@@ -7285,6 +7285,74 @@ describe("Attention plugin sources", () => {
       config: { command: ["check"] },
     },
   };
+  it.each(["pass", "filter", "failure", "cancel"])(
+    "holds completed sources through classification: %s",
+    async (outcome) => {
+      const pass = outcome === "pass" || outcome === "failure";
+      const jev = fakeJev();
+      let answer!: (value: DecisionResult) => void;
+      jev.decide.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            answer = resolve;
+          }),
+      );
+      const { service, run, plugin, native } = await setup({ jev });
+      plugin.agents.addAttentionSource({
+        id: "command",
+        run: async ({ emit }) => {
+          emit("build failed");
+        },
+      });
+      await service.create({ type: "example/echo", name: "Echo" });
+      await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
+      await service.save(bot, {
+        attentionEnabled: true,
+        attention: {
+          ...watches,
+          "watch/pr": {
+            ...watches["watch/pr"],
+            classifier: {
+              questions: {
+                deploy: { question: "Did the build fail?", threshold: 0.5 },
+              },
+            },
+          },
+        },
+      });
+      await vi.waitFor(() => expect(jev.decide).toHaveBeenCalledTimes(1));
+      await vi.waitFor(() =>
+        expect(service.find(bot)?.sourceRuns?.["watch/pr"]).toBeDefined(),
+      );
+      expect(service.find(bot)?.attention["watch/pr"]).toBeDefined();
+      expect(run).not.toHaveBeenCalled();
+      const state = JSON.parse(jev.decide.mock.calls[0]?.[0].state ?? "null");
+      expect(state).toEqual({
+        source: { provider: "example/command", text: "build failed" },
+      });
+      if (outcome === "cancel")
+        await service.save(bot, { attentionEnabled: false });
+      answer(
+        outcome === "failure"
+          ? failure("service_error")
+          : answered(pass ? 0.9 : 0.1),
+      );
+      if (outcome === "cancel") {
+        await settle();
+        expect(run).not.toHaveBeenCalled();
+        return;
+      }
+      await vi.waitFor(() =>
+        expect(service.find(bot)?.attention["watch/pr"]).toBeUndefined(),
+      );
+      expect(run).toHaveBeenCalledTimes(pass ? 1 : 0);
+      if (pass)
+        expect(run.mock.calls[0]?.[0].trigger).toMatchObject({
+          type: "attention",
+          text: expect.stringContaining("watch-classifier"),
+        });
+    },
+  );
   it("starts sources only for active plugin revisions and cancels them on deactivation", async () => {
     let active = false;
     const listeners = new Set<() => void>();

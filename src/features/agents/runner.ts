@@ -60,6 +60,7 @@ import {
   notRun,
   type ClassifierContext,
   type ClassifierOutcome,
+  type ClassifierInput,
 } from "./classifier";
 import type { Decisions } from "../decisions/service";
 import type { EventWatch } from "./attention";
@@ -181,6 +182,7 @@ type Job = {
 };
 type WatchTrigger = Extract<Trigger, { type: "watch" }>;
 type CatchUpTrigger = Extract<Trigger, { type: "catch-up" }>;
+type SourceTrigger = Extract<Trigger, { type: "source" }>;
 /** Mentions and watch work queue and are rate limited apart; a plugin's wake
  * goes with mentions. */
 type Lane = "mention" | "watch";
@@ -623,15 +625,19 @@ export class AgentRunners {
     const runner = this.runners.get(pubkey);
     if (!runner || !this.runs(pubkey) || !this.host.ready(pubkey))
       throw new Error("This copy of Buzz does not run that agent");
-    if (
-      !this.enqueue(runner, {
-        trigger,
-        matched: { object, epoch: runner.epoch },
-        sourceCurrent,
-      })
-    )
+    const job = {
+      trigger,
+      matched: { object, epoch: runner.epoch },
+      sourceCurrent,
+    };
+    const agent = this.host.ready(pubkey) as Agent;
+    const accepted = trigger.watch.classifier
+      ? this.classified(runner, agent, job)
+      : this.enqueue(runner, job);
+    if (!accepted)
       throw new Error("The agent is busy and could not take this wake");
   }
+
   /** Whether this copy runs the agent: its type can run it, and no other
    * copy of the app holds it. */
   runs(pubkey: string) {
@@ -1592,20 +1598,28 @@ export class AgentRunners {
   private classified(
     runner: Runner,
     agent: Agent,
-    job: Job & { trigger: WatchTrigger | CatchUpTrigger },
+    job: Job & { trigger: WatchTrigger | CatchUpTrigger | SourceTrigger },
   ) {
     const { trigger } = job;
     const events =
-      trigger.type === "watch"
-        ? [trigger.event]
-        : trigger.events.map(({ event }) => event);
+      trigger.type === "source"
+        ? []
+        : trigger.type === "watch"
+          ? [trigger.event]
+          : trigger.events.map(({ event }) => event);
+    const inputs =
+      trigger.type === "source"
+        ? [{ source: { provider: trigger.watch.provider, text: trigger.text } }]
+        : events.map((event) => ({ event }));
     const interest = trigger.watch.interest_id;
     // Never bypassed: without room the event is dropped, like a full queue.
-    if (!this.fits(runner, 0, [interest], events.length)) {
-      console.warn(`Agent ${agent.name} dropped an event to classify`);
-      return;
+    if (!this.fits(runner, 0, [interest], inputs.length)) {
+      if (trigger.type !== "source")
+        console.warn(`Agent ${agent.name} dropped an event to classify`);
+      return false;
     }
-    runner.classifying += events.length;
+    runner.classifying += inputs.length;
+    if (trigger.type === "source") this.sourceJobs.set(job, agent.pubkey);
     const count = (by: number) => {
       const next = (runner.classifyingIn.get(interest) ?? 0) + by;
       if (next) runner.classifyingIn.set(interest, next);
@@ -1617,7 +1631,7 @@ export class AgentRunners {
     const unreserve = () => {
       if (!reserved) return;
       reserved = false;
-      runner.classifying -= events.length;
+      runner.classifying -= inputs.length;
       count(-1);
     };
     const lifetime = runner.controller.signal;
@@ -1631,8 +1645,8 @@ export class AgentRunners {
       EventWatch["classifier"]
     >;
     const outcomes = Promise.all(
-      events.map((event) =>
-        this.classify(runner, agent, classifier, event, live).catch((error) => {
+      inputs.map((input) =>
+        this.classify(runner, agent, classifier, input, live).catch((error) => {
           console.warn(
             `Agent ${agent.name} could not classify an event`,
             error,
@@ -1650,7 +1664,7 @@ export class AgentRunners {
         if (lifetime.aborted || this.runners.get(runner.pubkey) !== runner)
           return;
         unreserve();
-        if (trigger.type === "watch") {
+        if (trigger.type === "watch" || trigger.type === "source") {
           const [result] = results;
           if (result)
             this.enqueue(runner, {
@@ -1670,8 +1684,18 @@ export class AgentRunners {
           });
       } finally {
         unreserve();
+        if (trigger.type === "source") {
+          this.sourceJobs.delete(job);
+          const object = job.matched?.object;
+          if (
+            object &&
+            sourceCompleted(this.host.record(agent.pubkey).sourceRuns, object)
+          )
+            await this.completeSource(agent.pubkey, object);
+        }
       }
     })();
+    return true;
   }
   /** The classifier's outcome for one event, or undefined when it does not
    * pass or should no longer be acted on. */
@@ -1679,7 +1703,9 @@ export class AgentRunners {
     runner: Runner,
     agent: Agent,
     classifier: NonNullable<EventWatch["classifier"]>,
-    event: RelayEvent,
+    input:
+      | { event: RelayEvent }
+      | { source: { provider: string; text: string } },
     live: () => boolean,
   ): Promise<ClassifierOutcome | undefined> {
     const decisions = this.host.decisions();
@@ -1693,19 +1719,21 @@ export class AgentRunners {
     }
     // Only the copy of the app that holds the agent sends its events out.
     if (!(await this.claim(runner)) || !live()) return undefined;
-    const context = await this.host.context(agent, event);
-    // Stopped or changed while its context was looked up: nothing is sent.
+    const facts: ClassifierInput =
+      "event" in input
+        ? {
+            classifier,
+            event: input.event,
+            author: {
+              role: input.event.pubkey === agent.owner ? "owner" : "other",
+              name: this.host.displayName(agent, input.event.pubkey),
+            },
+            context: await this.host.context(agent, input.event),
+          }
+        : { classifier, ...input };
     if (!live()) return undefined;
     const generation = this.host.classifierKeyGeneration();
-    const { pass, result, backend } = await classify(decisions, {
-      classifier,
-      event,
-      author: {
-        role: event.pubkey === agent.owner ? "owner" : "other",
-        name: this.host.displayName(agent, event.pubkey),
-      },
-      context,
-    });
+    const { pass, result, backend } = await classify(decisions, facts);
     // On the `typesafe` backend: the key was removed outside the app since it
     // was read, the service refused it, or native found one the failed status
     // read could not. Other backends say nothing about the key.

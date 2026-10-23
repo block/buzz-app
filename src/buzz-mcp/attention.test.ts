@@ -536,39 +536,52 @@ describe("a classifier", () => {
     return call;
   };
 
-  it("is saved without a key, and every answer says it will not run", async () => {
-    const call = await setup(false);
-    const added = await call("watch_add", {
-      ...asks,
-      classifier,
-      expected_state: ABSENT,
-    });
-    expect(added).toMatchObject({
-      classifier: "unavailable",
-      classifier_note: expect.stringMatching(/once a classifier is available/),
-      object: { classifier },
-    });
-    expect((await call("watch_show", { id: "asks" })).classifier_note).toMatch(
-      /pass unchecked/,
-    );
-    expect((await call("watch_list")).watches).toEqual([
-      {
-        id: "asks",
-        interest_id: "triage",
-        type: "event",
-        status: "enabled",
-        classified: true,
+  it.each(["event", "source"])(
+    "saves a %s classifier without a key and reports it consistently",
+    async (type) => {
+      const call = await setup(false);
+      const added = await call("watch_add", {
+        ...(type === "event"
+          ? asks
+          : {
+              id: "asks",
+              type,
+              interest: "triage",
+              provider: "example/command",
+              config: {},
+            }),
+        classifier,
+        expected_state: ABSENT,
+      });
+      expect(added).toMatchObject({
         classifier: "unavailable",
-      },
-    ]);
-    const cleared = await call("watch_update", {
-      id: "asks",
-      clear: ["classifier"],
-      expected_state: added.expected_state,
-    });
-    expect(cleared).not.toHaveProperty("classifier_note");
-    expect(cleared.object).not.toHaveProperty("classifier");
-  });
+        classifier_note: expect.stringMatching(
+          /once a classifier is available/,
+        ),
+        object: { classifier },
+      });
+      expect(
+        (await call("watch_show", { id: "asks" })).classifier_note,
+      ).toMatch(/pass unchecked/);
+      expect((await call("watch_list")).watches).toEqual([
+        {
+          id: "asks",
+          interest_id: "triage",
+          type,
+          status: "enabled",
+          classified: true,
+          classifier: "unavailable",
+        },
+      ]);
+      const cleared = await call("watch_update", {
+        id: "asks",
+        clear: ["classifier"],
+        expected_state: added.expected_state,
+      });
+      expect(cleared).not.toHaveProperty("classifier_note");
+      expect(cleared.object).not.toHaveProperty("classifier");
+    },
+  );
 
   it("carries no warning when a classifier can run", async () => {
     const call = await setup(true);

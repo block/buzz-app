@@ -62,6 +62,7 @@ export type SourceWatch = Readonly<{
   name?: string;
   provider: string;
   config: Readonly<Record<string, unknown>>;
+  classifier?: EventWatch["classifier"];
   channel?: string;
   root?: string;
 }>;
@@ -227,6 +228,10 @@ function eventWatch(value: Record<string, unknown>) {
     fail("A watch cannot have both authors and exclude_authors");
   if (value.is_reply !== undefined && typeof value.is_reply !== "boolean")
     fail("is_reply must be true or false");
+  validateClassifier(classifier);
+}
+
+function validateClassifier(classifier: unknown) {
   if (classifier !== undefined) {
     if (!isObject(classifier)) fail("classifier must be an object");
     fields(classifier as Record<string, unknown>, ["questions"]);
@@ -317,7 +322,7 @@ export function validateObject(
       fields(
         object,
         ["type", "interest_id", "enabled", "provider", "config"],
-        ["name", "channel", "root"],
+        ["name", "channel", "root", "classifier"],
       );
       interestId(object.interest_id);
       if (typeof object.enabled !== "boolean")
@@ -330,6 +335,7 @@ export function validateObject(
         fail("provider must be plugin/source");
       if (!isObject(object.config)) fail("config must be an object");
       destination(object);
+      validateClassifier(object.classifier);
     } else fail('A watch/ value has type "event", "timer" or "source"');
     const body = JSON.stringify({ schema: ATTENTION_SCHEMA, slug, value });
     if (bytes(body) > BODY_LIMIT)

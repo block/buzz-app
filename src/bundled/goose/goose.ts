@@ -47,6 +47,8 @@ export type Settled = Readonly<{
 
 export type ActivityReceipt = Readonly<{
   current?: () => boolean;
+  /** The prompt was handed to goose, after cancellation and provider checks. */
+  delivered?: () => void;
   /** Steps show on the latest acknowledged message of each scope. */
   activityScope?: string;
   step?: (tool: string, target?: string) => void;
@@ -482,6 +484,7 @@ export class GooseSession {
     model?: string;
     current?: () => boolean;
     waiter?: Waiter;
+    delivered?: () => void;
   }[] = [];
   /** The model the running turn runs on; empty is its provider's default. */
   private model = "";
@@ -565,6 +568,7 @@ export class GooseSession {
     else {
       this.queue.push({
         text,
+        ...(activity.delivered ? { delivered: activity.delivered } : {}),
         ...(activity.current ? { current: activity.current } : {}),
         waiter,
         ...(model ? { model } : {}),
@@ -671,7 +675,10 @@ export class GooseSession {
             prompt: [{ type: "text", text }],
             expectedRunId: runId,
           });
-          if (live()) this.acknowledge(activity, waiter);
+          if (live()) {
+            activity.delivered?.();
+            this.acknowledge(activity, waiter);
+          }
           return;
         } catch {
           // The turn ended, or another took its place: run it as the next.
@@ -680,6 +687,7 @@ export class GooseSession {
       if (live()) {
         this.queue.push({
           text,
+          ...(activity.delivered ? { delivered: activity.delivered } : {}),
           ...(activity.current ? { current: activity.current } : {}),
           waiter,
           ...(model ? { model } : {}),
@@ -709,9 +717,10 @@ export class GooseSession {
       while (this.queue.length && !this.closed) {
         // Stopped work has ended, and messages sent since run as new work.
         if (this.stopped) this.endStopped();
-        const { text, model, current, waiter } = this.queue.shift() ?? {
-          text: "",
-        };
+        const { text, model, current, waiter, delivered } =
+          this.queue.shift() ?? {
+            text: "",
+          };
         try {
           await this.select(model);
           // The owner stopped it while its provider switch was going.
@@ -720,6 +729,7 @@ export class GooseSession {
             if (waiter) this.discard(waiter);
             continue;
           }
+          delivered?.();
           const { stopReason } = (await this.goose.request("session/prompt", {
             sessionId: this.id,
             prompt: [{ type: "text", text }],

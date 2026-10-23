@@ -269,10 +269,10 @@ export class AgentSessions {
         this.drop(key, live);
         break;
       }
-      this.touch(key, live, seen);
       return this.answer(
         key,
         live,
+        seen,
         live.session.busy ? steer : text,
         { ...activity, ...(current ? { current } : {}) },
         model,
@@ -301,11 +301,11 @@ export class AgentSessions {
         return {
           settled: Promise.resolve({ ok: true, undelivered: true } as Settled),
         };
-      this.touch(key, live, seen);
       return {
         settled: this.answer(
           key,
           live,
+          seen,
           text,
           { ...activity, ...(current ? { current } : {}) },
           model,
@@ -353,7 +353,14 @@ export class AgentSessions {
       this.drop(key, live);
       return { ok: true };
     }
-    const result = await this.answer(key, live, "/compact", {}, undefined);
+    const result = await this.answer(
+      key,
+      live,
+      this.seen(key),
+      "/compact",
+      {},
+      undefined,
+    );
     // goose ends the turn either way, and says which in its text.
     if (!result.ok || result.text === "Compaction complete") return result;
     return {
@@ -515,11 +522,22 @@ export class AgentSessions {
   private async answer(
     key: string,
     live: Live,
+    seen: number,
     text: string,
     activity: ActivityReceipt,
     model: string | undefined,
   ) {
-    const sent = live.session.send(text, activity, model);
+    const sent = live.session.send(
+      text,
+      {
+        ...activity,
+        delivered: () => {
+          if (this.live.get(key) === live) this.touch(key, live, seen);
+          activity.delivered?.();
+        },
+      },
+      model,
+    );
     // A final Buzz send can answer before goose finishes its model work.
     void live.session.idle().then(() => {
       if (this.live.get(key) === live) this.options.onChange?.();

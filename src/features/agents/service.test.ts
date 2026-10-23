@@ -7201,30 +7201,6 @@ describe("Attention plugin sources", () => {
   });
 });
 
-it("gives a run its owner's channel templates with the owner's agents each adds", async () => {
-  const { service, run, emit } = await setup();
-  await service.create({ type: "example/echo", name: "Echo" });
-  await service.create({ type: "example/echo", name: "Sib" });
-  const team = await service.saveTeam({
-    name: "Crew",
-    instructions: "",
-    members: [sibling],
-  });
-  vi.spyOn(channelTemplates, "snapshot").mockReturnValueOnce([
-    {
-      id: "t",
-      name: "Launch",
-      teams: [team.id],
-      agents: [other, bot],
-      canvas: "# Plan",
-    },
-  ]);
-  const { templates } = await handleOf(run, emit);
-  expect(templates()).toEqual([
-    { name: "Launch", canvas: "# Plan", agents: [bot, sibling] },
-  ]);
-});
-
 it("delivers a timer to a conversation once while retaining its occurrence budget", async () => {
   vi.useFakeTimers({ now: 1_000_000 });
   const runOnce = vi.fn(async () => ({ ok: true }));
@@ -7347,4 +7323,29 @@ it("serializes standalone source output per Interest and drops queued output aft
   await Promise.resolve();
   expect(prompts).toHaveLength(1);
   expect(run).not.toHaveBeenCalled();
+});
+
+
+it("gives a run its owner's channel templates with the owner's agents each adds", async () => {
+  const { service, run, emit } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.create({ type: "example/echo", name: "Sib" });
+  const team = await service.saveTeam({
+    name: "Crew",
+    instructions: "",
+    members: [sibling],
+  });
+  vi.spyOn(channelTemplates, "snapshot").mockReturnValueOnce([
+    {
+      id: "t",
+      name: "Launch",
+      teams: [team.id],
+      agents: [other, bot],
+      canvas: "# Plan",
+    },
+  ]);
+  const { templates } = await handleOf(run, emit);
+  expect(templates()).toEqual([
+    { name: "Launch", canvas: "# Plan", agents: [bot, sibling] },
+  ]);
 });

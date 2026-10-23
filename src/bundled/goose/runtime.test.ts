@@ -1229,6 +1229,15 @@ it("Interrupt during a queued prompt rebuild restores notes without starting a t
     f.read.mockImplementationOnce(() => reading);
     process.turns[0]?.finish();
     await vi.waitFor(() => expect(notes).toHaveBeenCalledTimes(1));
+    expect(
+      f.runtime.sessionState(
+        {
+          ...f.agent,
+          config: { ...DEFAULT_CONFIG, scope: "channel" },
+        } as unknown as Agent,
+        { channelId: channel },
+      ),
+    ).toBe("active");
     await f.runtime.session(
       {
         ...f.agent,
@@ -1252,3 +1261,4 @@ it("Interrupt during a queued prompt rebuild restores notes without starting a t
     f.runtime.dispose();
   }
 });
+

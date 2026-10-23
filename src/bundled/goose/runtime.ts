@@ -258,6 +258,7 @@ export class GooseRuntime {
     const key = this.controlKey(agent, place);
     if (this.controls.compacting(`${agent.pubkey}/${key}`)) return "compacting";
     return this.controls.active(`${agent.pubkey}/${key}`) ||
+      this.agents.get(agent.pubkey)?.policies.has(key) ||
       this.agents.get(agent.pubkey)?.sessions.active(key)
       ? "active"
       : "idle";

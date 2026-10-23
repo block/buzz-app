@@ -258,11 +258,7 @@ test("real HTTP accepts the 1022-channel body and rejects invalid/oversized/orig
     large.abort();
     await until(() => h.sockets.every((s) => s.readyState === 3));
     const count = h.sockets.length;
-    for (const invalid of [
-      [""],
-      Array(10_065).fill("a"),
-      ["x".repeat(150001)],
-    ]) {
+    for (const invalid of [[""], ["x".repeat(150001)]]) {
       const { response } = await h.post(invalid);
       expect([400, 413]).toContain(response.status);
       await response.text();
@@ -1491,16 +1487,21 @@ test("joined batches survive the real HTTP boundary and retirement only rebuilds
       (_, i) => `c${String(i).padStart(3, "0")}`,
     );
     traffic.update([...joined, "preview"], joined);
-    await until(() => established.mock.calls.length === 29);
-    expect(h.requests).toHaveLength(29);
+    await until(
+      () => established.mock.calls.length === 4 && h.requests.length === 30,
+    );
+    expect(h.requests).toHaveLength(30);
     const batches = h.requests.filter(
+      (r) => r.filter["#h"] && r.filter.limit === 0,
+    );
+    const replays = h.requests.filter(
       (r) => r.filter["#h"] && r.filters.length > 1,
     );
-    expect(batches.map((r) => r.filters.length)).toEqual([
+    expect(replays.map((r) => r.filters.length)).toEqual([
       ...Array(25).fill(10),
       6,
     ]);
-    for (const r of batches)
+    for (const r of replays)
       for (const f of r.filters) {
         expect(f["#h"]).toHaveLength(1);
         expect(f.limit).toBe(500);
@@ -1509,7 +1510,7 @@ test("joined batches survive the real HTTP boundary and retirement only rebuilds
       established.mock.calls
         .filter(([ids]) => Array.isArray(ids))
         .map(([ids]) => ids.length),
-    ).toEqual([...Array(25).fill(10), 6]);
+    ).toEqual([256]);
     const old = batches[0];
     // Host rejects mismatched joined scope before changing any live routes.
     const malformed = await fetcher(`${h.base}/api/relay/stream-interests`, {
@@ -1524,16 +1525,19 @@ test("joined batches survive the real HTTP boundary and retirement only rebuilds
     });
     expect(malformed.status).toBe(400);
     await malformed.text();
-    expect(h.requests).toHaveLength(29);
+    expect(h.requests).toHaveLength(30);
     const retained = joined.slice(1);
     traffic.update([...retained, "preview"], retained);
-    await until(() => established.mock.calls.length === 30);
-    expect(h.requests).toHaveLength(30);
-    expect(h.frames.filter((f) => f.kind === "CLOSE").map((f) => f.id)).toEqual(
-      [old.id],
+    await until(() =>
+      h.frames.some((frame) => frame.kind === "CLOSE" && frame.id === old.id),
     );
+    expect(established).toHaveBeenCalledTimes(4);
+    expect(h.requests).toHaveLength(31);
+    expect(
+      h.frames.filter((f) => f.kind === "CLOSE" && f.id === old.id),
+    ).toHaveLength(1);
     expect(h.requests.at(-1).filters.flatMap((f) => f["#h"])).toEqual(
-      joined.slice(1, 10),
+      joined.slice(1),
     );
     const event = finalizeEvent(
       {
@@ -1549,7 +1553,7 @@ test("joined batches survive the real HTTP boundary and retirement only rebuilds
     await until(() => receive.mock.calls.length === 1);
     expect(receive).toHaveBeenCalledExactlyOnceWith([event], {
       phase: "live",
-      sourceChannels: joined.slice(1, 10),
+      sourceChannels: joined.slice(1),
     });
     expect(h.sockets).toHaveLength(1);
   } finally {
@@ -2018,7 +2022,7 @@ test("live streams request no agent telemetry without plugin demand", async () =
   }
 });
 
-test("real broker keeps 10,000 joined channels and delivers outside the first batch", async () => {
+test("real broker keeps 100,000 joined channels and delivers outside the first batch", async () => {
   const h = await harness();
   const nativeFetch = globalThis.fetch;
   let traffic;
@@ -2050,24 +2054,34 @@ test("real broker keeps 10,000 joined channels and delivers outside the first ba
       },
     });
     const ids = Array.from(
-      { length: 10_000 },
-      (_, i) => `${String(i).padStart(5, "0")}-${"c".repeat(122)}`,
+      { length: 100_000 },
+      (_, i) => `${String(i).padStart(6, "0")}-${"c".repeat(121)}`,
     );
     traffic.update(ids, ids);
     await vi.waitFor(
       () => {
-        expect(established.size).toBe(10_000);
+        expect(
+          established.size,
+          JSON.stringify({
+            status: snapshot?.status,
+            error: snapshot?.error,
+            requests: h.requests.length,
+            sockets: h.sockets.length,
+          }),
+        ).toBe(100_000);
         expect(snapshot?.status).toBe("connected");
         expect(
           snapshot.routes.filter(
             (route) => route.channelId && route.status === "live",
           ),
-        ).toHaveLength(10_000);
+        ).toHaveLength(100_000);
       },
       { timeout: 30_000 },
     );
     expect(h.sockets).toHaveLength(1);
-    expect(h.requests).toHaveLength(1002);
+    expect(
+      h.requests.filter((r) => r.filters.some((f) => f["#h"] && f.limit === 0)),
+    ).toHaveLength(49);
     const last = ids.at(-1);
     const route = h.requests.find((request) =>
       request.filters.some((filter) => filter["#h"]?.includes(last)),

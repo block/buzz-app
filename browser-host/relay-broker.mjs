@@ -1483,14 +1483,16 @@ export function relayBrokerPlugin({
             const prioritizing = route === "/api/relay/stream-priority";
             const observing = route === "/api/relay/stream-observer";
             const updating = route === "/api/relay/stream-interests";
-            let raw = "";
+            let raw = "",
+              bytes = 0;
             req.setEncoding("utf8");
             for await (const part of req) {
               raw += part;
+              bytes += Buffer.byteLength(part);
               if (
-                Buffer.byteLength(raw) >
+                bytes >
                 (updating
-                  ? 4 * 1024 * 1024
+                  ? 64 * 1024 * 1024
                   : watchingPresence
                     ? 20000
                     : prioritizing
@@ -1586,9 +1588,10 @@ export function relayBrokerPlugin({
               // Coalescing may hide a removal followed by re-add. Retire the old
               // wire before stamping the new revision; unchanged routes survive.
               if (removed.length) {
+                const removedIds = new Set(removed);
                 stream.traffic.update(
-                  stream.channels.filter((id) => !removed.includes(id)),
-                  stream.joined.filter((id) => !removed.includes(id)),
+                  stream.channels.filter((id) => !removedIds.has(id)),
+                  stream.joined.filter((id) => !removedIds.has(id)),
                 );
               }
               stream.interestRevision = interestRevision;
@@ -1603,11 +1606,13 @@ export function relayBrokerPlugin({
             return json(res, 200, { accepted: true });
           }
           if (route === "/api/relay/stream" && req.method === "POST") {
-            let raw = "";
+            let raw = "",
+              bytes = 0;
             req.setEncoding("utf8");
             for await (const part of req) {
               raw += part;
-              if (Buffer.byteLength(raw) > 3 * 1024 * 1024)
+              bytes += Buffer.byteLength(part);
+              if (bytes > 64 * 1024 * 1024)
                 return json(res, 413, { error: "Live interests too large" });
             }
             let channels,
@@ -1615,9 +1620,11 @@ export function relayBrokerPlugin({
               priority,
               observer,
               interestRevision,
-              presenceAuthors;
+              presenceAuthors,
+              statusDeltas;
             try {
               const body = JSON.parse(raw);
+              statusDeltas = body.statusDeltas === true;
               channels = liveChannels(body.channels);
               joined = liveJoined(channels, body.joined ?? []);
               interestRevision = body.interestRevision ?? 0;
@@ -1670,12 +1677,12 @@ export function relayBrokerPlugin({
             let lastStateStatus;
             let lastObserverStatus;
             let liveChannelIds = new Set();
-            const flushState = () => {
+            const flushLegacyState = () => {
               const state = pendingState;
               pendingState = undefined;
               if (state) write("state", state);
             };
-            const writeState = (state) => {
+            const writeLegacyState = (state) => {
               const observerStatus = state.routes.find(
                 (route) => route.id === "observer",
               )?.status;
@@ -1700,6 +1707,98 @@ export function relayBrokerPlugin({
               if (replaceable && res.writableNeedDrain) pendingState = state;
               else write("state", state);
             };
+            let knownRoutes = new Map();
+            const dirtyRoutes = new Map();
+            let deltaHeader;
+            const sameRoute = (a, b) =>
+              a?.status === b.status &&
+              a?.replay === b.replay &&
+              a?.error === b.error;
+            const flushDeltas = () => {
+              if (!deltaHeader) return;
+              do {
+                const routes = [],
+                  removed = [];
+                for (const [id, route] of dirtyRoutes) {
+                  dirtyRoutes.delete(id);
+                  if (route) routes.push(route);
+                  else removed.push(id);
+                  if (routes.length + removed.length === 512) break;
+                }
+                write("state-delta", { ...deltaHeader, routes, removed });
+              } while (
+                dirtyRoutes.size &&
+                !res.writableNeedDrain &&
+                !res.destroyed
+              );
+            };
+            const writeState = statusDeltas
+              ? (state) => {
+                  const reset =
+                    !deltaHeader || state.status !== deltaHeader.status;
+                  if (reset) {
+                    dirtyRoutes.clear();
+                    knownRoutes.clear();
+                    write("state-delta", {
+                      status: state.status,
+                      ...(state.error ? { error: state.error } : {}),
+                      interestRevision: state.interestRevision,
+                      reset: true,
+                      routes: [],
+                      removed: [],
+                    });
+                  }
+                  deltaHeader = {
+                    status: state.status,
+                    ...(state.error ? { error: state.error } : {}),
+                    interestRevision: state.interestRevision,
+                  };
+                  const next = new Map();
+                  const urgent = [];
+                  for (const route of state.routes) {
+                    next.set(route.id, route);
+                    const previous = knownRoutes.get(route.id);
+                    // The browser already owns the IDs and can construct pending rows.
+                    const implicit =
+                      !previous &&
+                      route.channelId &&
+                      route.status === "pending" &&
+                      route.replay === "unknown" &&
+                      !route.error;
+                    if (!implicit && !sameRoute(previous, route)) {
+                      dirtyRoutes.set(route.id, route);
+                      if (
+                        (previous?.status === "live" &&
+                          route.status !== "live") ||
+                        route.id === "observer"
+                      )
+                        urgent.push(route);
+                    }
+                  }
+                  for (const id of knownRoutes.keys())
+                    if (!next.has(id)) dirtyRoutes.set(id, null);
+                  for (let offset = 0; offset < urgent.length; offset += 512) {
+                    const routes = urgent.slice(offset, offset + 512);
+                    for (const route of routes) dirtyRoutes.delete(route.id);
+                    write("state-delta", {
+                      ...deltaHeader,
+                      routes,
+                      removed: [],
+                    });
+                  }
+                  if (knownRoutes.has("observer") && !next.has("observer")) {
+                    dirtyRoutes.delete("observer");
+                    write("state-delta", {
+                      ...deltaHeader,
+                      routes: [],
+                      removed: ["observer"],
+                    });
+                  }
+                  knownRoutes = next;
+                  if (!res.writableNeedDrain) flushDeltas();
+                }
+              : writeLegacyState;
+            const flushState = statusDeltas ? flushDeltas : flushLegacyState;
             res.on("drain", flushState);
             const stream = {
               relay,
@@ -1740,6 +1839,7 @@ export function relayBrokerPlugin({
                     interestRevision: stream.interestRevision,
                   }),
                 established: (channelId) =>
+                  (!statusDeltas || channelId === undefined) &&
                   write("established", {
                     ...(Array.isArray(channelId)
                       ? { channels: channelId }
@@ -1774,6 +1874,8 @@ export function relayBrokerPlugin({
               closed = true;
               principal.streams--;
               pendingState = undefined;
+              dirtyRoutes.clear();
+              knownRoutes.clear();
               res.off("drain", flushState);
               traffic.dispose();
               clearInterval(keepAlive);

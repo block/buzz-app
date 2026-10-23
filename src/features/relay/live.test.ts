@@ -50,7 +50,11 @@ class Socket {
   }
 }
 afterEach(() => vi.useRealTimers());
-function setup(channels = ["a", "b"], admission = createLiveAdmission()) {
+function setup(
+  channels = ["a", "b"],
+  admission = createLiveAdmission(),
+  batchSize = 10,
+) {
   const key = keypair(),
     sockets: Socket[] = [];
   const callbacks = {
@@ -71,6 +75,9 @@ function setup(channels = ["a", "b"], admission = createLiveAdmission()) {
       return socket as unknown as WebSocket;
     },
     admission,
+    undefined,
+    undefined,
+    batchSize,
   );
   owner.update(channels);
   const first = sockets[0];
@@ -694,7 +701,7 @@ it.each(["timeout", "error: temporarily unavailable"])(
         h.callbacks.state.mock.lastCall?.[0].routes.find(
           (r) => r.channelId === "b",
         ),
-      ).toMatchObject({ status: "pending", error: expect.any(String) });
+      ).toMatchObject({ status: "live", error: expect.any(String) });
       await h.first.receive(["EOSE", retry[1]]);
       expect(h.first.sent).toContainEqual(["CLOSE", initial[1]]);
       const state = h.callbacks.state.mock.lastCall?.[0].routes.find(
@@ -1071,7 +1078,9 @@ it("bounds interests and exposes every omitted ID without exceeding 1024 subscri
       .filter((r) => r.status === "limited")
       .map((r) => r.channelId),
   ).toEqual(ids.slice(1022));
-  expect(() => liveChannels(Array(10_065).fill("a"))).toThrow();
+  expect(
+    liveChannels(Array.from({ length: 100_001 }, (_, i) => `c${i}`)),
+  ).toHaveLength(100_001);
   for (const invalid of [[""], ["a b"], ["x".repeat(129)], [9], {}])
     expect(() => liveChannels(invalid)).toThrow();
   h.owner.dispose();
@@ -1130,6 +1139,8 @@ it.each([false, true])(
       () => socket as unknown as WebSocket,
       undefined,
       16,
+      undefined,
+      10,
     );
     const channels = Array.from({ length: 170 }, (_, i) => `channel-${i}`);
     owner.update(channels, joined ? channels : []);
@@ -2620,7 +2631,7 @@ it("keeps 10,000 joined channels live through membership changes, reconnect and 
 
 it("passes the full session roster and delivers input and artifacts on task 10,000", async () => {
   vi.useFakeTimers({ now: 1_700_000_100_000 });
-  const h = setup([]),
+  const h = setup([], createLiveAdmission(), 2048),
     relay = keypair(),
     author = keypair();
   const wire = scriptedTransport(h.key.pubkey, relay.pubkey);
@@ -2698,9 +2709,25 @@ it("passes the full session roster and delivers input and artifacts on task 10,0
     const reconnect = h.sockets.at(-1);
     assert.exists(reconnect);
     await reconnect.auth();
+    let cursor = 0;
+    while (
+      !reconnect
+        .requests()
+        .some(
+          (request) =>
+            scopeOf(request).includes("task-00000") && request[2].limit === 500,
+        )
+    ) {
+      const request: WireRequest | undefined = reconnect.requests()[cursor++];
+      assert.exists(request);
+      await reconnect.receive(["EOSE", request[1]]);
+    }
     const replayRoute = reconnect
       .requests()
-      .find((request) => scopeOf(request).includes("task-00000"));
+      .find(
+        (request) =>
+          scopeOf(request).includes("task-00000") && request[2].limit === 500,
+      );
     assert.exists(replayRoute);
     const missed = message(author, "task-00000", "missed input", 1_700_000_103);
     await reconnect.receive(["EVENT", replayRoute[1], missed]);
@@ -2866,3 +2893,80 @@ it("prioritizes a growing initial batch over healthy renewals", async () => {
     h.owner.dispose();
   }
 });
+
+it("covers 100,000 channels with protocol-sized live batches and a bounded replay queue", async () => {
+  vi.useFakeTimers();
+  const ids = Array.from(
+    { length: 100_000 },
+    (_, i) => `task-${String(i).padStart(6, "0")}`,
+  );
+  const h = setup([], createLiveAdmission(), 2048);
+  let latest: Parameters<LiveCallbacks["state"]>[0] | undefined;
+  h.callbacks.state.mockImplementation((state) => {
+    latest = state;
+    h.callbacks.state.mockClear();
+  });
+  const live = new Map<string, WireRequest>();
+  let replayed = 0;
+  const active = new Set<string>();
+  const drain = async (start = 0) => {
+    for (let i = start; i < h.first.sent.length; i++) {
+      const frame = h.first.sent[i] as WireRequest;
+      if (frame[0] === "CLOSE") active.delete(frame[1]);
+      if (frame[0] !== "REQ") continue;
+      active.add(frame[1]);
+      expect(active.size).toBeLessThanOrEqual(1024);
+      const filters = filtersOf(frame);
+      expect(filters.length).toBeLessThanOrEqual(10);
+      expect(scopeOf(frame).length).toBeLessThanOrEqual(2048);
+      if (scopeOf(frame).length && filters[0]?.limit === 0) {
+        for (const id of scopeOf(frame)) live.set(id, frame);
+      } else if (scopeOf(frame).length) {
+        expect(
+          filters.every((f) => f["#h"]?.length === 1 && f.limit === 500),
+        ).toBe(true);
+        replayed += filters.length;
+      }
+      await h.first.receive(["EOSE", frame[1]]);
+    }
+  };
+  try {
+    h.owner.update(ids, ids);
+    await h.first.auth();
+    await drain();
+    expect(live.size).toBe(100_000);
+    expect(replayed).toBe(100_000);
+    expect(active.size).toBe(51);
+    expect(
+      latest?.routes.filter((r) => r.channelId && r.status === "live"),
+    ).toHaveLength(100_000);
+    const last = ids.at(-1);
+    assert.exists(last);
+    const source = live.get(last);
+    assert.exists(source);
+    const event = message(h.key, last, "last channel input", 1700000001);
+    await h.first.receive(["EVENT", source[1], event]);
+    expect(h.callbacks.receive).toHaveBeenLastCalledWith([event], {
+      channelId: last,
+      phase: "live",
+    });
+    const start = h.first.sent.length;
+    h.owner.update(
+      [...ids.slice(0, -1), "replacement"],
+      [...ids.slice(0, -1), "replacement"],
+    );
+    await drain(start);
+    h.callbacks.receive.mockClear();
+    await h.first.receive(["EVENT", source[1], event]);
+    expect(h.callbacks.receive).not.toHaveBeenCalled();
+    expect(
+      latest?.routes.some(
+        (r) => r.channelId === "replacement" && r.status === "live",
+      ),
+    ).toBe(true);
+    expect(latest?.routes.some((r) => r.channelId === last)).toBe(false);
+  } finally {
+    h.owner.dispose();
+  }
+  expect(vi.getTimerCount()).toBe(0);
+}, 60_000);

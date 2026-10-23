@@ -1,5 +1,6 @@
 import { expect, it, vi } from "vitest";
 import { createRelaySession } from "./session";
+import { byteSize } from "./budget";
 import { DiscoveryState } from "./discovery";
 import { ReadError } from "./errors";
 import {
@@ -405,7 +406,11 @@ it("fails closed on the returned-channel cap and metadata capacity without evict
       ),
     ).rejects.toThrow("Too many");
     expect(wire.pending).toHaveLength(0);
-    const state = new DiscoveryState(viewer.pubkey, relay.pubkey, 1);
+    const state = new DiscoveryState(
+      viewer.pubkey,
+      relay.pubkey,
+      byteSize(publicMetadata(relay, "one")),
+    );
     state.retain(new Set(), new Map());
     state.accept(publicMetadata(relay, "one"));
     state.deny("one");

@@ -3,6 +3,7 @@ import {
   WORKFLOW_CHANNEL_BATCH,
   WORKFLOW_DEFINITION_LIMIT,
 } from "../workflows/queries";
+import { byteSize } from "./budget";
 import { tag, type RelayEvent } from "./events";
 import { createRelaySession } from "./session";
 import type { ChannelStoreOptions } from "./store";
@@ -489,39 +490,46 @@ it.each([10_000, 10_001])(
     const h = setup();
     h.channels.ensureList();
     await h.rosters(count);
-    await h.metadata(10_000);
-    expect(h.channels.list().channels).toHaveLength(10_000);
-    expect(h.channels.list().coverage).toBe(
-      count > 10_000 ? "partial" : undefined,
-    );
+    await h.metadata(count);
+    expect(h.channels.list().channels).toHaveLength(count);
+    expect(h.channels.list().coverage).toBeUndefined();
     expect(h.pending).toHaveLength(0);
   },
   60_000,
 );
 
-it("does not revoke omitted channels when retained rosters exhaust capacity", async () => {
-  const h = setup();
-  h.emit([roster(relay, "omitted", [viewer.pubkey])]);
+it("does not revoke omitted channels when retained bytes exhaust the budget", async () => {
+  const omitted = roster(relay, "omitted", [viewer.pubkey]);
+  const maxDiscoveryBytes =
+    byteSize(omitted) +
+    memberships
+      .slice(0, 499)
+      .reduce((bytes, event) => bytes + byteSize(event), 0);
+  const h = setup({ maxDiscoveryBytes });
+  h.emit([omitted]);
   h.channels.ensureList();
-  await h.rosters(10_000, false);
-  await h.metadata(9_999);
+  await h.rosters(500, false);
+  await h.metadata(499);
   expect(h.channels.list().coverage).toBe("partial");
-  expect(h.channels.list().channels).toHaveLength(10_000);
+  expect(h.channels.list().channels).toHaveLength(500);
   expect(
     h.channels.list().channels.some((channel) => channel.id === "omitted"),
   ).toBe(true);
 });
 
 it("keeps coverage partial when exact discovery overflows during omission confirmation", async () => {
-  const h = setup();
-  h.emit(memberships.slice(0, 10_000));
-  expect(h.channels.list().channels).toHaveLength(10_000);
+  const maxDiscoveryBytes = memberships
+    .slice(0, 1000)
+    .reduce((bytes, event) => bytes + byteSize(event), 0);
+  const h = setup({ maxDiscoveryBytes });
+  h.emit(memberships.slice(0, 1000));
+  expect(h.channels.list().channels).toHaveLength(1000);
 
   h.channels.ensureList();
-  await h.rosters(9_976);
+  await h.rosters(976);
   const confirmation = await h.next(39002);
   const omitted = memberships
-    .slice(9_976, 10_000)
+    .slice(976, 1000)
     .flatMap((event) => tag(event, "d") ?? []);
   const confirmationIds = confirmation.filters[0]?.["#d"] ?? [];
   expect(confirmation.filters[0]).toMatchObject({
@@ -554,7 +562,7 @@ it("keeps coverage partial when exact discovery overflows during omission confir
   expect(h.channels.list().coverage).toBe("partial");
 
   confirmation.respond([]);
-  await h.metadata(9_976);
+  await h.metadata(976);
   expect(h.session.live.snapshot().roster.state).toBe("verified");
   expect(h.channels.list().coverage).toBe("partial");
   expect(
@@ -564,13 +572,17 @@ it("keeps coverage partial when exact discovery overflows during omission confir
   expect(h.pending).toHaveLength(0);
 });
 
-it("marks metadata retention overflow as partial without discarding membership", async () => {
-  const h = setup();
-  const member = memberships[10_000];
+it("marks metadata byte overflow as partial without discarding membership", async () => {
+  const member = memberships[1000];
   assert.exists(member);
   const id = tag(member, "d");
   assert.exists(id);
-  h.emit([...names.keys()].filter((channelId) => channelId !== id).map(named));
+  const initial = [...names.keys()].slice(0, 500).map(named);
+  const maxDiscoveryBytes =
+    byteSize(member) +
+    initial.reduce((bytes, event) => bytes + byteSize(event), 0);
+  const h = setup({ maxDiscoveryBytes });
+  h.emit(initial);
   h.channels.ensureList();
   (await h.next(39002)).respond([member]);
   (await h.next(39000)).respond([named(id)]);

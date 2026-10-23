@@ -60,6 +60,10 @@ export type SkippedObject = Readonly<{
   modifiedAt: number;
   problem: string;
 }>;
+export type AttentionHistory = Readonly<{
+  lastWokeAt?: number;
+  output?: string;
+}>;
 export type AgentRecord = Readonly<{
   pubkey: string;
   /** Keyed by slug (`interest/<id>` or `watch/<id>`). */
@@ -79,6 +83,7 @@ export type AgentRecord = Readonly<{
   timers?: Readonly<Record<string, TimerState>>;
   /** Terminal source runs, matched to the exact registration. */
   sourceRuns?: Readonly<Record<string, string>>;
+  attentionHistory?: Readonly<Record<string, AttentionHistory>>;
 }>;
 type Stored = { version: 1; agents: Record<string, AgentRecord> };
 
@@ -207,6 +212,36 @@ function readRecord(
           ),
         }
       : {}),
+    ...(record.attentionHistory
+      ? {
+          attentionHistory: Object.fromEntries(
+            Object.entries(record.attentionHistory ?? {}).flatMap(
+              ([slug, entry]) =>
+                attention[slug] && entry && typeof entry === "object"
+                  ? [
+                      [
+                        slug,
+                        {
+                          ...(Number.isFinite(entry.lastWokeAt)
+                            ? { lastWokeAt: entry.lastWokeAt }
+                            : {}),
+                          ...(typeof entry.output === "string"
+                            ? {
+                                output: entry.output
+                                  .slice(-16384)
+                                  .split("\n")
+                                  .slice(-40)
+                                  .join("\n"),
+                              }
+                            : {}),
+                        },
+                      ],
+                    ]
+                  : [],
+            ),
+          ),
+        }
+      : {}),
     timers,
     ...(record.attentionEnabled === true ? { attentionEnabled: true } : {}),
   };
@@ -288,6 +323,9 @@ export function setAttention(
   schedule?: "rearm" | "restart",
 ): AgentRecord {
   const prior = record.attention[slug]?.value;
+  const { [slug]: history, ...attentionHistory } =
+    record.attentionHistory ?? {};
+  if (history !== undefined) record = { ...record, attentionHistory };
   const { [slug]: completed, ...sourceRuns } = record.sourceRuns ?? {};
   if (completed !== undefined) record = { ...record, sourceRuns };
   const { [slug]: _, ...rest } = record.attention;

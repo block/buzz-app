@@ -893,3 +893,5 @@ The separately installed Attention plugin provides command and GitHub PR produce
 ## Attention delivery destinations
 
 Event watches and timers accept an optional delivery `channel` and thread `root`. The event watch's `channels` still selects where to listen. With an address, the wake continues that conversation with the Interest's instructions; a channel without a root posts at channel level. Without an address, it runs an independent turn in the Interest's lane. Timers retain their occurrence and expiry budgets. The Attention panel shows listening channels separately from the delivery destination.
+
+Subscription runtime history stays on this device, outside configuration: the last wake time and up to 40 lines (16 KiB) of source output. Missing history on an older subscription is unknown. A completed source or spent timer is removed after its final queued turn succeeds, including work handed to `workingUntil`. A failed source delivery retains the subscription and output.

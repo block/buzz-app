@@ -2818,9 +2818,10 @@ it("runs no occurrence of a timer while its rearm is being saved, so the rearm k
   // Its second and last occurrence comes from the rearm, and no third.
   await vi.advanceTimersByTimeAsync(600_000);
   expect(run).toHaveBeenCalledTimes(2);
+  expect(service.find(bot)?.attention["watch/a"]).toBeUndefined();
   expect(
     JSON.parse(storage.get(`buzz.agent.v1:${bot}`) ?? "{}").timers["watch/a"],
-  ).toMatchObject({ armedAt: 1_115, used: 2 });
+  ).toBeUndefined();
 });
 
 it("keeps the occurrence a timer used while its progress saves, when the owner rearms it", async () => {
@@ -2850,6 +2851,9 @@ it("keeps the occurrence a timer used while its progress saves, when the owner r
   // It runs once at 1060.
   await vi.advanceTimersByTimeAsync(60_000);
   expect(run).toHaveBeenCalledTimes(1);
+  run.mockImplementationOnce(({ workingUntil }) =>
+    workingUntil(new Promise<void>(() => {})),
+  );
   let release = () => {};
   hold = new Promise((resolve) => (release = resolve));
   // Its second and last occurrence runs at 1120; that progress is saving
@@ -3261,7 +3265,8 @@ it("fires a due timer once, then again an interval after it ran", async () => {
   expect(run).toHaveBeenCalledTimes(2);
   // Its run state lives in the agent's record and goes when the timer does.
   const stored = () => JSON.parse(storage.get(`buzz.agent.v1:${bot}`) ?? "{}");
-  expect(stored().timers["watch/tick"]).toMatchObject({ used: 2 });
+  expect(stored().timers["watch/tick"]).toBeUndefined();
+  expect(service.find(bot)?.attention["watch/tick"]).toBeUndefined();
   expect(stored().timers["watch/stale"]).toMatchObject({ used: 16 });
   await service.save(bot, { attention: { "watch/tick": null } });
   expect(Object.keys(stored().timers)).toEqual(["watch/stale"]);
@@ -5852,6 +5857,14 @@ it("runs a spent timer again when its owner restarts it", async () => {
   const { service, run } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
   await service.save(bot, { attentionEnabled: true });
+  let finish!: () => void;
+  run.mockImplementationOnce(({ workingUntil }) =>
+    workingUntil(
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+    ),
+  );
   const once = {
     type: "timer",
     interest_id: "default",
@@ -5876,6 +5889,7 @@ it("runs a spent timer again when its owner restarts it", async () => {
     attention: { "watch/once": { ...once, armed_at: 1_130 } },
     restart: ["watch/once"],
   });
+  finish();
   await vi.advanceTimersByTimeAsync(65_000);
   expect(run).toHaveBeenCalledTimes(2);
 });
@@ -7330,6 +7344,70 @@ describe("Attention plugin sources", () => {
     expect(input?.signal.aborted).toBe(true);
     expect(() => input?.emit("late")).toThrow(/no longer/);
   });
+  it("retains a completed producer until its final turn settles, records output and then removes it", async () => {
+    const { service, run, plugin, native } = await setup();
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    run.mockImplementation(async (delivery) => {
+      delivery.workingUntil(held);
+    });
+    plugin.agents.addAttentionSource({
+      id: "command",
+      run: async ({ emit }) => {
+        emit("final output\n");
+      },
+    });
+    await service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
+    await service.save(bot, { attentionEnabled: true, attention: watches });
+    try {
+      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+      await vi.waitFor(() =>
+        expect(service.find(bot)?.attentionHistory?.["watch/pr"]?.output).toBe(
+          "final output\n",
+        ),
+      );
+      expect(
+        service.find(bot)?.attentionHistory?.["watch/pr"]?.lastWokeAt,
+      ).toEqual(expect.any(Number));
+      expect(service.find(bot)?.attention["watch/pr"]).toBeDefined();
+    } finally {
+      release();
+    }
+    await vi.waitFor(() =>
+      expect(service.find(bot)?.attention["watch/pr"]).toBeUndefined(),
+    );
+  });
+  it("keeps a completed subscription when its last delivery fails", async () => {
+    const { service, run, plugin, native } = await setup();
+    let finish!: () => void;
+    const held = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    run.mockRejectedValue(new Error("delivery failed"));
+    plugin.agents.addAttentionSource({
+      id: "command",
+      run: async ({ emit }) => {
+        emit("final output");
+        await held;
+      },
+    });
+    await service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
+    await service.save(bot, { attentionEnabled: true, attention: watches });
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    await settle();
+    finish();
+    await vi.waitFor(() =>
+      expect(service.find(bot)?.sourceRuns?.["watch/pr"]).toBeDefined(),
+    );
+    expect(service.find(bot)?.attention["watch/pr"]).toBeDefined();
+    expect(service.find(bot)?.attentionHistory?.["watch/pr"]?.output).toBe(
+      "final output",
+    );
+  });
   it("delivers nonempty output, preserves queued output on completion, and does not rerun after restart", async () => {
     const { service, run, plugin, native, storage, ctx } = await setup();
     let emitSource: ((text: string) => void) | undefined;
@@ -7352,15 +7430,16 @@ describe("Attention plugin sources", () => {
     expect(run).not.toHaveBeenCalled();
     emitSource?.("done");
     finishSource();
-    await vi.waitFor(() =>
-      expect(service.find(bot)?.sourceRuns?.["watch/pr"]).toBeDefined(),
-    );
+
     await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
     expect(run.mock.calls[0]?.[0].trigger).toMatchObject({
       channel,
       root,
       text: expect.stringContaining("done"),
     });
+    await vi.waitFor(() =>
+      expect(service.find(bot)?.attention["watch/pr"]).toBeUndefined(),
+    );
     const identities = await native.list();
     await ctx.fiber.dispose();
     const reloaded = await setup({ storage, identities });
@@ -7370,14 +7449,14 @@ describe("Attention plugin sources", () => {
       expect(reloaded.native.claim).toHaveBeenCalledWith(bot),
     );
     await settle();
-    expect(reloaded.service.find(bot)?.sourceRuns?.["watch/pr"]).toBeDefined();
+    expect(reloaded.service.find(bot)?.attention["watch/pr"]).toBeUndefined();
     expect(produce).not.toHaveBeenCalled();
     expect(reloaded.run).not.toHaveBeenCalled();
   });
 });
 
 it.each([undefined, "e".repeat(64)])(
-  "delivers a timer to a conversation once while retaining its occurrence budget (root: %s)",
+  "delivers a timer to a conversation once and removes it after delivery (root: %s)",
   async (root) => {
     vi.useFakeTimers({ now: 1_000_000 });
     const runOnce = vi.fn(async () => ({ ok: true }));
@@ -7422,7 +7501,8 @@ it.each([undefined, "e".repeat(64)])(
     await vi.advanceTimersByTimeAsync(180_000);
     expect(run).toHaveBeenCalledTimes(1);
     expect(runOnce).not.toHaveBeenCalled();
-    expect(service.find(bot)?.timers["watch/once"]).toMatchObject({ used: 1 });
+    expect(service.find(bot)?.attention["watch/once"]).toBeUndefined();
+    expect(service.find(bot)?.timers["watch/once"]).toBeUndefined();
   },
 );
 

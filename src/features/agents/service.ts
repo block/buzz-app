@@ -1,4 +1,4 @@
-import { sourceCompleted, sourceSignature } from "./attention";
+import { sourceCompleted } from "./attention";
 import { createLocalAgentActivity } from "./local-activity";
 import {
   AgentConfigStore,
@@ -156,6 +156,7 @@ export type Agent<Config = unknown> = Readonly<{
   /** Run state of its timers, by slug; written only by the runtime. */
   timers: Readonly<Record<string, TimerState>>;
   sourceRuns?: Readonly<Record<string, string>>;
+  attentionHistory?: AgentRecord["attentionHistory"];
   /** Whether its watches and timers wake it. Off keeps every object. */
   attentionEnabled: boolean;
   config: Config;
@@ -1515,6 +1516,8 @@ export class AgentsService extends Service implements Agents {
         soloChat(() => this.relay(agent.pubkey), agent.owner, channel, signal),
       remembered: (pubkey, slug, body) =>
         this.coreMemory.wrote(pubkey, slug, body),
+      woke: (pubkey, object) =>
+        this.history(pubkey, object, undefined, Math.floor(Date.now() / 1000)),
       finished: (pubkey) => void this.coreMemory.refresh(pubkey),
       named: (agent, event, title) =>
         void nameSoloChat(
@@ -1682,24 +1685,42 @@ export class AgentsService extends Service implements Agents {
       throw new Error("A plugin source needs an id and run");
     this.attentionSources.register(this.ctx, source);
   }
+  private history(
+    pubkey: string,
+    object: AttentionObject,
+    output?: string,
+    lastWokeAt?: number,
+  ) {
+    void this.queued(pubkey, async () => {
+      const record = this.records[pubkey];
+      if (!record || record.attention[object.slug] !== object) return;
+      const prior = record.attentionHistory?.[object.slug];
+      const entry = {
+        ...prior,
+        ...(lastWokeAt !== undefined ? { lastWokeAt } : {}),
+        ...(output !== undefined
+          ? {
+              output: ((prior?.output ?? "") + output)
+                .slice(-16384)
+                .split("\n")
+                .slice(-40)
+                .join("\n"),
+            }
+          : {}),
+      };
+      await this.commit(pubkey, record, {
+        ...record,
+        attentionHistory: { ...record.attentionHistory, [object.slug]: entry },
+      });
+      this.update();
+    }).catch((error) => console.warn("Attention history was not saved", error));
+  }
   private startAttentionSource(source: Contribution<AttentionSource>) {
     const sources = new AttentionSources(
       {
         completed: (pubkey, object) =>
           sourceCompleted(this.records[pubkey]?.sourceRuns, object),
-        finish: async (pubkey, object) => {
-          await this.change(pubkey, (record) => {
-            if (!record) return null;
-            if (record.attention[object.slug] !== object) return record;
-            return {
-              ...record,
-              sourceRuns: {
-                ...record.sourceRuns,
-                [object.slug]: sourceSignature(object),
-              },
-            };
-          });
-        },
+        finish: (pubkey, object) => this.runners.completeSource(pubkey, object),
         emit: (pubkey, object, text, current) => {
           const agent = this.state.running.find(
             (agent) => agent.pubkey === pubkey,
@@ -1710,6 +1731,7 @@ export class AgentsService extends Service implements Agents {
             !object.value.enabled
           )
             throw new Error("This source watch is no longer enabled");
+          this.history(pubkey, object, text);
           this.runners.wakeSource(
             pubkey,
             {
@@ -3193,6 +3215,7 @@ export class AgentsService extends Service implements Agents {
       skipped: record.skipped ?? EMPTY,
       timers: record.timers ?? EMPTY,
       ...(record.sourceRuns ? { sourceRuns: record.sourceRuns } : {}),
+      attentionHistory: record.attentionHistory,
       attentionEnabled: record.attentionEnabled === true,
       config: record.config,
       ...(this.archiveUnchecked(identity.pubkey) && { archiveUnchecked: true }),
@@ -3534,6 +3557,7 @@ export class AgentsService extends Service implements Agents {
           prior.skipped === (record.skipped ?? EMPTY) &&
           prior.timers === (record.timers ?? EMPTY) &&
           prior.sourceRuns === record.sourceRuns &&
+          prior.attentionHistory === record.attentionHistory &&
           prior.attentionEnabled === (record.attentionEnabled === true) &&
           prior.config === record.config &&
           prior.archiveUnchecked === this.archiveUnchecked(identity.pubkey) &&

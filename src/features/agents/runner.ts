@@ -37,6 +37,8 @@ import {
   watchMatches,
   type AttentionObject,
   type AttentionValue,
+  sourceCompleted,
+  sourceSignature,
   timerSpent,
   timerState,
   type TimerState,
@@ -61,7 +63,7 @@ import {
 import type { Decisions } from "../decisions/service";
 import type { EventWatch } from "./attention";
 import type { AgentEventTemplate, AgentIdentity, AgentsNative } from "./native";
-import type { AgentRecord, TimerProgress } from "./store";
+import { setAttention, type AgentRecord, type TimerProgress } from "./store";
 import { Runs, type Start } from "./agent-start";
 import { type Pulses, pulseTyping } from "./typing";
 import {
@@ -457,6 +459,7 @@ export type RunnerHost = {
   ): Promise<boolean>;
   /** The agent wrote this memory through its handle. */
   remembered(pubkey: string, slug: string, body: string): void;
+  woke?(pubkey: string, object: AttentionObject): void;
   /** A run of the agent ended, with everything it handed to `workingUntil`. */
   finished(pubkey: string): void;
   /** A harness's title for the conversation a mention started; may name a Solo chat. */
@@ -464,6 +467,31 @@ export type RunnerHost = {
 };
 
 export class AgentRunners {
+  private readonly sourceJobs = new Map<Job, string>();
+  private readonly failedSources = new WeakSet<AttentionObject>();
+  /** A terminal producer retains its registration until every queued turn settles. */
+  async completeSource(pubkey: string, object: AttentionObject) {
+    await this.host.change(pubkey, (record) => {
+      if (record.attention[object.slug] !== object) return record;
+      const pending =
+        [...this.sourceJobs].some(
+          ([job, agent]) => agent === pubkey && job.matched?.object === object,
+        ) ||
+        this.runners
+          .get(pubkey)
+          ?.queues.watch.some((job) => job.matched?.object === object);
+      return pending || this.failedSources.has(object)
+        ? {
+            ...record,
+            sourceRuns: {
+              ...record.sourceRuns,
+              [object.slug]: sourceSignature(object),
+            },
+          }
+        : setAttention(record, object.slug, null);
+    });
+  }
+
   private readonly runners = new Map<string, Runner>();
   /** The synced revisions each agent's current run started from. */
   readonly started = new Runs();
@@ -2053,6 +2081,7 @@ export class AgentRunners {
     job: Job,
   ) {
     runner.busy.add(lane);
+    if (job.trigger.type === "source") this.sourceJobs.set(job, agent.pubkey);
     const lifetime = runner.controller.signal;
     const signal = AbortSignal.any([
       lifetime,
@@ -2071,6 +2100,16 @@ export class AgentRunners {
       trigger.type === "mention"
         ? (title: string) => this.host.named(agent, trigger.event, title)
         : undefined;
+    let attempted = false;
+    const woke = () => {
+      attempted = true;
+      if (!addressed(trigger) && job.matched)
+        this.host.woke?.(agent.pubkey, job.matched.object);
+    };
+    const invoke: typeof run = (delivery) => {
+      woke();
+      return run(delivery);
+    };
     const completion = Promise.resolve().then(async () => {
       const pick = await pickFor(job.trigger, agent, type);
       const start = this.host.start(agent);
@@ -2106,9 +2145,8 @@ export class AgentRunners {
           (!destination ||
             this.host.member(agent, wakeAnchor(destination)) === true),
       });
-      const { trigger } = job;
       const runOnce = type.runOnce?.bind(type);
-      if (addressed(trigger)) return run(delivery);
+      if (addressed(trigger)) return invoke(delivery);
       const target =
         trigger.type === "timer"
           ? trigger.timer
@@ -2128,14 +2166,14 @@ export class AgentRunners {
         if (!text || !delivery.current()) return;
         const wake = conversationWake(trigger, text);
         if (wake)
-          return run({
+          return invoke({
             ...delivery,
             channelId: wake.channel,
             trigger: wake,
             wakeText,
           });
       }
-      if (!runOnce) return run(delivery);
+      if (!runOnce) return invoke(delivery);
       // A watch or timer is a standalone turn; this lane is held until it ends.
       delivery.workingUntil(
         wake(
@@ -2143,13 +2181,48 @@ export class AgentRunners {
           trigger,
           delivery.current,
           (key, prompt) =>
-            standalone(lifetime, (signal) =>
-              runOnce({ delivery, key, signal, prompt }),
+            standalone(
+              lifetime,
+              (signal) => (woke(), runOnce({ delivery, key, signal, prompt })),
             ),
           type.title,
         ),
       );
     });
+    void working.settled
+      .then(async () => {
+        this.sourceJobs.delete(job);
+        if (lifetime.aborted || !working.ok() || !attempted) {
+          if (trigger.type === "source" && job.matched)
+            this.failedSources.add(job.matched.object);
+          return;
+        }
+        const object = job.matched?.object;
+        if (!object) return;
+        if (
+          trigger.type === "source" &&
+          sourceCompleted(this.host.record(agent.pubkey).sourceRuns, object)
+        )
+          await this.completeSource(agent.pubkey, object);
+        if (trigger.type === "timer")
+          await this.host.change(agent.pubkey, (record) =>
+            record.attention[object.slug] === object &&
+            timerSpent(
+              trigger.timer,
+              timerState(
+                trigger.timer,
+                record.timers?.[object.slug],
+                Math.floor(Date.now() / 1000),
+              ),
+              Math.floor(Date.now() / 1000),
+            )
+              ? setAttention(record, object.slug, null)
+              : record,
+          );
+      })
+      .catch((error) =>
+        console.warn("Completed subscription was not removed", error),
+      );
     // Handover expiry releases the queue, never the actual work's outcome.
     void completion.then(
       () => working.release(),
@@ -2369,6 +2442,7 @@ export class AgentRunners {
       }
     };
     return {
+      ok: () => outcome.ok,
       /** Settles once the run and all it handed off have, or it is retired. */
       settled,
       hold(pending: PromiseLike<unknown>) {

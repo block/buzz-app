@@ -258,6 +258,7 @@ export class GooseRuntime {
     const key = this.controlKey(agent, place);
     if (this.controls.compacting(`${agent.pubkey}/${key}`)) return "compacting";
     return this.controls.active(`${agent.pubkey}/${key}`) ||
+      this.agents.get(agent.pubkey)?.policies.has(key) ||
       this.agents.get(agent.pubkey)?.sessions.active(key)
       ? "active"
       : "idle";
@@ -355,7 +356,7 @@ export class GooseRuntime {
     const topLevel = solo || wake?.topLevel === true;
     if (wake && !wakeLands(wake, topLevel)) return ignored?.();
     // `fresh` is for a session that has been shown nothing yet.
-    const prompt = async (fresh: boolean) => {
+    const prompt = async (fresh: boolean, admitted?: string) => {
       const turn = await this.turn(
         entry,
         agent.pubkey,
@@ -365,6 +366,7 @@ export class GooseRuntime {
         fresh,
         resumed,
         solo,
+        admitted,
       );
       const { channel: where } = turn;
       const text = turnPrompt({
@@ -415,7 +417,7 @@ export class GooseRuntime {
           notes = agent.notes?.(channel, noteRoot) ?? [];
           const text = this.review(
             entry,
-            wait ? (await prompt(false)).text : prepared,
+            wait ? (await prompt(false, key)).text : prepared,
             notes,
           );
           if (interrupted || this.agents.get(agent.pubkey) !== entry) {
@@ -434,7 +436,7 @@ export class GooseRuntime {
             ...(wake ? { current } : {}),
             steer: steerPrompt(text),
             fresh: async () =>
-              this.review(entry, (await prompt(true)).text, notes),
+              this.review(entry, (await prompt(true, key)).text, notes),
             title: sessionTitle(entry.name, place, key.split("/")[1]),
             // A Solo chat takes the name goose gives its first session.
             ...(solo && named ? { named } : {}),
@@ -589,6 +591,7 @@ export class GooseRuntime {
      * its own replies included, as its new session cannot know them. */
     resumed = false,
     solo = topLevel,
+    admitted?: string,
   ) {
     const snapshot = this.relay(self)?.snapshot();
     const session = snapshot?.status === "ready" ? snapshot.session : undefined;
@@ -600,9 +603,11 @@ export class GooseRuntime {
     const rootId = thread?.rootId ?? event.id;
     // A Solo chat is one conversation, as a DM is.
     const key =
-      topLevel || dm || entry.config.scope === "channel"
+      admitted ??
+      (topLevel || dm || entry.config.scope === "channel"
         ? channelId
-        : `${channelId}/${rootId}`;
+        : `${channelId}/${rootId}`);
+
     // The conversation it was admitted to, not the scope as it is now.
     const scope: Scope = key === channelId ? "channel" : "thread";
     // A resumed turn's session never saw its thread, its own replies included,

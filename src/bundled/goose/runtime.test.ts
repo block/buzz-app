@@ -1229,6 +1229,15 @@ it("Interrupt during a queued prompt rebuild restores notes without starting a t
     f.read.mockImplementationOnce(() => reading);
     process.turns[0]?.finish();
     await vi.waitFor(() => expect(notes).toHaveBeenCalledTimes(1));
+    expect(
+      f.runtime.sessionState(
+        {
+          ...f.agent,
+          config: { ...DEFAULT_CONFIG, scope: "channel" },
+        } as unknown as Agent,
+        { channelId: channel },
+      ),
+    ).toBe("active");
     await f.runtime.session(
       {
         ...f.agent,
@@ -1249,6 +1258,33 @@ it("Interrupt during a queued prompt rebuild restores notes without starting a t
     expect(process.turns).toHaveLength(1);
   } finally {
     release();
+    f.runtime.dispose();
+  }
+});
+
+it("keeps a queued Goose prompt in its admitted scope after settings change", async () => {
+  const f = setup({ hold: true, scope: "channel" });
+  try {
+    await f.run({ ...pluginWake(), topLevel: true });
+    await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+    const process = f.goose();
+    if (!process) throw new Error("Expected Goose process");
+    await f.deliver(message("1", "threaded work"));
+    f.runtime.sync([
+      {
+        ...f.agent,
+        config: { ...DEFAULT_CONFIG, scope: "thread" },
+      } as unknown as Agent,
+    ]);
+    process.turns[0]?.finish();
+    await vi.waitFor(() =>
+      expect(f.fake.geese.flatMap((p) => p.turns)).toHaveLength(2),
+    );
+    expect(f.fake.geese.flatMap((p) => p.turns)[1]?.text).toContain(
+      "Scope: channel",
+    );
+    f.fake.geese.flatMap((p) => p.turns)[1]?.finish();
+  } finally {
     f.runtime.dispose();
   }
 });

@@ -809,10 +809,15 @@ export function serve({
       if (
         request &&
         (result.status === "done" || result.status === "unanswered")
-      )
-        await opened.harness.commit(async (tx) => {
-          delete (await tx.doc(Replies))[request];
-        }, context);
+      ) {
+        try {
+          await opened.harness.commit(async (tx) => {
+            delete (await tx.doc(Replies))[request];
+          }, context);
+        } catch (error) {
+          console.warn("Pi could not clear a wake's reply destination", error);
+        }
+      }
       return result;
     },
     async abort({ agent, conversation }) {

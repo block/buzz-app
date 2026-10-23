@@ -147,12 +147,14 @@ otherwise only what the wake's run sends is.
 
 An agent hands off to itself in another of its conversations with the
 `self_handoff` tool, which takes a channel, a thread and text. The tool requires
-a channel the agent can see, and a thread in that channel (any message of it
-names its root) unless the channel is a Solo chat, which is one conversation
-whatever thread is named. It refuses the current conversation. It is the same
-`plugin` trigger with no `plugin`, shown in a `<self-handoff>` section that says
-the agent handed it off to itself, that nobody wrote it as a message, and that
-it acts only on what its owner asked.
+a channel the agent can see, as `send` does, and a thread in that channel (any
+message of it names its root) unless the channel is a Solo chat. It refuses the
+current conversation, which is the whole channel in a DM, a Solo chat or a
+channel-scoped session. It is the same `plugin` trigger with `from`, the
+conversation it came from, in place of `plugin`, shown in a `<self-handoff>`
+section that names that conversation, says nobody wrote it as a message and that
+its text is data, and that the agent acts only on what its owner asked. Only a
+run's handle hands off, and Pi, which takes no wakes, does not offer it.
 
 A plugin leaves context for a later turn with
 `ctx.agents.note(pubkey, channelId, text, root?)`, without waking the agent

@@ -19,7 +19,8 @@ import {
   attachmentName,
 } from "../features/relay/attachments";
 import { threadReference } from "../features/relay/thread-reference";
-import { SOLO_LABEL } from "../features/solo/labels";
+import { soloChannelMetadata } from "../features/relay/discovery";
+import type { RelayEvent } from "../features/relay/events";
 import { attestedOwner } from "../features/agents/owner-attestation";
 import type { BuzzClient, BuzzEvent, Context, Filter, Upload } from "./client";
 
@@ -308,30 +309,40 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
   },
   async self_handoff(tools, args) {
     const { client, context } = tools;
-    if (!client.wake) throw new Error("Self-handoff is unavailable here");
+    if (!client.handoff) throw new Error("Self-handoff is unavailable here");
     const channel = required(args, "channel");
     const body = text(args.text);
     if (!body) throw new Error("text is required.");
-    const metadata = await tools.metadata(channel);
-    if (!metadata) throw unseen(channel);
-    // A Solo chat is one conversation, whatever thread is named.
-    const solo = metadata.tags.some(
-      ([name, value]) => name === "t" && value === SOLO_LABEL,
-    );
     const thread = text(args.thread);
-    let root: string | undefined;
-    if (!solo) {
-      if (!thread) throw new Error("thread is required outside a Solo chat.");
-      const event = await tools.event(thread);
-      if (
-        !event.tags.some(([name, value]) => name === "h" && value === channel)
-      )
-        throw new Error(`${thread} is not in ${channel}.`);
-      root = rootOf(event);
-    }
-    if (channel === context.channel && root === context.root)
+    const [metadata, event] = await Promise.all([
+      tools.metadata(channel),
+      thread ? tools.event(thread) : undefined,
+    ]);
+    if (!metadata) throw unseen(channel);
+    if (
+      event &&
+      !event.tags.some(([name, value]) => name === "h" && value === channel)
+    )
+      throw new Error(`${thread} is not in ${channel}.`);
+    // A harness takes a wake with no thread only in a Solo chat.
+    if (!event && !soloChannelMetadata(metadata as RelayEvent))
+      throw new Error("thread is required outside a Solo chat.");
+    const root = event && rootOf(event);
+    if (
+      channel === context.channel &&
+      (!context.root || context.wholeChannel || root === context.root)
+    )
       throw new Error("That is this conversation.");
-    client.wake({ channel, ...(root && { root }), text: body });
+    const { channel: from, root: fromRoot } = context;
+    client.handoff({
+      channel,
+      ...(root && { root }),
+      text: body,
+      from: {
+        ...(from && { channel: from }),
+        ...(fromRoot && { root: fromRoot }),
+      },
+    });
     return root ? `Handed off to thread ${root}.` : `Handed off to ${channel}.`;
   },
   async agent_update({ client }, args) {

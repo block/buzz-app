@@ -103,10 +103,7 @@ export function ModelSettings({
   };
   return (
     <div className="grid gap-3">
-      <InlineHeader
-        title="Model"
-        subtitle="Saved in Builderlab for new tasks."
-      />
+      <InlineHeader title="Model" />
       <SettingsGroup layout="form">
         {saved.modelSelectionStatus !== "valid" && (
           <p role="status" className="m-0 text-body-sm text-warning">

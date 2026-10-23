@@ -462,7 +462,7 @@ export class PiRuntime {
     const same = prior?.topLevel === topLevel;
     const wait = prior && (same ? prior.handed : prior.settled);
     const request = event.id;
-    let submitted!: { submission: number; conversation: number };
+    let submitted: { submission: number; conversation: number } | undefined;
     let sends = 0;
     // A delivery during a session action waits for it, past its handover.
     const control = `${agent.pubkey}/${key}`;
@@ -501,7 +501,9 @@ export class PiRuntime {
           )),
           agent: agent.pubkey,
           label: "@mention",
-          ...(wake ? { wake: { ...wake, text: (await wakeText?.()) ?? wake.text } } : {}),
+          ...(wake
+            ? { wake: { ...wake, text: (await wakeText?.()) ?? wake.text } }
+            : {}),
         }),
       );
       // A conversation's tools default to its thread; a conversation shared
@@ -523,17 +525,23 @@ export class PiRuntime {
       const picked = await this.turnOf(entry, agent.pubkey, model, effort);
       this.live(entry, agent.pubkey);
       if (interrupted || (wake && current && !current())) return;
-      submitted = await this.deliver(entry, agent.pubkey, {
-        agent: agent.pubkey,
-        key,
-        at: event.created_at,
-        context,
-        text,
-        steer: steerPrompt(text),
-        request,
-        ...(wake ? { reply: where } : {}),
-        ...picked,
-      });
+      submitted = await this.deliver(
+        entry,
+        agent.pubkey,
+        {
+          agent: agent.pubkey,
+          key,
+          at: event.created_at,
+          context,
+          text,
+          steer: steerPrompt(text),
+          request,
+          ...(wake ? { reply: where } : {}),
+          ...picked,
+        },
+        () => !interrupted && (!wake || !current || current()),
+      );
+      if (!submitted) return;
       sends = entry.sends.get(submitted.conversation) ?? 0;
       if (
         this.remember(
@@ -792,13 +800,15 @@ export class PiRuntime {
     entry: Entry,
     pubkey: string,
     params: object,
-  ): Promise<{ submission: number; conversation: number }> {
+    current: () => boolean,
+  ): Promise<{ submission: number; conversation: number } | undefined> {
     try {
       return await this.pi.request("deliver", params);
     } catch (error) {
       if (!(error instanceof PiStopped) || entry.closed) throw error;
       try {
         await this.reopen(entry, pubkey);
+        if (!current()) return;
         return await this.pi.request("deliver", params);
       } catch (again) {
         // The stopped host may have taken it, and nothing waits for it now.

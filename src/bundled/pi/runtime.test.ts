@@ -1744,3 +1744,43 @@ it("waits for a recovered threaded wake before changing the shared conversation 
     f.runtime.dispose();
   }
 });
+
+it("does not retry a subscription cancelled while Pi reopens", async () => {
+  const reopening = deferred<unknown>();
+  let current = true;
+  const f = setup({
+    open: () => (f.host.requests("open").length > 1 ? reopening.promise : {}),
+    deliver: (_params, process) => {
+      if (f.host.requests("deliver").length === 1) {
+        queueMicrotask(() => process.exit(1, "Killed\n"));
+        return new Promise(() => {});
+      }
+      return { submission: 1, conversation: CONVERSATION };
+    },
+    wait: () => ({ status: "done", answer: 5, text: "Cancelled work" }),
+  });
+  const turn = f.deliver(
+    {
+      type: "plugin",
+      plugin: "example",
+      channel,
+      root: root.id,
+      id: "f".repeat(64),
+      at: 200_000,
+      text: "subscription",
+    },
+    { current: () => current },
+  );
+  try {
+    await vi.waitFor(() => expect(f.host.requests("open")).toHaveLength(2));
+    current = false;
+    reopening.resolve({});
+    await turn.run;
+    await expect(f.settled(turn)).resolves.toEqual({ ok: true });
+    expect(f.host.requests("deliver")).toHaveLength(1);
+    expect(f.published).toEqual([]);
+  } finally {
+    reopening.resolve({});
+    f.runtime.dispose();
+  }
+});

@@ -583,52 +583,7 @@ describe("a classifier", () => {
   });
 });
 
-it("creates command and PR checks through the normal Attention watch tools", async () => {
-  const { call } = agent();
-  await call("interest_set", {
-    id: "triage",
-    instructions: "Watch",
-    expected_state: ABSENT,
-  });
-  const command = await call("watch_add", {
-    interest: "triage",
-    id: "command",
-    type: "command",
-    command: ["check", "--once"],
-    channel,
-    expected_state: ABSENT,
-  });
-  expect(command.object).toMatchObject({
-    type: "source",
-    provider: "buzz.agents/command",
-    channel,
-    config: { command: ["check", "--once"] },
-  });
-  const pr = await call("watch_add", {
-    interest: "triage",
-    id: "pr",
-    type: "github-pr",
-    pr: "https://github.com/example/repo/pull/1",
-    channel,
-    expected_state: ABSENT,
-  });
-  expect(pr.object).toMatchObject({
-    provider: "buzz.agents/github-pr",
-    config: { pr: "https://github.com/example/repo/pull/1" },
-  });
-  await expect(
-    call("watch_add", {
-      interest: "triage",
-      id: "invalid",
-      type: "command",
-      command: [],
-      channel,
-      expected_state: ABSENT,
-    }),
-  ).rejects.toThrow(/command/);
-});
-
-it("updates command config and conversation and rejects foreign provider fields", async () => {
+it("creates and updates plugin-owned source configuration", async () => {
   const { call } = agent();
   await call("interest_set", {
     id: "triage",
@@ -637,40 +592,39 @@ it("updates command config and conversation and rejects foreign provider fields"
   });
   const added = await call("watch_add", {
     interest: "triage",
-    id: "command",
-    type: "command",
-    command: ["old"],
+    id: "source",
+    type: "source",
+    provider: "example/check",
+    config: { url: "example" },
     channel,
     expected_state: ABSENT,
   });
+  expect(added.object).toMatchObject({
+    type: "source",
+    provider: "example/check",
+    config: { url: "example" },
+    channel,
+  });
   const updated = await call("watch_update", {
-    id: "command",
-    command: ["new"],
-    cwd: "/tmp",
+    id: "source",
+    config: { url: "changed" },
     root: "e".repeat(64),
     expected_state: added.expected_state,
   });
   expect(updated.object).toMatchObject({
-    config: { command: ["new"], cwd: "/tmp" },
+    config: { url: "changed" },
     root: "e".repeat(64),
   });
-  const cleared = await call("watch_update", {
-    id: "command",
-    clear: ["cwd", "root"],
-    expected_state: updated.expected_state,
-  });
-  expect(cleared.object.config).toEqual({ command: ["new"] });
-  expect(cleared.object).not.toHaveProperty("root");
   await expect(
     call("watch_update", {
-      id: "command",
-      pr: "https://github.com/a/b/pull/1",
-      expected_state: cleared.expected_state,
+      id: "source",
+      prompt: "timer only",
+      expected_state: updated.expected_state,
     }),
-  ).rejects.toThrow();
+  ).rejects.toThrow(/Not a field/);
 });
 
-it.each(["event", "timer", "command", "github-pr"])(
+it.each(["event", "timer", "source"])(
   "sets and clears %s delivery without changing its trigger",
   async (type) => {
     const { call } = agent();
@@ -685,9 +639,7 @@ it.each(["event", "timer", "command", "github-pr"])(
         ? { since: 1, channels: [channel] }
         : type === "timer"
           ? { prompt: "tick", interval_secs: 60 }
-          : type === "command"
-            ? { command: ["check"] }
-            : { pr: "https://github.com/block/buzz-app/pull/1553" };
+          : { provider: "example/check", config: { key: "value" } };
     let saved = await call("watch_add", {
       interest: "triage",
       id: "delivery",
@@ -697,8 +649,7 @@ it.each(["event", "timer", "command", "github-pr"])(
       channel,
       root,
     });
-    const storedFields =
-      type === "command" || type === "github-pr" ? { config: fields } : fields;
+    const storedFields = fields;
     expect(saved.object).toMatchObject({ ...storedFields, channel, root });
     await expect(
       call("watch_update", {

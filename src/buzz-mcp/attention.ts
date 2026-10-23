@@ -53,13 +53,14 @@ const question = {
 const watchFields = {
   name: str,
   enabled: bool,
-  command: {
-    type: "array",
-    items: str,
-    description: "Command watch: program and arguments, without a shell.",
+  provider: {
+    ...str,
+    description: "Source subscription: plugin/source provider id.",
   },
-  cwd: { ...str, description: "Command watch: absolute working directory." },
-  pr: { ...str, description: "GitHub PR watch: pull request URL." },
+  config: {
+    type: "object",
+    description: "Source subscription: provider-owned configuration.",
+  },
   channel: {
     ...str,
     description:
@@ -163,13 +164,13 @@ export const ATTENTION_TOOLS: readonly Tool[] = [
   ),
   tool(
     "watch_add",
-    `Add an event watch (since and channels), a timer (prompt and interval_secs), a command watch (command), or a GitHub PR watch (pr) to an Interest; only for a new watch.
+    `Add an event watch (since and channels), a timer (prompt and interval_secs), a source subscription (provider and config) to an Interest; only for a new watch.
 
 Event watch: it sees only channels you are a member of, and "all" means all of those. It sees events that arrive while it is on: an earlier since does not replay older ones. Each matching event watch runs independently. Prefer deterministic selectors for hard rules; use the classifier only for judgment. authors keeps only those authors, exclude_authors: ["OWNER_HEX"] drops the owner's own messages, and is_reply: false keeps only top-level messages (true: only thread replies). A watch has authors or exclude_authors, not both. When a watch reports to the owner, exclude the owner's messages unless they are the signal.
 
 Classifier, for noisy event watches: Jev tests relevance after the normal filters. It sees one event, not history, and has no tools. Use named yes/no questions, for example {"questions":{"release_blocked":{"question":"Does the event say the release cannot proceed until something is fixed?","true":"It reports a release blocker, in any form: a question, an instruction or a status report.","false":"Routine release progress, or a problem that does not stop the release."}}}. Write questions for the facts the Interest needs, not for message types, and accept any phrasing of those facts. Ask one thing per question. The event passes when any question says yes, and each added question can add extra passes, so keep them few. For "A but not B", write one question that says so. Optional per question: true and false descriptions, guidance for examples and exclusions, and threshold (default 0.2; lower passes more). Change a threshold only when eval cases support it. Keep actions in the Interest. Pass uncertain cases. Errors pass events through. Every answer says classifier: available or unavailable. Classifiers can be saved either way and run once one is available; until then a classified watch's events pass unchecked, and the turn they start says so in a <watch-classifier> block.
 
-All subscription types share delivery: channel and optional root continue that conversation; omit both for an independent turn with the Interest instructions. A root requires a channel. Command and GitHub PR watches run deterministic checks while Buzz runs. Attention off or watch_disable cancels execution and queued output; watch_enable restarts a completed check. Empty output starts no agent turn. Commands inherit host process authority, without Buzz signing credentials. PR watches require the GitHub CLI.
+All subscription types share delivery: channel and optional root continue that conversation; omit both for an independent turn with the Interest instructions. A root requires a channel. Source providers are supplied by plugins and own their configuration. Empty output starts no agent turn. Attention off or watch_disable cancels execution and queued output; watch_enable restarts a completed source.
 
 Timer: its interval is at least 60 seconds, and it runs once by default. max_occurrences (a count, or "unbounded") and expires_at (Unix seconds, or "unbounded") control the budget; remaining budget schedules the next interval automatically. The final allowed wake says it is the last.
 
@@ -179,7 +180,7 @@ ${WRITES}`,
       id,
       type: {
         type: "string",
-        enum: ["event", "timer", "command", "github-pr"],
+        enum: ["event", "timer", "source"],
       },
       expected_state: token,
       ...watchFields,
@@ -200,7 +201,6 @@ ${WRITES}`,
           type: "string",
           enum: [
             "name",
-            "cwd",
             "channel",
             "root",
             "authors",
@@ -218,7 +218,7 @@ ${WRITES}`,
     [
       [
         "watch_enable",
-        "Turn an event watch on. A timer is turned on by watch_rearm.",
+        "Turn an event or source watch on. A timer is turned on by watch_rearm.",
       ],
       [
         "watch_disable",
@@ -381,32 +381,14 @@ async function run(
                 kinds: [],
                 ...eventFields(args),
               }
-            : args.type === "command" || args.type === "github-pr"
+            : args.type === "source"
               ? {
                   type: "source",
                   interest_id: interest,
-                  enabled: args.enabled !== false,
-                  provider: `buzz.agents/${args.type}`,
-                  ...(args.channel !== undefined
-                    ? { channel: required(args, "channel") }
-                    : {}),
-                  ...(args.root !== undefined
-                    ? { root: required(args, "root") }
-                    : {}),
-                  ...(args.name !== undefined
-                    ? { name: required(args, "name") }
-                    : {}),
-                  config:
-                    args.type === "command"
-                      ? {
-                          command: args.command,
-                          ...(args.cwd !== undefined
-                            ? { cwd: required(args, "cwd") }
-                            : {}),
-                        }
-                      : { pr: required(args, "pr") },
+                  enabled: true,
+                  ...sourceFields(args),
                 }
-              : fail('type must be "event", "timer", "command" or "github-pr"');
+              : fail('type must be "event", "timer" or "source"');
       return shown(
         attention.write(watch("id"), value as AttentionValue, {
           expected: required(args, "expected_state"),
@@ -420,19 +402,13 @@ async function run(
           value.type === "event"
             ? eventFields(args)
             : value.type === "source"
-              ? sourceFields(args, value)
+              ? sourceFields(args)
               : timerFields(args);
         const clear = Array.isArray(args.clear) ? args.clear : [];
         if (
           value.type === "source" &&
           clear.some(
-            (key) =>
-              ![
-                "name",
-                "channel",
-                "root",
-                ...(value.provider === "buzz.agents/command" ? ["cwd"] : []),
-              ].includes(String(key)),
+            (key) => !["name", "channel", "root"].includes(String(key)),
           )
         )
           refuse("not an optional field of this source watch");
@@ -446,10 +422,7 @@ async function run(
           refuse("use watch_rearm to turn a timer on");
         const next: Record<string, unknown> = { ...value, ...fields };
         for (const key of clear) {
-          if (value.type === "source" && key === "cwd") {
-            next.config = { ...(next.config as object) };
-            delete (next.config as Record<string, unknown>).cwd;
-          } else delete next[String(key)];
+          delete next[String(key)];
         }
         return next;
       });
@@ -570,24 +543,9 @@ function pick(args: Args, names: readonly string[], other: readonly string[]) {
       .map((key) => [key, args[key]]),
   );
 }
-const SOURCE = ["name", "enabled", "command", "cwd", "pr", "channel", "root"];
-function sourceFields(args: Args, value: SourceWatch): Record<string, unknown> {
-  const configKeys =
-    value.provider === "buzz.agents/command"
-      ? ["command", "cwd"]
-      : value.provider === "buzz.agents/github-pr"
-        ? ["pr"]
-        : [];
-  const names = ["name", "enabled", "channel", "root", ...configKeys];
-  const fields = pick(args, names, [...EVENT, ...TIMER, ...SOURCE]);
-  const config = { ...value.config };
-  for (const key of configKeys) {
-    if (key in fields) {
-      config[key] = fields[key];
-      delete fields[key];
-    }
-  }
-  return { ...fields, config };
+const SOURCE = ["name", "enabled", "provider", "config", "channel", "root"];
+function sourceFields(args: Args) {
+  return pick(args, SOURCE, [...EVENT, ...TIMER]);
 }
 function eventFields(args: Args) {
   const fields = pick(args, EVENT, [...TIMER, ...SOURCE]);

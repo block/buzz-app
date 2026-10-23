@@ -316,35 +316,6 @@ export function validateObject(
       )
         fail("provider must be plugin/source");
       if (!isObject(object.config)) fail("config must be an object");
-      if (object.provider === "buzz.agents/command") {
-        const config = object.config as Record<string, unknown>;
-        const command = config.command;
-        if (
-          !Array.isArray(command) ||
-          !command.length ||
-          typeof command[0] !== "string" ||
-          !command[0] ||
-          command.length > 256 ||
-          command.some(
-            (part) => typeof part !== "string" || part.includes("\0"),
-          )
-        )
-          fail("command must be a non-empty list of arguments");
-        if (
-          config.cwd !== undefined &&
-          (typeof config.cwd !== "string" ||
-            !(config.cwd.startsWith("/") || /^[A-Za-z]:[\\/]/.test(config.cwd)))
-        )
-          fail("cwd must be absolute");
-      }
-      if (
-        object.provider === "buzz.agents/github-pr" &&
-        (typeof (object.config as Record<string, unknown>).pr !== "string" ||
-          !/^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/[0-9]+$/.test(
-            (object.config as Record<string, unknown>).pr as string,
-          ))
-      )
-        fail("pr must be a GitHub pull request URL");
       destination(object);
     } else fail('A watch/ value has type "event", "timer" or "source"');
     const body = JSON.stringify({ schema: ATTENTION_SCHEMA, slug, value });

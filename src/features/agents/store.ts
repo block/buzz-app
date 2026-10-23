@@ -143,14 +143,18 @@ function readRecord(
   for (const [slug, saved] of entries) {
     const object =
       saved?.value?.type === "source" &&
-      saved.value.provider === "monitor/command"
+      [
+        "monitor/command",
+        "buzz.agents/command",
+        "buzz.agents/github-pr",
+      ].includes(saved.value.provider)
         ? {
             ...saved,
             value: {
               ...saved.value,
               provider: saved.value.config?.pr
-                ? "buzz.agents/github-pr"
-                : "buzz.agents/command",
+                ? "attention/github-pr"
+                : "attention/command",
             },
           }
         : saved;

@@ -95,10 +95,13 @@ export function builderlabType(
       },
     ],
     remote: {
-      async provision({ name, signal }) {
+      async provision({ name, picture, signal }) {
         await session.ensureSignedIn(signal);
-        return client.register(name, signal, ({ pubkey, id }, intent) =>
-          remember(pubkey, id, intent),
+        return client.register(
+          name,
+          signal,
+          ({ pubkey, id }, intent) => remember(pubkey, id, intent),
+          picture,
         );
       },
       async activate({ pubkey, auth, community, signal }) {
@@ -108,11 +111,9 @@ export function builderlabType(
         if (saved?.registration) clearRegistration(saved.registration);
         await client.activate(pubkey, auth, community, signal);
       },
-      async profile() {
-        // TODO: publish name and picture changes through Beekeeper.
-        throw new Error(
-          "Builderlab agent profile updates are not supported yet.",
-        );
+      async profile({ signal, ...profile }) {
+        await session.ensureSignedIn(signal);
+        await client.updateProfile(profile, signal);
       },
       async interrupt({ pubkey, signal, ...place }) {
         // A stop is urgent: it never waits on an interactive sign-in.

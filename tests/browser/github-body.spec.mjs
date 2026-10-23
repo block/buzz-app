@@ -126,6 +126,10 @@ test("PR media plays under the packaged media policy in a narrow GitHub panel", 
   ).toHaveCSS("list-style-type", "disc");
   for (let index = 0; index < 2; index++) {
     const video = videos.nth(index);
+    // Keep the short fixture playing while browser actions settle.
+    await video.evaluate((element) => {
+      element.playbackRate = 0.1;
+    });
     await panel
       .getByRole("button", { name: "Play video", exact: true })
       .nth(index)
@@ -139,6 +143,9 @@ test("PR media plays under the packaged media policy in a narrow GitHub panel", 
     await panel
       .getByRole("button", { name: "Pause video", exact: true })
       .click();
+    await expect
+      .poll(() => video.evaluate((element) => element.paused))
+      .toBe(true);
   }
   for (const source of [before, after])
     await expect(panel.locator(`a[href="${source}"]`)).toHaveCount(0);

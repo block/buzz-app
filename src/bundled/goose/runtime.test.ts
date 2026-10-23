@@ -1156,16 +1156,53 @@ it("keeps a shared session's posting policy until its active turn settles", asyn
         arguments: {
           audience: "everyone",
           text: "thread reply",
+          final: true,
           reply: "1".repeat(64),
         },
       },
     );
     expect(reply.result).not.toMatchObject({ isError: true });
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(process.turns).toHaveLength(1);
     expect(process.turns[0]?.steered).toEqual([]);
     process.turns[0]?.finish();
     await vi.waitFor(() => expect(process.turns).toHaveLength(2));
     expect(process.turns[1]?.text).toContain("channel work");
     process.turns[1]?.finish();
+  } finally {
+    f.runtime.dispose();
+  }
+});
+
+it("session Interrupt discards a channel wake queued behind threaded work", async () => {
+  const f = setup({ hold: true, scope: "channel" });
+  f.agent.query.mockResolvedValue([message("1", "threaded work")]);
+  try {
+    await f.deliver(message("1", "threaded work"));
+    await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+    const process = f.goose();
+    if (!process) throw new Error("Expected Goose process");
+    await f.run({
+      type: "plugin",
+      plugin: "example",
+      channel,
+      topLevel: true,
+      id: "f".repeat(64),
+      at: 200_000,
+      text: "channel work",
+    });
+    await f.runtime.session(
+      {
+        ...f.agent,
+        config: { ...DEFAULT_CONFIG, scope: "channel" },
+      } as unknown as Agent,
+      { channelId: channel, root: "1".repeat(64) },
+      "interrupt",
+    );
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(process.cancelled).toHaveLength(1);
+    expect(process.turns).toHaveLength(1);
+    expect(process.turns[0]?.steered).toEqual([]);
   } finally {
     f.runtime.dispose();
   }

@@ -182,3 +182,22 @@ it("waits for an aborted producer to exit before starting its replacement", asyn
   await vi.waitFor(() => expect(inputs).toHaveLength(2));
   manager.stop();
 });
+
+it("does not persist a rejected producer as completed and can retry after restart", async () => {
+  const h = harness(),
+    watch = object(),
+    agents = [agent(watch)];
+  vi.mocked(h.provider.run).mockRejectedValueOnce(new Error("spawn failed"));
+  const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    h.manager.reconcile("monitor/command", h.provider, agents);
+    await vi.waitFor(() => expect(warning).toHaveBeenCalled());
+    expect(h.finish).not.toHaveBeenCalled();
+    h.manager.stop();
+    h.manager.reconcile("monitor/command", h.provider, agents);
+    await vi.waitFor(() => expect(h.provider.run).toHaveBeenCalledTimes(2));
+  } finally {
+    h.manager.stop();
+    warning.mockRestore();
+  }
+});

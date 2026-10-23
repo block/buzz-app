@@ -1142,6 +1142,7 @@ export class AgentsService extends Service implements Agents {
   /** Every added tool's name, its plugin active or still starting. */
   private readonly toolNames = new Set<string>();
   private readonly attentionSources;
+  private readonly sourceTails = new Map<string, Promise<void>>();
   private readonly listeners = new Set<() => void>();
   /** Every saved identity, deleted ones included: native's list is the agent
    * list, and `records` only adds settings to it. */
@@ -1531,46 +1532,49 @@ export class AgentsService extends Service implements Agents {
     this.attentionSources.register(this.ctx, source);
   }
   private startAttentionSource(source: Contribution<AttentionSource>) {
-    const sources = new AttentionSources({
-      completed: (pubkey, object) =>
-        sourceCompleted(this.records[pubkey]?.sourceRuns, object),
-      finish: async (pubkey, object) => {
-        await this.change(pubkey, (record) => {
-          if (!record) return null;
-          if (record.attention[object.slug] !== object) return record;
-          return {
-            ...record,
-            sourceRuns: {
-              ...record.sourceRuns,
-              [object.slug]: sourceSignature(object),
+    const sources = new AttentionSources(
+      {
+        completed: (pubkey, object) =>
+          sourceCompleted(this.records[pubkey]?.sourceRuns, object),
+        finish: async (pubkey, object) => {
+          await this.change(pubkey, (record) => {
+            if (!record) return null;
+            if (record.attention[object.slug] !== object) return record;
+            return {
+              ...record,
+              sourceRuns: {
+                ...record.sourceRuns,
+                [object.slug]: sourceSignature(object),
+              },
+            };
+          });
+        },
+        emit: (pubkey, object, text, current) => {
+          const agent = this.state.running.find(
+            (agent) => agent.pubkey === pubkey,
+          );
+          if (
+            !agent?.attentionEnabled ||
+            agent.attention[object.slug] !== object ||
+            !object.value.enabled
+          )
+            throw new Error("This source watch is no longer enabled");
+          this.runners.wakeSource(
+            pubkey,
+            {
+              type: "source",
+              slug: object.slug,
+              watch: object.value,
+              plugin: source.pluginId,
+              text,
             },
-          };
-        });
+            object,
+            current,
+          );
+        },
       },
-      emit: (pubkey, object, text, current) => {
-        const agent = this.state.running.find(
-          (agent) => agent.pubkey === pubkey,
-        );
-        if (
-          !agent?.attentionEnabled ||
-          agent.attention[object.slug] !== object ||
-          !object.value.enabled
-        )
-          throw new Error("This source watch is no longer enabled");
-        this.runners.wakeSource(
-          pubkey,
-          {
-            type: "source",
-            slug: object.slug,
-            watch: object.value,
-            plugin: source.pluginId,
-            text,
-          },
-          object,
-          current,
-        );
-      },
-    });
+      this.sourceTails,
+    );
     const update = () =>
       sources.reconcile(
         source.key,

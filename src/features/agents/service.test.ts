@@ -7161,6 +7161,52 @@ describe("Attention plugin sources", () => {
     for (const listener of listeners) listener();
     expect(signal?.aborted).toBe(true);
   });
+  it("waits for provider teardown before starting it again after plugin reactivation", async () => {
+    let active = true;
+    const listeners = new Set<() => void>();
+    const { service, plugin, native } = await setup({
+      pluginActive: () => active,
+      subscribePlugin: (listener: () => void) => {
+        listeners.add(listener);
+        return () => {
+          listeners.delete(listener);
+        };
+      },
+    });
+    let release = () => {};
+    const signals: AbortSignal[] = [];
+    const produce = vi.fn(async ({ signal }: { signal: AbortSignal }) => {
+      signals.push(signal);
+      if (signals.length === 1)
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+      else
+        await new Promise<void>((resolve) =>
+          signal.addEventListener("abort", () => resolve(), { once: true }),
+        );
+    });
+    plugin.agents.addAttentionSource({ id: "command", run: produce });
+    await service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
+    await service.save(bot, { attentionEnabled: true, attention: watches });
+    await vi.waitFor(() => expect(produce).toHaveBeenCalledTimes(1));
+    active = false;
+    for (const listener of listeners) listener();
+    expect(signals[0]?.aborted).toBe(true);
+    active = true;
+    for (const listener of listeners) listener();
+    await settle();
+    try {
+      expect(produce).toHaveBeenCalledTimes(1);
+      release();
+      await vi.waitFor(() => expect(produce).toHaveBeenCalledTimes(2));
+    } finally {
+      release();
+      active = false;
+      for (const listener of listeners) listener();
+    }
+  });
   it("delivers source output to the saved conversation and cancels execution when Attention is disabled", async () => {
     const { service, run, plugin, native } = await setup();
     let input:
@@ -7194,8 +7240,8 @@ describe("Attention plugin sources", () => {
     expect(input?.signal.aborted).toBe(true);
     expect(() => input?.emit("late")).toThrow(/no longer/);
   });
-  it("persists natural completion without invalidating output already queued for the conversation", async () => {
-    const { service, run, plugin, native } = await setup();
+  it("delivers nonempty output, preserves queued output on completion, and does not rerun after restart", async () => {
+    const { service, run, plugin, native, storage, ctx } = await setup();
     let emitSource: ((text: string) => void) | undefined;
     let finishSource = () => {};
     plugin.agents.addAttentionSource({
@@ -7211,6 +7257,9 @@ describe("Attention plugin sources", () => {
     await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
     await service.save(bot, { attentionEnabled: true, attention: watches });
     await vi.waitFor(() => expect(emitSource).toBeDefined());
+    emitSource?.("  \n ");
+    await settle();
+    expect(run).not.toHaveBeenCalled();
     emitSource?.("done");
     finishSource();
     await vi.waitFor(() =>
@@ -7222,6 +7271,18 @@ describe("Attention plugin sources", () => {
       root,
       text: expect.stringContaining("done"),
     });
+    const identities = await native.list();
+    await ctx.fiber.dispose();
+    const reloaded = await setup({ storage, identities });
+    const produce = vi.fn(async () => {});
+    reloaded.plugin.agents.addAttentionSource({ id: "command", run: produce });
+    await vi.waitFor(() =>
+      expect(reloaded.native.claim).toHaveBeenCalledWith(bot),
+    );
+    await settle();
+    expect(reloaded.service.find(bot)?.sourceRuns?.["watch/pr"]).toBeDefined();
+    expect(produce).not.toHaveBeenCalled();
+    expect(reloaded.run).not.toHaveBeenCalled();
   });
 });
 

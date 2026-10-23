@@ -17,7 +17,6 @@ export type AttentionSource = Readonly<{
 }>;
 type SourceObject = AttentionObject & { value: SourceWatch };
 export class AttentionSources {
-  private tails = new Map<string, Promise<void>>();
   private runs = new Map<
     string,
     { object: SourceObject; stop: AbortController; done: boolean }
@@ -33,6 +32,7 @@ export class AttentionSources {
       completed(agent: string, object: SourceObject): boolean;
       finish(agent: string, object: SourceObject): Promise<void>;
     },
+    private tails = new Map<string, Promise<void>>(),
   ) {}
   reconcile(
     provider: string,
@@ -51,7 +51,7 @@ export class AttentionSources {
           agent.attention[`interest/${value.interest_id}`]?.value.type ===
             "interest"
         )
-          wanted.set(`${agent.pubkey}/${object.slug}`, {
+          wanted.set(`${provider}/${agent.pubkey}/${object.slug}`, {
             agent,
             object: object as SourceObject,
           });
@@ -78,6 +78,7 @@ export class AttentionSources {
             () => !run.stop.signal.aborted,
           );
       };
+      let succeeded = false;
       const previous = this.tails.get(key);
       const done = Promise.resolve(previous)
         .then(() => {
@@ -89,6 +90,9 @@ export class AttentionSources {
               emit,
             });
         })
+        .then(() => {
+          succeeded = true;
+        })
         .catch((error) => {
           if (!run.stop.signal.aborted)
             console.warn(`Attention source ${provider} failed`, error);
@@ -96,7 +100,7 @@ export class AttentionSources {
         .finally(() => {
           run.done = true;
           if (this.tails.get(key) === done) this.tails.delete(key);
-          if (!run.stop.signal.aborted)
+          if (succeeded && !run.stop.signal.aborted)
             void this.host
               .finish(agent.pubkey, object)
               .catch((error) =>

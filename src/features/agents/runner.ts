@@ -1,3 +1,4 @@
+import type { KeepAwake } from "./keep-awake";
 // The agent runner: one queue per agent, its rate limit, mention and watch
 // matching, due timers, the run deadline and the claim that lets exactly one
 // host run each agent. It knows nothing of where it runs: everything it needs
@@ -212,6 +213,8 @@ type Runner = {
   /** The registration whose `run` it calls; a new one aborts the in-flight run. */
   type: RegisteredAgentType | undefined;
   controller: AbortController;
+  /** Power demand ends when native custody changes, without cancelling work. */
+  execution: AbortController;
   /** Events waiting to run in each lane, mentions first; due timers are found
    * when a run starts instead. */
   readonly queues: Record<Lane, Job[]>;
@@ -409,6 +412,7 @@ export type RunnerHost = {
     | undefined;
   /** This device's view of each agent's work. */
   activity: LocalAgentActivity;
+  execution?: Pick<KeepAwake, "begin">;
   /** Whether a mention in `channel` continues the agent's owner's Solo chat,
    * so its turn answers, and shows typing, at channel top level. */
   soloChat(
@@ -612,7 +616,14 @@ export class AgentRunners {
       throw new Error(
         "Use session controls in the Buzz app that runs this agent.",
       );
-    return change();
+    const work = this.host.execution?.begin(
+      AbortSignal.any([runner.controller.signal, runner.execution.signal]),
+    );
+    try {
+      return await change();
+    } finally {
+      work?.finish();
+    }
   }
   /** Runs `change` while a change of type holds the agent's idle runner: no
    * turn starts meanwhile, and its queue resumes after. Refused while a turn
@@ -659,6 +670,7 @@ export class AgentRunners {
       pubkey: identity.pubkey,
       type,
       controller: new AbortController(),
+      execution: new AbortController(),
       queues: { mention: [], watch: [] },
       running: false,
       rates: {
@@ -1610,6 +1622,9 @@ export class AgentRunners {
     // Stopped or changed while its context was looked up: nothing is sent.
     if (!live()) return undefined;
     const generation = this.host.classifierKeyGeneration();
+    const work = this.host.execution?.begin(
+      AbortSignal.any([runner.controller.signal, runner.execution.signal]),
+    );
     const { pass, result, backend } = await classify(decisions, {
       classifier,
       event,
@@ -1618,7 +1633,7 @@ export class AgentRunners {
         name: this.host.displayName(agent, event.pubkey),
       },
       context,
-    });
+    }).finally(() => work?.finish());
     // On the `typesafe` backend: the key was removed outside the app since it
     // was read, the service refused it, or native found one the failed status
     // read could not. Other backends say nothing about the key.
@@ -1983,6 +1998,7 @@ export class AgentRunners {
     ]);
     const handle = this.handleFor(runner, agent, signal);
     const working = this.working(runner, job, agent);
+    const execution = this.executing(runner);
     const trigger = job.trigger;
     const named =
       trigger.type === "mention"
@@ -2004,14 +2020,21 @@ export class AgentRunners {
         ...pick,
         ...(team ? { team } : {}),
         signal,
-        workingUntil: working.hold,
+        workingUntil: (done: PromiseLike<unknown>) => {
+          working.hold(done);
+          execution.hold(done);
+        },
+        executingUntil: execution.hold,
         ignored: () => job.work?.remove(),
         acknowledged: () => job.work?.started(),
         superseded: () => job.work?.supersede(),
         interruptible: (stop: () => Promise<void>) =>
           job.work?.interruptible(stop),
         ...(named ? { named } : {}),
-        step: (tool: string, target?: string) => job.work?.step(tool, target),
+        step: (tool: string, target?: string) => {
+          job.work?.step(tool, target);
+          execution.pulse();
+        },
         current: () => !lifetime.aborted && this.stillCurrent(runner, job),
       });
       const { trigger } = job;
@@ -2031,6 +2054,7 @@ export class AgentRunners {
         ),
       );
     });
+    void completion.then(execution.release, execution.release);
     // Handover expiry releases the queue, never the actual work's outcome.
     void completion.then(
       () => working.release(),
@@ -2081,6 +2105,16 @@ export class AgentRunners {
       pubkey: agent.pubkey,
       name: agent.name,
       owner: agent.owner,
+      execution: () => {
+        if (
+          this.runners.get(runner.pubkey) !== runner ||
+          !this.runs(runner.pubkey)
+        )
+          throw new Error("This copy of Buzz no longer runs the agent.");
+        return this.host.execution?.begin(
+          AbortSignal.any([runner.controller.signal, runner.execution.signal]),
+        );
+      },
       publish: async (event: AgentEventTemplate) => this.publish(runner, event),
       query: async (filters: readonly object[]) =>
         this.require().query(agent.pubkey, filters),
@@ -2144,6 +2178,26 @@ export class AgentRunners {
       },
       attention: this.attention(agent.pubkey),
     });
+  }
+
+  /** All executions, including attention turns with no message-display row.
+   * A full-turn hold outlives a reply without changing the reply lifecycle. */
+  private executing(runner: Runner) {
+    const work = this.host.execution?.begin(
+      AbortSignal.any([runner.controller.signal, runner.execution.signal]),
+    );
+    let holds = 1;
+    const release = () => {
+      if (--holds === 0) work?.finish();
+    };
+    return {
+      release,
+      pulse: () => work?.pulse(),
+      hold(done: PromiseLike<unknown>) {
+        holds++;
+        void Promise.resolve(done).then(release, release);
+      },
+    };
   }
 
   /** Counts a run as working until it and everything it handed to
@@ -2254,6 +2308,9 @@ export class AgentRunners {
   private claimed(runner: Runner, held: boolean) {
     const before = this.runs(runner.pubkey);
     runner.mayHold = held;
+    if (!held) runner.execution.abort();
+    else if (runner.execution.signal.aborted)
+      runner.execution = new AbortController();
     runner.asked = true;
     this.heldChanged(runner, before);
     if (before !== this.runs(runner.pubkey)) this.host.ownershipChanged?.();

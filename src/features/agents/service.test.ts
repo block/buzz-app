@@ -7110,3 +7110,93 @@ it("gives a run its owner's channel templates with the owner's agents each adds"
     { name: "Launch", canvas: "# Plan", agents: [bot, sibling] },
   ]);
 });
+
+it("accounts for local execution independently of reply display, across handoffs and attention turns", async () => {
+  const f = await setup();
+  const power = f.service.keepAwake;
+  await f.service.create({ type: "example/echo", name: "Echo" });
+  let reply!: () => void;
+  let turn!: () => void;
+  const replied = new Promise<void>((resolve) => {
+    reply = resolve;
+  });
+  const ended = new Promise<void>((resolve) => {
+    turn = resolve;
+  });
+  f.run.mockImplementationOnce((delivery) => {
+    delivery.workingUntil(replied);
+    delivery.executingUntil?.(ended);
+  });
+  f.emit({
+    events: [event("power-mention", { tags: [["p", bot]] })],
+    channelId: channel,
+  });
+  try {
+    await vi.waitFor(() => expect(f.run).toHaveBeenCalledOnce());
+    expect(power.snapshot().working).toBe(true);
+    reply();
+    await vi.waitFor(() =>
+      expect(f.activity.reader.work()[0]?.state).toBe("done"),
+    );
+    expect(power.snapshot().working).toBe(true);
+    turn();
+    await vi.waitFor(() => expect(power.snapshot().working).toBe(false));
+    await f.service.save(bot, { attentionEnabled: true });
+    let finish!: () => void;
+    f.run.mockImplementationOnce(({ workingUntil }) => {
+      workingUntil(
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+      );
+    });
+    f.emit({ events: [deploy("power-watch")] });
+    await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(2));
+    expect(power.snapshot().working).toBe(true);
+    expect(
+      f.activity.reader.work().some((row) => row.state === "working"),
+    ).toBe(false);
+    // Retiring the actual runner releases demand even if a provider settles late.
+    await f.ctx.fiber.dispose();
+    expect(power.snapshot().working).toBe(false);
+    finish();
+  } finally {
+    reply();
+    turn();
+  }
+});
+
+it("fences recovered execution by custody and runner lifetime without a delivery", async () => {
+  const f = await setup();
+  await f.service.create({ type: "example/echo", name: "Echo" });
+  await vi.waitFor(() => expect(f.plugin.agents.handle(bot)).toBeDefined());
+  const handle = f.plugin.agents.handle(bot);
+  const power = f.service.keepAwake;
+  const first = handle?.execution?.();
+  try {
+    expect(power.snapshot().working).toBe(true);
+    first?.finish();
+    expect(power.snapshot().working).toBe(false);
+    const recovered = handle?.execution?.();
+    expect(power.snapshot().working).toBe(true);
+    f.connect(false);
+    await vi.waitFor(() => expect(f.native.release).toHaveBeenCalledWith(bot));
+    expect(power.snapshot().working).toBe(false);
+    recovered?.pulse();
+    expect(power.snapshot().working).toBe(false);
+    expect(() => handle?.execution?.()).toThrow("ask for its handle again");
+    f.connect(true);
+    await vi.waitFor(() => expect(f.plugin.agents.handle(bot)).toBeDefined());
+    const fresh = f.plugin.agents.handle(bot)?.execution?.();
+    expect(power.snapshot().working).toBe(true);
+    recovered?.finish();
+    expect(power.snapshot().working).toBe(true);
+    await f.ctx.fiber.dispose();
+    expect(power.snapshot().working).toBe(false);
+    fresh?.pulse();
+    expect(power.snapshot().working).toBe(false);
+  } finally {
+    first?.finish();
+    await f.ctx.fiber.dispose();
+  }
+});

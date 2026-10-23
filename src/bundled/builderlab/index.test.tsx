@@ -29,7 +29,24 @@ import { communityFixture } from "./agents/community-testing";
 import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
 
 const native = vi.hoisted(() => ({ isTauri: () => true, invoke: vi.fn() }));
-vi.mock("@tauri-apps/api/core", () => native);
+vi.mock("@tauri-apps/api/core", () => ({
+  ...native,
+  Channel: class {
+    onmessage = () => {};
+  },
+  invoke: (command: string, ...args: unknown[]) => {
+    // Agents owns the power service; it is unavailable in this login fixture.
+    // Keep Builderlab's native-call assertions scoped to its own dependencies.
+    if (command === "agent_keep_awake_open") return Promise.resolve(1);
+    if (command === "agent_keep_awake_set")
+      return Promise.resolve({
+        supported: false,
+        active: false,
+        expired: false,
+      });
+    return native.invoke(command, ...args);
+  },
+}));
 stubAvatarBrowserApis();
 beforeEach(() => {
   vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");

@@ -270,6 +270,19 @@ test("inline member identity geometry and separate addition focus", async ({
     await search.hover();
     await expect(memberKey).toBeHidden();
     await expect(memberMetadata).toHaveCSS("height", "0px");
+    // Establish the dialog's final position before recording exact geometry.
+    // Visibility does not mean its entrance transform has finished.
+    await dialog.evaluate(async (element) => {
+      await Promise.all(
+        element
+          .getAnimations({ subtree: true })
+          .filter(
+            (animation) =>
+              animation.effect?.getComputedTiming().iterations !== Infinity,
+          )
+          .map((animation) => animation.finished),
+      );
+    });
     const nameBoundsBeforeReveal = await memberName.boundingBox();
     const rowBoundsBeforeReveal = await memberRow.boundingBox();
     const avatarBoundsBeforeReveal = await memberAvatar.boundingBox();

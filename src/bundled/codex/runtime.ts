@@ -85,6 +85,7 @@ type Request = {
   /** Called once a final send answers this request, or one steered after it,
    * a steering rejection is posted in its place, or the turn ends normally. */
   answered: () => void;
+  executingUntil?: Delivery["executingUntil"];
   step?: (tool: string, target?: string) => void;
   acknowledged?: () => void;
   superseded?: () => void;
@@ -714,6 +715,9 @@ export class CodexRuntime {
       team: delivery.team ?? "",
       ...(project ? { project: `${project}\n` } : {}),
       answered,
+      ...(delivery.executingUntil
+        ? { executingUntil: delivery.executingUntil }
+        : {}),
       failActivity,
       ...(delivery.step ? { step: delivery.step } : {}),
       ...(delivery.acknowledged ? { acknowledged: delivery.acknowledged } : {}),
@@ -797,6 +801,7 @@ export class CodexRuntime {
                   `${context}${request.project ?? ""}${turnInput(request.event, request.conversation, text, true, noteOf(request), request.wake)}`,
                 ),
               });
+              request.executingUntil?.(lane.tail);
               active.reply = request;
               active.requests.push(request);
               entry.waiting.delete(request);
@@ -1087,6 +1092,7 @@ export class CodexRuntime {
         await this.execute(request, text, key, current, entry);
       });
     lane.tail = job;
+    request.executingUntil?.(job);
     this.status(request.agent.pubkey, key, "Starting");
     // Agents can deliver follow-ups and other conversations immediately.
     void job

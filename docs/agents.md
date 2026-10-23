@@ -149,19 +149,21 @@ config together; a failed save leaves the choice and draft available to retry
 or revert.
 
 An agent type may also contribute `provider`: a subscribable readiness snapshot,
-a read-only check, and a management-dialog body. **More → Providers** lists each
-active type once using the registered title and icon. It is a quick health view:
-rows show only ready, checking, attention, or a neutral unavailable state. The
-Agents host owns the submenu, modal framing, focus restoration and contribution
+a read-only check, and a management-dialog body. **Settings → Agent setup →
+Harness defaults** lists each active type once using the registered title and
+icon. It is a quick health view: rows show ready (with the default-model
+control), checking, attention, or a neutral unavailable state. The create
+dialog's **Model** row shows the same install and sign-in actions inline. The
+Agents host owns the rows, modal framing, focus restoration and contribution
 error boundary. The plugin owns connection actions and optional defaults inside
 the dialog; blocking install or sign-in work must expose cancellation before the
 dialog can close. Disabled or unloaded types remain in Settings → Plugins → Manage plugins.
 
-Goose's Settings → AI defaults contribution reads and writes Goose's own
+Goose's Settings → Harness defaults contribution reads and writes Goose's own
 configuration through `GooseSetup`. Provider keys stay in Goose's secret store;
 Buzz keeps no separate Goose defaults store. Readiness requires a working
 `goose-acp` and a configured default provider. The per-agent provider/model
-fields remain overrides. Types without a provider contribution have no AI
+fields remain overrides. Types without a provider contribution have no Harness
 defaults row; a failed contribution retains the unavailable fallback.
 
 Workspace, instructions and session scope are always per-agent. Claude and Codex
@@ -174,7 +176,7 @@ records. Codex uses an inherited thinking choice only when the effective model
 supports it, otherwise that model's default applies. Transient process/session
 state may appear in the Activity tab, but is not durable history.
 
-A type with `sessionControls` (Claude, Codex and goose) offers three immediate
+A type with `sessionControls` (Claude, Codex, goose and Pi) offers three immediate
 session controls in the composer's gauge popover: **Compact session**,
 **Start a new session**, and **Interrupt**. A side rail keeps all three visible.
 Compact and New are enabled while that harness session is idle; Interrupt is
@@ -199,6 +201,13 @@ received during an action is accepted into that session's handoff and releases
 the agent's mention lane immediately. It waits for the action without spending
 its handover deadline; other conversations continue, and stopping the agent
 cancels the deferred work.
+
+Claude's channel-scoped sessions save a separate history timestamp for each
+thread. Working in one thread does not mark another thread's messages as seen.
+The 200 most recently addressed threads are tracked across reloads. Older saves
+and evicted entries supply that thread's recent context again on its next turn;
+the saved Claude session is retained. DMs and Solo chats keep one conversation
+timestamp.
 
 Codex's provider model menu offers **Codex recommended** (the catalog's
 recommendation) and specific models. Blank model preferences follow the
@@ -244,7 +253,7 @@ process status, so a stopped agent is as selectable as a running one.
 
 ### Turns a close or reload stopped
 
-Claude and Codex (`AgentType.resumes`) run their turns in the page, so closing or
+Claude, Codex and goose (`AgentType.resumes`) run their turns in the page, so closing or
 reloading the app stops them; the native host then sends no exit for them. The
 runner keeps each mention turn working then in agent storage
 (`buzz.agents.interrupted.v1:<pubkey>`) until it settles. On the next start Agents lists
@@ -254,6 +263,8 @@ agent to carry on in its saved session; **Don’t resume** forgets them. Either
 answer covers only the agents the notice names, and only Resume gives those
 mentions again: a replay or live delivery of one never does. A turn
 stays saved until its resumed turn settles, so closing again first loses none.
+goose sessions end with the app, so a resumed goose turn opens a new one and is
+shown the mention's thread, including what it already posted there.
 Mentions queued behind a working turn, watch turns and other types are not
 kept.
 
@@ -678,7 +689,7 @@ There is no agent-global sequence gate: producer sequences reset, skip and inter
 
 ### Try with an existing owner account
 
-Use the [README's public-pin/Keychain setup](../README.md#relay-channels) and run
+Use the [public-pin/Keychain setup](contributing.md#live-relay-development) and run
 `bin/just web` (or `bin/just desktop`). Open the printed Local URL, choose
 the agent's community and open a channel. Keep a runner active for that agent, with
 telemetry publication enabled, then give it work. This activity plugin does not
@@ -736,7 +747,8 @@ and also the host's saved Buzz library: the development broker's
 `dev.local.buzz.foundation` data directory, and the native host reads the Classic
 post-fold `xyz.block.buzz.app/agents/managed-agents.json`. The host read is
 read-only: it writes no configuration, migrates no identities, retrieves no
-credentials and manages no processes, with 8 MiB / 2000-record caps. Only definition
+credentials and manages no processes, with 8 MiB / 2000-record caps. The broker
+reads a missing file as an empty library, not a failure. Only definition
 ID/name, identity public key/name/definition link and optional avatar artwork leave
 the host. Optional artwork accepts HTTPS without credentials or bounded raster data
 URLs, never file URLs or SVG data.
@@ -752,7 +764,7 @@ status. No keys, config, memory, membership, or runtime state are changed by it.
 
 ### Model-menu design exception
 
-The AI defaults and Goose creation controls intentionally use the shared Menu
+The Harness defaults and Goose creation controls intentionally use the shared Menu
 for family → model → effort navigation, as explicitly requested in product
 review. This is a scoped exception to DESIGN.md's Select/Combobox form-value
 guidance. Keep the selected model and effort accessible, preserve compact chip
@@ -762,8 +774,11 @@ continues to use a searchable Combobox.
 
 Provider dropdowns are intentionally text-only. The model control shows the
 selected model family icon, not the Goose runtime or Databricks/provider mark,
-as explicitly confirmed by the product owner. Goose device defaults have no
-reset action: omitting a model in Goose retains its stored provider model.
+as explicitly confirmed by the product owner. On agent cards the Goose mark
+precedes it to name the harness, as Pi's card chip does, and the chip leaves
+the thinking level and "Default" to its menu and accessible label so the model
+name keeps its room. Goose device defaults have no reset action: omitting a
+model in Goose retains its stored provider model.
 
 ## Usage
 

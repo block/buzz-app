@@ -81,6 +81,7 @@ import {
   type ClassifierNative,
   type ClassifierOutcome,
 } from "./classifier";
+import type { Decisions } from "../decisions/service";
 import {
   nativeAgents,
   type AgentEventTemplate,
@@ -636,7 +637,7 @@ export type AgentType<Config = unknown> = {
   /** Its turns run in this page, so closing or reloading the app stops them.
    * With this, a mention turn still working then is kept, and given to `run`
    * again marked `resumed` if the owner chooses to resume it, to carry on in
-   * the conversation's saved session. */
+   * the conversation's saved session, or in a new one shown the conversation. */
   resumes?: boolean;
   /** Makes the type hosted: its provider runs each agent, so it has no `run`,
    * `models` or `timeoutMs`, and its agents have no attention. */
@@ -1110,9 +1111,9 @@ const wssOf = (origin: string) =>
   relayOrigin(origin).replace(/^https:/, "wss:");
 
 export class AgentsService extends Service implements Agents {
-  /** Settles once the saved key's status is known; until then a classified
-   * event waits rather than pass unchecked. */
-  private jevStatus: Promise<void> | undefined;
+  /** Settles once the saved TypeSafe key's status is known; until then an
+   * event classified on that backend waits rather than pass unchecked. */
+  private keyStatus: Promise<void> | undefined;
   /** Goes up when a save or remove of the key starts and when it ends, so
    * that what a read or classifier call found under an older key is not
    * shown over the newer one. */
@@ -1197,6 +1198,8 @@ export class AgentsService extends Service implements Agents {
     ) => Promise<NipOaAuthorization> = prepareRemoteAgentAuthorization,
     localActivity = createLocalAgentActivity(),
     private readonly jev: ClassifierNative | undefined = nativeClassifier(),
+    /** Runs watch classifiers on this device's decision backend. */
+    private readonly decisions: Decisions | undefined = undefined,
     /** Which artifact types an agent has synced, from its config channel
      * binding. Unset, every agent starts `local`. */
     private readonly configBinding?: (agent: Agent) => ConfigBinding,
@@ -1215,7 +1218,7 @@ export class AgentsService extends Service implements Agents {
     this.teamList = Object.freeze(readTeams(storage));
     this.state = Object.freeze({
       status: native ? "loading" : "unavailable",
-      classifier: "unavailable",
+      classifier: this.availability("checking"),
       classifierKey: "checking",
       agents: [],
       running: [],
@@ -1339,8 +1342,8 @@ export class AgentsService extends Service implements Agents {
         return session && channelTabs(session);
       },
       classifier: () => this.classifier(),
-      jev: () => this.jev,
-      jevStatus: () => this.jevStatus,
+      decisions: () => this.decisions,
+      keyStatus: () => this.keyStatus,
       classifierKey: () => this.state.classifierKey,
       classifierKeyGeneration: () => this.keyGeneration,
       setClassifierKey: (key, generation) => {
@@ -1374,6 +1377,10 @@ export class AgentsService extends Service implements Agents {
           this.watch();
           this.update();
         }),
+        // Another backend can make classifiers available or not.
+        this.decisions?.subscribe(() =>
+          this.setKey(this.state.classifierKey),
+        ) ?? (() => {}),
       ];
       this.watch();
       void this.refresh();
@@ -1381,7 +1388,7 @@ export class AgentsService extends Service implements Agents {
       const found = (key: ClassifierKey) => {
         if (generation === this.keyGeneration) this.setKey(key);
       };
-      this.jevStatus = this.jev
+      this.keyStatus = this.jev
         ?.status()
         .then((configured) => found(configured ? "saved" : "missing"))
         .catch((error) => {
@@ -1588,7 +1595,8 @@ export class AgentsService extends Service implements Agents {
       { config, picture },
     );
   }
-  /** Whether watch classifiers can run on this device: a key is saved. */
+  /** Whether watch classifiers can run on this device: there is a decision
+   * backend, and on the `typesafe` backend a key is saved. */
   classifier(): ClassifierAvailability {
     return this.state.classifier;
   }
@@ -1614,15 +1622,24 @@ export class AgentsService extends Service implements Agents {
       this.keyGeneration++;
     }
   }
-  /** Agents are told a classifier can run only while a key is known to be
-   * saved. A key the service refused still runs, and each event reports why
-   * it passed unchecked. */
+  /** On the `typesafe` backend, agents are told a classifier can run only
+   * while a key is known to be saved. A key the service refused still runs,
+   * and each event reports why it passed unchecked. */
+  private availability(classifierKey: ClassifierKey): ClassifierAvailability {
+    const decisions = this.decisions;
+    if (!decisions) return "unavailable";
+    if (decisions.backend() !== "typesafe") return "available";
+    return classifierKey === "saved" || classifierKey === "refused"
+      ? "available"
+      : "unavailable";
+  }
   private setKey(classifierKey: ClassifierKey) {
-    const classifier =
-      classifierKey === "saved" || classifierKey === "refused"
-        ? "available"
-        : "unavailable";
-    if (this.state.classifierKey === classifierKey) return;
+    const classifier = this.availability(classifierKey);
+    if (
+      this.state.classifierKey === classifierKey &&
+      this.state.classifier === classifier
+    )
+      return;
     this.state = Object.freeze({ ...this.state, classifier, classifierKey });
     this.notify();
   }

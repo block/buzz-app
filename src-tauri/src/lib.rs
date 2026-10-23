@@ -16,6 +16,7 @@ use browser::{
 };
 mod agent_state;
 mod app_agents;
+mod decisions;
 mod deep_links;
 mod dock;
 mod huddle_window;
@@ -37,6 +38,7 @@ mod host_mcp;
 mod host_process;
 mod host_request;
 mod identity;
+mod native_mcp;
 mod nsec_backup;
 mod nsec_backup_choice;
 mod nsec_backup_config;
@@ -600,9 +602,9 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         jev::jev_classifier_status,
         jev::jev_classifier_set_key,
         jev::jev_classifier_clear_key,
-        jev::jev_classify,
         agent_state::app_agent_state_load,
         agent_state::app_agent_state_set,
+        decisions::decide,
         title_bar_double_click,
         notification_show,
         #[cfg(target_os = "macos")]
@@ -628,6 +630,16 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let context = app_context();
+    // Reject unsafe test launch settings before any identity or pending erase work.
+    let native_mcp = native_mcp::plugin(
+        context.config(),
+        std::env::var_os("BUZZ_NATIVE_MCP_PORT"),
+        std::env::var_os("BUZZ_DEV_VIEWER"),
+    )
+    .unwrap_or_else(|message| {
+        eprintln!("Cannot enable native MCP: {message}");
+        std::process::exit(1);
+    });
     // A pending Sign out finishes before any window, webview storage, service or
     // identity read; if it can't, Buzz explains and exits without opening.
     let instance = sign_out::Paths::resolve(&context.config().identifier).map(|paths| {
@@ -666,6 +678,11 @@ pub fn run() {
         builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             deep_links::focus_main(app);
         }))
+    } else {
+        builder
+    };
+    let builder = if let Some(plugin) = native_mcp {
+        builder.plugin(plugin)
     } else {
         builder
     };
@@ -803,6 +820,7 @@ pub fn run() {
         .manage(identity)
         .manage(archive::ArchiveHost::default())
         .manage(jev::JevHost::new())
+        .manage(decisions::DecisionsHost::new())
         .manage(pairing::Pairing::default())
         .manage(Huddles::default())
         .manage(HuddleWindow::default())

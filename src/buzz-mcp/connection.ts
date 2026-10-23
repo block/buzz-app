@@ -4,15 +4,14 @@ import type { HostMcpServer, McpHandler } from "../features/host/service";
 
 export async function connectMcp(
   serve: (handler: McpHandler) => Promise<HostMcpServer>,
-  handler: McpHandler,
+  createHandler: (signal: AbortSignal) => McpHandler,
   signal: AbortSignal,
 ): Promise<HostMcpServer> {
   signal.throwIfAborted();
-  let stopped = false;
-  const check = () => {
-    signal.throwIfAborted();
-    if (stopped) throw new Error("This agent connection has closed");
-  };
+  const controller = new AbortController();
+  const lifetime = AbortSignal.any([signal, controller.signal]);
+  const handler = createHandler(lifetime);
+  const check = () => lifetime.throwIfAborted();
   const server = await serve(async (message) => {
     check();
     const result = await handler(message);
@@ -20,14 +19,14 @@ export async function connectMcp(
     return result;
   });
   const close = () => {
-    stopped = true;
+    controller.abort(new Error("This agent connection has closed"));
     signal.removeEventListener("abort", abort);
     return server.close();
   };
   const abort = () => void close();
   signal.addEventListener("abort", abort, { once: true });
   void server.closed.then(() => {
-    stopped = true;
+    controller.abort(new Error("This agent connection has closed"));
     signal.removeEventListener("abort", abort);
   });
   if (signal.aborted) {

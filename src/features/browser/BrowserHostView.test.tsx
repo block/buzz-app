@@ -419,6 +419,7 @@ it("retries a failed evicted guest at its last page only on explicit Reload", as
       "https://first.example/signed-in",
       expect.any(Object),
       undefined,
+      undefined,
     ),
   );
   expect(await screen.findByRole("alert")).toHaveTextContent(
@@ -451,6 +452,7 @@ it("retries a failed evicted guest at its last page only on explicit Reload", as
   expect(platform.attach).toHaveBeenLastCalledWith(
     "https://first.example/signed-in",
     expect.any(Object),
+    undefined,
     undefined,
   );
   expect(screen.queryByRole("alert")).toBeNull();
@@ -798,4 +800,48 @@ it("ignores status from a replaced session", async () => {
   });
   await waitFor(() => expect(screen.getByTitle("New page")).toBeVisible());
   expect(screen.queryByText("Old page")).not.toBeInTheDocument();
+});
+
+it("restarts a lost Builderlab guest at the app URL instead of replaying its login ticket", async () => {
+  const platform = fakePlatform();
+  let count = 0;
+  vi.mocked(platform.attach).mockImplementation(async () => `guest-${++count}`);
+  const login =
+    "https://login.apps.builderlab.xyz/api/goose/v1/auth/hosted-site/handoff?code=one-use";
+  vi.mocked(platform.status).mockResolvedValue({
+    url: login,
+    title: "",
+    loading: true,
+    error: null,
+  });
+  const sessions = new BrowserSessions(platform);
+  const lifetime = new AbortController();
+  const builderlab = {
+    credential: "private",
+    storage: "viewer-test",
+    signal: lifetime.signal,
+  };
+  const app = "https://counter.apps.builderlab.xyz/report/42";
+  render(
+    <BrowserHostView
+      url={app}
+      builderlab={builderlab}
+      platform={platform}
+      sessions={sessions}
+    />,
+  );
+  // Establish that polling applied the intermediate navigation before losing this guest.
+  await waitFor(() =>
+    expect(screen.getByRole("textbox", { name: "Address" })).toHaveValue(login),
+  );
+  await act(() => sessions.detach("guest-1"));
+  fireEvent(window, new Event("resize"));
+  await waitFor(() => expect(platform.attach).toHaveBeenCalledTimes(2));
+  expect(platform.attach).toHaveBeenLastCalledWith(
+    app,
+    expect.any(Object),
+    "viewer-test",
+    builderlab,
+  );
+  lifetime.abort();
 });

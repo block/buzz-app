@@ -34,6 +34,7 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { useNonmemberMentions } from "./useNonmemberMentions";
+import { useOldAgentMentions } from "./useOldAgentMentions";
 import { useKnownAgentPubkeys } from "../agents/use-known";
 import { knownAgentPubkeys } from "../agents/known";
 import { rememberedMentions } from "./remembered-mentions";
@@ -610,6 +611,9 @@ function Composer({
     },
   );
   const nonmembers = useNonmemberMentions(session, channelId, () => {
+    if (permitted.current) input.current?.focus();
+  });
+  const oldAgents = useOldAgentMentions(agents, () => {
     if (permitted.current) input.current?.focus();
   });
   useEffect(() => {
@@ -1488,6 +1492,25 @@ function Composer({
         setAdmitting(true);
         recipients = await prepareRecipients(recipients);
       } else if (recipients.length) {
+        // An agent only an earlier Buzz runs would not answer; offer it here first.
+        const lookup = oldAgents.find(captured.recipients);
+        const old = lookup instanceof Promise ? await lookup : lookup;
+        if (old.length) {
+          setSending(true);
+          setError(undefined);
+          const proceed = await oldAgents.ask(
+            old,
+            attempt.signal,
+            () =>
+              valueRef.current === captured &&
+              sameAttachmentSelection(
+                attachments.store.snapshot(),
+                capturedAttachments,
+              ) &&
+              permitted.current,
+          );
+          if (!proceed) return;
+        }
         const channel = session.channels
           .list()
           .channels.find((item) => item.id === channelId);
@@ -1885,6 +1908,7 @@ function Composer({
     <SelectedMentionContext.Provider value={value.recipients}>
       {context}
       {active && nonmembers.dialog}
+      {active && oldAgents.dialog}
       {active && linkSharing.dialog}
       {!submission && !threadRootId && host && (
         <QueuedFollowUps

@@ -12,6 +12,7 @@ import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
 import { Select } from "../../shared/design-system/ui/Select";
+import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { AgentCreateHeader } from "./AgentCreateHeader";
 import styles from "./AgentCreate.module.css";
 import { useNamePrompt } from "./useNamePrompt";
@@ -250,11 +251,7 @@ export function AgentCreateDialog({
             </p>
           )}
         </div>
-        {error && (
-          <p role="alert" className="m-0 text-body-sm text-danger">
-            {error}
-          </p>
-        )}
+        {error && <ToastNotice title={error} onDismiss={() => setError("")} />}
       </form>
     </Dialog>
   );

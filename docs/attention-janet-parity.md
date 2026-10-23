@@ -6,9 +6,9 @@ intend to close. An "intended difference" is a choice we made on purpose.
 
 Terms:
 
-- **Interest**: a named piece of work with saved instructions. Subscriptions (event watches, timers and function producers) belong to one.
+- **Interest**: a named piece of work with saved instructions. Subscriptions (event watches, timers and function producers) may belong to one, adding their own optional task prompt. Standalone subscriptions require their own prompt.
 - **Delivery address**: optional `channel` and `root` on any subscription, separate from event listening `channels`. Without an address it runs independently; with one it continues that conversation.
-- **Lane**: a queue that runs one turn at a time.
+- **Lane**: a queue that runs one turn at a time. A shared Interest owns one lane; each standalone subscription has its own.
 - **Catch-up**: the events a watch missed while the agent was offline, read
   from the relay when the agent comes back.
 

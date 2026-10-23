@@ -300,3 +300,30 @@ it("validates delivery addresses independently of subscription selectors", () =>
     ).toMatch(/root/);
   }
 });
+
+it("accepts standalone prompts and retains legacy grouped subscriptions", () => {
+  const { interest_id: _, ...standalone } = watch;
+  expect(validateObject("watch/new", standalone)).toMatch(/prompt/);
+  expect(
+    validateObject("watch/new", {
+      ...standalone,
+      prompt: "Summarize new discussions",
+    }),
+  ).toBeUndefined();
+  expect(validateObject("watch/legacy", watch)).toBeUndefined();
+  expect(
+    validateObject("watch/grouped", {
+      ...watch,
+      prompt: "Report only blockers",
+    }),
+  ).toBeUndefined();
+  expect(
+    validateObject("watch/source", {
+      type: "source",
+      enabled: true,
+      provider: "test/source",
+      config: {},
+      prompt: "Handle the output",
+    }),
+  ).toBeUndefined();
+});

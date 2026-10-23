@@ -1275,77 +1275,82 @@ it("keeps room for mentions however much watch work waits", async () => {
   expect(turns(run).slice(0, 3)).toEqual(["watch", "mention", "watch"]);
 });
 
-it("runs one turn at a time for an Interest, Interests and mentions beside each other, and frees a lane to the oldest waiting job", async () => {
-  const { service, run, emit } = await setup({ identities: [echo] });
-  const watch = (interest: string, kind: number) => ({
-    type: "event" as const,
-    interest_id: interest,
-    enabled: true,
-    since: 1,
-    channels: [channel],
-    kinds: [kind],
-  });
-  await service.save(bot, {
-    attentionEnabled: true,
-    attention: {
-      "watch/channel": null,
-      "watch/a": watch("a", 9),
-      "watch/b": watch("b", 11),
-    },
-  });
-  await settle();
-  const pending = new Map<string, () => void>();
-  run.mockImplementation(
-    ({ trigger }) =>
-      new Promise<void>((resolve) => {
-        pending.set(
-          trigger.type === "timer" || trigger.type === "catch-up"
-            ? trigger.slug
-            : trigger.type === "plugin" || trigger.type === "source"
-              ? trigger.text
-              : trigger.event.content,
-          resolve,
-        );
-      }),
-  );
-  const working = () => [...pending.keys()].sort();
-  const finish = async (content: string) => {
-    pending.get(content)?.();
-    pending.delete(content);
+it.each([false, true])(
+  "runs independent lanes for grouped or standalone subscriptions (standalone=%s)",
+  async (standalone) => {
+    const { service, run, emit } = await setup({ identities: [echo] });
+    const watch = (interest: string, kind: number) => ({
+      type: "event" as const,
+      ...(standalone
+        ? { prompt: `Process ${interest}` }
+        : { interest_id: interest }),
+      enabled: true,
+      since: 1,
+      channels: [channel],
+      kinds: [kind],
+    });
+    await service.save(bot, {
+      attentionEnabled: true,
+      attention: {
+        "watch/channel": null,
+        "watch/a": watch("a", 9),
+        "watch/b": watch("b", 11),
+      },
+    });
     await settle();
-  };
-  emit({
-    events: [
-      event("a1", { content: "a1", created_at: 101 }),
-      event("a2", { content: "a2", created_at: 102 }),
-      event("b1", { content: "b1", kind: 11, created_at: 103 }),
-      event("b2", { content: "b2", kind: 11, created_at: 104 }),
-    ],
-  });
-  await vi.waitFor(() => expect(working()).toEqual(["a1", "b1"]));
-  // A mention runs beside the busy Interests.
-  emit({
-    events: [
-      event("named", {
-        content: "named",
-        created_at: 105,
-        tags: [
-          ["h", channel],
-          ["p", bot],
-        ],
-      }),
-    ],
-  });
-  await vi.waitFor(() => expect(working()).toEqual(["a1", "b1", "named"]));
-  await finish("b1");
-  expect(working()).toEqual(["a1", "b2", "named"]);
-  await finish("a1");
-  expect(working()).toEqual(["a2", "b2", "named"]);
-  await finish("a2");
-  await finish("b2");
-  await finish("named");
-  expect(run).toHaveBeenCalledTimes(5);
-});
+    const pending = new Map<string, () => void>();
+    run.mockImplementation(
+      ({ trigger }) =>
+        new Promise<void>((resolve) => {
+          pending.set(
+            trigger.type === "timer" || trigger.type === "catch-up"
+              ? trigger.slug
+              : trigger.type === "plugin" || trigger.type === "source"
+                ? trigger.text
+                : trigger.event.content,
+            resolve,
+          );
+        }),
+    );
+    const working = () => [...pending.keys()].sort();
+    const finish = async (content: string) => {
+      pending.get(content)?.();
+      pending.delete(content);
+      await settle();
+    };
+    emit({
+      events: [
+        event("a1", { content: "a1", created_at: 101 }),
+        event("a2", { content: "a2", created_at: 102 }),
+        event("b1", { content: "b1", kind: 11, created_at: 103 }),
+        event("b2", { content: "b2", kind: 11, created_at: 104 }),
+      ],
+    });
+    await vi.waitFor(() => expect(working()).toEqual(["a1", "b1"]));
+    // A mention runs beside the busy Interests.
+    emit({
+      events: [
+        event("named", {
+          content: "named",
+          created_at: 105,
+          tags: [
+            ["h", channel],
+            ["p", bot],
+          ],
+        }),
+      ],
+    });
+    await vi.waitFor(() => expect(working()).toEqual(["a1", "b1", "named"]));
+    await finish("b1");
+    expect(working()).toEqual(["a1", "b2", "named"]);
+    await finish("a1");
+    expect(working()).toEqual(["a2", "b2", "named"]);
+    await finish("a2");
+    await finish("b2");
+    await finish("named");
+    expect(run).toHaveBeenCalledTimes(5);
+  },
+);
 
 it("runs at most eight Interests at once, and the oldest waiting one next", async () => {
   const { service, run, emit } = await setup({ identities: [echo] });

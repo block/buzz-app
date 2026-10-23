@@ -181,10 +181,15 @@ const addressed = (trigger: Trigger) =>
 const laneOf = (trigger: Trigger): Lane =>
   addressed(trigger) ? "mention" : "watch";
 /** The Interest whose lane runs the attention job, or undefined for a mention. */
+const subscriptionLane = (watch: { interest_id?: string }, slug: string) =>
+  watch.interest_id ?? `\0${slug}`;
 const interestOf = (trigger: Trigger) =>
   addressed(trigger)
     ? undefined
-    : (trigger.type === "timer" ? trigger.timer : trigger.watch).interest_id;
+    : subscriptionLane(
+        trigger.type === "timer" ? trigger.timer : trigger.watch,
+        trigger.slug,
+      );
 /** Conversation delivery is independent of what produced the wake. */
 function conversationWake(
   trigger: Trigger,
@@ -1303,8 +1308,11 @@ export class AgentRunners {
         !this.fits(
           runner,
           nextMentions.length,
-          [...nextWatches.values()].map(
-            (list) => (list[0] as WatchTrigger).watch.interest_id,
+          [...nextWatches.values()].map((list) =>
+            subscriptionLane(
+              (list[0] as WatchTrigger).watch,
+              (list[0] as WatchTrigger).slug,
+            ),
           ),
           classified,
         )
@@ -1351,14 +1359,17 @@ export class AgentRunners {
     for (const trigger of triggers) {
       if (trigger.type !== "watch") continue;
       const more = trigger.watch.classifier ? 1 : 0;
-      const interests = [...watches.values()].map(
-        (list) => (list[0] as WatchTrigger).watch.interest_id,
+      const interests = [...watches.values()].map((list) =>
+        subscriptionLane(
+          (list[0] as WatchTrigger).watch,
+          (list[0] as WatchTrigger).slug,
+        ),
       );
       if (
         !this.fits(
           runner,
           mentions.length,
-          [...interests, trigger.watch.interest_id],
+          [...interests, subscriptionLane(trigger.watch, trigger.slug)],
           classified + more,
         )
       )
@@ -1560,7 +1571,7 @@ export class AgentRunners {
       trigger.type === "watch"
         ? [trigger.event]
         : trigger.events.map(({ event }) => event);
-    const interest = trigger.watch.interest_id;
+    const interest = subscriptionLane(trigger.watch, trigger.slug);
     // Never bypassed: without room the event is dropped, like a full queue.
     if (!this.fits(runner, 0, [interest], events.length)) {
       console.warn(`Agent ${agent.name} dropped an event to classify`);
@@ -1849,7 +1860,7 @@ export class AgentRunners {
         changed = { ...changed, [object.slug]: { seen: saved, next: state } };
       if (now < state.nextDue || timerSpent(timer, state, now)) continue;
       // Its Interest's lane is busy: it goes once that lane is free.
-      if (!idle(timer.interest_id)) continue;
+      if (!idle(subscriptionLane(timer, object.slug))) continue;
       if (!next || state.nextDue < next.state.nextDue)
         next = { slug: object.slug, timer, object, state };
     }

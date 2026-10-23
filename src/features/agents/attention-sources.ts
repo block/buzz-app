@@ -48,8 +48,9 @@ export class AttentionSources {
           value.type === "source" &&
           value.provider === provider &&
           value.enabled &&
-          agent.attention[`interest/${value.interest_id}`]?.value.type ===
-            "interest"
+          (!value.interest_id ||
+            agent.attention[`interest/${value.interest_id}`]?.value.type ===
+              "interest")
         )
           wanted.set(`${agent.pubkey}/${object.slug}`, {
             agent,

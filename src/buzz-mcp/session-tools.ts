@@ -97,7 +97,9 @@ export function turnNote(client?: Pick<BuzzClient, "attention">) {
   const attention = client?.attention;
   if (!attention) return undefined;
   if (!attention.enabled()) return ATTENTION_OFF;
-  return attention.interests().length ? ATTENTION_REVIEW : ATTENTION_NONE;
+  return attention.interests().length || attention.watches().length
+    ? ATTENTION_REVIEW
+    : ATTENTION_NONE;
 }
 
 /** Answers one tool call. Throws when the tool cannot run now; the message

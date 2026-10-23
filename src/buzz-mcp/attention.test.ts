@@ -276,10 +276,12 @@ describe("the attention tools", () => {
     await expect(
       call("watch_update", {
         id: "asks",
-        prompt: "no",
+        interval_secs: 60,
         expected_state: updated.expected_state,
       }),
-    ).rejects.toThrow(/^invalid: Not a field of this watch type: prompt/);
+    ).rejects.toThrow(
+      /^invalid: Not a field of this watch type: interval_secs/,
+    );
   });
 
   it("requires since for an event watch", async () => {
@@ -618,7 +620,7 @@ it("creates and updates plugin-owned source configuration", async () => {
   await expect(
     call("watch_update", {
       id: "source",
-      prompt: "timer only",
+      interval_secs: 60,
       expected_state: updated.expected_state,
     }),
   ).rejects.toThrow(/Not a field/);
@@ -668,3 +670,27 @@ it.each(["event", "timer", "source"])(
     expect(saved.object).toMatchObject(storedFields);
   },
 );
+
+it("creates and edits standalone subscriptions and reviews them without Interests", async () => {
+  const { call, api } = agent();
+  const result = await call("watch_add", {
+    id: "solo",
+    expected_state: "object-v1:absent",
+    type: "event",
+    prompt: "Summarize release blockers",
+    since: "now",
+    channels: [channel],
+  });
+  expect(result.object).toMatchObject({ prompt: "Summarize release blockers" });
+  expect(result.object).not.toHaveProperty("interest_id");
+  expect(api.interests()).toEqual([]);
+  expect(turnNote({ attention: api } as unknown as BuzzClient)).toContain(
+    "review your Interests and watches",
+  );
+  const edited = await call("watch_update", {
+    id: "solo",
+    expected_state: result.expected_state,
+    prompt: "Report blockers once",
+  });
+  expect(edited.object.prompt).toBe("Report blockers once");
+});

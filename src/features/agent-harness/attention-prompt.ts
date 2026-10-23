@@ -75,7 +75,7 @@ export function timerPrompt(
         `Prompt: ${input.prompt}`,
         ...(input.spent
           ? [
-              "spent: true. This is its last allowed occurrence; the timer stays for your disposition. Raise its limits and rearm it to keep it, or remove it.",
+              "spent: true. This is its last allowed occurrence. The timer will be removed after this turn succeeds unless you change or rearm it first.",
             ]
           : []),
         `This turn was started by your schedule, not by a message. Follow the Interest instructions, and publish only if it produced something worth knowing. ${SOURCES} ${input.conversation ? CONVERSATION : ONE_OFF}`,

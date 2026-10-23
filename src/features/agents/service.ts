@@ -377,6 +377,8 @@ export type AgentAttention = Readonly<{
     slug: string,
     value: AttentionValue | null,
     options: WriteOptions,
+    /** Rechecked when the queued mutation is applied, including after token calculation. */
+    check?: () => void,
   ): Promise<Shown>;
 }>;
 export type { ClassifierOutcome } from "./classifier";

@@ -8205,6 +8205,57 @@ it.each(["close", "unload", "abort"])(
   },
 );
 
+it.each(["abort", "community"])(
+  "refuses an Attention write queued before %s revocation",
+  async (reason) => {
+    const { service, plugin, storage } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+    const handle = plugin.agents.handle(bot);
+    if (!handle) throw new Error("Missing agent handle");
+    const controller = new AbortController();
+    let current = true;
+    const client = appClient(handle, {
+      signal: controller.signal,
+      check: () => {
+        if (!current) throw new Error("community changed");
+      },
+      read: vi.fn(),
+      memories: async () => ({ entries: [], partial: false }),
+    });
+    const attention = client.attention;
+    if (!attention) throw new Error("Missing Attention handle");
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const set = storage.set.bind(storage);
+    const saving = vi
+      .spyOn(storage, "set")
+      .mockImplementationOnce(async (...args) => {
+        await held;
+        await set(...args);
+      });
+    const ownerSave = service.save(bot, { attentionEnabled: true });
+    let pending!: ReturnType<typeof attention.write>;
+    try {
+      await vi.waitFor(() => expect(saving).toHaveBeenCalledTimes(1));
+      pending = attention.write(
+        "interest/revoked",
+        { type: "interest", instructions: "Must not be saved" },
+        { expected: "object-v1:absent" },
+      );
+      if (reason === "abort") controller.abort();
+      else current = false;
+    } finally {
+      release();
+    }
+    await ownerSave;
+    await expect(pending).rejects.toThrow();
+    expect(service.find(bot)?.attention["interest/revoked"]).toBeUndefined();
+  },
+);
+
 it("keeps classifying after source completion storage fails", async () => {
   const jev = fakeJev();
   let answer!: (value: DecisionResult) => void;

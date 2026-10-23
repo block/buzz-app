@@ -2556,12 +2556,22 @@ export class AgentRunners {
         slug: string,
         value: AttentionValue | null,
         options: WriteOptions,
+        check?: () => void,
       ) => {
         // The token is checked against the newest saved record, in turn
         // with the other changes to it, so no change lands between.
-        const after = await this.host.change(pubkey, (before) =>
-          checkedWrite(before, slug, value, options, seconds()),
-        );
+        const after = await this.host.change(pubkey, async (before) => {
+          check?.();
+          const next = await checkedWrite(
+            before,
+            slug,
+            value,
+            options,
+            seconds(),
+          );
+          check?.();
+          return next;
+        });
         return show(after, slug, seconds());
       },
     });

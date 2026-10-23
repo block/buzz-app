@@ -440,7 +440,7 @@ export class GooseRuntime {
             title: sessionTitle(entry.name, place, key.split("/")[1]),
             // A Solo chat takes the name goose gives its first session.
             ...(solo && named ? { named } : {}),
-            ...(!deferred ? { signal } : {}),
+            ...(!deferred && !wait ? { signal } : {}),
             ...(model ? { model } : {}),
             activityScope: topLevel
               ? channel

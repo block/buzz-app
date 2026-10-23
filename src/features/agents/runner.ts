@@ -2181,10 +2181,10 @@ export class AgentRunners {
           trigger,
           delivery.current,
           (key, prompt) =>
-            standalone(
-              lifetime,
-              (signal) => (woke(), runOnce({ delivery, key, signal, prompt })),
-            ),
+            standalone(lifetime, (signal) => {
+              woke();
+              return runOnce({ delivery, key, signal, prompt });
+            }),
           type.title,
         ),
       );

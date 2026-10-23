@@ -1288,3 +1288,68 @@ it("keeps a queued Goose prompt in its admitted scope after settings change", as
     f.runtime.dispose();
   }
 });
+
+it("notifies subscribers when the final Goose posting policy settles", async () => {
+  const f = setup({ hold: true, scope: "channel" });
+  const agent = {
+    ...f.agent,
+    config: { ...DEFAULT_CONFIG, scope: "channel" },
+  } as unknown as Agent;
+  const place = { channelId: channel };
+  const states: string[] = [];
+  const unsubscribe = f.runtime.subscribe(() => {
+    states.push(f.runtime.sessionState(agent, place));
+  });
+  try {
+    await f.deliver(message("1", "threaded work"));
+    await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+    expect(states.at(-1)).toBe("active");
+    f.goose()?.turns[0]?.finish();
+    await vi.waitFor(() =>
+      expect(f.runtime.sessionState(agent, place)).toBe("idle"),
+    );
+    expect(states.at(-1)).toBe("idle");
+  } finally {
+    unsubscribe();
+    f.runtime.dispose();
+  }
+});
+
+it("keeps an accepted policy wait after its handover deadline and reconfiguration", async () => {
+  const f = setup({ hold: true, scope: "channel" });
+  const handover = new AbortController();
+  const workingUntil = vi.fn<Delivery["workingUntil"]>();
+  try {
+    await f.deliver(message("1", "threaded work"));
+    await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+    await f.run(
+      { ...pluginWake(), topLevel: true },
+      {
+        signal: handover.signal,
+        workingUntil,
+      },
+    );
+    handover.abort(new Error("Handover expired"));
+    f.runtime.sync([
+      {
+        ...f.agent,
+        config: {
+          ...DEFAULT_CONFIG,
+          scope: "channel",
+          instructions: "Updated instructions",
+        },
+      } as unknown as Agent,
+    ]);
+    f.goose()?.turns[0]?.finish();
+    await vi.waitFor(() =>
+      expect(f.fake.geese.flatMap((p) => p.turns)).toHaveLength(2),
+    );
+    f.fake.geese.flatMap((p) => p.turns)[1]?.finish();
+    await workingUntil.mock.calls[0]?.[0];
+    expect(JSON.stringify(f.published)).not.toContain(
+      "goose did not start in time",
+    );
+  } finally {
+    f.runtime.dispose();
+  }
+});

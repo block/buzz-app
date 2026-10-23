@@ -440,7 +440,7 @@ export class GooseRuntime {
             title: sessionTitle(entry.name, place, key.split("/")[1]),
             // A Solo chat takes the name goose gives its first session.
             ...(solo && named ? { named } : {}),
-            ...(!deferred ? { signal } : {}),
+            ...(!deferred && !wait ? { signal } : {}),
             ...(model ? { model } : {}),
             activityScope: topLevel
               ? channel
@@ -464,7 +464,9 @@ export class GooseRuntime {
         };
         entry.policies.set(key, policy);
         void policy.settled.then(() => {
-          if (entry.policies.get(key) === policy) entry.policies.delete(key);
+          if (entry.policies.get(key) !== policy) return;
+          entry.policies.delete(key);
+          this.notify();
         });
         if (!wait) await handed;
         workingUntil(done);

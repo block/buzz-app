@@ -660,13 +660,16 @@ export type RemoteAgentType = Readonly<{
   provision(
     input: Readonly<{
       name: string;
+      /** An HTTPS image URL. */
+      picture?: string;
       community: string;
       config?: unknown;
       signal: AbortSignal;
     }>,
   ): Promise<Readonly<{ pubkey: string }>>;
   /** Hands over the owner's attestation (NIP-OA), which the agent attaches to
-   * what it signs. The provider publishes its profile and starts it. */
+   * what it signs. The provider publishes its profile with the name and
+   * picture it was made with, and starts it. */
   activate(
     input: Readonly<{
       pubkey: string;
@@ -1985,6 +1988,7 @@ export class AgentsService extends Service implements Agents {
     const community = wssOf(binding.origin);
     const { pubkey } = await remote.provision({
       name,
+      ...(picture ? { picture } : {}),
       community,
       ...(config !== undefined ? { config } : {}),
       signal: binding.controller.signal,
@@ -2050,19 +2054,6 @@ export class AgentsService extends Service implements Agents {
     );
     const agent = this.find(pubkey);
     if (!agent) throw new Error("The agent was set up in another community");
-    // Listed with its picture either way; its own profile is the provider's.
-    if (picture)
-      await remote
-        .profile({
-          pubkey,
-          community: setup.relay,
-          name: setup.name,
-          picture,
-          signal,
-        })
-        .catch((error: unknown) =>
-          console.warn(`Agent ${setup.name} picture was not published`, error),
-        );
     return agent;
   }
 

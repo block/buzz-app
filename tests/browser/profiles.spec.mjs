@@ -864,6 +864,7 @@ test("profile preview fits enlarged text and stops its status with reduced motio
   await avatar.press("Tab");
   await page.keyboard.press("Tab");
   await expect(profileAction).toBeFocused();
+  await expect(profileAction).toBeInViewport({ ratio: 1 });
   await profileAction.click();
   await expect(
     page.getByRole("complementary", { name: "Profile", exact: true }),

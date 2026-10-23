@@ -7,6 +7,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Host } from "../../../features/host/service";
 import { createAgentClient } from "../agents/client";
 import { createOAuthSession } from "../oauth/session";
+import type { Credential } from "../oauth/browser";
 import { deferred } from "../test-helpers";
 import { createCreationFields, EMPTY_CREATION } from "./Create";
 
@@ -152,4 +153,45 @@ it("waits for explicit sign-in before loading the creation catalog", async () =>
     .click(screen.getByRole("button", { name: "Sign in with Builderlab" }));
   await screen.findByRole("combobox", { name: "Model" });
   expect(h.acquire).toHaveBeenCalledTimes(1);
+});
+
+it("can cancel a pending shared sign-in even while the creation form is disabled", async () => {
+  const login = deferred<Credential>();
+  let aborted = false;
+  const session = createOAuthSession((signal) => {
+    signal.addEventListener("abort", () => (aborted = true));
+    return login.promise;
+  });
+  const request = vi.fn<Host["request"]>();
+  const client = createAgentClient(
+    { request, runCommand: vi.fn() },
+    session,
+    null,
+  );
+  const Create = createCreationFields(client, session);
+  render(
+    <Create config={{ ...EMPTY_CREATION }} disabled onChange={() => {}} />,
+    { wrapper: StrictMode },
+  );
+  expect(
+    screen.queryByRole("button", { name: "Cancel sign-in" }),
+  ).not.toBeInTheDocument();
+  await act(async () => {
+    void session.signIn();
+  });
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Finish sign-in in your browser",
+  );
+  const cancel = screen.getByRole("button", { name: "Cancel sign-in" });
+  expect(cancel).toBeEnabled();
+  await userEvent.setup().click(cancel);
+  expect(aborted).toBe(true);
+  expect(session.snapshot().status).toBe("signed-out");
+  expect(
+    screen.queryByRole("button", { name: "Cancel sign-in" }),
+  ).not.toBeInTheDocument();
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Sign in to choose a model",
+  );
+  expect(request).not.toHaveBeenCalled();
 });

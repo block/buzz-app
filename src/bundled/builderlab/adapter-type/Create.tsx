@@ -91,10 +91,15 @@ export function createCreationFields(
               </p>
             )}
             <Button
-              disabled={disabled || login.status === "pending"}
-              onClick={() => void session.signIn()}
+              disabled={disabled && login.status !== "pending"}
+              onClick={() => {
+                if (login.status === "pending") session.cancel();
+                else void session.signIn();
+              }}
             >
-              Sign in with Builderlab
+              {login.status === "pending"
+                ? "Cancel sign-in"
+                : "Sign in with Builderlab"}
             </Button>
           </div>
         ) : models?.length ? (

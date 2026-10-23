@@ -337,7 +337,7 @@ it("keeps source completion across reload and clears it when a source is edited"
 });
 
 it.each(["monitor/command", "buzz.agents/command", "buzz.agents/github-pr"])(
-  "moves legacy provider %s into Attention without restarting completed registrations",
+  "preserves provider %s and its completion without plugin-specific migration",
   async (provider) => {
     const storage = memoryStorage();
     const saved = setAttention(
@@ -366,7 +366,7 @@ it.each(["monitor/command", "buzz.agents/command", "buzz.agents/github-pr"])(
     });
     const read = readRecords(storage)[pubkey];
     expect(read?.attention["watch/check"]?.value).toMatchObject({
-      provider: "attention/github-pr",
+      provider,
     });
     expect(read?.sourceRuns?.["watch/check"]).toBe(
       JSON.stringify(read?.attention["watch/check"]),

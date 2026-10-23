@@ -145,24 +145,7 @@ function readRecord(
   const entries = Object.entries(record.attention ?? {}).sort(([a], [b]) =>
     a < b ? -1 : a > b ? 1 : 0,
   );
-  for (const [slug, saved] of entries) {
-    const object =
-      saved?.value?.type === "source" &&
-      [
-        "monitor/command",
-        "buzz.agents/command",
-        "buzz.agents/github-pr",
-      ].includes(saved.value.provider)
-        ? {
-            ...saved,
-            value: {
-              ...saved.value,
-              provider: saved.value.config?.pr
-                ? "attention/github-pr"
-                : "attention/command",
-            },
-          }
-        : saved;
+  for (const [slug, object] of entries) {
     const modifiedAt = Number.isSafeInteger(object?.modifiedAt)
       ? object.modifiedAt
       : 0;

@@ -2549,6 +2549,67 @@ it("validates creation inputs and reports hosts without agent creation", async (
   expect(client.createAgent).not.toHaveBeenCalled();
 });
 
+it("hands off to the agent in another of its conversations it can see", async () => {
+  const solo = event({
+    kind: 39000,
+    tags: [
+      ["d", "solo"],
+      ["t", "stream"],
+      ["t", "buzz.solo"],
+    ],
+  });
+  const reply = event({
+    id: nested,
+    tags: [
+      ["h", "chan"],
+      ["e", root, "", "reply"],
+    ],
+  });
+  const other = "3".repeat(64);
+  const inSolo = event({ id: "4".repeat(64), tags: [["h", "solo"]] });
+  const { client } = fake([
+    event({ kind: 39000, tags: [["d", "chan"]] }),
+    solo,
+    event({ id: root }),
+    reply,
+    event({ id: other, tags: [["h", "elsewhere"]] }),
+    inSolo,
+  ]);
+  const wake = (context: object, args: object) =>
+    callTool(client, context, "self_handoff", { text: "carry on", ...args });
+  await expect(wake({}, { channel: "chan" })).rejects.toThrow("unavailable");
+  client.wake = vi.fn();
+  await expect(wake({}, { channel: "nope" })).rejects.toThrow(
+    "No channel nope",
+  );
+  await expect(
+    wake({}, { channel: "chan", thread: "9".repeat(64) }),
+  ).rejects.toThrow("No message");
+  await expect(wake({}, { channel: "chan", thread: other })).rejects.toThrow(
+    `${other} is not in chan.`,
+  );
+  await expect(wake({}, { channel: "chan" })).rejects.toThrow(
+    "thread is required outside a Solo chat.",
+  );
+  await expect(
+    wake({ channel: "chan", root }, { channel: "chan", thread: nested }),
+  ).rejects.toThrow("That is this conversation.");
+  // A Solo chat is one conversation, whatever thread is named.
+  await expect(
+    wake({ channel: "solo" }, { channel: "solo", thread: inSolo.id }),
+  ).rejects.toThrow("That is this conversation.");
+  await expect(
+    callTool(client, {}, "self_handoff", { channel: "chan", thread: root }),
+  ).rejects.toThrow("text is required.");
+  expect(client.wake).not.toHaveBeenCalled();
+  // Any message of the thread names its root.
+  await wake({ channel: "solo" }, { channel: "chan", thread: nested });
+  await wake({ channel: "chan", root }, { channel: "solo" });
+  expect(vi.mocked(client.wake).mock.calls).toEqual([
+    [{ channel: "chan", root, text: "carry on" }],
+    [{ channel: "solo", text: "carry on" }],
+  ]);
+});
 it("validates change drafts and passes only the proposed fields", async () => {
   const { client } = fake([]);
   await expect(

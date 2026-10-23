@@ -22,6 +22,8 @@ const READERS = 8;
 const LIST_SLACK_MINUTES = 2;
 /** Files one search names, under the app's 256 process arguments. */
 const SEARCH_FILES = 200;
+/** Searches run at once. */
+const SEARCHES = 8;
 
 const object = (value: unknown): Json | undefined =>
   value !== null && typeof value === "object" && !Array.isArray(value)
@@ -365,23 +367,27 @@ async function refresh(spawn: Spawn, project: string, state: Project) {
       state.owners.delete(name);
       state.unowned.delete(name);
     }
-  if (first) {
-    await search(spawn, project, state, ["."]);
-    for (const name of sessions)
-      if (!state.owners.has(name)) state.unowned.add(name);
-  } else {
-    // A file still being written may not have its first prompt yet.
-    const unsearched = sessions.filter(
-      (name) =>
-        !state.owners.has(name) &&
-        (!state.unowned.has(name) || recent.has(name)),
-    );
-    for (let at = 0; at < unsearched.length; at += SEARCH_FILES) {
-      const batch = unsearched.slice(at, at + SEARCH_FILES);
+  // A file still being written may not have its first prompt yet.
+  const unsearched = sessions.filter(
+    (name) =>
+      !state.owners.has(name) && (!state.unowned.has(name) || recent.has(name)),
+  );
+  // In parallel: one search takes a core, and the first reads every file.
+  const size = Math.max(
+    1,
+    Math.min(SEARCH_FILES, Math.ceil(unsearched.length / SEARCHES)),
+  );
+  const batches = Array.from(
+    { length: Math.ceil(unsearched.length / size) },
+    (_, index) => unsearched.slice(index * size, (index + 1) * size),
+  );
+  const searcher = async () => {
+    for (let batch = batches.shift(); batch; batch = batches.shift()) {
       const owners = await search(spawn, project, state, batch);
       for (const name of batch) if (!owners.has(name)) state.unowned.add(name);
     }
-  }
+  };
+  await Promise.all(Array.from({ length: SEARCHES }, searcher));
   state.paths = paths;
   state.subagents = subagents;
   state.listedAt = startedAt;

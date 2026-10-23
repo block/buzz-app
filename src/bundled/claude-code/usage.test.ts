@@ -352,6 +352,7 @@ it("reads again only the files changed since the last read", async () => {
 it("fails rather than undercount when a search fails partway", async () => {
   const spawn = async (id: string, options: HostProcessOptions = {}) => {
     if (id === "workspace") options.onStdout?.("/Users/me/.buzz\n");
+    if (id === "list") options.onStdout?.("./s.jsonl\n");
     if (id === "owners") {
       options.onStdout?.(`./s.jsonl:Agent: ${agent}\n`);
       options.onStderr?.("grep: ./t.jsonl: Permission denied\n");

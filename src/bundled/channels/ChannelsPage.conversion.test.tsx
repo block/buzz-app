@@ -176,7 +176,13 @@ function fixture() {
       <ToastProvider>
         <ChannelsPage
           relay={relay}
-          panels={{ ...contribution, register() {}, resolve: () => undefined }}
+          panels={{
+            ...contribution,
+            register() {},
+            resolve: () => undefined,
+            requestOpen: () => false,
+            handleOpenRequests: () => () => {},
+          }}
           navigation={navigation}
         />
       </ToastProvider>
@@ -219,7 +225,7 @@ it("Messages conversion survives signed type replacement, announces completion a
       await t.confirmed;
     });
     expect(
-      screen.getByRole("button", { name: "Access", hidden: true }),
+      screen.getByRole("button", { name: "Manage members", hidden: true }),
     ).toBeInTheDocument();
     expect(
       t.session.channels.list().channels.find((channel) => channel.id === id)

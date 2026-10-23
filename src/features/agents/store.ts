@@ -454,6 +454,8 @@ export type Unfinished = Readonly<{
   owner: string;
   /** The HTTPS image URL it was made with, listed once it is set up. */
   picture?: string;
+  /** Provider-owned creation settings, retained only until setup succeeds. */
+  config?: unknown;
 }>;
 export const UNFINISHED_KEY = "buzz.agents.unfinished.v1";
 
@@ -486,6 +488,7 @@ export function readUnfinished(storage: AgentStore): readonly Unfinished[] {
             ...(typeof agent.picture === "string"
               ? { picture: agent.picture }
               : {}),
+            ...(agent.config !== undefined ? { config: agent.config } : {}),
           },
         ]
       : [],

@@ -176,7 +176,7 @@ Event watch: it sees only channels you are a member of, and "all" means all of t
 
 Classifier, for noisy event watches: Jev tests relevance after the normal filters. It sees one event, not history, and has no tools. Use named yes/no questions, for example {"questions":{"release_blocked":{"question":"Does the event say the release cannot proceed until something is fixed?","true":"It reports a release blocker, in any form: a question, an instruction or a status report.","false":"Routine release progress, or a problem that does not stop the release."}}}. Write questions for the facts the Interest needs, not for message types, and accept any phrasing of those facts. Ask one thing per question. The event passes when any question says yes, and each added question can add extra passes, so keep them few. For "A but not B", write one question that says so. Optional per question: true and false descriptions, guidance for examples and exclusions, and threshold (default 0.2; lower passes more). Change a threshold only when eval cases support it. Keep actions in the Interest. Pass uncertain cases. Errors pass events through. Every answer says classifier: available or unavailable. Classifiers can be saved either way and run once one is available; until then a classified watch's events pass unchecked, and the turn they start says so in a <watch-classifier> block.
 
-All subscription types share delivery: channel and optional root continue that conversation; omit both for an independent turn with the Interest instructions. A root requires a channel. Source providers are supplied by plugins and own their configuration. Empty output starts no agent turn. Attention off or watch_disable cancels execution and queued output; watch_enable restarts a completed source.
+All subscription types share delivery: channel and optional root continue that conversation; omit both for an independent turn with the Interest instructions. A root requires a channel. Source providers are supplied by plugins and own their configuration. Empty output starts no agent turn. Attention off or watch_disable cancels execution and queued output; watch_enable restarts a completed source. The address selects the execution conversation and default posting destination; explicit reporting instructions in the Interest take precedence. It grants no additional permission.
 
 Timer: its interval is at least 60 seconds, and it runs once by default. max_occurrences (a count, or "unbounded") and expires_at (Unix seconds, or "unbounded") control the budget; remaining budget schedules the next interval automatically. The final allowed wake says it is the last.
 
@@ -259,7 +259,7 @@ ${WRITES}`,
   ),
   tool(
     "watch_show",
-    "One watch and its expected_state; for a timer, its used occurrences, next_due and status.",
+    "One watch and its expected_state; for a timer, its used occurrences, next_due and status. An addressed watch also reports held or blocked delivery when destination membership is unconfirmed or absent.",
     { id, interest: scope },
     ["id"],
   ),
@@ -428,9 +428,7 @@ async function run(
         if (value.type === "timer" && !value.enabled && fields.enabled === true)
           refuse("use watch_rearm to turn a timer on");
         const next: Record<string, unknown> = { ...value, ...fields };
-        for (const key of clear) {
-          delete next[String(key)];
-        }
+        for (const key of clear) delete next[String(key)];
         return next;
       });
     case "watch_enable":

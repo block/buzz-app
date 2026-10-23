@@ -300,6 +300,7 @@ export class GooseRuntime {
     channelId,
     team,
     model,
+    effort,
     workingUntil,
     current,
     wakeText,
@@ -312,11 +313,15 @@ export class GooseRuntime {
     named,
   }: Delivery) {
     const settings = config(raw);
-    // Watches and timers come as standalone turns (`runOnce`).
-    if (trigger.type !== "mention" && trigger.type !== "plugin")
+    // Unaddressed watches and timers come as standalone turns (`runOnce`).
+    if (
+      trigger.type !== "mention" &&
+      trigger.type !== "attention" &&
+      trigger.type !== "plugin"
+    )
       return ignored?.();
     // A plugin's wake is the owner's installed code, not a message to check.
-    const wake = trigger.type === "plugin" ? trigger : undefined;
+    const wake = trigger.type !== "mention" ? trigger : undefined;
     const resumed = trigger.type === "mention" && !!trigger.resumed;
     // goose runs commands as you; mentions need owner or delegated authority.
     if (trigger.type === "mention") {
@@ -343,7 +348,7 @@ export class GooseRuntime {
     entry.handle = agent;
     entry.team = team ?? "";
     const event =
-      trigger.type === "plugin" ? wakeAnchor(trigger) : trigger.event;
+      trigger.type !== "mention" ? wakeAnchor(trigger) : trigger.event;
     const channel =
       channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1] ?? undefined;
     if (!channel) return;
@@ -374,6 +379,7 @@ export class GooseRuntime {
         ...turn,
         agent: agent.pubkey,
         label: "@mention",
+        channelLevel: topLevel && !solo,
         ...(wake
           ? { wake: { ...wake, text: (await wakeText?.()) ?? wake.text } }
           : {}),
@@ -430,13 +436,25 @@ export class GooseRuntime {
           entry.contexts.set(
             key,
             topLevel
-              ? { channel, topLevel }
+              ? { channel, ...(solo ? { topLevel } : {}) }
               : key === channel
                 ? { channel }
                 : { channel, root: threadReference(event)?.rootId ?? event.id },
           );
           delivered = entry.sessions.deliver(key, text, shown, {
-            ...(wake ? { current } : {}),
+            ...(wake
+              ? {
+                  current,
+                  refresh: async (fresh = false) => {
+                    const text = this.review(
+                      entry,
+                      (await prompt(fresh, key)).text,
+                      notes,
+                    );
+                    return text;
+                  },
+                }
+              : {}),
             steer: steerPrompt(text),
             fresh: async () =>
               this.review(entry, (await prompt(true, key)).text, notes),
@@ -445,6 +463,7 @@ export class GooseRuntime {
             ...(solo && named ? { named } : {}),
             ...(!deferred && !wait ? { signal } : {}),
             ...(model ? { model } : {}),
+            ...(effort ? { effort } : {}),
             activityScope: topLevel
               ? channel
               : (threadReference(event)?.rootId ?? event.id),
@@ -640,7 +659,7 @@ export class GooseRuntime {
         const events = await session.read(
           threadRead
             ? [
-                { ids: [rootId], limit: 1 },
+                { ids: [rootId], "#h": [channelId], limit: 1 },
                 { kinds: CHAT, "#h": [channelId], "#e": [rootId], limit: 200 },
               ]
             : [{ kinds: CHAT, "#h": [channelId], limit: CONTEXT_LIMIT + 1 }],
@@ -650,6 +669,9 @@ export class GooseRuntime {
           .filter(
             (item) =>
               CHAT.includes(item.kind) &&
+              item.tags.some(
+                ([key, value]) => key === "h" && value === channelId,
+              ) &&
               item.id !== event.id &&
               (resumed || item.created_at <= event.created_at),
           )
@@ -725,8 +747,6 @@ export class GooseRuntime {
         handle &&
         appClient(handle, {
           relayAuthor: this.relay(pubkey)?.snapshot().session.relayAuthor,
-          audienceAuthorityCommunity:
-            this.relay(pubkey)?.snapshot().session.audienceAuthorityCommunity,
           signingAuthority:
             this.relay(pubkey)?.snapshot().session.workflowAuthority,
           read: async (path) =>

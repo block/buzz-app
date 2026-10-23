@@ -127,6 +127,7 @@ import { readInterrupted, writeInterrupted } from "./interrupted";
 import { AttentionSources, type AttentionSource } from "./attention-sources";
 import { type AddedTool, BUZZ_SESSION } from "../../buzz-mcp/session-tools";
 import { nameSoloChat } from "./solo-chat-name";
+import { forgetDefaultAgent } from "../solo/default-agent";
 
 /** Where an agent runs: `here`, with its key on this device; `hosted`, by its
  * type's provider; or `elsewhere`, on another of the owner's devices. Only an
@@ -210,7 +211,7 @@ export type AgentViewProps<Config = unknown> = {
  * picture around it. */
 export type AgentCreateProps<Config = unknown> = {
   /** Model fields may use the compact card treatment in the library. */
-  modelAppearance?: "subtle";
+  modelAppearance?: "glass-ghost";
   config: Config;
   onChange(config: Config): void;
   disabled: boolean;
@@ -310,10 +311,6 @@ export type AgentHandle = Readonly<{
   publish(event: AgentEventTemplate): Promise<RelayEvent>;
   /** Reads the community as the agent, seeing only what it may see. */
   query(filters: readonly object[]): Promise<RelayEvent[]>;
-  audienceAuthority?(
-    destination: string,
-    sources: readonly string[],
-  ): Promise<unknown>;
   /** Finds profiles by `name` or `display_name`, as the agent, best match
    * first. `undefined` when its community has no profile name search. */
   searchProfiles(
@@ -383,26 +380,24 @@ export type CaughtUp = Readonly<{
   event: RelayEvent;
   classifier?: ClassifierOutcome;
 }>;
+/** A local wake delivered in a conversation, never a signed message. */
+export type ConversationWake = Readonly<
+  {
+    channel: string;
+    root?: string;
+    /** Explicit channel-level delivery when no thread is saved. */
+    topLevel?: true;
+    text: string;
+    id: string;
+    at: number;
+  } & ({ type: "plugin"; plugin: string } | { type: "attention" })
+>;
 export type Trigger =
   /** Directly addressed: a chat message that mentions the agent. `resumed`
    * when its turn was working as the app closed or reloaded, which stopped it
    * partway, and the owner chose to resume it (see `AgentType.resumes`). */
   | Readonly<{ type: "mention"; event: RelayEvent; resumed?: true }>
-  /** A plugin woke the agent in a conversation (`Agents.wake`): no relay
-   * event, and not the owner's words. It runs like a mention, in the
-   * conversation's session; `id` and `at` (milliseconds) are this wake's own. */
-  | Readonly<{
-      type: "plugin";
-      plugin: string;
-      channel: string;
-      /** The thread, absent for a channel-level conversation (a Solo chat). */
-      root?: string;
-      /** Attention explicitly addresses the channel when no root is saved. */
-      topLevel?: true;
-      text: string;
-      id: string;
-      at: number;
-    }>
+  | ConversationWake
   /** One matching watch; an event that matches several runs once for each. */
   | Readonly<{
       type: "watch";
@@ -488,7 +483,9 @@ export type Delivery<Config = unknown> = Readonly<{
    * replaced. Advisory: the handle keeps working, so finishing up is harmless. */
   signal: AbortSignal;
   /** Keeps the run counted as working after `run` returns, until `done`
-   * settles, for a type that hands its work off and returns early. */
+   * settles, for a type that hands its work off and returns early. `done`
+   * resolving `{ ok: false, error }` fails the request; `{ ok: true,
+   * stopped: true }` says the owner's Stop ended its turn. */
   workingUntil(done: PromiseLike<unknown>): void;
   /** Optional presentation evidence supplied by the harness, not inferred by the UI. */
   step?(tool: string, target?: string): void;
@@ -675,7 +672,12 @@ export type AgentType<Config = unknown> = {
 export type RemoteAgentType = Readonly<{
   /** Makes the agent and resolves with its pubkey. Not yet its owner's. */
   provision(
-    input: Readonly<{ name: string; community: string; signal: AbortSignal }>,
+    input: Readonly<{
+      name: string;
+      community: string;
+      config?: unknown;
+      signal: AbortSignal;
+    }>,
   ): Promise<Readonly<{ pubkey: string }>>;
   /** Hands over the owner's attestation (NIP-OA), which the agent attaches to
    * what it signs. The provider publishes its profile and starts it. */
@@ -685,6 +687,7 @@ export type RemoteAgentType = Readonly<{
       name: string;
       community: string;
       auth: NipOaAuthorization;
+      config?: unknown;
       signal: AbortSignal;
     }>,
   ): Promise<void>;
@@ -832,7 +835,7 @@ export type NewAgent = Readonly<{
   /** An HTTPS image URL. */
   picture?: string;
   /** Its starting config, from the type's `Create`; else the type's defaults.
-   * A hosted type's settings are its provider's, so it has none here. */
+   * Hosted setup retains it until the provider has applied it. */
   config?: unknown;
 }>;
 export type Agents = {
@@ -1868,7 +1871,30 @@ export class AgentsService extends Service implements Agents {
       const listed = recordPicture(picture);
       if (picture && !listed)
         console.warn(`Agent ${name.trim()} picture is not an HTTPS image URL`);
-      return this.provision(type, remote, name.trim(), listed);
+      const binding = this.selectedBinding();
+      const pending = this.unfinished.find(
+        (setup) =>
+          setup.type === type &&
+          setup.name === name.trim() &&
+          setup.relay === wssOf(binding.origin) &&
+          setup.owner === binding.viewer,
+      );
+      if (pending) {
+        if (config !== undefined || listed)
+          await this.writeUnfinished(
+            this.unfinished.map((setup) =>
+              setup === pending
+                ? {
+                    ...setup,
+                    ...(config !== undefined ? { config } : {}),
+                    ...(listed ? { picture: listed } : {}),
+                  }
+                : setup,
+            ),
+          );
+        return this.finish(pending.pubkey);
+      }
+      return this.provision(type, remote, name.trim(), listed, config);
     }
     return this.add(
       type,
@@ -2085,12 +2111,14 @@ export class AgentsService extends Service implements Agents {
     remote: RemoteAgentType,
     name: string,
     picture: string | undefined,
+    config?: unknown,
   ) {
     const binding = this.selectedBinding();
     const community = wssOf(binding.origin);
     const { pubkey } = await remote.provision({
       name,
       community,
+      ...(config !== undefined ? { config } : {}),
       signal: binding.controller.signal,
     });
     if (typeof pubkey !== "string" || !/^[0-9a-f]{64}$/.test(pubkey))
@@ -2110,6 +2138,7 @@ export class AgentsService extends Service implements Agents {
         relay: community,
         owner: binding.viewer,
         ...(picture ? { picture } : {}),
+        ...(config !== undefined ? { config } : {}),
       },
     ]);
     return this.finish(pubkey);
@@ -2137,6 +2166,7 @@ export class AgentsService extends Service implements Agents {
       name: setup.name,
       community: setup.relay,
       auth,
+      ...(setup.config !== undefined ? { config: setup.config } : {}),
       signal,
     });
     const { picture } = setup;
@@ -2679,6 +2709,7 @@ export class AgentsService extends Service implements Agents {
     await native.forget(pubkey);
     // Drops its settings.
     await this.refresh();
+    await handOnMainAgent(binding.session, pubkey);
   }
 
   async unarchive(pubkey: string): Promise<string | undefined> {
@@ -2715,6 +2746,7 @@ export class AgentsService extends Service implements Agents {
       await this.writeUnfinished(
         this.unfinished.filter((setup) => setup.pubkey !== pubkey),
       );
+      await handOnMainAgent(binding.session, pubkey);
     });
   }
   private async exclusive<T>(pubkey: string, step: () => Promise<T>) {
@@ -3750,6 +3782,13 @@ async function leaveCommunity(
   // there is nothing to hide (and no consent path to archive it with).
   if (state === "not-archived" && (await archives.consent(pubkey, signal)))
     await archives.request("archive", pubkey, signal);
+}
+/** After a finished Delete, rereads the shared agent choices, superseding any
+ * read begun before it, so their inventory no longer offers it; then forgets
+ * it as the main agent so the next available one is saved in its place. */
+async function handOnMainAgent(session: RelaySession, pubkey: string) {
+  await session.agentChoices.refresh(true, { fresh: true });
+  forgetDefaultAgent(pubkey);
 }
 function stillArchived(name: string) {
   return `${name} is still archived in this community, so it stays out of member lists and mentions there.`;

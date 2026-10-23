@@ -45,7 +45,7 @@ const Places = defineDoc({
   scope: "session",
   initial: () => ({}),
 });
-/** A plugin wake's reply destination belongs to its request, independently
+/** An Attention wake's reply destination belongs to its request, independently
  * of the conversation's tool defaults. Recorded before submission for recovery. */
 const Replies = defineDoc({
   kind: "buzz.replies",
@@ -519,7 +519,7 @@ export function serve({
   /** Starts a request in a conversation configured for this turn. One that
    * steers a run working in it, `busy`, changes only what its owner picked,
    * as in Claude. */
-  async function submit(conversation, turn, busy) {
+  async function submit(conversation, turn, busy, refresh) {
     const steers = busy && turn.steer;
     const chosen = await choose(turn);
     const change = steers
@@ -537,6 +537,11 @@ export function serve({
         };
     if (Object.keys(change).length)
       await conversation.configure(change, context);
+    if (refresh) {
+      const prompt = await refresh();
+      if (!prompt) return;
+      turn = { ...turn, ...prompt };
+    }
     const submission = await conversation.submit(
       {
         type: "input",
@@ -685,7 +690,7 @@ export function serve({
     },
     /** A turn for a conversation key: its Pi conversation, made the first
      * time, takes the request, or steers its run if one is working. */
-    async deliver({ agent, key, at, context: tools, reply, ...turn }) {
+    async deliver({ agent, key, at, context: tools, reply, refresh, ...turn }) {
       const opened = await agentOf(agent);
       const prior = opened.queues.get(key);
       const delivered = (async () => {
@@ -717,7 +722,15 @@ export function serve({
           await harness.commit(async (tx) => {
             (await tx.doc(Replies))[turn.request] = reply;
           }, context);
-        const submitted = await submit(conversation, turn, busy);
+        const submitted = await submit(
+          conversation,
+          turn,
+          busy,
+          refresh
+            ? () => call("prompt", { agent, request: turn.request })
+            : undefined,
+        );
+        if (!submitted) return false;
         // Recorded once Pi has the turn: one that could not start leaves the
         // messages it would have been shown for the next.
         await harness.commit(async (tx) => {

@@ -505,6 +505,18 @@ describe("GooseRuntime", () => {
     expect(fake.geese[0]?.configured).toEqual(["session-1 model=o3"]);
   });
 
+  it("runs a mention on the thinking level its owner picked", async () => {
+    const { deliver, fake } = setup();
+    await deliver(message("1", "@Gander think"), {
+      config: { ...DEFAULT_CONFIG, effort: "low" },
+      effort: "high",
+    });
+    await flush(100);
+    expect(fake.geese[0]?.configured).toEqual([
+      "session-1 thinking_effort=high",
+    ]);
+  });
+
   it("keeps goose while another agent runs, and stops it with the last", async () => {
     const { agent, deliver, fake, runtime } = setup();
     const other = { ...agent, pubkey: "d".repeat(64), name: "Drake" };
@@ -777,7 +789,7 @@ it("shows a turn a reload stopped what it already posted, and to carry on", asyn
   await flush(100);
   expect(g.read).toHaveBeenCalledWith(
     [
-      { ids: [mention.id], limit: 1 },
+      { ids: [mention.id], "#h": [channel], limit: 1 },
       { kinds: [9, 40002], "#h": [channel], "#e": [mention.id], limit: 200 },
     ],
     expect.anything(),
@@ -1114,11 +1126,12 @@ it.each(["completed", "stopped"])(
 
 it("delivers a rootless subscription to its channel without publishing its anchor", async () => {
   const f = setup({ hold: true, canvas: "Only Solo chats supply this" });
-  await f.run({ ...pluginWake(), topLevel: true });
+  await f.run({ ...pluginWake(), type: "attention", topLevel: true });
   await flush(100);
   const text = f.goose()?.turns[0]?.text ?? "";
-  expect(text).toContain('<plugin-wake plugin="github">');
-  expect(text).toContain(TOP_LEVEL_PROMPT);
+  expect(text).not.toContain("<plugin-wake");
+  expect(text).not.toContain(TOP_LEVEL_PROMPT);
+  expect(text).toContain("unless the Interest instructions");
   expect(text).not.toContain(WAKE_ID);
   expect(text).not.toContain("Only Solo chats supply this");
   f.goose()?.exit(1, "Error: boom\n");
@@ -1374,4 +1387,98 @@ it("refreshes a queued subscription's instructions when its policy wait ends", a
   } finally {
     f.runtime.dispose();
   }
+});
+
+it("refreshes Attention instructions after Goose startup", async () => {
+  const f = setup({ hold: true });
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  f.core.mockImplementationOnce(async () => {
+    await gate;
+    return undefined;
+  });
+  let instructions = "Old Interest instructions";
+  try {
+    await f.run(
+      { ...pluginWake(), topLevel: true, text: instructions },
+      {
+        wakeText: async () => instructions,
+      },
+    );
+    await vi.waitFor(() => expect(f.core).toHaveBeenCalled());
+    instructions = "Updated Interest instructions";
+    release();
+    await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+    expect(f.goose()?.turns[0]?.text).toContain(instructions);
+    expect(f.goose()?.turns[0]?.text).not.toContain(
+      "Old Interest instructions",
+    );
+    f.goose()?.turns[0]?.finish();
+  } finally {
+    release();
+    f.runtime.dispose();
+  }
+});
+
+it("drops an Attention wake stopped while its final prompt refresh waits", async () => {
+  const f = setup();
+  let release!: () => void;
+  let refreshing!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const started = new Promise<void>((resolve) => {
+    refreshing = resolve;
+  });
+  let builds = 0;
+  const wakeText = async () => {
+    if (++builds === 2) {
+      refreshing();
+      await gate;
+    }
+    return "Attention work";
+  };
+  const interruptible = vi.fn();
+  const workingUntil = vi.fn<Delivery["workingUntil"]>();
+  try {
+    await f.run(
+      { ...pluginWake(), topLevel: true },
+      { wakeText, interruptible, workingUntil },
+    );
+    await started;
+    await vi.waitFor(() => expect(interruptible).toHaveBeenCalled());
+    await interruptible.mock.calls[0]?.[0]();
+    release();
+    await Promise.all(workingUntil.mock.calls.map(([done]) => done));
+    expect(f.fake.geese.flatMap((g) => g.turns)).toEqual([]);
+  } finally {
+    release();
+    f.runtime.dispose();
+  }
+});
+
+it("keeps foreign-channel roots out of conversation context", async () => {
+  const root = message("1", "Private root", {
+    tags: [["h", "another-channel"]],
+  });
+  const mention = message("2", "@Goose look", {
+    tags: [
+      ["h", channel],
+      ["e", root.id, "", "reply"],
+    ],
+  });
+  const f = setup({ thread: [root], hold: true });
+  await f.deliver(mention);
+  await flush(100);
+  expect(f.goose()?.turns[0]?.text).toContain("@Goose look");
+  expect(f.goose()?.turns[0]?.text).not.toContain("Private root");
+  expect(f.read).toHaveBeenCalledWith(
+    [
+      { ids: [root.id], "#h": [channel], limit: 1 },
+      { kinds: [9, 40002], "#h": [channel], "#e": [root.id], limit: 200 },
+    ],
+    expect.anything(),
+  );
 });

@@ -208,6 +208,7 @@ function setup(
     solo,
     core,
     connection,
+    core,
   };
 }
 
@@ -675,8 +676,40 @@ it("stops a mention's run when the owner stops it, and posts nothing", async () 
     agent: self,
     conversation: CONVERSATION,
   });
-  await expect(settled(turn)).resolves.toEqual({ ok: true });
+  await expect(settled(turn)).resolves.toEqual({ ok: true, stopped: true });
   expect(published).toEqual([]);
+});
+
+it("settles a run that finishes despite the owner's stop as done, not stopped", async () => {
+  const answered = deferred<unknown>();
+  const { deliver, settled } = setup({
+    wait: () => answered.promise,
+    abort: () => {
+      answered.resolve({ status: "done", answer: 5, text: "" });
+      return {};
+    },
+  });
+  const interruptible = vi.fn<NonNullable<Delivery["interruptible"]>>();
+  const turn = deliver(
+    { type: "mention", event: reply("2", "@Pi look") },
+    { interruptible },
+  );
+  await turn.run;
+  await interruptible.mock.calls[0]?.[0]();
+  await expect(settled(turn)).resolves.toEqual({ ok: true });
+});
+
+it("settles a removed agent's aborted run as done, not stopped", async () => {
+  const answered = deferred<unknown>();
+  const { runtime, host, deliver, settled } = setup({
+    wait: () => answered.promise,
+  });
+  const turn = deliver({ type: "mention", event: reply("2", "@Pi look") });
+  await turn.run;
+  await vi.waitFor(() => expect(host.requests("wait")).toHaveLength(1));
+  runtime.sync([]);
+  answered.resolve({ status: "unanswered", reason: "aborted" });
+  await expect(settled(turn)).resolves.toEqual({ ok: true });
 });
 
 it("interrupts a run an earlier app left from its thread's session controls", async () => {
@@ -1564,8 +1597,7 @@ it.each([undefined, root.id])(
     });
     try {
       const receipt = deliver({
-        type: "plugin",
-        plugin: "attention",
+        type: "attention",
         channel,
         ...(destinationRoot ? { root: destinationRoot } : { topLevel: true }),
         id: "f".repeat(64),
@@ -1577,11 +1609,10 @@ it.each([undefined, root.id])(
       await expect(settled(receipt)).resolves.toEqual({ ok: true });
       const delivered = host.requests("deliver")[0]?.params;
       expect(delivered?.context).toEqual(
-        destinationRoot
-          ? { channel, root: destinationRoot }
-          : { channel, topLevel: true },
+        destinationRoot ? { channel, root: destinationRoot } : { channel },
       );
-      expect(delivered?.text).toContain('<plugin-wake plugin="attention">');
+      expect(delivered?.text).not.toContain("<plugin-wake");
+      expect(delivered?.text).toContain("CI changed");
       await vi.waitFor(() => expect(published).toHaveLength(1));
       expect(published[0]?.tags.filter((tag) => tag[0] === "e")).toEqual(
         destinationRoot ? [["e", destinationRoot, "", "reply"]] : [],
@@ -1598,8 +1629,7 @@ it("persists a channel-scoped wake's reply thread separately from its tool conte
   try {
     await f.deliver(
       {
-        type: "plugin",
-        plugin: "attention",
+        type: "attention",
         channel,
         root: root.id,
         id: "f".repeat(64),
@@ -1618,32 +1648,37 @@ it("persists a channel-scoped wake's reply thread separately from its tool conte
   }
 });
 
-it("recovers a channel-scoped wake's answer in its saved thread", async () => {
-  const f = setup({
-    unfinished: () => ({
-      submissions: [
-        {
-          submission: 41,
-          conversation: 5,
-          request: "f".repeat(64),
-          context: { channel },
-          reply: { channel, root: root.id, topLevel: false },
-        },
-      ],
-    }),
-    wait: ({ submission }) =>
-      submission === 41
-        ? { status: "done", answer: 9, text: "Recovered wake" }
-        : new Promise(() => {}),
-  });
-  try {
-    await f.deliver({ type: "mention", event: reply("2", "@Pi hi") }).run;
-    await vi.waitFor(() => expect(f.published).toHaveLength(1));
-    expect(f.published[0]?.tags).toContainEqual(["e", root.id, "", "reply"]);
-  } finally {
-    f.runtime.dispose();
-  }
-});
+it.each([false, true])(
+  "recovers a wake at its saved destination (channel-level: %s)",
+  async (topLevel) => {
+    const f = setup({
+      unfinished: () => ({
+        submissions: [
+          {
+            submission: 41,
+            conversation: 5,
+            request: "f".repeat(64),
+            context: { channel },
+            reply: { channel, root: root.id, topLevel },
+          },
+        ],
+      }),
+      wait: ({ submission }) =>
+        submission === 41
+          ? { status: "done", answer: 9, text: "Recovered wake" }
+          : new Promise(() => {}),
+    });
+    try {
+      await f.deliver({ type: "mention", event: reply("2", "@Pi hi") }).run;
+      await vi.waitFor(() => expect(f.published).toHaveLength(1));
+      expect(f.published[0]?.tags.filter((tag) => tag[0] === "e")).toEqual(
+        topLevel ? [] : [["e", root.id, "", "reply"]],
+      );
+    } finally {
+      f.runtime.dispose();
+    }
+  },
+);
 
 it("starts no standalone source turn invalidated during core-memory loading", async () => {
   const f = setup({
@@ -1699,8 +1734,7 @@ it("keeps mention activity when a watch joins without presentation callbacks", a
     await vi.waitFor(() => expect(mention.acknowledged).toHaveBeenCalled());
     const watch = f.deliver(
       {
-        type: "plugin",
-        plugin: "attention",
+        type: "attention",
         channel,
         root: root.id,
         id: "f".repeat(64),
@@ -1754,8 +1788,7 @@ it("waits for a recovered threaded wake before changing the shared conversation 
   try {
     const next = f.deliver(
       {
-        type: "plugin",
-        plugin: "attention",
+        type: "attention",
         channel,
         topLevel: true,
         id: "f".repeat(64),
@@ -1791,8 +1824,7 @@ it("does not retry a subscription cancelled while Pi reopens", async () => {
   });
   const turn = f.deliver(
     {
-      type: "plugin",
-      plugin: "example",
+      type: "attention",
       channel,
       root: root.id,
       id: "f".repeat(64),
@@ -1813,4 +1845,130 @@ it("does not retry a subscription cancelled while Pi reopens", async () => {
     reopening.resolve({});
     f.runtime.dispose();
   }
+});
+
+it("ignores unrelated plugin wakes", async () => {
+  const f = setup();
+  try {
+    const receipt = f.deliver({
+      type: "plugin",
+      plugin: "github",
+      channel,
+      root: root.id,
+      id: "f".repeat(64),
+      at: 200_000,
+      text: "Untrusted PR comment",
+    });
+    await receipt.run;
+    expect(receipt.ignored).toHaveBeenCalledOnce();
+    expect(f.host.requests("deliver")).toEqual([]);
+  } finally {
+    f.runtime.dispose();
+  }
+});
+
+it("refreshes Attention instructions after model preparation", async () => {
+  const memory = deferred<string | null>();
+  const f = setup();
+  let instructions = "Old Interest instructions";
+  const wakeText = vi.fn(async () => instructions);
+  f.core.mockImplementationOnce(() => memory.promise);
+  try {
+    const receipt = f.deliver(
+      {
+        type: "attention",
+        channel,
+        root: root.id,
+        id: "f".repeat(64),
+        at: 200_000,
+        text: instructions,
+      },
+      { wakeText },
+    );
+    await vi.waitFor(() => expect(f.core).toHaveBeenCalled());
+    instructions = "Updated Interest instructions";
+    memory.resolve(null);
+    await receipt.run;
+    expect(f.host.requests("deliver")[0]?.params.text).toContain(instructions);
+    expect(f.host.requests("deliver")[0]?.params.text).not.toContain(
+      "Old Interest instructions",
+    );
+  } finally {
+    memory.resolve(null);
+    f.runtime.dispose();
+  }
+});
+
+it.each([true, false])(
+  "refreshes or drops an Attention wake after the host queue (current: %s)",
+  async (valid) => {
+    const queued = deferred<void>();
+    let instructions = "Old Interest instructions";
+    let current = true;
+    let refreshed: unknown;
+    const f = setup({
+      deliver: async (params, process) => {
+        await queued.promise;
+        if (params.refresh) {
+          const answer = await process.tool(
+            { agent: self, request: params.request },
+            "prompt",
+          );
+          refreshed = answer.result;
+          if (!answer.result) return false;
+        }
+        return { submission: 1, conversation: CONVERSATION };
+      },
+    });
+    try {
+      const receipt = f.deliver(
+        {
+          type: "attention",
+          channel,
+          root: root.id,
+          id: "f".repeat(64),
+          at: 200_000,
+          text: instructions,
+        },
+        { wakeText: async () => instructions, current: () => current },
+      );
+      await vi.waitFor(() =>
+        expect(f.host.requests("deliver")).toHaveLength(1),
+      );
+      instructions = "Updated Interest instructions";
+      current = valid;
+      queued.resolve();
+      await receipt.run;
+      if (valid) {
+        expect(refreshed).toMatchObject({
+          text: expect.stringContaining(instructions),
+          steer: expect.stringContaining(instructions),
+        });
+        expect(JSON.stringify(refreshed)).not.toContain(
+          "Old Interest instructions",
+        );
+      } else {
+        expect(refreshed).toBe(false);
+        await expect(f.settled(receipt)).resolves.toEqual({ ok: true });
+        expect(f.published).toEqual([]);
+      }
+    } finally {
+      queued.resolve();
+      f.runtime.dispose();
+    }
+  },
+);
+
+it("keeps foreign-channel roots out of conversation context", async () => {
+  const f = setup();
+  f.session.read.mockResolvedValue([
+    { ...root, tags: [["h", "another-channel"]], content: "Private root" },
+  ]);
+  await f.deliver({ type: "mention", event: reply("2", "@Pi look") }).run;
+  expect(String(f.host.requests("deliver")[0]?.params.text)).toContain(
+    "@Pi look",
+  );
+  expect(String(f.host.requests("deliver")[0]?.params.text)).not.toContain(
+    "Private root",
+  );
 });

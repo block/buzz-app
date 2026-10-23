@@ -45,14 +45,17 @@ const tools = [
   { name: "watch_add", description: "Watch for events", inputSchema: { type: "object" }, load: "search" },
 ];
 const out = {};
-function start() {
+function start(prompt = async () => undefined) {
   const input = new PassThrough(), output = new PassThrough();
   const events = [], tools = [], pending = new Map();
   let id = 0;
   createInterface({ input: output }).on("line", (line) => {
     const message = JSON.parse(line);
     if (message.method === "event") events.push(message.params);
-    else if (message.method === "tool") {
+    else if (message.method === "prompt") {
+      Promise.resolve(prompt(message.params)).then((result) =>
+        input.write(JSON.stringify({ id: message.id, result: result ?? false }) + "\\n"));
+    } else if (message.method === "tool") {
       tools.push(message.params);
       const final = message.params.arguments.final === true;
       input.write(JSON.stringify({ id: message.id, result: { content: [{ type: "text", text: "sent" }], ...(final ? { final } : {}) } }) + "\\n");
@@ -252,6 +255,31 @@ await rm(lock, { recursive: true });
 await pi.rpc("open", { agent, tools });
 out.lostLeft = (await pi.rpc("unfinished", { agent })).submissions.map((item) => item.request);
 await pi.stop();
+// Attention prompts are refreshed after the host queue and configuration.
+const promptAgent = "c".repeat(64);
+const promptStarted = held(), promptQueue = held();
+let instructions = "Old Interest instructions";
+const promptCalls = [];
+pi = start(async ({ request }) => {
+  promptCalls.push(request);
+  if (request === "R1") { promptStarted.release(); await promptQueue.gate; }
+  return request === "R3" ? undefined : { text: instructions, steer: instructions };
+});
+await pi.rpc("open", { agent: promptAgent, tools });
+faux.setResponses([fauxAssistantMessage("Refreshed"), fauxAssistantMessage("Refreshed")]);
+const refreshing = (request, at = 200) => ({ ...turn(request, "Old Interest instructions"), agent: promptAgent, key: "refresh", refresh: true, at });
+const r1 = pi.rpc("deliver", refreshing("R1"));
+await promptStarted.gate;
+const r2 = pi.rpc("deliver", refreshing("R2"));
+await pi.rpc("place", { agent: promptAgent, key: "refresh" });
+instructions = "Updated Interest instructions";
+promptQueue.release();
+const submitted = await Promise.all([r1, r2]);
+await Promise.all(submitted.map(({ submission }) => pi.rpc("wait", { agent: promptAgent, submission })));
+out.refresh = { calls: promptCalls, entries: JSON.stringify((await pi.rpc("entries", { agent: promptAgent, conversation: submitted[0].conversation })).entries) };
+out.refresh.dropped = await pi.rpc("deliver", refreshing("R3", 999));
+out.refresh.seen = (await pi.rpc("place", { agent: promptAgent, key: "refresh" })).seen;
+await pi.stop();
 // Pi's auth.json: a change that returns nothing, as pi-ai's refresh does when
 // another process refreshed first, keeps the sign-in.
 const auth = new AuthFile(data + "/auth.json");
@@ -450,6 +478,11 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
     expect(out.lost).toEqual({ status: "closed" });
     expect(out.lostDeliver).toBe("The agent is not open");
     expect(out.lostLeft).toEqual(["K"]);
+    expect(out.refresh.calls).toEqual(["R1", "R2", "R3"]);
+    expect(out.refresh.entries).toContain("Updated Interest instructions");
+    expect(out.refresh.entries).not.toContain("Old Interest instructions");
+    expect(out.refresh.seen).toBe(200);
+    expect(out.refresh.dropped).toBe(false);
     const signIn = { type: "oauth", access: "a", refresh: "r", expires: 1 };
     expect(out.auth).toEqual({ result: signIn, stored: signIn });
     expect(out.command).toMatch(

@@ -126,6 +126,8 @@ type Receipt = Pick<Delivery, "step" | "acknowledged" | "superseded"> & {
   where: Where;
   /** A recovered turn holds its posting policy until its answer settles. */
   settled?: Promise<void>;
+  /** An Attention prompt rebuilt when the host is ready to submit. */
+  prompt?: () => Promise<{ text: string; steer: string } | undefined>;
   /** Where Pi placed it in a run: its conversation, its entry there, and the
    * conversation's `send` calls then. */
   placed?: Readonly<{ conversation: number; entry: number; sends: number }>;
@@ -208,6 +210,9 @@ export class PiRuntime {
     this.pi = new Pi(() => this.spawn, {
       tool: (call) => this.tool(call),
       event: (event) => this.event(event),
+      prompt: ({ agent, request }) =>
+        this.agents.get(agent)?.receipts.get(request)?.prompt?.() ??
+        Promise.resolve(undefined),
     });
     this.setup = new PiSetup(this.pi);
   }
@@ -420,10 +425,10 @@ export class PiRuntime {
     superseded,
     interruptible,
   }: Delivery) {
-    // Watches and timers come as standalone turns (`runOnce`).
-    if (trigger.type !== "mention" && trigger.type !== "plugin")
+    // Unaddressed watches and timers come as standalone turns (`runOnce`).
+    if (trigger.type !== "mention" && trigger.type !== "attention")
       return ignored?.();
-    const wake = trigger.type === "plugin" ? trigger : undefined;
+    const wake = trigger.type !== "mention" ? trigger : undefined;
     // Pi runs commands as you; mentions need owner or delegated authority.
     if (
       trigger.type === "mention" &&
@@ -439,7 +444,7 @@ export class PiRuntime {
     entry.handle = agent;
     entry.team = team ?? "";
     const event =
-      trigger.type === "plugin" ? wakeAnchor(trigger) : trigger.event;
+      trigger.type !== "mention" ? wakeAnchor(trigger) : trigger.event;
     const channel = channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1];
     if (!channel) return;
     const solo =
@@ -462,7 +467,10 @@ export class PiRuntime {
     const same = prior?.topLevel === topLevel;
     const wait = prior && (same ? prior.handed : prior.settled);
     const request = event.id;
-    let submitted: { submission: number; conversation: number } | undefined;
+    let submitted:
+      | { submission: number; conversation: number }
+      | false
+      | undefined;
     let sends = 0;
     // A delivery during a session action waits for it, past its handover.
     const control = `${agent.pubkey}/${key}`;
@@ -487,29 +495,31 @@ export class PiRuntime {
         agent: agent.pubkey,
         key,
       });
-      const text = this.review(
-        entry,
-        turnPrompt({
-          ...(await this.turn(
-            agent.pubkey,
-            event,
-            channel,
-            key,
-            topLevel,
-            seen,
-            solo,
-          )),
-          agent: agent.pubkey,
-          label: "@mention",
-          ...(wake
-            ? { wake: { ...wake, text: (await wakeText?.()) ?? wake.text } }
-            : {}),
-        }),
-      );
+      const prompt = async () =>
+        this.review(
+          entry,
+          turnPrompt({
+            ...(await this.turn(
+              agent.pubkey,
+              event,
+              channel,
+              key,
+              topLevel,
+              seen,
+              solo,
+            )),
+            agent: agent.pubkey,
+            label: "@mention",
+            channelLevel: topLevel && !solo,
+            ...(wake
+              ? { wake: { ...wake, text: (await wakeText?.()) ?? wake.text } }
+              : {}),
+          }),
+        );
       // A conversation's tools default to its thread; a conversation shared
       // by several threads is told which to reply in instead.
       const context: Context = topLevel
-        ? { channel, topLevel }
+        ? { channel, ...(solo ? { topLevel } : {}) }
         : key === channel
           ? { channel }
           : { channel, root };
@@ -518,11 +528,22 @@ export class PiRuntime {
         key,
         scope: topLevel ? channel : root,
         where,
+        ...(wake
+          ? {
+              prompt: async () => {
+                const text = await prompt();
+                return !interrupted && (!current || current())
+                  ? { text, steer: steerPrompt(text) }
+                  : undefined;
+              },
+            }
+          : {}),
         ...(step ? { step } : {}),
         ...(acknowledged ? { acknowledged } : {}),
         ...(superseded ? { superseded } : {}),
       });
       const picked = await this.turnOf(entry, agent.pubkey, model, effort);
+      const text = await prompt();
       this.live(entry, agent.pubkey);
       if (interrupted || (wake && current && !current())) return;
       submitted = await this.deliver(
@@ -536,7 +557,7 @@ export class PiRuntime {
           text,
           steer: steerPrompt(text),
           request,
-          ...(wake ? { reply: where } : {}),
+          ...(wake ? { reply: where, refresh: true } : {}),
           ...picked,
         },
         () => !interrupted && (!wake || !current || current()),
@@ -555,7 +576,7 @@ export class PiRuntime {
     });
     const handed = handoff.done;
     const settled = handed
-      .then(async (): Promise<TurnResult> => {
+      .then(async (): Promise<TurnResult & { stopped?: true }> => {
         // Interrupted before Pi had it, it says nothing.
         if (!submitted) return { ok: true };
         const waited = await this.settle(
@@ -575,8 +596,10 @@ export class PiRuntime {
           return { ok: true };
         }
         // A turn the owner stopped, or a removed agent's, says nothing more.
-        return waited.status === "closed" || waited.reason === "aborted"
-          ? { ok: true }
+        // A run that finished before the stop took effect is done, above.
+        if (waited.status === "closed") return { ok: true };
+        return waited.reason === "aborted"
+          ? { ok: true, stopped: true }
           : { ok: false, error: unanswered(waited) };
       })
       .catch(
@@ -688,9 +711,6 @@ export class PiRuntime {
       entry?.handle &&
       appClient(entry.handle, {
         relayAuthor: this.reads(call.agent)?.relayAuthor?.(),
-        audienceAuthorityCommunity: this.reads(
-          call.agent,
-        )?.audienceAuthorityCommunity?.(),
         signingAuthority: this.reads(call.agent)?.workflowAuthority(),
         read: (path) => this.readFile(path, { cwd: entry.config.workspace }),
         memories: (slug) => this.memories(call.agent, slug),
@@ -802,7 +822,7 @@ export class PiRuntime {
     pubkey: string,
     params: object,
     current: () => boolean,
-  ): Promise<{ submission: number; conversation: number } | undefined> {
+  ): Promise<{ submission: number; conversation: number } | false | undefined> {
     try {
       return await this.pi.request("deliver", params);
     } catch (error) {
@@ -898,7 +918,7 @@ export class PiRuntime {
         key: context.root
           ? `${context.channel}/${context.root}`
           : context.channel,
-        scope: context.topLevel ? context.channel : root,
+        scope: where.topLevel ? context.channel : root,
         where,
       };
       // A delivery of the same request takes it over, and says how it ended.
@@ -1156,7 +1176,7 @@ export class PiRuntime {
         const events = await reads.read(
           thread && !topLevel
             ? [
-                { ids: [rootId], limit: 1 },
+                { ids: [rootId], "#h": [channelId], limit: 1 },
                 { kinds: CHAT, "#h": [channelId], "#e": [rootId], limit: 200 },
               ]
             : [{ kinds: CHAT, "#h": [channelId], limit: CONTEXT_LIMIT + 1 }],
@@ -1166,6 +1186,9 @@ export class PiRuntime {
           .filter(
             (item) =>
               CHAT.includes(item.kind) &&
+              item.tags.some(
+                ([key, value]) => key === "h" && value === channelId,
+              ) &&
               item.id !== event.id &&
               item.created_at <= event.created_at,
           )

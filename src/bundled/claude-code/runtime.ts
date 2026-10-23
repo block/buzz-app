@@ -421,11 +421,15 @@ export class ClaudeRuntime {
     named,
   }: Delivery) {
     const settings = this.resolveConfig(raw);
-    // Watches and timers come as standalone turns (`runOnce`).
-    if (trigger.type !== "mention" && trigger.type !== "plugin")
+    // Unaddressed watches and timers come as standalone turns (`runOnce`).
+    if (
+      trigger.type !== "mention" &&
+      trigger.type !== "attention" &&
+      trigger.type !== "plugin"
+    )
       return ignored?.();
     // A plugin's wake is the owner's installed code, not a message to check.
-    const wake = trigger.type === "plugin" ? trigger : undefined;
+    const wake = trigger.type !== "mention" ? trigger : undefined;
     // Claude runs commands as you; mentions need owner or delegated authority.
     if (
       trigger.type === "mention" &&
@@ -443,7 +447,7 @@ export class ClaudeRuntime {
     entry.handle = agent;
     entry.team = team ?? "";
     const event =
-      trigger.type === "plugin" ? wakeAnchor(trigger) : trigger.event;
+      trigger.type !== "mention" ? wakeAnchor(trigger) : trigger.event;
     const channel =
       channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1] ?? undefined;
     if (!channel) return;
@@ -482,6 +486,7 @@ export class ClaudeRuntime {
             ...turn,
             agent: agent.pubkey,
             label: "@mention",
+            channelLevel: topLevel && !solo,
             ...(wake
               ? { wake: { ...wake, text: (await wakeText?.()) ?? wake.text } }
               : {}),
@@ -526,13 +531,25 @@ export class ClaudeRuntime {
           entry.contexts.set(
             key,
             topLevel
-              ? { channel, topLevel }
+              ? { channel, ...(solo ? { topLevel } : {}) }
               : key === channel
                 ? { channel }
                 : { channel, root: threadReference(event)?.rootId ?? event.id },
           );
           delivered = entry.sessions.deliver(key, text, event.created_at, {
-            ...(wake ? { current } : {}),
+            current: () => !interrupted && (!current || current()),
+            ...(wake
+              ? {
+                  refresh: async (fresh = false) => {
+                    const text = this.review(
+                      entry,
+                      (await prompt(fresh)).text,
+                      notes,
+                    );
+                    return text;
+                  },
+                }
+              : {}),
             steer: steerPrompt(text),
             fresh: async () =>
               this.review(entry, (await prompt(true)).text, notes),
@@ -580,7 +597,10 @@ export class ClaudeRuntime {
         if (!wait) await handed;
         // The turn outlives `run`, which the host is told so it shows it as working.
         workingUntil(done);
-        interruptible?.(() => entry.sessions.interrupt(key));
+        interruptible?.(() => {
+          interrupted = true;
+          return entry.sessions.interrupt(key);
+        });
         this.notify();
         this.watch(done, async (error) => {
           if (error) await this.report(agent, channel, event, error, topLevel);
@@ -756,7 +776,7 @@ export class ClaudeRuntime {
         const events = await reads.read(
           thread && !topLevel
             ? [
-                { ids: [rootId], limit: 1 },
+                { ids: [rootId], "#h": [channelId], limit: 1 },
                 { kinds: CHAT, "#h": [channelId], "#e": [rootId], limit: 200 },
               ]
             : [{ kinds: CHAT, "#h": [channelId], limit: CONTEXT_LIMIT + 1 }],
@@ -766,6 +786,9 @@ export class ClaudeRuntime {
           .filter(
             (item) =>
               CHAT.includes(item.kind) &&
+              item.tags.some(
+                ([key, value]) => key === "h" && value === channelId,
+              ) &&
               item.id !== event.id &&
               item.created_at <= event.created_at,
           )
@@ -837,8 +860,6 @@ export class ClaudeRuntime {
           handle &&
           appClient(handle, {
             relayAuthor: this.reads(pubkey)?.relayAuthor?.(),
-            audienceAuthorityCommunity:
-              this.reads(pubkey)?.audienceAuthorityCommunity?.(),
             signingAuthority: this.reads(pubkey)?.workflowAuthority(),
             read: (path) => readFile(this.spawn, cwd, path),
             memories: (slug) => this.memories(pubkey, slug),

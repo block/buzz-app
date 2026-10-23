@@ -265,6 +265,7 @@ it("keeps an emoji avatar draft after an outside click", async () => {
 });
 
 it("does not create an emoji avatar without an upload community", async () => {
+  Element.prototype.scrollIntoView = vi.fn();
   const { agents, dialog, user } = setup([echo]);
   await user.type(within(dialog).getByLabelText("Name"), "Nova");
   await user.click(
@@ -574,7 +575,9 @@ it("edits instructions directly without a separate editing step", async () => {
   );
 });
 
-it("shows a failed create's error, stays open, and lets it be tried again", async () => {
+it("shows a failed create's error in view, stays open, and lets it be tried again", async () => {
+  const scrollIntoView = vi.fn();
+  Element.prototype.scrollIntoView = scrollIntoView;
   let attempts = 0;
   const { agents, onCreated, onClose, dialog, user } = setup(
     [echo],
@@ -586,9 +589,11 @@ it("shows a failed create's error, stays open, and lets it be tried again", asyn
   await user.type(within(dialog).getByLabelText("Name"), "Nova");
   await user.click(createButton());
 
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Credential store refused",
-  );
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent("Credential store refused");
+  // Below a long form, the error would otherwise be out of sight.
+  expect(scrollIntoView.mock.contexts).toEqual([alert]);
+  expect(scrollIntoView).toHaveBeenCalledWith({ block: "nearest" });
   expect(screen.getByRole("dialog", { name: "Create agent" })).toBeVisible();
   expect(createButton()).toBeEnabled();
   expect(within(dialog).getByLabelText("Name")).toBeEnabled();
@@ -603,6 +608,7 @@ it("shows a failed create's error, stays open, and lets it be tried again", asyn
 });
 
 it("clears a shown error when the name changes", async () => {
+  Element.prototype.scrollIntoView = vi.fn();
   const { dialog, user } = setup([echo], async () => {
     throw new Error("Nope");
   });
@@ -722,4 +728,55 @@ it("submits custom creation instructions and disables editing while saving", asy
     finish(made);
   }
   await waitFor(() => expect(onCreated).toHaveBeenCalledWith(made));
+});
+
+it("preserves the existing avatar and requested name when saving a proposed update", async () => {
+  const agents = { create: vi.fn() } as unknown as Agents;
+  const onSave = vi.fn().mockResolvedValue(undefined);
+  const onCreated = vi.fn();
+  const agent = {
+    ...made,
+    picture: "https://example.test/existing.png",
+    config: { reply: "kept" },
+  };
+  render(
+    <AgentCreateDialog
+      agents={agents}
+      types={[echo]}
+      onClose={vi.fn()}
+      onCreated={onCreated}
+      update={{
+        agent,
+        onSave,
+        request: {
+          id: "request",
+          requester: "requester",
+          requesterName: "Ada",
+          owner: made.owner,
+          community: "here",
+          agent: made.pubkey,
+          agentName: made.name,
+          agentType: made.type,
+          name: "Requested name",
+        },
+      }}
+    />,
+  );
+  expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(
+    "Requested name",
+  );
+  expect(screen.getByRole("textbox", { name: "Reply" })).toHaveValue("kept");
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Save changes" }));
+  await waitFor(() =>
+    expect(onSave).toHaveBeenCalledExactlyOnceWith({
+      type: made.type,
+      name: "Requested name",
+      picture: agent.picture,
+      config: { reply: "kept" },
+    }),
+  );
+  expect(agents.create).not.toHaveBeenCalled();
+  expect(onCreated).not.toHaveBeenCalled();
 });

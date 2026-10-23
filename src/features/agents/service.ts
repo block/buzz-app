@@ -125,6 +125,7 @@ import {
 import { readInterrupted, writeInterrupted } from "./interrupted";
 import { type AddedTool, BUZZ_SESSION } from "../../buzz-mcp/session-tools";
 import { nameSoloChat } from "./solo-chat-name";
+import { forgetDefaultAgent } from "../solo/default-agent";
 
 /** Where an agent runs: `here`, with its key on this device; `hosted`, by its
  * type's provider; or `elsewhere`, on another of the owner's devices. Only an
@@ -474,7 +475,9 @@ export type Delivery<Config = unknown> = Readonly<{
    * replaced. Advisory: the handle keeps working, so finishing up is harmless. */
   signal: AbortSignal;
   /** Keeps the run counted as working after `run` returns, until `done`
-   * settles, for a type that hands its work off and returns early. */
+   * settles, for a type that hands its work off and returns early. `done`
+   * resolving `{ ok: false, error }` fails the request; `{ ok: true,
+   * stopped: true }` says the owner's Stop ended its turn. */
   workingUntil(done: PromiseLike<unknown>): void;
   /** Optional presentation evidence supplied by the harness, not inferred by the UI. */
   step?(tool: string, target?: string): void;
@@ -2547,6 +2550,7 @@ export class AgentsService extends Service implements Agents {
     await native.forget(pubkey);
     // Drops its settings.
     await this.refresh();
+    await handOnMainAgent(binding.session, pubkey);
   }
 
   async unarchive(pubkey: string): Promise<string | undefined> {
@@ -2583,6 +2587,7 @@ export class AgentsService extends Service implements Agents {
       await this.writeUnfinished(
         this.unfinished.filter((setup) => setup.pubkey !== pubkey),
       );
+      await handOnMainAgent(binding.session, pubkey);
     });
   }
   private async exclusive<T>(pubkey: string, step: () => Promise<T>) {
@@ -3614,6 +3619,13 @@ async function leaveCommunity(
   // there is nothing to hide (and no consent path to archive it with).
   if (state === "not-archived" && (await archives.consent(pubkey, signal)))
     await archives.request("archive", pubkey, signal);
+}
+/** After a finished Delete, rereads the shared agent choices, superseding any
+ * read begun before it, so their inventory no longer offers it; then forgets
+ * it as the main agent so the next available one is saved in its place. */
+async function handOnMainAgent(session: RelaySession, pubkey: string) {
+  await session.agentChoices.refresh(true, { fresh: true });
+  forgetDefaultAgent(pubkey);
 }
 function stillArchived(name: string) {
   return `${name} is still archived in this community, so it stays out of member lists and mentions there.`;

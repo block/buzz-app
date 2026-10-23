@@ -29,7 +29,14 @@ Terms:
 | The agent is told that an event comes from catch-up | Yes | Yes, for every agent type with standalone turns (Claude Code, Codex and Goose) | Same |
 | Conversation delivery address | No watch delivery address; reporting policy lives in Interest instructions | Optional channel/thread executes in that conversation. Explicit Interest reporting instructions override its default destination. | Intended difference |
 | Timers | Yes | Yes, for every agent type with standalone turns (Claude Code, Codex and Goose) | Same |
+| Conversation delivery address | Not supported | Optional `channel` and `root` continue an existing conversation | buzz-app extension |
+| Plugin source watches | Not supported | `type: "source"` stores a namespaced provider and provider-owned config | buzz-app extension |
+| Literal content keywords | Janet uses a `filter` expression | Optional case-insensitive literal `keywords` selector | Intended difference |
 | Watch events from people other than the owner | The watch sees them | The watch sees them as data. The owner check (`fromOwner`) applies only to mentions. | Same |
+
+## Configuration compatibility
+
+These extensions retain the `agent-attention/v1` schema name. Older readers reject fields and watch types they do not support, retain the objects for repair, and do not execute them. Janet does not support conversation delivery addresses or plugin source watches. Conversion to Janet must reject unsupported objects rather than silently dropping a source or its destination; converter enforcement is tracked separately from this app change.
 
 ## Known limit
 

@@ -418,7 +418,7 @@ it("rejects retry while busy, disabled, paused, or carrying an artifact error", 
   expect(plugins.retryPlugin("example")).toBe(false);
 });
 
-it("does not activate the retired Monitor plugin alongside Attention", async () => {
+it("loads an enabled external plugin regardless of its id", async () => {
   const catalog = ready();
   if (catalog.status !== "ready") throw new Error("fixture");
   const entry = catalog.catalog.plugins[0];
@@ -430,6 +430,5 @@ it("does not activate the retired Monitor plugin alongside Attention", async () 
   });
   await vi.advanceTimersByTimeAsync(0);
   expect(plugins.startup()).toBe("ready");
-  expect(installation.readModule).not.toHaveBeenCalled();
-  expect(plugins.snapshot().activation).not.toHaveProperty("monitor");
+  expect(installation.readModule).toHaveBeenCalledWith("monitor", "one");
 });

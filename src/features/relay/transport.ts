@@ -1134,9 +1134,10 @@ export async function connectBrokerTransport(
           },
         }
       : {}),
-    // As the desktop host does: artifact saves are the viewer's own kind
-    // 45010 events, signed and published through the ordinary routes, which
-    // admit that kind and leave write permission to the relay.
+    // Artifact saves are the viewer's own kind 45010 events, signed and
+    // published through the ordinary routes, which admit that kind and leave
+    // write permission to the relay. Unlike the desktop host, which allows
+    // nearly 512 KiB, the broker body and socket frame cap them at 64 KiB.
     ...(session.writeKinds?.includes(ARTIFACT_KIND)
       ? {
           configArtifacts: {

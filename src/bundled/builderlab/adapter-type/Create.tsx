@@ -150,11 +150,12 @@ export function createCreationFields(
                 onChange({ ...draft, reasoningEffort })
               }
             />
-            <p role="status" className="m-0 text-body-sm text-secondary">
-              {wrongAccount
-                ? "These choices belong to another Builderlab account. Choose a model and reasoning effort again."
-                : "Choose a model and reasoning effort. Both are required."}
-            </p>
+            {wrongAccount && (
+              <p role="status" className="m-0 text-body-sm text-secondary">
+                These choices belong to another Builderlab account. Choose a
+                model and reasoning effort again.
+              </p>
+            )}
           </>
         ) : (
           <p

@@ -210,3 +210,38 @@ it("preserves a failed draft and refuses to save it through a different account"
   );
   expect(h.request).toHaveBeenCalledTimes(before);
 });
+
+it("retries a failed catalog refresh without retrying a failed save", async () => {
+  const h = await fixture();
+  await choose("Model", "Friendly One");
+  await choose("Reasoning effort", "low");
+  const user = userEvent.setup();
+  h.offline(true);
+  await user.click(screen.getByRole("button", { name: "Save model" }));
+  await user.click(
+    await screen.findByRole("button", { name: "Refresh models" }),
+  );
+  const retry = await screen.findByRole("button", { name: "Retry models" });
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Could not reach Builderlab",
+  );
+  h.offline(false);
+  await user.click(retry);
+  await screen.findByRole("button", { name: "Refresh models" });
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Could not reach Builderlab",
+  );
+  expect(
+    screen.getByRole("combobox", { name: "Reasoning effort" }),
+  ).toHaveTextContent("low");
+  expect(
+    h.request.mock.calls.filter(([request]) =>
+      request.url.endsWith("/update-agent"),
+    ),
+  ).toHaveLength(1);
+  await user.click(screen.getByRole("button", { name: "Save model" }));
+  expect(
+    await screen.findByRole("dialog", { name: "Model preferences saved" }),
+  ).toBeVisible();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});

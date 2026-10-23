@@ -41,6 +41,7 @@ export function ModelSettings({
   const [effort, setEffort] = useState(agent.reasoningEffort ?? "");
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState("");
+  const [catalogError, setCatalogError] = useState("");
   const [revision, setRevision] = useState(0);
   const controller = useRef<AbortController | null>(null);
   useEffect(() => {
@@ -52,7 +53,7 @@ export function ModelSettings({
   useEffect(() => {
     const current = new AbortController();
     setBusy(true);
-    setError("");
+    setCatalogError("");
     void client
       .modelCatalog(current.signal)
       .then(
@@ -60,7 +61,7 @@ export function ModelSettings({
           if (!current.signal.aborted) setModels(catalog);
         },
         (reason) => {
-          if (!current.signal.aborted) setError(message(reason));
+          if (!current.signal.aborted) setCatalogError(message(reason));
         },
       )
       .finally(() => {
@@ -177,18 +178,20 @@ export function ModelSettings({
             <p className="m-0 text-body-sm text-secondary">Loading models…</p>
           )
         )}
-        {error && (
+        {(catalogError || error) && (
           <p role="alert" className="m-0 text-body-sm text-danger">
-            {error}
+            {catalogError || error}
           </p>
         )}
-        {(error || models?.length === 0) && (
+        {(catalogError || error || models?.length === 0) && (
           <div>
             <Button
               disabled={busy}
               onClick={() => setRevision((value) => value + 1)}
             >
-              Retry models
+              {catalogError || models?.length === 0
+                ? "Retry models"
+                : "Refresh models"}
             </Button>
           </div>
         )}

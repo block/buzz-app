@@ -19,6 +19,7 @@ import { Tabs } from "../../shared/design-system/ui/Tabs";
 import {
   avatarPictureError,
   emojiAvatar,
+  emojiAvatarScale,
   paintEmojiAvatar,
   uploadAvatar,
 } from "./avatar-upload";
@@ -47,6 +48,7 @@ type DraftPreview = {
   picture: string;
   emoji?: string;
   color?: string;
+  scale?: number;
   pulse?: number;
 };
 
@@ -150,6 +152,7 @@ export function AvatarEditor(props: Props) {
                 <EmojiArtwork
                   key={`${draftPreview.emoji}-${draftPreview.pulse}`}
                   emoji={draftPreview.emoji}
+                  scale={draftPreview.scale}
                   animate={!!draftPreview.pulse}
                 />
               </div>
@@ -192,6 +195,7 @@ export function AvatarEditor(props: Props) {
                   <EmojiArtwork
                     key={`${draftPreview.emoji}-${draftPreview.pulse}`}
                     emoji={draftPreview.emoji}
+                    scale={draftPreview.scale}
                     animate={!!draftPreview.pulse}
                   />
                 </div>
@@ -271,11 +275,20 @@ export function AvatarEditor(props: Props) {
   );
 }
 
-function EmojiArtwork({ emoji, animate }: { emoji: string; animate: boolean }) {
+function EmojiArtwork({
+  emoji,
+  scale,
+  animate,
+}: {
+  emoji: string;
+  scale: number | undefined;
+  animate: boolean;
+}) {
   const canvas = useRef<HTMLCanvasElement>(null);
   useLayoutEffect(() => {
-    if (canvas.current) paintEmojiAvatar(canvas.current, emoji);
-  }, [emoji]);
+    if (canvas.current)
+      paintEmojiAvatar(canvas.current, emoji, undefined, scale);
+  }, [emoji, scale]);
   return (
     <canvas
       ref={canvas}
@@ -325,6 +338,7 @@ function AvatarDraft({
   const [mode, setMode] = useState<"image" | "emoji" | "background">("image");
   const [emoji, setEmoji] = useState("😀");
   const [color, setColor] = useState("#FFF4CC");
+  const [scale, setScale] = useState(emojiAvatarScale);
   const [pulse, setPulse] = useState(0);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -334,9 +348,9 @@ function AvatarDraft({
   useEffect(() => {
     onPreview({
       picture,
-      ...(mode !== "image" ? { emoji, color, pulse } : {}),
+      ...(mode !== "image" ? { emoji, color, scale, pulse } : {}),
     });
-  }, [picture, mode, emoji, color, pulse, onPreview]);
+  }, [picture, mode, emoji, color, scale, pulse, onPreview]);
   useEffect(() => () => onPreview(null), [onPreview]);
   const input = useRef<HTMLInputElement>(null);
   const pending = useRef<AbortController | null>(null);
@@ -385,7 +399,7 @@ function AvatarDraft({
       }
       onClick={() => {
         if (mode !== "image")
-          void upload(() => emojiAvatar(emoji, color), true);
+          void upload(() => emojiAvatar(emoji, color, scale), true);
         else done(picture);
       }}
     >
@@ -466,6 +480,19 @@ function AvatarDraft({
             setPulse((current) => (animate ? current + 1 : 0));
           }}
         />
+        <label className={styles.emojiScale}>
+          <span className="text-label-sm">Emoji size</span>
+          <input
+            type="range"
+            min={0.4}
+            max={1}
+            step={0.05}
+            value={scale}
+            aria-valuetext={`${Math.round(scale * 100)}%`}
+            disabled={disabled || busy}
+            onChange={(event) => setScale(Number(event.target.value))}
+          />
+        </label>
       </div>
     ) : (
       <div className={styles.backgroundPanel}>

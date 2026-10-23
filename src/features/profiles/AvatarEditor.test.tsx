@@ -11,7 +11,7 @@ import {
 import { useState } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { AvatarEditor } from "./AvatarEditor";
-import { uploadAvatar } from "./avatar-upload";
+import { emojiAvatar, paintEmojiAvatar, uploadAvatar } from "./avatar-upload";
 import { stubAvatarBrowserApis } from "../agents/avatar-testing";
 
 stubAvatarBrowserApis();
@@ -19,6 +19,7 @@ stubAvatarBrowserApis();
 vi.mock("./avatar-upload", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./avatar-upload")>()),
   uploadAvatar: vi.fn(),
+  emojiAvatar: vi.fn(),
   paintEmojiAvatar: vi.fn(),
 }));
 afterEach(() => {
@@ -323,4 +324,35 @@ it("previews an inline agent emoji and its background with Done in the form foot
   expect(change).not.toHaveBeenCalled();
   view.unmount();
   footer.remove();
+});
+
+it("sizes the emoji in its preview and its uploaded avatar", async () => {
+  vi.mocked(emojiAvatar).mockResolvedValue(
+    new File([], "avatar.png", { type: "image/png" }),
+  );
+  vi.mocked(uploadAvatar).mockResolvedValue(next);
+  const change = vi.fn();
+  render(
+    <AvatarEditor
+      triggerStyle="dotted-squircle"
+      inlinePicker
+      value=""
+      name="Agent"
+      community={community}
+      onChange={change}
+    />,
+  );
+  fireEvent.click(screen.getByRole("tab", { name: "Emoji" }));
+  const size = screen.getByRole("slider", { name: "Emoji size" });
+  expect(size).toHaveValue("0.7");
+  fireEvent.change(size, { target: { value: "0.9" } });
+  expect(paintEmojiAvatar).toHaveBeenLastCalledWith(
+    expect.any(HTMLCanvasElement),
+    "😀",
+    undefined,
+    0.9,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Done" }));
+  await waitFor(() => expect(change).toHaveBeenCalledWith(next));
+  expect(emojiAvatar).toHaveBeenCalledExactlyOnceWith("😀", "#FFF4CC", 0.9);
 });

@@ -179,6 +179,17 @@ html[data-keyboard-navigation] .panelViewport {
   );
 }
 
+.emojiScale {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.emojiScale input {
+  width: 100%;
+  margin: 0;
+  accent-color: var(--affordance-prominent);
+}
+
 .emojiPreview {
   width: 100%;
   height: 100%;

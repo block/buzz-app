@@ -390,12 +390,12 @@ test("custom color and footer resize together without reversing direction", asyn
   }
 });
 
-test("emoji avatar artwork is centered for faces, symbols, and joined glyphs", async ({
+test("emoji avatar artwork is centered and sized for faces, symbols, and joined glyphs", async ({
   page,
 }) => {
   await page.goto("/tests/fixtures/profile-settings.html");
   const centers = await page.evaluate(async () => {
-    const { paintEmojiAvatar } = await import(
+    const { paintEmojiAvatar, emojiAvatarScale } = await import(
       "/src/features/profiles/avatar-upload.ts"
     );
     return ["😀", "❤️", "🧑🏽‍💻", "🐈", "🇬🇧"].map((emoji) => {
@@ -415,7 +415,13 @@ test("emoji avatar artwork is centered for faces, symbols, and joined glyphs", a
           bottom = Math.max(bottom, y);
         }
       }
-      return { emoji, x: (left + right + 1) / 2, y: (top + bottom + 1) / 2 };
+      return {
+        emoji,
+        x: (left + right + 1) / 2,
+        y: (top + bottom + 1) / 2,
+        size: Math.max(right - left + 1, bottom - top + 1),
+        expected: 512 * emojiAvatarScale,
+      };
     });
   });
   for (const center of centers) {
@@ -427,6 +433,10 @@ test("emoji avatar artwork is centered for faces, symbols, and joined glyphs", a
       Math.abs(center.y - 256),
       `${center.emoji} vertical center`,
     ).toBeLessThanOrEqual(3);
+    expect(
+      Math.abs(center.size - center.expected),
+      `${center.emoji} size`,
+    ).toBeLessThanOrEqual(4);
   }
 });
 

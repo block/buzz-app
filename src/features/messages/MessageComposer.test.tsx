@@ -8601,6 +8601,17 @@ it("previews a picked GIF while preserving its source through undo and send", as
   );
 });
 
+it("preserves source when a GIF preview adopts a custom emoji token", async () => {
+  const { h } = await mountGifComposer();
+  h.setEmoji([{ shortcode: "party", url: "https://emoji.test/party.png" }]);
+  const source = "![:party:](https://emoji.test/party.gif)";
+  h.fill(source.slice(0, -1));
+  expect(within(h.input()).getByRole("img", { name: ":party:" })).toBeVisible();
+  await h.user.keyboard(")");
+  expect(h.input()).toHaveValue(source);
+  expect(h.input().querySelector("[data-gif-preview]")).not.toBeNull();
+});
+
 it.each([
   "`![Party](https://emoji.test/party.gif)`",
   "```\n![Party](https://emoji.test/party.gif)\n```",

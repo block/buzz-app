@@ -385,8 +385,8 @@ export function EditableInput({
                 )
               : token.node.attrs.resource ||
                 decorations.some(
-                  (item) =>
-                    item.start === token.start && item.end === token.end,
+                  // A larger decoration has already adopted any tokens inside it.
+                  (item) => item.start <= token.start && item.end >= token.end,
                 )
           )
             continue;

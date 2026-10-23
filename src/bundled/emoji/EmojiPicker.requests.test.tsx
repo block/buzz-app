@@ -234,7 +234,28 @@ it("honors companion shortcut overrides and cross-window changes", async () => {
     );
     fireEvent.keyDown(draft, { key: "j", ctrlKey: true });
     expect(screen.queryByRole("searchbox", { name: "Search GIFs" })).toBeNull();
-    fireEvent.keyDown(draft, { key: "k", ctrlKey: true });
+    localStorage.setItem(
+      key,
+      JSON.stringify({
+        "buzz.emoji/gif-picker": { key: "k", mod: true, alt: true },
+      }),
+    );
+    fireEvent(
+      window,
+      new StorageEvent("storage", { key, storageArea: localStorage }),
+    );
+    const altGraph = new KeyboardEvent("keydown", {
+      key: "k",
+      ctrlKey: true,
+      altKey: true,
+      bubbles: true,
+    });
+    Object.defineProperty(altGraph, "getModifierState", {
+      value: (modifier: string) => modifier === "AltGraph",
+    });
+    fireEvent(draft, altGraph);
+    expect(screen.queryByRole("searchbox", { name: "Search GIFs" })).toBeNull();
+    fireEvent.keyDown(draft, { key: "k", ctrlKey: true, altKey: true });
     expect(
       await screen.findByRole("searchbox", { name: "Search GIFs" }),
     ).toHaveFocus();

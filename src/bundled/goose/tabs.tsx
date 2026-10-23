@@ -1091,9 +1091,9 @@ export function createTabs({
             resetLabel="Use Goose default"
             allowCustomModel
             label="Goose model"
-            appearance={modelAppearance === "subtle" ? "subtle" : "outlined"}
+            appearance={modelAppearance ?? "outlined"}
             // A card names its harness before the model, as Pi's does.
-            {...(modelAppearance === "subtle" && {
+            {...(modelAppearance && {
               leading: <GooseLogoIcon size={18} />,
             })}
             models={choices}
@@ -1104,7 +1104,7 @@ export function createTabs({
             // A card's chip keeps its room for the model name; its menu
             // still shows and sets the level.
             effortLabel={
-              modelAppearance !== "subtle" && thinking.value?.levels.length
+              !modelAppearance && thinking.value?.levels.length
                 ? current.effort
                   ? current.effort.charAt(0).toUpperCase() +
                     current.effort.slice(1)

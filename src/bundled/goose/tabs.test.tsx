@@ -82,7 +82,7 @@ function created(
   options: Readonly<{
     reply?: string;
     spawn?: (fake: ReturnType<typeof fakeSpawn>) => GooseSetup;
-    modelAppearance?: "subtle";
+    modelAppearance?: "glass-ghost";
     config?: Config;
   }> = {},
 ) {
@@ -238,7 +238,7 @@ it("keeps provider fields visible while saving its key and selecting a model", a
 
 it("keeps a card's model chip to the model, while its menu shows the level", async () => {
   created({
-    modelAppearance: "subtle",
+    modelAppearance: "glass-ghost",
     config: {
       ...DEFAULT_CONFIG,
       provider: "anthropic",
@@ -264,7 +264,7 @@ it("keeps a card's model chip to the model, while its menu shows the level", asy
 });
 
 it("gives a card's inherited model its name's room, naming Default only in its label", async () => {
-  created({ modelAppearance: "subtle" });
+  created({ modelAppearance: "glass-ghost" });
   await waitFor(() => expect(modelButton()).toBeEnabled());
   expect(modelButton()).toHaveTextContent(/^claude$/);
   expect(modelButton()).toHaveAccessibleName("Goose model: claude · Default");

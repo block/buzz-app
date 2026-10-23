@@ -1,0 +1,97 @@
+[
+  {
+    "name": "public metadata only, duplicate communities, deleted identities and safe artwork",
+    "rows": [
+      {
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "name": "Ada",
+        "picture": "https://images.example/ada.png",
+        "auth": "private attestation",
+        "owner": "private owner",
+        "type": "plugin/agent"
+      },
+      {
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "name": "Ada elsewhere",
+        "relay": "wss://other.example"
+      },
+      {
+        "pubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "name": "Bo",
+        "picture": "file:///private"
+      },
+      {
+        "pubkey": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "name": "Deleted",
+        "deleted": true
+      }
+    ],
+    "expected": {
+      "definitions": [],
+      "identities": [
+        {
+          "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "name": "Ada",
+          "avatar": "https://images.example/ada.png"
+        },
+        {
+          "pubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "name": "Bo"
+        }
+      ]
+    }
+  },
+  {
+    "name": "empty store",
+    "rows": [],
+    "expected": {
+      "definitions": [],
+      "identities": []
+    }
+  },
+  {
+    "name": "malformed key",
+    "rows": [
+      {
+        "pubkey": "bad",
+        "name": "Bad"
+      }
+    ]
+  },
+  {
+    "name": "malformed deletion state",
+    "rows": [
+      {
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "name": "Ada",
+        "deleted": "false"
+      }
+    ]
+  },
+  {
+    "name": "older identity without a name",
+    "rows": [
+      {
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    ],
+    "expected": {
+      "definitions": [],
+      "identities": [
+        {
+          "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "name": ""
+        }
+      ]
+    }
+  },
+  {
+    "name": "present non-string name",
+    "rows": [
+      {
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "name": null
+      }
+    ]
+  }
+]

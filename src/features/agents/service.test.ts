@@ -1336,7 +1336,9 @@ it("runs one turn at a time for an Interest, Interests and mentions beside each 
         pending.set(
           trigger.type === "timer" || trigger.type === "catch-up"
             ? trigger.slug
-            : trigger.type === "plugin" || trigger.type === "attention" || trigger.type === "source"
+            : trigger.type === "plugin" ||
+                trigger.type === "attention" ||
+                trigger.type === "source"
               ? trigger.text
               : trigger.event.content,
           resolve,
@@ -4546,7 +4548,9 @@ const heard = (run: { mock: { calls: readonly (readonly unknown[])[] } }) =>
       ? trigger.events.map(({ event }) => event.content)
       : trigger.type === "timer"
         ? []
-        : trigger.type === "plugin" || trigger.type === "attention" || trigger.type === "source"
+        : trigger.type === "plugin" ||
+            trigger.type === "attention" ||
+            trigger.type === "source"
           ? [trigger.text]
           : [trigger.event.content];
   });
@@ -7381,8 +7385,7 @@ describe("Attention plugin sources", () => {
     input?.emit("CI failed");
     await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
     expect(run.mock.calls[0]?.[0].trigger).toMatchObject({
-      type: "plugin",
-      plugin: "example",
+      type: "attention",
       channel,
       root,
       text: expect.stringContaining("CI failed"),
@@ -7711,9 +7714,23 @@ it.each([false, true])(
         { id: destination, name: "Private", members: [viewer, bot] },
       ],
     });
-    await vi.advanceTimersByTimeAsync(5_000);
-    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
-    expect(service.find(bot)?.timers["watch/blocked"]?.used).toBe(1);
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    run.mockImplementation(async (delivery) => {
+      delivery.workingUntil(held);
+    });
+    try {
+      await vi.advanceTimersByTimeAsync(5_000);
+      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+      expect(service.find(bot)?.timers["watch/blocked"]?.used).toBe(1);
+    } finally {
+      release();
+    }
+    await vi.waitFor(() =>
+      expect(service.find(bot)?.attention["watch/blocked"]).toBeUndefined(),
+    );
   },
 );
 

@@ -8,6 +8,7 @@ import type {
   Agent,
   AgentAttention,
   AgentHandle,
+  AgentUpdateInput,
   RegisteredAgentType,
   Trigger,
 } from "./service";
@@ -19,7 +20,11 @@ import {
   type RelayEvent,
 } from "../relay/events";
 import { wake, wakePrompt } from "../agent-harness/wakes";
-import { type PluginTrigger, wakeLands } from "../agent-harness/plugin-wake";
+import {
+  type PluginTrigger,
+  wakeAnchor,
+  wakeLands,
+} from "../agent-harness/plugin-wake";
 import { STANDALONE_DEADLINE_MS } from "../agent-harness/standalone";
 import { EFFORT_TAG, MODEL_TAG } from "../relay/messages";
 import type { LiveBatch } from "../relay/incoming";
@@ -344,7 +349,7 @@ export type RunnerHost = {
   agent(pubkey: string): Agent | undefined;
   /** Whether the agent is in the event's channel, or undefined while its
    * roster is only the one saved on disk and the relay has not confirmed it. */
-  member(agent: Agent, event: RelayEvent): boolean | undefined;
+  member(agent: Agent, event: Pick<RelayEvent, "tags">): boolean | undefined;
   /** Whether the event's channel is a DM between the agent and one other. */
   dm(agent: Agent, event: RelayEvent): boolean;
   /** While the owner is still starting this chat, settles once it can take
@@ -393,6 +398,15 @@ export type RunnerHost = {
   team(pubkey: string): string;
   /** What its next run starts with, from this device's storage only. */
   start(agent: Agent): Start<unknown>;
+  agentTypes(): ReturnType<NonNullable<AgentHandle["agentTypes"]>>;
+  createAgent(
+    agent: Agent,
+    input: Readonly<{ type: string; name: string }>,
+  ): Promise<Readonly<{ requestId: string; saved: false }>>;
+  updateAgent(
+    agent: Agent,
+    input: AgentUpdateInput,
+  ): Promise<Readonly<{ requestId: string; saved: false }>>;
   /** The owner's channel templates as the agent's handle offers them. */
   templates(agent: Agent): ReturnType<AgentHandle["templates"]>;
   /** The owner's thread tabs as the agent's handle offers them. */
@@ -2046,6 +2060,7 @@ export class AgentRunners {
     ]);
     const handle = this.handleFor(runner, agent, signal);
     const anchor = conversationWake(job.trigger, "");
+    const destination = !addressed(job.trigger) ? anchor : undefined;
     const working = this.working(
       runner,
       anchor ? { ...job, trigger: anchor, channelId: anchor.channel } : job,
@@ -2085,7 +2100,11 @@ export class AgentRunners {
             }
           : {}),
         ...(named ? { named } : {}),
-        current: () => !lifetime.aborted && this.stillCurrent(runner, job),
+        current: () =>
+          !lifetime.aborted &&
+          this.stillCurrent(runner, job) &&
+          (!destination ||
+            this.host.member(agent, wakeAnchor(destination)) === true),
       });
       const { trigger } = job;
       const runOnce = type.runOnce?.bind(type);
@@ -2097,16 +2116,24 @@ export class AgentRunners {
             ? trigger.watch
             : undefined;
       if (target?.channel) {
-        const text = await wakePrompt(
-          handle,
-          trigger,
-          trigger.slug.replace(/^watch\//, ""),
-          delivery.current,
-        );
+        if (!delivery.current()) return;
+        const wakeText = () =>
+          wakePrompt(
+            handle,
+            trigger,
+            trigger.slug.replace(/^watch\//, ""),
+            delivery.current,
+          );
+        const text = await wakeText();
         if (!text || !delivery.current()) return;
         const wake = conversationWake(trigger, text);
         if (wake)
-          return run({ ...delivery, channelId: wake.channel, trigger: wake });
+          return run({
+            ...delivery,
+            channelId: wake.channel,
+            trigger: wake,
+            wakeText,
+          });
       }
       if (!runOnce) return run(delivery);
       // A watch or timer is a standalone turn; this lane is held until it ends.
@@ -2169,6 +2196,8 @@ export class AgentRunners {
     agent: Agent,
     signal: AbortSignal,
   ): AgentHandle {
+    // Taken now, as a type change replaces the controller.
+    const lifetime = runner.controller.signal;
     return Object.freeze({
       pubkey: agent.pubkey,
       name: agent.name,
@@ -2210,6 +2239,17 @@ export class AgentRunners {
         );
         this.host.remembered(agent.pubkey, slug, body);
         return event;
+      },
+      agentTypes: () => this.host.agentTypes(),
+      // Drafts outlive the run's handover deadline, as a turn still working may
+      // submit one, but not the agent or its type.
+      createAgent: async (input: Readonly<{ type: string; name: string }>) => {
+        lifetime.throwIfAborted();
+        return this.host.createAgent(agent, input);
+      },
+      updateAgent: async (input: AgentUpdateInput) => {
+        lifetime.throwIfAborted();
+        return this.host.updateAgent(agent, input);
       },
       templates: () => this.host.templates(agent),
       tabs: () => this.host.tabs(agent),

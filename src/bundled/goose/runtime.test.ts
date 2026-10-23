@@ -1353,3 +1353,25 @@ it("keeps an accepted policy wait after its handover deadline and reconfiguratio
     f.runtime.dispose();
   }
 });
+
+it("refreshes a queued subscription's instructions when its policy wait ends", async () => {
+  const f = setup({ hold: true, scope: "channel" });
+  let instructions = "Old Interest instructions";
+  try {
+    await f.deliver(message("1", "threaded work"));
+    await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+    await f.run({ ...pluginWake(), topLevel: true, text: instructions }, {
+      wakeText: async () => instructions,
+    } as unknown as Partial<Delivery>);
+    instructions = "Updated Interest instructions";
+    f.goose()?.turns[0]?.finish();
+    await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(2));
+    expect(f.goose()?.turns[1]?.text).toContain(instructions);
+    expect(f.goose()?.turns[1]?.text).not.toContain(
+      "Old Interest instructions",
+    );
+    f.goose()?.turns[1]?.finish();
+  } finally {
+    f.runtime.dispose();
+  }
+});

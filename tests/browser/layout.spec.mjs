@@ -10,6 +10,7 @@ import {
   selectSettingsSection,
   settingsDialog,
   settingsSections,
+  settleDialogMotion,
   settleShellToggle,
 } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
@@ -97,10 +98,6 @@ async function open(page, app) {
   await expect(page.locator("[data-message-id]").first()).toBeVisible();
 }
 async function link(page, app, target) {
-  await page.route(
-    /https:\/\/api\.github\.com\/repos\/block\/buzz\/(?:issues\/\d+\/comments|pulls\/\d+\/reviews)\?/,
-    (route) => route.fulfill({ json: [] }),
-  );
   await page.route("https://api.github.com/repos/block/buzz/pulls/*", (route) =>
     route.fulfill({
       json: {
@@ -362,11 +359,19 @@ test("separate sidebar and workspace surfaces, real link panel and compact commu
   // This scroll-ownership journey needs overflowing content; descriptions now
   // start collapsed, so open the real disclosure before sending wheel input.
   const description = panel(page).getByRole("button", {
-    name: "Expand Description",
+    name: "Description",
     exact: true,
   });
   await description.click();
   await expect(description).toHaveAttribute("aria-expanded", "true");
+  // The disclosure animates open; wheel only once the panel overflows.
+  await expect
+    .poll(() =>
+      panel(page)
+        .locator("[class*='root']")
+        .evaluate((el) => el.scrollHeight - el.clientHeight),
+    )
+    .toBeGreaterThan(1000);
   await panel(page)
     .getByRole("heading", { name: "A useful change #1" })
     .hover();
@@ -401,7 +406,7 @@ test("separate sidebar and workspace surfaces, real link panel and compact commu
     .getByRole("button", { name: "Join a community", exact: true })
     .click();
   await expect(
-    page.getByRole("heading", { name: "Add a community", exact: true }),
+    page.getByRole("heading", { name: "Join a community", exact: true }),
   ).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog")).toHaveCount(0);
@@ -934,11 +939,7 @@ companionTest(
       // The Settings modal fits each width over the retained, inert companion.
       await openSettings(page);
       // Observe the settled frame, not its upward entrance motion.
-      await settingsDialog(page).evaluate((element) =>
-        Promise.all(
-          element.getAnimations().map((animation) => animation.finished),
-        ),
-      );
+      await settleDialogMotion(settingsDialog(page));
       const modal = await box(settingsDialog(page));
       expect(modal.x).toBeGreaterThanOrEqual(0);
       expect(modal.y).toBeGreaterThanOrEqual(0);

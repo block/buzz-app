@@ -200,18 +200,58 @@ it("reveals actions only over message content or the toolbar, not the row's empt
   expect(row.hasAttribute("data-actions-revealed")).toBe(false);
 });
 
+it("keeps timestamp hover and keyboard focus separate from message actions", () => {
+  pointerMedia();
+  function TimeRow() {
+    const rowRef = useRef<HTMLDivElement>(null);
+    return (
+      <div ref={rowRef} data-testid="message">
+        <div data-message-action-anchor>
+          <button type="button" data-media-timecode>
+            0:18
+          </button>
+          <span>Comment body</span>
+        </div>
+        <MessageActionBar rowRef={rowRef} copyText={() => "Comment body"} />
+      </div>
+    );
+  }
+  render(<TimeRow />);
+  const row = screen.getByTestId("message");
+  const time = screen.getByRole("button", { name: "0:18" });
+  const body = screen.getByText("Comment body");
+  fireEvent.pointerEnter(row);
+  fireEvent.pointerOver(body);
+  expect(row.hasAttribute("data-actions-revealed")).toBe(true);
+  fireEvent.pointerOut(body, { relatedTarget: time });
+  fireEvent.pointerOver(time);
+  expect(row.hasAttribute("data-actions-revealed")).toBe(false);
+  document.documentElement.setAttribute("data-keyboard-navigation", "");
+  try {
+    act(() => time.focus());
+    expect(row.hasAttribute("data-actions-revealed")).toBe(false);
+  } finally {
+    document.documentElement.removeAttribute("data-keyboard-navigation");
+  }
+  act(() => time.blur());
+  fireEvent.pointerOver(body);
+  expect(row.hasAttribute("data-actions-revealed")).toBe(true);
+});
+
 it("keeps reaction hover separate from message actions without losing keyboard access", async () => {
   pointerMedia();
   function ReactionRow() {
     const rowRef = useRef<HTMLDivElement>(null);
     return (
       <div ref={rowRef} data-testid="message">
-        <span data-message-action-anchor>Message body</span>
-        <MessageActionBar rowRef={rowRef} copyText={() => "Message body"} />
-        <div data-message-reactions>
-          <button type="button">Existing reaction</button>
-          <button type="button">Add reaction</button>
+        <div data-message-action-anchor>
+          <span>Message body</span>
+          <div data-message-reactions>
+            <button type="button">Existing reaction</button>
+            <button type="button">Add reaction</button>
+          </div>
         </div>
+        <MessageActionBar rowRef={rowRef} copyText={() => "Message body"} />
         <div>
           <span data-message-reactions>
             <button type="button">First reaction</button>

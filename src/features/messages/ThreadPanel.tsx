@@ -88,6 +88,7 @@ export type ThreadPanelProps = {
     attachment: ChannelMessage["attachments"][number],
     seconds: number,
     hasComments?: boolean,
+    attachments?: ChannelMessage["attachments"],
   ): void;
   canOpenLink?: ((target: string) => boolean) | undefined;
 };
@@ -827,9 +828,17 @@ function ThreadMessages({
       _rowId: string,
       attachment: ChannelMessage["attachments"][number],
       seconds: number,
+      _hasComments?: boolean,
+      attachments?: ChannelMessage["attachments"],
     ) => {
       if (rootId)
-        onOpenMediaReview?.(_rowId, attachment, seconds, hasMediaComments);
+        onOpenMediaReview?.(
+          _rowId,
+          attachment,
+          seconds,
+          hasMediaComments,
+          attachments,
+        );
     },
     [rootId, onOpenMediaReview, hasMediaComments],
   );
@@ -856,10 +865,9 @@ function ThreadMessages({
   const handleMediaTime = useCallback(
     (seconds: number) => {
       if (!videoOwner || !videoAttachment) return;
-      if (videoOwner.id !== rootId) {
-        // A reply's video may be inside a collapsed branch. Open its canonical
-        // viewer instead of seeking an absent preview or an unrelated root.
-        openRootMedia(videoOwner.id, videoAttachment, seconds);
+      if (onOpenMediaReview) {
+        // Open the connected video at the comment, including root attachments.
+        openRootMedia(videoOwner.id, videoAttachment, Math.max(0, seconds - 3));
         return;
       }
       setMediaSeek((current) => ({
@@ -867,7 +875,7 @@ function ThreadMessages({
         request: (current?.request ?? 0) + 1,
       }));
     },
-    [videoOwner, videoAttachment, rootId, openRootMedia],
+    [videoOwner, videoAttachment, onOpenMediaReview, openRootMedia],
   );
   // Only legacy traversal is eager. Strict windows open at the newest page.
   useEffect(() => {

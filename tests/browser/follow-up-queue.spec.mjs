@@ -21,49 +21,7 @@ test("Solo queues follow-ups, keeps typing intact, and offers Send now", async (
   page,
   app,
 }, testInfo) => {
-  await page.goto(app.origin);
-  await openPage(page, "Messages");
-  await page.getByRole("button", { name: "Your profile", exact: true }).click();
-  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await selectSettingsSection(page, "Appearance", "Appearance");
-  const preference = page.getByRole("combobox", { name: "Follow-up behavior" });
-  await expect(preference).toContainText("Send immediately");
-  await preference.click();
-  await page.getByRole("option", { name: "Queue", exact: true }).click();
-  await page
-    .getByRole("button", { name: "Close Settings", exact: true })
-    .click();
-  await expect(
-    page.getByRole("dialog", { name: "Settings", exact: true }),
-  ).toBeHidden();
-  await openPage(page, "Messages");
-  await page
-    .getByRole("navigation", { name: "Solo conversations" })
-    .locator(`[data-solo-channel-id="${chat}"]`)
-    .click();
-  await expect
-    .poll(() => page.evaluate(() => !!window.localAgentFixture))
-    .toBe(true);
-  const editor = page.getByRole("textbox", {
-    name: "Message your agents",
-    exact: true,
-  });
-  await page
-    .getByRole("button", { name: "Mention a member", exact: true })
-    .click();
-  await page
-    .getByRole("dialog", { name: "Mention a member or agent" })
-    .getByRole("button", { name: `Local tester ${agent}`, exact: true })
-    .click();
-  await editor.press("End");
-  await editor.pressSequentially("First request");
-  await editor.press("Enter");
-  await expect
-    .poll(() => page.evaluate(() => window.localAgentFixture.pending().length))
-    .toBe(1);
-  const first = await page.evaluate(
-    () => window.localAgentFixture.pending()[0],
-  );
+  const { editor, first } = await startWorkingAgent(page, app);
   await editor.press("End");
   await editor.pressSequentially("Queued follow-up");
   await editor.press("Enter");
@@ -171,4 +129,97 @@ test("Solo queues follow-ups, keeps typing intact, and offers Send now", async (
         app.report.publications.filter(({ event }) => event.kind === 9).length,
     )
     .toBeGreaterThanOrEqual(3);
+});
+
+async function startWorkingAgent(page, app) {
+  await page.goto(app.origin);
+  await openPage(page, "Messages");
+  await page.getByRole("button", { name: "Your profile", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+  await selectSettingsSection(page, "Appearance", "Appearance");
+  const preference = page.getByRole("combobox", { name: "Follow-up behavior" });
+  await expect(preference).toContainText("Send immediately");
+  await preference.click();
+  await page.getByRole("option", { name: "Queue", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Close Settings", exact: true })
+    .click();
+  await expect(
+    page.getByRole("dialog", { name: "Settings", exact: true }),
+  ).toBeHidden();
+  await openPage(page, "Messages");
+  await page
+    .getByRole("navigation", { name: "Solo conversations" })
+    .locator(`[data-solo-channel-id="${chat}"]`)
+    .click();
+  await expect
+    .poll(() => page.evaluate(() => !!window.localAgentFixture))
+    .toBe(true);
+  const editor = page.getByRole("textbox", {
+    name: "Message your agents",
+    exact: true,
+  });
+  await page
+    .getByRole("button", { name: "Mention a member", exact: true })
+    .click();
+  await page
+    .getByRole("dialog", { name: "Mention a member or agent" })
+    .getByRole("button", { name: `Local tester ${agent}`, exact: true })
+    .click();
+  await editor.press("End");
+  await editor.pressSequentially("First request");
+  await editor.press("Enter");
+  await expect
+    .poll(() => page.evaluate(() => window.localAgentFixture.pending().length))
+    .toBe(1);
+  const first = await page.evaluate(
+    () => window.localAgentFixture.pending()[0],
+  );
+  return { editor, first };
+}
+
+// Browser-only: pointer modality, computed visibility and native focus handoff.
+test("queue focus survives preview release and pointer removal", async ({
+  page,
+  app,
+}) => {
+  const { editor, first } = await startWorkingAgent(page, app);
+  const queue = page.getByRole("region", { name: "Queued follow-ups" });
+  await editor.press("End");
+  await editor.pressSequentially("A long queued request ".repeat(30));
+  await editor.press("Enter");
+  const preview = queue.locator('[data-queue-action="preview"]');
+  await expect(preview).toHaveAttribute("aria-expanded", "false");
+  await preview.focus();
+  await page.keyboard.press("Enter");
+  await expect(preview).toHaveAttribute("aria-expanded", "true");
+  await page.evaluate((id) => window.localAgentFixture.finish(id, true), first);
+  await expect(queue).toHaveCount(0);
+  await expect(editor).toBeFocused();
+  await expect
+    .poll(() => page.evaluate(() => window.localAgentFixture.pending().length))
+    .toBe(2);
+  await editor.press("End");
+  await editor.pressSequentially("Keep this row");
+  await editor.press("Enter");
+  await editor.press("End");
+  await editor.pressSequentially("Remove last row");
+  await editor.press("Enter");
+  const remove = queue.getByRole("button", { name: "Remove queued message" });
+  await queue.getByRole("listitem").last().hover();
+  // WebKit does not focus clicked buttons; focus explicitly to cover the same
+  // pointer-modality handoff on both engines.
+  await remove.last().focus();
+  await remove.last().click();
+  await page.mouse.move(0, 0);
+  await expect(remove).toHaveCount(1);
+  await expect(remove).toBeFocused();
+  await expect(page.locator("html")).not.toHaveAttribute(
+    "data-keyboard-navigation",
+  );
+  await expect(remove).toHaveCSS("opacity", "1");
+  await expect(remove).toHaveCSS("pointer-events", "auto");
+  await page.keyboard.press("Enter");
+  await expect(queue).toHaveCount(0);
+  await expect(editor).toBeFocused();
 });

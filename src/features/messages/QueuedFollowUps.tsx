@@ -31,9 +31,9 @@ export function QueuedFollowUps({
     (entry) => entry.channelId === channelId,
   );
   const section = useRef<HTMLElement>(null);
-  const focused = useRef<{ id: string; action: "send" | "remove" } | undefined>(
-    undefined,
-  );
+  const focused = useRef<
+    { id: string; action: "send" | "remove" | "preview" } | undefined
+  >(undefined);
   useLayoutEffect(() => {
     if (
       !focused.current ||
@@ -46,7 +46,7 @@ export function QueuedFollowUps({
     // while asynchronous send validation was pending.
     if (document.activeElement !== document.body) return;
     const next = section.current?.querySelector<HTMLButtonElement>(
-      `button[data-queue-action="${action}"]:not(:disabled)`,
+      `button[data-queue-action="${action}"]:not(:disabled)${action === "preview" ? ":not([aria-disabled=true])" : ""}`,
     );
     if (next) next.focus();
     else focusComposer();
@@ -62,7 +62,12 @@ export function QueuedFollowUps({
         {entries.map((entry) => (
           <li key={entry.id} className={styles.row}>
             <div className={styles.content}>
-              <QueuePreview text={entry.text || "Attachment"} />
+              <QueuePreview
+                text={entry.text || "Attachment"}
+                onFocus={() => {
+                  focused.current = { id: entry.id, action: "preview" };
+                }}
+              />
               {entry.error && (
                 <p role="alert" className="text-body-sm text-danger">
                   {entry.error}
@@ -105,7 +110,7 @@ export function QueuedFollowUps({
   );
 }
 
-function QueuePreview({ text }: { text: string }) {
+function QueuePreview({ text, onFocus }: { text: string; onFocus(): void }) {
   const [expanded, setExpanded] = useState(false);
   const [canExpand, setCanExpand] = useState(false);
   const collapsed = useRef<HTMLSpanElement>(null);
@@ -146,6 +151,7 @@ function QueuePreview({ text }: { text: string }) {
         ease: [0.4, 0, 0.2, 1],
       }}
       type="button"
+      data-queue-action="preview"
       className={`text-caption ${styles.preview}`}
       aria-label={text}
       aria-expanded={canExpand ? expanded : undefined}
@@ -156,6 +162,7 @@ function QueuePreview({ text }: { text: string }) {
       }}
       onFocus={(event) => {
         if (!canExpand) event.currentTarget.blur();
+        else onFocus();
       }}
       onClick={() => {
         if (canExpand) setExpanded((value) => !value);

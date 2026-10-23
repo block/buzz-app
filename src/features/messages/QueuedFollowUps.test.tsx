@@ -23,11 +23,16 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 function fixture() {
+  const listeners = new Set<() => void>();
+  let state = "working";
   const session = {
     channels: { list: () => ({ channels: [{ id: "chat" }] }) },
     agentActivity: {
       activate: () => () => {},
-      subscribe: () => () => {},
+      subscribe: (listener: () => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
       snapshot: () => ({
         status: "listening",
         turns: [],
@@ -36,7 +41,7 @@ function fixture() {
             agent: "agent",
             messageId: "old",
             channelId: "chat",
-            state: "working",
+            state,
           },
         ],
       }),
@@ -68,7 +73,15 @@ function fixture() {
       </AgentsContext.Provider>,
     );
   }
-  return { queue, add, mount };
+  return {
+    queue,
+    add,
+    mount,
+    finish() {
+      state = "done";
+      for (const listener of listeners) listener();
+    },
+  };
 }
 it("keeps queued Send focused when compaction finishes, then sends with Enter", async () => {
   const h = fixture();
@@ -181,4 +194,31 @@ it("toggles multiline requests while short requests remain non-expandable", asyn
   expect(long).toHaveAttribute("aria-expanded", "true");
   await userEvent.click(long);
   expect(long).toHaveAttribute("aria-expanded", "false");
+});
+
+it("restores preview focus after automatic release, then returns to the composer", async () => {
+  const h = fixture();
+  const first = h.add("First\nrequest");
+  h.add("Second\nrequest");
+  h.mount();
+  screen.getByRole("button", { name: /First\s+request/ }).focus();
+  await act(async () => h.finish());
+  expect(first).toHaveBeenCalledOnce();
+  expect(
+    screen.getByRole("button", { name: /Second\s+request/ }),
+  ).toHaveFocus();
+  const remaining = h.queue.snapshot()[0];
+  if (!remaining) throw new Error("Expected a remaining queued request");
+  act(() => h.queue.remove(remaining.id));
+  expect(screen.getByRole("textbox")).toHaveFocus();
+});
+
+it("does not steal external focus when a previously focused preview releases", async () => {
+  const h = fixture();
+  h.add("First\nrequest");
+  h.mount();
+  screen.getByRole("button", { name: /First\s+request/ }).focus();
+  screen.getByRole("button", { name: "Elsewhere" }).focus();
+  await act(async () => h.finish());
+  expect(screen.getByRole("button", { name: "Elsewhere" })).toHaveFocus();
 });

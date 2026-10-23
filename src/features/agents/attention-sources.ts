@@ -81,27 +81,28 @@ export class AttentionSources {
       let succeeded = false;
       const previous = this.tails.get(key);
       const done = Promise.resolve(previous)
-        .then(() => {
-          if (!run.stop.signal.aborted)
-            return source.run({
-              agent: agent.pubkey,
-              watch: object.value,
-              signal: run.stop.signal,
-              emit,
-            });
-        })
-        .then(() => {
+        .then(async () => {
+          if (
+            run.stop.signal.aborted ||
+            this.host.completed(agent.pubkey, object)
+          )
+            return;
+          await source.run({
+            agent: agent.pubkey,
+            watch: object.value,
+            signal: run.stop.signal,
+            emit,
+          });
           succeeded = true;
         })
         .catch((error) => {
           if (!run.stop.signal.aborted)
             console.warn(`Attention source ${provider} failed`, error);
         })
-        .finally(() => {
+        .finally(async () => {
           run.done = true;
-          if (this.tails.get(key) === done) this.tails.delete(key);
           if (succeeded && !run.stop.signal.aborted)
-            void this.host
+            await this.host
               .finish(agent.pubkey, object)
               .catch((error) =>
                 console.warn(
@@ -109,6 +110,7 @@ export class AttentionSources {
                   error,
                 ),
               );
+          if (this.tails.get(key) === done) this.tails.delete(key);
         });
       this.tails.set(key, done);
     }

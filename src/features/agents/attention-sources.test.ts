@@ -201,3 +201,41 @@ it("does not persist a rejected producer as completed and can retry after restar
     warning.mockRestore();
   }
 });
+
+it("waits for completion persistence before reactivating a provider", async () => {
+  const tails = new Map<string, Promise<void>>();
+  let saved = false;
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const host = {
+    emit: vi.fn(),
+    completed: () => saved,
+    finish: vi.fn(async () => {
+      await pending;
+      saved = true;
+    }),
+  };
+  const provider = { id: "command", run: vi.fn(async () => {}) };
+  const agents = [agent(object())];
+  const first = new AttentionSources(host, tails);
+  const replacement = new AttentionSources(host, tails);
+  try {
+    first.reconcile("example/command", provider, agents);
+    await vi.waitFor(() => expect(host.finish).toHaveBeenCalledTimes(1));
+    first.stop();
+    replacement.reconcile("example/command", provider, agents);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(provider.run).toHaveBeenCalledTimes(1);
+    release();
+    await vi.waitFor(() => expect(saved).toBe(true));
+    await Promise.all(tails.values());
+    expect(provider.run).toHaveBeenCalledTimes(1);
+    expect(host.finish).toHaveBeenCalledTimes(1);
+  } finally {
+    release();
+    first.stop();
+    replacement.stop();
+  }
+});

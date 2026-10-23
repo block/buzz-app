@@ -419,6 +419,14 @@ export type Trigger =
       skipped?: boolean;
     }>
   | Readonly<{
+      type: "source";
+      interest?: Interest;
+      slug: string;
+      watch: import("./attention").SourceWatch;
+      plugin: string;
+      text: string;
+    }>
+  | Readonly<{
       type: "timer";
       slug: string;
       timer: TimerWatch;
@@ -1547,18 +1555,14 @@ export class AgentsService extends Service implements Agents {
           !object.value.enabled
         )
           throw new Error("This source watch is no longer enabled");
-        const interest =
-          agent.attention[`interest/${object.value.interest_id}`]?.value;
-        this.runners.wakeIn(
+        this.runners.wakeSource(
           pubkey,
           {
-            type: "plugin",
+            type: "source",
+            slug: object.slug,
+            watch: object.value,
             plugin: source.pluginId,
-            channel: object.value.channel,
-            ...(object.value.root ? { root: object.value.root } : {}),
-            text: `${text}\n\nInterest: ${interest?.type === "interest" ? interest.instructions : ""}`,
-            id: bytesToHex(crypto.getRandomValues(new Uint8Array(32))),
-            at: Date.now(),
+            text,
           },
           object,
           current,

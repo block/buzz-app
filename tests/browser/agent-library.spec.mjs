@@ -222,3 +222,40 @@ test("owner profile keeps its pane and caret stable during inline name editing",
   ).toBeVisible();
   expect((await profile.boundingBox()).height).toBe(before.height);
 });
+
+test("Attention overview groups subscriptions by agent and preserves pause controls", async ({
+  page,
+}, info) => {
+  await page.goto("/tests/fixtures/agent-library.html?attention");
+  for (const name of ["Ada", "Bo", "Cy"])
+    await expect(page.getByRole("region", { name, exact: true })).toBeVisible();
+  await expect(page.getByText(/Delivers to reports/)).toBeVisible();
+  await expect(page.getByText("Paused", { exact: true })).toBeVisible();
+  const toggle = page
+    .getByRole("region", { name: "Ada", exact: true })
+    .getByRole("switch", { name: "Attention on" });
+  await toggle.focus();
+  await expect(toggle).toBeFocused();
+  await page.keyboard.press("Space");
+  await toggle.click();
+  for (const theme of ["light", "dark"]) {
+    for (const width of [390, 1280]) {
+      await page.setViewportSize({ width, height: 950 });
+      await page.evaluate((theme) => {
+        document.documentElement.classList.toggle("dark", theme === "dark");
+        document.documentElement.style.fontSize = "20px";
+      }, theme);
+      await expect(
+        page.getByRole("heading", { name: "Ada", exact: true }),
+      ).toBeVisible();
+      expect(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= innerWidth,
+        ),
+      ).toBe(true);
+      await page.screenshot({
+        path: info.outputPath(`attention-${theme}-${width}.png`),
+      });
+    }
+  }
+});

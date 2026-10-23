@@ -164,8 +164,8 @@ export function AttentionPanel({
         <h4 className="m-0 text-label">Interests</h4>
         <p className="m-0 text-body-sm text-secondary">
           Tasks the agent looks after, like tracking releases. The agent keeps
-          them itself, with a watch for new messages or a timer for a schedule.
-          To change them, ask the agent.
+          them itself, with subscriptions for messages, schedules or function
+          output. To change them, ask the agent.
         </p>
       </div>
       {interests.length === 0 && watches.length === 0 && (
@@ -300,16 +300,20 @@ function WatchRow({
   const title = describeWatch(value, channels);
   const status =
     value.type === "timer" ? timerStatus(agent, slug, value) : undefined;
+  const delivery = value.channel
+    ? `Delivers to ${channels.find((channel) => channel.id === value.channel)?.name ?? value.channel}${value.root ? " (thread)" : ""}`
+    : "Independent turn for this Interest";
   const detail =
     value.type === "timer"
-      ? [`“${value.prompt}”`, status?.text]
+      ? [`“${value.prompt}”`, status?.text, delivery]
       : value.type === "source"
-        ? [
-            `Provided by ${value.provider}`,
-            "Returns to its registered conversation",
-          ]
+        ? [`Provided by ${value.provider}`, delivery]
         : [
             value.name && describeWatch(unnamed(value), channels),
+            value.channels === "all"
+              ? "Listens in all joined channels"
+              : `Listens in ${value.channels.map((id) => channels.find((channel) => channel.id === id)?.name ?? id).join(", ")}`,
+            delivery,
             value.authors &&
               `from ${plural(value.authors.length, "author")} only`,
             value.exclude_authors &&

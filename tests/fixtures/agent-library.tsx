@@ -1,5 +1,6 @@
 import { agentAvatars } from "../../src/features/agents/avatar-packs";
 import { createRoot } from "react-dom/client";
+import { AttentionPage } from "../../src/bundled/agents/AttentionPage";
 import { AgentsPage } from "../../src/bundled/agents/AgentsPage";
 import type {
   Agent,
@@ -36,7 +37,7 @@ const type: RegisteredAgentType = {
 };
 const snapshot = {
   status: "ready" as const,
-  running: [],
+  running: [] as Agent[],
   teams: [],
   agents: ["Ada", "Bo", "Cy"].map(
     (name, index) =>
@@ -56,6 +57,31 @@ const snapshot = {
       }) as Agent,
   ),
 };
+const attentionView = new URLSearchParams(location.search).has("attention");
+if (attentionView) {
+  snapshot.running = snapshot.agents.map((agent, index) => ({
+    ...agent,
+    attention: {
+      "interest/release": {
+        slug: "interest/release",
+        modifiedAt: 1,
+        value: { type: "interest", instructions: "Keep the release moving." },
+      },
+      "watch/check": {
+        slug: "watch/check",
+        modifiedAt: 1,
+        value: {
+          type: "source",
+          interest_id: "release",
+          enabled: index !== 1,
+          provider: "example/check",
+          config: {},
+          ...(index === 0 ? { channel: "reports" } : {}),
+        },
+      },
+    },
+  }));
+}
 const types = [type];
 const agents = {
   snapshot: () => snapshot,
@@ -76,6 +102,10 @@ const root = document.getElementById("root");
 if (!root) throw new Error("Missing fixture root");
 createRoot(root).render(
   <div className="h-screen">
-    <AgentsPage agents={agents} relay={relay} />
+    {attentionView ? (
+      <AttentionPage agents={agents} relay={relay} />
+    ) : (
+      <AgentsPage agents={agents} relay={relay} />
+    )}
   </div>,
 );

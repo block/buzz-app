@@ -25,6 +25,8 @@ export type EventWatch = Readonly<{
   name?: string;
   enabled: boolean;
   since: number;
+  channel?: string;
+  root?: string;
   channels: "all" | readonly string[];
   kinds: readonly number[];
   /** The event's author must be one of these. Not with `exclude_authors`. */
@@ -47,6 +49,8 @@ export type TimerWatch = Readonly<{
   armed_at: number;
   max_occurrences: number | null;
   expires_at: number | null;
+  channel?: string;
+  root?: string;
 }>;
 /** A plugin-owned deterministic producer. Attention owns its registration and destination. */
 export type SourceWatch = Readonly<{
@@ -56,7 +60,7 @@ export type SourceWatch = Readonly<{
   name?: string;
   provider: string;
   config: Readonly<Record<string, unknown>>;
-  channel: string;
+  channel?: string;
   root?: string;
 }>;
 export type AttentionValue = Interest | EventWatch | TimerWatch | SourceWatch;
@@ -140,12 +144,22 @@ function eventWatch(value: Record<string, unknown>) {
   fields(
     value,
     ["type", "interest_id", "enabled", "since", "channels", "kinds"],
-    ["name", "authors", "exclude_authors", "tags", "is_reply", "classifier"],
+    [
+      "name",
+      "authors",
+      "exclude_authors",
+      "tags",
+      "is_reply",
+      "classifier",
+      "channel",
+      "root",
+    ],
   );
   interestId(value.interest_id);
   if (value.name !== undefined) label(value.name, "name");
   if (typeof value.enabled !== "boolean") fail("enabled must be true or false");
   integer(value.since, "since", 1);
+  destination(value);
   const { channels, kinds, tags, classifier } = value;
   if (channels !== "all")
     if (
@@ -231,17 +245,35 @@ function eventWatch(value: Record<string, unknown>) {
   }
 }
 
+function destination(value: Record<string, unknown>) {
+  if (
+    value.channel !== undefined &&
+    (typeof value.channel !== "string" || !CHANNEL.test(value.channel))
+  )
+    fail("channel must be a channel id");
+  if (value.root !== undefined) {
+    if (value.channel === undefined) fail("root requires a channel");
+    if (typeof value.root !== "string" || !PUBKEY.test(value.root))
+      fail("root must be a 64-hex thread id");
+  }
+}
+
 function timer(value: Record<string, unknown>) {
-  fields(value, [
-    "type",
-    "interest_id",
-    "prompt",
-    "enabled",
-    "interval_secs",
-    "armed_at",
-    "max_occurrences",
-    "expires_at",
-  ]);
+  fields(
+    value,
+    [
+      "type",
+      "interest_id",
+      "prompt",
+      "enabled",
+      "interval_secs",
+      "armed_at",
+      "max_occurrences",
+      "expires_at",
+    ],
+    ["channel", "root"],
+  );
+  destination(value);
   interestId(value.interest_id);
   filled(value.prompt, "prompt", TEXT_LIMIT);
   if (typeof value.enabled !== "boolean") fail("enabled must be true or false");
@@ -271,8 +303,8 @@ export function validateObject(
     else if (object.type === "source") {
       fields(
         object,
-        ["type", "interest_id", "enabled", "provider", "config", "channel"],
-        ["name", "root"],
+        ["type", "interest_id", "enabled", "provider", "config"],
+        ["name", "channel", "root"],
       );
       interestId(object.interest_id);
       if (typeof object.enabled !== "boolean")
@@ -313,13 +345,7 @@ export function validateObject(
           ))
       )
         fail("pr must be a GitHub pull request URL");
-      if (typeof object.channel !== "string" || !CHANNEL.test(object.channel))
-        fail("channel must be a channel id");
-      if (
-        object.root !== undefined &&
-        (typeof object.root !== "string" || !PUBKEY.test(object.root))
-      )
-        fail("root must be a 64-hex thread id");
+      destination(object);
     } else fail('A watch/ value has type "event", "timer" or "source"');
     const body = JSON.stringify({ schema: ATTENTION_SCHEMA, slug, value });
     if (bytes(body) > BODY_LIMIT)

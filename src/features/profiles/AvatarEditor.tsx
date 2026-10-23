@@ -484,8 +484,8 @@ function AvatarDraft({
           <span className="text-label-sm">Emoji size</span>
           <input
             type="range"
-            min={0.4}
-            max={1.6}
+            min={0.5}
+            max={1.5}
             step={0.05}
             value={scale}
             aria-valuetext={`${Math.round(scale * 100)}%`}

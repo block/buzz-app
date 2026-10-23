@@ -379,26 +379,24 @@ export type CaughtUp = Readonly<{
   event: RelayEvent;
   classifier?: ClassifierOutcome;
 }>;
+/** A local wake delivered in a conversation, never a signed message. */
+export type ConversationWake = Readonly<
+  {
+    channel: string;
+    root?: string;
+    /** Explicit channel-level delivery when no thread is saved. */
+    topLevel?: true;
+    text: string;
+    id: string;
+    at: number;
+  } & ({ type: "plugin"; plugin: string } | { type: "attention" })
+>;
 export type Trigger =
   /** Directly addressed: a chat message that mentions the agent. `resumed`
    * when its turn was working as the app closed or reloaded, which stopped it
    * partway, and the owner chose to resume it (see `AgentType.resumes`). */
   | Readonly<{ type: "mention"; event: RelayEvent; resumed?: true }>
-  /** A plugin woke the agent in a conversation (`Agents.wake`): no relay
-   * event, and not the owner's words. It runs like a mention, in the
-   * conversation's session; `id` and `at` (milliseconds) are this wake's own. */
-  | Readonly<{
-      type: "plugin";
-      plugin: string;
-      channel: string;
-      /** The thread, absent for a channel-level conversation (a Solo chat). */
-      root?: string;
-      /** Attention explicitly addresses the channel when no root is saved. */
-      topLevel?: true;
-      text: string;
-      id: string;
-      at: number;
-    }>
+  | ConversationWake
   /** One matching watch; an event that matches several runs once for each. */
   | Readonly<{
       type: "watch";

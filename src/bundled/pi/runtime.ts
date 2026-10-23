@@ -420,10 +420,10 @@ export class PiRuntime {
     superseded,
     interruptible,
   }: Delivery) {
-    // Watches and timers come as standalone turns (`runOnce`).
-    if (trigger.type !== "mention" && trigger.type !== "plugin")
+    // Unaddressed watches and timers come as standalone turns (`runOnce`).
+    if (trigger.type !== "mention" && trigger.type !== "attention")
       return ignored?.();
-    const wake = trigger.type === "plugin" ? trigger : undefined;
+    const wake = trigger.type !== "mention" ? trigger : undefined;
     // Pi runs commands as you; mentions need owner or delegated authority.
     if (
       trigger.type === "mention" &&
@@ -439,7 +439,7 @@ export class PiRuntime {
     entry.handle = agent;
     entry.team = team ?? "";
     const event =
-      trigger.type === "plugin" ? wakeAnchor(trigger) : trigger.event;
+      trigger.type !== "mention" ? wakeAnchor(trigger) : trigger.event;
     const channel = channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1];
     if (!channel) return;
     const solo =
@@ -501,6 +501,7 @@ export class PiRuntime {
           )),
           agent: agent.pubkey,
           label: "@mention",
+          channelLevel: topLevel && !solo,
           ...(wake
             ? { wake: { ...wake, text: (await wakeText?.()) ?? wake.text } }
             : {}),
@@ -509,7 +510,7 @@ export class PiRuntime {
       // A conversation's tools default to its thread; a conversation shared
       // by several threads is told which to reply in instead.
       const context: Context = topLevel
-        ? { channel, topLevel }
+        ? { channel, ...(solo ? { topLevel } : {}) }
         : key === channel
           ? { channel }
           : { channel, root };
@@ -897,7 +898,7 @@ export class PiRuntime {
         key: context.root
           ? `${context.channel}/${context.root}`
           : context.channel,
-        scope: context.topLevel ? context.channel : root,
+        scope: where.topLevel ? context.channel : root,
         where,
       };
       // A delivery of the same request takes it over, and says how it ended.

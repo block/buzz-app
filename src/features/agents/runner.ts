@@ -22,6 +22,7 @@ import {
 import { wake, wakePrompt } from "../agent-harness/wakes";
 import {
   type PluginTrigger,
+  type ConversationWake,
   wakeAnchor,
   wakeLands,
 } from "../agent-harness/plugin-wake";
@@ -181,7 +182,9 @@ type CatchUpTrigger = Extract<Trigger, { type: "catch-up" }>;
  * goes with mentions. */
 type Lane = "mention" | "watch";
 const addressed = (trigger: Trigger) =>
-  trigger.type === "mention" || trigger.type === "plugin";
+  trigger.type === "mention" ||
+  trigger.type === "plugin" ||
+  trigger.type === "attention";
 const laneOf = (trigger: Trigger): Lane =>
   addressed(trigger) ? "mention" : "watch";
 /** The Interest whose lane runs the attention job, or undefined for a mention. */
@@ -193,8 +196,8 @@ const interestOf = (trigger: Trigger) =>
 function conversationWake(
   trigger: Trigger,
   text: string,
-): PluginTrigger | undefined {
-  if (trigger.type === "plugin") return trigger;
+): ConversationWake | undefined {
+  if (trigger.type === "plugin" || trigger.type === "attention") return trigger;
   const target =
     trigger.type === "timer"
       ? trigger.timer
@@ -203,8 +206,7 @@ function conversationWake(
         : undefined;
   if (!target?.channel) return;
   return {
-    type: "plugin",
-    plugin: "buzz.agents",
+    type: "attention",
     channel: target.channel,
     ...(target.root ? { root: target.root } : { topLevel: true }),
     text,
@@ -581,12 +583,7 @@ export class AgentRunners {
     const runner = this.runners.get(pubkey);
     if (!runner || !this.runs(pubkey) || !this.host.ready(pubkey))
       throw new Error("This copy of Buzz does not run that agent");
-    if (
-      !this.enqueue(runner, {
-        trigger,
-        channelId: trigger.channel,
-      })
-    )
+    if (!this.enqueue(runner, { trigger, channelId: trigger.channel }))
       throw new Error("The agent is busy and could not take this wake");
   }
   /** Whether this copy runs the agent: its type can run it, and no other
@@ -1777,7 +1774,7 @@ export class AgentRunners {
     const agent = this.host.agent(runner.pubkey);
     if (!agent) return false;
     const { trigger } = job;
-    if (addressed(trigger)) return !!this.current(runner, agent, job);
+    if (addressed(trigger)) return true;
     if (trigger.type === "watch" || trigger.type === "catch-up")
       return !!this.current(runner, agent, job);
     // A timer occurrence belongs to the object and epoch it fell due under:
@@ -1828,6 +1825,11 @@ export class AgentRunners {
       if (state !== saved)
         changed = { ...changed, [object.slug]: { seen: saved, next: state } };
       if (now < state.nextDue || timerSpent(timer, state, now)) continue;
+      if (
+        timer.channel &&
+        this.host.member(agent, { tags: [["h", timer.channel]] }) !== true
+      )
+        continue;
       // Its Interest's lane is busy: it goes once that lane is free.
       if (!idle(timer.interest_id)) continue;
       if (!next || state.nextDue < next.state.nextDue)
@@ -2075,13 +2077,7 @@ export class AgentRunners {
       const { trigger } = job;
       const runOnce = type.runOnce?.bind(type);
       if (addressed(trigger)) return run(delivery);
-      const target =
-        trigger.type === "timer"
-          ? trigger.timer
-          : !addressed(trigger)
-            ? trigger.watch
-            : undefined;
-      if (target?.channel) {
+      if (anchor) {
         if (!delivery.current()) return;
         const wakeText = () =>
           wakePrompt(
@@ -2092,14 +2088,12 @@ export class AgentRunners {
           );
         const text = await wakeText();
         if (!text || !delivery.current()) return;
-        const wake = conversationWake(trigger, text);
-        if (wake)
-          return run({
-            ...delivery,
-            channelId: wake.channel,
-            trigger: wake,
-            wakeText,
-          });
+        return run({
+          ...delivery,
+          channelId: anchor.channel,
+          trigger: { ...anchor, text },
+          wakeText,
+        });
       }
       if (!runOnce) return run(delivery);
       // A watch or timer is a standalone turn; this lane is held until it ends.
@@ -2257,7 +2251,10 @@ export class AgentRunners {
     work?.started();
     // A plugin wake types where it posts: its thread, a Solo chat, or the
     // channel explicitly addressed by a subscription, never its own id.
-    const wake = trigger.type === "plugin" ? trigger : undefined;
+    const wake =
+      trigger.type === "plugin" || trigger.type === "attention"
+        ? trigger
+        : undefined;
     const event =
       trigger.type === "mention"
         ? trigger.event
@@ -2404,8 +2401,31 @@ export class AgentRunners {
     return Object.freeze({
       enabled: () => record().attentionEnabled === true,
       classifier: () => this.host.classifier(),
-      show: async (slug: string, interest?: string) =>
-        show(record(), slug, seconds(), interest),
+      show: async (slug: string, interest?: string) => {
+        const result = await show(record(), slug, seconds(), interest);
+        const object = result.object;
+        const agent = this.host.agent(pubkey);
+        if (!agent || !object || object.type === "interest" || !object.channel)
+          return result;
+        const member = this.host.member(agent, {
+          tags: [["h", object.channel]],
+        });
+        return member === true
+          ? result
+          : {
+              ...result,
+              delivery:
+                member === undefined
+                  ? {
+                      status: "held" as const,
+                      reason: "Waiting for confirmed destination membership.",
+                    }
+                  : {
+                      status: "blocked" as const,
+                      reason: "Agent is not a member of the delivery channel.",
+                    },
+            };
+      },
       interests: (search?: string) => interestIds(record(), search),
       watches: (filter: WatchFilter = {}) =>
         watchSummaries(record(), filter, seconds()),

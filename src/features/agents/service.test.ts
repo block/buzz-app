@@ -1301,7 +1301,7 @@ it("runs one turn at a time for an Interest, Interests and mentions beside each 
         pending.set(
           trigger.type === "timer" || trigger.type === "catch-up"
             ? trigger.slug
-            : trigger.type === "plugin"
+            : trigger.type === "plugin" || trigger.type === "attention"
               ? trigger.text
               : trigger.event.content,
           resolve,
@@ -4492,7 +4492,7 @@ const heard = (run: { mock: { calls: readonly (readonly unknown[])[] } }) =>
       ? trigger.events.map(({ event }) => event.content)
       : trigger.type === "timer"
         ? []
-        : trigger.type === "plugin"
+        : trigger.type === "plugin" || trigger.type === "attention"
           ? [trigger.text]
           : [trigger.event.content];
   });
@@ -7230,7 +7230,7 @@ it.each([undefined, "e".repeat(64)])(
     expect(run.mock.calls[0]?.[0]).toMatchObject({
       channelId: channel,
       trigger: {
-        type: "plugin",
+        type: "attention",
         channel,
         ...(root ? { root } : { topLevel: true }),
         text: expect.stringContaining("Check the release"),
@@ -7239,7 +7239,7 @@ it.each([undefined, "e".repeat(64)])(
     expect(run.mock.calls[0]?.[0].step).toBeUndefined();
     expect(run.mock.calls[0]?.[0].superseded).toBeUndefined();
     const trigger = run.mock.calls[0]?.[0].trigger;
-    if (trigger?.type !== "plugin")
+    if (trigger?.type !== "attention")
       throw new Error("Expected conversation delivery");
     expect(trigger.text).toContain("Be brief.");
     expect(trigger.text).toContain("spent: true");
@@ -7281,8 +7281,12 @@ it("delivers matched events to their configured address rather than the listenin
   emit({ channelId: channel, events: [deploy("addressed-subscription")] });
   await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
   const trigger = run.mock.calls[0]?.[0].trigger;
-  expect(trigger).toMatchObject({ type: "plugin", channel: destination, root });
-  if (trigger?.type !== "plugin")
+  expect(trigger).toMatchObject({
+    type: "attention",
+    channel: destination,
+    root,
+  });
+  if (trigger?.type !== "attention")
     throw new Error("Expected conversation delivery");
   expect(trigger.text).toContain("observed-message");
   expect(trigger.text).toContain("Be brief.");
@@ -7301,11 +7305,11 @@ it("delivers matched events to their configured address rather than the listenin
 });
 
 it.each([false, true])(
-  "does not deliver timer history without confirmed membership (cached: %s)",
+  "holds a timer without spending it until destination membership is confirmed (cached: %s)",
   async (cached) => {
     vi.useFakeTimers({ now: 1_000_000 });
     const runOnce = vi.fn(async () => ({ ok: true }));
-    const { service, run, session } = await setup({ runOnce });
+    const { service, run, session, plugin } = await setup({ runOnce });
     await service.create({ type: "example/echo", name: "Echo" });
     const destination = "11111111-1111-1111-1111-111111111111";
     const list = session.channels.list();
@@ -7342,6 +7346,20 @@ it.each([false, true])(
     // The same Interest's next turn proves the first handover has settled.
     await vi.waitFor(() => expect(runOnce).toHaveBeenCalledTimes(1));
     expect(run).not.toHaveBeenCalled();
+    expect(
+      await plugin.agents.handle(bot)?.attention.show("watch/blocked"),
+    ).toMatchObject({ delivery: { status: cached ? "held" : "blocked" } });
+    expect(service.find(bot)?.timers["watch/blocked"]?.used).toBe(0);
+    vi.mocked(session.channels.list).mockReturnValue({
+      ...list,
+      channels: [
+        ...list.channels,
+        { id: destination, name: "Private", members: [viewer, bot] },
+      ],
+    });
+    await vi.advanceTimersByTimeAsync(5_000);
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    expect(service.find(bot)?.timers["watch/blocked"]?.used).toBe(1);
   },
 );
 

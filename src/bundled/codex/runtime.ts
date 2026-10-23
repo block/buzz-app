@@ -1,7 +1,7 @@
 import type { WorkOutcome } from "../../features/agents/local-activity";
 import { fromOwner, workflowOf } from "../../features/agents/owner-attestation";
 import {
-  type PluginTrigger,
+  type ConversationWake,
   wakeAnchor,
   wakeLands,
 } from "../../features/agent-harness/plugin-wake";
@@ -73,7 +73,7 @@ type Request = {
   settings: Config;
   conversation: Conversation;
   /** A plugin's wake, for which `event` is its local anchor. */
-  wake?: PluginTrigger;
+  wake?: ConversationWake;
   wakeText?: Delivery["wakeText"];
   /** Latest request's thread, independent of session scope; absent in DMs. */
   toolRoot?: string;
@@ -646,13 +646,17 @@ export class CodexRuntime {
   async run(delivery: Delivery) {
     delivery.signal.throwIfAborted();
     const { trigger, agent } = delivery;
-    // Watches and timers come as standalone turns (`runOnce`).
-    if (trigger.type !== "mention" && trigger.type !== "plugin")
+    // Unaddressed watches and timers come as standalone turns (`runOnce`).
+    if (
+      trigger.type !== "mention" &&
+      trigger.type !== "attention" &&
+      trigger.type !== "plugin"
+    )
       return delivery.ignored?.();
     // A plugin's wake is the owner's installed code, not a message to check.
-    const wake = trigger.type === "plugin" ? trigger : undefined;
+    const wake = trigger.type !== "mention" ? trigger : undefined;
     const event =
-      trigger.type === "plugin" ? wakeAnchor(trigger) : trigger.event;
+      trigger.type !== "mention" ? wakeAnchor(trigger) : trigger.event;
     const reads = this.reads(agent.pubkey);
     if (
       trigger.type === "mention" &&
@@ -712,6 +716,7 @@ export class CodexRuntime {
         name: channel?.name ?? channelId,
         ...(root ? { root } : {}),
         ...(topLevel ? { topLevel } : {}),
+        ...(topLevel && !solo ? { threadReplies: true } : {}),
       },
       team: delivery.team ?? "",
       ...(project ? { project: `${project}\n` } : {}),
@@ -1204,7 +1209,10 @@ export class CodexRuntime {
       ? {
           channel: request.conversation.channelId,
           ...(request.toolRoot ? { root: request.toolRoot } : {}),
-          ...(request.conversation.topLevel ? { topLevel: true } : {}),
+          ...(request.conversation.topLevel &&
+          !request.conversation.threadReplies
+            ? { topLevel: true }
+            : {}),
         }
       : {};
     const reply = await callSessionTool(

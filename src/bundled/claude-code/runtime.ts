@@ -421,11 +421,15 @@ export class ClaudeRuntime {
     named,
   }: Delivery) {
     const settings = this.resolveConfig(raw);
-    // Watches and timers come as standalone turns (`runOnce`).
-    if (trigger.type !== "mention" && trigger.type !== "plugin")
+    // Unaddressed watches and timers come as standalone turns (`runOnce`).
+    if (
+      trigger.type !== "mention" &&
+      trigger.type !== "attention" &&
+      trigger.type !== "plugin"
+    )
       return ignored?.();
     // A plugin's wake is the owner's installed code, not a message to check.
-    const wake = trigger.type === "plugin" ? trigger : undefined;
+    const wake = trigger.type !== "mention" ? trigger : undefined;
     // Claude runs commands as you; mentions need owner or delegated authority.
     if (
       trigger.type === "mention" &&
@@ -443,7 +447,7 @@ export class ClaudeRuntime {
     entry.handle = agent;
     entry.team = team ?? "";
     const event =
-      trigger.type === "plugin" ? wakeAnchor(trigger) : trigger.event;
+      trigger.type !== "mention" ? wakeAnchor(trigger) : trigger.event;
     const channel =
       channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1] ?? undefined;
     if (!channel) return;
@@ -482,6 +486,7 @@ export class ClaudeRuntime {
             ...turn,
             agent: agent.pubkey,
             label: "@mention",
+            channelLevel: topLevel && !solo,
             ...(wake
               ? { wake: { ...wake, text: (await wakeText?.()) ?? wake.text } }
               : {}),
@@ -526,7 +531,7 @@ export class ClaudeRuntime {
           entry.contexts.set(
             key,
             topLevel
-              ? { channel, topLevel }
+              ? { channel, ...(solo ? { topLevel } : {}) }
               : key === channel
                 ? { channel }
                 : { channel, root: threadReference(event)?.rootId ?? event.id },

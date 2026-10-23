@@ -519,7 +519,11 @@ function fixture(
    * in its Interest's lane, which the runner holds. */
   const wakeTurn = (delivery: Delivery) => {
     const { trigger } = delivery;
-    if (trigger.type === "mention" || trigger.type === "plugin")
+    if (
+      trigger.type === "mention" ||
+      trigger.type === "plugin" ||
+      trigger.type === "attention"
+    )
       throw new Error("Expected a wake");
     delivery.workingUntil(
       wake(
@@ -4175,11 +4179,13 @@ it("delivers a rootless subscription to its channel without publishing its ancho
   );
   await f.runtime.run({
     ...delivery,
-    trigger: { ...delivery.trigger, topLevel: true },
+    trigger: { ...delivery.trigger, type: "attention", topLevel: true },
   });
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
   const input = JSON.stringify(f.starts()[0]?.params);
-  expect(input).toContain("<plugin-wake plugin=");
+  expect(input).not.toContain("<plugin-wake");
+  expect(input).not.toContain("continuous personal chat");
+  expect(input).toContain("unless the Interest instructions");
   expect(input).toContain("top-level");
   expect(input).not.toContain(WAKE_ID);
   expect(f.snapshot.session.canvas.read).not.toHaveBeenCalled();
@@ -4204,4 +4210,37 @@ it("does not reuse persisted bindings with pre-delivery built-in tool schemas", 
   );
   expect(f.runtime.conversations(pubkey)).toEqual([]);
   f.runtime.dispose();
+});
+
+it("allows an addressed channel turn to reply in an existing thread", async () => {
+  const f = fixture();
+  const delivery = pluginWake(f);
+  if (delivery.trigger.type !== "plugin") throw new Error("fixture");
+  await f.runtime.run({
+    ...delivery,
+    trigger: { ...delivery.trigger, type: "attention", topLevel: true },
+  });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  f.query.mockResolvedValue([
+    {
+      id: root,
+      pubkey: owner,
+      kind: 9,
+      created_at: 1,
+      tags: [["h", "channel"]],
+      content: "Release thread",
+    },
+  ]);
+  const reply = await f.tool("send", {
+    audience: "everyone",
+    text: "Release status",
+    reply: root,
+  });
+  expect(reply?.result).toMatchObject({ success: true });
+  expect(f.publish).toHaveBeenCalledWith(
+    expect.objectContaining({
+      tags: expect.arrayContaining([["e", root, "", "reply"]]),
+    }),
+  );
+  await f.complete(0);
 });

@@ -1563,8 +1563,7 @@ it.each([undefined, root.id])(
     });
     try {
       const receipt = deliver({
-        type: "plugin",
-        plugin: "attention",
+        type: "attention",
         channel,
         ...(destinationRoot ? { root: destinationRoot } : { topLevel: true }),
         id: "f".repeat(64),
@@ -1576,11 +1575,10 @@ it.each([undefined, root.id])(
       await expect(settled(receipt)).resolves.toEqual({ ok: true });
       const delivered = host.requests("deliver")[0]?.params;
       expect(delivered?.context).toEqual(
-        destinationRoot
-          ? { channel, root: destinationRoot }
-          : { channel, topLevel: true },
+        destinationRoot ? { channel, root: destinationRoot } : { channel },
       );
-      expect(delivered?.text).toContain('<plugin-wake plugin="attention">');
+      expect(delivered?.text).not.toContain("<plugin-wake");
+      expect(delivered?.text).toContain("CI changed");
       await vi.waitFor(() => expect(published).toHaveLength(1));
       expect(published[0]?.tags.filter((tag) => tag[0] === "e")).toEqual(
         destinationRoot ? [["e", destinationRoot, "", "reply"]] : [],
@@ -1597,8 +1595,7 @@ it("persists a channel-scoped wake's reply thread separately from its tool conte
   try {
     await f.deliver(
       {
-        type: "plugin",
-        plugin: "attention",
+        type: "attention",
         channel,
         root: root.id,
         id: "f".repeat(64),
@@ -1617,32 +1614,37 @@ it("persists a channel-scoped wake's reply thread separately from its tool conte
   }
 });
 
-it("recovers a channel-scoped wake's answer in its saved thread", async () => {
-  const f = setup({
-    unfinished: () => ({
-      submissions: [
-        {
-          submission: 41,
-          conversation: 5,
-          request: "f".repeat(64),
-          context: { channel },
-          reply: { channel, root: root.id, topLevel: false },
-        },
-      ],
-    }),
-    wait: ({ submission }) =>
-      submission === 41
-        ? { status: "done", answer: 9, text: "Recovered wake" }
-        : new Promise(() => {}),
-  });
-  try {
-    await f.deliver({ type: "mention", event: reply("2", "@Pi hi") }).run;
-    await vi.waitFor(() => expect(f.published).toHaveLength(1));
-    expect(f.published[0]?.tags).toContainEqual(["e", root.id, "", "reply"]);
-  } finally {
-    f.runtime.dispose();
-  }
-});
+it.each([false, true])(
+  "recovers a wake at its saved destination (channel-level: %s)",
+  async (topLevel) => {
+    const f = setup({
+      unfinished: () => ({
+        submissions: [
+          {
+            submission: 41,
+            conversation: 5,
+            request: "f".repeat(64),
+            context: { channel },
+            reply: { channel, root: root.id, topLevel },
+          },
+        ],
+      }),
+      wait: ({ submission }) =>
+        submission === 41
+          ? { status: "done", answer: 9, text: "Recovered wake" }
+          : new Promise(() => {}),
+    });
+    try {
+      await f.deliver({ type: "mention", event: reply("2", "@Pi hi") }).run;
+      await vi.waitFor(() => expect(f.published).toHaveLength(1));
+      expect(f.published[0]?.tags.filter((tag) => tag[0] === "e")).toEqual(
+        topLevel ? [] : [["e", root.id, "", "reply"]],
+      );
+    } finally {
+      f.runtime.dispose();
+    }
+  },
+);
 
 it("keeps mention activity when a watch joins without presentation callbacks", async () => {
   const f = setup({
@@ -1669,8 +1671,7 @@ it("keeps mention activity when a watch joins without presentation callbacks", a
     await vi.waitFor(() => expect(mention.acknowledged).toHaveBeenCalled());
     const watch = f.deliver(
       {
-        type: "plugin",
-        plugin: "attention",
+        type: "attention",
         channel,
         root: root.id,
         id: "f".repeat(64),
@@ -1724,8 +1725,7 @@ it("waits for a recovered threaded wake before changing the shared conversation 
   try {
     const next = f.deliver(
       {
-        type: "plugin",
-        plugin: "attention",
+        type: "attention",
         channel,
         topLevel: true,
         id: "f".repeat(64),
@@ -1761,8 +1761,7 @@ it("does not retry a subscription cancelled while Pi reopens", async () => {
   });
   const turn = f.deliver(
     {
-      type: "plugin",
-      plugin: "example",
+      type: "attention",
       channel,
       root: root.id,
       id: "f".repeat(64),
@@ -1781,6 +1780,26 @@ it("does not retry a subscription cancelled while Pi reopens", async () => {
     expect(f.published).toEqual([]);
   } finally {
     reopening.resolve({});
+    f.runtime.dispose();
+  }
+});
+
+it("ignores unrelated plugin wakes", async () => {
+  const f = setup();
+  try {
+    const receipt = f.deliver({
+      type: "plugin",
+      plugin: "github",
+      channel,
+      root: root.id,
+      id: "f".repeat(64),
+      at: 200_000,
+      text: "Untrusted PR comment",
+    });
+    await receipt.run;
+    expect(receipt.ignored).toHaveBeenCalledOnce();
+    expect(f.host.requests("deliver")).toEqual([]);
+  } finally {
     f.runtime.dispose();
   }
 });

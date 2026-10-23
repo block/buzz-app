@@ -1114,11 +1114,12 @@ it.each(["completed", "stopped"])(
 
 it("delivers a rootless subscription to its channel without publishing its anchor", async () => {
   const f = setup({ hold: true, canvas: "Only Solo chats supply this" });
-  await f.run({ ...pluginWake(), topLevel: true });
+  await f.run({ ...pluginWake(), type: "attention", topLevel: true });
   await flush(100);
   const text = f.goose()?.turns[0]?.text ?? "";
-  expect(text).toContain('<plugin-wake plugin="github">');
-  expect(text).toContain(TOP_LEVEL_PROMPT);
+  expect(text).not.toContain("<plugin-wake");
+  expect(text).not.toContain(TOP_LEVEL_PROMPT);
+  expect(text).toContain("unless the Interest instructions");
   expect(text).not.toContain(WAKE_ID);
   expect(text).not.toContain("Only Solo chats supply this");
   f.goose()?.exit(1, "Error: boom\n");

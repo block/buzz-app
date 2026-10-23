@@ -1,3 +1,9 @@
+import {
+  createAgentToolHooks,
+  type AgentToolHook,
+  type AgentToolHooks,
+  type AgentToolHookEvent,
+} from "./tool-hooks";
 import { appClient } from "../../buzz-mcp/app-client";
 import { respond } from "../../buzz-mcp/rpc";
 import { connectMcp } from "../../buzz-mcp/connection";
@@ -839,7 +845,7 @@ export type NewAgent = Readonly<{
    * A hosted type's settings are its provider's, so it has none here. */
   config?: unknown;
 }>;
-export type Agents = {
+export type Agents = AgentToolHooks & {
   /** Registers a deterministic source owned by this plugin. Attention controls
    * its lifetime; output goes privately to the watch's saved conversation.
    * The provider key is pluginId/id. Local agents only. */
@@ -1213,6 +1219,11 @@ export class AgentsService extends Service implements Agents {
    * that what a read or classifier call found under an older key is not
    * shown over the newer one. */
   private keyGeneration = 0;
+  private readonly toolHooks;
+  registerToolHook(hook: AgentToolHook) {
+    this.toolHooks.register(this.ctx, hook);
+  }
+  toolHook = (event: AgentToolHookEvent) => this.toolHooks.run(event);
   private readonly contributions;
   private readonly addedTools;
   /** Every added tool's name, its plugin active or still starting. */
@@ -1306,6 +1317,7 @@ export class AgentsService extends Service implements Agents {
   ) {
     super(ctx, "agents");
     this.contributions = createContributions<AgentType>(ctx);
+    this.toolHooks = createAgentToolHooks(ctx);
     this.addedTools = createContributions<AddedTool & { id: string }>(ctx);
     this.attentionSources = createContributions<AttentionSource>(ctx);
     // Each changes the copy at once and logs a failed save itself.

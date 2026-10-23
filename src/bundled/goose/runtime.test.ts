@@ -1262,3 +1262,29 @@ it("Interrupt during a queued prompt rebuild restores notes without starting a t
   }
 });
 
+it("keeps a queued Goose prompt in its admitted scope after settings change", async () => {
+  const f = setup({ hold: true, scope: "channel" });
+  try {
+    await f.run({ ...pluginWake(), topLevel: true });
+    await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+    const process = f.goose();
+    if (!process) throw new Error("Expected Goose process");
+    await f.deliver(message("1", "threaded work"));
+    f.runtime.sync([
+      {
+        ...f.agent,
+        config: { ...DEFAULT_CONFIG, scope: "thread" },
+      } as unknown as Agent,
+    ]);
+    process.turns[0]?.finish();
+    await vi.waitFor(() =>
+      expect(f.fake.geese.flatMap((p) => p.turns)).toHaveLength(2),
+    );
+    expect(f.fake.geese.flatMap((p) => p.turns)[1]?.text).toContain(
+      "Scope: channel",
+    );
+    f.fake.geese.flatMap((p) => p.turns)[1]?.finish();
+  } finally {
+    f.runtime.dispose();
+  }
+});

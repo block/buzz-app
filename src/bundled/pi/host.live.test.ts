@@ -180,16 +180,17 @@ out.unstartedPlace = await pi.rpc("place", { agent, key: "chan/root" });
 // request is read only afterwards, as when the plugin's wait is already in the pipe.
 const locked = held();
 faux.setResponses([async () => { await locked.gate; return fauxAssistantMessage("Late answer"); }, () => fauxAssistantMessage("Late answer")]);
-const l1 = await pi.rpc("deliver", turn("L", "tenth"));
+const l1 = await pi.rpc("deliver", { ...turn("L", "tenth"), reply: { channel: "chan", root: "wake-root", topLevel: false } });
 const blocker = spawn(process.execPath, ["--disable-warning=ExperimentalWarning", "-e", "const { DatabaseSync } = require('node:sqlite'); new DatabaseSync(process.argv[1]).exec('BEGIN IMMEDIATE'); console.log('locked'); setTimeout(() => {}, 60000)", data + "/agents/" + agent + ".sqlite"], { stdio: ["ignore", "pipe", "inherit"] });
 await new Promise((resolve) => blocker.stdout.once("data", resolve));
+const failingWait = pi.rpc("wait", { agent, submission: l1.submission, request: "L" });
+await new Promise((resolve) => setImmediate(resolve));
 locked.release();
-await new Promise((resolve) => setTimeout(resolve, 50));
-out.failed = await pi.rpc("wait", { agent, submission: l1.submission });
+out.failed = await failingWait;
 blocker.kill();
 await new Promise((resolve) => blocker.once("exit", resolve));
 await pi.rpc("open", { agent, tools });
-out.failedResumed = await pi.rpc("wait", { agent, submission: l1.submission });
+out.failedResumed = await pi.rpc("wait", { agent, submission: l1.submission, request: "L" });
 // Pi's settings as they are now, which the pi command changes.
 await writeFile(data + "/settings.json", JSON.stringify({ defaultProvider: "faux", defaultModel: "faux-1" }));
 out.defaults = await pi.rpc("defaults", {});

@@ -79,6 +79,7 @@ export type ShownObject =
   | (SourceWatch &
       Readonly<{ id: string; status: "enabled" | "disabled" | "completed" }>);
 export type Shown = Readonly<{
+  delivery?: Readonly<{ status: "held" | "blocked"; reason: string }>;
   result: "found" | "not-found";
   object: ShownObject | null;
   expected_state: string;

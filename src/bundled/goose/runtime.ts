@@ -312,11 +312,15 @@ export class GooseRuntime {
     named,
   }: Delivery) {
     const settings = config(raw);
-    // Watches and timers come as standalone turns (`runOnce`).
-    if (trigger.type !== "mention" && trigger.type !== "plugin")
+    // Unaddressed watches and timers come as standalone turns (`runOnce`).
+    if (
+      trigger.type !== "mention" &&
+      trigger.type !== "attention" &&
+      trigger.type !== "plugin"
+    )
       return ignored?.();
     // A plugin's wake is the owner's installed code, not a message to check.
-    const wake = trigger.type === "plugin" ? trigger : undefined;
+    const wake = trigger.type !== "mention" ? trigger : undefined;
     const resumed = trigger.type === "mention" && !!trigger.resumed;
     // goose runs commands as you; mentions need owner or delegated authority.
     if (trigger.type === "mention") {
@@ -343,7 +347,7 @@ export class GooseRuntime {
     entry.handle = agent;
     entry.team = team ?? "";
     const event =
-      trigger.type === "plugin" ? wakeAnchor(trigger) : trigger.event;
+      trigger.type !== "mention" ? wakeAnchor(trigger) : trigger.event;
     const channel =
       channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1] ?? undefined;
     if (!channel) return;
@@ -374,6 +378,7 @@ export class GooseRuntime {
         ...turn,
         agent: agent.pubkey,
         label: "@mention",
+        channelLevel: topLevel && !solo,
         ...(wake
           ? { wake: { ...wake, text: (await wakeText?.()) ?? wake.text } }
           : {}),
@@ -430,7 +435,7 @@ export class GooseRuntime {
           entry.contexts.set(
             key,
             topLevel
-              ? { channel, topLevel }
+              ? { channel, ...(solo ? { topLevel } : {}) }
               : key === channel
                 ? { channel }
                 : { channel, root: threadReference(event)?.rootId ?? event.id },
@@ -725,8 +730,6 @@ export class GooseRuntime {
         handle &&
         appClient(handle, {
           relayAuthor: this.relay(pubkey)?.snapshot().session.relayAuthor,
-          audienceAuthorityCommunity:
-            this.relay(pubkey)?.snapshot().session.audienceAuthorityCommunity,
           signingAuthority:
             this.relay(pubkey)?.snapshot().session.workflowAuthority,
           read: async (path) =>

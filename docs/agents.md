@@ -119,7 +119,7 @@ by the other member of a one-to-one DM the agent is in; group DMs still need
 the mention. It also owns watches and timers, and runs attention work in Janet's lanes: each
 Interest's turns one at a time, up to 8 Interests at once, beside the mention
 lane. For a wake in its lane, `src/features/agent-harness/wakes.ts` checks that
-it is still current before and while its prompt is built. Subscriptions with a delivery `channel` (and optional `root`) continue that conversation through the existing harness wake path. A subscription with no `root` explicitly posts at the channel top level, including DMs and shared channels; this does not make the destination a Solo chat or hand over its Canvas. Without an address, the type's optional `runOnce` runs one turn with
+it is still current before and while its prompt is built. A subscription with a delivery address runs in that conversation through the type's `run`, with an `attention` trigger and the Interest instructions outside plugin-data framing. It remains in its Interest lane. Without an address it passes to the type's optional `runOnce`, which runs one turn with
 no saved conversation (Claude: a
 one-off process; Codex: an ephemeral thread). Its signal aborts
 `STANDALONE_DEADLINE_MS` after it starts, including any wait for the harness to
@@ -894,6 +894,10 @@ The separately installed Attention plugin provides command and GitHub PR produce
 
 Event watches can filter content with `keywords`: 1 to 32 nonblank literal strings, up to 256 bytes each. Matching is case-insensitive and passes when any keyword occurs anywhere in the event content. Keywords combine with the other deterministic selectors and do not require a classifier.
 
-Event watches and timers accept an optional delivery `channel` and thread `root`. The event watch's `channels` still selects where to listen. With an address, the wake continues that conversation with the Interest's instructions; a channel without a root posts at channel level. Without an address, it runs an independent turn in the Interest's lane. Timers retain their occurrence and expiry budgets. The Attention panel shows listening channels separately from the delivery destination.
+Event watches and timers accept an optional delivery `channel` and thread `root`. The event watch's `channels` still selects where to listen. With an address, the wake continues that conversation with the Interest's instructions. Claude, Codex, Goose and Pi accept these Attention triggers; Pi still ignores ordinary plugin wakes. A channel without a root defaults to channel-level posting, while explicit reporting instructions in the Interest can direct another thread or channel within the agent's existing authority. Solo chats retain their personal-chat framing and reply restriction. The address owns the execution conversation and default destination; the Interest owns explicit reporting policy.
+
+Without an address, the subscription runs an independent turn in its Interest's lane. Timers retain their occurrence and expiry budgets. An addressed timer waits without spending an occurrence while destination membership is unconfirmed or absent. `watch_show` reports delivery as held or blocked with a reason; delivery resumes once membership is confirmed. Expiry still applies while held. Membership checks never join channels. The Attention panel shows listening channels separately from the delivery destination.
+
+Conversation wakes are local, have no signed message to resume, and never publish their synthetic anchor ids. Pi saves a conversation wake's reply destination separately from its tool context so a recovered answer keeps its destination. Ordinary plugin wakes retain the separate contract above.
 
 Subscription runtime history stays on this device, outside configuration: the last wake time and up to 40 lines (16 KiB) of source output. Missing history on an older subscription is unknown. A completed source or spent timer is removed after its final queued turn succeeds, including work handed to `workingUntil`. A failed source delivery retains the subscription and output.

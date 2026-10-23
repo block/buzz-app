@@ -8,6 +8,7 @@ import { npubEncode } from "nostr-tools/nip19";
 import { bytesToHex } from "nostr-tools/utils";
 import { finalizeEvent, generateSecretKey } from "nostr-tools";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { forgetDefaultAgent } from "../solo/default-agent";
 import { AgentConfigStore, type Subject } from "./agent-config";
 import type { Mode } from "./agent-start";
 import { channelTemplates } from "../channel-templates/local";
@@ -71,6 +72,10 @@ const records = vi.hoisted(() => ({
   publish: vi.fn(),
   remove: vi.fn(),
   removeAgent: vi.fn(),
+}));
+vi.mock("../solo/default-agent", async (original) => ({
+  ...(await original<typeof import("../solo/default-agent")>()),
+  forgetDefaultAgent: vi.fn(),
 }));
 vi.mock("./relay-removal", () => ({
   removeAgentFromChannels: leaveChannels,
@@ -1026,6 +1031,34 @@ it("keeps handed-off activity local, and pulses typing in the thread until the t
   }
 });
 
+it.each([
+  [{ ok: true, stopped: true }, "stopped"],
+  [{ ok: false, error: "Broke", stopped: true }, "error"],
+])(
+  "records the outcome a handed-off turn reports: %o",
+  async (outcome, state) => {
+    const { service, run, emit, activity } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    run.mockImplementationOnce(async ({ workingUntil }) =>
+      workingUntil(Promise.resolve(outcome)),
+    );
+    emit({
+      events: [
+        event("m", {
+          tags: [
+            ["h", channel],
+            ["p", bot],
+          ],
+        }),
+      ],
+      channelId: channel,
+    });
+    await vi.waitFor(() =>
+      expect(activity.reader.work()[0]?.state).toBe(state),
+    );
+  },
+);
+
 describe("a plugin's wake", () => {
   const root = "e".repeat(64);
   /** Once this copy holds the agent. */
@@ -1303,7 +1336,7 @@ it("runs one turn at a time for an Interest, Interests and mentions beside each 
         pending.set(
           trigger.type === "timer" || trigger.type === "catch-up"
             ? trigger.slug
-            : trigger.type === "plugin" || trigger.type === "source"
+            : trigger.type === "plugin" || trigger.type === "attention" || trigger.type === "source"
               ? trigger.text
               : trigger.event.content,
           resolve,
@@ -2524,13 +2557,16 @@ it("stops refreshing core memory for a community once it is left", async () => {
 });
 
 it("keeps a Delete that fails partway listed and stopped, deletes nothing, and retries nothing", async () => {
-  const { service, native, archives, recover } = await setup();
+  const { service, native, archives, recover, session } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
   const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
   leaveChannels.mockRejectedValueOnce(new Error("offline"));
   await expect(service.remove(bot)).rejects.toThrow(UNFINISHED);
   warn.mockRestore();
   expect(service.find(bot)?.deleting).toBe(true);
+  // Only a finished Delete hands the main agent role on.
+  expect(forgetDefaultAgent).not.toHaveBeenCalled();
+  expect(session.agentChoices.refresh).not.toHaveBeenCalled();
   expect(native.remove).not.toHaveBeenCalled();
   // Reconnecting retries nothing.
   recover();
@@ -2552,6 +2588,17 @@ it("keeps a Delete that fails partway listed and stopped, deletes nothing, and r
     "forget",
   ]);
   expect(service.find(bot)).toBeUndefined();
+  // Cached choices are reread first, so the deleted agent can't be saved
+  // again as its own replacement.
+  expect(session.agentChoices.refresh).toHaveBeenCalledWith(true, {
+    fresh: true,
+  });
+  expect(forgetDefaultAgent).toHaveBeenCalledWith(bot);
+  expect(
+    vi.mocked(session.agentChoices.refresh).mock.invocationCallOrder[0],
+  ).toBeLessThan(
+    vi.mocked(forgetDefaultAgent).mock.invocationCallOrder[0] ?? 0,
+  );
 });
 
 it("shows an agent whose settings could not be saved with its type's defaults", async () => {
@@ -4499,7 +4546,7 @@ const heard = (run: { mock: { calls: readonly (readonly unknown[])[] } }) =>
       ? trigger.events.map(({ event }) => event.content)
       : trigger.type === "timer"
         ? []
-        : trigger.type === "plugin" || trigger.type === "source"
+        : trigger.type === "plugin" || trigger.type === "attention" || trigger.type === "source"
           ? [trigger.text]
           : [trigger.event.content];
   });
@@ -7484,7 +7531,7 @@ it.each([undefined, "e".repeat(64)])(
     expect(run.mock.calls[0]?.[0]).toMatchObject({
       channelId: channel,
       trigger: {
-        type: "plugin",
+        type: "attention",
         channel,
         ...(root ? { root } : { topLevel: true }),
         text: expect.stringContaining("Check the release"),
@@ -7493,7 +7540,7 @@ it.each([undefined, "e".repeat(64)])(
     expect(run.mock.calls[0]?.[0].step).toBeUndefined();
     expect(run.mock.calls[0]?.[0].superseded).toBeUndefined();
     const trigger = run.mock.calls[0]?.[0].trigger;
-    if (trigger?.type !== "plugin")
+    if (trigger?.type !== "attention")
       throw new Error("Expected conversation delivery");
     expect(trigger.text).toContain("Be brief.");
     expect(trigger.text).toContain("spent: true");
@@ -7536,8 +7583,12 @@ it("delivers matched events to their configured address rather than the listenin
   emit({ channelId: channel, events: [deploy("addressed-subscription")] });
   await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
   const trigger = run.mock.calls[0]?.[0].trigger;
-  expect(trigger).toMatchObject({ type: "plugin", channel: destination, root });
-  if (trigger?.type !== "plugin")
+  expect(trigger).toMatchObject({
+    type: "attention",
+    channel: destination,
+    root,
+  });
+  if (trigger?.type !== "attention")
     throw new Error("Expected conversation delivery");
   expect(trigger.text).toContain("observed-message");
   expect(trigger.text).toContain("Be brief.");
@@ -7608,11 +7659,11 @@ it("serializes standalone source output per Interest and drops queued output aft
 });
 
 it.each([false, true])(
-  "does not deliver timer history without confirmed membership (cached: %s)",
+  "holds a timer without spending it until destination membership is confirmed (cached: %s)",
   async (cached) => {
     vi.useFakeTimers({ now: 1_000_000 });
     const runOnce = vi.fn(async () => ({ ok: true }));
-    const { service, run, session } = await setup({ runOnce });
+    const { service, run, session, plugin } = await setup({ runOnce });
     await service.create({ type: "example/echo", name: "Echo" });
     const destination = "11111111-1111-1111-1111-111111111111";
     const list = session.channels.list();
@@ -7649,6 +7700,20 @@ it.each([false, true])(
     // The same Interest's next turn proves the first handover has settled.
     await vi.waitFor(() => expect(runOnce).toHaveBeenCalledTimes(1));
     expect(run).not.toHaveBeenCalled();
+    expect(
+      await plugin.agents.handle(bot)?.attention.show("watch/blocked"),
+    ).toMatchObject({ delivery: { status: cached ? "held" : "blocked" } });
+    expect(service.find(bot)?.timers["watch/blocked"]?.used).toBe(0);
+    vi.mocked(session.channels.list).mockReturnValue({
+      ...list,
+      channels: [
+        ...list.channels,
+        { id: destination, name: "Private", members: [viewer, bot] },
+      ],
+    });
+    await vi.advanceTimersByTimeAsync(5_000);
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    expect(service.find(bot)?.timers["watch/blocked"]?.used).toBe(1);
   },
 );
 

@@ -30,7 +30,8 @@ export const ATTENTION_OFF = section(
 /** Janet's rule for an Interest that links where it came from. */
 const SOURCES =
   "If the Interest links source conversations, read the parts that your decision depends on before you act.";
-const CONVERSATION = "Continue in the supplied conversation.";
+const CONVERSATION =
+  "Continue in the supplied conversation. The delivery address selects the execution conversation and default posting destination; explicit reporting instructions in the Interest take precedence. It does not grant permission to act or post elsewhere.";
 const ONE_OFF =
   "`send` has no default destination in this turn: pass the `channel` (and `reply`) that the Interest instructions name.";
 

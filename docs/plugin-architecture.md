@@ -242,7 +242,7 @@ message. `root` is the thread's root event id (64 hex); leave it out for a Solo
 chat. The agent is told
 the text comes from the plugin, not its owner, and is data, so quote what others
 wrote (comments, check output) rather than phrasing it as instructions. It
-throws when this copy does not run the agent or its queue is full.
+throws when this copy does not run the agent or its queue is full. Claude, Codex and Goose accept plugin wakes; Pi ignores them. Attention delivery uses a separate internal `attention` trigger in the Interest lane, accepted by all four harnesses. Its Interest instructions retain their instruction framing, while observed messages remain data. A channel-only Attention address supplies a default posting destination and allows explicit thread replies outside Solo chats.
 
 An agent type's `run` gets the agent's handle, which publishes, reads and
 uploads as the agent. For agents that act on something other than a message,
@@ -563,6 +563,10 @@ selects its **exact active contribution**, not target matching. `available()` an
 `PanelProps.channelContext` carries the current displayed public context to a channel
 panel; ordinary link/host panels do not supply it. It is presentation metadata, not
 signing authority. Plugins decide when to capture it into their own work.
+
+A tab a link opens is a transient detail: the next link or thread replaces it. A panel
+that sets `keepOpen: true` keeps each target it opens from links as its own tab until
+the viewer closes it, as a launcher's tab is kept.
 
 Channels keeps layout and channel/thread selection. The Terminal plugin binds its
 mounted launcher into the existing shortcut dispatcher, and owns sessions separately
@@ -952,9 +956,17 @@ origin without changing the renderer CSP. URLs must use a declared origin; redir
 are not followed and cookies are not forwarded. Requests accept up to 1 MiB of text
 body and 8 KiB of headers; responses return status, up to 64 headers totaling
 16 KiB (excluding `Set-Cookie`), and up to 16 MiB of UTF-8 body. The full request
-has a 30-second deadline. Browser calls cannot use these native operations.
+defaults to a 30-second deadline; `timeoutMs` may select 1–180000 milliseconds
+for long operations such as Apps initialization. Archive uploads have a
+180-second deadline. Browser calls cannot use these native operations.
 Existing bundled GitHub requests retain their first-party renderer fetch and CSP
 entry.
+
+`host.upload` requires both `host.files` and the destination in `host.networkOrigins`.
+It sends a multipart archive to that origin and reads one absolute
+regular `.tar.gz` file under home, up to 100 MiB. This is local-file access in
+addition to ordinary network requests. The archive suffix and path checks are
+guardrails for trusted plugins, not a sandbox or a content classification check.
 
 New-install review lists declarations. Update review compares against the installed
 revision and leads with added, changed and removed declarations; changed commands and

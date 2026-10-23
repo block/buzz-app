@@ -1268,6 +1268,7 @@ export function createUnread({
     const confirmed = [...nextTypes.keys()].some((id) =>
       cachedChannels.has(id),
     );
+    const gained = [...nextTypes.keys()].some((id) => !channelTypes.has(id));
     cachedChannels = cachedIds(list);
     channelTypes = nextTypes;
     // Channel archive changes Inbox eligibility, not membership or read intent.
@@ -1281,7 +1282,9 @@ export function createUnread({
       purge();
       // An initial observation made against a display-only roster still owes
       // evidence when membership becomes fresh, including during an active repair.
-      if (requested && confirmed) {
+      // A newly accessible channel has no evidence yet, and the epoch bump
+      // abandons any in-flight observation, so both also observe again.
+      if (requested && (confirmed || gained || refresh)) {
         repairAgain = true;
         if (!refresh) void repair();
       }

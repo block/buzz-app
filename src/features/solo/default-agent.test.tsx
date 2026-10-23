@@ -3,7 +3,11 @@ import "@testing-library/jest-dom/vitest";
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, expect, it } from "vitest";
 import type { RelaySession } from "../relay/session";
-import { setDefaultAgent, useDefaultAgent } from "./default-agent";
+import {
+  readDefaultAgent,
+  setDefaultAgent,
+  useDefaultAgent,
+} from "./default-agent";
 
 afterEach(() => {
   cleanup();
@@ -46,6 +50,12 @@ it("choosing a default updates new-chat routing only in its account/community sc
   });
   expect(screen.getByLabelText("one").textContent).toBe("Second");
   expect(screen.getByLabelText("two").textContent).toBe("First");
+  act(() => {
+    setDefaultAgent("one", null);
+  });
+  expect(readDefaultAgent("one")).toBeUndefined();
+  // Solo's routing fallback stays intact; it is not a saved Bestie.
+  expect(screen.getByLabelText("one").textContent).toBe("First");
   act(() => {
     setDefaultAgent("one", "d".repeat(64));
   });

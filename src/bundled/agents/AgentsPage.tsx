@@ -45,7 +45,7 @@ import { useAgentChoices } from "../../features/agents/use-choices";
 import type { RelaySession } from "../../features/relay/session";
 import {
   setDefaultAgent,
-  useDefaultAgent,
+  useChosenAgent,
 } from "../../features/solo/default-agent";
 import type { RelayData } from "../../features/relay/service";
 import type { Navigation } from "../../features/navigation/controller";
@@ -70,7 +70,6 @@ import { Input } from "../../shared/design-system/ui/Input";
 import {
   ContextMenuRoot,
   ContextMenuTrigger,
-  MenuNote,
   MenuPopup,
   MenuItem,
   MenuRoot,
@@ -355,7 +354,7 @@ export function AgentsPage({
       newAgent: !toolbarAction && starts,
     };
     return connection.status === "ready" ? (
-      <DefaultAgentInventory
+      <BestieAgentInventory
         session={connection.session}
         scope={connection.scope ?? ""}
         {...inventory}
@@ -599,34 +598,47 @@ type InventoryProps = {
   onSelect(pubkey?: string): void;
   onBuild(pubkey: string): void;
   newAgent: ReactNode;
-  /** The agent new Berd messages are tagged for, in this community. */
-  defaultAgent?: string | undefined;
-  onMakeDefault?: ((pubkey: string) => void) | undefined;
-  defaultChoices?: ReadonlySet<string>;
+  /** The explicitly chosen bestie in this account/community, with no fallback. */
+  bestie?: string | undefined;
+  onSetBestie?: ((pubkey: string | null) => void) | undefined;
+  bestieChoices?: ReadonlySet<string>;
 };
 
-/** The inventory with this community's default agent marked and settable. */
-function DefaultAgentInventory({
+/** The inventory shares the Bestie page's explicit account/community choice. */
+function BestieAgentInventory({
   session,
   scope,
   ...props
 }: InventoryProps & { session: RelaySession; scope: string }) {
-  const current = useDefaultAgent(session, scope);
+  const current = useChosenAgent(scope);
   const choices = useAgentChoices(session, true, true);
   const [error, setError] = useState("");
   return (
     <>
       <Inventory
         {...props}
-        defaultAgent={current?.pubkey}
-        defaultChoices={
-          new Set(choices.selectable.map((agent) => agent.pubkey))
+        bestie={current}
+        bestieChoices={
+          new Set(
+            choices.selectable
+              .filter((agent) => agent.managed)
+              .map((agent) => agent.pubkey),
+          )
         }
-        onMakeDefault={(pubkey) => {
+        onSetBestie={(pubkey) => {
+          if (
+            pubkey !== null &&
+            !session.agentChoices
+              .snapshot()
+              .selectable.some(
+                (agent) => agent.pubkey === pubkey && agent.managed,
+              )
+          )
+            return;
           setError(
             setDefaultAgent(scope, pubkey)
               ? ""
-              : "The default agent couldn't be saved on this device.",
+              : "Your bestie choice couldn't be saved on this device. Try again.",
           );
         }}
       />
@@ -640,15 +652,15 @@ function DefaultAgentInventory({
 function AgentQuickActions({
   name,
   card,
-  isDefault,
+  isBestie,
   available,
-  onMakeDefault,
+  onToggleBestie,
 }: {
   available: boolean;
   name: string;
   card: ReactElement;
-  isDefault: boolean;
-  onMakeDefault(): void;
+  isBestie: boolean;
+  onToggleBestie(): void;
 }) {
   const [open, setOpen] = useState(false);
   const [anchor, setAnchor] = useState<HTMLElement>();
@@ -675,13 +687,9 @@ function AgentQuickActions({
         }}
       />
       <MenuPopup aria-label={`Actions for ${name}`} anchor={anchor}>
-        {isDefault ? (
-          <MenuNote>Default agent</MenuNote>
-        ) : (
-          <MenuItem disabled={!available} onClick={onMakeDefault}>
-            Make default agent
-          </MenuItem>
-        )}
+        <MenuItem disabled={!isBestie && !available} onClick={onToggleBestie}>
+          {isBestie ? "Remove as your bestie" : "Make this agent your bestie"}
+        </MenuItem>
       </MenuPopup>
     </ContextMenuRoot>
   );
@@ -697,9 +705,9 @@ function Inventory({
   onSelect,
   onBuild,
   newAgent,
-  defaultAgent,
-  defaultChoices,
-  onMakeDefault,
+  bestie,
+  bestieChoices,
+  onSetBestie,
 }: InventoryProps) {
   const grid = useRef<HTMLDivElement>(null);
   const index = agents.findIndex((agent) => agent.pubkey === selected);
@@ -761,17 +769,15 @@ function Inventory({
             const active = agent.pubkey === selected;
             const card = (
               <InventoryCard
-                tag={
-                  agent.pubkey === defaultAgent ? "Default agent" : undefined
-                }
+                tag={agent.pubkey === bestie ? "Your bestie" : undefined}
                 service={service}
                 type={type}
                 onBuild={() => onBuild(agent.pubkey)}
                 onRemoved={() => onSelect()}
                 role="gridcell"
                 aria-label={
-                  agent.pubkey === defaultAgent
-                    ? `${agent.name}, Default agent`
+                  agent.pubkey === bestie
+                    ? `${agent.name}, Your bestie`
                     : agent.name
                 }
                 data-selected={active}
@@ -806,13 +812,15 @@ function Inventory({
               // biome-ignore lint/a11y/useSemanticElements: Layout grid rows group cards without table layout.
               // biome-ignore lint/a11y/useFocusableInteractive: Roving focus belongs to the gridcell, not its row wrapper.
               <div role="row" className="contents" key={agent.pubkey}>
-                {onMakeDefault ? (
+                {onSetBestie ? (
                   <AgentQuickActions
                     name={agent.name}
                     card={card}
-                    isDefault={agent.pubkey === defaultAgent}
-                    available={!!defaultChoices?.has(agent.pubkey)}
-                    onMakeDefault={() => onMakeDefault(agent.pubkey)}
+                    isBestie={agent.pubkey === bestie}
+                    available={!!bestieChoices?.has(agent.pubkey)}
+                    onToggleBestie={() =>
+                      onSetBestie(agent.pubkey === bestie ? null : agent.pubkey)
+                    }
                   />
                 ) : (
                   card

@@ -40,6 +40,13 @@ import type { OpenTarget } from "../../features/navigation/targets";
 import { PlugIcon, RobotIcon } from "../../shared/design-system/icons";
 import { AgentSettings } from "../../app/AgentSettings";
 import { AgentsPage } from "./AgentsPage";
+import { BestieNavigationProvider } from "../../app/shell/BestieNavigation";
+import { PageNavigation as ShellPageNavigation } from "../../app/shell/PageNavigation";
+import type { RegisteredPage } from "../../features/pages/service";
+import {
+  readDefaultAgent,
+  setDefaultAgent,
+} from "../../features/solo/default-agent";
 
 vi.mock("../../features/profiles/avatar-upload", async (actual) => ({
   ...(await actual<typeof import("../../features/profiles/avatar-upload")>()),
@@ -49,6 +56,7 @@ vi.mock("../../features/profiles/avatar-upload", async (actual) => ({
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  localStorage.clear();
 });
 
 const agent = (name: string, n: number): Agent => ({
@@ -2182,23 +2190,35 @@ it("retains the selected profile draft while viewing teams", async () => {
   expect(agents.save).not.toHaveBeenCalled();
 });
 
-it("announces the default agent and presents its menu status without a fake toggle", async () => {
+function bestieTiles() {
   const ada = agent("Ada", 1);
-  const view = setup([ada]);
-  const choices = {
+  const bo = agent("Bo", 2);
+  const view = setup([ada, bo]);
+  const scope = `https://bestie.test:${ada.owner}`;
+  let choices = {
     status: "ready",
     complete: true,
     pending: false,
-    selectable: [{ pubkey: ada.pubkey, name: ada.name, managed: true }],
+    selectable: [ada, bo].map(({ pubkey, name }) => ({
+      pubkey,
+      name,
+      managed: true,
+    })),
     archives: { status: "unavailable" },
   };
+  const listeners = new Set<() => void>();
   const connection = {
     status: "ready",
-    scope: "default-card",
+    viewer: ada.owner,
+    scope,
     session: {
+      viewer: ada.owner,
       agentChoices: {
         snapshot: () => choices,
-        subscribe: () => () => {},
+        subscribe: (notify: () => void) => {
+          listeners.add(notify);
+          return () => listeners.delete(notify);
+        },
         retain: () => () => {},
       },
     },
@@ -2207,12 +2227,147 @@ it("announces the default agent and presents its menu status without a fake togg
     snapshot: () => connection,
     subscribe: () => () => {},
   } as unknown as RelayData;
-  view.rerender(<AgentsPage agents={view.agents} relay={relay} />);
-  const card = screen.getByRole("gridcell", { name: "Ada, Default agent" });
-  fireEvent.keyDown(card, { key: "F10", shiftKey: true });
-  const menu = await screen.findByRole("menu", { name: "Actions for Ada" });
-  expect(within(menu).getByText("Default agent")).toBeVisible();
-  expect(within(menu).queryByRole("menuitemcheckbox")).toBeNull();
+  const page: RegisteredPage = {
+    id: "bestie",
+    key: "buzz.bestie/bestie",
+    pluginId: "buzz.bestie",
+    revision: "bundled",
+    title: "Bestie",
+    primary: true,
+    component: () => null,
+  };
+  view.rerender(
+    <BestieNavigationProvider pages={[page]} relay={relay}>
+      <nav aria-label="Pages">
+        <ShellPageNavigation
+          pages={[page]}
+          selected={page.key}
+          onSelect={() => {}}
+        />
+      </nav>
+      <AgentsPage agents={view.agents} relay={relay} />
+    </BestieNavigationProvider>,
+  );
+  return {
+    ...view,
+    ada,
+    bo,
+    scope,
+    nav: screen.getByRole("navigation", { name: "Pages" }),
+    unavailable() {
+      act(() => {
+        choices = { ...choices, selectable: [] };
+        for (const notify of listeners) notify();
+      });
+    },
+    libraryOnly() {
+      act(() => {
+        choices = {
+          ...choices,
+          selectable: choices.selectable.map((agent) => ({
+            ...agent,
+            managed: false,
+          })),
+        };
+        for (const notify of listeners) notify();
+      });
+    },
+    async action(name: string, selected = false) {
+      const card = screen.getByRole("gridcell", {
+        name: selected ? `${name}, Your bestie` : name,
+      });
+      fireEvent.keyDown(card, { key: "F10", shiftKey: true });
+      const menu = await screen.findByRole("menu", {
+        name: `Actions for ${name}`,
+      });
+      return within(menu).getByRole("menuitem", {
+        name: selected
+          ? "Remove as your bestie"
+          : "Make this agent your bestie",
+      });
+    },
+  };
+}
+
+it("sets, replaces and removes the explicit Bestie from tiles and updates navigation in place", async () => {
+  const user = userEvent.setup();
+  const f = bestieTiles();
+  // An inferred Solo default is not an explicit Bestie.
+  expect(readDefaultAgent(f.scope)).toBeUndefined();
+  expect(within(f.nav).getByRole("button", { name: "Bestie" })).toBeVisible();
+  await user.click(await f.action("Ada"));
+  expect(readDefaultAgent(f.scope)).toBe(f.ada.pubkey);
+  expect(within(f.nav).getByRole("button", { name: "Ada" })).toBeVisible();
+  await user.click(await f.action("Bo"));
+  expect(readDefaultAgent(f.scope)).toBe(f.bo.pubkey);
+  expect(screen.getByRole("gridcell", { name: "Ada" })).toBeVisible();
+  expect(within(f.nav).getByRole("button", { name: "Bo" })).toBeVisible();
+  await user.click(await f.action("Bo", true));
+  expect(readDefaultAgent(f.scope)).toBeUndefined();
+  const empty = within(f.nav).getByRole("button", { name: "Bestie" });
+  expect(empty.querySelector("image")).toHaveAttribute(
+    "href",
+    new URL("/bestie.png", window.location.href).href,
+  );
+  expect(screen.getByRole("gridcell", { name: "Bo" })).toBeVisible();
+  expect(f.agents.remove).not.toHaveBeenCalled();
+  // Reopening the action must not mark a fallback agent after removal.
+  expect(await f.action("Bo")).toBeEnabled();
+});
+
+it("allows removing a Bestie even when it is no longer selectable, but disables setting one", async () => {
+  const user = userEvent.setup();
+  const f = bestieTiles();
+  act(() => {
+    setDefaultAgent(f.scope, f.ada.pubkey);
+  });
+  f.unavailable();
+  expect(await f.action("Ada", true)).toBeEnabled();
+  await user.click(
+    screen.getByRole("menuitem", { name: "Remove as your bestie" }),
+  );
+  expect(readDefaultAgent(f.scope)).toBeUndefined();
+  expect(await f.action("Ada")).toHaveAttribute("aria-disabled", "true");
+});
+
+it("does not offer a library-only identity as a Bestie, but preserves removal of an earlier choice", async () => {
+  const f = bestieTiles();
+  act(() => {
+    setDefaultAgent(f.scope, f.ada.pubkey);
+  });
+  f.libraryOnly();
+  expect(within(f.nav).getByRole("button", { name: "Bestie" })).toBeVisible();
+  expect(await f.action("Ada", true)).toBeEnabled();
+  await userEvent.click(
+    screen.getByRole("menuitem", { name: "Remove as your bestie" }),
+  );
+  expect(await f.action("Ada")).toHaveAttribute("aria-disabled", "true");
+  expect(readDefaultAgent(f.scope)).toBeUndefined();
+});
+
+it("keeps the Bestie and navigation after a failed removal and lets the same action retry", async () => {
+  const user = userEvent.setup();
+  const f = bestieTiles();
+  act(() => {
+    setDefaultAgent(f.scope, f.ada.pubkey);
+  });
+  const save = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    throw new Error("Fixture storage unavailable");
+  });
+  try {
+    await user.click(await f.action("Ada", true));
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Your bestie choice couldn't be saved on this device. Try again.",
+    );
+    expect(readDefaultAgent(f.scope)).toBe(f.ada.pubkey);
+    expect(within(f.nav).getByRole("button", { name: "Ada" })).toBeVisible();
+  } finally {
+    save.mockRestore();
+  }
+  await user.click(await f.action("Ada", true));
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(readDefaultAgent(f.scope)).toBeUndefined();
+  expect(within(f.nav).getByRole("button", { name: "Bestie" })).toBeVisible();
 });
 
 it("opens a Marketplace tile in the profile pane and returns focus on close and import", async () => {

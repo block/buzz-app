@@ -9,14 +9,18 @@ const KEY = "solo:default-agent";
 
 const PUBKEY = /^[0-9a-f]{64}$/;
 
-/** Makes an agent the one new Berd messages are tagged for. */
-export function setDefaultAgent(scope: string, pubkey: string) {
-  return writeView(scope, KEY, PUBKEY.test(pubkey) ? pubkey : null);
+/** Sets or clears the explicit Bestie/default used for new chats. */
+export function setDefaultAgent(scope: string, pubkey: string | null) {
+  return writeView(
+    scope,
+    KEY,
+    pubkey !== null && PUBKEY.test(pubkey) ? pubkey : null,
+  );
 }
 
 /**
  * The agent explicitly chosen on this device, with no stand-in: nothing writes
- * this but a person choosing one, so its absence means they never have. Read
+ * this but a person choosing or removing one. Read
  * `useDefaultAgent` instead to learn which agent a message would be tagged for.
  */
 export function readDefaultAgent(scope: string) {
@@ -34,7 +38,7 @@ export function useChosenAgent(scope: string) {
 /**
  * The agent new Berd messages are tagged for: the one chosen as default when
  * it can still be tagged, otherwise the first agent the viewer runs here, else
- * the first agent they can tag. Bestie may own this choice later. A requested
+ * the first agent they can tag. Bestie shares the explicit choice, not this fallback. A requested
  * agent, as when search opens a new chat with it, replaces that choice: it is
  * tagged once it can be, and no other agent stands in for it.
  */

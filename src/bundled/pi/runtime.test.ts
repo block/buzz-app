@@ -155,6 +155,7 @@ function setup(
   const deliver = (
     trigger: Delivery["trigger"],
     extra: Partial<Delivery<Config>> = {},
+    presented = true,
   ) => {
     const receipt = {
       workingUntil: vi.fn<Delivery["workingUntil"]>(),
@@ -169,7 +170,9 @@ function setup(
       agent,
       config: DEFAULT_CONFIG,
       signal: new AbortController().signal,
-      ...receipt,
+      ...(presented
+        ? receipt
+        : { workingUntil: receipt.workingUntil, ignored: receipt.ignored }),
       ...extra,
     } as unknown as Delivery);
     return { run, ...receipt };
@@ -1640,3 +1643,62 @@ it("recovers a channel-scoped wake's answer in its saved thread", async () => {
     f.runtime.dispose();
   }
 });
+
+it("keeps mention activity when a watch joins without presentation callbacks", async () => {
+  const f = setup({
+    deliver: (params, process) => {
+      process.send({
+        method: "event",
+        params: {
+          agent: self,
+          conversation: CONVERSATION,
+          type: "placed",
+          request: params.request,
+          entry: 1,
+        },
+      });
+      return { submission: 1, conversation: CONVERSATION };
+    },
+  });
+  try {
+    const mention = f.deliver({
+      type: "mention",
+      event: reply("2", "@Pi work"),
+    });
+    await mention.run;
+    await vi.waitFor(() => expect(mention.acknowledged).toHaveBeenCalled());
+    const watch = f.deliver(
+      {
+        type: "plugin",
+        plugin: "attention",
+        channel,
+        root: root.id,
+        id: "f".repeat(64),
+        at: 200_000,
+        text: "Update",
+      },
+      {},
+      false,
+    );
+    await watch.run;
+    await vi.waitFor(() => expect(f.host.requests("deliver")).toHaveLength(2));
+    f.runtime.event({
+      agent: self,
+      conversation: CONVERSATION,
+      type: "placed",
+      request: "f".repeat(64),
+      entry: 2,
+    });
+    f.runtime.event({
+      agent: self,
+      conversation: CONVERSATION,
+      type: "step",
+      tool: "read",
+    });
+    expect(mention.superseded).not.toHaveBeenCalled();
+    expect(mention.step).toHaveBeenCalledWith("read", undefined);
+  } finally {
+    f.runtime.dispose();
+  }
+});
+

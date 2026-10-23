@@ -712,8 +712,10 @@ export class PiRuntime {
       active ??= new Map();
       entry.active.set(event.conversation, active);
       const before = active.get(receipt.scope);
-      if (before !== receipt) before?.superseded?.();
-      active.set(receipt.scope, receipt);
+      if (!before || receipt.step) {
+        if (before !== receipt) before?.superseded?.();
+        active.set(receipt.scope, receipt);
+      }
       receipt.placed ??= {
         conversation: event.conversation,
         entry: event.entry,

@@ -2039,13 +2039,18 @@ export class AgentRunners {
         ...(team ? { team } : {}),
         signal,
         workingUntil: working.hold,
-        ignored: () => job.work?.remove(),
-        acknowledged: () => job.work?.started(),
-        superseded: () => job.work?.supersede(),
-        interruptible: (stop: () => Promise<void>) =>
-          job.work?.interruptible(stop),
+        ...(job.work
+          ? {
+              ignored: () => job.work?.remove(),
+              acknowledged: () => job.work?.started(),
+              superseded: () => job.work?.supersede(),
+              interruptible: (stop: () => Promise<void>) =>
+                job.work?.interruptible(stop),
+              step: (tool: string, target?: string) =>
+                job.work?.step(tool, target),
+            }
+          : {}),
         ...(named ? { named } : {}),
-        step: (tool: string, target?: string) => job.work?.step(tool, target),
         current: () => !lifetime.aborted && this.stillCurrent(runner, job),
       });
       const { trigger } = job;

@@ -85,7 +85,7 @@ export type Shown = Readonly<{
 }>;
 export type WatchSummary = Readonly<{
   id: string;
-  interest_id?: string;
+  interest_id: string;
   name?: string;
   type: "event" | "timer" | "source";
   status: WatchStatus;
@@ -248,7 +248,7 @@ export function watchSummaries(
       return [
         {
           id,
-          ...(value.interest_id ? { interest_id: value.interest_id } : {}),
+          interest_id: value.interest_id,
           ...(value.type === "event" && value.name ? { name: value.name } : {}),
           type: value.type,
           status,
@@ -354,7 +354,6 @@ export async function checkedWrite(
   if (
     value &&
     value.type !== "interest" &&
-    value.interest_id !== undefined &&
     !record.attention[interestSlug(value.interest_id)]
   )
     throw new AttentionError(

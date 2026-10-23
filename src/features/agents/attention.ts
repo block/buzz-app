@@ -21,8 +21,7 @@ export type ClassifierQuestion = Readonly<{
 export const CLASSIFIER_THRESHOLD = 0.2;
 export type EventWatch = Readonly<{
   type: "event";
-  interest_id?: string;
-  prompt?: string;
+  interest_id: string;
   name?: string;
   enabled: boolean;
   since: number;
@@ -43,7 +42,7 @@ export type EventWatch = Readonly<{
 }>;
 export type TimerWatch = Readonly<{
   type: "timer";
-  interest_id?: string;
+  interest_id: string;
   prompt: string;
   enabled: boolean;
   interval_secs: number;
@@ -56,9 +55,8 @@ export type TimerWatch = Readonly<{
 /** A plugin-owned deterministic producer. Attention owns its registration and destination. */
 export type SourceWatch = Readonly<{
   type: "source";
-  interest_id?: string;
+  interest_id: string;
   enabled: boolean;
-  prompt?: string;
   name?: string;
   provider: string;
   config: Readonly<Record<string, unknown>>;
@@ -142,21 +140,11 @@ function interestId(value: unknown) {
     : fail("interest_id must be an Interest id");
 }
 
-/** Legacy subscriptions keep their Interest; standalone ones carry their own task. */
-function subscriptionInstructions(value: Record<string, unknown>) {
-  if (value.interest_id !== undefined) interestId(value.interest_id);
-  if (value.prompt !== undefined) filled(value.prompt, "prompt", TEXT_LIMIT);
-  if (value.interest_id === undefined && value.prompt === undefined)
-    fail("A standalone subscription needs a prompt");
-}
-
 function eventWatch(value: Record<string, unknown>) {
   fields(
     value,
-    ["type", "enabled", "since", "channels", "kinds"],
+    ["type", "interest_id", "enabled", "since", "channels", "kinds"],
     [
-      "interest_id",
-      "prompt",
       "name",
       "authors",
       "exclude_authors",
@@ -167,7 +155,7 @@ function eventWatch(value: Record<string, unknown>) {
       "root",
     ],
   );
-  subscriptionInstructions(value);
+  interestId(value.interest_id);
   if (value.name !== undefined) label(value.name, "name");
   if (typeof value.enabled !== "boolean") fail("enabled must be true or false");
   integer(value.since, "since", 1);
@@ -275,6 +263,7 @@ function timer(value: Record<string, unknown>) {
     value,
     [
       "type",
+      "interest_id",
       "prompt",
       "enabled",
       "interval_secs",
@@ -282,10 +271,10 @@ function timer(value: Record<string, unknown>) {
       "max_occurrences",
       "expires_at",
     ],
-    ["interest_id", "channel", "root"],
+    ["channel", "root"],
   );
   destination(value);
-  subscriptionInstructions(value);
+  interestId(value.interest_id);
   filled(value.prompt, "prompt", TEXT_LIMIT);
   if (typeof value.enabled !== "boolean") fail("enabled must be true or false");
   integer(value.interval_secs, "interval_secs", 1, 31_536_000);
@@ -314,10 +303,10 @@ export function validateObject(
     else if (object.type === "source") {
       fields(
         object,
-        ["type", "enabled", "provider", "config"],
-        ["interest_id", "prompt", "name", "channel", "root"],
+        ["type", "interest_id", "enabled", "provider", "config"],
+        ["name", "channel", "root"],
       );
-      subscriptionInstructions(object);
+      interestId(object.interest_id);
       if (typeof object.enabled !== "boolean")
         fail("enabled must be true or false");
       if (object.name !== undefined) label(object.name, "name");
@@ -498,10 +487,7 @@ export function attentionOf(
   return {
     interests,
     watches,
-    orphans: watches.filter(
-      (object) =>
-        !object.value.interest_id || !ids.has(object.value.interest_id),
-    ),
+    orphans: watches.filter((object) => !ids.has(object.value.interest_id)),
   };
 }
 

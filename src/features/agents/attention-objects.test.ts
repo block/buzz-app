@@ -259,16 +259,3 @@ describe("summaries", () => {
     });
   });
 });
-
-it("writes a standalone subscription without creating an Interest", async () => {
-  const { interest_id: _, ...fields } = watch();
-  const value = record();
-  const result = await write(value, "watch/standalone", {
-    ...fields,
-    prompt: "Review updates",
-  });
-  expect(result.attention["watch/standalone"]?.value).toMatchObject({
-    prompt: "Review updates",
-  });
-  expect(interestIds(result)).toEqual(interestIds(value));
-});

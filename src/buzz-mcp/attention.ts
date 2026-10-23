@@ -120,11 +120,7 @@ const watchFields = {
     required: ["questions"],
     additionalProperties: false,
   },
-  prompt: {
-    ...str,
-    description:
-      "What to do when this subscription fires. Required without an Interest.",
-  },
+  prompt: { ...str, description: "Timer: what to do when it fires." },
   interval_secs: int,
   max_occurrences: { ...unbounded, description: "Timer: default 1." },
   expires_at: {
@@ -168,7 +164,7 @@ export const ATTENTION_TOOLS: readonly Tool[] = [
   ),
   tool(
     "watch_add",
-    `Add an event watch (since and channels), a timer (prompt and interval_secs), a source subscription (provider and config) with an optional Interest; only for a new watch. Without interest, supply its own prompt. With interest, prompt adds subscription-specific instructions.
+    `Add an event watch (since and channels), a timer (prompt and interval_secs), a source subscription (provider and config) to an Interest; only for a new watch.
 
 Event watch: it sees only channels you are a member of, and "all" means all of those. It sees events that arrive while it is on: an earlier since does not replay older ones. Each matching event watch runs independently. Prefer deterministic selectors for hard rules; use the classifier only for judgment. authors keeps only those authors, exclude_authors: ["OWNER_HEX"] drops the owner's own messages, and is_reply: false keeps only top-level messages (true: only thread replies). A watch has authors or exclude_authors, not both. When a watch reports to the owner, exclude the owner's messages unless they are the signal.
 
@@ -189,7 +185,7 @@ ${WRITES}`,
       expected_state: token,
       ...watchFields,
     },
-    ["id", "type", "expected_state"],
+    ["interest", "id", "type", "expected_state"],
   ),
   tool(
     "watch_update",
@@ -360,7 +356,7 @@ async function run(
         expected: required(args, "expected_state"),
       });
     case "watch_add": {
-      const interest = text(args.interest);
+      const interest = required(args, "interest");
       // As in Janet, adding never replaces: an existing watch is changed with
       // watch_update, which keeps the fields it is not given.
       if ((await attention.show(watch("id"))).object)
@@ -370,7 +366,7 @@ async function run(
         args.type === "timer"
           ? {
               type: "timer",
-              ...(interest ? { interest_id: interest } : {}),
+              interest_id: interest,
               enabled: true,
               armed_at: now,
               max_occurrences: 1,
@@ -380,7 +376,7 @@ async function run(
           : args.type === "event"
             ? {
                 type: "event",
-                ...(interest ? { interest_id: interest } : {}),
+                interest_id: interest,
                 enabled: true,
                 kinds: [],
                 ...eventFields(args),
@@ -388,7 +384,7 @@ async function run(
             : args.type === "source"
               ? {
                   type: "source",
-                  ...(interest ? { interest_id: interest } : {}),
+                  interest_id: interest,
                   enabled: true,
                   ...sourceFields(args),
                 }
@@ -396,7 +392,7 @@ async function run(
       return shown(
         attention.write(watch("id"), value as AttentionValue, {
           expected: required(args, "expected_state"),
-          ...(interest ? { interest } : {}),
+          interest,
         }),
       );
     }
@@ -516,7 +512,6 @@ function stored(object: ShownObject) {
 }
 
 const EVENT = [
-  "prompt",
   "channel",
   "root",
   "name",
@@ -548,15 +543,7 @@ function pick(args: Args, names: readonly string[], other: readonly string[]) {
       .map((key) => [key, args[key]]),
   );
 }
-const SOURCE = [
-  "prompt",
-  "name",
-  "enabled",
-  "provider",
-  "config",
-  "channel",
-  "root",
-];
+const SOURCE = ["name", "enabled", "provider", "config", "channel", "root"];
 function sourceFields(args: Args) {
   return pick(args, SOURCE, [...EVENT, ...TIMER]);
 }

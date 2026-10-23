@@ -153,30 +153,3 @@ it("shortens one catch-up message's long text and says where the full text is", 
   // A short message is shown whole, as its original signed event.
   expect(prompt).toContain("Message 2 of 2: original signed event as JSON.");
 });
-
-it("includes a subscription task beside optional shared instructions, never inventing a missing Interest", () => {
-  const event = {
-    id: "e".repeat(64),
-    pubkey: "b".repeat(64),
-    created_at: 100,
-    kind: 9,
-    content: "observed",
-    tags: [],
-  } as EventData;
-  const standalone = watchPrompt({ id: "w", prompt: "Report blockers", event });
-  expect(standalone).toContain(
-    "<subscription>\nReport blockers\n</subscription>",
-  );
-  expect(standalone).not.toContain('missing="true"');
-  const grouped = watchPrompt({
-    id: "w",
-    interest: "release",
-    instructions: "Keep releases moving",
-    prompt: "Report blockers",
-    event,
-  });
-  expect(grouped).toContain(
-    '<interest id="release">\nKeep releases moving\n</interest>',
-  );
-  expect(grouped).toContain("<subscription>\nReport blockers\n</subscription>");
-});

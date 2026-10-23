@@ -192,8 +192,8 @@ export function AttentionPanel({
           <div className="grid gap-0.5">
             <h4 className="m-0 text-label">Without an interest</h4>
             <p className="m-0 text-body-sm text-secondary">
-              Standalone subscriptions carry their own prompt. A subscription
-              naming a missing Interest needs repair.
+              These name an Interest that does not exist, so they wake the agent
+              without instructions.
             </p>
           </div>
           <SettingsGroup>{orphans.map(row)}</SettingsGroup>
@@ -302,14 +302,13 @@ function WatchRow({
     value.type === "timer" ? timerStatus(agent, slug, value) : undefined;
   const delivery = value.channel
     ? `Delivers to ${channels.find((channel) => channel.id === value.channel)?.name ?? value.channel}${value.root ? " (thread)" : ""}`
-    : "Independent agent turn";
+    : "Independent turn for this Interest";
   const detail =
     value.type === "timer"
       ? [`“${value.prompt}”`, status?.text, delivery]
       : value.type === "source"
-        ? [value.prompt, `Provided by ${value.provider}`, delivery]
+        ? [`Provided by ${value.provider}`, delivery]
         : [
-            value.prompt,
             value.name && describeWatch(unnamed(value), channels),
             value.channels === "all"
               ? "Listens in all joined channels"

@@ -182,21 +182,3 @@ it("waits for an aborted producer to exit before starting its replacement", asyn
   await vi.waitFor(() => expect(inputs).toHaveLength(2));
   manager.stop();
 });
-
-it("runs a standalone source with its own prompt and no Interest", async () => {
-  const h = harness();
-  const { interest_id: _, ...fields } = source;
-  const watch = {
-    ...object(),
-    value: { ...fields, prompt: "Report new output" },
-  };
-  const owner = agent(watch);
-  h.manager.reconcile("monitor/command", h.provider, [
-    { ...owner, attention: { [watch.slug]: watch } },
-  ]);
-  await Promise.resolve();
-  expect(h.provider.run).toHaveBeenCalledTimes(1);
-  h.inputs[0]?.emit("Changed");
-  expect(h.emit).toHaveBeenCalledOnce();
-  h.manager.stop();
-});

@@ -68,29 +68,26 @@ export async function wakePrompt(
         ? "source"
         : "event";
   if (!current || current.type !== type) return undefined;
-  const interest = current.interest_id
-    ? (await attention.show(`interest/${current.interest_id}`)).object
-    : null;
-  const instructions = {
-    ...(current.prompt ? { prompt: current.prompt } : {}),
-    ...(interest?.type === "interest"
+  const interest = (await attention.show(`interest/${current.interest_id}`))
+    .object;
+  const instructions =
+    interest?.type === "interest"
       ? { instructions: interest.instructions }
-      : {}),
-  };
+      : {};
   const text =
     trigger.type === "source"
       ? sourcePrompt({
           id,
           provider: trigger.watch.provider,
           text: trigger.text,
-          ...(current.interest_id ? { interest: current.interest_id } : {}),
+          interest: current.interest_id,
           ...instructions,
           conversation: !!current.channel,
         })
       : trigger.type === "watch"
         ? watchPrompt({
             id,
-            ...(current.interest_id ? { interest: current.interest_id } : {}),
+            interest: current.interest_id,
             ...instructions,
             conversation: !!current.channel,
             event: trigger.event,
@@ -99,7 +96,7 @@ export async function wakePrompt(
         : trigger.type === "catch-up"
           ? catchUpPrompt({
               id,
-              ...(current.interest_id ? { interest: current.interest_id } : {}),
+              interest: current.interest_id,
               ...instructions,
               conversation: !!current.channel,
               events: trigger.events,
@@ -107,7 +104,7 @@ export async function wakePrompt(
             })
           : timerPrompt({
               id,
-              ...(current.interest_id ? { interest: current.interest_id } : {}),
+              interest: current.interest_id,
               prompt: current.type === "timer" ? current.prompt : "",
               ...instructions,
               spent: trigger.spent,

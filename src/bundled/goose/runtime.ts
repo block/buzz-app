@@ -272,6 +272,7 @@ export class GooseRuntime {
     const entry = this.entry(agent.pubkey, config(agent.config));
     if (action === "interrupt") {
       this.controls.interrupt(control);
+      entry.policies.get(key)?.cancel();
       await entry.sessions.interrupt(key);
       return;
     }
@@ -448,7 +449,7 @@ export class GooseRuntime {
           topLevel,
           handed,
           settled: Promise.all([same ? prior.settled : undefined, done]).then(
-            () => undefined,
+            () => entry.sessions.idle(key),
           ),
           cancel() {
             interrupted = true;

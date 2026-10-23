@@ -17,6 +17,10 @@ import {
   sessionTools,
   turnNote,
 } from "../../buzz-mcp/session-tools";
+import {
+  wakeAnchor,
+  wakeLands,
+} from "../../features/agent-harness/plugin-wake";
 import { SessionControls } from "../../features/agent-harness/session-control";
 import {
   MemoryReads,
@@ -405,6 +409,7 @@ export class PiRuntime {
     effort,
     team,
     workingUntil,
+    current,
     ignored,
     signal,
     step,
@@ -413,9 +418,12 @@ export class PiRuntime {
     interruptible,
   }: Delivery) {
     // Watches and timers come as standalone turns (`runOnce`).
-    if (trigger.type !== "mention") return ignored?.();
+    if (trigger.type !== "mention" && trigger.type !== "plugin")
+      return ignored?.();
+    const wake = trigger.type === "plugin" ? trigger : undefined;
     // Pi runs commands as you; mentions need owner or delegated authority.
     if (
+      trigger.type === "mention" &&
       !(await fromOwner(
         trigger.event,
         agent.owner,
@@ -427,15 +435,18 @@ export class PiRuntime {
     const entry = this.entry(agent, config(raw));
     entry.handle = agent;
     entry.team = team ?? "";
-    const { event } = trigger;
+    const event =
+      trigger.type === "plugin" ? wakeAnchor(trigger) : trigger.event;
     const channel = channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1];
     if (!channel) return;
-    const topLevel =
+    const solo =
       (await this.reads(agent.pubkey)?.soloChat(
         agent.owner,
         channel,
         signal,
       )) ?? false;
+    const topLevel = solo || wake?.topLevel === true;
+    if (wake && !wakeLands(wake, topLevel)) return ignored?.();
     // Frozen with the policy: a scope change while this waits must not move
     // its prompt to another conversation than the one it is delivered to.
     const key = await this.key(entry, agent.pubkey, event, channel, topLevel);
@@ -455,7 +466,7 @@ export class PiRuntime {
     let interrupted = false;
     const handoff = this.controls.deliver(control, async () => {
       await wait;
-      if (interrupted) return;
+      if (interrupted || (wake && current && !current())) return;
       this.live(entry, agent.pubkey);
       await this.open(agent.pubkey);
       await this.adopted(entry, agent.pubkey, { current: request });
@@ -473,9 +484,11 @@ export class PiRuntime {
             key,
             topLevel,
             seen,
+            solo,
           )),
           agent: agent.pubkey,
           label: "@mention",
+          ...(wake ? { wake } : {}),
         }),
       );
       // A conversation's tools default to its thread; a conversation shared
@@ -496,7 +509,7 @@ export class PiRuntime {
       });
       const picked = await this.turnOf(entry, agent.pubkey, model, effort);
       this.live(entry, agent.pubkey);
-      if (interrupted) return;
+      if (interrupted || (wake && current && !current())) return;
       submitted = await this.deliver(entry, agent.pubkey, {
         agent: agent.pubkey,
         key,
@@ -1072,6 +1085,7 @@ export class PiRuntime {
     key: string,
     topLevel: boolean,
     seen: number,
+    solo = topLevel,
   ) {
     const reads = this.reads(self);
     const summary = await reads?.channel(channelId);
@@ -1083,7 +1097,7 @@ export class PiRuntime {
     // Read alongside the conversation: only a Solo chat's Canvas is handed over.
     const canvas = reads?.canvas?.bind(reads);
     const owner = this.agents.get(self)?.handle?.owner;
-    const reading = topLevel
+    const reading = solo
       ? readProject(
           canvas && owner ? () => canvas(channelId, owner) : undefined,
         )

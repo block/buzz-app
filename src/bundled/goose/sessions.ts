@@ -340,6 +340,11 @@ export class AgentSessions {
     await this.opening.get(key)?.catch(() => undefined);
     this.live.get(key)?.session.interrupt();
   }
+  /** Includes the model call after a final send has answered the turn. */
+  async idle(key: string) {
+    await this.opening.get(key)?.catch(() => undefined);
+    await this.live.get(key)?.session.idle();
+  }
   /** Waits for the conversation's session to finish its work, then compacts
    * it or closes it, so the message opens a new one. Without an open session
    * there is nothing to do. */

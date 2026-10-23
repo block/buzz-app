@@ -1551,3 +1551,40 @@ it("runs a turn at the agent's saved thinking level, apart from a pick", async (
     pick: {},
   });
 });
+
+it.each([undefined, root.id])(
+  "delivers an addressed subscription and posts its answer at the configured destination (root: %s)",
+  async (destinationRoot) => {
+    const { host, deliver, settled, published, runtime } = setup({
+      wait: () => ({ status: "done", answer: 5, text: "CI is green." }),
+    });
+    try {
+      const receipt = deliver({
+        type: "plugin",
+        plugin: "attention",
+        channel,
+        ...(destinationRoot ? { root: destinationRoot } : { topLevel: true }),
+        id: "f".repeat(64),
+        at: 200_000,
+        text: "CI changed",
+      });
+      await receipt.run;
+      expect(receipt.ignored).not.toHaveBeenCalled();
+      await expect(settled(receipt)).resolves.toEqual({ ok: true });
+      const delivered = host.requests("deliver")[0]?.params;
+      expect(delivered?.context).toEqual(
+        destinationRoot
+          ? { channel, root: destinationRoot }
+          : { channel, topLevel: true },
+      );
+      expect(delivered?.text).toContain('<plugin-wake plugin="attention">');
+      await vi.waitFor(() => expect(published).toHaveLength(1));
+      expect(published[0]?.tags.filter((tag) => tag[0] === "e")).toEqual(
+        destinationRoot ? [["e", destinationRoot, "", "reply"]] : [],
+      );
+      expect(JSON.stringify(published)).not.toContain("f".repeat(64));
+    } finally {
+      runtime.dispose();
+    }
+  },
+);

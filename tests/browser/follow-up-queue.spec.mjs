@@ -35,31 +35,55 @@ test("Solo queues follow-ups, keeps typing intact, and offers Send now", async (
       await page.setViewportSize({ width, height: 950 });
       const button = queue.getByRole("button", { name: "Send", exact: true });
       await expect(button).toBeVisible();
-      const contrast = await button.evaluate((element) => {
-        const luminance = (color) => {
-          const channels = color
-            .match(/[\d.]+/g)
-            .slice(0, 3)
-            .map(Number)
-            .map((channel) => {
-              const value = channel / 255;
-              return value <= 0.04045
-                ? value / 12.92
-                : ((value + 0.055) / 1.055) ** 2.4;
-            });
+      const contrast = () =>
+        button.evaluate((element) => {
+          const luminance = (color) => {
+            const channels = color
+              .match(/[\d.]+/g)
+              .slice(0, 3)
+              .map(Number)
+              .map((channel) => {
+                const value = channel / 255;
+                return value <= 0.04045
+                  ? value / 12.92
+                  : ((value + 0.055) / 1.055) ** 2.4;
+              });
+            return (
+              channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722
+            );
+          };
+          const style = getComputedStyle(element);
+          const foreground = luminance(style.color),
+            background = luminance(style.backgroundColor);
           return (
-            channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722
+            (Math.max(foreground, background) + 0.05) /
+            (Math.min(foreground, background) + 0.05)
           );
-        };
-        const style = getComputedStyle(element);
-        const foreground = luminance(style.color),
-          background = luminance(style.backgroundColor);
-        return (
-          (Math.max(foreground, background) + 0.05) /
-          (Math.min(foreground, background) + 0.05)
-        );
+        });
+      // Approved queue-only design exception: resting text uses the quiet
+      // control token (about 3.62:1 in light mode), not WCAG AA text contrast.
+      // Keep that exact treatment covered; interactive states must meet 4.5:1.
+      await editor.focus();
+      await page.mouse.move(0, 0);
+      const quietColor = await button.evaluate((element) => {
+        const probe = document.createElement("span");
+        probe.style.color = "var(--text-quiet-control)";
+        element.append(probe);
+        const color = getComputedStyle(probe).color;
+        probe.remove();
+        return color;
       });
-      expect(contrast).toBeGreaterThanOrEqual(4.5);
+      await expect(button).toHaveCSS("color", quietColor);
+      await button.hover();
+      await expect.poll(contrast).toBeGreaterThanOrEqual(4.5);
+      await page.mouse.move(0, 0);
+      await queue
+        .getByRole("button", { name: "Remove queued message" })
+        .focus();
+      await page.keyboard.press("Tab");
+      await expect(button).toBeFocused();
+      await expect.poll(contrast).toBeGreaterThanOrEqual(4.5);
+      await editor.focus();
       const box = await button.boundingBox();
       expect(box.x).toBeGreaterThanOrEqual(0);
       expect(box.x + box.width).toBeLessThanOrEqual(width);

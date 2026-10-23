@@ -1702,3 +1702,45 @@ it("keeps mention activity when a watch joins without presentation callbacks", a
   }
 });
 
+it("waits for a recovered threaded wake before changing the shared conversation to channel posting", async () => {
+  const old = deferred<unknown>();
+  const f = setup({
+    unfinished: () => ({
+      submissions: [
+        {
+          submission: 41,
+          conversation: CONVERSATION,
+          request: "e".repeat(64),
+          context: { channel },
+          reply: { channel, root: root.id, topLevel: false },
+        },
+      ],
+    }),
+    wait: ({ submission }) =>
+      submission === 41
+        ? old.promise
+        : Promise.resolve({ status: "done", answer: 10, text: "New answer" }),
+  });
+  try {
+    const next = f.deliver(
+      {
+        type: "plugin",
+        plugin: "attention",
+        channel,
+        topLevel: true,
+        id: "f".repeat(64),
+        at: 200_000,
+        text: "Update",
+      },
+      { config: { ...DEFAULT_CONFIG, scope: "channel" } },
+    );
+    await vi.waitFor(() => expect(f.host.requests("wait")).toHaveLength(1));
+    expect(f.host.requests("deliver")).toHaveLength(0);
+    old.resolve({ status: "done", answer: 5, text: "Recovered answer" });
+    await next.run;
+    expect(f.host.requests("deliver")).toHaveLength(1);
+  } finally {
+    old.resolve({ status: "unanswered", reason: "aborted" });
+    f.runtime.dispose();
+  }
+});

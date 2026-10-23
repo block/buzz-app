@@ -124,6 +124,8 @@ type Receipt = Pick<Delivery, "step" | "acknowledged" | "superseded"> & {
   scope: string;
   /** Where a run's answer for it is posted. */
   where: Where;
+  /** A recovered turn holds its posting policy until its answer settles. */
+  settled?: Promise<void>;
   /** Where Pi placed it in a run: its conversation, its entry there, and the
    * conversation's `send` calls then. */
   placed?: Readonly<{ conversation: number; entry: number; sends: number }>;
@@ -470,6 +472,16 @@ export class PiRuntime {
       this.live(entry, agent.pubkey);
       await this.open(agent.pubkey);
       await this.adopted(entry, agent.pubkey, { current: request });
+      await Promise.all(
+        [...entry.receipts.values()]
+          .filter(
+            (receipt) =>
+              receipt.key === key && receipt.where.topLevel !== topLevel,
+          )
+          .map((receipt) => receipt.settled),
+      );
+      this.live(entry, agent.pubkey);
+      if (interrupted || (wake && current && !current())) return;
       const { seen } = await this.pi.request<{ seen: number }>("place", {
         agent: agent.pubkey,
         key,
@@ -885,8 +897,13 @@ export class PiRuntime {
       active.set(receipt.scope, receipt);
       entry.active.set(conversation, active);
       const sends = entry.sends.get(conversation) ?? 0;
-      waits.push(() =>
-        this.settle(entry, pubkey, submission, reply ? request : undefined)
+      waits.push(() => {
+        receipt.settled = this.settle(
+          entry,
+          pubkey,
+          submission,
+          reply ? request : undefined,
+        )
           .then(async (waited) => {
             if (!ours()) return;
             if (waited.status === "done")
@@ -909,8 +926,9 @@ export class PiRuntime {
           })
           .finally(() => {
             if (ours()) this.forget(entry, request);
-          }),
-      );
+          });
+        return receipt.settled;
+      });
     }
     // Only once every run's sends are counted: a wait continues all of them,
     // and one could send while a later run's thread is still looked up.

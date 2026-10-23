@@ -336,12 +336,13 @@ export class GooseRuntime {
       channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1] ?? undefined;
     if (!channel) return;
     // Frozen for the turn: its key, prompt, tools and posts all follow it.
-    const topLevel = await soloChat(
+    const solo = await soloChat(
       () => this.relay(agent.pubkey),
       agent.owner,
       channel,
       signal,
     );
+    const topLevel = solo || wake?.topLevel === true;
     if (wake && !wakeLands(wake, topLevel)) return ignored?.();
     // `fresh` is for a session that has been shown nothing yet.
     const prompt = async (fresh: boolean) => {
@@ -353,6 +354,7 @@ export class GooseRuntime {
         topLevel,
         fresh,
         resumed,
+        solo,
       );
       const { channel: where } = turn;
       const text = turnPrompt({
@@ -404,7 +406,7 @@ export class GooseRuntime {
             this.review(entry, (await prompt(true)).text, notes),
           title: sessionTitle(entry.name, place, key.split("/")[1]),
           // A Solo chat takes the name goose gives its first session.
-          ...(topLevel && named ? { named } : {}),
+          ...(solo && named ? { named } : {}),
           ...(!deferred ? { signal } : {}),
           ...(model ? { model } : {}),
           activityScope: topLevel
@@ -530,6 +532,7 @@ export class GooseRuntime {
     /** Given again after a reload stopped it: it is shown what came after it,
      * its own replies included, as its new session cannot know them. */
     resumed = false,
+    solo = topLevel,
   ) {
     const snapshot = this.relay(self)?.snapshot();
     const session = snapshot?.status === "ready" ? snapshot.session : undefined;
@@ -551,7 +554,7 @@ export class GooseRuntime {
     const seen = fresh || resumed ? 0 : entry.sessions.seen(key);
     // Read alongside the conversation: only a Solo chat's Canvas is handed over.
     const owner = entry.handle?.owner;
-    const reading = topLevel
+    const reading = solo
       ? readProject(
           session && owner
             ? () =>

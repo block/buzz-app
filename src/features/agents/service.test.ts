@@ -7201,51 +7201,53 @@ describe("Attention plugin sources", () => {
   });
 });
 
-it("delivers a timer to a conversation once while retaining its occurrence budget", async () => {
-  vi.useFakeTimers({ now: 1_000_000 });
-  const runOnce = vi.fn(async () => ({ ok: true }));
-  const { service, run } = await setup({ runOnce });
-  await service.create({ type: "example/echo", name: "Echo" });
-  const root = "e".repeat(64);
-  await service.save(bot, {
-    attentionEnabled: true,
-    attention: {
-      "watch/once": {
-        type: "timer",
-        interest_id: "default",
-        prompt: "Check the release",
-        enabled: true,
-        interval_secs: 60,
-        armed_at: 1_000,
-        max_occurrences: 1,
-        expires_at: null,
-        channel,
-        root,
+it.each([undefined, "e".repeat(64)])(
+  "delivers a timer to a conversation once while retaining its occurrence budget (root: %s)",
+  async (root) => {
+    vi.useFakeTimers({ now: 1_000_000 });
+    const runOnce = vi.fn(async () => ({ ok: true }));
+    const { service, run } = await setup({ runOnce });
+    await service.create({ type: "example/echo", name: "Echo" });
+    await service.save(bot, {
+      attentionEnabled: true,
+      attention: {
+        "watch/once": {
+          type: "timer",
+          interest_id: "default",
+          prompt: "Check the release",
+          enabled: true,
+          interval_secs: 60,
+          armed_at: 1_000,
+          max_occurrences: 1,
+          expires_at: null,
+          channel,
+          ...(root ? { root } : {}),
+        },
       },
-    },
-  });
-  await vi.advanceTimersByTimeAsync(60_000);
-  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
-  expect(run.mock.calls[0]?.[0]).toMatchObject({
-    channelId: channel,
-    trigger: {
-      type: "plugin",
-      channel,
-      root,
-      text: expect.stringContaining("Check the release"),
-    },
-  });
-  const trigger = run.mock.calls[0]?.[0].trigger;
-  if (trigger?.type !== "plugin")
-    throw new Error("Expected conversation delivery");
-  expect(trigger.text).toContain("Be brief.");
-  expect(trigger.text).toContain("spent: true");
-  expect(trigger.text).not.toContain("no default destination");
-  await vi.advanceTimersByTimeAsync(180_000);
-  expect(run).toHaveBeenCalledTimes(1);
-  expect(runOnce).not.toHaveBeenCalled();
-  expect(service.find(bot)?.timers["watch/once"]).toMatchObject({ used: 1 });
-});
+    });
+    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    expect(run.mock.calls[0]?.[0]).toMatchObject({
+      channelId: channel,
+      trigger: {
+        type: "plugin",
+        channel,
+        ...(root ? { root } : { topLevel: true }),
+        text: expect.stringContaining("Check the release"),
+      },
+    });
+    const trigger = run.mock.calls[0]?.[0].trigger;
+    if (trigger?.type !== "plugin")
+      throw new Error("Expected conversation delivery");
+    expect(trigger.text).toContain("Be brief.");
+    expect(trigger.text).toContain("spent: true");
+    expect(trigger.text).not.toContain("no default destination");
+    await vi.advanceTimersByTimeAsync(180_000);
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(runOnce).not.toHaveBeenCalled();
+    expect(service.find(bot)?.timers["watch/once"]).toMatchObject({ used: 1 });
+  },
+);
 
 it("delivers matched events to their configured address rather than the listening channel", async () => {
   const runOnce = vi.fn(async () => ({ ok: true }));

@@ -669,15 +669,12 @@ export class CodexRuntime {
     if (!channelId) throw new Error("The event has no unambiguous channel");
     const settings = this.resolveConfig(delivery.config);
     const channel = await reads.channel(channelId);
-    const topLevel = await reads.soloChat(
-      agent.owner,
-      channelId,
-      delivery.signal,
-    );
+    const solo = await reads.soloChat(agent.owner, channelId, delivery.signal);
+    const topLevel = solo || wake?.topLevel === true;
     if (wake && !wakeLands(wake, topLevel)) return delivery.ignored?.();
     // Only a Solo chat's Canvas is handed over.
     const canvas = reads.canvas?.bind(reads);
-    const project = topLevel
+    const project = solo
       ? (await readProject(canvas && (() => canvas(channelId, agent.owner))))
           ?.section
       : undefined;
@@ -723,7 +720,7 @@ export class CodexRuntime {
       ...(trigger.type === "mention" && trigger.resumed
         ? { resumed: true }
         : {}),
-      ...(topLevel && delivery.named ? { named: delivery.named } : {}),
+      ...(solo && delivery.named ? { named: delivery.named } : {}),
     };
     if (!validWorkspace(settings.workspace)) {
       failActivity(

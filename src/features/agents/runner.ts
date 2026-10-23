@@ -202,7 +202,7 @@ function conversationWake(
     type: "plugin",
     plugin: trigger.type === "source" ? trigger.plugin : "buzz.agents",
     channel: target.channel,
-    ...(target.root ? { root: target.root } : {}),
+    ...(target.root ? { root: target.root } : { topLevel: true }),
     text,
     id: bytesToHex(crypto.getRandomValues(new Uint8Array(32))),
     at: Date.now(),
@@ -2244,8 +2244,8 @@ export class AgentRunners {
     agent: Agent,
   ) {
     work?.started();
-    // A plugin's wake types in its thread as a mention of the root would, and
-    // one with no thread only in a Solo chat (`wakeLands`): never at its own id.
+    // A plugin wake types where it posts: its thread, a Solo chat, or the
+    // channel explicitly addressed by a subscription, never its own id.
     const wake = trigger.type === "plugin" ? trigger : undefined;
     const event =
       trigger.type === "mention"
@@ -2272,7 +2272,7 @@ export class AgentRunners {
           .then((flat) => {
             if (wake && !wakeLands(wake, flat))
               throw new Error("The wake has no conversation here");
-            return flat;
+            return flat || wake?.topLevel === true;
           }),
         event,
         channel,

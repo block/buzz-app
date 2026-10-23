@@ -1111,3 +1111,21 @@ it.each(["completed", "stopped"])(
     }
   },
 );
+
+it("delivers a rootless subscription to its channel without publishing its anchor", async () => {
+  const f = setup({ hold: true, canvas: "Only Solo chats supply this" });
+  await f.run({ ...pluginWake(), topLevel: true });
+  await flush(100);
+  const text = f.goose()?.turns[0]?.text ?? "";
+  expect(text).toContain('<plugin-wake plugin="github">');
+  expect(text).toContain(TOP_LEVEL_PROMPT);
+  expect(text).not.toContain(WAKE_ID);
+  expect(text).not.toContain("Only Solo chats supply this");
+  f.goose()?.exit(1, "Error: boom\n");
+  await vi.waitFor(() =>
+    expect(f.published.some((event) => event.kind === 9)).toBe(true),
+  );
+  for (const event of f.published.filter(({ kind }) => kind === 9))
+    expect(event.tags.some((tag) => tag[0] === "e")).toBe(false);
+  expect(JSON.stringify(f.published)).not.toContain(WAKE_ID);
+});

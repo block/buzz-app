@@ -26,10 +26,10 @@ export const wakeAnchor = (wake: PluginTrigger): EventData => ({
 });
 
 /** Whether a wake has a conversation to go to. One with no thread goes only to
- * a Solo chat, which answers in the channel itself; anywhere else its turn
- * would answer in a thread of the anchor, which is not there. */
+ * a Solo chat or an explicitly channel-addressed subscription. Other plugin
+ * wakes require a thread, so they never answer at the synthetic anchor. */
 export const wakeLands = (wake: PluginTrigger, topLevel: boolean) =>
-  !!wake.root || topLevel;
+  !!wake.root || topLevel || wake.topLevel === true;
 
 /** The section a wake's turn has in place of `<buzz-event>`. */
 export function wakeSection(wake: PluginTrigger) {

@@ -4140,3 +4140,30 @@ it("queues an ordinary follow-up when a source is cancelled during startup histo
   expect(f.sent.filter((w) => w.method === "turn/steer")).toHaveLength(0);
   await f.complete(0);
 });
+
+it("delivers a rootless subscription to its channel without publishing its anchor", async () => {
+  const f = fixture();
+  const delivery = pluginWake(f);
+  if (delivery.trigger.type !== "plugin")
+    throw new Error("Expected plugin wake");
+  f.snapshot.session.canvas.available = true;
+  f.snapshot.session.canvas.read.mockResolvedValue(
+    canvasHead("Only Solo chats supply this"),
+  );
+  await f.runtime.run({
+    ...delivery,
+    trigger: { ...delivery.trigger, topLevel: true },
+  });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const input = JSON.stringify(f.starts()[0]?.params);
+  expect(input).toContain("<plugin-wake plugin=");
+  expect(input).toContain("top-level");
+  expect(input).not.toContain(WAKE_ID);
+  expect(f.snapshot.session.canvas.read).not.toHaveBeenCalled();
+  f.exits.resolve(3);
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
+    tags: expect.not.arrayContaining([expect.arrayContaining(["e"])]),
+  });
+  expect(JSON.stringify(f.publish.mock.calls)).not.toContain(WAKE_ID);
+});

@@ -2150,3 +2150,27 @@ it("keeps an accepted Claude handoff past its deadline while compaction runs", a
     f.runtime.dispose();
   }
 });
+
+it("delivers a rootless subscription to its channel without publishing its anchor", async () => {
+  const f = setup([], {
+    hold: true,
+    canvas: { content: "Only Solo chats supply this" },
+  });
+  await f.deliver({ ...pluginWake(), topLevel: true });
+  await flush(10);
+  const prompt =
+    f.claudes().find((process) => process.prompts.length)?.prompts[0] ?? "";
+  expect(prompt).toContain('<plugin-wake plugin="github">');
+  expect(prompt).toContain(TOP_LEVEL_PROMPT);
+  expect(prompt).not.toContain(WAKE_ID);
+  expect(prompt).not.toContain("Only Solo chats supply this");
+  f.claudes()
+    .find((process) => process.prompts.length)
+    ?.exit(1, "Error: boom\n");
+  await vi.waitFor(() =>
+    expect(f.published.some((event) => event.kind === 9)).toBe(true),
+  );
+  for (const event of f.published.filter(({ kind }) => kind === 9))
+    expect(event.tags.some((tag) => tag[0] === "e")).toBe(false);
+  expect(JSON.stringify(f.published)).not.toContain(WAKE_ID);
+});

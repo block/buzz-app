@@ -387,6 +387,8 @@ export type Trigger =
       channel: string;
       /** The thread, absent for a channel-level conversation (a Solo chat). */
       root?: string;
+      /** Attention explicitly addresses the channel when no root is saved. */
+      topLevel?: true;
       text: string;
       id: string;
       at: number;

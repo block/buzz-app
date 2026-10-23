@@ -97,7 +97,7 @@ by the other member of a one-to-one DM the agent is in; group DMs still need
 the mention. It also owns watches and timers, and runs attention work in Janet's lanes: each
 Interest's turns one at a time, up to 8 Interests at once, beside the mention
 lane. For a wake in its lane, `src/features/agent-harness/wakes.ts` checks that
-it is still current before and while its prompt is built. Subscriptions with a delivery `channel` (and optional `root`) continue that conversation through the existing harness wake path. Without an address, the type's optional `runOnce` runs one turn with
+it is still current before and while its prompt is built. Subscriptions with a delivery `channel` (and optional `root`) continue that conversation through the existing harness wake path. A subscription with no `root` explicitly posts at the channel top level, including DMs and shared channels; this does not make the destination a Solo chat or hand over its Canvas. Without an address, the type's optional `runOnce` runs one turn with
 no saved conversation (Claude: a
 one-off process; Codex: an ephemeral thread). Its signal aborts
 `STANDALONE_DEADLINE_MS` after it starts, including any wait for the harness to

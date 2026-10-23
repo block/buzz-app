@@ -446,12 +446,13 @@ export class ClaudeRuntime {
     const channel =
       channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1] ?? undefined;
     if (!channel) return;
-    const topLevel =
+    const solo =
       (await this.reads(agent.pubkey)?.soloChat(
         agent.owner,
         channel,
         signal,
       )) ?? false;
+    const topLevel = solo || wake?.topLevel === true;
     if (wake && !wakeLands(wake, topLevel)) return ignored?.();
     // Frozen with the policy: a scope change while this waits must not move
     // its prompt to another conversation than the one it is delivered to.
@@ -475,6 +476,7 @@ export class ClaudeRuntime {
               key,
               topLevel,
               fresh,
+              solo,
             )),
             agent: agent.pubkey,
             label: "@mention",
@@ -573,7 +575,7 @@ export class ClaudeRuntime {
         this.watch(done, async (error) => {
           if (error) await this.report(agent, channel, event, error, topLevel);
         });
-        if (topLevel && named)
+        if (solo && named)
           void this.offerTitle(
             done,
             agent.pubkey,
@@ -716,6 +718,7 @@ export class ClaudeRuntime {
     key: string,
     topLevel: boolean,
     fresh = false,
+    solo = topLevel,
   ) {
     const reads = this.reads(self);
     const summary = await reads?.channel(channelId);
@@ -728,7 +731,7 @@ export class ClaudeRuntime {
     // Read alongside the conversation: only a Solo chat's Canvas is handed over.
     const canvas = reads?.canvas?.bind(reads);
     const owner = entry.handle?.owner;
-    const reading = topLevel
+    const reading = solo
       ? readProject(
           canvas && owner ? () => canvas(channelId, owner) : undefined,
         )

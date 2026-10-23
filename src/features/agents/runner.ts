@@ -2073,16 +2073,23 @@ export class AgentRunners {
             : undefined;
       if (target?.channel) {
         if (!delivery.current()) return;
-        const text = await wakePrompt(
-          handle,
-          trigger,
-          trigger.slug.replace(/^watch\//, ""),
-          delivery.current,
-        );
+        const wakeText = () =>
+          wakePrompt(
+            handle,
+            trigger,
+            trigger.slug.replace(/^watch\//, ""),
+            delivery.current,
+          );
+        const text = await wakeText();
         if (!text || !delivery.current()) return;
         const wake = conversationWake(trigger, text);
         if (wake)
-          return run({ ...delivery, channelId: wake.channel, trigger: wake });
+          return run({
+            ...delivery,
+            channelId: wake.channel,
+            trigger: wake,
+            wakeText,
+          });
       }
       if (!runOnce) return run(delivery);
       // A watch or timer is a standalone turn; this lane is held until it ends.

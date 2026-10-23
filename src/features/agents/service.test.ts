@@ -7254,3 +7254,30 @@ it.each([false, true])(
     expect(run).not.toHaveBeenCalled();
   },
 );
+
+it("rebuilds addressed Interest instructions after a queued handover", async () => {
+  const { service, run, emit } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  const watch = service.find(bot)?.attention["watch/channel"]?.value;
+  if (watch?.type !== "event") throw new Error("fixture");
+  await service.save(bot, {
+    attentionEnabled: true,
+    attention: {
+      "watch/channel": { ...watch, channel },
+    },
+  });
+  emit({ channelId: channel, events: [deploy("late-instructions")] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  const delivery = run.mock.calls[0]?.[0];
+  await service.save(bot, {
+    attention: {
+      "interest/default": {
+        type: "interest",
+        instructions: "Use the updated task",
+      },
+    },
+  });
+  expect(delivery?.current()).toBe(true);
+  expect(await delivery?.wakeText?.()).toContain("Use the updated task");
+  expect(await delivery?.wakeText?.()).not.toContain("Be brief.");
+});

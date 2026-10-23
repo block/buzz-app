@@ -412,6 +412,7 @@ export class PiRuntime {
     team,
     workingUntil,
     current,
+    wakeText,
     ignored,
     signal,
     step,
@@ -500,7 +501,7 @@ export class PiRuntime {
           )),
           agent: agent.pubkey,
           label: "@mention",
-          ...(wake ? { wake } : {}),
+          ...(wake ? { wake: { ...wake, text: (await wakeText?.()) ?? wake.text } } : {}),
         }),
       );
       // A conversation's tools default to its thread; a conversation shared

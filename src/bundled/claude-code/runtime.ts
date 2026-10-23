@@ -411,6 +411,7 @@ export class ClaudeRuntime {
     team,
     workingUntil,
     current,
+    wakeText,
     ignored,
     signal,
     step,
@@ -481,7 +482,9 @@ export class ClaudeRuntime {
             ...turn,
             agent: agent.pubkey,
             label: "@mention",
-            ...(wake ? { wake } : {}),
+            ...(wake
+              ? { wake: { ...wake, text: (await wakeText?.()) ?? wake.text } }
+              : {}),
           });
           return {
             contextRoot: turn.contextRoot,

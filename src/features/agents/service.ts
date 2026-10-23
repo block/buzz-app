@@ -485,6 +485,8 @@ export type Delivery<Config = unknown> = Readonly<{
   /** The harness's own title for this mention's conversation. The host may
    * name a Solo chat with it once; the type need not know whether it did. */
   named?(title: string): void;
+  /** Rebuilds an addressed subscription prompt after harness readiness or a queue wait. */
+  wakeText?(): Promise<string | undefined>;
   /** Whether the trigger should still run, asked again now. False once the
    * agent is removed or its type replaced; for a watch or timer, also once
    * attention was turned off or its object disabled or removed; and for a

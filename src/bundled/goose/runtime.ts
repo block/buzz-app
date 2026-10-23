@@ -302,6 +302,7 @@ export class GooseRuntime {
     model,
     workingUntil,
     current,
+    wakeText,
     ignored,
     signal,
     step,
@@ -373,7 +374,9 @@ export class GooseRuntime {
         ...turn,
         agent: agent.pubkey,
         label: "@mention",
-        ...(wake ? { wake } : {}),
+        ...(wake
+          ? { wake: { ...wake, text: (await wakeText?.()) ?? wake.text } }
+          : {}),
       });
       return {
         key: turn.key,

@@ -7321,6 +7321,8 @@ it.each([undefined, "e".repeat(64)])(
         text: expect.stringContaining("Check the release"),
       },
     });
+    expect(run.mock.calls[0]?.[0].step).toBeUndefined();
+    expect(run.mock.calls[0]?.[0].superseded).toBeUndefined();
     const trigger = run.mock.calls[0]?.[0].trigger;
     if (trigger?.type !== "plugin")
       throw new Error("Expected conversation delivery");

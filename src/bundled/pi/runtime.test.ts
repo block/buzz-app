@@ -155,6 +155,7 @@ function setup(
   const deliver = (
     trigger: Delivery["trigger"],
     extra: Partial<Delivery<Config>> = {},
+    presented = true,
   ) => {
     const receipt = {
       workingUntil: vi.fn<Delivery["workingUntil"]>(),
@@ -169,7 +170,9 @@ function setup(
       agent,
       config: DEFAULT_CONFIG,
       signal: new AbortController().signal,
-      ...receipt,
+      ...(presented
+        ? receipt
+        : { workingUntil: receipt.workingUntil, ignored: receipt.ignored }),
       ...extra,
     } as unknown as Delivery);
     return { run, ...receipt };
@@ -1667,6 +1670,107 @@ it("starts no standalone source turn invalidated during core-memory loading", as
     expect(f.host.requests("once")).toEqual([]);
   } finally {
     memory.resolve(null);
+    f.runtime.dispose();
+  }
+});
+
+it("keeps mention activity when a watch joins without presentation callbacks", async () => {
+  const f = setup({
+    deliver: (params, process) => {
+      process.send({
+        method: "event",
+        params: {
+          agent: self,
+          conversation: CONVERSATION,
+          type: "placed",
+          request: params.request,
+          entry: 1,
+        },
+      });
+      return { submission: 1, conversation: CONVERSATION };
+    },
+  });
+  try {
+    const mention = f.deliver({
+      type: "mention",
+      event: reply("2", "@Pi work"),
+    });
+    await mention.run;
+    await vi.waitFor(() => expect(mention.acknowledged).toHaveBeenCalled());
+    const watch = f.deliver(
+      {
+        type: "plugin",
+        plugin: "attention",
+        channel,
+        root: root.id,
+        id: "f".repeat(64),
+        at: 200_000,
+        text: "Update",
+      },
+      {},
+      false,
+    );
+    await watch.run;
+    await vi.waitFor(() => expect(f.host.requests("deliver")).toHaveLength(2));
+    f.runtime.event({
+      agent: self,
+      conversation: CONVERSATION,
+      type: "placed",
+      request: "f".repeat(64),
+      entry: 2,
+    });
+    f.runtime.event({
+      agent: self,
+      conversation: CONVERSATION,
+      type: "step",
+      tool: "read",
+    });
+    expect(mention.superseded).not.toHaveBeenCalled();
+    expect(mention.step).toHaveBeenCalledWith("read", undefined);
+  } finally {
+    f.runtime.dispose();
+  }
+});
+
+it("waits for a recovered threaded wake before changing the shared conversation to channel posting", async () => {
+  const old = deferred<unknown>();
+  const f = setup({
+    unfinished: () => ({
+      submissions: [
+        {
+          submission: 41,
+          conversation: CONVERSATION,
+          request: "e".repeat(64),
+          context: { channel },
+          reply: { channel, root: root.id, topLevel: false },
+        },
+      ],
+    }),
+    wait: ({ submission }) =>
+      submission === 41
+        ? old.promise
+        : Promise.resolve({ status: "done", answer: 10, text: "New answer" }),
+  });
+  try {
+    const next = f.deliver(
+      {
+        type: "plugin",
+        plugin: "attention",
+        channel,
+        topLevel: true,
+        id: "f".repeat(64),
+        at: 200_000,
+        text: "Update",
+      },
+      { config: { ...DEFAULT_CONFIG, scope: "channel" } },
+    );
+    await vi.waitFor(() => expect(f.host.requests("wait")).toHaveLength(1));
+    expect(f.host.requests("deliver")).toHaveLength(0);
+    old.resolve({ status: "done", answer: 5, text: "Recovered answer" });
+    await next.run;
+    expect(f.host.requests("deliver")).toHaveLength(1);
+  } finally {
+    old.resolve({ status: "unanswered", reason: "aborted" });
     f.runtime.dispose();
   }
 });

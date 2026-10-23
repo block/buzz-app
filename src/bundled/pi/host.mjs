@@ -806,7 +806,10 @@ export function serve({
       if (failed.has(agent)) return { status: "reopen" };
       const opened = await agentOf(agent);
       const result = await settle(opened, submission);
-      if (request && result.status !== "closed")
+      if (
+        request &&
+        (result.status === "done" || result.status === "unanswered")
+      )
         await opened.harness.commit(async (tx) => {
           delete (await tx.doc(Replies))[request];
         }, context);

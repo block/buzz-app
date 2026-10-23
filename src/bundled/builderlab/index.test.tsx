@@ -699,6 +699,21 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
       );
       expect(create).toBeEnabled();
       expect(name).toHaveValue("Browser");
+      // The wait itself can be abandoned from the dialog.
+      loginCallback = deferred();
+      await user.click(create);
+      await user.click(
+        await within(createDialog).findByRole("button", {
+          name: "Cancel sign-in",
+        }),
+      );
+      expect(await within(createDialog).findByRole("alert")).toHaveTextContent(
+        "Sign-in canceled.",
+      );
+      expect(create).toBeEnabled();
+      expect(
+        within(createDialog).queryByRole("button", { name: "Cancel sign-in" }),
+      ).not.toBeInTheDocument();
       expect(
         requestsTo("register-agent").filter(
           (input) => JSON.parse(input.request.body).agent_name === "Browser",

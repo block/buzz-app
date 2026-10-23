@@ -249,7 +249,7 @@ export function watchSummaries(
         {
           id,
           interest_id: value.interest_id,
-          ...(value.type === "event" && value.name ? { name: value.name } : {}),
+          ...(value.type !== "timer" && value.name ? { name: value.name } : {}),
           type: value.type,
           status,
           ...(value.type === "event" && value.classifier

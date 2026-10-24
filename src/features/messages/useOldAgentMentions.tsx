@@ -10,9 +10,12 @@ type Pending = {
   found: readonly PortableAgent[];
   signal: AbortSignal;
   current(): boolean;
-  finish(sent: boolean): void;
+  /** null stops the send; otherwise the agents sent to without importing. */
+  finish(declined: readonly string[] | null): void;
   busy: boolean;
   error?: string;
+  /** What an import that came through still needs the owner to know. */
+  notes?: readonly string[];
 };
 
 // Agents the owner chose to send to without importing; not asked again this run.
@@ -36,6 +39,7 @@ export function useOldAgentMentions(
     importing.current = true;
     const request = pending;
     setPending({ ...request, busy: true });
+    const notes: string[] = [];
     try {
       for (const agent of request.found) {
         request.signal.throwIfAborted();
@@ -45,19 +49,23 @@ export function useOldAgentMentions(
           );
         // A retry after a partial failure skips the ones that came over.
         if (agents.find(agent.pubkey)) continue;
-        await agents.port({
+        const ported = await agents.port({
           source: agent.source,
           pubkey: agent.pubkey,
           type: chosen.key,
         });
+        notes.push(...ported.notes);
       }
-      request.finish(true);
+      // As on the Agents page, what still needs a hand is said before moving on.
+      if (notes.length) setPending({ ...request, busy: false, notes });
+      else request.finish([]);
     } catch (reason) {
       if (!request.signal.aborted)
         setPending({
           ...request,
           busy: false,
           error: reason instanceof Error ? reason.message : String(reason),
+          ...(notes.length ? { notes } : {}),
         });
     } finally {
       importing.current = false;
@@ -87,37 +95,53 @@ export function useOldAgentMentions(
         () => [],
       );
     },
-    /** Resolves false when the owner closed the dialog and the send stops. */
+    /** Resolves null when the owner closed the dialog and the send stops;
+     * otherwise the agents to pass to `decline` once the message goes out. */
     ask(
       found: readonly PortableAgent[],
       signal: AbortSignal,
       current: () => boolean,
     ) {
       signal.throwIfAborted();
-      return new Promise<boolean>((resolve) => {
-        const finish = (sent: boolean) => {
+      return new Promise<readonly string[] | null>((resolve) => {
+        const finish = (declined: readonly string[] | null) => {
           signal.removeEventListener("abort", abort);
           setPending(undefined);
-          resolve(sent);
+          resolve(declined);
         };
-        const abort = () => finish(false);
+        const abort = () => finish(null);
         signal.addEventListener("abort", abort, { once: true });
         setPending({ found, signal, current, finish, busy: false });
       });
+    },
+    /** Records agents sent to without importing, so this run asks no more.
+     * Called only once every step before sending passed, since a send
+     * stopped later leaves nothing declined. */
+    decline(keys: readonly string[]) {
+      for (const key of keys) declined.add(key);
     },
     dialog: (
       <Dialog
         size="compact"
         open={!!pending}
         onOpenChange={(open) => {
-          if (!open) pending?.finish(false);
+          if (!open) pending?.finish(null);
         }}
         title={
-          pending?.found.length === 1
-            ? `Import ${pending.found[0]?.name}?`
-            : "Import these agents?"
+          pending?.notes && !pending.error
+            ? pending.found.length === 1
+              ? `${pending.found[0]?.name} was imported`
+              : "These agents were imported"
+            : pending?.found.length === 1
+              ? `Import ${pending.found[0]?.name}?`
+              : "Import these agents?"
         }
-        description={pending && describe(pending.found, !!chosen?.adopt)}
+        description={
+          pending &&
+          (pending.notes && !pending.error
+            ? "Send when you're ready. Closing this keeps your draft."
+            : describe(pending.found, !!chosen?.adopt))
+        }
         preventClose={!!pending?.busy}
         initialFocus={importAction}
         finalFocus={() => {
@@ -125,33 +149,40 @@ export function useOldAgentMentions(
           return false;
         }}
         actions={
-          <>
-            <Button
-              type="button"
-              disabled={pending?.busy}
-              onClick={() => {
-                if (!pending) return;
-                // A draft changed meanwhile is not sent, so nothing was declined.
-                if (pending.current())
-                  for (const agent of pending.found) declined.add(agent.pubkey);
-                pending.finish(true);
-              }}
-            >
-              Send without importing
-            </Button>
+          pending?.notes && !pending.error ? (
             <Button
               ref={importAction}
               type="button"
               variant="prominent"
-              disabled={pending?.busy || !chosen}
-              onClick={() => void port()}
+              onClick={() => pending.finish([])}
             >
-              {pending?.busy ? "Importing…" : "Import and send"}
+              Send
             </Button>
-          </>
+          ) : (
+            <>
+              <Button
+                type="button"
+                disabled={pending?.busy}
+                onClick={() =>
+                  pending?.finish(pending.found.map((agent) => agent.pubkey))
+                }
+              >
+                Send without importing
+              </Button>
+              <Button
+                ref={importAction}
+                type="button"
+                variant="prominent"
+                disabled={pending?.busy || !chosen}
+                onClick={() => void port()}
+              >
+                {pending?.busy ? "Importing…" : "Import and send"}
+              </Button>
+            </>
+          )
         }
       >
-        {types.length > 1 && (
+        {types.length > 1 && !(pending?.notes && !pending.error) && (
           <div className="flex">
             <Select
               label="Import as"
@@ -170,6 +201,9 @@ export function useOldAgentMentions(
             />
           </div>
         )}
+        {pending?.notes?.map((note) => (
+          <p key={note}>{note}</p>
+        ))}
         {pending?.error ? (
           <p role="alert">
             {pending.error} Your draft is kept. Agents already imported stay

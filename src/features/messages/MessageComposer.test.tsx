@@ -2538,6 +2538,60 @@ it("sends without importing, and asks about that agent no more", async () => {
   expect(port).not.toHaveBeenCalled();
 });
 
+it("shows what an import still needs before sending", async () => {
+  const { agents, port } = oldBuzzAgents();
+  port.mockResolvedValueOnce({
+    agent: {} as never,
+    notes: ["Honey's picture didn't come over."],
+  });
+  const h = mount({}, undefined, undefined, agents);
+  fireEvent.click(screen.getByRole("button", { name: "First Honey" }));
+  h.submit();
+  await screen.findByRole("dialog", { name: "Import Honey?" });
+  fireEvent.click(screen.getByRole("button", { name: "Import and send" }));
+  const done = await screen.findByRole("dialog", {
+    name: "Honey was imported",
+  });
+  expect(done).toHaveTextContent("Honey's picture didn't come over.");
+  expect(h.messages.send).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  expect(port).toHaveBeenCalledOnce();
+});
+
+it("asks again when a send without importing stops at a later prompt", async () => {
+  const { agents, port } = oldBuzzAgents();
+  const h = mount({}, undefined, undefined, agents);
+  const list = {
+    status: "ready",
+    channels: [
+      { id: "channel", channelType: "stream", members: ["d".repeat(64)] },
+    ],
+  };
+  Object.assign(h.session, {
+    viewer: "d".repeat(64),
+    channels: { list: () => list, subscribeList: () => () => {} },
+    memberAdditions: { add: vi.fn() },
+  });
+  act(() => h.commands().insertMention(first));
+  h.submit();
+  await screen.findByRole("dialog", { name: "Import Honey?" });
+  fireEvent.click(
+    screen.getByRole("button", { name: "Send without importing" }),
+  );
+  await screen.findByRole("button", { name: "Invite" });
+  await userEvent.setup().keyboard("{Escape}");
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+  );
+  h.submit();
+  expect(
+    await screen.findByRole("dialog", { name: "Import Honey?" }),
+  ).toBeInTheDocument();
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(port).not.toHaveBeenCalled();
+});
+
 it("keeps the draft when the import dialog is closed", async () => {
   const { agents, port } = oldBuzzAgents();
   const h = mount({}, undefined, undefined, agents);

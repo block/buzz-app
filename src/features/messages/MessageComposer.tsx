@@ -1487,6 +1487,7 @@ function Composer({
       }
       let references: readonly string[] = [];
       let recipients = captured.recipients.map((item) => item.pubkey);
+      let declinedImports: readonly string[] = [];
       if (soloConversation || ownSoloConversation) {
         admission.current = true;
         setAdmitting(true);
@@ -1498,7 +1499,7 @@ function Composer({
         if (old.length) {
           setSending(true);
           setError(undefined);
-          const proceed = await oldAgents.ask(
+          const decision = await oldAgents.ask(
             old,
             attempt.signal,
             () =>
@@ -1509,7 +1510,8 @@ function Composer({
               ) &&
               permitted.current,
           );
-          if (!proceed) return;
+          if (decision === null) return;
+          declinedImports = decision;
         }
         const channel = session.channels
           .list()
@@ -1596,6 +1598,8 @@ function Composer({
         }
         if (!current()) return;
       }
+      // Every prompt passed, so this message goes out to who was declined.
+      oldAgents.decline(declinedImports);
       // Destination and content are fixed here; a background send never retargets.
       function publishNow(
         uploaded: readonly UploadedAttachment[],

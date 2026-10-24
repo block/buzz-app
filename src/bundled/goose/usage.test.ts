@@ -241,6 +241,38 @@ it("stops goose when a read is cancelled while an export is pending", async () =
   expect(goose.geese[0]?.killed).toBe(true);
 });
 
+it("reads anew when a read starts as every earlier one is cancelled", async () => {
+  const history = new GooseHistory(
+    fakeSpawn({
+      home: "/home/test",
+      history: [
+        {
+          sessionId: "mine",
+          title: "Grok · #general · mine",
+          cwd: "/home/test/.buzz",
+          updatedAt: "2026-06-15T08:00:00Z",
+          conversation: [user(ask()), reply(start + 1, tokens(1, 2, 3, 0.5))],
+        },
+      ],
+    }),
+  );
+  const read = (signal: AbortSignal) =>
+    readUsage(
+      history,
+      agent,
+      "~/.buzz",
+      Date.parse("2026-06-01T00:00:00Z"),
+      signal,
+    );
+  // As a page that mounts twice cancels its first reads and reads again.
+  const first = new AbortController();
+  const cancelled = read(first.signal);
+  first.abort(new Error("left the page"));
+  const again = read(new AbortController().signal);
+  await expect(cancelled).rejects.toThrow("left the page");
+  expect((await again).map((session) => session.id)).toEqual(["mine"]);
+});
+
 afterEach(() => {
   vi.useRealTimers();
 });

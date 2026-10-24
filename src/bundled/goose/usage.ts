@@ -192,7 +192,9 @@ export async function readUsage(
   }
   const current = state;
   let reading = current.reading;
-  if (!reading) {
+  // One stopped because every agent waiting on it was cancelled is ending; a
+  // read that starts meanwhile, as when the page opens again, starts anew.
+  if (!reading || reading.stop.signal.aborted) {
     const stop = new AbortController();
     const started: NonNullable<Workspace["reading"]> = {
       readers: 0,

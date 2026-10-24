@@ -166,7 +166,7 @@ it("summarises the agents' spend and opens a costly session's thread", async () 
   });
 });
 
-it("shows each agent's usage as its read finishes, naming those still read", async () => {
+it("waits for every agent before its totals, and shows each agent read meanwhile", async () => {
   const pixel = agent("Pixel");
   let finish = () => {};
   const slow = new Promise<void>((resolve) => {
@@ -182,16 +182,59 @@ it("shows each agent's usage as its read finishes, naming those still read", asy
       open={vi.fn()}
     />,
   );
-  const hero = await screen.findByRole("region", { name: "Estimated cost" });
-  expect(within(hero).getByText("$3.00")).toBeTruthy();
-  // Said only once the read has taken a moment.
-  expect(screen.queryByText("Still reading Relay…")).toBeNull();
+  // A quick read would show its result without a loading state first.
+  expect(screen.getByText("Reading your agents’ sessions…")).toBeTruthy();
   expect(
-    await screen.findByText("Still reading Relay…", {}, { timeout: 2000 }),
+    await screen.findByText(
+      "Reading your agents’ sessions: 1 of 2 done…",
+      {},
+      { timeout: 2000 },
+    ),
   ).toBeTruthy();
+  const hero = screen.getByRole("region", { name: "Estimated cost" });
+  expect(within(hero).getByText("—")).toBeTruthy();
+  expect(screen.getByText("Shown once every agent is read.")).toBeTruthy();
+  const rows = screen
+    .getAllByRole("listitem")
+    .map((row) => row.textContent ?? "");
+  expect(
+    rows.some((row) => row.includes("Pixel") && row.includes("$3.00")),
+  ).toBe(true);
+  expect(
+    rows.some((row) => row.includes("Relay") && row.includes("Reading…")),
+  ).toBe(true);
   finish();
-  expect(await within(hero).findByText("$4.00")).toBeTruthy();
-  expect(screen.queryByText("Still reading Relay…")).toBeNull();
+  expect(
+    await screen.findByText(
+      summary(
+        "Your 2 agents ran 2 sessions in the last 30 days. Pixel accounts for 75% of the cost, mostly on Claude Opus 5.5.",
+      ),
+    ),
+  ).toBeTruthy();
+  expect(within(hero).getByText("$4.00")).toBeTruthy();
+});
+
+it("tries a failed read once more before reporting it", async () => {
+  let reads = 0;
+  render(
+    <UsagePage
+      agents={host([agent("Pixel")], async () => {
+        reads += 1;
+        if (reads === 1) throw new Error("busy");
+        return [session("a", 250_000)];
+      })}
+      open={vi.fn()}
+    />,
+  );
+  expect(
+    await screen.findByText(
+      summary("Pixel ran 1 session in the last 30 days."),
+      {},
+      { timeout: 2000 },
+    ),
+  ).toBeTruthy();
+  expect(reads).toBe(2);
+  expect(screen.queryByText(/Couldn’t read/)).toBeNull();
 });
 
 it("names the agents it could not read and reads them again", async () => {
@@ -208,8 +251,10 @@ it("names the agents it could not read and reads them again", async () => {
     />,
   );
   expect((await screen.findByRole("status")).textContent).toContain(
-    "Couldn’t read the sessions of Pixel.",
+    "Couldn’t read the sessions of Pixel: no workspace.",
   );
+  // Tried once more before it was reported, as each Try again is.
+  expect(reads).toBe(2);
   // A failed read is no evidence of an empty period; filters stay reachable.
   expect(screen.getByText("No sessions read")).toBeTruthy();
   expect(screen.queryByText("No sessions in this period")).toBeNull();
@@ -219,7 +264,7 @@ it("names the agents it could not read and reads them again", async () => {
   const retry = screen.getByRole("button", { name: "Try again" });
   retry.focus();
   await user.keyboard("{Enter}");
-  await vi.waitFor(() => expect(reads).toBe(2));
+  await vi.waitFor(() => expect(reads).toBe(4), { timeout: 2000 });
   await vi.waitFor(() => expect(retry.getAttribute("aria-busy")).toBeNull());
   expect(document.activeElement).toBe(retry);
   // One that succeeds removes it, and the keyboard moves to Refresh.
@@ -389,7 +434,7 @@ it("keeps showing what it read before when a refresh fails", async () => {
   fail = true;
   await userEvent.click(screen.getByRole("button", { name: "Refresh usage" }));
   expect((await screen.findByRole("status")).textContent).toContain(
-    "Couldn’t read the sessions of Pixel; showing what was read before.",
+    "Couldn’t read the sessions of Pixel: no workspace. Showing what was read before.",
   );
   expect(
     within(screen.getByRole("region", { name: "Estimated cost" })).getByText(
@@ -492,7 +537,7 @@ it("compares nothing while an agent it shows could not be read", async () => {
     />,
   );
   expect((await screen.findByRole("status")).textContent).toContain(
-    "Couldn’t read the sessions of Relay.",
+    "Couldn’t read the sessions of Relay: no workspace.",
   );
   const user = userEvent.setup();
   await user.click(screen.getByRole("combobox", { name: "Period" }));

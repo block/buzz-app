@@ -2072,18 +2072,39 @@ export class AgentsService extends Service implements Agents {
             .filter((identity) => yours(identity, binding))
             .map((identity) => identity.pubkey)
         : [],
-      copies: binding
-        ? this.identities
-            .filter((identity) => this.copyable(identity, binding))
-            .map(({ pubkey, name, picture, relay, type }) => ({
-              pubkey,
-              name,
-              ...(picture ? { picture } : {}),
-              relay,
-              type,
-            }))
-        : [],
+      copies: binding ? this.copies(binding) : [],
     };
+  }
+
+  /** The owner's agents it can copy here, one for each original and its
+   * copies, and none already here as either. */
+  private copies(binding: Binding) {
+    const here = new Set(
+      this.identities
+        .filter((identity) => yours(identity, binding))
+        .map((identity) => this.original(identity)),
+    );
+    const offered = new Map<string, CopyableAgent>();
+    for (const identity of this.identities) {
+      const original = this.original(identity);
+      if (!this.copyable(identity, binding) || here.has(original)) continue;
+      // The original stands for its copies while it can be copied itself.
+      if (offered.has(original) && identity.pubkey !== original) continue;
+      const { pubkey, name, picture, relay, type } = identity;
+      offered.set(original, {
+        pubkey,
+        name,
+        ...(picture ? { picture } : {}),
+        relay,
+        type,
+      });
+    }
+    return [...offered.values()];
+  }
+
+  /** The agent it was copied from, or itself when it is no copy. */
+  private original({ pubkey }: AgentIdentity) {
+    return this.records[pubkey]?.copyOf ?? pubkey;
   }
 
   /** Whether the agent is the binding owner's, in another community, with a
@@ -2135,6 +2156,14 @@ export class AgentsService extends Service implements Agents {
     if (!source || !this.copyable(source, binding))
       throw new Error("That agent is not in another of your communities");
     const { name, type, picture } = source;
+    const original = this.original(source);
+    if (
+      this.identities.some(
+        (identity) =>
+          yours(identity, binding) && this.original(identity) === original,
+      )
+    )
+      throw new Error(`${name} is already here`);
     // A picture in its community's media is fetched there as the original and
     // uploaded here as the copy; any other is a URL both can show.
     const media =
@@ -2153,10 +2182,16 @@ export class AgentsService extends Service implements Agents {
       {
         config: this.recordOf(source).config,
         picture: media ? undefined : picture,
+        copyOf: original,
       },
       binding,
     );
     const notes: string[] = [];
+    // The agent is made either way; settings that were not saved say so.
+    if (this.records[made.pubkey]?.copyOf !== original)
+      notes.push(
+        `${name}'s settings didn't come over. Set them in its settings.`,
+      );
     if (media)
       try {
         if (!image?.data) throw new Error("Not an image an agent can show");
@@ -2348,7 +2383,11 @@ export class AgentsService extends Service implements Agents {
       destination: string,
       owner: string,
     ) => Promise<Readonly<{ agent: AgentIdentity; carry?: Carry }>>,
-    made: Readonly<{ config?: unknown; picture?: string | undefined }> = {},
+    made: Readonly<{
+      config?: unknown;
+      picture?: string | undefined;
+      copyOf?: string;
+    }> = {},
     given?: Binding,
   ) {
     const native = this.native;
@@ -2368,6 +2407,7 @@ export class AgentsService extends Service implements Agents {
     try {
       if (made.config !== undefined)
         record = { ...record, config: made.config };
+      if (made.copyOf) record = { ...record, copyOf: made.copyOf };
       if (carry && kind.adopt)
         record = { ...record, config: kind.adopt(carry, record.config) };
       await this.change(identity.pubkey, () => record);

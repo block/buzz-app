@@ -1250,9 +1250,14 @@ function ImportAgents({
     );
   const copies = only === "agents" ? (found?.copies ?? []) : [];
   // Old Buzz's guidance and its type stay out of a list of copies alone.
-  const old = !found || found[only].length > 0 || !copies.length;
+  const old = !!found && (found[only].length > 0 || !copies.length);
   return (
     <div className="flex flex-col gap-4">
+      {(error || said.size > 0) && (
+        <p role="alert" className="m-0 text-body-sm text-danger">
+          {[error, ...said.values()].filter(Boolean).join(" ")}
+        </p>
+      )}
       {copies.length > 0 && (
         <section
           aria-label="Agents in your other communities"
@@ -1312,11 +1317,6 @@ function ImportAgents({
             onValueChange={setType}
           />
         </div>
-      )}
-      {(error || said.size > 0) && (
-        <p role="alert" className="m-0 text-body-sm text-danger">
-          {[error, ...said.values()].filter(Boolean).join(" ")}
-        </p>
       )}
       {found?.warnings.map((warning) => (
         <p key={warning} className="m-0 text-body-sm text-secondary">
@@ -1472,7 +1472,7 @@ function CopyCard({
         <Button
           size="compact"
           variant="outline"
-          aria-label={`${agent.name} copied`}
+          aria-label={`${agent.name} from ${host(agent.relay)} copied`}
           disabled
           // Keeps the owner's place for the next copy.
           focusableWhenDisabled
@@ -1483,7 +1483,7 @@ function CopyCard({
         <Button
           size="compact"
           variant="outline"
-          aria-label={`Copy ${agent.name}`}
+          aria-label={`Copy ${agent.name} from ${host(agent.relay)}`}
           loading={state === "queued"}
           onClick={onCopy}
         >

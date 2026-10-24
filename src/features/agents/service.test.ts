@@ -765,7 +765,7 @@ it("leaves a member another account on this device has off the team, and names i
 
 it("copies the owner's agents from their other communities as new agents on their teams", async () => {
   const media = `https://other.example.test/media/${"a".repeat(64)}.png`;
-  const { service, native, run, emit } = await setup({
+  const { service, native, run, emit, select, second } = await setup({
     identities: [
       { ...here(birch, "wss://other.example.test"), picture: media },
       { ...here(carrow, "wss://other.example.test"), owner: "f".repeat(64) },
@@ -819,6 +819,11 @@ it("copies the owner's agents from their other communities as new agents on thei
   expect(service.snapshot().teams).toEqual([
     { ...crew, members: [birch, bot] },
   ]);
+  // Copied once: neither it nor its copy is offered where either is.
+  expect((await service.portable()).copies).toEqual([]);
+  await expect(
+    service.port({ source: "community", pubkey: birch }),
+  ).rejects.toThrow("Birch is already here");
   // The original keeps its key and community.
   expect(
     (await native.list()).find((row) => row.pubkey === birch),
@@ -844,6 +849,11 @@ it("copies the owner's agents from their other communities as new agents on thei
   await expect(
     service.port({ source: "community", pubkey: bot }),
   ).rejects.toThrow("That agent is not in another of your communities");
+  select(second.origin);
+  await vi.waitFor(async () =>
+    expect((await service.portable()).here).toEqual([birch]),
+  );
+  expect((await service.portable()).copies).toEqual([]);
 });
 
 it("copies an agent without the picture its community would not give, and says so", async () => {

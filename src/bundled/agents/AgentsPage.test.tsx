@@ -1041,10 +1041,14 @@ it("copies an agent from another community into a community with none", async ()
   expect(
     within(dialog).queryByText("No other agents found to import."),
   ).toBeNull();
-  await user.click(within(list).getByRole("button", { name: "Copy Cy" }));
+  await user.click(
+    within(list).getByRole("button", { name: "Copy Cy from other.example" }),
+  );
   expect(agents.port).toHaveBeenCalledWith({ source: "community", pubkey: cy });
   expect(
-    await within(list).findByRole("button", { name: "Cy copied" }),
+    await within(list).findByRole("button", {
+      name: "Cy from other.example copied",
+    }),
   ).toHaveAttribute("aria-disabled", "true");
 });
 

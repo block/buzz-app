@@ -2013,3 +2013,91 @@ test("live streams request no agent telemetry without plugin demand", async () =
     await h.close();
   }
 });
+
+test("a sync close that overtakes its open keeps the late open from taking a host slot", async () => {
+  const h = await harness();
+  const post = (path, body) =>
+    fetch(`${h.base}${path}`, {
+      method: "POST",
+      headers: { Origin: h.base, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  const filter = {
+    artifact: "current",
+    "#h": ["11111111-1111-4111-8111-111111111111"],
+  };
+  try {
+    const stream = await h.post(["a"]);
+    const streamId = stream.response.headers.get("x-buzz-live-id");
+    await until(() => h.requests.length === 3);
+    const close = await post("/api/relay/stream-artifact-sync-close", {
+      streamId,
+      id: "s1",
+    });
+    expect(close.status).toBe(200);
+    await close.text();
+    const late = await post("/api/relay/stream-artifact-sync", {
+      streamId,
+      id: "s1",
+      filter,
+    });
+    expect(late.status).toBe(409);
+    await late.text();
+    // The remembered close is spent; nothing reached the relay for it.
+    expect(h.requests).toHaveLength(3);
+    const next = await post("/api/relay/stream-artifact-sync", {
+      streamId,
+      id: "s2",
+      filter,
+    });
+    expect(next.status).toBe(200);
+    await next.text();
+    stream.abort();
+  } finally {
+    await h.close();
+  }
+});
+
+test("a stream with too many unresolved sync closes ends instead of forgetting one", async () => {
+  const h = await harness();
+  const post = async (path, body) => {
+    const response = await fetch(`${h.base}${path}`, {
+      method: "POST",
+      headers: { Origin: h.base, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    await response.text();
+    return response.status;
+  };
+  const filter = {
+    artifact: "current",
+    "#h": ["11111111-1111-4111-8111-111111111111"],
+  };
+  try {
+    const stream = await h.post(["a"]);
+    const streamId = stream.response.headers.get("x-buzz-live-id");
+    await until(() => h.requests.length === 3);
+    const closeSync = (id) =>
+      post("/api/relay/stream-artifact-sync-close", { streamId, id });
+    for (let i = 0; i < 64; i++) expect(await closeSync(`c${i}`)).toBe(200);
+    // The oldest close is still remembered at capacity.
+    expect(
+      await post("/api/relay/stream-artifact-sync", {
+        streamId,
+        id: "c0",
+        filter,
+      }),
+    ).toBe(409);
+    expect(await closeSync("c0")).toBe(200);
+    // One more unresolved close ends the stream rather than forget a record.
+    expect(await closeSync("c64")).toBe(200);
+    for (const id of ["c1", "c64", "fresh"])
+      expect(
+        await post("/api/relay/stream-artifact-sync", { streamId, id, filter }),
+      ).toBe(404);
+    expect(h.requests).toHaveLength(3);
+    stream.abort();
+  } finally {
+    await h.close();
+  }
+});

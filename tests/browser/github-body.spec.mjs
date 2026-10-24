@@ -17,7 +17,7 @@ const picture =
 const redirected =
   "https://objects.githubusercontent.com/github-production-user-asset-6210df/659873452-after.mp4";
 const videoPath = fileURLToPath(
-  new URL("../fixtures/message-gallery/assets/sample.mp4", import.meta.url),
+  new URL("../fixtures/github-body.mp4", import.meta.url),
 );
 const imagePath = fileURLToPath(
   new URL("../fixtures/attachment-media/still.png", import.meta.url),
@@ -126,8 +126,6 @@ test("PR media plays under the packaged media policy in a narrow GitHub panel", 
   ).toHaveCSS("list-style-type", "disc");
   for (let index = 0; index < 2; index++) {
     const video = videos.nth(index);
-    // Each player owns its controls. The two-second clip can end before a
-    // Pause click lands, flipping that button to Play, so let it finish.
     const player = video.locator("..");
     await player
       .getByRole("button", { name: "Play video", exact: true })
@@ -138,12 +136,12 @@ test("PR media plays under the packaged media policy in a narrow GitHub panel", 
     await expect
       .poll(() => video.evaluate((element) => element.videoWidth))
       .toBeGreaterThan(0);
+    await player
+      .getByRole("button", { name: "Pause video", exact: true })
+      .click();
     await expect
-      .poll(() => video.evaluate((element) => element.ended))
+      .poll(() => video.evaluate((element) => element.paused))
       .toBe(true);
-    await expect(
-      player.getByRole("button", { name: "Play video", exact: true }),
-    ).toBeVisible();
   }
   for (const source of [before, after])
     await expect(panel.locator(`a[href="${source}"]`)).toHaveCount(0);

@@ -6,8 +6,7 @@ Agents (`src/bundled/agents`, `src/features/agents`) is the app's only agent
 system: it creates, runs and deletes the viewer's agents. This document covers
 what the rest of the app knows about agents: shared selection, mentions, archive
 display, activity, names, inventory and usage. The v1 Agents page, Profiles plugin,
-Channel templates plugin, agent snapshots, team bundles, community catalog and
-agent-management request popups are gone, as are the native `agent_control_*`,
+Channel templates plugin, agent snapshots, team bundles, community catalog are gone, as are the native `agent_control_*`,
 model-discovery and harness-install commands behind them.
 
 Agents was called Agents2 while v1 still shipped. Startup now moves its identity
@@ -30,6 +29,29 @@ replacing either folder. A pending erase handles both folder names before the
 migration runs. Browser moves write the destination before removing the source
 and resume identical interrupted copies; differing destinations are left intact
 and reported as migration errors.
+
+## Creating and changing agents from a conversation
+
+The shared tools offer `agent_types` to list installed local runtimes and
+`agent_create` to submit an unsaved creation draft using a listed type key and a display name.
+It returns a request ID and `saved: false`; no identity exists yet. The owner reviews
+the usual Create agent form, may edit the name, runtime and settings, and creates
+only by submitting it. Closing the form discards the request. Requests are local,
+bounded to 16 and do not survive reload or a change of signed-in owner.
+Approval binds the identity to the requesting agent's owner and community, even
+when another community is selected. Use `members` separately after creation to add
+it to a conversation. Agent tools do not expose draft approval.
+
+`agent_update` submits an unsaved draft of changes to one of the owner's local
+agents in the same community, named by pubkey or exact name: a new name, a type
+key from `agent_types`, or new instructions. Absent fields stay as they are. The
+owner reviews them in the New agent form, titled Edit and filled in with the
+agent's settings and the proposed changes, with the usual type-change preview;
+saving applies what the owner reviewed, and closing the review discards the
+request. A type change carries what the new type adopts, as a manual one does. Change
+requests share the creation requests' local bound and lifetime.
+Keys stay in native custody. Hosted-provider provisioning and standalone tool
+servers do not support these operations.
 
 ## Agent types and providers
 
@@ -149,19 +171,21 @@ config together; a failed save leaves the choice and draft available to retry
 or revert.
 
 An agent type may also contribute `provider`: a subscribable readiness snapshot,
-a read-only check, and a management-dialog body. **More → Providers** lists each
-active type once using the registered title and icon. It is a quick health view:
-rows show only ready, checking, attention, or a neutral unavailable state. The
-Agents host owns the submenu, modal framing, focus restoration and contribution
+a read-only check, and a management-dialog body. **Settings → Agent setup →
+Harness defaults** lists each active type once using the registered title and
+icon. It is a quick health view: rows show ready (with the default-model
+control), checking, attention, or a neutral unavailable state. The create
+dialog's **Model** row shows the same install and sign-in actions inline. The
+Agents host owns the rows, modal framing, focus restoration and contribution
 error boundary. The plugin owns connection actions and optional defaults inside
 the dialog; blocking install or sign-in work must expose cancellation before the
 dialog can close. Disabled or unloaded types remain in Settings → Plugins → Manage plugins.
 
-Goose's Settings → AI defaults contribution reads and writes Goose's own
+Goose's Settings → Harness defaults contribution reads and writes Goose's own
 configuration through `GooseSetup`. Provider keys stay in Goose's secret store;
 Buzz keeps no separate Goose defaults store. Readiness requires a working
 `goose-acp` and a configured default provider. The per-agent provider/model
-fields remain overrides. Types without a provider contribution have no AI
+fields remain overrides. Types without a provider contribution have no Harness
 defaults row; a failed contribution retains the unavailable fallback.
 
 Workspace, instructions and session scope are always per-agent. Claude and Codex
@@ -174,7 +198,7 @@ records. Codex uses an inherited thinking choice only when the effective model
 supports it, otherwise that model's default applies. Transient process/session
 state may appear in the Activity tab, but is not durable history.
 
-A type with `sessionControls` (Claude, Codex and goose) offers three immediate
+A type with `sessionControls` (Claude, Codex, goose and Pi) offers three immediate
 session controls in the composer's gauge popover: **Compact session**,
 **Start a new session**, and **Interrupt**. A side rail keeps all three visible.
 Compact and New are enabled while that harness session is idle; Interrupt is
@@ -199,6 +223,13 @@ received during an action is accepted into that session's handoff and releases
 the agent's mention lane immediately. It waits for the action without spending
 its handover deadline; other conversations continue, and stopping the agent
 cancels the deferred work.
+
+Claude's channel-scoped sessions save a separate history timestamp for each
+thread. Working in one thread does not mark another thread's messages as seen.
+The 200 most recently addressed threads are tracked across reloads. Older saves
+and evicted entries supply that thread's recent context again on its next turn;
+the saved Claude session is retained. DMs and Solo chats keep one conversation
+timestamp.
 
 Codex's provider model menu offers **Codex recommended** (the catalog's
 recommendation) and specific models. Blank model preferences follow the
@@ -544,8 +575,10 @@ store and stops it, keeping its key. The cleanup (`AgentsService.cleanup`, share
 helpers in `features/agents/relay-removal.ts`) then runs:
 
 1. An exact one-member 9001 (`h`, `p`, `client-id`) goes through the outbox for every
-   channel whose relay-signed 39002 roster lists the agent, plus the viewer's loaded
-   channels. Each channel's own fresh roster must then omit the agent.
+   unarchived channel whose relay-signed 39002 roster lists the agent, plus the
+   viewer's loaded unarchived channels. Each channel's own fresh roster must then omit
+   the agent. The relay refuses membership changes in an archived channel, so its
+   roster keeps the deleted agent.
 2. A fresh archive read runs; unless it already lists the identity, it is archived
    through the request path above when a consent path exists. An agent that never
    published an owner-attested profile has nothing to hide and is not archived.
@@ -680,7 +713,7 @@ There is no agent-global sequence gate: producer sequences reset, skip and inter
 
 ### Try with an existing owner account
 
-Use the [README's public-pin/Keychain setup](../README.md#relay-channels) and run
+Use the [public-pin/Keychain setup](contributing.md#live-relay-development) and run
 `bin/just web` (or `bin/just desktop`). Open the printed Local URL, choose
 the agent's community and open a channel. Keep a runner active for that agent, with
 telemetry publication enabled, then give it work. This activity plugin does not
@@ -755,7 +788,7 @@ status. No keys, config, memory, membership, or runtime state are changed by it.
 
 ### Model-menu design exception
 
-The AI defaults and Goose creation controls intentionally use the shared Menu
+The Harness defaults and Goose creation controls intentionally use the shared Menu
 for family → model → effort navigation, as explicitly requested in product
 review. This is a scoped exception to DESIGN.md's Select/Combobox form-value
 guidance. Keep the selected model and effort accessible, preserve compact chip

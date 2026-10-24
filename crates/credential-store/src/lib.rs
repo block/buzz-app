@@ -12,6 +12,9 @@ use std::path::Path;
 use zeroize::Zeroize;
 use zeroize::Zeroizing;
 
+#[cfg(all(not(test), target_os = "macos", debug_assertions))]
+mod dev_helper;
+
 pub const HUMAN_ACCOUNT: &str = "human";
 pub const HUMAN_SERVICE: &str = human_service(cfg!(debug_assertions));
 
@@ -215,6 +218,10 @@ pub fn read_human() -> Result<Zeroizing<Vec<u8>>> {
 
 #[cfg(all(not(test), target_os = "macos"))]
 pub fn read_human() -> Result<Zeroizing<Vec<u8>>> {
+    #[cfg(debug_assertions)]
+    if let Some(helper) = std::env::var_os("BUZZ_DEV_CREDENTIAL_HELPER") {
+        return dev_helper::read(&helper);
+    }
     use security_framework::os::macos::keychain::SecKeychain;
     let keychain = SecKeychain::default().map_err(mac_error)?;
     keychain

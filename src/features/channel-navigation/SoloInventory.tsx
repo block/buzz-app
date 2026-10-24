@@ -40,7 +40,7 @@ import creationStyles from "./SoloInventory.module.css";
 import { PlusIcon, ChatCircleIcon } from "../../shared/design-system/icons";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import type { ContributionReader } from "../conversation/contracts";
-import type { ChatIcon } from "../conversation/service";
+import type { ChatIcon, ChatMenu } from "../conversation/service";
 import channelStyles from "../../bundled/channels/Channels.module.css";
 import styles from "../../bundled/channels/SoloWorkspaces.module.css";
 
@@ -58,6 +58,7 @@ export function SoloInventory({
   navigator,
   target,
   chatIcons,
+  chatMenus,
 }: {
   session: RelaySession;
   scope: string;
@@ -65,6 +66,7 @@ export function SoloInventory({
   target: OpenTarget;
   /** Plugin icons that can stand in for a chat's own. */
   chatIcons?: ContributionReader<ChatIcon> | undefined;
+  chatMenus?: ContributionReader<ChatMenu> | undefined;
 }) {
   const list = useChannelList(session.channels);
   const pendingClick = useRef<ReturnType<typeof setTimeout> | undefined>(
@@ -95,6 +97,10 @@ export function SoloInventory({
   const ChatIcon = useSyncExternalStore(
     chatIcons?.subscribe ?? noSubscription,
     () => chatIcons?.snapshot()[0]?.component,
+  );
+  const menus = useSyncExternalStore(
+    chatMenus?.subscribe ?? noSubscription,
+    () => chatMenus?.snapshot(),
   );
   const workingChannels = new Set<string>(JSON.parse(workingIds));
   const open = (channelId: string) =>
@@ -216,6 +222,11 @@ export function SoloInventory({
         />
       )}
       <SoloWorkspaces
+        renderChatMenu={(channelId) =>
+          menus?.map(({ key, component: Menu }) => (
+            <Menu key={key} session={session} channelId={channelId} />
+          ))
+        }
         navigator={navigator}
         draft={
           draft

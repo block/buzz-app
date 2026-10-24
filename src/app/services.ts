@@ -1,4 +1,5 @@
 import { createAdminAccess } from "../bundled/admin-access";
+import { SoloNavigationService } from "../features/channel-navigation/solo-navigation";
 import { nativeRelayStaff } from "../features/relay-staff/native";
 import { createLocalAgentActivity } from "../features/agents/local-activity";
 // FOUNDATION: Compose the bundled distribution, plugin runtime, and services here.
@@ -77,6 +78,7 @@ export function createServices() {
     subscribe: communities.subscribe,
   });
   const relay = communities.relay;
+  const soloNavigation = new SoloNavigationService(ctx, relay);
   const adminAccess = createAdminAccess(relay, communities, nativeRelayStaff());
   ctx.provide("adminAccess", adminAccess);
   ctx.effect(() => () => adminAccess.dispose());
@@ -137,6 +139,7 @@ export function createServices() {
     accountActions,
     shortcutBindings,
     conversation,
+    soloNavigation,
     settingsCards,
     adminAccess,
     pages,

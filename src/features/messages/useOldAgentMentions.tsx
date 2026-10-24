@@ -167,7 +167,7 @@ export function useOldAgentMentions(
                   pending?.finish(pending.found.map((agent) => agent.pubkey))
                 }
               >
-                Send without importing
+                Just send
               </Button>
               <Button
                 ref={importAction}
@@ -218,9 +218,16 @@ export function useOldAgentMentions(
 function describe(found: readonly PortableAgent[], adopts: boolean) {
   const one = found.length === 1;
   const names = found.map((agent) => agent.name).join(", ");
-  return `${names} ${one ? "is" : "are"} set up in a previous version of Buzz, so ${
-    one ? "it answers" : "they answer"
-  } only while that app runs. Import ${one ? "it" : "them"} to keep ${
-    one ? "its" : "their"
-  } ${adopts ? "key, name, picture and instructions" : "key, name and picture"} here. Quit the old app afterward, or both will answer.`;
+  const kept = one
+    ? adopts
+      ? "name, avatar, and instructions"
+      : "name and avatar"
+    : adopts
+      ? "names, avatars, and instructions"
+      : "names and avatars";
+  return `${names} ${one ? "is" : "are"} set up in the preview version of Buzz. Are you ready to import ${
+    one ? "it" : "them"
+  } to Buzz 1.0? This will keep ${one ? "its" : "their"} ${kept} but will start running ${
+    one ? "it" : "them"
+  } in this app.`;
 }

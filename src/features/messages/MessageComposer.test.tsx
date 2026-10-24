@@ -2504,7 +2504,7 @@ it("imports a mentioned agent an earlier Buzz runs before sending to it", async 
   h.submit();
   const dialog = await screen.findByRole("dialog", { name: "Import Honey?" });
   expect(dialog).toHaveTextContent(
-    "Honey is set up in a previous version of Buzz",
+    "Honey is set up in the preview version of Buzz. Are you ready to import it to Buzz 1.0?",
   );
   expect(h.messages.send).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("button", { name: "Import and send" }));
@@ -2527,9 +2527,7 @@ it("sends without importing, and asks about that agent no more", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Second Honey" }));
   h.submit();
   await screen.findByRole("dialog", { name: "Import Honey?" });
-  fireEvent.click(
-    screen.getByRole("button", { name: "Send without importing" }),
-  );
+  fireEvent.click(screen.getByRole("button", { name: "Just send" }));
   await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
   fireEvent.click(screen.getByRole("button", { name: "Second Honey" }));
   h.submit();
@@ -2576,9 +2574,7 @@ it("asks again when a send without importing stops at a later prompt", async () 
   act(() => h.commands().insertMention(first));
   h.submit();
   await screen.findByRole("dialog", { name: "Import Honey?" });
-  fireEvent.click(
-    screen.getByRole("button", { name: "Send without importing" }),
-  );
+  fireEvent.click(screen.getByRole("button", { name: "Just send" }));
   await screen.findByRole("button", { name: "Invite" });
   await userEvent.setup().keyboard("{Escape}");
   await waitFor(() =>

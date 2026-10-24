@@ -1865,7 +1865,6 @@ export class AgentsService extends Service implements Agents {
           signal,
           relayAuthor: source.relayAuthor?.(),
           signingAuthority: source.workflowAuthority(),
-          audienceAuthorityCommunity: source.audienceAuthorityCommunity?.(),
           check: () => {
             handle.attention.enabled();
             if (reads().connection !== source.connection)

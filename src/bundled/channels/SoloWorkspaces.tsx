@@ -424,7 +424,7 @@ export function SoloWorkspaces({
               content={
                 <>
                   <MenuItem onClick={() => setSettingsFor(project)}>
-                    Workspace settings…
+                    Workspace settings
                   </MenuItem>
                   <MenuItem
                     tone="danger"

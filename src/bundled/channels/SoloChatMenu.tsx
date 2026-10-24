@@ -86,7 +86,7 @@ export function SoloChatMenuItems({
         <MenuIcon>
           <GearIcon size={14} />
         </MenuIcon>
-        Chat settings…
+        Chat settings
       </MenuItem>
       <MenuSeparator />
       {session.unread.sync().capability === "frontier-sync" && (
@@ -126,7 +126,7 @@ export function SoloChatMenuItems({
                 {group.name}
               </MenuItem>
             ))}
-            <MenuItem onClick={onNewWorkspace}>New workspace…</MenuItem>
+            <MenuItem onClick={onNewWorkspace}>New workspace</MenuItem>
           </MenuSubmenuPopup>
         </MenuSubmenu>
       )}
@@ -166,7 +166,7 @@ export function SoloChatMenuItems({
             <MenuIcon>
               <ShareIcon size={14} />
             </MenuIcon>
-            Share…
+            Share
           </MenuItem>
           {onConvert && canConvertToChannel(session, channel) && (
             <MenuItem onClick={onConvert}>

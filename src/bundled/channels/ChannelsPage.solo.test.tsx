@@ -725,10 +725,10 @@ it("offers the same chat actions from the header and the sidebar row", async () 
   };
   const header = await items("Chat actions");
   expect(header).toEqual([
-    "Chat settings…",
+    "Chat settings",
     "Move to",
     "Copy",
-    "Share…",
+    "Share",
     "Convert to channel",
     "Archive chat",
     "Delete chat",
@@ -751,7 +751,7 @@ it("runs the header's own chat actions and returns focus to Chat actions", async
   await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
   await user.click(trigger);
   await user.click(
-    await screen.findByRole("menuitem", { name: "Chat settings…" }),
+    await screen.findByRole("menuitem", { name: "Chat settings" }),
   );
   const dialog = await screen.findByRole("dialog", { name: "Edit chat" });
   await user.click(within(dialog).getByRole("button", { name: "Cancel" }));

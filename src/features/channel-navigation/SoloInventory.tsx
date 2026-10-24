@@ -189,7 +189,7 @@ export function SoloInventory({
                       if (current()) setCreatingProject(true);
                     }}
                   >
-                    New workspace…
+                    New workspace
                   </MenuItem>
                 </MenuPopup>
               </MenuRoot>

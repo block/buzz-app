@@ -146,12 +146,12 @@ it("creates and moves through the relay service, then restores in a fresh store"
     screen.getByRole("button", { name: "Actions for Planning" }),
   );
   expect(
-    await screen.findByRole("menuitem", { name: "Chat settings…" }),
+    await screen.findByRole("menuitem", { name: "Chat settings" }),
   ).toHaveAttribute("aria-disabled", "true");
   (await screen.findByRole("menuitem", { name: "Move to" })).focus();
   await user.keyboard("{ArrowRight}");
   await user.click(
-    await screen.findByRole("menuitem", { name: "New workspace…" }),
+    await screen.findByRole("menuitem", { name: "New workspace" }),
   );
   await user.type(
     screen.getByRole("textbox", { name: "Workspace name" }),
@@ -306,7 +306,7 @@ it("only offers Chats as a destination from a project", async () => {
     );
     (await screen.findByRole("menuitem", { name: "Move to" })).focus();
     await user.keyboard("{ArrowRight}");
-    await screen.findByRole("menuitem", { name: "New workspace…" });
+    await screen.findByRole("menuitem", { name: "New workspace" });
   };
   await openProjectMenu();
   expect(screen.queryByRole("menuitem", { name: "Chats" })).toBeNull();

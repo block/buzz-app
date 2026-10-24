@@ -1,3 +1,10 @@
+import { hookMessageSource } from "../../features/agents/tool-hooks";
+import type { Host } from "../../features/host/service";
+import type {
+  AgentToolHookEvent,
+  AgentToolHooks,
+} from "../../features/agents/tool-hooks";
+import { CodexHooks, HOOK_SERVER, hookToolName } from "./hooks";
 import type { WorkOutcome } from "../../features/agents/local-activity";
 import { fromOwner, workflowOf } from "../../features/agents/owner-attestation";
 import {
@@ -69,6 +76,7 @@ type Request = {
   /** The agent's community and owner, as `origin:viewer`. */
   scope: string;
   event: EventData;
+  deliveredAt?: number;
   agent: AgentHandle;
   settings: Config;
   conversation: Conversation;
@@ -232,6 +240,7 @@ function textOf(event: EventData, name: string) {
  * calls find their agent by thread and turn. */
 export class CodexRuntime {
   private entries = new Map<string, Entry>();
+  private readonly bridges = new WeakMap<AppServer, CodexHooks>();
   private server: Server | undefined;
   private stopping = new Map<string, Promise<void>>();
   private views = new Map<string, readonly SessionView[]>();
@@ -252,6 +261,10 @@ export class CodexRuntime {
     /** Desktop-local repository instructions; standalone hosts keep their own layout. */
     private readonly repositories: (scope: string | undefined) => string = () =>
       "",
+    private readonly hooks?: {
+      serve: NonNullable<Host["serveMcp"]>;
+      run: AgentToolHooks["toolHook"];
+    },
   ) {}
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
@@ -322,15 +335,15 @@ export class CodexRuntime {
         throw new Error(
           "The workspace changed. Send a message to start its session first.",
         );
-      const { params } = await this.prepare(
+      const { params, closeHooks } = await this.prepare(
         rpc,
         agent,
         settings,
         workspace,
         {},
       );
-      signal.throwIfAborted();
       try {
+        signal.throwIfAborted();
         await rpc.request("thread/resume", {
           ...params,
           threadId: saved.threadId,
@@ -351,6 +364,7 @@ export class CodexRuntime {
         await rpc
           .request("thread/unsubscribe", { threadId: saved.threadId })
           .catch(() => undefined);
+        await closeHooks?.();
       }
     });
   }
@@ -499,26 +513,74 @@ export class CodexRuntime {
     this.open();
   }
   private close() {
+    if (this.server) void this.bridges.get(this.server.rpc)?.close();
     void this.server?.rpc.close();
     this.server = undefined;
   }
   private open() {
     if (this.server) return this.server;
     const rpc = new AppServer((call) => this.tool(call));
+    const bridge =
+      this.hooks &&
+      new CodexHooks(this.hooks.serve, async (input) => {
+        const entries = [...this.entries.values()];
+        const active = entries
+          .flatMap((entry) => [...entry.lanes.values()])
+          .map((lane) => lane.active)
+          .find((turn) => turn?.threadId === input.session_id);
+        const turn =
+          active ??
+          entries
+            .flatMap((entry) => [...entry.onces])
+            .find((turn) => turn.threadId === input.session_id);
+        if (!turn) return undefined; // Background titles have no agent tools.
+        if (active) await active.ready;
+        if (
+          turn.turnId !== input.turn_id ||
+          turn.finished ||
+          turn.signal.aborted
+        )
+          return "The Codex turn has ended";
+        return this.hooks?.run(
+          this.hookEvent(
+            turn,
+            String(input.tool_use_id),
+            hookToolName(String(input.tool_name)),
+            (input.tool_input ?? {}) as Record<string, unknown>,
+          ),
+        );
+      });
+    if (bridge) this.bridges.set(rpc, bridge);
     // Threads set their own cwd; the process just needs a directory that exists.
     const server: Server = {
       rpc,
-      opening: rpc.open(this.spawn, defaults.workspace),
+      opening: bridge
+        ? bridge.open().then((args) =>
+            rpc.open(
+              (id, options) =>
+                this.spawn(id, {
+                  ...options,
+                  ...(args
+                    ? { args: [...(options?.args ?? []), ...args] }
+                    : {}),
+                }),
+              defaults.workspace,
+            ),
+          )
+        : rpc.open(this.spawn, defaults.workspace),
       threads: new Map(),
     };
     // An exit fails current work and permits the next ordinary mention to reopen.
     rpc.onMessage((wire) => {
-      if (wire.method === "connection/closed" && this.server === server)
-        this.server = undefined;
+      if (wire.method === "connection/closed") {
+        void bridge?.close();
+        if (this.server === server) this.server = undefined;
+      }
     });
     void server.opening.catch(() => {
       if (this.server === server) this.server = undefined;
       void rpc.close();
+      void bridge?.close();
     });
     this.server = server;
     return server;
@@ -809,6 +871,7 @@ export class CodexRuntime {
                 request.answered();
                 return;
               }
+              request.deliveredAt = Date.now();
               await active.rpc.request("turn/steer", {
                 threadId: active.threadId,
                 expectedTurnId: active.turnId,
@@ -913,19 +976,16 @@ export class CodexRuntime {
     };
     const followed = follow(server.rpc, signal, once);
     entry.onces.add(once);
+    let closeHooks: (() => Promise<void>) | undefined;
     try {
       const rpc = await server.opening;
       signal.throwIfAborted();
       const workspace = await this.workspace(settings.workspace);
       signal.throwIfAborted();
       once.workspace = workspace;
-      const { params, model, effort, summary } = await this.prepare(
-        rpc,
-        agent,
-        settings,
-        workspace,
-        {},
-      );
+      const prepared = await this.prepare(rpc, agent, settings, workspace, {});
+      const { params, model, effort, summary } = prepared;
+      closeHooks = prepared.closeHooks;
       const text = await prompt();
       if (text === undefined) return { ok: true };
       const memory = await this.core(agent.pubkey, signal);
@@ -991,6 +1051,7 @@ export class CodexRuntime {
           .request("thread/unsubscribe", { threadId })
           .catch(() => undefined);
       }
+      await closeHooks?.();
       entry.onces.delete(once);
       release();
     }
@@ -1216,13 +1277,28 @@ export class CodexRuntime {
             : {}),
         }
       : {};
-    const reply = await callSessionTool(
-      client,
-      context,
-      call.tool,
+    const event = this.hookEvent(
+      turn,
+      call.callId,
+      `mcp__buzz__${call.tool}`,
       args,
-      this.added(),
     );
+    const denied = await this.hooks?.run(event);
+    if (denied) throw new Error(denied);
+    let reply: Awaited<ReturnType<typeof callSessionTool>>;
+    try {
+      reply = await callSessionTool(
+        client,
+        context,
+        call.tool,
+        args,
+        this.added(),
+      );
+    } catch (error) {
+      await this.hooks?.run({ ...event, phase: "after", success: false });
+      throw error;
+    }
+    await this.hooks?.run({ ...event, phase: "after", success: true });
     const final = call.tool === "send" && args.final === true;
     if (final) {
       for (const taken of answering) taken.answered();
@@ -1241,6 +1317,46 @@ export class CodexRuntime {
                 ? [{ type: "inputText" as const, text: reply.text }]
                 : []),
             ],
+    };
+  }
+  private hookEvent(
+    turn: Active | Once,
+    callId: string,
+    tool: string,
+    input: Record<string, unknown>,
+  ): AgentToolHookEvent {
+    const active = "reply" in turn ? turn : undefined;
+    const request = active?.reply;
+    return {
+      phase: "before",
+      agent: (request ?? (turn as Once)).agent.pubkey,
+      session: turn.threadId ?? "",
+      callId,
+      tool,
+      input,
+      context: request
+        ? {
+            channel: request.conversation.channelId,
+            ...(request.toolRoot ? { root: request.toolRoot } : {}),
+            ...(request.conversation.topLevel ? { topLevel: true } : {}),
+          }
+        : {},
+      messages: (active?.requests ?? [])
+        .filter((request) => !request.wake)
+        .map((request) => ({
+          ...hookMessageSource(
+            request.event,
+            this.reads(request.agent.pubkey)?.profile(request.event.pubkey),
+          ),
+          id: request.event.id,
+          channel: request.conversation.channelId,
+          ...(request.conversation.topLevel
+            ? { topLevel: true }
+            : request.toolRoot
+              ? { root: request.toolRoot }
+              : {}),
+          deliveredAt: request.deliveredAt ?? 0,
+        })),
     };
   }
   /** The agent's memory, or only entry `slug`, as its community's reads give
@@ -1343,7 +1459,9 @@ export class CodexRuntime {
       if (method === "item/completed" && item.type === "agentMessage")
         reply = item.text ?? "";
     });
+    let hookConfig: Awaited<ReturnType<CodexHooks["config"]>> | undefined;
     try {
+      hookConfig = await this.bridges.get(rpc)?.config(rpc, cwd);
       const started = await rpc.request<{ thread: { id: string } }>(
         "thread/start",
         {
@@ -1352,7 +1470,15 @@ export class CodexRuntime {
           approvalPolicy: "never",
           sandbox: "read-only",
           ephemeral: true,
-          config,
+          config: hookConfig
+            ? {
+                ...config,
+                mcp_servers: {
+                  ...(config.mcp_servers as object),
+                  [HOOK_SERVER]: hookConfig.server,
+                },
+              }
+            : config,
         },
       );
       turn.threadId = started.thread.id;
@@ -1372,6 +1498,7 @@ export class CodexRuntime {
         await rpc
           .request("thread/unsubscribe", { threadId: turn.threadId })
           .catch(() => undefined);
+      await hookConfig?.close();
     }
   }
 
@@ -1422,6 +1549,8 @@ export class CodexRuntime {
         ],
       ),
     );
+    const hookConfig = await this.bridges.get(rpc)?.config(rpc, workspace);
+    if (hookConfig) mcp[HOOK_SERVER] = hookConfig.server;
     const params = {
       model,
       cwd: workspace,
@@ -1431,6 +1560,9 @@ export class CodexRuntime {
       // agent's own watches and timers start work.
       sandbox: "danger-full-access",
       config: {
+        ...(hookConfig
+          ? { "hooks.state": hookConfig.state, "features.hooks": true }
+          : {}),
         web_search: "disabled",
         mcp_servers: mcp,
         "features.plugins": false,
@@ -1441,7 +1573,7 @@ export class CodexRuntime {
     const summary = normalized.config.model_reasoning_summary
       ? {}
       : { summary: "auto" };
-    return { params, model, effort, summary };
+    return { params, model, effort, summary, closeHooks: hookConfig?.close };
   }
   private async execute(
     request: Request,
@@ -1472,6 +1604,7 @@ export class CodexRuntime {
     };
     void active.ready.catch(() => undefined);
     lane.active = active;
+    let closeHooks: (() => Promise<void>) | undefined;
     const { settings, agent } = request;
     const followed = follow(server.rpc, signal, active, (method, item) => {
       const step = method === "item/started" ? codexStep(item) : undefined;
@@ -1497,13 +1630,15 @@ export class CodexRuntime {
       signal.throwIfAborted();
       active.workspace = workspace;
       const existing = entry.saved[key];
-      const { params, model, effort, summary } = await this.prepare(
+      const prepared = await this.prepare(
         rpc,
         agent,
         settings,
         workspace,
         request,
       );
+      const { params, model, effort, summary } = prepared;
+      closeHooks = prepared.closeHooks;
       active.model = model;
       active.effort = effort;
       // Resume restores the thread's tools, so one started with other added
@@ -1568,6 +1703,7 @@ export class CodexRuntime {
         ready();
         return;
       }
+      request.deliveredAt = Date.now();
       const turn = await rpc.request<{ turn: { id: string } }>("turn/start", {
         threadId: active.threadId,
         input: input(
@@ -1671,6 +1807,7 @@ export class CodexRuntime {
         await server.rpc
           .request("thread/unsubscribe", { threadId: active.threadId })
           .catch(() => server.rpc.close());
+      await closeHooks?.();
       if (lane.active === active) delete lane.active;
     }
   }

@@ -11,7 +11,8 @@ import type { RelayData } from "../../features/relay/service";
 import type { EventData } from "../../features/relay/events";
 import { eventDto } from "../../features/relay/events";
 import { keypair, signed } from "../../features/relay/testing";
-import type { HostProcessOptions } from "../../features/host/service";
+import type { AgentToolHooks } from "../../features/agents/tool-hooks";
+import type { Host, HostProcessOptions } from "../../features/host/service";
 import { BUZZ_PROMPT, TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
 import { CodexRuntime, codexStep, programs } from "./runtime";
 import { config } from "./config";
@@ -53,6 +54,10 @@ function fixture(
     model_reasoning_summary?: string;
   } = {},
   repositories?: (scope: string | undefined) => string,
+  hooks?: {
+    serve: NonNullable<Host["serveMcp"]>;
+    run: AgentToolHooks["toolHook"];
+  },
 ) {
   let terminals = remainingTerminals;
   let options: HostProcessOptions | undefined;
@@ -137,6 +142,23 @@ function fixture(
               },
             },
           },
+        };
+      if (request.method === "hooks/list")
+        result = {
+          data: [
+            {
+              hooks: [
+                {
+                  key: "own",
+                  currentHash: "hash",
+                  source: "sessionFlags",
+                  server: "buzz_tool_hooks",
+                  tool: "before_tool",
+                  eventName: "preToolUse",
+                },
+              ],
+            },
+          ],
         };
       if (request.method === "thread/start")
         result = { thread: { id: `thread-${++thread}`, cwd: params.cwd } };
@@ -318,6 +340,7 @@ function fixture(
     config,
     () => added,
     repositories,
+    hooks,
   );
   runtimes.push(runtime);
   const events: EventData[] = [];
@@ -3524,7 +3547,7 @@ it("ends a queued mention with the attention note current when it starts", async
 });
 
 it("stops a wake when its turn signal aborts, and lists it as needing attention", async () => {
-  const f = fixture();
+  const { f, servers } = hookFixture();
   const turn = new AbortController();
   f.wake(watchDelivery(f, { signal: turn.signal }));
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
@@ -3534,6 +3557,7 @@ it("stops a wake when its turn signal aborts, and lists it as needing attention"
     error: "The turn ran past its deadline",
   });
   expect(f.sent.some((wire) => wire.method === "turn/interrupt")).toBe(true);
+  expect(servers[0]?.close).toHaveBeenCalledOnce();
   expect(f.runtime.sessions(pubkey)).toEqual([
     {
       key: "watch/deploys",
@@ -3707,7 +3731,7 @@ it("continues an owner's Solo chat as one channel conversation posted at the top
 });
 
 it("titles a new Solo chat once, from its first message on an ephemeral read-only thread", async () => {
-  const f = fixture();
+  const { f, servers } = hookFixture();
   asSoloChat(f);
   const named = vi.fn();
   const titling = () =>
@@ -3718,6 +3742,8 @@ it("titles a new Solo chat once, from its first message on an ephemeral read-onl
     );
   await f.runtime.run({ ...f.delivery("@Codex fix the login bug"), named });
   await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  expect(servers).toHaveLength(2);
+  expect(servers[0]?.url).not.toBe(servers[1]?.url);
   // Without Codex's title model in the catalog, the chat's own model titles it.
   expect(titling()[0]?.params).toMatchObject({
     model: "test-model",
@@ -3755,6 +3781,9 @@ it("titles a new Solo chat once, from its first message on an ephemeral read-onl
   await vi.waitFor(() =>
     expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
   );
+  await vi.waitFor(() => {
+    for (const server of servers) expect(server.close).toHaveBeenCalledOnce();
+  });
   // A resumed conversation is not new, so it is not titled again.
   await f.runtime.run({ ...f.delivery("@Codex later"), named });
   await vi.waitFor(() => expect(f.starts()).toHaveLength(3));
@@ -4025,7 +4054,7 @@ describe("session actions", () => {
     f.sent.flatMap((wire) => (wire.method ? [wire.method] : []));
 
   it("compacts immediately, and keeps the session active until an early interrupt ends its turn", async () => {
-    const f = fixture();
+    const { f, servers } = hookFixture();
     const delivery = f.delivery("first");
     const agent = {
       ...delivery.agent,
@@ -4057,6 +4086,7 @@ describe("session actions", () => {
       params: { threadId: "thread-1", turn: { id: "compact" } },
     });
     expect(await compacted).toBeInstanceOf(Error);
+    expect(servers[1]?.close).toHaveBeenCalledOnce();
     await later;
     await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
     expect(
@@ -4292,4 +4322,165 @@ it("allows an addressed channel turn to reply in an existing thread", async () =
     }),
   );
   await f.complete(0);
+});
+
+it("isolates hook transports for overlapping conversations and a resumed turn", async () => {
+  const { f, servers } = hookFixture();
+  const first = f.runtime.run(f.delivery("first"));
+  const second = f.runtime.run(f.delivery("second", "e".repeat(64)));
+  const starts = () => f.sent.filter((wire) => wire.method === "turn/start");
+  await vi.waitFor(() => expect(starts()).toHaveLength(2));
+  const configs = () =>
+    f.sent
+      .filter(
+        (wire) =>
+          wire.method === "thread/start" || wire.method === "thread/resume",
+      )
+      .map(
+        (wire) =>
+          wire.params as {
+            config: { mcp_servers: { buzz_tool_hooks: { url: string } } };
+          },
+      );
+  expect(
+    new Set(configs().map((p) => p.config.mcp_servers.buzz_tool_hooks.url))
+      .size,
+  ).toBe(2);
+  await f.complete(0);
+  await first;
+  await vi.waitFor(() => expect(servers[0]?.close).toHaveBeenCalledOnce());
+  expect(servers[1]?.close).not.toHaveBeenCalled();
+  const resumed = f.runtime.run(f.delivery("again"));
+  await vi.waitFor(() => expect(starts()).toHaveLength(3));
+  expect(
+    new Set(configs().map((p) => p.config.mcp_servers.buzz_tool_hooks.url))
+      .size,
+  ).toBe(3);
+  await f.complete(1);
+  await f.complete(2);
+  await Promise.all([second, resumed]);
+  await vi.waitFor(() => {
+    for (const server of servers) expect(server.close).toHaveBeenCalledOnce();
+  });
+});
+
+function hookFixture() {
+  const run = vi.fn<AgentToolHooks["toolHook"]>(async () => undefined);
+  const handlers: Parameters<NonNullable<Host["serveMcp"]>>[0][] = [];
+  const servers: { url: string; close: ReturnType<typeof vi.fn> }[] = [];
+  const f = fixture([], undefined, false, {}, undefined, {
+    serve: async (handler) => {
+      handlers.push(handler);
+      const server = {
+        url: `http://127.0.0.1:${1234 + servers.length}/mcp`,
+        headers: [],
+        close: vi.fn(async () => {}),
+        closed: new Promise<void>(() => {}),
+      };
+      servers.push(server);
+      return server;
+    },
+    run,
+  });
+  return { f, servers, handlers, run };
+}
+
+it("enforces native and Buzz tool policies for standalone turns without mention obligations", async () => {
+  const { f, handlers, run } = hookFixture();
+  f.wake(watchDelivery(f));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const { threadId } = (f.starts()[0]?.params ?? {}) as { threadId: string };
+  run.mockResolvedValue("Blocked by policy");
+  const native = (await handlers[0]?.({
+    id: 1,
+    method: "tools/call",
+    params: {
+      name: "before_tool",
+      arguments: {
+        session_id: threadId,
+        turn_id: "turn-1",
+        tool_use_id: "native",
+        tool_name: "Bash",
+        tool_input: { cmd: "pwd" },
+      },
+    },
+  })) as { result: { content: { text: string }[] } };
+  expect(JSON.parse(native.result.content[0]?.text ?? "")).toEqual({
+    decision: "block",
+    reason: "Blocked by policy",
+  });
+  expect(run).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      phase: "before",
+      agent: pubkey,
+      session: threadId,
+      tool: "Bash",
+      context: {},
+      messages: [],
+    }),
+  );
+  const denied = await f.tool("send", {
+    channel: "channel",
+    audience: "everyone",
+    text: "blocked",
+  });
+  expect(denied?.result).toMatchObject({
+    success: false,
+    contentItems: [{ text: "Blocked by policy" }],
+  });
+  expect(f.publish).not.toHaveBeenCalled();
+  run.mockResolvedValue(undefined);
+  await f.tool("send", { audience: "everyone", text: "missing destination" });
+  expect(run).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      phase: "after",
+      success: false,
+      context: {},
+      messages: [],
+    }),
+  );
+  await f.tool("send", {
+    channel: "channel",
+    audience: "everyone",
+    text: "allowed",
+  });
+  expect(f.publish).toHaveBeenCalledOnce();
+  expect(run).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      phase: "after",
+      success: true,
+      tool: "mcp__buzz__send",
+      context: {},
+      messages: [],
+    }),
+  );
+  await f.complete(0, "");
+  await f.workingUntil.mock.calls[0]?.[0];
+});
+
+it("passes an agents-only mention audience to tool hooks", async () => {
+  const { f, run } = hookFixture();
+  const delivery = f.delivery("coordination");
+  if (delivery.trigger.type !== "mention") throw new Error("Expected mention");
+  const work = f.runtime.run({
+    ...delivery,
+    trigger: {
+      ...delivery.trigger,
+      event: {
+        ...delivery.trigger.event,
+        tags: [...delivery.trigger.event.tags, ["audience", "agents"]],
+      },
+    },
+  });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.tool("send", { audience: "agents", text: "working" });
+  expect(run).toHaveBeenCalledWith(
+    expect.objectContaining({
+      messages: [
+        expect.objectContaining({ authorIsAgent: false, audience: "agents" }),
+      ],
+    }),
+  );
+  await f.complete();
+  await work;
 });

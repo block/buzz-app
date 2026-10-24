@@ -31,6 +31,10 @@ import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import lockfile from "proper-lockfile";
 import { AuthFile, serve } from "./host.mjs";
+import { Harness } from "@earendil-works/pi-durable";
+const originalOpen = Harness.open;
+let openedHarness;
+Harness.open = async (...args) => { openedHarness = await originalOpen(...args); return openedHarness; };
 const data = process.argv[2];
 const faux = fauxProvider();
 const models = createModels();
@@ -83,6 +87,15 @@ out.a = { ...(await pi.rpc("wait", { agent, submission: a.submission })), calls:
 faux.setResponses([fauxAssistantMessage("Plain answer")]);
 const b = await pi.rpc("deliver", turn("B", "second"));
 out.b = { ...(await pi.rpc("wait", { agent, submission: b.submission })), conversation: b.conversation };
+// A cleanup write must not replace an already-settled answer with an RPC error.
+const commit = openedHarness.commit;
+let waitCommits = 0;
+openedHarness.commit = function (...args) {
+  if (++waitCommits === 2) throw new Error("Reply cleanup storage failure");
+  return commit.apply(this, args);
+};
+try { out.cleanupFailure = await pi.rpc("wait", { agent, submission: b.submission, request: "B" }); }
+finally { openedHarness.commit = commit; }
 // What a transcript and usage read: the places, and the entries without schemas.
 out.places = (await pi.rpc("places", { agent })).places;
 out.recorded = Object.keys((await pi.rpc("recorded", { agent, conversation: a.conversation })).models);
@@ -105,7 +118,7 @@ faux.setResponses([
   async (_context, options) => { calling.release(); await abortable(d.gate, options?.signal); return fauxAssistantMessage("first try"); },
   () => fauxAssistantMessage("Resumed answer"),
 ]);
-const d1 = await pi.rpc("deliver", turn("D", "fifth"));
+const d1 = await pi.rpc("deliver", { ...turn("D", "fifth"), reply: { channel: "chan", root: "wake-root", topLevel: false } });
 await calling.gate;
 const stopped = pi.rpc("wait", { agent, submission: d1.submission });
 await pi.stop();
@@ -180,16 +193,17 @@ out.unstartedPlace = await pi.rpc("place", { agent, key: "chan/root" });
 // request is read only afterwards, as when the plugin's wait is already in the pipe.
 const locked = held();
 faux.setResponses([async () => { await locked.gate; return fauxAssistantMessage("Late answer"); }, () => fauxAssistantMessage("Late answer")]);
-const l1 = await pi.rpc("deliver", turn("L", "tenth"));
+const l1 = await pi.rpc("deliver", { ...turn("L", "tenth"), reply: { channel: "chan", root: "wake-root", topLevel: false } });
 const blocker = spawn(process.execPath, ["--disable-warning=ExperimentalWarning", "-e", "const { DatabaseSync } = require('node:sqlite'); new DatabaseSync(process.argv[1]).exec('BEGIN IMMEDIATE'); console.log('locked'); setTimeout(() => {}, 60000)", data + "/agents/" + agent + ".sqlite"], { stdio: ["ignore", "pipe", "inherit"] });
 await new Promise((resolve) => blocker.stdout.once("data", resolve));
+const failingWait = pi.rpc("wait", { agent, submission: l1.submission, request: "L" });
+await new Promise((resolve) => setImmediate(resolve));
 locked.release();
-await new Promise((resolve) => setTimeout(resolve, 50));
-out.failed = await pi.rpc("wait", { agent, submission: l1.submission });
+out.failed = await failingWait;
 blocker.kill();
 await new Promise((resolve) => blocker.once("exit", resolve));
 await pi.rpc("open", { agent, tools });
-out.failedResumed = await pi.rpc("wait", { agent, submission: l1.submission });
+out.failedResumed = await pi.rpc("wait", { agent, submission: l1.submission, request: "L" });
 // Pi's settings as they are now, which the pi command changes.
 await writeFile(data + "/settings.json", JSON.stringify({ defaultProvider: "faux", defaultModel: "faux-1" }));
 out.defaults = await pi.rpc("defaults", {});
@@ -314,6 +328,10 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
         arguments: { text: "hi", final: true },
       },
     ]);
+    expect(out.cleanupFailure).toMatchObject({
+      status: "done",
+      text: "Plain answer",
+    });
     expect(out.recorded).toEqual(["faux/faux-1"]);
     expect(out.places).toEqual([
       { key: "chan/root", conversation: out.a.conversation, seen: 100 },
@@ -358,6 +376,7 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
         submission: expect.any(Number),
         conversation: out.a.conversation,
         request: "D",
+        reply: { channel: "chan", root: "wake-root", topLevel: false },
         context: { channel: "chan", root: "root" },
       },
     ]);

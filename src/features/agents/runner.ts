@@ -3,6 +3,7 @@
 // host run each agent. It knows nothing of where it runs: everything it needs
 // of the device, community and storage comes through its RunnerHost, so the
 // desktop app and a standalone host run agents with the same code.
+import { bytesToHex } from "nostr-tools/utils";
 import type {
   Agent,
   AgentAttention,
@@ -18,8 +19,13 @@ import {
   type ReadFilter,
   type RelayEvent,
 } from "../relay/events";
-import { wake } from "../agent-harness/wakes";
-import { type PluginTrigger, wakeLands } from "../agent-harness/plugin-wake";
+import { wake, wakePrompt } from "../agent-harness/wakes";
+import {
+  type PluginTrigger,
+  type ConversationWake,
+  wakeAnchor,
+  wakeLands,
+} from "../agent-harness/plugin-wake";
 import { STANDALONE_DEADLINE_MS } from "../agent-harness/standalone";
 import { EFFORT_TAG, MODEL_TAG } from "../relay/messages";
 import type { LiveBatch } from "../relay/incoming";
@@ -176,7 +182,9 @@ type CatchUpTrigger = Extract<Trigger, { type: "catch-up" }>;
  * goes with mentions. */
 type Lane = "mention" | "watch";
 const addressed = (trigger: Trigger) =>
-  trigger.type === "mention" || trigger.type === "plugin";
+  trigger.type === "mention" ||
+  trigger.type === "plugin" ||
+  trigger.type === "attention";
 const laneOf = (trigger: Trigger): Lane =>
   addressed(trigger) ? "mention" : "watch";
 /** The Interest whose lane runs the attention job, or undefined for a mention. */
@@ -184,6 +192,28 @@ const interestOf = (trigger: Trigger) =>
   addressed(trigger)
     ? undefined
     : (trigger.type === "timer" ? trigger.timer : trigger.watch).interest_id;
+/** Conversation delivery is independent of what produced the wake. */
+function conversationWake(
+  trigger: Trigger,
+  text: string,
+): ConversationWake | undefined {
+  if (trigger.type === "plugin" || trigger.type === "attention") return trigger;
+  const target =
+    trigger.type === "timer"
+      ? trigger.timer
+      : !addressed(trigger)
+        ? trigger.watch
+        : undefined;
+  if (!target?.channel) return;
+  return {
+    type: "attention",
+    channel: target.channel,
+    ...(target.root ? { root: target.root } : { topLevel: true }),
+    text,
+    id: bytesToHex(crypto.getRandomValues(new Uint8Array(32))),
+    at: Date.now(),
+  };
+}
 const channelOf = (event: RelayEvent) =>
   event.tags.find(([key]) => key === "h")?.[1];
 /** The key of the catch-up stream that `trigger`'s event is in, for a kind 9
@@ -320,7 +350,7 @@ export type RunnerHost = {
   agent(pubkey: string): Agent | undefined;
   /** Whether the agent is in the event's channel, or undefined while its
    * roster is only the one saved on disk and the relay has not confirmed it. */
-  member(agent: Agent, event: RelayEvent): boolean | undefined;
+  member(agent: Agent, event: Pick<RelayEvent, "tags">): boolean | undefined;
   /** Whether the event's channel is a DM between the agent and one other. */
   dm(agent: Agent, event: RelayEvent): boolean;
   /** While the owner is still starting this chat, settles once it can take
@@ -1794,6 +1824,11 @@ export class AgentRunners {
       if (state !== saved)
         changed = { ...changed, [object.slug]: { seen: saved, next: state } };
       if (now < state.nextDue || timerSpent(timer, state, now)) continue;
+      if (
+        timer.channel &&
+        this.host.member(agent, { tags: [["h", timer.channel]] }) !== true
+      )
+        continue;
       // Its Interest's lane is busy: it goes once that lane is free.
       if (!idle(timer.interest_id)) continue;
       if (!next || state.nextDue < next.state.nextDue)
@@ -1991,7 +2026,13 @@ export class AgentRunners {
       AbortSignal.timeout(type.timeoutMs ?? 60_000),
     ]);
     const handle = this.handleFor(runner, agent);
-    const working = this.working(runner, job, agent);
+    const anchor = conversationWake(job.trigger, "");
+    const destination = !addressed(job.trigger) ? anchor : undefined;
+    const working = this.working(
+      runner,
+      anchor ? { ...job, trigger: anchor, channelId: anchor.channel } : job,
+      agent,
+    );
     const trigger = job.trigger;
     const named =
       trigger.type === "mention"
@@ -2014,18 +2055,46 @@ export class AgentRunners {
         ...(team ? { team } : {}),
         signal,
         workingUntil: working.hold,
-        ignored: () => job.work?.remove(),
-        acknowledged: () => job.work?.started(),
-        superseded: () => job.work?.supersede(),
-        interruptible: (stop: () => Promise<void>) =>
-          job.work?.interruptible(stop),
+        ...(job.work
+          ? {
+              ignored: () => job.work?.remove(),
+              acknowledged: () => job.work?.started(),
+              superseded: () => job.work?.supersede(),
+              interruptible: (stop: () => Promise<void>) =>
+                job.work?.interruptible(stop),
+              step: (tool: string, target?: string) =>
+                job.work?.step(tool, target),
+            }
+          : {}),
         ...(named ? { named } : {}),
-        step: (tool: string, target?: string) => job.work?.step(tool, target),
-        current: () => !lifetime.aborted && this.stillCurrent(runner, job),
+        current: () =>
+          !lifetime.aborted &&
+          this.stillCurrent(runner, job) &&
+          (!destination ||
+            this.host.member(agent, wakeAnchor(destination)) === true),
       });
       const { trigger } = job;
       const runOnce = type.runOnce?.bind(type);
-      if (addressed(trigger) || !runOnce) return run(delivery);
+      if (addressed(trigger)) return run(delivery);
+      if (anchor) {
+        if (!delivery.current()) return;
+        const wakeText = () =>
+          wakePrompt(
+            handle,
+            trigger,
+            trigger.slug.replace(/^watch\//, ""),
+            delivery.current,
+          );
+        const text = await wakeText();
+        if (!text || !delivery.current()) return;
+        return run({
+          ...delivery,
+          channelId: anchor.channel,
+          trigger: { ...anchor, text },
+          wakeText,
+        });
+      }
+      if (!runOnce) return run(delivery);
       // A watch or timer is a standalone turn; this lane is held until it ends.
       delivery.workingUntil(
         wake(
@@ -2157,9 +2226,12 @@ export class AgentRunners {
     agent: Agent,
   ) {
     work?.started();
-    // A plugin's wake types in its thread as a mention of the root would, and
-    // one with no thread only in a Solo chat (`wakeLands`): never at its own id.
-    const wake = trigger.type === "plugin" ? trigger : undefined;
+    // A plugin wake types where it posts: its thread, a Solo chat, or the
+    // channel explicitly addressed by a subscription, never its own id.
+    const wake =
+      trigger.type === "plugin" || trigger.type === "attention"
+        ? trigger
+        : undefined;
     const event =
       trigger.type === "mention"
         ? trigger.event
@@ -2185,7 +2257,7 @@ export class AgentRunners {
           .then((flat) => {
             if (wake && !wakeLands(wake, flat))
               throw new Error("The wake has no conversation here");
-            return flat;
+            return flat || wake?.topLevel === true;
           }),
         event,
         channel,
@@ -2313,8 +2385,31 @@ export class AgentRunners {
     return Object.freeze({
       enabled: () => record().attentionEnabled === true,
       classifier: () => this.host.classifier(),
-      show: async (slug: string, interest?: string) =>
-        show(record(), slug, seconds(), interest),
+      show: async (slug: string, interest?: string) => {
+        const result = await show(record(), slug, seconds(), interest);
+        const object = result.object;
+        const agent = this.host.agent(pubkey);
+        if (!agent || !object || object.type === "interest" || !object.channel)
+          return result;
+        const member = this.host.member(agent, {
+          tags: [["h", object.channel]],
+        });
+        return member === true
+          ? result
+          : {
+              ...result,
+              delivery:
+                member === undefined
+                  ? {
+                      status: "held" as const,
+                      reason: "Waiting for confirmed destination membership.",
+                    }
+                  : {
+                      status: "blocked" as const,
+                      reason: "Agent is not a member of the delivery channel.",
+                    },
+            };
+      },
       interests: (search?: string) => interestIds(record(), search),
       watches: (filter: WatchFilter = {}) =>
         watchSummaries(record(), filter, seconds()),

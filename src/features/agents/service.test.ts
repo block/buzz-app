@@ -1334,7 +1334,7 @@ it("runs one turn at a time for an Interest, Interests and mentions beside each 
         pending.set(
           trigger.type === "timer" || trigger.type === "catch-up"
             ? trigger.slug
-            : trigger.type === "plugin"
+            : trigger.type === "plugin" || trigger.type === "attention"
               ? trigger.text
               : trigger.event.content,
           resolve,
@@ -4539,7 +4539,7 @@ const heard = (run: { mock: { calls: readonly (readonly unknown[])[] } }) =>
       ? trigger.events.map(({ event }) => event.content)
       : trigger.type === "timer"
         ? []
-        : trigger.type === "plugin"
+        : trigger.type === "plugin" || trigger.type === "attention"
           ? [trigger.text]
           : [trigger.event.content];
   });
@@ -7246,6 +7246,195 @@ it("gives a run its owner's channel templates with the owner's agents each adds"
   expect(templates()).toEqual([
     { name: "Launch", canvas: "# Plan", agents: [bot, sibling] },
   ]);
+});
+
+it.each([undefined, "e".repeat(64)])(
+  "delivers a timer to a conversation once while retaining its occurrence budget (root: %s)",
+  async (root) => {
+    vi.useFakeTimers({ now: 1_000_000 });
+    const runOnce = vi.fn(async () => ({ ok: true }));
+    const { service, run } = await setup({ runOnce });
+    await service.create({ type: "example/echo", name: "Echo" });
+    await service.save(bot, {
+      attentionEnabled: true,
+      attention: {
+        "watch/once": {
+          type: "timer",
+          interest_id: "default",
+          prompt: "Check the release",
+          enabled: true,
+          interval_secs: 60,
+          armed_at: 1_000,
+          max_occurrences: 1,
+          expires_at: null,
+          channel,
+          ...(root ? { root } : {}),
+        },
+      },
+    });
+    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    expect(run.mock.calls[0]?.[0]).toMatchObject({
+      channelId: channel,
+      trigger: {
+        type: "attention",
+        channel,
+        ...(root ? { root } : { topLevel: true }),
+        text: expect.stringContaining("Check the release"),
+      },
+    });
+    expect(run.mock.calls[0]?.[0].step).toBeUndefined();
+    expect(run.mock.calls[0]?.[0].superseded).toBeUndefined();
+    const trigger = run.mock.calls[0]?.[0].trigger;
+    if (trigger?.type !== "attention")
+      throw new Error("Expected conversation delivery");
+    expect(trigger.text).toContain("Be brief.");
+    expect(trigger.text).toContain("spent: true");
+    expect(trigger.text).not.toContain("no default destination");
+    await vi.advanceTimersByTimeAsync(180_000);
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(runOnce).not.toHaveBeenCalled();
+    expect(service.find(bot)?.timers["watch/once"]).toMatchObject({ used: 1 });
+  },
+);
+
+it("delivers matched events to their configured address rather than the listening channel", async () => {
+  const runOnce = vi.fn(async () => ({ ok: true }));
+  const { service, run, emit, native, session } = await setup({ runOnce });
+  await service.create({ type: "example/echo", name: "Echo" });
+  const destination = "11111111-1111-1111-1111-111111111111";
+  const root = "e".repeat(64);
+  const list = session.channels.list();
+  vi.spyOn(session.channels, "list").mockReturnValue({
+    ...list,
+    channels: [
+      ...list.channels,
+      { id: destination, name: "Destination", members: [viewer, bot] },
+    ],
+  });
+  const watch = service.find(bot)?.attention["watch/channel"]?.value;
+  if (watch?.type !== "event") throw new Error("fixture");
+  await service.save(bot, {
+    attentionEnabled: true,
+    attention: {
+      "watch/channel": { ...watch, channel: destination, root },
+    },
+  });
+  let finish = () => {};
+  const turn = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  run.mockImplementationOnce(({ workingUntil }) => workingUntil(turn));
+  emit({ channelId: channel, events: [deploy("addressed-subscription")] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  const trigger = run.mock.calls[0]?.[0].trigger;
+  expect(trigger).toMatchObject({
+    type: "attention",
+    channel: destination,
+    root,
+  });
+  if (trigger?.type !== "attention")
+    throw new Error("Expected conversation delivery");
+  expect(trigger.text).toContain("observed-message");
+  expect(trigger.text).toContain("Be brief.");
+  expect(trigger.text).not.toContain("no default destination");
+  try {
+    await vi.waitFor(async () => {
+      const pulses = await published(native, 20002);
+      expect(pulses.length).toBeGreaterThan(0);
+      for (const pulse of pulses)
+        expect(pulse.tags).toContainEqual(["h", destination]);
+    });
+  } finally {
+    finish();
+  }
+  expect(runOnce).not.toHaveBeenCalled();
+});
+
+it.each([false, true])(
+  "holds a timer without spending it until destination membership is confirmed (cached: %s)",
+  async (cached) => {
+    vi.useFakeTimers({ now: 1_000_000 });
+    const runOnce = vi.fn(async () => ({ ok: true }));
+    const { service, run, session, plugin } = await setup({ runOnce });
+    await service.create({ type: "example/echo", name: "Echo" });
+    const destination = "11111111-1111-1111-1111-111111111111";
+    const list = session.channels.list();
+    vi.spyOn(session.channels, "list").mockReturnValue({
+      ...list,
+      channels: [
+        ...list.channels,
+        {
+          id: destination,
+          name: "Private",
+          members: cached ? [viewer, bot] : [viewer],
+          ...(cached ? { cached: true as const } : {}),
+        },
+      ],
+    });
+    const timer = {
+      type: "timer" as const,
+      interest_id: "default",
+      prompt: "Check",
+      enabled: true,
+      interval_secs: 60,
+      armed_at: 1_000,
+      max_occurrences: 1,
+      expires_at: null,
+    };
+    await service.save(bot, {
+      attentionEnabled: true,
+      attention: {
+        "watch/blocked": { ...timer, channel: destination },
+        "watch/witness": timer,
+      },
+    });
+    await vi.advanceTimersByTimeAsync(60_000);
+    // The same Interest's next turn proves the first handover has settled.
+    await vi.waitFor(() => expect(runOnce).toHaveBeenCalledTimes(1));
+    expect(run).not.toHaveBeenCalled();
+    expect(
+      await plugin.agents.handle(bot)?.attention.show("watch/blocked"),
+    ).toMatchObject({ delivery: { status: cached ? "held" : "blocked" } });
+    expect(service.find(bot)?.timers["watch/blocked"]?.used).toBe(0);
+    vi.mocked(session.channels.list).mockReturnValue({
+      ...list,
+      channels: [
+        ...list.channels,
+        { id: destination, name: "Private", members: [viewer, bot] },
+      ],
+    });
+    await vi.advanceTimersByTimeAsync(5_000);
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    expect(service.find(bot)?.timers["watch/blocked"]?.used).toBe(1);
+  },
+);
+
+it("rebuilds addressed Interest instructions after a queued handover", async () => {
+  const { service, run, emit } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  const watch = service.find(bot)?.attention["watch/channel"]?.value;
+  if (watch?.type !== "event") throw new Error("fixture");
+  await service.save(bot, {
+    attentionEnabled: true,
+    attention: {
+      "watch/channel": { ...watch, channel },
+    },
+  });
+  emit({ channelId: channel, events: [deploy("late-instructions")] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  const delivery = run.mock.calls[0]?.[0];
+  await service.save(bot, {
+    attention: {
+      "interest/default": {
+        type: "interest",
+        instructions: "Use the updated task",
+      },
+    },
+  });
+  expect(delivery?.current()).toBe(true);
+  expect(await delivery?.wakeText?.()).toContain("Use the updated task");
+  expect(await delivery?.wakeText?.()).not.toContain("Be brief.");
 });
 
 it("submits an unsaved creation draft and creates only after owner review", async () => {

@@ -212,7 +212,11 @@ function setup(
     trigger: Delivery["trigger"],
     picks: Partial<Delivery> = {},
   ) => {
-    if (trigger.type !== "mention" && trigger.type !== "plugin") {
+    if (
+      trigger.type !== "mention" &&
+      trigger.type !== "plugin" &&
+      trigger.type !== "attention"
+    ) {
       const value = trigger.type === "timer" ? trigger.timer : trigger.watch;
       objects.set(trigger.slug, {
         ...value,
@@ -237,11 +241,16 @@ function setup(
       current: () =>
         trigger.type === "mention" ||
         trigger.type === "plugin" ||
+        trigger.type === "attention" ||
         (attention.on &&
           objects.get(trigger.slug)?.enabled === true &&
           !stale.has(trigger.slug)),
     } as unknown as Delivery;
-    if (trigger.type === "mention" || trigger.type === "plugin")
+    if (
+      trigger.type === "mention" ||
+      trigger.type === "plugin" ||
+      trigger.type === "attention"
+    )
       return runtime.run(delivery);
     // A watch or timer, as the agent runner hands it over: a standalone turn
     // in its Interest's lane, which the runner holds.
@@ -2260,4 +2269,29 @@ it("keeps an accepted Claude handoff past its deadline while compaction runs", a
     finishCompaction?.();
     f.runtime.dispose();
   }
+});
+
+it("delivers a rootless subscription to its channel without publishing its anchor", async () => {
+  const f = setup([], {
+    hold: true,
+    canvas: { content: "Only Solo chats supply this" },
+  });
+  await f.deliver({ ...pluginWake(), type: "attention", topLevel: true });
+  await flush(10);
+  const prompt =
+    f.claudes().find((process) => process.prompts.length)?.prompts[0] ?? "";
+  expect(prompt).not.toContain("<plugin-wake");
+  expect(prompt).not.toContain(TOP_LEVEL_PROMPT);
+  expect(prompt).toContain("unless the Interest instructions");
+  expect(prompt).not.toContain(WAKE_ID);
+  expect(prompt).not.toContain("Only Solo chats supply this");
+  f.claudes()
+    .find((process) => process.prompts.length)
+    ?.exit(1, "Error: boom\n");
+  await vi.waitFor(() =>
+    expect(f.published.some((event) => event.kind === 9)).toBe(true),
+  );
+  for (const event of f.published.filter(({ kind }) => kind === 9))
+    expect(event.tags.some((tag) => tag[0] === "e")).toBe(false);
+  expect(JSON.stringify(f.published)).not.toContain(WAKE_ID);
 });

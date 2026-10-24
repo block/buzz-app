@@ -410,6 +410,8 @@ export class ClaudeRuntime {
     effort,
     team,
     workingUntil,
+    current,
+    wakeText,
     ignored,
     signal,
     step,
@@ -419,11 +421,15 @@ export class ClaudeRuntime {
     named,
   }: Delivery) {
     const settings = this.resolveConfig(raw);
-    // Watches and timers come as standalone turns (`runOnce`).
-    if (trigger.type !== "mention" && trigger.type !== "plugin")
+    // Unaddressed watches and timers come as standalone turns (`runOnce`).
+    if (
+      trigger.type !== "mention" &&
+      trigger.type !== "attention" &&
+      trigger.type !== "plugin"
+    )
       return ignored?.();
     // A plugin's wake is the owner's installed code, not a message to check.
-    const wake = trigger.type === "plugin" ? trigger : undefined;
+    const wake = trigger.type !== "mention" ? trigger : undefined;
     // Claude runs commands as you; mentions need owner or delegated authority.
     if (
       trigger.type === "mention" &&
@@ -441,16 +447,17 @@ export class ClaudeRuntime {
     entry.handle = agent;
     entry.team = team ?? "";
     const event =
-      trigger.type === "plugin" ? wakeAnchor(trigger) : trigger.event;
+      trigger.type !== "mention" ? wakeAnchor(trigger) : trigger.event;
     const channel =
       channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1] ?? undefined;
     if (!channel) return;
-    const topLevel =
+    const solo =
       (await this.reads(agent.pubkey)?.soloChat(
         agent.owner,
         channel,
         signal,
       )) ?? false;
+    const topLevel = solo || wake?.topLevel === true;
     if (wake && !wakeLands(wake, topLevel)) return ignored?.();
     // Frozen with the policy: a scope change while this waits must not move
     // its prompt to another conversation than the one it is delivered to.
@@ -473,12 +480,16 @@ export class ClaudeRuntime {
             key,
             topLevel,
             fresh,
+            solo,
           );
           const text = turnPrompt({
             ...turn,
             agent: agent.pubkey,
             label: "@mention",
-            ...(wake ? { wake } : {}),
+            channelLevel: topLevel && !solo,
+            ...(wake
+              ? { wake: { ...wake, text: (await wakeText?.()) ?? wake.text } }
+              : {}),
           });
           return {
             contextRoot: turn.contextRoot,
@@ -520,12 +531,13 @@ export class ClaudeRuntime {
           entry.contexts.set(
             key,
             topLevel
-              ? { channel, topLevel }
+              ? { channel, ...(solo ? { topLevel } : {}) }
               : key === channel
                 ? { channel }
                 : { channel, root: threadReference(event)?.rootId ?? event.id },
           );
           delivered = entry.sessions.deliver(key, text, event.created_at, {
+            ...(wake ? { current } : {}),
             steer: steerPrompt(text),
             fresh: async () =>
               this.review(entry, (await prompt(true)).text, notes),
@@ -578,7 +590,7 @@ export class ClaudeRuntime {
         this.watch(done, async (error) => {
           if (error) await this.report(agent, channel, event, error, topLevel);
         });
-        if (topLevel && named)
+        if (solo && named)
           void this.offerTitle(
             done,
             agent.pubkey,
@@ -721,6 +733,7 @@ export class ClaudeRuntime {
     key: string,
     topLevel: boolean,
     fresh = false,
+    solo = topLevel,
   ) {
     const reads = this.reads(self);
     const summary = await reads?.channel(channelId);
@@ -736,7 +749,7 @@ export class ClaudeRuntime {
     // Read alongside the conversation: only a Solo chat's Canvas is handed over.
     const canvas = reads?.canvas?.bind(reads);
     const owner = entry.handle?.owner;
-    const reading = topLevel
+    const reading = solo
       ? readProject(
           canvas && owner ? () => canvas(channelId, owner) : undefined,
         )

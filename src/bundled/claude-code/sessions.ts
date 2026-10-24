@@ -185,6 +185,7 @@ export class AgentSessions {
     seen: number,
     {
       steer = text,
+      current,
       fresh,
       pick = {},
       contextRoot,
@@ -194,6 +195,7 @@ export class AgentSessions {
       activityScope,
     }: Readonly<{
       steer?: string;
+      current?: () => boolean;
       fresh?: () => Promise<string>;
       pick?: TurnPick;
       /** The thread whose history was supplied to a shared channel session. */
@@ -207,6 +209,7 @@ export class AgentSessions {
     // Checked without awaiting first, so the first message opens it at once.
     const opening = this.opening.get(key);
     if (opening) await opening;
+    if (current && !current()) return { ok: true, undelivered: true };
     let live = this.live.get(key);
     if (
       live &&
@@ -228,9 +231,11 @@ export class AgentSessions {
       });
     }
     const saved = this.options.store.get(key);
-    const opened = await this.open(key, saved?.id, seen, contextRoot);
+    const opened = await this.open(key, saved?.id, 0);
     if (!("process" in opened)) return opened;
     live = opened;
+    if (current && !current()) return { ok: true, undelivered: true };
+    this.touch(key, live, seen, contextRoot);
     const activity = {
       ...pick,
       ...(activityScope ? { activityScope } : {}),
@@ -258,6 +263,7 @@ export class AgentSessions {
       }
       return this.deliver(key, retry, seen, {
         pick,
+        ...(current ? { current } : {}),
         ...(contextRoot ? { contextRoot } : {}),
         ...activity,
       });

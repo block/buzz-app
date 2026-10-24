@@ -854,3 +854,23 @@ describe("stepLabel", () => {
     ).toEqual({ tool: "send", target: "notes.md" });
   });
 });
+
+it("drops a cancelled source after provider selection without cancelling ordinary work", async () => {
+  const { goose, process, release, waiting } = await slow(
+    "session/set_config_option",
+  );
+  const session = await goose.open({
+    cwd: "/work",
+    systemPrompt: "",
+    choice: () => ({ provider: "openai", model: "gpt-4.1" }),
+  });
+  let current = true;
+  const cancelled = session.send("cancelled wake", { current: () => current });
+  await flush();
+  expect(waiting()).toBe(1);
+  current = false;
+  release();
+  await expect(cancelled).resolves.toEqual({ ok: true, undelivered: true });
+  await session.send("ordinary message");
+  expect(process.turns.map((turn) => turn.text)).toEqual(["ordinary message"]);
+});

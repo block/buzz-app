@@ -48,6 +48,9 @@ export type Settled = Readonly<{
 }>;
 
 export type ActivityReceipt = Readonly<{
+  current?: () => boolean;
+  /** The prompt was handed to goose, after cancellation and provider checks. */
+  delivered?: () => void;
   /** Steps show on the latest acknowledged message of each scope. */
   activityScope?: string;
   step?: (tool: string, target?: string) => void;
@@ -478,7 +481,13 @@ export class GooseSession {
   private prompting = false;
   private steering = 0;
   /** Turns to run, each with the model it was asked for, if any. */
-  private readonly queue: { text: string; model?: string }[] = [];
+  private readonly queue: {
+    text: string;
+    model?: string;
+    current?: () => boolean;
+    waiter?: Waiter;
+    delivered?: () => void;
+  }[] = [];
   /** The model the running turn runs on; empty is its provider's default. */
   private model = "";
   /** Messages sent and not yet answered. */
@@ -560,7 +569,13 @@ export class GooseSession {
     )
       void this.steer(text, activity, waiter, model);
     else {
-      this.queue.push({ text, ...(model ? { model } : {}) });
+      this.queue.push({
+        text,
+        ...(activity.delivered ? { delivered: activity.delivered } : {}),
+        ...(activity.current ? { current: activity.current } : {}),
+        waiter,
+        ...(model ? { model } : {}),
+      });
       this.acknowledge(activity, waiter);
       void this.pump();
     }
@@ -652,6 +667,10 @@ export class GooseSession {
               this.runWaiters.push(resolve),
             )
           : undefined);
+      if (activity.current && !activity.current()) {
+        this.discard(waiter);
+        return;
+      }
       if (runId) {
         try {
           await this.goose.request("_goose/unstable/session/steer", {
@@ -659,14 +678,23 @@ export class GooseSession {
             prompt: [{ type: "text", text }],
             expectedRunId: runId,
           });
-          if (live()) this.acknowledge(activity, waiter);
+          if (live()) {
+            activity.delivered?.();
+            this.acknowledge(activity, waiter);
+          }
           return;
         } catch {
           // The turn ended, or another took its place: run it as the next.
         }
       }
       if (live()) {
-        this.queue.push({ text, ...(model ? { model } : {}) });
+        this.queue.push({
+          text,
+          ...(activity.delivered ? { delivered: activity.delivered } : {}),
+          ...(activity.current ? { current: activity.current } : {}),
+          waiter,
+          ...(model ? { model } : {}),
+        });
         this.acknowledge(activity, waiter);
       }
     } finally {
@@ -676,6 +704,15 @@ export class GooseSession {
     }
   }
 
+  private discard(waiter: Waiter) {
+    this.waiters = this.waiters.filter((pending) => pending !== waiter);
+    this.pending = this.waiters.length;
+    if (this.owner === waiter) this.owner = this.waiters.at(-1);
+    for (const [scope, receipt] of this.active)
+      if (receipt.current && !receipt.current()) this.active.delete(scope);
+    waiter({ ok: true, undelivered: true });
+  }
+
   private async pump() {
     if (this.prompting) return;
     this.prompting = true;
@@ -683,7 +720,10 @@ export class GooseSession {
       while (this.queue.length && !this.closed) {
         // Stopped work has ended, and messages sent since run as new work.
         if (this.stopped) this.endStopped();
-        const { text, model } = this.queue.shift() ?? { text: "" };
+        const { text, model, current, waiter, delivered } =
+          this.queue.shift() ?? {
+            text: "",
+          };
         try {
           await this.select(model);
           // The owner stopped it while its provider switch was going.
@@ -691,6 +731,11 @@ export class GooseSession {
             this.cancelEnded();
             continue;
           }
+          if (current && !current()) {
+            if (waiter) this.discard(waiter);
+            continue;
+          }
+          delivered?.();
           const { stopReason } = (await this.goose.request("session/prompt", {
             sessionId: this.id,
             prompt: [{ type: "text", text }],

@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { loadEnv } from "vite";
 import { desktopOverlay, options } from "./desktop-config.mjs";
@@ -72,7 +73,20 @@ forwarded.push(...rest);
 const viewer =
   loadEnv("development", process.cwd(), "BUZZ_DEV_VIEWER").BUZZ_DEV_VIEWER ??
   "";
-const result = spawnSync("pnpm", ["tauri", "dev", ...forwarded], {
+// On Windows pnpm's launcher is a .cmd, which Node cannot spawn without a
+// shell, and a shell would re-split the JSON config: run the CLI with Node.
+const [command, commandArgs] =
+  process.platform === "win32"
+    ? [
+        process.execPath,
+        [
+          createRequire(import.meta.url).resolve("@tauri-apps/cli/tauri.js"),
+          "dev",
+          ...forwarded,
+        ],
+      ]
+    : ["pnpm", ["tauri", "dev", ...forwarded]];
+const result = spawnSync(command, commandArgs, {
   stdio: "inherit",
   env: { ...process.env, BUZZ_DEV_VIEWER: viewer },
 });

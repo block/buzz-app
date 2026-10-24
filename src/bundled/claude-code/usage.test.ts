@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import {
+  appendFileSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -9,7 +10,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import type { HostProcessOptions } from "../../features/host/service";
 import manifest from "./manifest.json";
 import { readUsage, sessionUsage } from "./usage";
@@ -245,7 +246,7 @@ it("finds the agent's sessions with the manifest's processes", async () => {
     `${context(["Session scope: channel", "Channel: dm"])}\n${reply(1000, "m1", usage(5, 6))}`,
   );
   const sessions = await readUsage(
-    { spawn: processes(home) },
+    desktop(home),
     "~/.buzz",
     agent,
     ["saved", "gone"],
@@ -266,7 +267,7 @@ it("finds the agent's sessions with the manifest's processes", async () => {
   // Activity before `since` is left out.
   expect(
     await readUsage(
-      { spawn: processes(home) },
+      desktop(home),
       "~/.buzz",
       agent,
       [],
@@ -304,29 +305,29 @@ it("reads again only the files changed since the last read", async () => {
   );
   write("theirs.jsonl", `${threadPrompt(other)}`, true);
   const reads: string[] = [];
-  const host = {
-    spawn: processes(base),
-    readFile: async (path: string) => {
-      reads.push(path.replace(/^~\/\.claude\/projects\/-Users-me--buzz\//, ""));
-      return readFileSync(path.replace(/^~/, base));
-    },
-  };
-  const ids = async () =>
-    (
-      await readUsage(
-        host,
-        "~/.buzz",
-        agent,
-        [],
-        0,
-        new AbortController().signal,
-      )
-    ).map((session) => session.id);
+  const host = desktop(base, reads);
+  const read = () =>
+    readUsage(host, "~/.buzz", agent, [], 0, new AbortController().signal);
+  const ids = async () => (await read()).map((session) => session.id);
   expect(await ids()).toEqual(["one"]);
   expect(reads.sort()).toEqual(["one.jsonl", "one/subagents/agent-x.jsonl"]);
   reads.length = 0;
   expect(await ids()).toEqual(["one"]);
   expect(reads).toEqual([]);
+  // A session written to since is read again, and only it.
+  appendFileSync(
+    join(project, "one.jsonl"),
+    `\n${reply(2000, "m3", usage(7, 8))}`,
+  );
+  const [one] = await read();
+  expect(reads).toEqual(["one.jsonl"]);
+  expect(one?.observations.map((entry) => entry.tokens.input)).toEqual([
+    1, 7, 3,
+  ]);
+  // Until it is older than a listing looks back, it is read on every open.
+  const then = new Date(Date.now() - 2 * HOUR);
+  utimesSync(join(project, "one.jsonl"), then, then);
+  reads.length = 0;
   // Sessions started since: only the agent's own is read.
   write("two.jsonl", `${threadPrompt()}\n${reply(HOUR, "m2", usage(5, 6))}`);
   write("theirs-too.jsonl", threadPrompt(other));
@@ -347,6 +348,77 @@ it("reads again only the files changed since the last read", async () => {
   ]);
 });
 
+it("reads everything again after the clock is set back", async () => {
+  home = mkdtempSync(join(tmpdir(), "claude-usage-"));
+  const file = join(home, ".claude/projects/-Users-me--buzz/one.jsonl");
+  mkdirSync(dirname(file), { recursive: true });
+  const old = (path: string) => {
+    const then = new Date(Date.now() - 2 * HOUR);
+    utimesSync(path, then, then);
+  };
+  writeFileSync(file, `${threadPrompt()}\n${reply(1000, "m1", usage(1, 2))}`);
+  old(file);
+  const reads: string[] = [];
+  const host = desktop(home, reads);
+  const read = () =>
+    readUsage(host, "~/.buzz", agent, [], 0, new AbortController().signal);
+  await read();
+  // Written while the clock was ahead, so older than any later window.
+  appendFileSync(file, `\n${reply(2000, "m2", usage(3, 4))}`);
+  old(file);
+  reads.length = 0;
+  const now = Date.now();
+  const clock = vi.spyOn(Date, "now").mockReturnValue(now - HOUR);
+  try {
+    const [one] = await read();
+    expect(reads).toEqual(["one.jsonl"]);
+    expect(one?.observations).toHaveLength(2);
+  } finally {
+    clock.mockRestore();
+  }
+});
+
+it("files a session under the agent its opening context names", async () => {
+  home = mkdtempSync(join(tmpdir(), "claude-usage-"));
+  const project = join(home, ".claude/projects/-Users-me--buzz");
+  mkdirSync(project, { recursive: true });
+  // The event quotes another agent's context on the same line.
+  const opening = context([
+    "Session scope: channel",
+    "Channel: buzz-app (#chan)",
+    `Agent: ${agent}`,
+  ]).replace("Content: hi", `Content: see Agent: ${other}`);
+  writeFileSync(
+    join(project, "q.jsonl"),
+    `${opening}\n${reply(1000, "m1", usage(1, 2))}`,
+  );
+  const host = desktop(home);
+  const read = (who: string) =>
+    readUsage(host, "~/.buzz", who, [], 0, new AbortController().signal);
+  expect((await read(agent)).map((session) => session.id)).toEqual(["q"]);
+  expect(await read(other)).toEqual([]);
+});
+
+it("shares one listing between agents read together", async () => {
+  home = mkdtempSync(join(tmpdir(), "claude-usage-"));
+  mkdirSync(join(home, ".claude/projects/-Users-me--buzz"), {
+    recursive: true,
+  });
+  const host = desktop(home);
+  const listings: string[] = [];
+  const spawn: typeof host.spawn = (id, options) => {
+    if (id === "list") listings.push(id);
+    return host.spawn(id, options);
+  };
+  const signal = new AbortController().signal;
+  await Promise.all(
+    [agent, other, root].map((who) =>
+      readUsage({ ...host, spawn }, "~/.buzz", who, [], 0, signal),
+    ),
+  );
+  expect(listings).toEqual(["list"]);
+});
+
 /** Runs the manifest's processes for real, `~` being `home`; the workspace
  * resolves to /Users/me/.buzz. */
 it("fails rather than undercount when a search fails partway", async () => {
@@ -365,9 +437,35 @@ it("fails rather than undercount when a search fails partway", async () => {
     };
   };
   await expect(
-    readUsage({ spawn }, "~/.buzz", agent, [], 0, new AbortController().signal),
+    readUsage(
+      { spawn, readFile: async () => new Uint8Array() },
+      "~/.buzz",
+      agent,
+      [],
+      0,
+      new AbortController().signal,
+    ),
   ).rejects.toThrow("Permission denied");
 });
+
+/** The manifest's processes and the app's file read, `~` being `home`;
+ * `reads` collects the paths read within the project. */
+function desktop(home: string, reads: string[] = []) {
+  return {
+    spawn: processes(home),
+    readFile: async (path: string) => {
+      reads.push(path.replace(/^~\/\.claude\/projects\/[^/]+\//, ""));
+      try {
+        return readFileSync(path.replace(/^~/, home));
+      } catch (error) {
+        // The app's wording for a missing file.
+        if ((error as { code?: string }).code === "ENOENT")
+          throw new Error(`${path}: No such file`);
+        throw error;
+      }
+    },
+  };
+}
 
 function processes(home: string) {
   return async (id: string, options: HostProcessOptions = {}) => {

@@ -2,7 +2,6 @@
 // Claude Code keeps on this computer. Claude Code owns the files; nothing here
 // writes them. What each file said is kept while the app runs, so a later read
 // opens only the files changed since.
-import { readFile } from "../../buzz-mcp/app-client";
 import { promptSections } from "../../features/agents/activity-transcript";
 import type {
   SessionUsage,
@@ -22,7 +21,7 @@ const READERS = 8;
 const LIST_SLACK_MINUTES = 2;
 /** Files one search names, under the app's 256 process arguments. */
 const SEARCH_FILES = 200;
-/** Searches run at once. */
+/** Searches run at once, across every project. */
 const SEARCHES = 8;
 
 const object = (value: unknown): Json | undefined =>
@@ -243,9 +242,28 @@ export function sessionUsage(
 
 export type UsageHost = Readonly<{
   spawn: Spawn;
-  /** The app's own file read; without it, files pass through `base64`. */
-  readFile?: Host["readFile"];
+  readFile: NonNullable<Host["readFile"]>;
 }>;
+
+/** Runs each `work` once one of `places` is free. */
+function limited(places: number) {
+  let busy = 0;
+  const waiting: (() => void)[] = [];
+  return async <T>(work: () => Promise<T>) => {
+    if (busy >= places)
+      await new Promise<void>((resolve) => waiting.push(resolve));
+    else busy += 1;
+    try {
+      return await work();
+    } finally {
+      const next = waiting.shift();
+      if (next) next();
+      else busy -= 1;
+    }
+  };
+}
+const reader = limited(READERS);
+const searching = limited(SEARCHES);
 
 /** One Claude Code project directory as the app's earlier reads left it. */
 type Project = {
@@ -323,7 +341,9 @@ async function search(
   const owners = new Map<string, string>();
   for (const line of found) {
     const match = /^([^/]+\.jsonl):Agent: ([0-9a-f]{64})$/.exec(line);
-    if (match?.[1] && match[2]) owners.set(match[1], match[2]);
+    // The first is the opening context's; a later one on its line is quoted.
+    if (match?.[1] && match[2] && !owners.has(match[1]))
+      owners.set(match[1], match[2]);
   }
   for (const [name, owner] of owners) {
     state.owners.set(name, owner);
@@ -336,27 +356,32 @@ async function search(
  * changed, gone or new since its last listing are dropped, and new session
  * files are searched for the agent they belong to. */
 async function refresh(spawn: Spawn, project: string, state: Project) {
-  const first = !state.listedAt;
   const startedAt = Date.now();
+  // After a clock set back, file ages say nothing about the last listing:
+  // everything is read and searched again.
+  const fresh = !state.listedAt || startedAt < state.listedAt;
+  if (fresh) {
+    state.digests.clear();
+    state.unowned.clear();
+  }
   const [all, changed] = await Promise.all([
     list(spawn, project),
-    first
+    fresh
       ? []
       : list(
           spawn,
           project,
-          // A clock set back must not make the count invalid.
-          Math.ceil(Math.max(0, startedAt - state.listedAt) / 60_000) +
-            LIST_SLACK_MINUTES,
+          Math.ceil((startedAt - state.listedAt) / 60_000) + LIST_SLACK_MINUTES,
         ),
   ]);
   const paths = new Set(all);
   const recent = new Set(changed);
-  for (const path of [...recent, ...state.paths])
-    if (recent.has(path) || !paths.has(path)) state.digests.delete(path);
+  // A digest holds while its file is listed, unchanged, both times.
+  for (const path of state.digests.keys())
+    if (recent.has(path) || !paths.has(path) || !state.paths.has(path))
+      state.digests.delete(path);
   const subagents = new Map<string, string[]>();
   for (const path of paths) {
-    if (!state.paths.has(path)) state.digests.delete(path);
     const match = /^([\w-]+)\/subagents\/[^/]+\.jsonl$/.exec(path);
     if (match?.[1])
       subagents.set(match[1], [...(subagents.get(match[1]) ?? []), path]);
@@ -381,32 +406,18 @@ async function refresh(spawn: Spawn, project: string, state: Project) {
     { length: Math.ceil(unsearched.length / size) },
     (_, index) => unsearched.slice(index * size, (index + 1) * size),
   );
-  const searcher = async () => {
-    for (let batch = batches.shift(); batch; batch = batches.shift()) {
-      const owners = await search(spawn, project, state, batch);
-      for (const name of batch) if (!owners.has(name)) state.unowned.add(name);
-    }
-  };
-  await Promise.all(Array.from({ length: SEARCHES }, searcher));
+  await Promise.all(
+    batches.map((batch) =>
+      searching(async () => {
+        const owners = await search(spawn, project, state, batch);
+        for (const name of batch)
+          if (!owners.has(name)) state.unowned.add(name);
+      }),
+    ),
+  );
   state.paths = paths;
   state.subagents = subagents;
   state.listedAt = startedAt;
-}
-
-/** Runs `work` once a reader is free. */
-let reading = 0;
-const waiting: (() => void)[] = [];
-async function reader<T>(work: () => Promise<T>) {
-  if (reading >= READERS)
-    await new Promise<void>((resolve) => waiting.push(resolve));
-  else reading += 1;
-  try {
-    return await work();
-  } finally {
-    const next = waiting.shift();
-    if (next) next();
-    else reading -= 1;
-  }
 }
 
 /** The agent's Buzz sessions in its workspace's Claude Code history, active
@@ -457,15 +468,7 @@ export async function readUsage(
       try {
         return digest(
           new TextDecoder().decode(
-            host.readFile
-              ? await host.readFile(`~/.claude/projects/${project}/${path}`)
-              : // Project names start with `-`; GNU base64 would read one as
-                // options.
-                await readFile(
-                  spawn,
-                  "~/.claude/projects",
-                  `./${project}/${path}`,
-                ),
+            await host.readFile(`~/.claude/projects/${project}/${path}`),
           ),
         );
       } catch (error) {

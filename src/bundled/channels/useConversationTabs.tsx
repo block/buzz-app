@@ -75,6 +75,7 @@ export function useConversationTabs({
   routed,
   onCloseThread,
   onRetryNavigation,
+  conversationToolbar,
 }: {
   state: ReturnType<typeof useChannelTabState>;
   relay: RelayData;
@@ -84,6 +85,8 @@ export function useConversationTabs({
   scope: string;
   channels: readonly ChannelSummary[];
   conversationIcon(channel: ChannelSummary): ReactNode;
+  /** Header actions for a conversation tab, owned by the page. */
+  conversationToolbar?: ((channel: ChannelSummary) => ReactNode) | undefined;
   extensions?: ConversationExtensions | undefined;
   leadingIds: string[];
   continuingVisit: boolean;
@@ -723,6 +726,8 @@ export function useConversationTabs({
           <BrowserIcon size="1rem" />
         ),
       close: () => closeConversationTab(tab.id),
+      ...(tab.kind === "conversation" &&
+        target && { toolbar: conversationToolbar?.(target) }),
       ...(tab.kind === "thread" && {
         attentionRequest: tab.attentionRequest,
         move: (delta: -1 | 1) => moveBy(tab, delta),

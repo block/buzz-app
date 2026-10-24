@@ -15,11 +15,18 @@ import type { Navigation } from "../../features/navigation/controller";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
+  MenuIcon,
+  MenuItem,
   MenuPopup,
   MenuRoot,
+  MenuSeparator,
   MenuTrigger,
 } from "../../shared/design-system/ui/Menu";
-import { DotsThreeIcon, GearIcon } from "../../shared/design-system/icons";
+import {
+  ArrowSquareOutIcon,
+  DotsThreeIcon,
+  GearIcon,
+} from "../../shared/design-system/icons";
 import {
   ChannelMembersButton,
   ChannelMembersDialog,
@@ -32,18 +39,7 @@ import {
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { useSoloOwner } from "./ChatSharedMark";
 
-/** The header of a conversation shown with the Solo treatment. */
-export function SoloHeading({
-  session,
-  scope,
-  channel,
-  navigator,
-  signal,
-  children,
-  paneToggle,
-  onConvert,
-  onLifecycle,
-}: {
+type SoloToolbarProps = {
   session: RelaySession;
   scope: string;
   channel: ChannelSummary;
@@ -53,9 +49,33 @@ export function SoloHeading({
   children?: ReactNode;
   /** The tab pane toggle, owned by the conversation page; it ends the header. */
   paneToggle?: ReactNode;
-  onConvert(trigger: HTMLElement | null): void;
+  /** Shows the chat in the main view, from a host that shows it elsewhere. */
+  onOpen?: (() => void) | undefined;
+  /** Absent where no host can finish a conversion. */
+  onConvert?: ((trigger: HTMLElement | null) => void) | undefined;
   onLifecycle(action: ChannelLifecycleAction, trigger?: HTMLElement): void;
-}) {
+};
+
+/** The header of a conversation shown with the Solo treatment. */
+export function SoloHeading(props: SoloToolbarProps) {
+  return (
+    <SoloTitle channel={props.channel} actions={<SoloToolbar {...props} />} />
+  );
+}
+
+/** A Solo chat's header actions, wherever the chat is shown. */
+export function SoloToolbar({
+  session,
+  scope,
+  channel,
+  navigator,
+  signal,
+  children,
+  paneToggle,
+  onOpen,
+  onConvert,
+  onLifecycle,
+}: SoloToolbarProps) {
   const settingsTrigger = useRef<HTMLButtonElement>(null);
   const actionsTrigger = useRef<HTMLButtonElement>(null);
   // Each dialog returns focus to the control that opened it.
@@ -83,79 +103,86 @@ export function SoloHeading({
     : undefined;
   return (
     <>
-      <SoloTitle
-        channel={channel}
-        // Archived chats keep their lifecycle actions, including Unarchive.
-        actions={
-          <>
-            {!channel.readOnly && !channel.cached && (
-              <MenuRoot>
-                <MenuTrigger
-                  render={
-                    <IconButton
-                      ref={actionsTrigger}
-                      size="toolbar"
-                      aria-label="Chat actions"
-                      title="Chat actions"
-                      icon={<DotsThreeIcon size="1rem" aria-hidden="true" />}
-                    />
-                  }
-                />
-                <MenuPopup aria-label="Chat actions" align="end">
-                  <SoloChatMenuItems
-                    session={session}
-                    channel={channel}
-                    onShare={() => setSharing({ visit: signal })}
-                    onConvert={() => onConvert(actionsTrigger.current)}
-                    onMove={(projectId) => {
-                      setMoving(true);
-                      void preferences
-                        .assign(channel.id, projectId)
-                        .catch(() => {});
-                    }}
-                    onNewWorkspace={() => setCreatingWorkspace(true)}
-                    onCopy={copy}
-                    onSettings={() =>
-                      setSettingsOpen({
-                        visit: signal,
-                        trigger: actionsTrigger,
-                      })
-                    }
-                    onLifecycle={(action) =>
-                      onLifecycle(action, actionsTrigger.current ?? undefined)
-                    }
-                    onReadResult={setReadError}
-                  />
-                </MenuPopup>
-              </MenuRoot>
+      {channel.archived ? (
+        <span>Archived</span>
+      ) : (
+        <>
+          <ChannelMembersButton
+            session={session}
+            channelId={channel.id}
+            owner={owner}
+            navigator={navigator}
+            signal={signal}
+          />
+          {children}
+          <IconButton
+            ref={settingsTrigger}
+            size="toolbar"
+            aria-label="Chat settings"
+            title="Chat settings"
+            icon={<GearIcon size="1rem" aria-hidden="true" />}
+            disabled={
+              !!channel.readOnly ||
+              (!session.canvas.available && !canEditLifetime(session, channel))
+            }
+            onClick={() =>
+              setSettingsOpen({ visit: signal, trigger: settingsTrigger })
+            }
+          />
+        </>
+      )}
+      {/* Archived chats keep their lifecycle actions, including Unarchive. */}
+      {!channel.readOnly && !channel.cached && (
+        <MenuRoot>
+          <MenuTrigger
+            render={
+              <IconButton
+                ref={actionsTrigger}
+                size="toolbar"
+                aria-label="Chat actions"
+                title="Chat actions"
+                icon={<DotsThreeIcon size="1rem" aria-hidden="true" />}
+              />
+            }
+          />
+          <MenuPopup aria-label="Chat actions" align="end">
+            {onOpen && (
+              <>
+                <MenuItem onClick={onOpen}>
+                  <MenuIcon>
+                    <ArrowSquareOutIcon size={14} />
+                  </MenuIcon>
+                  Open in main view
+                </MenuItem>
+                <MenuSeparator />
+              </>
             )}
-            {!channel.archived && paneToggle}
-          </>
-        }
-      >
-        <ChannelMembersButton
-          session={session}
-          channelId={channel.id}
-          owner={owner}
-          navigator={navigator}
-          signal={signal}
-        />
-        {children}
-        <IconButton
-          ref={settingsTrigger}
-          size="toolbar"
-          aria-label="Chat settings"
-          title="Chat settings"
-          icon={<GearIcon size="1rem" aria-hidden="true" />}
-          disabled={
-            !!channel.readOnly ||
-            (!session.canvas.available && !canEditLifetime(session, channel))
-          }
-          onClick={() =>
-            setSettingsOpen({ visit: signal, trigger: settingsTrigger })
-          }
-        />
-      </SoloTitle>
+            <SoloChatMenuItems
+              session={session}
+              channel={channel}
+              onShare={() => setSharing({ visit: signal })}
+              onConvert={onConvert && (() => onConvert(actionsTrigger.current))}
+              onMove={(projectId) => {
+                setMoving(true);
+                void preferences.assign(channel.id, projectId).catch(() => {});
+              }}
+              onNewWorkspace={() => setCreatingWorkspace(true)}
+              onCopy={copy}
+              onSettings={() =>
+                setSettingsOpen({
+                  visit: signal,
+                  trigger: actionsTrigger,
+                })
+              }
+              onLifecycle={(action) =>
+                onLifecycle(action, actionsTrigger.current ?? undefined)
+              }
+              onReadResult={setReadError}
+            />
+          </MenuPopup>
+        </MenuRoot>
+      )}
+      {!channel.archived && paneToggle}
       {sharing && (
         <ChannelMembersDialog
           key={channel.id}

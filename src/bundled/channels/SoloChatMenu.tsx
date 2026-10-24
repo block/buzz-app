@@ -51,7 +51,8 @@ export function SoloChatMenuItems({
   session: RelaySession;
   channel: ChannelSummary;
   onShare(): void;
-  onConvert(): void;
+  /** Absent where no host can finish a conversion. */
+  onConvert?: (() => void) | undefined;
   onMove(projectId?: string): void;
   onNewWorkspace(): void;
   onCopy(value: string, label: string): void;
@@ -166,7 +167,7 @@ export function SoloChatMenuItems({
             </MenuIcon>
             Share…
           </MenuItem>
-          {canConvertToChannel(session, channel) && (
+          {onConvert && canConvertToChannel(session, channel) && (
             <MenuItem onClick={onConvert}>
               <MenuIcon>
                 <HashArrowInIcon size={14} />

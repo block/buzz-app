@@ -24,7 +24,7 @@ import {
 } from "../../features/channel-navigation/routes";
 import { WorkspaceControl } from "../../features/solo/WorkspaceControl";
 import type { ChannelLifecycleAction } from "../../features/relay/channel-lifecycle-protocol";
-import { SoloHeading } from "./SoloHeading";
+import { SoloHeading, SoloToolbar } from "./SoloHeading";
 import { ChannelCanvasDialog } from "./ChannelCanvasDialog";
 import { NewMessage } from "../../features/direct-messages/NewMessage";
 import { Panel } from "../../shared/design-system/ui/Panel";
@@ -785,6 +785,34 @@ function ChannelWorkspace({
     scope,
     channels,
     conversationIcon,
+    // A Solo chat beside another conversation keeps its own header actions.
+    conversationToolbar: (channel) =>
+      channel.channelType === "solo" && (
+        <SoloToolbar
+          session={queries}
+          scope={scope}
+          channel={channel}
+          navigator={navigator}
+          signal={navigation?.signal}
+          onOpen={
+            navigator && viewer
+              ? () =>
+                  void navigator.open({
+                    version: 1,
+                    kind: "conversation",
+                    scope: {
+                      viewer,
+                      communityOrigin: scope.slice(0, -(viewer.length + 1)),
+                    },
+                    channelId: channel.id,
+                  })
+              : undefined
+          }
+          onLifecycle={(action, trigger) =>
+            handoff?.openLifecycle(channel, action, trigger, navigation?.signal)
+          }
+        />
+      ),
     extensions,
     leadingIds: settings ? ["settings"] : [],
     threadId: routedThread?.messageId,

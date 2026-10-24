@@ -102,9 +102,11 @@ export function appClient(
       check();
       return options.read(path);
     },
-    memories: (slug) => {
+    memories: async (slug) => {
       check();
-      return options.memories(slug);
+      const result = await options.memories(slug);
+      check();
+      return result;
     },
     remember: async (slug, body, after) => {
       check();

@@ -8310,3 +8310,89 @@ it("keeps classifying after source completion storage fails", async () => {
   await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
   expect(jev.decide).toHaveBeenCalledTimes(2);
 });
+
+it.each(["before", "during"])(
+  "withholds connection memory when its agent type changes %s the read",
+  async (phase) => {
+    const { service, plugin, ctx, session } = await setup();
+    ctx
+      .extend({
+        pluginOwner: Object.freeze({ id: "replacement", revision: "one" }),
+      })
+      .agents.register({
+        id: "echo",
+        title: "Replacement",
+        defaults: () => ({ config: {} }),
+        adopt: () => ({}),
+        run: vi.fn(),
+      });
+    await service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+    let request!: import("../host/service").McpHandler;
+    let close!: () => void;
+    const closed = new Promise<void>((resolve) => {
+      close = resolve;
+    });
+    ctx.provide("host", {
+      serveMcp: async (handler: import("../host/service").McpHandler) => {
+        request = handler;
+        return {
+          url: "http://127.0.0.1/mcp",
+          headers: [],
+          close: async () => {
+            close();
+          },
+          closed,
+        };
+      },
+    } as unknown as import("../host/service").Host);
+    const consumer = ctx.extend({
+      pluginOwner: Object.freeze({ id: "consumer", revision: "one" }),
+    });
+    const connection = await consumer.agents.connect(bot, {
+      signal: new AbortController().signal,
+    });
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const read = vi
+      .spyOn(session.agentMemories, "read")
+      .mockImplementation(async () => {
+        if (phase === "during") await held;
+        return {
+          entries: [
+            {
+              slug: "core",
+              body: "REVOKED-PRIVATE-MEMORY",
+              eventId: "f".repeat(64),
+              createdAt: 1,
+            },
+          ],
+          partial: false,
+        };
+      });
+    read.mockClear();
+    const call = () =>
+      request({
+        id: 1,
+        method: "tools/call",
+        params: { name: "mem_get", arguments: { slug: "core" } },
+      });
+    const pending = phase === "during" ? call() : undefined;
+    try {
+      if (pending)
+        await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(1));
+      await service.retype(bot, "replacement/echo");
+      expect(service.find(bot)?.type).toBe("replacement/echo");
+      release();
+      const result = await (pending ?? call());
+      expect(JSON.stringify(result)).not.toContain("REVOKED-PRIVATE-MEMORY");
+      expect(result).toHaveProperty("result.isError", true);
+    } finally {
+      release();
+      await pending?.catch(() => {});
+      await connection.close();
+    }
+  },
+);

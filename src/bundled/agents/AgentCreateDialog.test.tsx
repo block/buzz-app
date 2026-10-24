@@ -24,6 +24,7 @@ import type {
 } from "../../features/agents/service";
 import {
   emojiAvatar,
+  emojiAvatarScale,
   uploadAvatar,
 } from "../../features/profiles/avatar-upload";
 import { AgentCreateDialog } from "./AgentCreateDialog";
@@ -214,7 +215,12 @@ it("creates with a custom emoji on a chosen background", async () => {
     within(dialog).getByRole("button", { name: "Use #476CFF background" }),
   );
   await user.click(within(dialog).getByRole("button", { name: "Done" }));
-  expect(emojiAvatar).toHaveBeenCalledExactlyOnceWith("😀", "#476CFF");
+  expect(emojiAvatar).toHaveBeenCalledExactlyOnceWith(
+    "😀",
+    "#476CFF",
+    emojiAvatarScale,
+    0,
+  );
   await waitFor(() =>
     expect(uploadAvatar).toHaveBeenCalledWith(
       file,

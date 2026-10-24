@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
@@ -147,7 +148,7 @@ afterEach(() => {
   home = undefined;
 });
 
-it("finds the agent's threads by name and reads their rollouts with the manifest's processes", async () => {
+it("finds the agent's threads by name, reads their rollouts, and later only those Codex updated", async () => {
   home = mkdtempSync(join(tmpdir(), "codex-usage-"));
   const rollout = (
     name: string,
@@ -232,12 +233,22 @@ it("finds the agent's threads by name and reads their rollouts with the manifest
       nextCursor: start + 1 < found.length ? String(start + 1) : null,
     };
   });
-  const sessions = await readUsage(
+  const reads: string[] = [];
+  const host = {
     spawn,
-    { pubkey: agent, name: "Sol" },
-    hour - HOUR,
-    new AbortController().signal,
-  );
+    readFile: async (path: string) => {
+      reads.push(path.slice(path.lastIndexOf("/") + 1));
+      return new Uint8Array(await readFile(path));
+    },
+  };
+  const read = () =>
+    readUsage(
+      host,
+      { pubkey: agent, name: "Sol" },
+      hour - HOUR,
+      new AbortController().signal,
+    );
+  const sessions = await read();
   expect(sessions.map((session) => session.id)).toEqual(["mine"]);
   // The thread's own response, and one from each of its subagents.
   expect(
@@ -261,6 +272,24 @@ it("finds the agent's threads by name and reads their rollouts with the manifest
       "theirs",
     ].sort(),
   );
+  expect(reads.sort()).toEqual(
+    ["gone", "mine", "nested", "review", "theirs"].map(
+      (name) => `${name}.jsonl`,
+    ),
+  );
+
+  // Again: only the thread whose subagent Codex updated is read, and the one
+  // whose rollout was gone.
+  reads.length = 0;
+  const review = threads.find((thread) => thread.id === "review");
+  if (review) review.updatedAt += 60;
+  expect((await read()).map((session) => session.id)).toEqual(["mine"]);
+  expect(reads.sort()).toEqual(
+    ["gone", "mine", "nested", "review"].map((name) => `${name}.jsonl`),
+  );
+  reads.length = 0;
+  await read();
+  expect(reads).toEqual(["gone.jsonl"]);
 });
 
 /** `thread/list` as `list` answers it, from a fake app-server, and the

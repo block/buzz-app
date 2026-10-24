@@ -36,7 +36,7 @@ Terms:
 
 ## Configuration compatibility
 
-These extensions retain the `agent-attention/v1` schema name. Older readers reject fields and watch types they do not support, retain the objects for repair, and do not execute them. Janet does not support conversation delivery addresses or plugin source watches. Conversion to Janet must reject unsupported objects rather than silently dropping a source or its destination; converter enforcement is tracked separately from this app change.
+These extensions retain the `agent-attention/v1` schema name. Older readers reject fields and watch types they do not support, retain the objects for repair, and do not execute them. Janet does not support conversation delivery addresses or plugin source watches. Conversion to Janet must reject unsupported objects rather than silently dropping a source or its destination. Converter enforcement of this requirement remains unverified.
 
 ## Known limit
 

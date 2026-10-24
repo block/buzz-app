@@ -440,7 +440,6 @@ export type RunnerHost = {
         | "publish"
         | "query"
         | "searchProfiles"
-        | "audienceAuthority"
         | "upload"
         | "media"
         | "gitAuth"
@@ -623,7 +622,7 @@ export class AgentRunners {
     if (!now) return;
     const { runner, agent } = now;
     const { signal } = runner.controller;
-    return guarded(this.handleFor(runner, agent, signal), () => {
+    return guarded(this.handleFor(runner, agent), () => {
       if (signal.aborted || held()?.runner !== runner)
         throw new Error(
           `${agent.name} no longer runs here as this plugin's agent; ask for its handle again`,
@@ -2026,7 +2025,7 @@ export class AgentRunners {
       lifetime,
       AbortSignal.timeout(type.timeoutMs ?? 60_000),
     ]);
-    const handle = this.handleFor(runner, agent, signal);
+    const handle = this.handleFor(runner, agent);
     const anchor = conversationWake(job.trigger, "");
     const destination = !addressed(job.trigger) ? anchor : undefined;
     const working = this.working(
@@ -2150,12 +2149,8 @@ export class AgentRunners {
     });
   }
 
-  /** The agent as `run` holds it; `signal` bounds its audience checks. */
-  private handleFor(
-    runner: Runner,
-    agent: Agent,
-    signal: AbortSignal,
-  ): AgentHandle {
+  /** The agent as `run` holds it. */
+  private handleFor(runner: Runner, agent: Agent): AgentHandle {
     // Taken now, as a type change replaces the controller.
     const lifetime = runner.controller.signal;
     return Object.freeze({
@@ -2165,24 +2160,6 @@ export class AgentRunners {
       publish: async (event: AgentEventTemplate) => this.publish(runner, event),
       query: async (filters: readonly object[]) =>
         this.require().query(agent.pubkey, filters),
-      audienceAuthority: async (
-        destination: string,
-        sources: readonly string[],
-      ) => {
-        signal.throwIfAborted();
-        const native = this.require();
-        if (!native.audienceAuthority)
-          throw new Error(
-            "Current audience authority is unsupported by this host.",
-          );
-        const response = await native.audienceAuthority(
-          agent.pubkey,
-          destination,
-          sources,
-        );
-        signal.throwIfAborted();
-        return response;
-      },
       searchProfiles: async (query: string, limit: number) =>
         this.require().searchProfiles(agent.pubkey, query, limit),
       upload: async (data: string, mime: string) =>

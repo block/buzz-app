@@ -1,4 +1,4 @@
-// Agent identity above the type-owned model and instructions fields.
+// Avatar selection above the agent identity and type-owned setup fields.
 import { useId, useRef, useState } from "react";
 import { randomAgentAvatar } from "../../features/agents/avatar-packs";
 import type {
@@ -12,13 +12,15 @@ import type {
 import { RobotIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
+import { Select } from "../../shared/design-system/ui/Select";
+import { AgentAvatarPicker, type AvatarSelection } from "./AgentAvatarPicker";
+import styles from "./AgentCreate.module.css";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
-import { Select } from "../../shared/design-system/ui/Select";
-import { AgentCreateHeader } from "./AgentCreateHeader";
+import { Field } from "../../shared/design-system/ui/Field";
+import { Input } from "../../shared/design-system/ui/Input";
+import { useNamePrompt, useShake } from "./useNamePrompt";
 import { MigrationPreview } from "./AgentSettingsHost";
-import styles from "./AgentCreate.module.css";
-import { useNamePrompt } from "./useNamePrompt";
 
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
@@ -71,8 +73,10 @@ export function AgentCreateDialog({
   const [name, setName] = useState(
     update ? (update.request.name ?? update.agent.name) : (request?.name ?? ""),
   );
-  const [picture, setPicture] = useState(() =>
-    update ? (update.agent.picture ?? "") : randomAgentAvatar().url,
+  const [avatar, setAvatar] = useState<AvatarSelection>(() =>
+    update
+      ? { kind: "image", picture: update.agent.picture ?? "" }
+      : { kind: "gloopie", picture: randomAgentAvatar().url },
   );
   const [typeKey, setTypeKey] = useState(
     (update ? (update.request.type ?? update.agent.type) : request?.type) ??
@@ -103,21 +107,27 @@ export function AgentCreateDialog({
   const [config, setConfig] = useState(() => seed(type));
   const preview = migration(type);
   const [dirty, setDirty] = useState(Boolean(update));
+  const [configRevision, setConfigRevision] = useState(0);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
-  const [avatarActive, setAvatarActive] = useState(false);
   const [avatarBusy, setAvatarBusy] = useState(false);
-  const [avatarAction, setAvatarAction] = useState<HTMLDivElement | null>(null);
-  const avatarNavigation = useRef<{ back(): void }>(null);
+  const avatarRef = useRef<{ prepare(): Promise<string> }>(null);
   const nameField = useRef<HTMLInputElement>(null);
   const namePrompt = useNamePrompt(nameField);
+  const nameControl = useRef<HTMLDivElement>(null);
+  useShake(nameControl, namePrompt.attempts);
   const form = useId();
   const Create = type?.Create;
   const Model = type?.CreateModel;
   const close = () => setOpen(false);
   const chooseModel = (item: RegisteredAgentType, next: unknown) => {
     setTypeKey(item.key);
-    setConfig(next);
+    setConfig(
+      !update && next && typeof next === "object" && "instructions" in next
+        ? { ...next, instructions: "" }
+        : next,
+    );
+    setConfigRevision((revision) => revision + 1);
     setDirty(true);
     setError("");
   };
@@ -126,20 +136,23 @@ export function AgentCreateDialog({
     if (item && key !== type?.key) chooseModel(item, seed(item));
   };
   const create = async () => {
-    if (!type || pending) return;
+    if (!type || pending || avatarBusy) return;
     if (!name.trim()) {
       namePrompt.prompt();
       return;
     }
     setPending(true);
     setError("");
-    const input = {
-      type: type.key,
-      name: name.trim(),
-      ...(picture ? { picture } : {}),
-      ...(config !== undefined ? { config } : {}),
-    };
     try {
+      const picture =
+        (await avatarRef.current?.prepare()) ??
+        (avatar.kind === "emoji" ? "" : avatar.picture);
+      const input = {
+        type: type.key,
+        name: name.trim(),
+        ...(picture ? { picture } : {}),
+        ...(config !== undefined ? { config } : {}),
+      };
       if (update) await update.onSave(input);
       else onCreated(await (onCreate ? onCreate(input) : agents.create(input)));
     } catch (reason) {
@@ -147,9 +160,6 @@ export function AgentCreateDialog({
       setPending(false);
     }
   };
-  const back = avatarActive
-    ? () => avatarNavigation.current?.back()
-    : undefined;
   return (
     <Dialog
       open={open}
@@ -167,91 +177,104 @@ export function AgentCreateDialog({
             ? `${request.requesterName} requested this agent. Review its settings before creating it.`
             : undefined
       }
-      size="wide"
-      height="stable-tall"
+      size="default"
+      height="content"
       chromeSpacing="padded"
-      bodyLayout={avatarActive ? "flex" : "flow"}
       initialFocus={nameField}
       // A started draft only closes from the close button.
       dismissOnOutsideClick={!dirty}
       onEscape={() => {
-        if (back) {
-          back();
-          return true;
-        }
+        if (pending || avatarBusy) return true;
         return dirty || pending;
       }}
-      preventClose={pending}
-      leadingActions={
-        back && (
-          <Button disabled={pending} onClick={back}>
-            Back
-          </Button>
-        )
-      }
+      preventClose={pending || avatarBusy}
       actions={
-        <>
-          <div ref={setAvatarAction} hidden={!avatarActive} />
-          {!avatarActive && (
-            <Button
-              variant="primary"
-              // The footer is outside the form; Enter in any field submits it.
-              type="submit"
-              form={form}
-              loading={pending}
-              disabled={avatarBusy || !type || pending}
-            >
-              {update ? "Save changes" : "Create agent"}
-            </Button>
-          )}
-        </>
+        <Button
+          variant="primary"
+          type="submit"
+          form={form}
+          loading={pending}
+          disabled={avatarBusy || pending || !type}
+        >
+          {update ? "Save changes" : "Create agent"}
+        </Button>
       }
     >
       <form
         id={form}
         className={styles.form}
-        data-avatar-active={avatarActive || undefined}
         aria-label={edited ? `Edit ${edited.name}` : "New agent"}
         onSubmit={(event) => {
           event.preventDefault();
-          if (!avatarActive) void create();
+          void create();
         }}
       >
-        <AgentCreateHeader
-          name={name}
-          picture={picture}
-          disabled={pending}
-          community={community}
-          onBusyChange={setAvatarBusy}
-          onChange={(patch) => {
-            if (patch.name !== undefined) {
-              setName(patch.name);
-              namePrompt.named(patch.name);
-            }
-            if (patch.picture !== undefined) setPicture(patch.picture);
-            setDirty(true);
-            setError("");
-          }}
-          nameRef={nameField}
-          nameError={
-            namePrompt.attempts
-              ? {
-                  message: update
+        <div className={styles.createStack}>
+          <section aria-label="Identity" className={styles.profileIdentity}>
+            <div>
+              <AgentAvatarPicker
+                name={name}
+                selection={avatar}
+                disabled={pending}
+                community={community}
+                onBusyChange={setAvatarBusy}
+                onChange={(selection) => {
+                  setAvatar(selection);
+                  setDirty(true);
+                  setError("");
+                }}
+                avatarRef={avatarRef}
+              />
+            </div>
+          </section>
+          <div>
+            <Field
+              label="Name"
+              error={
+                namePrompt.attempts
+                  ? update
                     ? "Name the agent"
-                    : "Add a name to create your agent",
-                  attempt: namePrompt.attempts,
-                }
-              : undefined
-          }
-          details={null}
-          editing={false}
-          avatarNavigationRef={avatarNavigation}
-          avatarActionTarget={avatarAction}
-          onAvatarActiveChange={setAvatarActive}
-        />
-
-        <div hidden={avatarActive} className="grid gap-4">
-          <div className={styles.setupSurface}>
+                    : "Add a name to create your agent"
+                  : undefined
+              }
+            >
+              <div ref={nameControl}>
+                <Input
+                  ref={nameField}
+                  placeholder="Name"
+                  value={name}
+                  disabled={pending || avatarBusy}
+                  onChange={(event) => {
+                    setName(event.target.value);
+                    namePrompt.named(event.target.value);
+                    setDirty(true);
+                    setError("");
+                  }}
+                />
+              </div>
+            </Field>
+          </div>
+          {Create ? (
+            <Create
+              key={`${type.key}:${configRevision}`}
+              config={config}
+              disabled={pending}
+              onChange={(next) => {
+                setConfig(next);
+                setDirty(true);
+              }}
+            />
+          ) : (
+            <p className="m-0 text-body-sm text-secondary">
+              {type?.remote
+                ? "Its provider keeps its key and runs it, whether or not this app is open."
+                : "Set it up after it is made."}
+            </p>
+          )}
+          <section
+            aria-label="AI configuration"
+            className={styles.configuration}
+          >
             <SettingsGroup>
               <PreferenceRow
                 title="Harness"
@@ -291,7 +314,7 @@ export function AgentCreateDialog({
                 />
               )}
             </SettingsGroup>
-          </div>
+          </section>
           {preview && type && (
             <MigrationPreview
               source={types.find((item) => item.key === edited?.type)}
@@ -299,23 +322,6 @@ export function AgentCreateDialog({
               preview={preview}
               discardDraft={false}
             />
-          )}
-          {Create ? (
-            <Create
-              key={type.key}
-              config={config}
-              disabled={pending}
-              onChange={(next) => {
-                setConfig(next);
-                setDirty(true);
-              }}
-            />
-          ) : (
-            <p className="m-0 text-body-sm text-secondary">
-              {type?.remote
-                ? "Its provider keeps its key and runs it, whether or not this app is open."
-                : "Set it up after it is made."}
-            </p>
           )}
         </div>
         {error && (

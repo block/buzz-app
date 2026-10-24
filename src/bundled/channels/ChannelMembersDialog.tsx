@@ -325,9 +325,11 @@ export function ChannelMembersButton({
   navigator,
   signal,
   owner,
+  label = "Access",
 }: {
   session: RelaySession;
   channelId: string;
+  label?: string;
   /** Someone else's Solo chat names its owner on the Access control. */
   owner?: { name: string; picture?: string | undefined } | undefined;
   agents?: Agents | undefined;
@@ -346,8 +348,8 @@ export function ChannelMembersButton({
       <IconButton
         ref={trigger}
         size="sm"
-        aria-label={owner ? `Access, ${soloOwnerLabel(owner)}` : "Access"}
-        title={owner ? soloOwnerLabel(owner) : "Access"}
+        aria-label={owner ? `${label}, ${soloOwnerLabel(owner)}` : label}
+        title={owner ? soloOwnerLabel(owner) : label}
         aria-haspopup="dialog"
         aria-expanded={open}
         onClick={() => setOpen(true)}
@@ -1228,7 +1230,7 @@ export function ChannelMembersDialog({
           ? selection.role === "remove"
             ? `Remove ${removalTarget} from ${place}`
             : "Change member role?"
-          : (title ?? (solo ? "Chat access" : "Channel access"))
+          : (title ?? (solo ? "Share" : "Channel access"))
       }
       height={selection ? "content" : "stable"}
       bodyLayout={selection ? "flow" : "flex"}

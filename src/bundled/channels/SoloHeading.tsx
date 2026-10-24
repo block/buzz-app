@@ -107,6 +107,7 @@ export function SoloToolbar({
           <ChannelMembersButton
             session={session}
             channelId={channel.id}
+            label="Share"
             owner={owner}
             navigator={navigator}
             signal={signal}

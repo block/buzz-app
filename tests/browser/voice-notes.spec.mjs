@@ -122,9 +122,10 @@ async function record(page) {
   await page.screenshot({
     path: test.info().outputPath("voice-recording.png"),
   });
-  await page
-    .getByRole("button", { name: "Stop recording", exact: true })
-    .click();
+  await expect(
+    page.getByRole("button", { name: "Stop recording", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("Enter");
   await expect(
     page.getByRole("button", { name: "Remove voice note", exact: true }),
   ).toBeVisible();

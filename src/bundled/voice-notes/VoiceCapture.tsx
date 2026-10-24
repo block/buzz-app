@@ -17,6 +17,14 @@ export function VoiceCapture({ accept, cancel }: ComposerCaptureProps) {
   useLayoutEffect(() => {
     if (recorder.error || failed) close.current?.focus();
   }, [recorder.error, failed]);
+  const root = useRef<HTMLDivElement>(null);
+  const stop = useRef<HTMLButtonElement>(null);
+  const recording = recorder.status === "recording";
+  // Discard holds focus while the microphone is pending; once recording, Enter keeps the note.
+  useLayoutEffect(() => {
+    if (recording && root.current?.contains(document.activeElement))
+      stop.current?.focus();
+  }, [recording]);
   useEffect(() => {
     // Strict Mode can dispose a mount immediately; do not open two permission requests.
     let active = true;
@@ -55,7 +63,7 @@ export function VoiceCapture({ accept, cancel }: ComposerCaptureProps) {
       </div>
     );
   return (
-    <div className={styles.capture}>
+    <div ref={root} className={styles.capture}>
       <VoiceNoteRecorder
         elapsedSeconds={recorder.elapsedSeconds}
         levels={recorder.levels}
@@ -66,10 +74,11 @@ export function VoiceCapture({ accept, cancel }: ComposerCaptureProps) {
         }}
       />
       <IconButton
+        ref={stop}
         type="button"
         variant="subtle"
         size="sm"
-        disabled={recorder.status !== "recording"}
+        disabled={!recording}
         aria-label="Stop recording"
         title="Stop recording"
         onClick={() => void finish()}

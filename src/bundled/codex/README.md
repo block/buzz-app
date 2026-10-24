@@ -183,8 +183,10 @@ Buzz checks when the agents load and every 6 hours; the first download (about
   contract has no live-activity API. The agent's Activity tab shows
   conversation status and the latest command/output.
   Messages and uploads use the shared Buzz tools. Codex assistant text is not automatically posted. After `buzz.send` with `final: true`, Codex finishes normally and consumes pending steering. A turn that has nothing new to say ends without posting. Final sends preserve background processes, such as a dev server it started.
-- Turns have a 29-minute deadline;
-  RPC acknowledgements have a 30-second deadline. Local bindings retain 200 sessions.
+- Buzz imposes no time limit on conversation turns; they run until Codex ends
+  them or they are stopped. One-off watch and timer turns retain the 5-minute
+  limit described above. RPC acknowledgements have a 30-second deadline. Local
+  bindings retain 200 sessions.
 - Uses experimental app-server APIs for dynamic tools, model discovery, application context, and terminal
   cleanup. The live check was exercised with `codex-cli 0.162.0` on macOS.
 - Linux and Windows native behavior, packaged app behavior, full relay signing,

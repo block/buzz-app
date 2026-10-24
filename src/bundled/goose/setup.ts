@@ -329,7 +329,10 @@ export class GooseSetup {
   }
 
   /** `efforts` for each of `models` on `provider`. Those not read yet are
-   * read together, in one throwaway session moved from model to model. */
+   * read together, in one throwaway session moved from model to model.
+   * goose carries a level across models only once one is set, and this
+   * session sets none, so each model reports its own default: a session per
+   * model read the same levels and defaults, six times slower. */
   private levels(
     provider: string,
     models: readonly string[],

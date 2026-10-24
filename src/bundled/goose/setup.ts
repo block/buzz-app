@@ -98,6 +98,10 @@ export class GooseSetup {
   constructor(
     private readonly host: GooseHost | undefined,
     private readonly defaultsChanged: () => void = () => {},
+    /** Called once a provider's fields are saved, before `save` resolves. */
+    private readonly credentialsChanged: (
+      provider: string,
+    ) => Promise<void> = async () => {},
   ) {}
 
   snapshot = () => this.state;
@@ -363,6 +367,7 @@ export class GooseSetup {
     this.listing = undefined;
     this.live.delete(id);
     this.thinking.clear();
+    await this.credentialsChanged(id);
   }
 
   /** Asks the provider for one short reply, without tools. goose reports a

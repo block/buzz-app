@@ -36,7 +36,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
           resolveDirectory: host.resolveDirectory.bind(host),
         }
       : undefined;
-  const setup = new GooseSetup(desktop, () => runtime.defaultsChanged());
+  const setup = new GooseSetup(
+    desktop,
+    () => runtime.defaultsChanged(),
+    (provider) => runtime.credentialsChanged(provider),
+  );
   const history = new GooseHistory(desktop);
   const {
     Create,

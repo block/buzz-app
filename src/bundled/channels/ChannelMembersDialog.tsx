@@ -26,6 +26,7 @@ import { profileTarget } from "../../features/profiles/target";
 import { matchPerson } from "../../features/search/person-match";
 import { useSearchHighlight } from "../../features/search/use-search-highlight";
 import styles from "./ChannelMembersDialog.module.css";
+import { SoloOwnerAvatar, soloOwnerLabel } from "./ChatSharedMark";
 import { MEMBER_SEARCH_PAGE_SIZE } from "../../features/channel-members/search";
 import {
   canManageMember,
@@ -323,9 +324,12 @@ export function ChannelMembersButton({
   agents,
   navigator,
   signal,
+  owner,
 }: {
   session: RelaySession;
   channelId: string;
+  /** Someone else's Solo chat names its owner on the Access control. */
+  owner?: { name: string; picture?: string | undefined } | undefined;
   agents?: Agents | undefined;
   navigator?: Navigation | undefined;
   signal?: AbortSignal | undefined;
@@ -342,12 +346,18 @@ export function ChannelMembersButton({
       <IconButton
         ref={trigger}
         size="sm"
-        aria-label="Access"
-        title="Access"
+        aria-label={owner ? `Access, ${soloOwnerLabel(owner)}` : "Access"}
+        title={owner ? soloOwnerLabel(owner) : "Access"}
         aria-haspopup="dialog"
         aria-expanded={open}
         onClick={() => setOpen(true)}
-        icon={<UsersIcon size="1rem" aria-hidden="true" />}
+        icon={
+          owner ? (
+            <SoloOwnerAvatar owner={owner} />
+          ) : (
+            <UsersIcon size="1rem" aria-hidden="true" />
+          )
+        }
       />
       {open && (
         <ChannelMembersDialog

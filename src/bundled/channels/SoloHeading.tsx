@@ -30,6 +30,7 @@ import {
   useChatCopy,
 } from "./SoloChatMenu";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
+import { useSoloOwner } from "./ChatSharedMark";
 
 /** The header of a conversation shown with the Solo treatment. */
 export function SoloHeading({
@@ -65,6 +66,7 @@ export function SoloHeading({
   const [sharing, setSharing] = useState<{ visit: AbortSignal | undefined }>();
   const [creatingWorkspace, setCreatingWorkspace] = useState(false);
   const [copy, copyNotice] = useChatCopy();
+  const owner = useSoloOwner(session, channel);
   const [readError, setReadError] = useState<string>();
   // The sidebar may be hidden, so a move started here reports its own failure.
   const preferences = session.soloPreferences;
@@ -134,6 +136,7 @@ export function SoloHeading({
         <ChannelMembersButton
           session={session}
           channelId={channel.id}
+          owner={owner}
           navigator={navigator}
           signal={signal}
         />

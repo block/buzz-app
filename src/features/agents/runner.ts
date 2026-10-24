@@ -2454,7 +2454,7 @@ export class AgentRunners {
       }
     };
     return {
-      ok: () => outcome.ok,
+      ok: () => outcome.ok && !outcome.stopped,
       /** Settles once the run and all it handed off have, or it is retired. */
       settled,
       hold(pending: PromiseLike<unknown>) {

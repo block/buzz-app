@@ -7463,70 +7463,89 @@ describe("Attention plugin sources", () => {
     expect(input?.signal.aborted).toBe(true);
     expect(() => input?.emit("late")).toThrow(/no longer/);
   });
-  it("retains a completed producer until its final turn settles, records output and then removes it", async () => {
-    const { service, run, plugin, native } = await setup();
-    let release!: () => void;
-    const held = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    run.mockImplementation(async (delivery) => {
-      delivery.workingUntil(held);
-    });
-    plugin.agents.addAttentionSource({
-      id: "command",
-      run: async ({ emit }) => {
-        emit("final output\n");
-      },
-    });
-    await service.create({ type: "example/echo", name: "Echo" });
-    await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
-    await service.save(bot, { attentionEnabled: true, attention: watches });
-    try {
-      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
-      await vi.waitFor(() =>
+  it.each([false, true])(
+    "settles a completed producer's final turn without losing stopped work (stopped: %s)",
+    async (stopped) => {
+      const { service, run, plugin, native } = await setup();
+      let release!: (outcome: WorkOutcome) => void;
+      const held = new Promise<WorkOutcome>((resolve) => {
+        release = resolve;
+      });
+      run.mockImplementation(async (delivery) => {
+        delivery.workingUntil(held);
+      });
+      plugin.agents.addAttentionSource({
+        id: "command",
+        run: async ({ emit }) => {
+          emit("final output\n");
+        },
+      });
+      await service.create({ type: "example/echo", name: "Echo" });
+      await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
+      await service.save(bot, { attentionEnabled: true, attention: watches });
+      try {
+        await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+        await vi.waitFor(() =>
+          expect(
+            service.find(bot)?.attentionHistory?.["watch/pr"]?.output,
+          ).toBe("final output\n"),
+        );
+        expect(
+          service.find(bot)?.attentionHistory?.["watch/pr"]?.lastWokeAt,
+        ).toEqual(expect.any(Number));
+        expect(service.find(bot)?.attention["watch/pr"]).toBeDefined();
+      } finally {
+        release(stopped ? { ok: true, stopped: true } : { ok: true });
+      }
+      await settle();
+      if (stopped) {
+        expect(service.find(bot)?.attention["watch/pr"]).toBeDefined();
         expect(service.find(bot)?.attentionHistory?.["watch/pr"]?.output).toBe(
           "final output\n",
-        ),
+        );
+      } else {
+        await vi.waitFor(() =>
+          expect(service.find(bot)?.attention["watch/pr"]).toBeUndefined(),
+        );
+      }
+    },
+  );
+  it.each(["fails", "stops"])(
+    "keeps a subscription when delivery %s before its producer completes",
+    async (outcome) => {
+      const { service, run, plugin, native } = await setup();
+      let finish!: () => void;
+      const held = new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      if (outcome === "fails")
+        run.mockRejectedValue(new Error("delivery failed"));
+      else
+        run.mockImplementation(({ workingUntil }) =>
+          workingUntil(Promise.resolve({ ok: true, stopped: true })),
+        );
+      plugin.agents.addAttentionSource({
+        id: "command",
+        run: async ({ emit }) => {
+          emit("final output");
+          await held;
+        },
+      });
+      await service.create({ type: "example/echo", name: "Echo" });
+      await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
+      await service.save(bot, { attentionEnabled: true, attention: watches });
+      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+      await settle();
+      finish();
+      await vi.waitFor(() =>
+        expect(service.find(bot)?.sourceRuns?.["watch/pr"]).toBeDefined(),
       );
-      expect(
-        service.find(bot)?.attentionHistory?.["watch/pr"]?.lastWokeAt,
-      ).toEqual(expect.any(Number));
       expect(service.find(bot)?.attention["watch/pr"]).toBeDefined();
-    } finally {
-      release();
-    }
-    await vi.waitFor(() =>
-      expect(service.find(bot)?.attention["watch/pr"]).toBeUndefined(),
-    );
-  });
-  it("keeps a completed subscription when its last delivery fails", async () => {
-    const { service, run, plugin, native } = await setup();
-    let finish!: () => void;
-    const held = new Promise<void>((resolve) => {
-      finish = resolve;
-    });
-    run.mockRejectedValue(new Error("delivery failed"));
-    plugin.agents.addAttentionSource({
-      id: "command",
-      run: async ({ emit }) => {
-        emit("final output");
-        await held;
-      },
-    });
-    await service.create({ type: "example/echo", name: "Echo" });
-    await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
-    await service.save(bot, { attentionEnabled: true, attention: watches });
-    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
-    await settle();
-    finish();
-    await vi.waitFor(() =>
-      expect(service.find(bot)?.sourceRuns?.["watch/pr"]).toBeDefined(),
-    );
-    expect(service.find(bot)?.attention["watch/pr"]).toBeDefined();
-    expect(service.find(bot)?.attentionHistory?.["watch/pr"]?.output).toBe(
-      "final output",
-    );
-  });
+      expect(service.find(bot)?.attentionHistory?.["watch/pr"]?.output).toBe(
+        "final output",
+      );
+    },
+  );
   it("delivers nonempty output, preserves queued output on completion, and does not rerun after restart", async () => {
     const { service, run, plugin, native, storage, ctx } = await setup();
     let emitSource: ((text: string) => void) | undefined;
@@ -7574,12 +7593,19 @@ describe("Attention plugin sources", () => {
   });
 });
 
-it.each([undefined, "e".repeat(64)])(
-  "delivers a timer to a conversation once and removes it after delivery (root: %s)",
-  async (root) => {
+it.each(
+  [undefined, "e".repeat(64)].flatMap((root) =>
+    [false, true].map((stopped) => ({ root, stopped })),
+  ),
+)(
+  "delivers a timer once and retains stopped work (root: $root, stopped: $stopped)",
+  async ({ root, stopped }) => {
     vi.useFakeTimers({ now: 1_000_000 });
     const runOnce = vi.fn(async () => ({ ok: true }));
     const { service, run } = await setup({ runOnce });
+    run.mockImplementation(({ workingUntil }) =>
+      workingUntil(Promise.resolve({ ok: true, stopped })),
+    );
     await service.create({ type: "example/echo", name: "Echo" });
     await service.save(bot, {
       attentionEnabled: true,
@@ -7620,8 +7646,13 @@ it.each([undefined, "e".repeat(64)])(
     await vi.advanceTimersByTimeAsync(180_000);
     expect(run).toHaveBeenCalledTimes(1);
     expect(runOnce).not.toHaveBeenCalled();
-    expect(service.find(bot)?.attention["watch/once"]).toBeUndefined();
-    expect(service.find(bot)?.timers["watch/once"]).toBeUndefined();
+    if (stopped) {
+      expect(service.find(bot)?.attention["watch/once"]).toBeDefined();
+      expect(service.find(bot)?.timers["watch/once"]?.used).toBe(1);
+    } else {
+      expect(service.find(bot)?.attention["watch/once"]).toBeUndefined();
+      expect(service.find(bot)?.timers["watch/once"]).toBeUndefined();
+    }
   },
 );
 

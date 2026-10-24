@@ -76,6 +76,25 @@ export function SoloChatMenuItems({
   const active = !channel.archived;
   return (
     <>
+      {session.unread.sync().capability === "frontier-sync" && (
+        <ChannelReadMenuItem
+          unread={session.unread}
+          channelId={channel.id}
+          pending={false}
+          closeOnClick
+          run={(action) =>
+            action().then(
+              () => onReadResult(),
+              (error: unknown) =>
+                onReadResult(
+                  error instanceof Error
+                    ? error.message
+                    : "Read state couldn’t be saved. Try again.",
+                ),
+            )
+          }
+        />
+      )}
       <MenuItem
         disabled={
           !!channel.readOnly ||
@@ -88,29 +107,6 @@ export function SoloChatMenuItems({
         </MenuIcon>
         Chat settings
       </MenuItem>
-      <MenuSeparator />
-      {session.unread.sync().capability === "frontier-sync" && (
-        <>
-          <ChannelReadMenuItem
-            unread={session.unread}
-            channelId={channel.id}
-            pending={false}
-            closeOnClick
-            run={(action) =>
-              action().then(
-                () => onReadResult(),
-                (error: unknown) =>
-                  onReadResult(
-                    error instanceof Error
-                      ? error.message
-                      : "Read state couldn’t be saved. Try again.",
-                  ),
-              )
-            }
-          />
-          <MenuSeparator />
-        </>
-      )}
       {active && (
         <MenuSubmenu>
           <MenuSubmenuTrigger disabled={!preferences.writable}>

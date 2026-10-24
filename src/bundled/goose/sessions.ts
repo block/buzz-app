@@ -219,7 +219,8 @@ export class AgentSessions {
    * first one is left for goose to name, if it names sessions, when `named`
    * takes that name;
    * `model`, one of the agent's
-   * provider's, is what its turn runs on. Once `signal` aborts, it stops
+   * provider's, and `effort`, one of its thinking levels, are what its turn
+   * runs on. Once `signal` aborts, it stops
    * waiting for a session to open, which is then kept for the next message,
    * and sends nothing. */
   async deliver(
@@ -233,6 +234,7 @@ export class AgentSessions {
       named,
       signal,
       model,
+      effort,
       ...activity
     }: Readonly<{
       steer?: string;
@@ -241,6 +243,7 @@ export class AgentSessions {
       named?: (title: string) => void;
       signal?: AbortSignal;
       model?: string;
+      effort?: string;
     }> &
       ActivityReceipt = {},
   ): Promise<Settled> {
@@ -273,6 +276,7 @@ export class AgentSessions {
         live.session.busy ? steer : text,
         activity,
         model,
+        effort,
       );
     }
     // Reserved before anything is awaited, so a message that comes meanwhile
@@ -295,7 +299,9 @@ export class AgentSessions {
       }
       if (signal?.aborted) return {};
       this.touch(key, live, seen);
-      return { settled: this.answer(key, live, text, activity, model) };
+      return {
+        settled: this.answer(key, live, text, activity, model, effort),
+      };
     })();
     this.opening.set(key, starting);
     const opened = () => {
@@ -503,8 +509,9 @@ export class AgentSessions {
     text: string,
     activity: ActivityReceipt,
     model: string | undefined,
+    effort?: string,
   ) {
-    const sent = live.session.send(text, activity, model);
+    const sent = live.session.send(text, activity, model, effort);
     // A final Buzz send can answer before goose finishes its model work.
     void live.session.idle().then(() => {
       if (this.live.get(key) === live) this.options.onChange?.();

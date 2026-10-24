@@ -248,9 +248,6 @@ export async function publishSoloChatLink(
       [],
       [],
       recovery,
-      [],
-      {},
-      [sourceId],
     );
   onQueued(id);
   if (existing?.delivery === "failed" || existing?.delivery === "unknown")

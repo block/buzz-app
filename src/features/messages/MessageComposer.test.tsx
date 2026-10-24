@@ -7834,10 +7834,6 @@ it("stages session cards above an ordinary caption editor, persists them, and se
     `${link}\n\n@Honey please review`,
     [first.pubkey],
     [],
-    undefined,
-    [],
-    {},
-    ["session-id"],
   );
   expect(
     screen.queryByRole("region", { name: "Session attachments" }),
@@ -7881,16 +7877,7 @@ it("sends a staged session without a caption", async () => {
   writeView("scope", "draft:channel", link);
   const h = mount();
   await h.user.click(screen.getByRole("button", { name: "Send message" }));
-  expect(h.messages.send).toHaveBeenCalledWith(
-    "channel",
-    link,
-    [],
-    [],
-    undefined,
-    [],
-    {},
-    ["session-id"],
-  );
+  expect(h.messages.send).toHaveBeenCalledWith("channel", link, [], []);
 });
 
 it("retains a new card-only followup when a background upload fails", async () => {
@@ -7931,10 +7918,6 @@ it("restores and sends an older session-link draft with its selected mention int
     `${link}\n\n@Honey `,
     [first.pubkey],
     [],
-    undefined,
-    [],
-    {},
-    ["session-id"],
   );
 });
 
@@ -7955,7 +7938,7 @@ it("does not publish an unchanged inline session edit, including reverting a cap
   expect(h.messages.edit).not.toHaveBeenCalled();
 });
 
-it("marks staged session cards in thread replies", async () => {
+it("sends staged session cards in thread replies without share tags", async () => {
   const link = "[Session: Work](buzz://channel/session-id)";
   const h = mount();
   h.retarget({ threadRootId: "root" });
@@ -7967,10 +7950,6 @@ it("marks staged session cards in thread replies", async () => {
     link,
     [],
     [],
-    undefined,
-    [],
-    {},
-    ["session-id"],
   );
 });
 

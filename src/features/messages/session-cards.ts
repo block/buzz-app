@@ -172,3 +172,24 @@ export function separateSessionCards(
     ranges: merged,
   };
 }
+
+/** The Solo chats a message's cards link to, using exactly the card renderer's
+ * exclusions for quoted, code and hidden links. */
+export function chatCardIds(content: string): string[] {
+  const { cards } = separateSessionCards({ content } as ChannelMessage, []);
+  return [
+    ...new Set(
+      cards.flatMap((card) =>
+        messageLinkParts(card.content).flatMap((part) => {
+          const target = part.url && parseBuzzLink(part.url);
+          return target &&
+            target.format === "legacy" &&
+            !target.messageId &&
+            !target.threadRootId
+            ? [target.channelId]
+            : [];
+        }),
+      ),
+    ),
+  ];
+}

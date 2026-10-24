@@ -1,7 +1,7 @@
 import { useSessionLinkSharing } from "./useSessionLinkSharing";
 import { accentButtonStyle } from "../../shared/theme/accent";
 import { stageSessionCards } from "./composer-session-cards";
-import { sessionReferenceIds } from "../sessions/shared-session-marker";
+import { chatCardIds } from "./session-cards";
 import { ComposerSessionCards } from "./ComposerSessionCards";
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import { TypingPresentation } from "../conversation/typing-presentation";
@@ -1550,13 +1550,13 @@ function Composer({
         ),
       );
       const tuned = Object.keys(sentPicks).length > 0;
-      const stagedSessions = new Set(
-        sessionReferenceIds((captured.sessionCards ?? []).join("\n\n")),
+      const stagedChats = new Set(
+        chatCardIds((captured.sessionCards ?? []).join("\n\n")),
       );
-      const sharedSessions = sessionReferenceIds(content).filter((id) =>
-        stagedSessions.has(id),
+      const linkedChats = chatCardIds(content).filter((id) =>
+        stagedChats.has(id),
       );
-      if (sharedSessions.length) {
+      if (linkedChats.length) {
         setSending(true);
         setError(undefined);
         const current = () =>
@@ -1567,9 +1567,7 @@ function Composer({
             attachments.store.snapshot(),
             capturedAttachments,
           );
-        if (
-          !(await linkSharing.prepare(sharedSessions, attempt.signal, current))
-        )
+        if (!(await linkSharing.prepare(linkedChats, attempt.signal, current)))
           return;
         attempt.signal.throwIfAborted();
         if (viewRevision(scope, draftKey) !== savedRevision) {
@@ -1622,19 +1620,13 @@ function Composer({
               content,
               recipients,
               uploaded,
-              ...(replyParentId ||
-              references.length ||
-              tuned ||
-              sharedSessions.length
+              ...(replyParentId || references.length || tuned
                 ? [replyParentId]
                 : []),
-              ...(references.length || tuned || sharedSessions.length
-                ? [references]
-                : []),
-              ...(tuned || sharedSessions.length ? [sentPicks] : []),
-              ...(sharedSessions.length ? [sharedSessions] : []),
+              ...(references.length || tuned ? [references] : []),
+              ...(tuned ? [sentPicks] : []),
             )
-          : references.length || tuned || sharedSessions.length
+          : references.length || tuned
             ? sender.messages.send(
                 channelId,
                 content,
@@ -1642,8 +1634,7 @@ function Composer({
                 uploaded,
                 undefined,
                 references,
-                ...(tuned || sharedSessions.length ? [sentPicks] : []),
-                ...(sharedSessions.length ? [sharedSessions] : []),
+                ...(tuned ? [sentPicks] : []),
               )
             : sender.messages.send(channelId, content, recipients, uploaded);
       }

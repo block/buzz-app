@@ -167,7 +167,7 @@ it.each([false, true])(
     expect(f.published.map((event) => event.kind)).toEqual([9000, 9]);
     const message = f.published.find((event) => event.kind === 9);
     expect(message?.content).toContain("Please look at this");
-    expect(message?.tags).toContainEqual(["s", source]);
+    expect(message?.tags.some(([key]) => key === "s")).toBe(false);
     if (thread) expect(message?.tags).toContainEqual(["e", root, "", "reply"]);
     else expect(message?.tags.some((tag) => tag[0] === "e")).toBe(false);
   },

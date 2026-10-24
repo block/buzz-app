@@ -5,7 +5,6 @@ import { matchesEvent } from "../relay/projection";
 import type { RelayEvent } from "../relay/events";
 import { beginSoloShare, finishSoloShare } from "./share-attempt";
 import { PublishRejected } from "../relay/outbox";
-import { SHARED_SESSION_TOPIC } from "../sessions/shared-session-marker";
 import { SOLO_NAMED_LABEL } from "./labels";
 import {
   destinationShareAudience,
@@ -203,12 +202,10 @@ it("grants exact Solo chat membership, confirms its signed roster, then posts on
   expect(t.published[0]?.tags).toContainEqual(["h", chatId]);
   expect(t.published[0]?.tags).toContainEqual(["p", t.human.pubkey]);
   expect(t.published[0]?.tags.some(([name]) => name === "role")).toBe(false);
-  expect(t.published[1]?.tags).toEqual(
-    expect.arrayContaining([
-      ["h", channelId],
-      ["t", SHARED_SESSION_TOPIC],
-      ["s", chatId],
-    ]),
+  // A share is an ordinary link message: no share marker tags.
+  expect(t.published[1]?.tags).toContainEqual(["h", channelId]);
+  expect(t.published[1]?.tags.some(([key]) => key === "t" || key === "s")).toBe(
+    false,
   );
   // An unnamed chat's starting title names the card.
   expect(t.published[1]?.content).toBe(soloChatLinkMessage(chatId, "Work"));
@@ -381,7 +378,6 @@ it("does not publish on failed grant, nor duplicate an accepted grant or rejecte
   expect(t.published.map((event) => event.kind)).toEqual([9000, 9]);
   if (!saved) throw new Error("Missing saved receipt");
   expect(t.published[1]).toMatchObject(saved.event);
-  expect(t.published[1]?.tags).toContainEqual(["t", SHARED_SESSION_TOPIC]);
   expect(t.records().filter((item) => item.event.kind === 9)).toHaveLength(1);
 });
 
@@ -566,7 +562,6 @@ it("retries an older plain-link receipt without upgrading its signed share inten
   const original = t.records().find((item) => item.event.id === id)?.event;
   if (!original) throw new Error("Missing original receipt");
   expect(original?.tags.some(([key]) => key === "s")).toBe(false);
-  expect(original?.tags).not.toContainEqual(["t", SHARED_SESSION_TOPIC]);
   t.failLink(false);
   await expect(
     publishSoloChatLink(

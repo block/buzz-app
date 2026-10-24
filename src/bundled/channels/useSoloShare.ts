@@ -8,8 +8,7 @@ import {
 } from "react";
 import type { RelaySession } from "../../features/relay/session";
 import type { Navigation } from "../../features/navigation/controller";
-import { sharedSessionNavigationTarget } from "../../features/sessions/shared-session-target";
-import { sharedSessionIds } from "../../features/sessions/shared-session-marker";
+import { buzzLinkTarget } from "../../features/navigation/buzz-links";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import {
   beginSoloShare,
@@ -431,49 +430,31 @@ export function useSoloShare({
           exact.messageId = id;
         },
       );
-      // Optional discovery feedback must not turn a confirmed share into a failed operation.
-      try {
-        const confirmed = await session.read(
-          [
-            {
-              kinds: [9],
-              ids: [messageId],
-              "#h": [target],
-              limit: 1,
-              consistency: "strong",
-            },
-          ],
-          { signal: controller.signal, fresh: true },
+      if (visible()) {
+        const destination =
+          session.viewer &&
+          buzzLinkTarget(`buzz://channel/${target}/${messageId}`, {
+            viewer: session.viewer,
+            communityOrigin: session.scope.slice(
+              0,
+              -(session.viewer.length + 1),
+            ),
+          });
+        const destinationName = session.channels
+          .list()
+          .channels.find((item) => item.id === target)?.name;
+        notify(
+          destinationName ? `Shared in #${destinationName}` : "Shared",
+          "success",
+          destination && navigationController
+            ? {
+                label: "View",
+                onClick: () => {
+                  void navigationController.open(destination);
+                },
+              }
+            : undefined,
         );
-        if (
-          visible() &&
-          confirmed.some((event) => sharedSessionIds(event).includes(channelId))
-        ) {
-          const destination = sharedSessionNavigationTarget(
-            target,
-            session.scope,
-            session.viewer,
-          );
-          const destinationName = session.channels
-            .list()
-            .channels.find((item) => item.id === target)?.name;
-          notify(
-            destinationName
-              ? `Added to #${destinationName}’s Shared sessions`
-              : "Added to Shared sessions",
-            "success",
-            destination && navigationController
-              ? {
-                  label: "View",
-                  onClick: () => {
-                    void navigationController.open(destination);
-                  },
-                }
-              : undefined,
-          );
-        }
-      } catch {
-        /* Sharing is already confirmed; the tab can be opened from its launcher. */
       }
       finishSoloShare(session, channelId);
       if (visible()) {

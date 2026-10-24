@@ -485,7 +485,7 @@ test.describe("GIF send roundtrip", () => {
   test("chosen GIF sends as an image attachment instead of visible markdown body text", async ({
     page,
     app,
-  }) => {
+  }, testInfo) => {
     await page.route("**/api/relay/*/gif-info", fulfillGifInfo);
     await page.route("**/api/relay/*/gifs", (route) =>
       route.fulfill({
@@ -512,14 +512,14 @@ test.describe("GIF send roundtrip", () => {
       name: "Message #Alpha",
       exact: true,
     });
-    const trigger = page.getByRole("button", {
-      name: "Emoji and GIFS",
-      exact: true,
-    });
-    await trigger.click();
-    const gifTab = page.getByRole("tab", { name: "GIF", exact: true });
-    await expect(gifTab).toBeVisible();
-    await gifTab.click();
+    await page
+      .getByRole("region", { name: "Channel message history", exact: true })
+      .click({ position: { x: 20, y: 20 } });
+    await expect(draft).not.toBeFocused();
+    await page.keyboard.press("ControlOrMeta+g");
+    await expect(
+      page.getByRole("searchbox", { name: "Search GIFs" }),
+    ).toBeFocused();
     await page
       .getByRole("button", { name: "Choose Roundtrip Gif", exact: true })
       .click();
@@ -528,6 +528,20 @@ test.describe("GIF send roundtrip", () => {
       "![Roundtrip Gif](https://gif.fixture.invalid/7.gif)",
     );
 
+    const preview = draft.getByRole("img", {
+      name: "Roundtrip Gif",
+      exact: true,
+    });
+    await expect(preview).toBeVisible();
+    await expect(preview).toHaveJSProperty("naturalWidth", 160);
+    expect((await preview.boundingBox()).height).toBeGreaterThan(64);
+    await expect(draft).not.toHaveText(
+      "![Roundtrip Gif](https://gif.fixture.invalid/7.gif)",
+    );
+    await expect(draft).toBeFocused();
+    await page.screenshot({
+      path: testInfo.outputPath("gif-draft-preview.png"),
+    });
     await draft.press("Enter");
 
     const expectedContent =

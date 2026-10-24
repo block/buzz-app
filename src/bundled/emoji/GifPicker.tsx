@@ -18,12 +18,18 @@ const LOADING_TILES = [
 
 export function GifPicker({
   community,
+  enabled = true,
+  unavailable,
+  retryDiscovery,
   initialQuery,
   onQueryChange,
   select,
   search = fetchKlipyGifs,
 }: {
   community: string;
+  enabled?: boolean;
+  unavailable?: string | undefined;
+  retryDiscovery?: (() => void) | undefined;
   search?: typeof fetchKlipyGifs;
   initialQuery: string;
   onQueryChange(query: string): void;
@@ -47,6 +53,7 @@ export function GifPicker({
   }, [query]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: attempt explicitly retries the same request.
   useEffect(() => {
+    if (!enabled) return;
     const controller = new AbortController();
     setError(undefined);
     setGifs(undefined);
@@ -58,7 +65,7 @@ export function GifPicker({
       },
     );
     return () => controller.abort();
-  }, [community, debouncedQuery, attempt, search]);
+  }, [community, debouncedQuery, attempt, search, enabled]);
 
   return (
     <div className={styles.gifPicker}>
@@ -82,7 +89,19 @@ export function GifPicker({
         />
       </div>
       <div className={`${styles.gifResults} buzz-thin-scrollbar`}>
-        {!gifs && !error ? (
+        {unavailable ? (
+          <div
+            className={styles.gifEmpty}
+            role={retryDiscovery ? "alert" : "status"}
+          >
+            <p>{unavailable}</p>
+            {retryDiscovery && (
+              <Button type="button" onClick={retryDiscovery}>
+                Retry GIF availability
+              </Button>
+            )}
+          </div>
+        ) : !gifs && !error ? (
           <div
             className={styles.gifLoading}
             role="status"

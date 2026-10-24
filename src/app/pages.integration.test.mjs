@@ -71,6 +71,7 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
       assert.equal(
         plugin.enabledByDefault,
         ![
+          "buzz.amp",
           "buzz.bestie",
           "buzz.pi",
           "buzz.todos",

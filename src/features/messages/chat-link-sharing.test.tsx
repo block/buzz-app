@@ -271,7 +271,7 @@ it("offers only link-only when the viewer can't share the chat", async () => {
   const f = await fixture();
   // Sharing's own rule is covered in share.test.ts; here only the dialog's response.
   vi.spyOn(share, "shareBlocker").mockReturnValue(
-    "You can’t share access to this chat, so some people may not be able to open it.",
+    "You can’t share access to this chat, so some people may not be able to open it. Send the link only, or ask its owner to share it.",
   );
   await userEvent.click(screen.getByRole("button", { name: "Send message" }));
   const dialog = await screen.findByRole("dialog");

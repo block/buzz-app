@@ -69,7 +69,7 @@ async function fixture(
   originalAttachment = false,
   originalMention = false,
   agentOwner: "viewer" | "other" | undefined = undefined,
-  sessionCard = false,
+  chatCard = false,
   shareRead?: Promise<RelayEvent[]>,
 ) {
   vi.stubGlobal(
@@ -93,7 +93,7 @@ async function fixture(
   const original = message(
     own ? viewer : (agent ?? peer),
     "room",
-    sessionCard
+    chatCard
       ? "[Session: Saved work](buzz://channel/source)"
       : originalAttachment
         ? "Original message\n\n[original.pdf](https://fixture.test/media/original.pdf)"

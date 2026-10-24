@@ -172,6 +172,6 @@ View-only role.
 
 `share.test.ts` covers grants, channel audiences, archived members, retry without
 repeated grants and the share blockers. `ChannelMembersDialog.solo.test.tsx` and
-`session-link-sharing.test.tsx` cover the dialog and the composer prompt.
+`chat-link-sharing.test.tsx` cover the dialog and the composer prompt.
 Live relay ACLs, cross-account discovery and no-wake behavior are separate
 checks.

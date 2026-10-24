@@ -253,6 +253,12 @@ live; otherwise it returns `undefined`. A handle kept from earlier fails each
 call while that no longer holds, and for good once the agent's type or its
 plugin is replaced, so ask for it when acting rather than keeping it. Like any type whose agents run here, the type needs `run`.
 
+Plugins can discover active Attention source registrations through `ctx.agents.attentionProviders()`. Each entry includes its `provider` key and optional `description` and JSON-object `configExample` supplied to `addAttentionSource`. The catalog omits executable callbacks and inactive registrations; discovery tools belong in external plugins.
+
+An installed plugin can use `await ctx.agents.connect(pubkey, { signal, channel?, root?, cwd? })` to obtain a local authenticated MCP endpoint for an agent running on this device, including an agent of another plugin's type. Declare `host.mcp` in the manifest. Pass the returned `url` and `headers` to the child process or MCP client, and close the connection in `finally`. The endpoint serves Buzz's existing tools with the agent's identity; the private key stays in the app. Optional channel and root supply the tool destination. File-reading tools additionally require the plugin's `host.files` permission and use `cwd` when supplied.
+
+Aborting `signal`, closing the endpoint, or unloading the plugin revokes requests. Agent and community lifetime checks also reject calls after the agent stops, changes type, or its community reconnects. A source passes its cancellation signal to `connect`, processes the returned tool results, then calls its existing `emit` callback when it has output to deliver. This capability supplies Buzz identity to trusted plugin code; processes retain the plugin's existing operating-system execution privileges.
+
 ```ts
 ctx.pages.register({
   id: "dashboard",

@@ -384,8 +384,10 @@ export class AgentSessions {
     {
       signal,
       title,
+      current,
     }: Readonly<{
       signal?: AbortSignal;
+      current?: () => boolean;
       title?: string;
     }> = {},
   ): Promise<Settled> {
@@ -404,7 +406,10 @@ export class AgentSessions {
       if (this.disposed) return STOPPED;
       const text = await abortable(Promise.resolve(prompt()), signal);
       if (text === undefined || this.disposed) return { ok: true };
-      return await abortable(live.session.send(text), signal);
+      return await abortable(
+        live.session.send(text, { ...(current ? { current } : {}) }),
+        signal,
+      );
     } catch (error) {
       if (signal?.aborted) return { ok: false, error: message(signal.reason) };
       console.warn("goose could not start a one-off session", error);

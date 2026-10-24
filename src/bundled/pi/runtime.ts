@@ -654,6 +654,7 @@ export class PiRuntime {
         delivery.effort,
       );
       signal.throwIfAborted();
+      if (delivery.current && !delivery.current()) return { ok: true };
       request = `${key}/${crypto.randomUUID()}`;
       entry.standalone.add(request);
       const { submission, conversation } = await this.pi.request<{

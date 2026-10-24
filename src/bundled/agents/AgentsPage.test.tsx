@@ -276,6 +276,7 @@ function setup(
     find: (pubkey: string) => snapshot.agents.find((a) => a.pubkey === pubkey),
     relay: () => undefined,
     handle: () => undefined,
+    connect: vi.fn(),
     sessionState: () => "unavailable" as const,
     session: vi.fn(async () => {}),
     register: vi.fn(),
@@ -362,6 +363,8 @@ function setup(
       };
       for (const listener of listeners) listener();
     }),
+    attentionProviders: () => [],
+    addAttentionSource: vi.fn(),
     storage: localStore(),
     resumeInterrupted: vi.fn(),
     dismissInterrupted: vi.fn(),

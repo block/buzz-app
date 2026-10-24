@@ -100,7 +100,7 @@ export function ResizableSidebar({
   };
   return (
     <>
-      <div className={className} style={{ width }}>
+      <div className={`${className} ${styles.sidebar}`} style={{ width }}>
         {children}
       </div>
       <ResizeHandle

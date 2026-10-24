@@ -2,6 +2,7 @@ import { useSyncExternalStore } from "react";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import type { RelaySession } from "../../features/relay/session";
 import { ownSolo } from "../../features/solo/labels";
+import { avatarMedia } from "../../shared/avatar-source";
 import { UsersIcon } from "../../shared/design-system/icons";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 
@@ -59,7 +60,10 @@ export function useSoloOwner(
     return undefined;
   const profile = profiles.get(creator);
   if (!profile || profile.nameIsFallback) return undefined;
-  return { name: profile.name, picture: profile.picture };
+  return {
+    name: profile.name,
+    picture: avatarMedia(profile.picture, session.media),
+  };
 }
 
 export const soloOwnerLabel = (owner: { name: string }) =>

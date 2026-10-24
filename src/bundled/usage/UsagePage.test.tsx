@@ -166,6 +166,34 @@ it("summarises the agents' spend and opens a costly session's thread", async () 
   });
 });
 
+it("shows each agent's usage as its read finishes, naming those still read", async () => {
+  const pixel = agent("Pixel");
+  let finish = () => {};
+  const slow = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  render(
+    <UsagePage
+      agents={host([pixel, agent("Relay")], async (target) => {
+        if (target === pixel) return [session("a", 750_000)];
+        await slow;
+        return [session("b", 250_000)];
+      })}
+      open={vi.fn()}
+    />,
+  );
+  const hero = await screen.findByRole("region", { name: "Estimated cost" });
+  expect(within(hero).getByText("$3.00")).toBeTruthy();
+  // Said only once the read has taken a moment.
+  expect(screen.queryByText("Still reading Relay…")).toBeNull();
+  expect(
+    await screen.findByText("Still reading Relay…", {}, { timeout: 2000 }),
+  ).toBeTruthy();
+  finish();
+  expect(await within(hero).findByText("$4.00")).toBeTruthy();
+  expect(screen.queryByText("Still reading Relay…")).toBeNull();
+});
+
 it("names the agents it could not read and reads them again", async () => {
   let fail = true;
   let reads = 0;

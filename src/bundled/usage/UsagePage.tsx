@@ -6,7 +6,11 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import type { Agent, Agents } from "../../features/agents/service";
+import type {
+  Agent,
+  Agents,
+  SessionUsage,
+} from "../../features/agents/service";
 import { relayOrigin } from "../../features/communities/destination";
 import type { Navigation } from "../../features/navigation/controller";
 import {
@@ -22,6 +26,7 @@ import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { FullPageSurface } from "../../shared/design-system/ui/FullPageSurface";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
+import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import {
   PanelHeader,
@@ -53,6 +58,8 @@ type Load = Readonly<{
   usage: readonly AgentUsage[];
   /** Agents whose sessions could not be read this time. */
   failed: readonly Agent[];
+  /** Agents whose sessions are still being read. */
+  pending: readonly Agent[];
   /** Whether the price data failed to load, so costs are not estimated. */
   unpriced: boolean;
 }>;
@@ -63,8 +70,9 @@ const readKey = (agent: Agent) =>
 
 /** Reads each agent's sessions from its type, `READ_DAYS` back for every
  * period, again when the agents or `reload` change; earlier results stay shown
- * meanwhile. Each read is merged
- * over what earlier ones found, and an agent that cannot be read keeps it. */
+ * meanwhile. Each agent's read is shown as it finishes, merged over what
+ * earlier ones found, so a slow harness holds up only its own agents; an agent
+ * that cannot be read keeps what was found before. */
 function useUsage(agents: Agents, keys: string, reload: number) {
   const [load, setLoad] = useState<Load>();
   // biome-ignore lint/correctness/useExhaustiveDependencies: Refresh reads the same agents again.
@@ -76,50 +84,80 @@ function useUsage(agents: Agents, keys: string, reload: number) {
       .agents.filter((agent) => wanted.has(readKey(agent)));
     const controller = new AbortController();
     const now = Date.now();
-    setLoad((current) => current && { ...current, loading: true });
+    const pending = new Set(targets.map(keyOf));
+    const failed = new Set<string>();
+    setLoad(
+      (current) =>
+        current && {
+          ...current,
+          loading: targets.length > 0,
+          pending: targets,
+        },
+    );
     // Without price data, estimates show as unknown rates rather than wrong.
     const prices = loadPrices().then(
       () => false,
       () => true,
     );
-    void Promise.allSettled(
-      targets.map(async (agent) => {
-        const read = types.find((type) => type.key === agent.type)?.usage;
-        if (!read) throw new Error("No usage");
-        return {
-          agent,
-          harness: agent.type,
-          sessions: await read(agent, {
-            since: since(now),
-            signal: controller.signal,
+    const settle = (agent: Agent, sessions?: readonly SessionUsage[]) => {
+      const key = keyOf(agent);
+      pending.delete(key);
+      if (!sessions) failed.add(key);
+      return prices.then((unpriced) => {
+        if (controller.signal.aborted) return;
+        setLoad((current) => ({
+          loading: pending.size > 0,
+          now,
+          usage: targets.flatMap((target) => {
+            const kept = current?.usage.find(
+              (entry) => keyOf(entry.agent) === keyOf(target),
+            );
+            if (keyOf(target) !== key || !sessions) return kept ? [kept] : [];
+            return [
+              {
+                agent: target,
+                harness: target.type,
+                sessions: merge(kept?.sessions ?? [], sessions),
+              },
+            ];
           }),
-        };
-      }),
-    ).then(async (results) => {
-      const unpriced = await prices;
-      if (controller.signal.aborted) return;
-      setLoad((current) => ({
-        loading: false,
-        now,
-        usage: targets.flatMap((agent, index) => {
-          const kept = current?.usage.find(
-            (entry) => keyOf(entry.agent) === keyOf(agent),
-          );
-          const result = results[index];
-          if (result?.status !== "fulfilled") return kept ? [kept] : [];
-          return [
-            {
-              ...result.value,
-              sessions: merge(kept?.sessions ?? [], result.value.sessions),
-            },
-          ];
-        }),
-        failed: targets.filter(
-          (_, index) => results[index]?.status === "rejected",
-        ),
-        unpriced,
-      }));
-    });
+          // One still being read stays named until its read again ends.
+          failed: targets.filter(
+            (target) =>
+              failed.has(keyOf(target)) ||
+              (pending.has(keyOf(target)) &&
+                !!current?.failed.some(
+                  (agent) => keyOf(agent) === keyOf(target),
+                )),
+          ),
+          pending: targets.filter((target) => pending.has(keyOf(target))),
+          unpriced,
+        }));
+      });
+    };
+    // Nothing to read, as while the agents load: what was shown stays.
+    if (!targets.length)
+      setLoad(
+        (current) =>
+          current ?? {
+            loading: false,
+            now,
+            usage: [],
+            failed: [],
+            pending: [],
+            unpriced: false,
+          },
+      );
+    for (const agent of targets) {
+      const read = types.find((type) => type.key === agent.type)?.usage;
+      (read
+        ? read(agent, { since: since(now), signal: controller.signal })
+        : Promise.reject(new Error("No usage"))
+      ).then(
+        (sessions) => settle(agent, sessions),
+        () => settle(agent),
+      );
+    }
     return () => controller.abort();
   }, [agents, keys, reload]);
   return load;
@@ -206,6 +244,7 @@ export function UsagePage({
       (harnessFilter === ALL || agent.type === harnessFilter);
     const failed = load.failed.filter(included);
     return {
+      reading: load.pending.filter(included),
       result: stats(
         load.usage.filter((entry) => included(entry.agent)),
         load.now,
@@ -231,6 +270,37 @@ export function UsagePage({
     )
       refresh.current?.focus();
   }, [load, loading]);
+
+  const reading = shown?.reading ?? [];
+  // A failure shows at once, in place of the delayed note of reads under way.
+  const failure =
+    load?.failed.length || load?.unpriced ? (
+      <p className={styles.notice} role="status">
+        {load.failed.length > 0 && (
+          <>
+            Couldn’t read the sessions of{" "}
+            {load.failed.map((agent) => agent.name).join(", ")}
+            {load.failed.some((agent) =>
+              load.usage.some((entry) => keyOf(entry.agent) === keyOf(agent)),
+            )
+              ? "; showing what was read before. "
+              : ". "}
+          </>
+        )}
+        {load.unpriced && "Couldn’t load prices to estimate costs. "}
+        <Button
+          size="sm"
+          variant="ghost"
+          loading={loading}
+          onClick={() => {
+            retrying.current = true;
+            setReload((value) => value + 1);
+          }}
+        >
+          Try again
+        </Button>
+      </p>
+    ) : undefined;
 
   let body: ReactNode;
   if (snapshot.status === "error" || snapshot.status === "unavailable")
@@ -327,34 +397,18 @@ export function UsagePage({
           </div>
         }
         notice={
-          load?.failed.length || load?.unpriced ? (
-            <p className={styles.notice} role="status">
-              {load.failed.length > 0 && (
-                <>
-                  Couldn’t read the sessions of{" "}
-                  {load.failed.map((agent) => agent.name).join(", ")}
-                  {load.failed.some((agent) =>
-                    load.usage.some(
-                      (entry) => keyOf(entry.agent) === keyOf(agent),
-                    ),
-                  )
-                    ? "; showing what was read before. "
-                    : ". "}
-                </>
-              )}
-              {load.unpriced && "Couldn’t load prices to estimate costs. "}
-              <Button
-                size="sm"
-                variant="ghost"
-                loading={loading}
-                onClick={() => {
-                  retrying.current = true;
-                  setReload((value) => value + 1);
-                }}
-              >
-                Try again
-              </Button>
-            </p>
+          reading.length || failure ? (
+            <LoadingRegion
+              pending={reading.length > 0}
+              label={`Still reading ${
+                reading.length > 3
+                  ? `${reading.length} agents`
+                  : reading.map((agent) => agent.name).join(", ")
+              }…`}
+              feedback={failure}
+            >
+              {null}
+            </LoadingRegion>
           ) : undefined
         }
       />

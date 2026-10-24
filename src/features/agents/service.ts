@@ -1867,6 +1867,7 @@ export class AgentsService extends Service implements Agents {
           signingAuthority: source.workflowAuthority(),
           audienceAuthorityCommunity: source.audienceAuthorityCommunity?.(),
           check: () => {
+            handle.attention.enabled();
             if (reads().connection !== source.connection)
               throw new Error("The agent's community connection changed");
           },

@@ -28,7 +28,7 @@ import {
   CopyIcon,
   FolderSimpleIcon,
   HashArrowInIcon,
-  PencilSimpleIcon,
+  GearIcon,
   ShareIcon,
 } from "../../shared/design-system/icons";
 import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
@@ -76,6 +76,19 @@ export function SoloChatMenuItems({
   const active = !channel.archived;
   return (
     <>
+      <MenuItem
+        disabled={
+          !!channel.readOnly ||
+          (!session.canvas.available && !canEditLifetime(session, channel))
+        }
+        onClick={onSettings}
+      >
+        <MenuIcon>
+          <GearIcon size={14} />
+        </MenuIcon>
+        Chat settings…
+      </MenuItem>
+      <MenuSeparator />
       {session.unread.sync().capability === "frontier-sync" && (
         <>
           <ChannelReadMenuItem
@@ -98,18 +111,6 @@ export function SoloChatMenuItems({
           <MenuSeparator />
         </>
       )}
-      <MenuItem
-        disabled={
-          !!channel.readOnly ||
-          (!session.canvas.available && !canEditLifetime(session, channel))
-        }
-        onClick={onSettings}
-      >
-        <MenuIcon>
-          <PencilSimpleIcon size={14} />
-        </MenuIcon>
-        Edit…
-      </MenuItem>
       {active && (
         <MenuSubmenu>
           <MenuSubmenuTrigger disabled={!preferences.writable}>

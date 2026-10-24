@@ -725,7 +725,7 @@ it("offers the same chat actions from the header and the sidebar row", async () 
   };
   const header = await items("Chat actions");
   expect(header).toEqual([
-    "Edit…",
+    "Chat settings…",
     "Move to",
     "Copy",
     "Share…",
@@ -750,7 +750,9 @@ it("runs the header's own chat actions and returns focus to Chat actions", async
   expect(assign).toHaveBeenCalledExactlyOnceWith(id, "work");
   await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
   await user.click(trigger);
-  await user.click(await screen.findByRole("menuitem", { name: "Edit…" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Chat settings…" }),
+  );
   const dialog = await screen.findByRole("dialog", { name: "Edit chat" });
   await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
@@ -829,19 +831,11 @@ it("returns focus to Chat actions when its confirmation is cancelled", async () 
   expect(f.open).not.toHaveBeenCalled();
 });
 
-it("opens Chat settings from the heading and restores keyboard focus without navigating", async () => {
+it("keeps Chat settings in the chat actions menu, not as a separate heading button", async () => {
   const f = fixture();
   f.mount();
-  const user = userEvent.setup();
-  const trigger = await screen.findByRole("button", { name: "Chat settings" });
-  expect(trigger).not.toHaveAttribute("aria-haspopup", "menu");
-  trigger.focus();
-  await user.keyboard("{Enter}");
-  const dialog = await screen.findByRole("dialog", { name: "Edit chat" });
-  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
-  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-  await waitFor(() => expect(trigger).toHaveFocus());
-  expect(f.open).not.toHaveBeenCalled();
+  await screen.findByRole("button", { name: "Chat actions" });
+  expect(screen.queryByRole("button", { name: "Chat settings" })).toBeNull();
 });
 
 it("does not recreate a consumed linked draft on history navigation", () => {

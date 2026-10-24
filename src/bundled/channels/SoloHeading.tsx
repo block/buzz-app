@@ -5,7 +5,6 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
-import { canEditLifetime } from "../../features/solo/Lifetime";
 import { SoloTitle } from "../../features/solo/SoloPresentation";
 import { WorkspaceSettings } from "../../features/solo/WorkspaceSettings";
 import type { ChannelLifecycleAction } from "../../features/relay/channel-lifecycle-protocol";
@@ -25,7 +24,6 @@ import {
 import {
   ArrowSquareOutIcon,
   DotsThreeIcon,
-  GearIcon,
 } from "../../shared/design-system/icons";
 import {
   ChannelMembersButton,
@@ -76,7 +74,6 @@ export function SoloToolbar({
   onConvert,
   onLifecycle,
 }: SoloToolbarProps) {
-  const settingsTrigger = useRef<HTMLButtonElement>(null);
   const actionsTrigger = useRef<HTMLButtonElement>(null);
   // Each dialog returns focus to the control that opened it.
   const [settingsOpen, setSettingsOpen] = useState<{
@@ -115,20 +112,6 @@ export function SoloToolbar({
             signal={signal}
           />
           {children}
-          <IconButton
-            ref={settingsTrigger}
-            size="toolbar"
-            aria-label="Chat settings"
-            title="Chat settings"
-            icon={<GearIcon size="1rem" aria-hidden="true" />}
-            disabled={
-              !!channel.readOnly ||
-              (!session.canvas.available && !canEditLifetime(session, channel))
-            }
-            onClick={() =>
-              setSettingsOpen({ visit: signal, trigger: settingsTrigger })
-            }
-          />
         </>
       )}
       {/* Archived chats keep their lifecycle actions, including Unarchive. */}

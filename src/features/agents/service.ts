@@ -852,6 +852,12 @@ export type Agents = {
   addAttentionSource(
     source: import("./attention-sources").AttentionSource,
   ): void;
+  /** Active providers, including those contributed by other plugins. */
+  attentionProviders(): readonly Readonly<{
+    provider: string;
+    description?: string;
+    configExample?: Readonly<Record<string, unknown>>;
+  }>[];
   register<Config>(type: AgentType<Config>): void;
   types(): readonly RegisteredAgentType[];
   /** Adds a tool to every agent session in the app, beside the Buzz tools.
@@ -1702,11 +1708,36 @@ export class AgentsService extends Service implements Agents {
     if (
       !plugin ||
       !/^[a-z0-9][a-z0-9._-]*$/.test(source.id) ||
-      typeof source.run !== "function"
+      typeof source.run !== "function" ||
+      (source.description !== undefined &&
+        (typeof source.description !== "string" ||
+          !source.description.trim())) ||
+      (source.configExample !== undefined &&
+        (!source.configExample ||
+          typeof source.configExample !== "object" ||
+          Array.isArray(source.configExample) ||
+          !serializable(source.configExample)))
     )
-      throw new Error("A plugin source needs an id and run");
-    this.attentionSources.register(this.ctx, source);
+      throw new Error(
+        "A plugin source needs an id, run and valid discovery metadata",
+      );
+    this.attentionSources.register(this.ctx, {
+      ...source,
+      ...(source.configExample === undefined
+        ? {}
+        : { configExample: JSON.parse(JSON.stringify(source.configExample)) }),
+    });
   }
+  attentionProviders = () =>
+    this.attentionSources
+      .snapshot()
+      .map(({ key: provider, description, configExample }) => ({
+        provider,
+        ...(description === undefined ? {} : { description }),
+        ...(configExample === undefined
+          ? {}
+          : { configExample: JSON.parse(JSON.stringify(configExample)) }),
+      }));
   private history(
     pubkey: string,
     object: AttentionObject,

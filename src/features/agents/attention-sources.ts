@@ -5,6 +5,9 @@ import type { AttentionObject, SourceWatch } from "./attention";
 
 export type AttentionSource = Readonly<{
   id: string;
+  /** Discovery metadata for tools that configure this provider. */
+  description?: string;
+  configExample?: Readonly<Record<string, unknown>>;
   run(
     input: Readonly<{
       agent: string;

@@ -1,3 +1,4 @@
+import { ArtifactStorageService } from "../features/artifact-storage/service";
 import { createAdminAccess } from "../bundled/admin-access";
 import { nativeRelayStaff } from "../features/relay-staff/native";
 import { createLocalAgentActivity } from "../features/agents/local-activity";
@@ -77,6 +78,7 @@ export function createServices() {
     subscribe: communities.subscribe,
   });
   const relay = communities.relay;
+  const artifactStorage = new ArtifactStorageService(ctx);
   const adminAccess = createAdminAccess(relay, communities, nativeRelayStaff());
   ctx.provide("adminAccess", adminAccess);
   ctx.effect(() => () => adminAccess.dispose());
@@ -137,6 +139,7 @@ export function createServices() {
     accountActions,
     shortcutBindings,
     conversation,
+    artifactStorage,
     settingsCards,
     adminAccess,
     pages,

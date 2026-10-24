@@ -763,15 +763,20 @@ it("leaves a member another account on this device has off the team, and names i
   expect(portedKeys(native)).toEqual([alder]);
 });
 
-it("copies the owner's agents from their other communities as new agents here", async () => {
+it("copies the owner's agents from their other communities as new agents on their teams", async () => {
   const media = `https://other.example.test/media/${"a".repeat(64)}.png`;
-  const { service, native } = await setup({
+  const { service, native, run, emit } = await setup({
     identities: [
       { ...here(birch, "wss://other.example.test"), picture: media },
       { ...here(carrow, "wss://other.example.test"), owner: "f".repeat(64) },
     ],
   });
   await service.save(birch, { config: { reply: "Triage." } });
+  const crew = await service.saveTeam({
+    name: "Crew",
+    instructions: "",
+    members: [birch],
+  });
   const found = await service.portable();
   expect(found.copies).toEqual([
     {
@@ -782,31 +787,84 @@ it("copies the owner's agents from their other communities as new agents here", 
       type: "example/echo",
     },
   ]);
+  // Its picture is fetched from its community as it, and uploaded here as the copy.
+  native.media.mockResolvedValueOnce({
+    path: "/tmp/a.png",
+    type: "image/png",
+    size: 3,
+    data: "AAAA",
+  });
+  const uploaded = "https://relay.example.test/media/b.png";
+  native.upload.mockResolvedValueOnce({
+    url: uploaded,
+    sha256: "b",
+    size: 3,
+    type: "image/png",
+  });
   const { agent, notes } = await service.port({
     source: "community",
     pubkey: birch,
   });
+  expect(native.media).toHaveBeenCalledWith(birch, media);
+  expect(native.upload).toHaveBeenCalledWith(bot, "AAAA", "image/png");
   expect(agent).toMatchObject({
     pubkey: bot,
     name: "Birch",
     relay: "wss://relay.example.test",
     type: "example/echo",
+    picture: uploaded,
     config: { reply: "Triage." },
   });
-  expect(agent.picture).toBeUndefined();
-  expect(notes).toEqual([
-    "Birch's picture stays in its own community. Choose one here.",
+  expect(notes).toEqual([]);
+  expect(service.snapshot().teams).toEqual([
+    { ...crew, members: [birch, bot] },
   ]);
   // The original keeps its key and community.
   expect(
     (await native.list()).find((row) => row.pubkey === birch),
   ).toMatchObject({ relay: "wss://other.example.test", deleted: false });
+  // The copy's teammates are those it can reach, in its own community.
+  emit({
+    events: [
+      event("m", {
+        tags: [
+          ["h", channel],
+          ["p", bot],
+        ],
+      }),
+    ],
+  });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  const prompt = run.mock.calls[0]?.[0].team ?? "";
+  expect(prompt).toContain(`- Birch (${npubEncode(bot)}), you`);
+  expect(prompt).not.toContain(npubEncode(birch));
   await expect(
     service.port({ source: "community", pubkey: carrow }),
   ).rejects.toThrow("That agent is not in another of your communities");
   await expect(
     service.port({ source: "community", pubkey: bot }),
   ).rejects.toThrow("That agent is not in another of your communities");
+});
+
+it("copies an agent without the picture its community would not give, and says so", async () => {
+  const media = `https://other.example.test/media/${"a".repeat(64)}.png`;
+  const { service, native } = await setup({
+    identities: [
+      { ...here(birch, "wss://other.example.test"), picture: media },
+    ],
+  });
+  native.media.mockRejectedValueOnce(
+    new Error("The community refused the media"),
+  );
+  const { agent, notes } = await service.port({
+    source: "community",
+    pubkey: birch,
+  });
+  expect(agent.picture).toBeUndefined();
+  expect(native.upload).not.toHaveBeenCalled();
+  expect(notes).toEqual([
+    "Birch's picture didn't come over. Choose one in its settings.",
+  ]);
 });
 
 it("drops another account's agents an earlier import left on the team, keeping its edits", async () => {

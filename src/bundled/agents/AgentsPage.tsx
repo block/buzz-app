@@ -1261,7 +1261,8 @@ function ImportAgents({
           <InlineHeader title="From your other communities" />
           <p className="m-0 text-body-sm text-secondary">
             Makes a new agent here with the same name, picture, type and
-            settings. Its conversations and memory stay in its own community.
+            settings, on the same teams. Its conversations and memory stay in
+            its own community.
           </p>
           <div className={cardStyles.grid}>
             {copies.map((agent) => (

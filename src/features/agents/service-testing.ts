@@ -8,6 +8,7 @@ import type { RelaySession } from "../relay/session";
 import type {
   AgentEventTemplate,
   AgentIdentity,
+  AgentMedia,
   AgentsNative,
   PortableAgents,
 } from "./native";
@@ -373,7 +374,9 @@ export function fakeNative(identities: AgentIdentity[] = []) {
     query: vi.fn(async () => []),
     searchProfiles: vi.fn(async () => undefined),
     upload: vi.fn(async () => ({ url: "", sha256: "", size: 0, type: "" })),
-    media: vi.fn(async () => ({ path: "", type: "", size: 0 })),
+    media: vi.fn(
+      async (): Promise<AgentMedia> => ({ path: "", type: "", size: 0 }),
+    ),
     gitAuth: vi.fn(async () => ({ url: "", header: "" })),
     remember: vi.fn(async (pubkey: string) =>
       event(`m${++published}`, { pubkey }),

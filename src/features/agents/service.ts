@@ -1382,12 +1382,17 @@ export class AgentsService extends Service implements Agents {
           ...(instructions ? { instructions } : {}),
         });
       },
-      team: (pubkey) =>
-        teamPrompt(
+      team: (pubkey) => {
+        // Teammates it can reach: those in its own community.
+        const relay = this.live(pubkey)?.relay;
+        return teamPrompt(
           this.teamList,
-          this.identities.filter((identity) => !identity.deleted),
+          this.identities.filter(
+            (identity) => !identity.deleted && identity.relay === relay,
+          ),
           pubkey,
-        ),
+        );
+      },
       agentTypes: () =>
         this.types()
           .filter((type) => !type.remote)
@@ -2120,29 +2125,69 @@ export class AgentsService extends Service implements Agents {
   }
 
   /** A new agent here with the name, type, settings and picture of one of the
-   * owner's agents in another community. Its key, conversations, memory and
-   * attention stay there, as does a picture in that community's media. */
+   * owner's agents in another community, on each of its teams. Its key,
+   * conversations, memory and attention stay there. */
   private async copy(pubkey: string): Promise<Ported> {
+    const native = this.native;
+    if (!native) throw new Error("Agents run only in the desktop app");
     const binding = this.selectedBinding();
     const source = this.live(pubkey);
     if (!source || !this.copyable(source, binding))
       throw new Error("That agent is not in another of your communities");
-    const media = `${relayOrigin(source.relay)}/media/`;
-    const kept = source.picture?.startsWith(media) ? undefined : source.picture;
-    const { name, type } = source;
-    const agent = await this.add(
+    const { name, type, picture } = source;
+    // A picture in its community's media is fetched there as the original and
+    // uploaded here as the copy; any other is a URL both can show.
+    const media =
+      picture?.startsWith(`${relayOrigin(source.relay)}/media/`) && picture;
+    const image = media
+      ? await native.media(pubkey, media).catch((error: unknown) => {
+          console.warn(`Agent ${name} picture was not fetched`, error);
+          return undefined;
+        })
+      : undefined;
+    const made = await this.add(
       type,
       async (native, destination, owner) => ({
         agent: await native.create(destination, owner, type, name),
       }),
-      { config: this.recordOf(source).config, picture: kept },
+      {
+        config: this.recordOf(source).config,
+        picture: media ? undefined : picture,
+      },
       binding,
     );
-    const notes =
-      source.picture && !kept
-        ? [`${name}'s picture stays in its own community. Choose one here.`]
-        : [];
-    return { agent, notes };
+    const notes: string[] = [];
+    if (media)
+      try {
+        if (!image?.data) throw new Error("Not an image an agent can show");
+        const { url } = await native.upload(
+          made.pubkey,
+          image.data,
+          image.type,
+        );
+        await this.save(made.pubkey, { picture: url });
+      } catch (error) {
+        console.warn(`Agent ${name} picture was not copied`, error);
+        notes.push(
+          `${name}'s picture didn't come over. Choose one in its settings.`,
+        );
+      }
+    // Teams are shared by every community, each showing its own members, so
+    // joining its original's teams fills them in here.
+    const joined = this.teamList.map((team) =>
+      team.members.includes(pubkey) && !team.members.includes(made.pubkey)
+        ? Object.freeze({
+            ...team,
+            members: Object.freeze([...team.members, made.pubkey]),
+          })
+        : team,
+    );
+    if (joined.some((team, index) => team !== this.teamList[index]))
+      await this.writeTeams(joined).catch((error: unknown) => {
+        console.warn(`Agent ${name} was not added to its teams`, error);
+        notes.push(`${name} wasn't added to its teams here. Add it in Teams.`);
+      });
+    return { agent: this.find(made.pubkey) ?? made, notes };
   }
 
   /** Takes over an identity an earlier agent system saved. One deleted here

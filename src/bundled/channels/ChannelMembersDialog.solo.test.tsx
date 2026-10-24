@@ -56,6 +56,7 @@ function SoloShare({
       <ChatSharedMark
         session={session}
         channel={list.channels.find((item) => item.id === channel.id)}
+        onOpen={() => setOpen(true)}
       />
       {open && (
         <ChannelMembersDialog
@@ -688,17 +689,21 @@ it("shows Shared on cold render from verified members and cached human evidence 
     "ready",
   );
   expect(channel?.cached).not.toBe(true);
-  // The sidebar's status mark is not an action; Access manages sharing.
+  // The sidebar's mark describes the row and opens its access list.
+  const onOpen = vi.fn();
   render(
     <>
       <button type="button" aria-describedby={soloSharedMarkId(source)}>
         Row
       </button>
-      <ChatSharedMark session={t.session} channel={channel} />
+      <ChatSharedMark session={t.session} channel={channel} onOpen={onOpen} />
     </>,
   );
-  expect(screen.getByRole("button")).toHaveAccessibleDescription("Shared");
-  expect(screen.getAllByRole("button")).toHaveLength(1);
+  expect(
+    screen.getByRole("button", { name: "Row" }),
+  ).toHaveAccessibleDescription("Shared");
+  await userEvent.click(screen.getByRole("button", { name: "Shared" }));
+  expect(onOpen).toHaveBeenCalledOnce();
   expect(t.session.memberAdministration.snapshot(source)?.status).not.toBe(
     "ready",
   );

@@ -5,6 +5,7 @@ import { ownSolo } from "../../features/solo/labels";
 import { avatarMedia } from "../../shared/avatar-source";
 import { UsersIcon } from "../../shared/design-system/icons";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
 
 /** Unknown classification is not evidence of a private conversation. Only a
  * verified current roster plus a known non-agent profile supplies Shared. */
@@ -79,34 +80,45 @@ export function SoloOwnerAvatar({
   );
 }
 
-/** Status only: the chat's actions menu owns access management. The row's
- * select button names it through `soloSharedMarkId`. */
+/** Opens the chat's access list. The row's select button is described by it
+ * through `soloSharedMarkId`. */
 export const soloSharedMarkId = (channelId: string) =>
   `solo-shared-${channelId}`;
 
 export function ChatSharedMark({
   session,
   channel,
+  onOpen,
 }: {
   session: RelaySession;
   channel: ChannelSummary | undefined;
+  onOpen(): void;
 }) {
   const shared = useSharedWithPeople(session, channel);
   const owner = useSoloOwner(session, channel);
-  if (!shared && !owner) return null;
+  if (!channel || (!shared && !owner)) return null;
+  const label = owner ? soloOwnerLabel(owner) : "Shared";
   return (
-    <span id={channel && soloSharedMarkId(channel.id)} data-solo-shared="">
-      {owner ? (
-        <>
-          <SoloOwnerAvatar owner={owner} />
-          <span className="sr-only">{soloOwnerLabel(owner)}</span>
-        </>
-      ) : (
-        <>
-          <UsersIcon size={16} aria-hidden="true" />
-          <span className="sr-only">Shared</span>
-        </>
-      )}
-    </span>
+    <>
+      <IconButton
+        data-solo-shared=""
+        variant={owner ? "avatar" : "bare"}
+        size="compact"
+        aria-label={label}
+        title={label}
+        aria-haspopup="dialog"
+        onClick={onOpen}
+        icon={
+          owner ? (
+            <SoloOwnerAvatar owner={owner} />
+          ) : (
+            <UsersIcon size={16} aria-hidden="true" />
+          )
+        }
+      />
+      <span id={soloSharedMarkId(channel.id)} hidden>
+        {label}
+      </span>
+    </>
   );
 }

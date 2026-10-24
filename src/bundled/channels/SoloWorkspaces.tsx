@@ -512,7 +512,11 @@ export function SoloWorkspaces({
                     id={item.id}
                     title={item.title}
                     indicator={
-                      <ChatSharedMark session={session} channel={channel} />
+                      <ChatSharedMark
+                        session={session}
+                        channel={channel}
+                        onOpen={() => setSharing({ id: item.id, visit })}
+                      />
                     }
                     className={styles.organizedRow}
                     content={

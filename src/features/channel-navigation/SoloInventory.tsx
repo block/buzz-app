@@ -16,12 +16,10 @@ import { UnreadBadge } from "../../bundled/channels/UnreadBadge";
 import { useUnreadChannelIds } from "../../bundled/channels/useSidebarFilters";
 import { SoloWorkspaces } from "../../bundled/channels/SoloWorkspaces";
 import {
-  soloOwnerLabel,
   soloSharedMarkId,
   useSharedWithPeople,
   useSoloOwner,
 } from "../../bundled/channels/ChatSharedMark";
-import { Tooltip } from "../../shared/design-system/ui/Tooltip";
 import { useChannelList } from "../relay/react";
 import type { RelaySession } from "../relay/session";
 import type { ChannelSummary } from "../relay/contracts";
@@ -342,16 +340,6 @@ function SoloConversationRow({
   // Describe only by a mark that renders, using the same Shared evidence.
   const owner = useSoloOwner(session, channel);
   const shared = useSharedWithPeople(session, channel) || !!owner;
-  const rowLabel = (
-    <span className={styles.chatRow}>
-      <UnreadBadge
-        session={session}
-        channelId={id}
-        label={title}
-        labelUnread="all"
-      />
-    </span>
-  );
   return (
     <ChannelActivityPopover
       session={session}
@@ -408,19 +396,14 @@ function SoloConversationRow({
             )
           }
           label={
-            // The owner's avatar yields its slot to the row menu on hover,
-            // so the name carries the owner hint.
-            owner ? (
-              <Tooltip
-                content={soloOwnerLabel(owner)}
-                delay={500}
-                disableHoverablePopup
-              >
-                {rowLabel}
-              </Tooltip>
-            ) : (
-              rowLabel
-            )
+            <span className={styles.chatRow}>
+              <UnreadBadge
+                session={session}
+                channelId={id}
+                label={title}
+                labelUnread="all"
+              />
+            </span>
           }
           trailing={
             <span

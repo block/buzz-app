@@ -143,6 +143,7 @@ function setup(
     upload: vi.fn(),
     media: vi.fn(),
     remember: vi.fn(),
+    handoff: vi.fn(),
     attention: {
       enabled: () => true,
       classifier: () => "unavailable" as const,
@@ -528,6 +529,21 @@ it("runs Pi's Buzz tools in the conversation's thread, and posts nothing more af
   expect(published).toHaveLength(1);
   expect(published[0]).toMatchObject({ kind: 9, content: "On it" });
   expect(published[0]?.tags).toContainEqual(["e", root.id, "", "reply"]);
+});
+
+it("does not hand off for Pi, which takes no wakes", async () => {
+  const { host, deliver } = setup();
+  await deliver({ type: "mention", event: reply("2", "@Pi look") }).run;
+  const result = (
+    await host.processes[0]?.tool({
+      agent: self,
+      conversation: CONVERSATION,
+      context: { channel, root: root.id },
+      name: "self_handoff",
+      arguments: { channel, thread: root.id, text: "carry on" },
+    })
+  )?.result;
+  expect(JSON.stringify(result)).toContain("Self-handoff is unavailable here");
 });
 
 it("lists the tools plugins add, and runs them for Pi", async () => {

@@ -9,6 +9,7 @@ import type {
   AgentAttention,
   AgentHandle,
   AgentUpdateInput,
+  AgentHandoff,
   RegisteredAgentType,
   Trigger,
 } from "./service";
@@ -413,6 +414,8 @@ export type RunnerHost = {
     agent: Agent,
     input: AgentUpdateInput,
   ): Promise<Readonly<{ requestId: string; saved: false }>>;
+  /** Wakes the agent in another of its conversations, as its own handoff. */
+  handoff(agent: Agent, handoff: AgentHandoff): void;
   /** The owner's channel templates as the agent's handle offers them. */
   templates(agent: Agent): ReturnType<AgentHandle["templates"]>;
   /** The owner's thread tabs as the agent's handle offers them. */
@@ -2119,7 +2122,7 @@ export class AgentRunners {
       lifetime,
       AbortSignal.timeout(type.timeoutMs ?? 60_000),
     ]);
-    const handle = this.handleFor(runner, agent);
+    const handle = this.handleFor(runner, agent, true);
     const anchor = conversationWake(job.trigger, "");
     const destination = !addressed(job.trigger) ? anchor : undefined;
     const working = this.working(
@@ -2288,7 +2291,7 @@ export class AgentRunners {
   }
 
   /** The agent as `run` holds it. */
-  private handleFor(runner: Runner, agent: Agent): AgentHandle {
+  private handleFor(runner: Runner, agent: Agent, run = false): AgentHandle {
     // Taken now, as a type change replaces the controller.
     const lifetime = runner.controller.signal;
     return Object.freeze({
@@ -2326,6 +2329,14 @@ export class AgentRunners {
         lifetime.throwIfAborted();
         return this.host.updateAgent(agent, input);
       },
+      // Only a run hands off: a plugin's wake through `Agents.handle` would
+      // read as the agent's own.
+      ...(run && {
+        handoff: (handoff: AgentHandoff) => {
+          lifetime.throwIfAborted();
+          this.host.handoff(agent, handoff);
+        },
+      }),
       templates: () => this.host.templates(agent),
       tabs: () => this.host.tabs(agent),
       notes: (channelId: string, root?: string) => {

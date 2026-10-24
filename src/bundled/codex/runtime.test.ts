@@ -3165,7 +3165,7 @@ it("lists saved conversations newest first from storage, and moves a started one
   const channel = JSON.stringify(["channel", "channel"]);
   const elsewhere = JSON.stringify(["unlisted", root]);
   f.storage.set(
-    `buzz.codex.sessions.v11:${scope}:${pubkey}`,
+    `buzz.codex.sessions.v12:${scope}:${pubkey}`,
     JSON.stringify({
       [channel]: { threadId: "before-timestamps", workspace: "/w" },
       [thread]: { threadId: "older", workspace: "/w", at: 1 },
@@ -3202,7 +3202,7 @@ it("lists saved conversations newest first from storage, and moves a started one
   expect(latest?.at).toBeGreaterThan(2);
   const stored = Object.keys(
     JSON.parse(
-      f.storage.get(`buzz.codex.sessions.v11:${scope}:${pubkey}`) ?? "{}",
+      f.storage.get(`buzz.codex.sessions.v12:${scope}:${pubkey}`) ?? "{}",
     ),
   );
   expect(stored.at(-1)).toBe(latest?.key);
@@ -3323,7 +3323,7 @@ it("offers the tools plugins add, runs them as the agent here, and starts a new 
     1,
   );
   const saved = JSON.parse(
-    f.storage.get(`buzz.codex.sessions.v11:${scope}:${pubkey}`) ?? "{}",
+    f.storage.get(`buzz.codex.sessions.v12:${scope}:${pubkey}`) ?? "{}",
   );
   expect(Object.values(saved)).toEqual([
     expect.objectContaining({ tools: expect.any(String) }),

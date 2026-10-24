@@ -76,6 +76,9 @@ export type AgentRecord = Readonly<{
   /** Run state of its timers, by slug. Not config, so it never leaves the device;
    * kept here so removing a timer or the agent removes its state with it. */
   timers?: Readonly<Record<string, TimerState>>;
+  /** The agent it was copied from another community from, or that one's own
+   * original, so each agent is offered for copying once wherever it is. */
+  copyOf?: string;
 }>;
 type Stored = { version: 1; agents: Record<string, AgentRecord> };
 
@@ -168,6 +171,9 @@ function readRecord(
     config: record.config,
     timers,
     ...(record.attentionEnabled === true ? { attentionEnabled: true } : {}),
+    ...(typeof record.copyOf === "string" && PUBKEY.test(record.copyOf)
+      ? { copyOf: record.copyOf }
+      : {}),
   };
 }
 

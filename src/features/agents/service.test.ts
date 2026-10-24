@@ -731,7 +731,9 @@ it("keeps a team import in the community it started in, stopping when another is
     { name: "Birch", error: "Community changed" },
   ]);
   expect(result.team).toEqual(savedShift([alder]));
-  expect(service.snapshot().teams).toEqual([savedShift([alder])]);
+  // Its members are all in the first community, which shows it; this one does not.
+  expect(service.snapshot().teams).toEqual([]);
+  expect((await service.portable()).teamCopies).toEqual([savedShift([alder])]);
   const relays = new Map(
     (await native.list()).map((identity) => [identity.pubkey, identity.relay]),
   );
@@ -761,6 +763,150 @@ it("leaves a member another account on this device has off the team, and names i
   expect(result.elsewhere).toEqual([]);
   expect(result.team).toEqual(savedShift([alder]));
   expect(portedKeys(native)).toEqual([alder]);
+});
+
+it("copies the owner's agents from their other communities as new agents on their teams", async () => {
+  const media = `https://other.example.test/media/${"a".repeat(64)}.png`;
+  const { service, native, run, emit, select, second } = await setup({
+    identities: [
+      { ...here(birch, "wss://other.example.test"), picture: media },
+      { ...here(carrow, "wss://other.example.test"), owner: "f".repeat(64) },
+    ],
+  });
+  await service.save(birch, { config: { reply: "Triage." } });
+  const crew = await service.saveTeam({
+    name: "Crew",
+    instructions: "",
+    members: [birch],
+  });
+  const found = await service.portable();
+  expect(found.copies).toEqual([
+    {
+      pubkey: birch,
+      name: "Birch",
+      picture: media,
+      relay: "wss://other.example.test",
+      type: "example/echo",
+    },
+  ]);
+  // Its picture is fetched from its community as it, and uploaded here as the copy.
+  native.media.mockResolvedValueOnce({
+    path: "/tmp/a.png",
+    type: "image/png",
+    size: 3,
+    data: "AAAA",
+  });
+  const uploaded = "https://relay.example.test/media/b.png";
+  native.upload.mockResolvedValueOnce({
+    url: uploaded,
+    sha256: "b",
+    size: 3,
+    type: "image/png",
+  });
+  const { agent, notes } = await service.port({
+    source: "community",
+    pubkey: birch,
+  });
+  expect(native.media).toHaveBeenCalledWith(birch, media);
+  expect(native.upload).toHaveBeenCalledWith(bot, "AAAA", "image/png");
+  expect(agent).toMatchObject({
+    pubkey: bot,
+    name: "Birch",
+    relay: "wss://relay.example.test",
+    type: "example/echo",
+    picture: uploaded,
+    config: { reply: "Triage." },
+  });
+  expect(notes).toEqual([]);
+  expect(service.snapshot().teams).toEqual([
+    { ...crew, members: [birch, bot] },
+  ]);
+  // Copied once: neither it nor its copy is offered where either is.
+  expect((await service.portable()).copies).toEqual([]);
+  await expect(
+    service.port({ source: "community", pubkey: birch }),
+  ).rejects.toThrow("Birch is already here");
+  // The original keeps its key and community.
+  expect(
+    (await native.list()).find((row) => row.pubkey === birch),
+  ).toMatchObject({ relay: "wss://other.example.test", deleted: false });
+  // The copy's teammates are those it can reach, in its own community.
+  emit({
+    events: [
+      event("m", {
+        tags: [
+          ["h", channel],
+          ["p", bot],
+        ],
+      }),
+    ],
+  });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  const prompt = run.mock.calls[0]?.[0].team ?? "";
+  expect(prompt).toContain(`- Birch (${npubEncode(bot)}), you`);
+  expect(prompt).not.toContain(npubEncode(birch));
+  await expect(
+    service.port({ source: "community", pubkey: carrow }),
+  ).rejects.toThrow("That agent is not in another of your communities");
+  await expect(
+    service.port({ source: "community", pubkey: bot }),
+  ).rejects.toThrow("That agent is not in another of your communities");
+  select(second.origin);
+  await vi.waitFor(async () =>
+    expect((await service.portable()).here).toEqual([birch]),
+  );
+  expect((await service.portable()).copies).toEqual([]);
+});
+
+it("keeps a team whose members are all elsewhere out of this community until it is copied here", async () => {
+  const elsewhere = (pubkey: string, name: string) => ({
+    ...here(pubkey, "wss://other.example.test"),
+    name,
+  });
+  const [ann, ben] = ["1".repeat(64), "2".repeat(64)];
+  const { service } = await setup({
+    identities: [elsewhere(ann, "Ann"), elsewhere(ben, "Ben")],
+  });
+  // Ann was copied here before the team was made.
+  await service.port({ source: "community", pubkey: ann });
+  const crew = await service.saveTeam({
+    name: "Crew",
+    instructions: "",
+    members: [ann, ben],
+  });
+  expect(service.snapshot().teams).toEqual([]);
+  expect((await service.portable()).teamCopies).toEqual([crew]);
+  const { copied, notes } = await service.copyTeam(crew.id);
+  // Ann's copy here joins; only Ben is copied now.
+  expect(copied.map((agent) => [agent.pubkey, agent.name])).toEqual([
+    [sibling, "Ben"],
+  ]);
+  expect(notes).toEqual([]);
+  expect(service.snapshot().teams).toEqual([
+    { ...crew, members: [ann, ben, bot, sibling] },
+  ]);
+  expect((await service.portable()).teamCopies).toEqual([]);
+});
+
+it("copies an agent without the picture its community would not give, and says so", async () => {
+  const media = `https://other.example.test/media/${"a".repeat(64)}.png`;
+  const { service, native } = await setup({
+    identities: [
+      { ...here(birch, "wss://other.example.test"), picture: media },
+    ],
+  });
+  native.media.mockRejectedValueOnce(
+    new Error("The community refused the media"),
+  );
+  const { agent, notes } = await service.port({
+    source: "community",
+    pubkey: birch,
+  });
+  expect(agent.picture).toBeUndefined();
+  expect(native.upload).not.toHaveBeenCalled();
+  expect(notes).toEqual([
+    "Birch's picture didn't come over. Choose one in its settings.",
+  ]);
 });
 
 it("drops another account's agents an earlier import left on the team, keeping its edits", async () => {
@@ -836,9 +982,10 @@ it("keeps each account's import of the same old team apart on one device", async
     ...savedShift([birch]),
     id: betaTeam("old-night-shift", undefined, other),
   });
-  expect(service.snapshot().teams).toEqual([mine, theirs]);
+  // Each account sees only its own team.
+  await vi.waitFor(() => expect(service.snapshot().teams).toEqual([theirs]));
   expect(await importAs(viewer, alder)).toEqual(mine);
-  expect(service.snapshot().teams).toEqual([mine, theirs]);
+  expect(service.snapshot().teams).toEqual([mine]);
 });
 
 it("creates no team when no member imports and none was saved", async () => {

@@ -4,6 +4,6 @@ Your home for creating and managing agents. Set them up, group them into teams, 
 
 ## Getting started
 
-1. Open **Agents**. With no agents yet, import the ones you had in an earlier Buzz, create your first, or explore the marketplace.
-2. Later, choose **New agent** and pick **Create a new agent**, **Import an agent**, or **Browse the marketplace**. Import stays open, so you can import several agents in a row.
+1. Open **Agents**. With no agents yet, import the ones you had in an earlier Buzz or in your other communities, create your first, or explore the marketplace.
+2. Later, choose **New agent** and pick **Create a new agent**, **Import an agent**, or **Browse the marketplace**. Import stays open, so you can import several agents in a row. An agent from another of your communities is copied as a new agent with the same name, picture, type and settings, on the same teams; its conversations and memory stay where they are. Teams are shared by your communities, and each community shows a team once one of its members is there. **Import a team** copies a team from another of your communities with its members.
 3. Use **Settings** → **Agent setup** → **Harness defaults** to install or sign in to an agent type such as Claude or Codex.

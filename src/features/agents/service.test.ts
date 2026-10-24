@@ -731,7 +731,9 @@ it("keeps a team import in the community it started in, stopping when another is
     { name: "Birch", error: "Community changed" },
   ]);
   expect(result.team).toEqual(savedShift([alder]));
-  expect(service.snapshot().teams).toEqual([savedShift([alder])]);
+  // Its members are all in the first community, which shows it; this one does not.
+  expect(service.snapshot().teams).toEqual([]);
+  expect((await service.portable()).teamCopies).toEqual([savedShift([alder])]);
   const relays = new Map(
     (await native.list()).map((identity) => [identity.pubkey, identity.relay]),
   );
@@ -856,6 +858,36 @@ it("copies the owner's agents from their other communities as new agents on thei
   expect((await service.portable()).copies).toEqual([]);
 });
 
+it("keeps a team whose members are all elsewhere out of this community until it is copied here", async () => {
+  const elsewhere = (pubkey: string, name: string) => ({
+    ...here(pubkey, "wss://other.example.test"),
+    name,
+  });
+  const [ann, ben] = ["1".repeat(64), "2".repeat(64)];
+  const { service } = await setup({
+    identities: [elsewhere(ann, "Ann"), elsewhere(ben, "Ben")],
+  });
+  // Ann was copied here before the team was made.
+  await service.port({ source: "community", pubkey: ann });
+  const crew = await service.saveTeam({
+    name: "Crew",
+    instructions: "",
+    members: [ann, ben],
+  });
+  expect(service.snapshot().teams).toEqual([]);
+  expect((await service.portable()).teamCopies).toEqual([crew]);
+  const { copied, notes } = await service.copyTeam(crew.id);
+  // Ann's copy here joins; only Ben is copied now.
+  expect(copied.map((agent) => [agent.pubkey, agent.name])).toEqual([
+    [sibling, "Ben"],
+  ]);
+  expect(notes).toEqual([]);
+  expect(service.snapshot().teams).toEqual([
+    { ...crew, members: [ann, ben, bot, sibling] },
+  ]);
+  expect((await service.portable()).teamCopies).toEqual([]);
+});
+
 it("copies an agent without the picture its community would not give, and says so", async () => {
   const media = `https://other.example.test/media/${"a".repeat(64)}.png`;
   const { service, native } = await setup({
@@ -950,9 +982,10 @@ it("keeps each account's import of the same old team apart on one device", async
     ...savedShift([birch]),
     id: betaTeam("old-night-shift", undefined, other),
   });
-  expect(service.snapshot().teams).toEqual([mine, theirs]);
+  // Each account sees only its own team.
+  await vi.waitFor(() => expect(service.snapshot().teams).toEqual([theirs]));
   expect(await importAs(viewer, alder)).toEqual(mine);
-  expect(service.snapshot().teams).toEqual([mine, theirs]);
+  expect(service.snapshot().teams).toEqual([mine]);
 });
 
 it("creates no team when no member imports and none was saved", async () => {

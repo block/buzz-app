@@ -297,9 +297,11 @@ function setup(
         warnings: [],
         here: [],
         copies,
+        teamCopies: [],
       }),
     ),
     port: vi.fn(async () => ({ agent: created, notes: [] })),
+    copyTeam: vi.fn(async () => ({ copied: [], notes: [] })),
     portTeam: vi.fn(
       async (): Promise<TeamPort> => ({
         imported: [],
@@ -1190,6 +1192,7 @@ it("tells same-named agents to import apart by their keys", async () => {
     warnings: [],
     here: [],
     copies: [],
+    teamCopies: [],
   });
   await user.click(
     await screen.findByRole("button", { name: /Import them now/ }),
@@ -1255,6 +1258,46 @@ async function openImport(user: ReturnType<typeof userEvent.setup>) {
   );
 }
 
+it("copies a team from another community and returns to Your teams", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([]);
+  const crew = {
+    id: "crew",
+    name: "Crew",
+    instructions: "",
+    members: ["c".repeat(64)],
+  };
+  agents.portable.mockResolvedValue({
+    agents: [],
+    teams: [],
+    warnings: [],
+    here: [],
+    copies: [],
+    teamCopies: [crew],
+  });
+  await openImport(user);
+  const dialog = screen.getByRole("dialog", { name: "Import a team" });
+  const list = await within(dialog).findByRole("region", {
+    name: "Teams in your other communities",
+  });
+  expect(
+    within(dialog).queryByText("No old teams found to import."),
+  ).toBeNull();
+  await user.click(
+    within(list).getByRole("button", { name: "Copy team Crew" }),
+  );
+  expect(agents.copyTeam).toHaveBeenCalledWith("crew");
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("dialog", { name: "Import a team" }),
+    ).not.toBeInTheDocument(),
+  );
+  expect(screen.getByRole("tab", { name: "Your teams" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+});
+
 it("offers New team on Your teams with create and import, but no marketplace", async () => {
   const user = userEvent.setup();
   setup([agent("Ada", 1)]);
@@ -1282,6 +1325,7 @@ it("shows only teams in Import a team and only agents in Import an agent", async
     warnings: [],
     here: [],
     copies: [],
+    teamCopies: [],
   });
   await openImport(user);
   const teamDialog = screen.getByRole("dialog", { name: "Import a team" });
@@ -1316,6 +1360,7 @@ it("keeps Import a team from closing while a team import is pending", async () =
     warnings: [],
     here: [],
     copies: [],
+    teamCopies: [],
   });
   let finish!: (value: Awaited<ReturnType<typeof agents.portTeam>>) => void;
   agents.portTeam.mockImplementationOnce(
@@ -1354,6 +1399,7 @@ it("lists old teams with how many members are here, and imports one as a team", 
     warnings: [],
     here: ["c".repeat(64)],
     copies: [],
+    teamCopies: [],
   });
   await openImport(user);
   const teams = await screen.findByRole("region", { name: "Teams to import" });
@@ -1391,6 +1437,7 @@ it("counts no member of a team as here when they were imported into another comm
     warnings: [],
     here: [],
     copies: [],
+    teamCopies: [],
   });
   await openImport(user);
   const teams = await screen.findByRole("region", { name: "Teams to import" });
@@ -1412,6 +1459,7 @@ it("keeps a team whose members are all here importable with no agents to list", 
     warnings: [],
     here: [],
     copies: [],
+    teamCopies: [],
   });
   agents.portTeam.mockImplementationOnce(async () => ({
     team: await agents.saveTeam({
@@ -1450,6 +1498,7 @@ it("keeps Import open and names each part of a team import that did not come", a
     warnings: [],
     here: [],
     copies: [],
+    teamCopies: [],
   });
   // Renamed in old Buzz since it was listed: messages name what was saved.
   const team = { id: "t", name: "Late Shift", instructions: "", members: [] };
@@ -1507,6 +1556,7 @@ it("neither counts nor adds a member another account on this device has", async 
     warnings: [],
     here: [],
     copies: [],
+    teamCopies: [],
   });
   const bea = { ...agent("Bea", 2), pubkey: "b".repeat(64) };
   agents.portTeam.mockResolvedValueOnce({

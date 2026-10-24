@@ -759,7 +759,8 @@ export type AgentsSnapshot = Readonly<{
   /** Running agents that were working when the app last closed or reloaded,
    * until the owner resumes or forgets those turns. */
   interrupted: readonly Agent[];
-  /** The owner's teams on this device, in any community. */
+  /** The owner's teams on this device with a member in the selected
+   * community, or with no member in any. */
   teams: readonly Team[];
   error?: string;
 }>;
@@ -805,7 +806,17 @@ export type CopyableAgent = Readonly<{
 }>;
 /** What Import can bring over, and the agents already in Yours. */
 export type FoundAgents = PortableAgents &
-  Readonly<{ here: readonly string[]; copies: readonly CopyableAgent[] }>;
+  Readonly<{
+    here: readonly string[];
+    copies: readonly CopyableAgent[];
+    /** The owner's teams whose members are all in their other communities. */
+    teamCopies: readonly Team[];
+  }>;
+/** What copying a team did: the members it copied, and what did not come. */
+export type TeamCopy = Readonly<{
+  copied: readonly Agent[];
+  notes: readonly string[];
+}>;
 /** What importing an old Buzz team did. Members that came are kept even when
  * others, or the team itself, did not. */
 export type TeamPort = Readonly<{
@@ -918,6 +929,9 @@ export type Agents = {
    * copy there with every member here. A team imported before keeps its name,
    * instructions and members here. */
   portTeam(input: Readonly<{ id: string; type: string }>): Promise<TeamPort>;
+  /** Brings a team from `portable`'s `teamCopies` to the selected community:
+   * each member's copy here joins it, copied now if it is not here yet. */
+  copyTeam(id: string): Promise<TeamCopy>;
   save(pubkey: string, change: AgentChange): Promise<void>;
   /** Previews the destination config and transferable settings the same
    * migration used by `retype` will produce, without changing the agent. */
@@ -2073,7 +2087,74 @@ export class AgentsService extends Service implements Agents {
             .map((identity) => identity.pubkey)
         : [],
       copies: binding ? this.copies(binding) : [],
+      teamCopies: binding ? this.teamCopies(binding) : [],
     };
+  }
+
+  /** Teams not shown here, with a member of the binding owner elsewhere. */
+  private teamCopies(binding: Binding) {
+    const shown = new Set(this.state.teams);
+    return this.teamList.filter(
+      (team) =>
+        !shown.has(team) &&
+        team.members.some((pubkey) => {
+          const member = this.live(pubkey);
+          return !!member && ownedBy(member, binding);
+        }),
+    );
+  }
+
+  async copyTeam(id: string): Promise<TeamCopy> {
+    const binding = this.selectedBinding();
+    const team = this.teamList.find((entry) => entry.id === id);
+    if (!team) throw new Error("No such team");
+    const copied: Agent[] = [];
+    const notes: string[] = [];
+    for (const pubkey of team.members) {
+      if (binding.controller.signal.aborted) {
+        notes.push("The community changed before every member was copied.");
+        break;
+      }
+      const member = this.live(pubkey);
+      if (!member || !ownedBy(member, binding)) continue;
+      const original = this.original(member);
+      const here = this.identities.find(
+        (identity) =>
+          yours(identity, binding) && this.original(identity) === original,
+      );
+      if (here) {
+        await this.joinTeams(here.pubkey, (entry) => entry.id === id);
+        continue;
+      }
+      if (!this.copyable(member, binding)) {
+        notes.push(`${member.name} can't be copied here.`);
+        continue;
+      }
+      try {
+        const result = await this.copy(pubkey, binding);
+        copied.push(result.agent);
+        notes.push(...result.notes);
+      } catch (error) {
+        notes.push(
+          `Couldn't copy ${member.name}: ${message(error).replace(/\.?$/, ".")}`,
+        );
+      }
+    }
+    return { copied, notes };
+  }
+
+  /** Adds `member` to each team `on` picks that it is not on yet. */
+  private async joinTeams(member: string, on: (team: Team) => boolean) {
+    const joined = this.teamList.map((team) =>
+      on(team) && !team.members.includes(member)
+        ? Object.freeze({
+            ...team,
+            members: Object.freeze([...team.members, member]),
+          })
+        : team,
+    );
+    if (joined.some((team, index) => team !== this.teamList[index]))
+      await this.writeTeams(joined);
   }
 
   /** The owner's agents it can copy here, one for each original and its
@@ -2148,10 +2229,12 @@ export class AgentsService extends Service implements Agents {
   /** A new agent here with the name, type, settings and picture of one of the
    * owner's agents in another community, on each of its teams. Its key,
    * conversations, memory and attention stay there. */
-  private async copy(pubkey: string): Promise<Ported> {
+  private async copy(
+    pubkey: string,
+    binding = this.selectedBinding(),
+  ): Promise<Ported> {
     const native = this.native;
     if (!native) throw new Error("Agents run only in the desktop app");
-    const binding = this.selectedBinding();
     const source = this.live(pubkey);
     if (!source || !this.copyable(source, binding))
       throw new Error("That agent is not in another of your communities");
@@ -2209,19 +2292,12 @@ export class AgentsService extends Service implements Agents {
       }
     // Teams are shared by every community, each showing its own members, so
     // joining its original's teams fills them in here.
-    const joined = this.teamList.map((team) =>
-      team.members.includes(pubkey) && !team.members.includes(made.pubkey)
-        ? Object.freeze({
-            ...team,
-            members: Object.freeze([...team.members, made.pubkey]),
-          })
-        : team,
-    );
-    if (joined.some((team, index) => team !== this.teamList[index]))
-      await this.writeTeams(joined).catch((error: unknown) => {
-        console.warn(`Agent ${name} was not added to its teams`, error);
-        notes.push(`${name} wasn't added to its teams here. Add it in Teams.`);
-      });
+    await this.joinTeams(made.pubkey, (team) =>
+      team.members.includes(pubkey),
+    ).catch((error: unknown) => {
+      console.warn(`Agent ${name} was not added to its teams`, error);
+      notes.push(`${name} wasn't added to its teams here. Add it in Teams.`);
+    });
     return { agent: this.find(made.pubkey) ?? made, notes };
   }
 
@@ -2809,9 +2885,41 @@ export class AgentsService extends Service implements Agents {
   }
   private showTeams(teams: readonly Team[]) {
     this.teamList = Object.freeze(teams);
-    this.state = Object.freeze({ ...this.state, teams: this.teamList });
+    this.state = Object.freeze({
+      ...this.state,
+      teams: this.teamsHere(this.state.agents),
+    });
     this.notify();
     return this.teamList;
+  }
+  /** The teams the selected community shows, `agents` being its agents: those
+   * with a member there, or with none in any community. A team whose members
+   * are all elsewhere is theirs; Import copies it here. */
+  private teamsHere(agents: readonly Agent[]) {
+    const binding = this.bound.get(this.selectedOrigin() ?? "")?.binding;
+    const here = new Set([
+      ...agents.map((agent) => agent.pubkey),
+      ...(binding
+        ? this.identities
+            .filter((identity) => yours(identity, binding))
+            .map((identity) => identity.pubkey)
+        : []),
+    ]);
+    const live = new Set(
+      this.identities
+        .filter((identity) => !identity.deleted)
+        .map((identity) => identity.pubkey),
+    );
+    const teams = this.teamList.filter(
+      (team) =>
+        team.members.some((pubkey) => here.has(pubkey)) ||
+        !team.members.some((pubkey) => live.has(pubkey)),
+    );
+    const prior = this.state.teams;
+    return teams.length === prior.length &&
+      teams.every((team, index) => team === prior[index])
+      ? prior
+      : Object.freeze(teams);
   }
 
   /** Saves which imports need an archive check, then keeps it in memory. */
@@ -3602,13 +3710,16 @@ export class AgentsService extends Service implements Agents {
     const same = (next: readonly Agent[], prior: readonly Agent[]) =>
       next.length === prior.length &&
       next.every((agent, index) => agent === prior[index]);
+    const teams = this.teamsHere(agents);
     if (
       !same(agents, this.state.agents) ||
       !same(running, this.state.running) ||
-      !same(interrupted, this.state.interrupted)
+      !same(interrupted, this.state.interrupted) ||
+      teams !== this.state.teams
     ) {
       this.state = Object.freeze({
         ...this.state,
+        teams,
         agents: Object.freeze(agents),
         running: Object.freeze(running),
         interrupted: Object.freeze(interrupted),

@@ -1241,6 +1241,30 @@ function ImportAgents({
       onPendingChange(false);
     }
   };
+  const copyTeam = async (team: Team) => {
+    if (pending) return;
+    setPending(team.id);
+    onPendingChange(true);
+    setError("");
+    try {
+      const { notes } = await agents.copyTeam(team.id);
+      setFound(
+        (last) =>
+          last && {
+            ...last,
+            teamCopies: last.teamCopies.filter((item) => item.id !== team.id),
+          },
+      );
+      // Leaving would hide the one place that names what still needs a hand.
+      if (notes.length) setError(notes.join(" "));
+      else onImported();
+    } catch (reason) {
+      setError(message(reason));
+    } finally {
+      setPending(undefined);
+      onPendingChange(false);
+    }
+  };
   const yours = new Set(found?.here);
   if (!types.length)
     return (
@@ -1249,8 +1273,10 @@ function ImportAgents({
       </p>
     );
   const copies = only === "agents" ? (found?.copies ?? []) : [];
+  const teamCopies = only === "teams" ? (found?.teamCopies ?? []) : [];
+  const others = copies.length + teamCopies.length;
   // Old Buzz's guidance and its type stay out of a list of copies alone.
-  const old = !!found && (found[only].length > 0 || !copies.length);
+  const old = !!found && (found[only].length > 0 || !others);
   return (
     <div className="flex flex-col gap-4">
       {(error || said.size > 0) && (
@@ -1287,7 +1313,41 @@ function ImportAgents({
           </div>
         </section>
       )}
-      {old && copies.length > 0 && (
+      {teamCopies.length > 0 && (
+        <section
+          aria-label="Teams in your other communities"
+          className="flex flex-col gap-3"
+        >
+          <InlineHeader title="From your other communities" />
+          <p className="m-0 text-body-sm text-secondary">
+            Copies each member not here yet, as Import does with an agent, and
+            shows the team here with them.
+          </p>
+          <ul className={styles.portList}>
+            {teamCopies.map((team) => (
+              <li key={team.id} className={styles.portRow}>
+                <span className="grid min-w-0 flex-1">
+                  <span className="truncate text-body">{team.name}</span>
+                  <span className="truncate text-caption text-secondary">
+                    {`${team.members.length} ${team.members.length === 1 ? "member" : "members"}`}
+                  </span>
+                </span>
+                <Button
+                  size="compact"
+                  variant="outline"
+                  aria-label={`Copy team ${team.name}`}
+                  loading={pending === team.id}
+                  disabled={!!pending && pending !== team.id}
+                  onClick={() => void copyTeam(team)}
+                >
+                  Copy team
+                </Button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+      {old && others > 0 && (
         <InlineHeader title="From earlier versions of Buzz" />
       )}
       {old && (

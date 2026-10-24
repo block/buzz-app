@@ -1,3 +1,4 @@
+import type { AttentionSource } from "./attention-sources";
 import { appClient } from "../../buzz-mcp/app-client";
 import { callTool } from "../../buzz-mcp/tools";
 import { createLocalAgentActivity, type WorkOutcome } from "./local-activity";
@@ -8396,3 +8397,70 @@ it.each(["before", "during"])(
     }
   },
 );
+
+it("discovers only active source providers and forgets unloaded registrations", async () => {
+  let active = false;
+  let changed = () => {};
+  const { service, plugin } = await setup({
+    pluginActive: () => active,
+    subscribePlugin: (listener) => {
+      changed = listener;
+      return () => {};
+    },
+  });
+  const configExample = { topic: "releases" };
+  const registration = plugin.plugin({
+    inject: ["agents"],
+    apply: (ctx: Context) =>
+      ctx.agents.addAttentionSource({
+        id: "unrelated",
+        description: "Follow releases",
+        configExample,
+        run: async () => {},
+      }),
+  });
+  await registration;
+  expect(service.attentionProviders()).toEqual([]);
+  configExample.topic = "mutated";
+  active = true;
+  changed();
+  const providers = service.attentionProviders();
+  expect(providers).toEqual([
+    {
+      provider: "example/unrelated",
+      description: "Follow releases",
+      configExample: { topic: "releases" },
+    },
+  ]);
+  expect(providers[0]).not.toHaveProperty("run");
+  (providers[0]?.configExample as { topic: string }).topic = "caller mutation";
+  expect(service.attentionProviders()[0]?.configExample).toEqual({
+    topic: "releases",
+  });
+  active = false;
+  changed();
+  expect(service.attentionProviders()).toEqual([]);
+  active = true;
+  changed();
+  await registration.dispose();
+  expect(service.attentionProviders()).toEqual([]);
+});
+
+it("rejects invalid source discovery metadata", async () => {
+  const { plugin } = await setup();
+  const circular: Record<string, unknown> = {};
+  circular.self = circular;
+  for (const metadata of [
+    { description: " " },
+    { configExample: [] },
+    { configExample: { value: 1n } },
+    { configExample: circular },
+  ])
+    expect(() =>
+      plugin.agents.addAttentionSource({
+        id: "bad",
+        run: async () => {},
+        ...metadata,
+      } as unknown as AttentionSource),
+    ).toThrow(/plugin source/);
+});

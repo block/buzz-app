@@ -763,6 +763,52 @@ it("leaves a member another account on this device has off the team, and names i
   expect(portedKeys(native)).toEqual([alder]);
 });
 
+it("copies the owner's agents from their other communities as new agents here", async () => {
+  const media = `https://other.example.test/media/${"a".repeat(64)}.png`;
+  const { service, native } = await setup({
+    identities: [
+      { ...here(birch, "wss://other.example.test"), picture: media },
+      { ...here(carrow, "wss://other.example.test"), owner: "f".repeat(64) },
+    ],
+  });
+  await service.save(birch, { config: { reply: "Triage." } });
+  const found = await service.portable();
+  expect(found.copies).toEqual([
+    {
+      pubkey: birch,
+      name: "Birch",
+      picture: media,
+      relay: "wss://other.example.test",
+      type: "example/echo",
+    },
+  ]);
+  const { agent, notes } = await service.port({
+    source: "community",
+    pubkey: birch,
+  });
+  expect(agent).toMatchObject({
+    pubkey: bot,
+    name: "Birch",
+    relay: "wss://relay.example.test",
+    type: "example/echo",
+    config: { reply: "Triage." },
+  });
+  expect(agent.picture).toBeUndefined();
+  expect(notes).toEqual([
+    "Birch's picture stays in its own community. Choose one here.",
+  ]);
+  // The original keeps its key and community.
+  expect(
+    (await native.list()).find((row) => row.pubkey === birch),
+  ).toMatchObject({ relay: "wss://other.example.test", deleted: false });
+  await expect(
+    service.port({ source: "community", pubkey: carrow }),
+  ).rejects.toThrow("That agent is not in another of your communities");
+  await expect(
+    service.port({ source: "community", pubkey: bot }),
+  ).rejects.toThrow("That agent is not in another of your communities");
+});
+
 it("drops another account's agents an earlier import left on the team, keeping its edits", async () => {
   const storage = memoryStorage();
   const other = "f".repeat(64);

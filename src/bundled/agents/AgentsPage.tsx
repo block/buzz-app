@@ -27,15 +27,13 @@ import type { ChannelChoice } from "../../features/agents/attention";
 import { AgentDelete } from "../../features/agents/AgentManage";
 import { AttentionSummary } from "../../features/agents/AttentionPanel";
 import { useAgents, useChannelChoices } from "../../features/agents/react";
-import type {
-  OldTeam,
-  PortableAgent,
-  PortSource,
-} from "../../features/agents/native";
+import type { OldTeam, PortSource } from "../../features/agents/native";
 import type {
   Agent,
   Agents,
+  CopyableAgent,
   FoundAgents,
+  PortInput,
   RegisteredAgentType,
   Team,
   TeamPort,
@@ -164,14 +162,16 @@ export function AgentsPage({
   const newAgentLabel = useRef<HTMLSpanElement>(null);
   const [importing, setImporting] = useState(false);
   // What an owner with no agents yet can import, offered before anything else.
-  const [importable, setImportable] = useState<readonly PortableAgent[]>([]);
+  const [importable, setImportable] = useState<
+    Pick<FoundAgents, "agents" | "copies">
+  >({ agents: [], copies: [] });
   const firstAgent = snapshot.status === "ready" && !snapshot.agents.length;
   useEffect(() => {
     if (!firstAgent) return;
     let live = true;
     agents.portable().then(
-      (found) => live && setImportable(found.agents),
-      () => live && setImportable([]),
+      (found) => live && setImportable(found),
+      () => live && setImportable({ agents: [], copies: [] }),
     );
     return () => {
       live = false;
@@ -266,14 +266,19 @@ export function AgentsPage({
   );
   // With no agents yet, each way to get one is its own tile; importing the
   // owner's own agents leads when there are any.
-  const canImport = firstAgent && importable.length > 0;
+  const crew = [...importable.copies, ...importable.agents];
+  const canImport = firstAgent && crew.length > 0;
   const starts = (
     <div className={cardStyles.starts}>
       {canImport && (
         <NewAgentTile
           fullWidth
-          crew={importable}
-          description="You have agents in a previous version of Buzz."
+          crew={crew}
+          description={
+            importable.copies.length
+              ? "You have agents in your other communities."
+              : "You have agents in a previous version of Buzz."
+          }
           label="Import them now"
           onClick={openImport}
         />
@@ -1183,29 +1188,28 @@ function ImportAgents({
       else next.delete(pubkey);
       return next;
     });
-  const port = (agent: PortableAgent) => {
-    if (!chosen || chosenPorts.current.has(agent.pubkey)) return;
-    chosenPorts.current.add(agent.pubkey);
-    setPort(agent.pubkey, "queued");
-    say(agent.pubkey);
-    const type = chosen.key;
+  const port = (
+    name: string,
+    input: Extract<PortInput, { pubkey: string }>,
+  ) => {
+    const { pubkey } = input;
+    if (chosenPorts.current.has(pubkey)) return;
+    chosenPorts.current.add(pubkey);
+    setPort(pubkey, "queued");
+    say(pubkey);
     portLine.current = portLine.current.then(async () => {
       if (!open.current) return;
       try {
-        const { notes } = await agents.port({
-          source: agent.source,
-          pubkey: agent.pubkey,
-          type,
-        });
-        setPort(agent.pubkey, "done");
-        if (notes.length) say(agent.pubkey, notes.join(" "));
+        const { notes } = await agents.port(input);
+        setPort(pubkey, "done");
+        if (notes.length) say(pubkey, notes.join(" "));
         onImported();
       } catch (reason) {
-        chosenPorts.current.delete(agent.pubkey);
-        setPort(agent.pubkey);
+        chosenPorts.current.delete(pubkey);
+        setPort(pubkey);
         say(
-          agent.pubkey,
-          `${agent.name} wasn't imported. ${sentence(message(reason))}`,
+          pubkey,
+          `${name} wasn't ${input.source === "community" ? "copied" : "imported"}. ${sentence(message(reason))}`,
         );
       }
     });
@@ -1244,16 +1248,52 @@ function ImportAgents({
         Enable an agent type plugin to import agents.
       </p>
     );
+  const copies = only === "agents" ? (found?.copies ?? []) : [];
+  // Old Buzz's guidance and its type stay out of a list of copies alone.
+  const old = !found || found[only].length > 0 || !copies.length;
   return (
     <div className="flex flex-col gap-4">
-      <p className="m-0 text-body-sm text-secondary">
-        {chosen?.adopt
-          ? "Keeps each agent's key, name, picture and instructions in this community. Its provider, model and other settings stay behind; choose them after importing."
-          : "Keeps each agent's key, name and picture in this community. Its instructions, provider, model and other settings stay behind; choose them after importing."}{" "}
-        An archived agent is unarchived here. Stop it where it runs now first,
-        or both will answer.
-      </p>
-      {types.length > 1 && (
+      {copies.length > 0 && (
+        <section
+          aria-label="Agents in your other communities"
+          className="flex flex-col gap-3"
+        >
+          <InlineHeader title="From your other communities" />
+          <p className="m-0 text-body-sm text-secondary">
+            Makes a new agent here with the same name, picture, type and
+            settings. Its conversations and memory stay in its own community.
+          </p>
+          <div className={cardStyles.grid}>
+            {copies.map((agent) => (
+              <CopyCard
+                key={agent.pubkey}
+                agent={agent}
+                type={types.find((item) => item.key === agent.type)}
+                state={ports.get(agent.pubkey)}
+                onCopy={() =>
+                  port(agent.name, {
+                    source: "community",
+                    pubkey: agent.pubkey,
+                  })
+                }
+              />
+            ))}
+          </div>
+        </section>
+      )}
+      {old && copies.length > 0 && (
+        <InlineHeader title="From earlier versions of Buzz" />
+      )}
+      {old && (
+        <p className="m-0 text-body-sm text-secondary">
+          {chosen?.adopt
+            ? "Keeps each agent's key, name, picture and instructions in this community. Its provider, model and other settings stay behind; choose them after importing."
+            : "Keeps each agent's key, name and picture in this community. Its instructions, provider, model and other settings stay behind; choose them after importing."}{" "}
+          An archived agent is unarchived here. Stop it where it runs now first,
+          or both will answer.
+        </p>
+      )}
+      {old && types.length > 1 && (
         <div className="flex">
           <Select
             label="Import as"
@@ -1378,7 +1418,14 @@ function ImportAgents({
                       aria-label={`Import ${agent.name}`}
                       loading={ports.get(agent.pubkey) === "queued"}
                       disabled={!chosen}
-                      onClick={() => port(agent)}
+                      onClick={() =>
+                        chosen &&
+                        port(agent.name, {
+                          source: agent.source,
+                          pubkey: agent.pubkey,
+                          type: chosen.key,
+                        })
+                      }
                     >
                       Import
                     </Button>
@@ -1389,13 +1436,60 @@ function ImportAgents({
           )}
         </>
       ) : (
-        <p className="m-0 text-body-sm text-secondary">
-          {only === "teams"
-            ? "No old teams found to import."
-            : "No other agents found to import."}
-        </p>
+        old && (
+          <p className="m-0 text-body-sm text-secondary">
+            {only === "teams"
+              ? "No old teams found to import."
+              : "No other agents found to import."}
+          </p>
+        )
       )}
     </div>
+  );
+}
+
+/** One of the owner's agents in another community, with its Copy action. */
+function CopyCard({
+  agent,
+  type,
+  state,
+  onCopy,
+}: {
+  agent: CopyableAgent;
+  type: RegisteredAgentType | undefined;
+  state: "queued" | "done" | undefined;
+  onCopy(): void;
+}) {
+  return (
+    <AgentCard
+      agent={agent}
+      community={agent.relay}
+      icon={<TypeIcon type={type} />}
+      detail={[type?.title, host(agent.relay)].filter(Boolean).join(" · ")}
+    >
+      {state === "done" ? (
+        <Button
+          size="compact"
+          variant="outline"
+          aria-label={`${agent.name} copied`}
+          disabled
+          // Keeps the owner's place for the next copy.
+          focusableWhenDisabled
+        >
+          <CheckIcon size={16} aria-hidden="true" /> Copied
+        </Button>
+      ) : (
+        <Button
+          size="compact"
+          variant="outline"
+          aria-label={`Copy ${agent.name}`}
+          loading={state === "queued"}
+          onClick={onCopy}
+        >
+          Copy
+        </Button>
+      )}
+    </AgentCard>
   );
 }
 

@@ -769,6 +769,8 @@ export type TeamChange = Omit<Team, "id"> & Readonly<{ id?: string }>;
  * machine, or an agent a community member shared. */
 export type PortInput = Readonly<
   | { source: PortSource; pubkey: string; type: string }
+  /** A copy of one of the owner's agents in another of their communities. */
+  | { source: "community"; pubkey: string }
   | {
       source: "shared";
       type: string;
@@ -791,9 +793,19 @@ function yours(identity: AgentIdentity, binding: Binding) {
     ownedBy(identity, binding)
   );
 }
+/** One of the owner's agents on this device in another of their communities,
+ * which Import can copy here as a new agent. */
+export type CopyableAgent = Readonly<{
+  pubkey: string;
+  name: string;
+  picture?: string;
+  /** The community it is in. */
+  relay: string;
+  type: string;
+}>;
 /** What Import can bring over, and the agents already in Yours. */
 export type FoundAgents = PortableAgents &
-  Readonly<{ here: readonly string[] }>;
+  Readonly<{ here: readonly string[]; copies: readonly CopyableAgent[] }>;
 /** What importing an old Buzz team did. Members that came are kept even when
  * others, or the team itself, did not. */
 export type TeamPort = Readonly<{
@@ -2055,10 +2067,36 @@ export class AgentsService extends Service implements Agents {
             .filter((identity) => yours(identity, binding))
             .map((identity) => identity.pubkey)
         : [],
+      copies: binding
+        ? this.identities
+            .filter((identity) => this.copyable(identity, binding))
+            .map(({ pubkey, name, picture, relay, type }) => ({
+              pubkey,
+              name,
+              ...(picture ? { picture } : {}),
+              relay,
+              type,
+            }))
+        : [],
     };
   }
 
+  /** Whether the agent is the binding owner's, in another community, with a
+   * type that can run here. */
+  private copyable(identity: AgentIdentity, binding: Binding) {
+    const kind = this.types().find((entry) => entry.key === identity.type);
+    return (
+      !identity.deleted &&
+      !identity.deleting &&
+      originOf(identity.relay) !== binding.origin &&
+      ownedBy(identity, binding) &&
+      !!kind &&
+      !kind.remote
+    );
+  }
+
   async port(input: PortInput): Promise<Ported> {
+    if (input.source === "community") return this.copy(input.pubkey);
     const { type } = input;
     if (input.source !== "shared")
       return this.portIdentity(input.source, input.pubkey, type);
@@ -2079,6 +2117,32 @@ export class AgentsService extends Service implements Agents {
       },
     );
     return { agent, notes: [] };
+  }
+
+  /** A new agent here with the name, type, settings and picture of one of the
+   * owner's agents in another community. Its key, conversations, memory and
+   * attention stay there, as does a picture in that community's media. */
+  private async copy(pubkey: string): Promise<Ported> {
+    const binding = this.selectedBinding();
+    const source = this.live(pubkey);
+    if (!source || !this.copyable(source, binding))
+      throw new Error("That agent is not in another of your communities");
+    const media = `${relayOrigin(source.relay)}/media/`;
+    const kept = source.picture?.startsWith(media) ? undefined : source.picture;
+    const { name, type } = source;
+    const agent = await this.add(
+      type,
+      async (native, destination, owner) => ({
+        agent: await native.create(destination, owner, type, name),
+      }),
+      { config: this.recordOf(source).config, picture: kept },
+      binding,
+    );
+    const notes =
+      source.picture && !kept
+        ? [`${name}'s picture stays in its own community. Choose one here.`]
+        : [];
+    return { agent, notes };
   }
 
   /** Takes over an identity an earlier agent system saved. One deleted here

@@ -149,6 +149,7 @@ function setup(
     more = [] as RegisteredAgentType[],
     dirtySettings = false,
     found = portable as readonly PortableAgent[],
+    copies = [] as FoundAgents["copies"],
     page = {} as {
       navigation?: PageNavigation;
       navigator?: Navigation;
@@ -295,6 +296,7 @@ function setup(
         teams: [],
         warnings: [],
         here: [],
+        copies,
       }),
     ),
     port: vi.fn(async () => ({ agent: created, notes: [] })),
@@ -1011,6 +1013,41 @@ it("imports an earlier agent as the chosen type and shows it in Your agents", as
   );
 });
 
+it("copies an agent from another community into a community with none", async () => {
+  const user = userEvent.setup();
+  const cy = "c".repeat(64);
+  const { agents } = setup([], {
+    found: [],
+    copies: [
+      {
+        pubkey: cy,
+        name: "Cy",
+        relay: "wss://other.example",
+        type: "test/echo",
+      },
+    ],
+  });
+  expect(
+    await screen.findByText("You have agents in your other communities."),
+  ).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: /Import them now/ }));
+  const dialog = screen.getByRole("dialog", { name: "Import an agent" });
+  const list = await within(dialog).findByRole("region", {
+    name: "Agents in your other communities",
+  });
+  expect(within(list).getByText(/other\.example/)).toBeInTheDocument();
+  // Old Buzz's guidance and type choice are for keys it hands over.
+  expect(within(dialog).queryByText(/Keeps each agent's key/)).toBeNull();
+  expect(
+    within(dialog).queryByText("No other agents found to import."),
+  ).toBeNull();
+  await user.click(within(list).getByRole("button", { name: "Copy Cy" }));
+  expect(agents.port).toHaveBeenCalledWith({ source: "community", pubkey: cy });
+  expect(
+    await within(list).findByRole("button", { name: "Cy copied" }),
+  ).toHaveAttribute("aria-disabled", "true");
+});
+
 it("queues several imports in a row and keeps the dialog open until they finish", async () => {
   const user = userEvent.setup();
   const { agents } = setup([]);
@@ -1148,6 +1185,7 @@ it("tells same-named agents to import apart by their keys", async () => {
     teams: [],
     warnings: [],
     here: [],
+    copies: [],
   });
   await user.click(
     await screen.findByRole("button", { name: /Import them now/ }),
@@ -1239,6 +1277,7 @@ it("shows only teams in Import a team and only agents in Import an agent", async
     teams: [nightShift],
     warnings: [],
     here: [],
+    copies: [],
   });
   await openImport(user);
   const teamDialog = screen.getByRole("dialog", { name: "Import a team" });
@@ -1272,6 +1311,7 @@ it("keeps Import a team from closing while a team import is pending", async () =
     teams: [nightShift],
     warnings: [],
     here: [],
+    copies: [],
   });
   let finish!: (value: Awaited<ReturnType<typeof agents.portTeam>>) => void;
   agents.portTeam.mockImplementationOnce(
@@ -1309,6 +1349,7 @@ it("lists old teams with how many members are here, and imports one as a team", 
     teams: [nightShift],
     warnings: [],
     here: ["c".repeat(64)],
+    copies: [],
   });
   await openImport(user);
   const teams = await screen.findByRole("region", { name: "Teams to import" });
@@ -1345,6 +1386,7 @@ it("counts no member of a team as here when they were imported into another comm
     teams: [nightShift],
     warnings: [],
     here: [],
+    copies: [],
   });
   await openImport(user);
   const teams = await screen.findByRole("region", { name: "Teams to import" });
@@ -1365,6 +1407,7 @@ it("keeps a team whose members are all here importable with no agents to list", 
     teams: [nightShift],
     warnings: [],
     here: [],
+    copies: [],
   });
   agents.portTeam.mockImplementationOnce(async () => ({
     team: await agents.saveTeam({
@@ -1402,6 +1445,7 @@ it("keeps Import open and names each part of a team import that did not come", a
     teams: [nightShift],
     warnings: [],
     here: [],
+    copies: [],
   });
   // Renamed in old Buzz since it was listed: messages name what was saved.
   const team = { id: "t", name: "Late Shift", instructions: "", members: [] };
@@ -1458,6 +1502,7 @@ it("neither counts nor adds a member another account on this device has", async 
     teams: [nightShift],
     warnings: [],
     here: [],
+    copies: [],
   });
   const bea = { ...agent("Bea", 2), pubkey: "b".repeat(64) };
   agents.portTeam.mockResolvedValueOnce({

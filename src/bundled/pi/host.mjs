@@ -244,6 +244,13 @@ export async function loadPackages(dir, limit = PACKAGE_MS) {
         throw new Error(
           "A provider it returns needs an id, name, auth and getModels",
         );
+      // The host never refreshes models, so a provider whose models come
+      // only from `fetchModels` would be missing from the list unexplained.
+      const empty = providers.find((provider) => !provider.getModels().length);
+      if (empty)
+        throw new Error(
+          `Provider ${empty.id} lists no models, and Buzz doesn't fetch a provider's models`,
+        );
       loaded.extensions.push(...extensions);
       loaded.providers.push(...providers);
     } catch (error) {

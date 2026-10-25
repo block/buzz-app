@@ -128,12 +128,25 @@ export default () => ({
 });
 ```
 
+Buzz uses the models a provider lists when it loads. It doesn't run a
+provider's `fetchModels`, so list every model in `models`.
+
 A provider takes the place of any with the same `id`, whether one of Pi's own
 or one from a package earlier in the list, so give yours an `id` of its own.
 
 Buzz's provider settings take only API keys. For a provider whose sign-in
-opens a browser, sign in with `pi` first: run `pi`, then `/login`. Buzz and
-`pi` share Pi's `auth.json`, so a sign-in or key saved in one works in both.
+opens a browser:
+
+- Give its `auth` an `oauth` method too, which Buzz uses to refresh the
+  sign-in.
+- Sign in with `pi`: run `pi`, then `/login`. `pi` signs in only to providers
+  it has, so the package must also register the provider, with the same `id`,
+  in a `pi.extensions` entry. Pi's
+  [custom provider guide](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/custom-provider.md#provide-authentication)
+  shows how.
+
+Buzz and `pi` share Pi's `auth.json`, so a sign-in or key saved in one works in
+both.
 
 ## 3. List the package in Pi's settings
 
@@ -178,8 +191,8 @@ package fails when:
 - Its setup throws or takes longer than 30 seconds.
 - An extension has a problem Pi durable rejects, such as a section key that
   isn't lowercase, or a name that's already taken.
-- A provider lacks an `id`, `name`, `auth` or `getModels`. One made with
-  `createProvider` has them all.
+- A provider lacks an `id`, `name`, `auth` or `getModels`, which one made
+  with `createProvider` always has, or lists no models.
 - Its source isn't a local folder, or its `pi.durable` isn't a list.
 
 When a provider is missing from the **Provider** list, its package didn't load.

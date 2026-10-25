@@ -346,6 +346,23 @@ const PACKAGES: Record<string, Record<string, string>> = {
     "durable.js":
       'export default () => ({ providers: [{ id: "half", name: "Half" }] });',
   },
+  fetches: {
+    "package.json":
+      '{ "type": "module", "pi": { "durable": ["./durable.js"] } }',
+    "durable.js": `
+import { createProvider, envApiKeyAuth } from "@earendil-works/pi-ai";
+import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
+export default () => ({
+  providers: [createProvider({
+    id: "fetched",
+    auth: { apiKey: envApiKeyAuth("Fetched key", ["FETCHED_KEY"]) },
+    api: openAICompletionsApi(),
+    models: [],
+    fetchModels: async () => [],
+  })],
+});
+`,
+  },
   "not-a-list": {
     "package.json": '{ "type": "module", "pi": { "durable": "./durable.js" } }',
   },
@@ -592,6 +609,7 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
           "../clash",
           "../invalid",
           "../half-provider",
+          "../fetches",
           "../not-a-list",
           "../pi-only",
           { source: "~/good" },
@@ -639,6 +657,11 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
       {
         source: "../half-provider",
         error: "A provider it returns needs an id, name, auth and getModels",
+      },
+      {
+        source: "../fetches",
+        error:
+          "Provider fetched lists no models, and Buzz doesn't fetch a provider's models",
       },
       {
         source: "../not-a-list",

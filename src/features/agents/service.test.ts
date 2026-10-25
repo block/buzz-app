@@ -7798,3 +7798,62 @@ it.each(["other-channel", "missing"])(
     ]);
   },
 );
+
+it.each([false, true])(
+  "delivers confirmed watch matches while another destination waits without replaying them (replay: %s)",
+  async (replay) => {
+    const { service, run, emit, confirm, session } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    const destination = "11111111-1111-1111-1111-111111111111";
+    const list = session.channels.list();
+    let cached = true;
+    vi.spyOn(session.channels, "list").mockImplementation(() => ({
+      ...list,
+      channels: [
+        ...list.channels,
+        {
+          id: destination,
+          name: "Destination",
+          members: [viewer, bot],
+          ...(cached ? { cached: true as const } : {}),
+        },
+      ],
+    }));
+    const watch = service.find(bot)?.attention["watch/channel"]?.value;
+    if (watch?.type !== "event") throw new Error("fixture");
+    await service.save(bot, {
+      attentionEnabled: true,
+      attention: {
+        "watch/channel": watch,
+        "watch/report": { ...watch, channel: destination },
+      },
+    });
+    emit({
+      ...(replay ? { replay: true as const } : {}),
+      channelId: channel,
+      events: [
+        deploy("mixed-destinations", {
+          created_at: Math.floor(Date.now() / 1000),
+        }),
+      ],
+    });
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    expect(run.mock.calls[0]?.[0].trigger).toMatchObject({
+      type: "watch",
+      slug: "watch/channel",
+    });
+    confirm("saved", [viewer, bot]);
+    await settle();
+    expect(run).toHaveBeenCalledTimes(1);
+    cached = false;
+    confirm("saved", [viewer, bot]);
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+    expect(run.mock.calls[1]?.[0].trigger).toMatchObject({
+      type: "attention",
+      channel: destination,
+    });
+    confirm("saved", [viewer, bot]);
+    await settle();
+    expect(run).toHaveBeenCalledTimes(2);
+  },
+);

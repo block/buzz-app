@@ -238,6 +238,13 @@ type CompiledWatch = Omit<WatchTrigger, "type" | "event">;
 /** One agent's runtime, for as long as its identity exists. Edits do not
  * replace it: each job reads the agent as it is when the job starts, and the
  * watches are recompiled only when its attention changes. */
+type PendingEvent = {
+  event: RelayEvent;
+  channelId?: string;
+  done?: ReadonlySet<string>;
+};
+type Heard = { triggers: Trigger[]; held?: true };
+
 type Runner = {
   readonly pubkey: string;
   /** The registration whose `run` it calls; a new one aborts the in-flight run. */
@@ -264,7 +271,7 @@ type Runner = {
   readonly seenIn: Map<string, Set<string>>;
   /** Replayed events waiting, oldest first, until the agent has room for the
    * jobs each makes. */
-  readonly backlog: { event: RelayEvent; channelId?: string }[];
+  readonly backlog: PendingEvent[];
   /** A missed event catch-up is still giving out, and the watches that have
    * it: it makes more watch jobs than the agent has room for at once. */
   fanning?: { id: string; done: ReadonlySet<string> };
@@ -277,7 +284,7 @@ type Runner = {
   transitioning: boolean;
   /** Watched events whose channel roster is not confirmed yet, by id: they are
    * matched again once it is (see `RunnerHost.member`). */
-  readonly held: Map<string, { event: RelayEvent; channelId?: string }>;
+  readonly held: Map<string, PendingEvent>;
   /** Notes plugins left for its next turn, grouped by channel and targeted root. */
   readonly notes: Map<
     string,
@@ -905,16 +912,18 @@ export class AgentRunners {
       this.submit(runner, agent, job);
     }
     while (runner.backlog.length) {
-      const { event, channelId } = runner.backlog[0] as Runner["backlog"][0];
-      const triggers = this.heard(runner, agent, event);
+      const { event, channelId, done } = runner
+        .backlog[0] as Runner["backlog"][0];
+      const heard = this.heard(runner, agent, event, done);
       if (
-        triggers === "held"
-          ? runner.held.size >= HELD_LIMIT
-          : !this.takes(runner, triggers)
+        (heard.held &&
+          !heard.triggers.length &&
+          runner.held.size >= HELD_LIMIT) ||
+        !this.takes(runner, heard.triggers)
       )
         return;
       runner.backlog.shift();
-      this.deliver(runner, agent, event, channelId, triggers);
+      this.deliver(runner, agent, event, channelId, heard, done);
     }
   }
   /** Gives the agent `event` once, however many times it arrives. */
@@ -932,12 +941,19 @@ export class AgentRunners {
   }
   /** Saves `event` as heard by each of the agent's streams it is in and has
    * not passed yet, so catch-up after a restart does not give it again. */
-  private heardLive(agent: Agent, event: RelayEvent) {
+  private heardLive(
+    agent: Agent,
+    event: RelayEvent,
+    done?: ReadonlySet<string>,
+  ) {
     if (event.kind !== 9) return;
     const channel = channelOf(event);
     let changed = false;
     for (const stream of streamsOf(agent))
-      if (stream.channel === undefined || stream.channel === channel)
+      if (
+        (!done || done.has(stream.slug)) &&
+        (stream.channel === undefined || stream.channel === channel)
+      )
         changed = this.heardIn(stream.key, event) || changed;
     if (changed) this.saveCheckpoints();
   }
@@ -1263,16 +1279,19 @@ export class AgentRunners {
       const heard =
         (!fanning && this.hasSeen(runner, event.id, channel)) ||
         event.pubkey === agent.pubkey
-          ? []
+          ? { triggers: [] }
           : this.heard(runner, agent, event);
-      if (heard === "held") break;
       const listened = event.created_at >= pass.community.connection.start;
-      const triggers = heard.filter((trigger) =>
+      const triggers = heard.triggers.filter((trigger) =>
         trigger.type === "watch"
           ? !fanning?.done.has(trigger.slug) &&
             this.missed(runner, trigger, listened)
           : !fanning && listened,
       );
+      if (heard.held) {
+        this.fanOut(runner, agent, event, triggers, slug, skipped);
+        break;
+      }
       const nextMentions = [...mentions];
       const nextWatches = new Map(
         [...watches].map(([key, list]) => [key, [...list]]),
@@ -1455,19 +1474,30 @@ export class AgentRunners {
     agent: Agent,
     event: RelayEvent,
     channelId: string | undefined,
-    triggers = this.heard(runner, agent, event),
+    heard = this.heard(runner, agent, event),
+    done: ReadonlySet<string> = new Set(),
   ) {
-    if (triggers === "held") {
-      runner.held.set(event.id, { event, ...(channelId ? { channelId } : {}) });
+    const { triggers } = heard;
+    const delivered = new Set([
+      ...done,
+      ...triggers.flatMap((trigger) =>
+        trigger.type === "watch" ? [trigger.slug] : [],
+      ),
+    ]);
+    if (heard.held) {
+      runner.held.set(event.id, {
+        event,
+        ...(channelId ? { channelId } : {}),
+        done: delivered,
+      });
       if (runner.held.size > HELD_LIMIT) {
         runner.held.delete(runner.held.keys().next().value as string);
         console.warn(
           `Agent ${agent.name} dropped a watched event its roster held`,
         );
       }
-      return;
     }
-    this.heardLive(agent, event);
+    this.heardLive(agent, event, heard.held ? delivered : undefined);
     for (const trigger of triggers) {
       const job = {
         trigger,
@@ -1670,22 +1700,24 @@ export class AgentRunners {
       this.host.setClassifierKey("refused", generation);
     return pass ? result : undefined;
   }
-  /** What `event` wakes in the agent, or "held" while a watch it matches waits
+  /** What `event` wakes now, and whether other matching watches still wait
    * for its channel's roster to be confirmed. */
   private heard(
     runner: Runner,
     agent: Agent,
     event: RelayEvent,
-  ): Trigger[] | "held" {
-    if (this.stopped[runner.pubkey]?.[event.id] !== undefined) return [];
+    done: ReadonlySet<string> = new Set(),
+  ): Heard {
+    if (this.stopped[runner.pubkey]?.[event.id] !== undefined)
+      return { triggers: [] };
     const wrote = (id: string) => runner.wrote.has(id);
     // Another of the owner's agents wakes it only by naming it, wherever: were a
     // watch enough, two agents replying to each other would never stop. The
     // claimed owner only narrows this; the type verifies it before answering.
     if (event.tags.some((tag) => tag[0] === "auth" && tag[1] === agent.owner))
       return CHAT_KINDS.includes(event.kind) && tagsAgent(event, agent.pubkey)
-        ? [{ type: "mention", event }]
-        : [];
+        ? { triggers: [{ type: "mention", event }] }
+        : { triggers: [] };
     // A one-to-one DM is always addressed to the other member, whoever else it
     // names, so no mention is needed. Only new messages: an edit is not a new
     // turn, and a reaction is not conversation. A group DM still needs the
@@ -1695,30 +1727,34 @@ export class AgentRunners {
       event.pubkey !== agent.pubkey &&
       this.host.dm(agent, event)
     )
-      return [{ type: "mention", event }];
+      return { triggers: [{ type: "mention", event }] };
     // Addressed events never reach a watch. Only conversation starts a run: not
     // an encrypted DM (kind 4) it cannot read yet, nor a reaction to its message.
     if (addressedTo(event, agent.pubkey, wrote))
       return CHAT_KINDS.includes(event.kind)
-        ? [{ type: "mention", event }]
-        : [];
-    if (!agent.attentionEnabled) return [];
-    const matches = this.watches(runner, agent).filter(({ watch }) =>
-      watchMatches(watch, event),
+        ? { triggers: [{ type: "mention", event }] }
+        : { triggers: [] };
+    if (!agent.attentionEnabled) return { triggers: [] };
+    const matches = this.watches(runner, agent).filter(
+      ({ slug, watch }) => !done.has(slug) && watchMatches(watch, event),
     );
-    if (!matches.length) return [];
+    if (!matches.length) return { triggers: [] };
     const member = this.host.member(agent, event);
-    if (member === undefined) return "held";
-    if (!member) return [];
+    if (member === undefined) return { triggers: [], held: true };
+    if (!member) return { triggers: [] };
     const destinations = matches.map(({ watch }) =>
       watch.channel
         ? this.host.member(agent, { tags: [["h", watch.channel]] })
         : true,
     );
-    if (destinations.includes(undefined)) return "held";
-    return matches.flatMap((match, index) =>
-      destinations[index] ? [{ type: "watch" as const, event, ...match }] : [],
-    );
+    return {
+      triggers: matches.flatMap((match, index) =>
+        destinations[index]
+          ? [{ type: "watch" as const, event, ...match }]
+          : [],
+      ),
+      ...(destinations.includes(undefined) ? { held: true as const } : {}),
+    };
   }
   /** The job as it should run now, or undefined when it should not run: a
    * watch's event is matched again against the agent's current attention, so

@@ -92,7 +92,7 @@ export function ChatSharedMark({
 }: {
   session: RelaySession;
   channel: ChannelSummary | undefined;
-  onOpen(): void;
+  onOpen(trigger: HTMLElement): void;
 }) {
   const shared = useSharedWithPeople(session, channel);
   const owner = useSoloOwner(session, channel);
@@ -107,7 +107,7 @@ export function ChatSharedMark({
         aria-label={label}
         title={label}
         aria-haspopup="dialog"
-        onClick={onOpen}
+        onClick={(event) => onOpen(event.currentTarget)}
         icon={
           owner ? (
             <SoloOwnerAvatar owner={owner} />

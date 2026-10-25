@@ -730,11 +730,18 @@ test("unified chat naming and lifetime retain host focus and save only explicit 
 }) => {
   await page.goto(app.origin);
   await newChat(page);
+  // Chat settings lives in the chat actions menu, which keeps return focus.
   const actions = page.getByRole("button", {
-    name: "Chat settings",
+    name: "Chat actions",
     exact: true,
   });
-  await actions.click();
+  const openSettings = async () => {
+    await actions.click();
+    await page
+      .getByRole("menuitem", { name: "Chat settings", exact: true })
+      .click();
+  };
+  await openSettings();
   const settings = page.getByRole("dialog", {
     name: "Edit chat",
     exact: true,
@@ -811,7 +818,7 @@ test("unified chat naming and lifetime retain host focus and save only explicit 
   await expect(settings).not.toBeVisible();
   await expect(actions).toBeFocused();
   expect(app.report.detailsPublications ?? []).toHaveLength(0);
-  await actions.click();
+  await openSettings();
   await expect(canvas).toHaveValue("Keep this local draft");
   await expect(draftName).toHaveValue(
     "Make contrast meet accessibility standards",
@@ -826,15 +833,7 @@ test("unified chat naming and lifetime retain host focus and save only explicit 
   await expect(
     page.getByText(`primary ${id} message 0`, { exact: false }),
   ).toBeVisible();
-  // A created chat reaches its settings through the chat actions menu.
-  const chatActions = page.getByRole("button", {
-    name: "Chat actions",
-    exact: true,
-  });
-  await chatActions.click();
-  await page
-    .getByRole("menuitem", { name: "Chat settings", exact: true })
-    .click();
+  await openSettings();
   const lifetime = page.getByRole("dialog", {
     name: "Edit chat",
     exact: true,
@@ -860,7 +859,7 @@ test("unified chat naming and lifetime retain host focus and save only explicit 
   await page.keyboard.press("Shift+Tab");
   await page.keyboard.press("Enter");
   await expect(lifetime).not.toBeVisible();
-  await expect(chatActions).toBeFocused();
+  await expect(actions).toBeFocused();
   expect(app.report.detailsPublications ?? []).toHaveLength(0);
   await row.focus();
   await row.press("Shift+F10");

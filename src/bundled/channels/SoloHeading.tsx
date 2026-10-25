@@ -1,4 +1,6 @@
 import {
+  useCallback,
+  useEffect,
   useRef,
   useState,
   useSyncExternalStore,
@@ -29,11 +31,7 @@ import {
   ChannelMembersButton,
   ChannelMembersDialog,
 } from "./ChannelMembersDialog";
-import {
-  NewWorkspaceDialog,
-  SoloChatMenuItems,
-  useChatCopy,
-} from "./SoloChatMenu";
+import { NewWorkspaceDialog, SoloChatMenuItems } from "./SoloChatMenu";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { useSoloOwner } from "./ChatSharedMark";
 
@@ -52,6 +50,8 @@ type SoloToolbarProps = {
   /** Absent where no host can finish a conversion. */
   onConvert?: ((trigger: HTMLElement | null) => void) | undefined;
   onLifecycle(action: ChannelLifecycleAction, trigger?: HTMLElement): void;
+  /** Reports a move started here; see `useSoloMoveRecovery`. */
+  onMove(move: Promise<unknown>): void;
 };
 
 /** The header of a conversation shown with the Solo treatment. */
@@ -75,6 +75,7 @@ export function SoloToolbar({
   onOpen,
   onConvert,
   onLifecycle,
+  onMove,
 }: SoloToolbarProps) {
   const actionsTrigger = useRef<HTMLButtonElement>(null);
   // Each dialog returns focus to the control that opened it.
@@ -84,22 +85,9 @@ export function SoloToolbar({
   }>();
   const [sharing, setSharing] = useState<{ visit: AbortSignal | undefined }>();
   const [creatingWorkspace, setCreatingWorkspace] = useState(false);
-  const [copy, copyNotice] = useChatCopy();
   const owner = useSoloOwner(session, channel);
   const [readError, setReadError] = useState<string>();
-  // The sidebar may be hidden, so a move started here reports its own failure.
   const preferences = session.soloPreferences;
-  const placement = useSyncExternalStore(
-    preferences.subscribe,
-    preferences.snapshot,
-    preferences.snapshot,
-  );
-  const [moving, setMoving] = useState(false);
-  const failedMove = moving
-    ? placement.moves?.find(
-        (move) => move.channelId === channel.id && move.error,
-      )
-    : undefined;
   return (
     <>
       {channel.archived ? (
@@ -148,12 +136,10 @@ export function SoloToolbar({
               channel={channel}
               onShare={() => setSharing({ visit: signal })}
               onConvert={onConvert && (() => onConvert(actionsTrigger.current))}
-              onMove={(projectId) => {
-                setMoving(true);
-                void preferences.assign(channel.id, projectId).catch(() => {});
-              }}
+              onMove={(projectId) =>
+                onMove(preferences.assign(channel.id, projectId))
+              }
               onNewWorkspace={() => setCreatingWorkspace(true)}
-              onCopy={copy}
               onSettings={() =>
                 setSettingsOpen({
                   visit: signal,
@@ -187,36 +173,16 @@ export function SoloToolbar({
           close={() => setCreatingWorkspace(false)}
           create={(name) => {
             if (!preferences.writable) return false;
-            setMoving(true);
-            void preferences
-              .createAndAssign(channel.id, { id: crypto.randomUUID(), name })
-              .catch(() => {});
+            onMove(
+              preferences.createAndAssign(channel.id, {
+                id: crypto.randomUUID(),
+                name,
+              }),
+            );
             setCreatingWorkspace(false);
             return true;
           }}
         />
-      )}
-      {copyNotice}
-      {failedMove?.error && (
-        <ToastNotice
-          key={`${failedMove.id}:${failedMove.error}`}
-          title="Chat wasn’t moved"
-          description={failedMove.error}
-          onDismiss={() => {
-            preferences.dismissMoveError(channel.id);
-            setMoving(false);
-          }}
-        >
-          <Button
-            size="sm"
-            disabled={!preferences.writable}
-            onClick={() =>
-              void preferences.retryMove(channel.id).catch(() => {})
-            }
-          >
-            Retry move
-          </Button>
-        </ToastNotice>
       )}
       {readError && (
         <ToastNotice
@@ -238,4 +204,71 @@ export function SoloToolbar({
       )}
     </>
   );
+}
+
+/** Reports failed moves started from Solo headers. The sidebar may be hidden,
+ * so a header move reports its own failure. The page owns this, so recovery
+ * outlives header remounts and side tab switches. A move stays tracked until it
+ * succeeds or its failure is dismissed. */
+export function useSoloMoveRecovery(session: RelaySession) {
+  const preferences = session.soloPreferences;
+  const placement = useSyncExternalStore(
+    preferences.subscribe,
+    preferences.snapshot,
+    preferences.snapshot,
+  );
+  const [tracked, setTracked] = useState<ReadonlySet<string>>(() => new Set());
+  const untrack = useCallback(
+    (channelId: string) =>
+      setTracked((current) => {
+        if (!current.has(channelId)) return current;
+        const next = new Set(current);
+        next.delete(channelId);
+        return next;
+      }),
+    [],
+  );
+  const track = useCallback(
+    (channelId: string, move: Promise<unknown>) => {
+      setTracked((current) =>
+        current.has(channelId) ? current : new Set(current).add(channelId),
+      );
+      void move.then(
+        () => untrack(channelId),
+        () => {},
+      );
+    },
+    [untrack],
+  );
+  // A move settled elsewhere, such as the sidebar's own Retry or Dismiss,
+  // leaves no record and is no longer the header's to report.
+  useEffect(() => {
+    for (const channelId of tracked)
+      if (!placement.moves?.some((move) => move.channelId === channelId))
+        untrack(channelId);
+  }, [placement, tracked, untrack]);
+  const notices = placement.moves?.map(
+    ({ id, channelId, error }) =>
+      error &&
+      tracked.has(channelId) && (
+        <ToastNotice
+          key={`${id}:${error}`}
+          title="Chat wasn’t moved"
+          description={error}
+          onDismiss={() => {
+            preferences.dismissMoveError(channelId);
+            untrack(channelId);
+          }}
+        >
+          <Button
+            size="sm"
+            disabled={!preferences.writable}
+            onClick={() => track(channelId, preferences.retryMove(channelId))}
+          >
+            Retry move
+          </Button>
+        </ToastNotice>
+      ),
+  );
+  return [track, notices] as const;
 }

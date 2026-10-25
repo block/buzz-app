@@ -739,8 +739,8 @@ it("offers the same chat actions from the header and the sidebar row", async () 
   expect(header).toEqual([
     "Chat settings",
     "Move to",
-    "Copy",
     "Share access",
+    "Copy link",
     "Convert to channel",
     "Archive chat",
     "Delete chat",
@@ -870,6 +870,10 @@ it("names the owner on the access controls of someone else's shared chat", async
   expect(
     await screen.findByRole("dialog", { name: /Share access/ }),
   ).toBeInTheDocument();
+  // Closing returns focus to the mark, not the row's select button.
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(mark).toHaveFocus();
 });
 
 it.each([

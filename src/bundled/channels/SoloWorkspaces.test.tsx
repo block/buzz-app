@@ -267,12 +267,9 @@ it("copies the chat link", async () => {
   await user.click(
     await screen.findByRole("button", { name: "Actions for Planning" }),
   );
-  (await screen.findByRole("menuitem", { name: "Copy" })).focus();
-  await user.keyboard("{ArrowRight}");
-  await user.click(
-    await screen.findByRole("menuitem", { name: "Copy link to chat" }),
-  );
+  await user.click(await screen.findByRole("menuitem", { name: "Copy link" }));
   expect(write).toHaveBeenCalledWith("buzz://channel/chat");
+  expect(await screen.findByText("Link copied.")).toBeVisible();
 });
 
 it("reports a clipboard failure without claiming success", async () => {
@@ -285,14 +282,8 @@ it("reports a clipboard failure without claiming success", async () => {
   await user.click(
     await screen.findByRole("button", { name: "Actions for Planning" }),
   );
-  (await screen.findByRole("menuitem", { name: "Copy" })).focus();
-  await user.keyboard("{ArrowRight}");
-  await user.click(
-    await screen.findByRole("menuitem", { name: "Copy chat ID" }),
-  );
-  expect(
-    await screen.findByText("Couldn’t copy. Try again from the chat menu."),
-  ).toBeVisible();
+  await user.click(await screen.findByRole("menuitem", { name: "Copy link" }));
+  expect(await screen.findByText("Couldn’t copy the link.")).toBeVisible();
 });
 
 it("only offers Chats as a destination from a project", async () => {

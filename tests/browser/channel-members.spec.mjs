@@ -343,7 +343,7 @@ test.describe("Members on an unsupported Solo chat destination", () => {
       }),
     ).toEqual({ status: "opened" });
     const dialog = page.getByRole("dialog", {
-      name: "Manage members",
+      name: "Share access",
       exact: true,
     });
     // As in a channel, the exact message opens in its thread.

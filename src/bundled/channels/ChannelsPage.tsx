@@ -24,7 +24,7 @@ import {
 } from "../../features/channel-navigation/routes";
 import { WorkspaceControl } from "../../features/solo/WorkspaceControl";
 import type { ChannelLifecycleAction } from "../../features/relay/channel-lifecycle-protocol";
-import { SoloHeading, SoloToolbar } from "./SoloHeading";
+import { SoloHeading, SoloToolbar, useSoloMoveRecovery } from "./SoloHeading";
 import { ChannelCanvasDialog } from "./ChannelCanvasDialog";
 import { NewMessage } from "../../features/direct-messages/NewMessage";
 import { Panel } from "../../shared/design-system/ui/Panel";
@@ -226,6 +226,7 @@ function ChannelWorkspace({
   const [joinNoticeHeight, setJoinNoticeHeight] = useState(0);
   const [contentReadyChannel, setContentReadyChannel] = useState<string>();
   const [composerFocus, setComposerFocus] = useState(0);
+  const [trackSoloMove, soloMoveNotices] = useSoloMoveRecovery(queries);
   const historyContainer = useRef<HTMLElement>(null);
   // A visit applied by a header opening must not take that opening's focus.
   const [preservedVisit, setPreservedVisit] = useState<PageNavigation>();
@@ -799,6 +800,7 @@ function ChannelWorkspace({
           onLifecycle={(action, trigger) =>
             handoff?.openLifecycle(channel, action, trigger, navigation?.signal)
           }
+          onMove={(move) => trackSoloMove(channel.id, move)}
         />
       ),
     extensions,
@@ -1623,6 +1625,7 @@ function ChannelWorkspace({
                   onLifecycle={(action, trigger) =>
                     chooseLifecycle(current, action, trigger)
                   }
+                  onMove={(move) => trackSoloMove(current.id, move)}
                   paneToggle={
                     hasChannelPanel &&
                     !showingChannelPanel && (
@@ -1941,6 +1944,7 @@ function ChannelWorkspace({
       >
         {workspace}
       </ConversationChannel>
+      {soloMoveNotices}
     </LinkThreadTabContext>
   );
 }

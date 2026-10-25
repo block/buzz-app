@@ -23,15 +23,14 @@ import {
   MenuSubmenuPopup,
   MenuSubmenuTrigger,
 } from "../../shared/design-system/ui/Menu";
-import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import {
-  CopyIcon,
   FolderSimpleIcon,
   HashArrowInIcon,
   GearIcon,
   ShareIcon,
 } from "../../shared/design-system/icons";
 import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
+import { ChannelCopyLinkMenuItem } from "./ChannelCopyLinkMenuItem";
 import { ChannelLifecycleMenu } from "./ChannelLifecycleMenu";
 import { ChannelReadMenuItem } from "./ChannelReadMenuItem";
 
@@ -43,7 +42,6 @@ export function SoloChatMenuItems({
   onConvert,
   onMove,
   onNewWorkspace,
-  onCopy,
   onSettings,
   onLifecycle,
   onReadResult,
@@ -55,7 +53,6 @@ export function SoloChatMenuItems({
   onConvert?: (() => void) | undefined;
   onMove(projectId?: string): void;
   onNewWorkspace(): void;
-  onCopy(value: string, label: string): void;
   onSettings(): void;
   /** Absent where no owner can confirm lifecycle actions. */
   onLifecycle?: ((action: ChannelLifecycleAction) => void) | undefined;
@@ -126,53 +123,26 @@ export function SoloChatMenuItems({
           </MenuSubmenuPopup>
         </MenuSubmenu>
       )}
-      <MenuSubmenu>
-        <MenuSubmenuTrigger>
-          <MenuIcon>
-            <CopyIcon size={14} />
-          </MenuIcon>
-          Copy
-        </MenuSubmenuTrigger>
-        <MenuSubmenuPopup aria-label="Copy chat">
-          <MenuItem onClick={() => onCopy(channel.name, "Chat name")}>
-            Copy chat name
-          </MenuItem>
-          <MenuItem onClick={() => onCopy(channel.id, "Chat ID")}>
-            Copy chat ID
-          </MenuItem>
-          <MenuItem
-            onClick={() =>
-              onCopy(
-                `buzz://channel/${encodeURIComponent(channel.id)}`,
-                "Chat link",
-              )
-            }
-          >
-            Copy link to chat
-          </MenuItem>
-        </MenuSubmenuPopup>
-      </MenuSubmenu>
+      <MenuSeparator />
       {active && (
-        <>
-          <MenuSeparator />
-          <MenuItem
-            disabled={!canShareConversation(session, channel)}
-            onClick={onShare}
-          >
-            <MenuIcon>
-              <ShareIcon size={14} />
-            </MenuIcon>
-            Share access
-          </MenuItem>
-          {onConvert && canConvertToChannel(session, channel) && (
-            <MenuItem onClick={onConvert}>
-              <MenuIcon>
-                <HashArrowInIcon size={14} />
-              </MenuIcon>
-              {conversionLabel(session, channel.id)}
-            </MenuItem>
-          )}
-        </>
+        <MenuItem
+          disabled={!canShareConversation(session, channel)}
+          onClick={onShare}
+        >
+          <MenuIcon>
+            <ShareIcon size={14} />
+          </MenuIcon>
+          Share access
+        </MenuItem>
+      )}
+      <ChannelCopyLinkMenuItem channelId={channel.id} />
+      {active && onConvert && canConvertToChannel(session, channel) && (
+        <MenuItem onClick={onConvert}>
+          <MenuIcon>
+            <HashArrowInIcon size={14} />
+          </MenuIcon>
+          {conversionLabel(session, channel.id)}
+        </MenuItem>
       )}
       {onLifecycle && !channel.readOnly && !channel.cached && (
         <ChannelLifecycleMenu
@@ -186,39 +156,6 @@ export function SoloChatMenuItems({
       )}
     </>
   );
-}
-
-/** Copies a chat detail and reports the result after the menu closes. */
-export function useChatCopy() {
-  const [notice, setNotice] = useState<{ text: string; error: boolean }>();
-  const copying = useRef(false);
-  const copy = async (value: string, label: string) => {
-    if (copying.current) return;
-    copying.current = true;
-    setNotice(undefined);
-    try {
-      await navigator.clipboard.writeText(value);
-      setNotice({ text: `${label} copied`, error: false });
-    } catch {
-      setNotice({
-        text: "Couldn’t copy. Try again from the chat menu.",
-        error: true,
-      });
-    } finally {
-      copying.current = false;
-    }
-  };
-  return [
-    (value: string, label: string) => void copy(value, label),
-    notice && (
-      <ToastNotice
-        title={notice.text}
-        tone={notice.error ? "error" : "success"}
-        timeout={notice.error ? 0 : 4000}
-        onDismiss={() => setNotice(undefined)}
-      />
-    ),
-  ] as const;
 }
 
 export function NewWorkspaceDialog({

@@ -525,6 +525,15 @@ fn isolated_agent_ipc_probe() {
         .invoke_handler(crate::commands())
         .build(crate::app_context())
         .unwrap();
+    app.manage(crate::app_agents::AppAgentHost::new(
+        Ok(app
+            .path()
+            .app_data_dir()
+            .unwrap()
+            .join("agents/identities.json")),
+        Err("unused".into()),
+        false,
+    ));
     let view = tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::default())
         .build()
         .unwrap();
@@ -733,8 +742,9 @@ fn isolated_agent_ipc_probe() {
             .join("agents/identities.json");
         assert!(path.starts_with(std::env::var("HOME").unwrap()));
         let saved = serde_json::json!([{
-            "pubkey": "a".repeat(64), "name": "Current agent",
-            "auth": "private attestation", "picture": "https://images.example/current.png"
+            "pubkey": "a".repeat(64), "relay": "wss://relay.test", "owner": public,
+            "auth": "private attestation", "type": "plugin/agent", "name": "Current agent",
+            "picture": "https://images.example/current.png"
         }])
         .to_string();
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();

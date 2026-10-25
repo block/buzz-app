@@ -4,24 +4,36 @@
     "rows": [
       {
         "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "name": "Ada",
-        "picture": "https://images.example/ada.png",
+        "relay": "wss://relay.example",
+        "owner": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
         "auth": "private attestation",
-        "owner": "private owner",
-        "type": "plugin/agent"
+        "type": "plugin/agent",
+        "name": "Ada",
+        "picture": "https://images.example/ada.png"
       },
       {
         "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "name": "Ada elsewhere",
-        "relay": "wss://other.example"
+        "relay": "wss://other.example",
+        "owner": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "auth": "private attestation",
+        "type": "plugin/agent",
+        "name": "Ada elsewhere"
       },
       {
         "pubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "relay": "wss://relay.example",
+        "owner": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "auth": "private attestation",
+        "type": "plugin/agent",
         "name": "Bo",
         "picture": "file:///private"
       },
       {
         "pubkey": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "relay": "wss://relay.example",
+        "owner": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "auth": "private attestation",
+        "type": "plugin/agent",
         "name": "Deleted",
         "deleted": true
       }
@@ -54,6 +66,10 @@
     "rows": [
       {
         "pubkey": "bad",
+        "relay": "wss://relay.example",
+        "owner": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "auth": "private attestation",
+        "type": "plugin/agent",
         "name": "Bad"
       }
     ]
@@ -63,6 +79,10 @@
     "rows": [
       {
         "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "relay": "wss://relay.example",
+        "owner": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "auth": "private attestation",
+        "type": "plugin/agent",
         "name": "Ada",
         "deleted": "false"
       }
@@ -72,7 +92,11 @@
     "name": "older identity without a name",
     "rows": [
       {
-        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "relay": "wss://relay.example",
+        "owner": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "auth": "private attestation",
+        "type": "plugin/agent"
       }
     ],
     "expected": {
@@ -90,7 +114,24 @@
     "rows": [
       {
         "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "relay": "wss://relay.example",
+        "owner": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "auth": "private attestation",
+        "type": "plugin/agent",
         "name": null
+      }
+    ]
+  },
+  {
+    "name": "overlong name",
+    "rows": [
+      {
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "relay": "wss://relay.example",
+        "owner": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "auth": "private attestation",
+        "type": "plugin/agent",
+        "name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
       }
     ]
   }

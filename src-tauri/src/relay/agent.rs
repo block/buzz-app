@@ -2,6 +2,7 @@
 use super::{origin, send, Result};
 use crate::identity::IdentityHost;
 use base64::{engine::general_purpose::STANDARD, Engine};
+use buzz_agent_controller::AppAgents;
 use hmac::{Hmac, Mac};
 use nostr::key::{PublicKey as NostrPublicKey, SecretKey as NostrSecretKey};
 use nostr::nips::nip44::{self, v2::ConversationKey};
@@ -9,11 +10,7 @@ use secp256k1::{schnorr::Signature, Keypair, Secp256k1, XOnlyPublicKey};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::{
-    collections::{BTreeMap, HashSet},
-    path::PathBuf,
-};
-use tauri::Manager;
+use std::collections::{BTreeMap, HashSet};
 
 const HEX: &str = "0123456789abcdef";
 fn key(value: &str) -> bool {
@@ -775,118 +772,61 @@ fn decode_memory_events(
     Ok(())
 }
 
-fn library_field(row: &Value, name: &str, max: usize) -> Result<String> {
-    let value = row
-        .get(name)
-        .and_then(Value::as_str)
-        .ok_or("Current Buzz library unavailable")?;
-    if value.encode_utf16().count() > max {
-        return Err("Current Buzz library unavailable".into());
-    }
-    Ok(value.to_owned())
-}
-
 #[tauri::command]
-pub(crate) async fn relay_agent_library<R: tauri::Runtime>(
-    app: tauri::AppHandle<R>,
+pub(crate) async fn relay_agent_library(
+    state: tauri::State<'_, crate::app_agents::AppAgentHost>,
 ) -> Result<Value> {
-    let parent = app
-        .path()
-        .app_data_dir()
+    let agents = state
+        .agents()
         .map_err(|_| "Current Buzz library unavailable")?;
-    let path = parent.join("agents/identities.json");
-    tauri::async_runtime::spawn_blocking(move || read_agent_library(path))
+    tauri::async_runtime::spawn_blocking(move || read_agent_library(&agents))
         .await
         .map_err(|_| "Current Buzz library unavailable".to_owned())?
 }
 
-fn read_agent_library(path: PathBuf) -> Result<Value> {
-    use std::{fs::OpenOptions, io::Read};
-    let mut options = OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
-    }
-    let file = match options.open(path) {
-        Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(json!({"definitions": [], "identities": []}));
-        }
-        Err(_) => return Err("Current Buzz library unavailable".into()),
-    };
-    let meta = file
-        .metadata()
+/// Public display metadata for the identities Agents saved, read through their
+/// owner so both share one schema.
+fn read_agent_library(agents: &AppAgents) -> Result<Value> {
+    let rows = agents
+        .list()
         .map_err(|_| "Current Buzz library unavailable")?;
-    if !meta.is_file() || meta.len() > 8 * 1024 * 1024 {
-        return Err("Current Buzz library unavailable".into());
-    }
-    let mut bytes = Vec::new();
-    file.take(8 * 1024 * 1024 + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|_| "Current Buzz library unavailable")?;
-    if bytes.len() > 8 * 1024 * 1024 {
-        return Err("Current Buzz library unavailable".into());
-    }
-    let rows: Vec<Value> =
-        serde_json::from_slice(&bytes).map_err(|_| "Current Buzz library unavailable")?;
-    if rows.len() > 2000 {
-        return Err("Current Buzz library unavailable".into());
-    }
     let mut identities = Vec::new();
     let mut keys = HashSet::new();
-    for row in rows {
-        if row.get("deleted").is_some_and(|v| !v.is_boolean()) {
+    for agent in rows.into_iter().filter(|agent| !agent.deleted) {
+        if !key(&agent.pubkey) || agent.name.encode_utf16().count() > 256 {
             return Err("Current Buzz library unavailable".into());
         }
-        if row.get("deleted") == Some(&Value::Bool(true)) {
-            continue;
-        }
-        let pubkey = library_field(&row, "pubkey", 64)?;
-        let name = if row.get("name").is_none() {
-            String::new()
-        } else {
-            library_field(&row, "name", 256)?
-        };
-        let avatar = row
-            .get("picture")
-            .and_then(Value::as_str)
-            .and_then(|source| {
-                let source = source.trim();
-                let data_image = ["png", "jpeg", "webp", "gif"].iter().any(|format| {
-                    source
-                        .strip_prefix(&format!("data:image/{format};base64,"))
-                        .is_some_and(|encoded| {
-                            let unpadded = encoded.trim_end_matches('=');
-                            !unpadded.is_empty()
-                                && unpadded
-                                    .bytes()
-                                    .all(|b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/')
-                        })
-                });
-                if source.len() <= 512 * 1024 && data_image {
-                    return Some(source.to_owned());
-                }
-                if source.len() > 2048 {
-                    return None;
-                }
-                let url = url::Url::parse(source).ok()?;
-                if url.scheme() == "https" && url.username().is_empty() && url.password().is_none()
-                {
-                    Some(url.to_string())
-                } else {
-                    None
-                }
+        let avatar = agent.picture.as_deref().and_then(|source| {
+            let source = source.trim();
+            let data_image = ["png", "jpeg", "webp", "gif"].iter().any(|format| {
+                source
+                    .strip_prefix(&format!("data:image/{format};base64,"))
+                    .is_some_and(|encoded| {
+                        let unpadded = encoded.trim_end_matches('=');
+                        !unpadded.is_empty()
+                            && unpadded
+                                .bytes()
+                                .all(|b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/')
+                    })
             });
-        if !key(&pubkey) {
-            return Err("Current Buzz library unavailable".into());
-        }
+            if source.len() <= 512 * 1024 && data_image {
+                return Some(source.to_owned());
+            }
+            if source.len() > 2048 {
+                return None;
+            }
+            let url = url::Url::parse(source).ok()?;
+            if url.scheme() == "https" && url.username().is_empty() && url.password().is_none() {
+                Some(url.to_string())
+            } else {
+                None
+            }
+        });
         // One identity may be configured in several communities.
-        if !keys.insert(pubkey.clone()) {
+        if !keys.insert(agent.pubkey.clone()) {
             continue;
         }
-        let mut item = json!({"pubkey":pubkey,"name":name});
+        let mut item = json!({"pubkey":agent.pubkey,"name":agent.name});
         if let Some(avatar) = avatar {
             item["avatar"] = json!(avatar);
         }
@@ -907,14 +847,15 @@ mod tests {
         .unwrap();
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("identities.json");
+        let agents = AppAgents::open(path.clone());
         assert_eq!(
-            read_agent_library(path.clone()).unwrap(),
+            read_agent_library(&agents).unwrap(),
             json!({"definitions": [], "identities": []})
         );
         for case in cases {
             let bytes = serde_json::to_vec(&case["rows"]).unwrap();
             std::fs::write(&path, &bytes).unwrap();
-            let result = read_agent_library(path.clone());
+            let result = read_agent_library(&agents);
             if let Some(expected) = case.get("expected") {
                 assert_eq!(&result.unwrap(), expected, "{}", case["name"]);
             } else {
@@ -1090,8 +1031,6 @@ mod tests {
             assert_eq!(decoded["entries"][0]["body"], "remember this");
             assert_eq!(decoded["partial"], true);
         }
-        assert!(library_field(&json!({"name": "é".repeat(256)}), "name", 256).is_ok());
-        assert!(library_field(&json!({"name": "é".repeat(257)}), "name", 256).is_err());
         let listing_wire = format!("[{},{{\"unknown\":\"\\ud800\"}}]", json!(memory));
         let wire = memory_wire_records(&listing_wire).unwrap();
         assert!(wire[1].is_none());

@@ -27,7 +27,6 @@ import type { OAuthCallback } from "./oauth/browser";
 import { deferred } from "./test-helpers";
 import { communityFixture } from "./agents/community-testing";
 import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
-import { ToastProvider } from "../../shared/design-system/ui/Toast";
 
 const native = vi.hoisted(() => ({ isTauri: () => true, invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => native);
@@ -677,9 +676,7 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
     expect(screen.getByRole("status")).toHaveTextContent("Sign in securely");
     // Creating while signed out starts the same browser login. A failed login
     // preserves the draft and sends no provisioning request; retry completes it.
-    render(<AgentsPage agents={agents} relay={community.relay} />, {
-      wrapper: ToastProvider,
-    });
+    render(<AgentsPage agents={agents} relay={community.relay} />);
     await user.click(
       screen.getByRole("button", { name: "Create your first agent" }),
     );
@@ -707,9 +704,9 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
       expect(create).toBeDisabled();
       expect(name).toHaveValue("Browser");
       loginCallback.reject(new Error("Browser could not open."));
-      expect(
-        await screen.findByRole("dialog", { name: "Browser could not open." }),
-      ).toBeVisible();
+      expect(await within(createDialog).findByRole("alert")).toHaveTextContent(
+        "Browser could not open.",
+      );
       expect(create).toBeEnabled();
       expect(name).toHaveValue("Browser");
       // The wait itself can be abandoned from the dialog.
@@ -720,9 +717,9 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
           name: "Cancel sign-in",
         }),
       );
-      expect(
-        await screen.findByRole("dialog", { name: "Sign-in canceled." }),
-      ).toBeVisible();
+      expect(await within(createDialog).findByRole("alert")).toHaveTextContent(
+        "Sign-in canceled.",
+      );
       expect(create).toBeEnabled();
       expect(
         within(createDialog).queryByRole("button", { name: "Cancel sign-in" }),
@@ -768,11 +765,9 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
       );
       expect(create).toBeDisabled();
       instructionsSave.reject(new Error("offline"));
-      expect(
-        await screen.findByRole("dialog", {
-          name: "Could not reach Builderlab. Try again.",
-        }),
-      ).toBeVisible();
+      expect(await within(createDialog).findByRole("alert")).toHaveTextContent(
+        "Could not reach Builderlab",
+      );
       expect(agents.find(browserKey)?.unfinished).toBe(true);
       expect(
         community.events.filter((event) => event.kind === 30177),

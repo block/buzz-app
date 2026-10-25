@@ -27,7 +27,6 @@ import {
   uploadAvatar,
 } from "../../features/profiles/avatar-upload";
 import { AgentCreateDialog } from "./AgentCreateDialog";
-import { ToastProvider } from "../../shared/design-system/ui/Toast";
 
 vi.mock("../../features/profiles/avatar-upload", async (actual) => ({
   ...(await actual<typeof import("../../features/profiles/avatar-upload")>()),
@@ -145,7 +144,6 @@ function setup(
       onCreated={onCreated}
       onClose={onClose}
     />,
-    { wrapper: ToastProvider },
   );
   const dialog = screen.getByRole("dialog", { name: "Create agent" });
   return { agents, onCreated, onClose, dialog, user: userEvent.setup() };
@@ -463,7 +461,7 @@ it("edits instructions below the identity card without a separate editing step",
   );
 });
 
-it("shows a failed create's error in a toast, stays open, and lets it be tried again", async () => {
+it("shows a failed create's error, stays open, and lets it be tried again", async () => {
   let attempts = 0;
   const { agents, onCreated, onClose, dialog, user } = setup(
     [echo],
@@ -473,29 +471,22 @@ it("shows a failed create's error in a toast, stays open, and lets it be tried a
     },
   );
   await user.type(within(dialog).getByLabelText("Name"), "Nova");
-  await user.type(within(dialog).getByLabelText("Reply"), "Keep this draft");
   await user.click(createButton());
 
-  expect(
-    await screen.findByRole("dialog", { name: "Credential store refused" }),
-  ).toBeVisible();
-  expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument();
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Credential store refused",
+  );
   expect(screen.getByRole("dialog", { name: "Create agent" })).toBeVisible();
   expect(createButton()).toBeEnabled();
   expect(within(dialog).getByLabelText("Name")).toBeEnabled();
   expect(within(dialog).getByLabelText("Name")).toHaveValue("Nova");
-  expect(within(dialog).getByLabelText("Reply")).toHaveValue("Keep this draft");
   expect(onCreated).not.toHaveBeenCalled();
   expect(onClose).not.toHaveBeenCalled();
 
   await user.click(createButton());
   expect(agents.create).toHaveBeenCalledTimes(2);
   await vi.waitFor(() => expect(onCreated).toHaveBeenCalledWith(made));
-  await waitFor(() =>
-    expect(
-      screen.queryByRole("dialog", { name: "Credential store refused" }),
-    ).not.toBeInTheDocument(),
-  );
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });
 
 it("clears a shown error when the name changes", async () => {
@@ -504,13 +495,9 @@ it("clears a shown error when the name changes", async () => {
   });
   await user.type(within(dialog).getByLabelText("Name"), "Nova");
   await user.click(createButton());
-  expect(await screen.findByRole("dialog", { name: "Nope" })).toBeVisible();
+  expect(await screen.findByRole("alert")).toHaveTextContent("Nope");
   await user.type(within(dialog).getByLabelText("Name"), "!");
-  await waitFor(() =>
-    expect(
-      screen.queryByRole("dialog", { name: "Nope" }),
-    ).not.toBeInTheDocument(),
-  );
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });
 
 it("blocks a second create while the first is pending", async () => {

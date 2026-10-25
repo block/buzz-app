@@ -2384,3 +2384,41 @@ it("keeps foreign-channel roots out of conversation context", async () => {
   expect(text).toContain("@Claude look");
   expect(text).not.toContain("Private root");
 });
+
+it("drops a mention stopped while queued behind an Attention refresh", async () => {
+  const f = setup([], { solo: new Set([channel]) });
+  const handovers = vi.spyOn(AgentSessions.prototype, "deliver");
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let ready!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    ready = resolve;
+  });
+  let builds = 0;
+  const wakeText = async () => {
+    if (++builds === 2) {
+      ready();
+      await gate;
+    }
+    return "Attention work";
+  };
+  try {
+    await f.deliver(
+      { ...pluginWake(), type: "attention", topLevel: true },
+      { wakeText },
+    );
+    await entered;
+    await f.deliver({ type: "mention", event: message("2", "queued mention") });
+    await vi.waitFor(() => expect(handovers).toHaveBeenCalledTimes(2));
+    const agent = { ...f.agent, config: DEFAULT_CONFIG } as unknown as Agent;
+    await f.runtime.session(agent, { channelId: channel }, "interrupt");
+    release();
+    await Promise.all(f.workingUntil.mock.calls.map(([done]) => done));
+    expect(f.claudes().flatMap((process) => process.prompts)).toEqual([]);
+  } finally {
+    release();
+    f.runtime.dispose();
+  }
+});

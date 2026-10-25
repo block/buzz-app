@@ -537,9 +537,9 @@ export class ClaudeRuntime {
                 : { channel, root: threadReference(event)?.rootId ?? event.id },
           );
           delivered = entry.sessions.deliver(key, text, event.created_at, {
+            current: () => !interrupted && (!current || current()),
             ...(wake
               ? {
-                  current: () => !interrupted && (!current || current()),
                   refresh: async (fresh = false) => {
                     const text = this.review(
                       entry,

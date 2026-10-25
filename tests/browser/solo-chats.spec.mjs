@@ -61,7 +61,7 @@ test("chat row menus open Share with the chat's people and restore focus", async
   });
   await expect(lifecycleReady).toBeVisible();
   const actions = await menu.getByRole("menuitem").allTextContents();
-  expect(actions).toContain("Share…");
+  expect(actions).toContain("Share access");
   await page.keyboard.press("Escape");
   await expect(
     page.getByRole("heading", { name: "New chat", exact: true }),
@@ -76,9 +76,11 @@ test("chat row menus open Share with the chat's people and restore focus", async
   await row.focus();
   await row.press("Shift+F10");
   await expect(menu).toBeVisible();
-  await menu.getByRole("menuitem", { name: "Share…", exact: true }).click();
+  await menu
+    .getByRole("menuitem", { name: "Share access", exact: true })
+    .click();
   const dialog = page.getByRole("dialog", {
-    name: "Chat access",
+    name: "Share access",
     exact: true,
   });
   await expect(dialog).toBeVisible();
@@ -113,7 +115,7 @@ test.describe("Berd-style Solo project organization", () => {
     const row = sidebar.locator(`[data-solo-channel-id="${id}"]`);
     await row.click({ button: "right" });
     await page.getByRole("menuitem", { name: "Move to", exact: true }).hover();
-    await page.getByRole("menuitem", { name: "New workspace…" }).click();
+    await page.getByRole("menuitem", { name: "New workspace" }).click();
     const dialog = page.getByRole("dialog");
     await dialog.getByRole("textbox", { name: "Workspace name" }).fill("Work");
     await dialog.getByRole("button", { name: "Create and move" }).click();
@@ -277,7 +279,7 @@ test("dragging a chat between a project and Chats saves and reloads like Move to
   await page.clock.install();
   await chat("Alpha").click({ button: "right" });
   await page.getByRole("menuitem", { name: "Move to", exact: true }).hover();
-  await page.getByRole("menuitem", { name: "New workspace…" }).click();
+  await page.getByRole("menuitem", { name: "New workspace" }).click();
   const dialog = page.getByRole("dialog");
   await dialog.getByRole("textbox", { name: "Workspace name" }).fill("Work");
   await dialog.getByRole("button", { name: "Create and move" }).click();
@@ -409,8 +411,10 @@ test("Share grants access and posts a link without promoting or moving the Solo 
     page.getByText(`primary ${id} message 0`, { exact: false }),
   ).toBeVisible();
   await row.click({ button: "right" });
-  await page.getByRole("menuitem", { name: "Share…", exact: true }).click();
-  const dialog = page.getByRole("dialog", { name: "Chat access" });
+  await page
+    .getByRole("menuitem", { name: "Share access", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog", { name: "Share access" });
   const search = dialog.getByRole("searchbox", {
     name: "Search people and channels",
   });
@@ -822,7 +826,15 @@ test("unified chat naming and lifetime retain host focus and save only explicit 
   await expect(
     page.getByText(`primary ${id} message 0`, { exact: false }),
   ).toBeVisible();
-  await actions.click();
+  // A created chat reaches its settings through the chat actions menu.
+  const chatActions = page.getByRole("button", {
+    name: "Chat actions",
+    exact: true,
+  });
+  await chatActions.click();
+  await page
+    .getByRole("menuitem", { name: "Chat settings", exact: true })
+    .click();
   const lifetime = page.getByRole("dialog", {
     name: "Edit chat",
     exact: true,
@@ -848,11 +860,13 @@ test("unified chat naming and lifetime retain host focus and save only explicit 
   await page.keyboard.press("Shift+Tab");
   await page.keyboard.press("Enter");
   await expect(lifetime).not.toBeVisible();
-  await expect(actions).toBeFocused();
+  await expect(chatActions).toBeFocused();
   expect(app.report.detailsPublications ?? []).toHaveLength(0);
   await row.focus();
   await row.press("Shift+F10");
-  await page.getByRole("menuitem", { name: "Edit…", exact: true }).click();
+  await page
+    .getByRole("menuitem", { name: "Chat settings", exact: true })
+    .click();
   await expect(save).toBeEnabled();
   await expect(ongoing).toBeChecked();
   await lifetime
@@ -935,7 +949,9 @@ test("unified chat naming and lifetime retain host focus and save only explicit 
   ).toHaveLength(0);
   await renamedRow.focus();
   await renamedRow.press("Shift+F10");
-  await page.getByRole("menuitem", { name: "Edit…", exact: true }).click();
+  await page
+    .getByRole("menuitem", { name: "Chat settings", exact: true })
+    .click();
   await expect(save).toBeEnabled();
   await expect(temporary).toHaveAccessibleDescription(
     "Archives after 2 weeks without activity.",

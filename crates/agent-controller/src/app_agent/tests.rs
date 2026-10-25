@@ -36,13 +36,16 @@ impl Credentials for Memory {
             .map(|hex| Secret::parse(hex, pubkey))
             .transpose()
     }
+    /// Never overwrites, as the platform stores don't.
     fn add(&self, id: &str, key: &Secret) -> Result<()> {
         failing(&self.1.add)?;
-        self.0
-            .lock()
-            .unwrap()
-            .insert(id.into(), key.hex().to_string());
-        Ok(())
+        match self.0.lock().unwrap().entry(id.into()) {
+            std::collections::btree_map::Entry::Occupied(_) => Err("Already saved".into()),
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(key.hex().to_string());
+                Ok(())
+            }
+        }
     }
     fn delete(&self, id: &str, _: &str) -> Result<()> {
         failing(&self.1.delete)?;
@@ -88,7 +91,11 @@ fn creates_saves_and_removes_an_identity_with_its_key() {
     assert_eq!(agents.list().unwrap(), std::slice::from_ref(&agent));
     assert_eq!(agents.get(&agent.pubkey, RELAY).unwrap(), agent);
     assert!(agent.read_key(&credentials).is_ok());
-    // The key goes at once; the row stays, marked, for its community's cleanup.
+    // Only once its Delete started, the key goes at once; the row stays,
+    // marked, for its community's cleanup.
+    assert!(agents.remove(&agent.pubkey, RELAY, &credentials).is_err());
+    assert!(agent.read_key(&credentials).is_ok());
+    agents.begin_delete(&agent.pubkey).unwrap();
     agents.remove(&agent.pubkey, RELAY, &credentials).unwrap();
     assert_eq!(rows(&agents), [(agent.pubkey.clone(), true)]);
     assert!(agents.get(&agent.pubkey, RELAY).is_err());
@@ -170,6 +177,7 @@ fn re_import_takes_back_a_deleted_row() {
         serde_json::from_str(&crate::secret::test_attestation(key.pubkey())).unwrap();
     let (agent, _) = agents.commit(adopt(), &auth, &credentials).unwrap();
     assert!(agents.commit(adopt(), &auth, &credentials).is_err());
+    agents.begin_delete(&agent.pubkey).unwrap();
     agents.remove(&agent.pubkey, RELAY, &credentials).unwrap();
     let (back, _) = agents.commit(adopt(), &auth, &credentials).unwrap();
     assert_eq!(rows(&agents), [(back.pubkey.clone(), false)]);
@@ -193,6 +201,7 @@ fn changes_only_a_live_agents_type() {
             ..agent.clone()
         }
     );
+    agents.begin_delete(&agent.pubkey).unwrap();
     agents.remove(&agent.pubkey, RELAY, &credentials).unwrap();
     assert!(agents.set_type(&agent.pubkey, "p/t").is_err());
 }
@@ -267,6 +276,8 @@ fn a_failed_key_deletion_keeps_the_identity_for_a_retry() {
     let dir = tempfile::tempdir().unwrap();
     let credentials = Memory::default();
     let (agents, agent) = created(dir.path(), &credentials);
+    agents.begin_delete(&agent.pubkey).unwrap();
+    let agent = agents.list().unwrap().remove(0);
     set(&credentials.1.delete, true);
     assert!(agents.remove(&agent.pubkey, RELAY, &credentials).is_err());
     assert_eq!(agents.list().unwrap(), std::slice::from_ref(&agent));
@@ -305,6 +316,7 @@ fn a_failed_key_save_leaves_no_orphaned_key() {
     set(&credentials.1.read, false);
     set(&credentials.1.delete, false);
     assert!(stranded.read_key(&credentials).is_ok());
+    agents.begin_delete(&stranded.pubkey).unwrap();
     agents
         .remove(&stranded.pubkey, RELAY, &credentials)
         .unwrap();
@@ -807,10 +819,16 @@ fn joins_communities_and_leaves_them_one_at_a_time() {
         .read_key(&credentials)
         .is_ok());
 
-    // Delete marks every community; none can be joined while it runs.
-    agents
+    // Added again, a removal another copy of the app started before can't
+    // take it.
+    let back = agents
         .join(&agent.pubkey, RELAY, OTHER, None, &credentials)
         .unwrap();
+    let late = AppAgents::open(path.clone());
+    assert!(late.remove(&agent.pubkey, OTHER, &credentials).is_err());
+    assert!(back.read_key(&credentials).is_ok());
+
+    // Delete marks every community; none can be joined while it runs.
     agents.begin_delete(&agent.pubkey).unwrap();
     assert!(agents.list().unwrap().iter().all(|agent| agent.deleting));
     agents.remove(&agent.pubkey, RELAY, &credentials).unwrap();
@@ -875,19 +893,29 @@ fn a_join_a_crash_cut_short_is_no_membership_until_it_is_added_again() {
     assert!(!joined.joining);
     assert_eq!(agents.list().unwrap(), [agent.clone(), joined.clone()]);
     assert!(joined.read_key(&credentials).is_ok());
-    // Or its Delete takes it, with any key it got.
-    agents
-        .update(|rows| {
-            rows.iter_mut()
-                .for_each(|row| row.joining = row.relay == OTHER);
-            Ok(())
-        })
-        .unwrap();
+    let crash = || {
+        agents
+            .update(|rows| {
+                rows.iter_mut()
+                    .for_each(|row| row.joining = row.relay == OTHER);
+                Ok(())
+            })
+            .unwrap()
+    };
+    // So does adding it again after the app quit with its key saved.
+    crash();
+    assert_eq!(
+        agents
+            .join(&agent.pubkey, RELAY, OTHER, None, &credentials)
+            .unwrap(),
+        joined
+    );
+    // Or the removal of its last community takes it first, with its key, as
+    // Delete and Forget do.
+    crash();
     agents.begin_delete(&agent.pubkey).unwrap();
-    for relay in [RELAY, OTHER] {
-        agents.remove(&agent.pubkey, relay, &credentials).unwrap();
-        agents.forget(&agent.pubkey, relay).unwrap();
-    }
+    agents.remove(&agent.pubkey, RELAY, &credentials).unwrap();
+    agents.forget(&agent.pubkey, RELAY).unwrap();
     assert!(agents.list().unwrap().is_empty());
     assert!(credentials.0.lock().unwrap().is_empty());
 }

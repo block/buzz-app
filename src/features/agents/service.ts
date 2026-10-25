@@ -2682,12 +2682,6 @@ export class AgentsService extends Service implements Agents {
         `${unfinished} It is still in ${left.map(hostOf).join(", ")}.`,
       );
     }
-    // An Add a crash cut short left a row, and maybe its key, but no member.
-    for (const row of await native.list())
-      if (row.pubkey === pubkey && row.joining && !row.deleted) {
-        await native.remove(row);
-        await native.forget(row);
-      }
     for (const origin of this.listings.keys()) this.unlist(origin, pubkey);
     // Drops its settings.
     await this.refresh();
@@ -3494,7 +3488,7 @@ export class AgentsService extends Service implements Agents {
       const rows = await this.native.list();
       // A newer list is on its way; this one may predate a change.
       if (turn !== this.listed) return;
-      // One still joining has no key there yet, and is no membership.
+      // One still joining, or a Join a crash cut short, is no membership.
       const identities = this.withKeys(rows.filter((row) => !row.joining));
       this.identities = identities;
       // A read that succeeds ends the failure the last one reported.

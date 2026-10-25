@@ -646,25 +646,29 @@ impl AppAgents {
             Ok(agent)
         })?;
         let id = agent.credential_id();
-        let saved = credentials
-            .add(&id, &key)
-            .and_then(|()| {
+        // A Join a crash cut short may have saved the key already: only this
+        // agent's key reads back under its ID.
+        let saved = (if agent.read_key(credentials).is_ok() {
+            Ok(())
+        } else {
+            credentials.add(&id, &key).and_then(|()| {
                 agent
                     .read_key(credentials)
                     .map(drop)
                     .map_err(|_| "Agent key could not be verified".into())
             })
-            .and_then(|()| {
-                self.update(|agents| {
-                    let joined = agents
-                        .iter_mut()
-                        .find(|saved| saved.pubkey == pubkey && saved.relay == relay)
-                        .filter(|saved| !saved.deleted && saved.joining)
-                        .ok_or("The agent was removed while it was being added")?;
-                    joined.joining = false;
-                    Ok(joined.clone())
-                })
-            });
+        })
+        .and_then(|()| {
+            self.update(|agents| {
+                let joined = agents
+                    .iter_mut()
+                    .find(|saved| saved.pubkey == pubkey && saved.relay == relay)
+                    .filter(|saved| !saved.deleted && saved.joining)
+                    .ok_or("The agent was removed while it was being added")?;
+                joined.joining = false;
+                Ok(joined.clone())
+            })
+        });
         saved.inspect_err(|_| {
             if credentials.delete(&id, pubkey).is_ok() {
                 let _ = self.update(|agents| {
@@ -741,21 +745,51 @@ impl AppAgents {
         })
     }
     /// Deletes its key in the community at `relay`, then marks that row deleted,
-    /// so a failed deletion can be retried. Its rows in other communities keep
-    /// their own copies of the key. Absence is success.
+    /// so a failed deletion can be retried. Only a row whose Delete or leaving
+    /// started goes, so a late removal from another copy of the app never takes
+    /// one added there again since. Its rows in other communities keep their own
+    /// copies of the key. With the last of them goes any Join a crash cut short,
+    /// first, so nothing is left with a key and no agent shown. Absence is
+    /// success.
     pub fn remove(&self, pubkey: &str, relay: &str, credentials: &dyn Credentials) -> Result<()> {
         let relay = canonical_relay(relay)?;
         let _keys = self.keys_lock()?;
-        let Some(agent) = self
-            .list()?
-            .into_iter()
+        let rows = self.list()?;
+        let Some(agent) = rows
+            .iter()
             .find(|agent| agent.pubkey == pubkey && agent.relay == relay && !agent.deleted)
         else {
             return Ok(());
         };
-        credentials.delete(&agent.credential_id(), &agent.pubkey)?;
-        // A row a crash left joining goes the same way.
+        if !agent.deleting {
+            return Err(format!(
+                "{} isn't being removed from that community",
+                agent.name
+            ));
+        }
+        // Under the keys lock, a joining row is no Join under way.
+        let last = !rows
+            .iter()
+            .any(|other| other.relay != relay && other.live(pubkey, &other.relay));
+        let unfinished: Vec<&AppAgent> = rows
+            .iter()
+            .filter(|other| {
+                last && other.pubkey == pubkey
+                    && other.relay != relay
+                    && other.joining
+                    && !other.deleted
+            })
+            .collect();
+        for other in &unfinished {
+            credentials.delete(&other.credential_id(), pubkey)?;
+        }
+        credentials.delete(&agent.credential_id(), pubkey)?;
         self.update(|agents| {
+            agents.retain(|saved| {
+                !unfinished.iter().any(|other| {
+                    saved.pubkey == pubkey && saved.relay == other.relay && saved.joining
+                })
+            });
             if let Some(agent) = agents
                 .iter_mut()
                 .find(|agent| agent.pubkey == pubkey && agent.relay == relay && !agent.deleted)

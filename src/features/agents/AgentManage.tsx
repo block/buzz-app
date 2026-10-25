@@ -10,8 +10,18 @@ import type { Agent, Agents } from "./service";
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 
+const hostOf = (origin: string) => origin.replace(/^https:\/\//, "");
+
+/** Whether the agent shown here is also in another of the owner's
+ * communities, so it can be removed from this one alone. */
+export const inSeveral = (agents: Agents, agent: Agent) =>
+  agent.place === "here" &&
+  !agent.deleting &&
+  agents.memberships(agent.pubkey).length > 1;
+
 /** Delete, after a confirmation that says what it does. One that cannot
- * finish keeps the dialog open with what is left; the agent stays listed. */
+ * finish keeps the dialog open with what is left; the agent stays listed.
+ * A community Delete cannot reach can then be given up on. */
 export function AgentDelete({
   agents,
   agent,
@@ -26,13 +36,36 @@ export function AgentDelete({
   const [confirming, setConfirming] = useState(false);
   const [removing, setRemoving] = useState(false);
   const [error, setError] = useState("");
+  const memberships =
+    agent.place === "here" ? agents.memberships(agent.pubkey) : [];
+  const several = memberships.length > 1;
+  // Only a Delete that started can be given up on where it can't reach.
+  const unreachable =
+    agent.deleting || error
+      ? memberships.filter((membership) => !membership.connected)
+      : [];
   const remove = async () => {
     setRemoving(true);
     setError("");
     try {
-      await agents.remove(agent.pubkey);
+      await agents.remove(agent.key);
       setConfirming(false);
       onRemoved();
+    } catch (reason) {
+      setError(message(reason));
+      setRemoving(false);
+    }
+  };
+  const forget = async (key: string) => {
+    setRemoving(true);
+    setError("");
+    try {
+      await agents.forget(key);
+      if (agents.memberships(agent.pubkey).length) setRemoving(false);
+      else {
+        setConfirming(false);
+        onRemoved();
+      }
     } catch (reason) {
       setError(message(reason));
       setRemoving(false);
@@ -59,7 +92,9 @@ export function AgentDelete({
         description={
           agent.place === "hosted"
             ? "Its provider deletes it and its key, then it leaves every channel and is archived so it no longer appears in member lists or mention suggestions. It can't be undone."
-            : "It stops, leaves every channel and is archived so it no longer appears in member lists or mention suggestions, then its key is deleted from this device. It can't be undone."
+            : several
+              ? "It stops in every community it's in. In each one it leaves every channel and is archived so it no longer appears in member lists or mention suggestions, then its key is deleted from this device. It can't be undone."
+              : "It stops, leaves every channel and is archived so it no longer appears in member lists or mention suggestions, then its key is deleted from this device. It can't be undone."
         }
         preventClose={removing}
         actions={
@@ -73,6 +108,120 @@ export function AgentDelete({
               onClick={() => void remove()}
             >
               Delete
+            </Button>
+          </>
+        }
+      >
+        {several || error ? (
+          <div className="flex flex-col gap-3">
+            {several && (
+              <ul
+                aria-label="Its communities"
+                className="m-0 flex list-none flex-col gap-1 p-0"
+              >
+                {memberships.map((membership) => (
+                  <li
+                    key={membership.key}
+                    className="flex items-center justify-between gap-2 text-body-sm"
+                  >
+                    <span className="truncate">
+                      {hostOf(membership.origin)}
+                      {!membership.connected && (
+                        <span className="text-secondary"> · Not connected</span>
+                      )}
+                    </span>
+                    {unreachable.includes(membership) && (
+                      <Button
+                        size="compact"
+                        variant="outline"
+                        aria-label={`Forget it in ${hostOf(membership.origin)}`}
+                        disabled={removing}
+                        onClick={() => void forget(membership.key)}
+                      >
+                        Forget
+                      </Button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+            {error ? (
+              <p role="alert" className="m-0 text-body-sm text-danger">
+                {error}
+                {unreachable.length > 0 &&
+                  " Forget deletes it from this device without reaching that community, so it may stay in its channels there."}
+              </p>
+            ) : null}
+            {!several && unreachable[0] && (
+              <div>
+                <Button
+                  size="compact"
+                  variant="outline"
+                  disabled={removing}
+                  onClick={() => void forget(unreachable[0]?.key ?? "")}
+                >
+                  Forget it
+                </Button>
+              </div>
+            )}
+          </div>
+        ) : null}
+      </Dialog>
+    </>
+  );
+}
+
+/** Takes the agent out of the community shown, after a confirmation, and
+ * keeps it in its others. Offer it only while it is in another: see
+ * `inSeveral`. */
+export function AgentRemoveHere({
+  agents,
+  agent,
+  onRemoved,
+  trigger,
+}: {
+  agents: Agents;
+  agent: Agent;
+  onRemoved(): void;
+  trigger: (open: () => void) => ReactNode;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const [error, setError] = useState("");
+  const place = agent.relay.replace(/^wss:\/\//, "");
+  const leave = async () => {
+    setRemoving(true);
+    setError("");
+    try {
+      await agents.leave(agent.key);
+      setConfirming(false);
+      onRemoved();
+    } catch (reason) {
+      setError(message(reason));
+      setRemoving(false);
+    }
+  };
+  return (
+    <>
+      {trigger(() => setConfirming(true))}
+      <Dialog
+        size="compact"
+        open={confirming}
+        onOpenChange={setConfirming}
+        title={`Remove ${agent.name} from ${place}?`}
+        description="It stops here, leaves this community's channels and is archived here. It stays in your other communities with the same name, type and settings. Add it here again and its memory and conversations here come back, but what it paid attention to here doesn't."
+        preventClose={removing}
+        actions={
+          <>
+            <Button onClick={() => setConfirming(false)} disabled={removing}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              loading={removing}
+              onClick={() => void leave()}
+            >
+              Remove
             </Button>
           </>
         }
@@ -103,7 +252,7 @@ export function AgentArchiveRetry({
     setChecking(true);
     setResult("");
     try {
-      setResult((await agents.unarchive(agent.pubkey)) ?? "");
+      setResult((await agents.unarchive(agent.key)) ?? "");
     } catch (reason) {
       setResult(`Couldn't check whether it's archived: ${message(reason)}`);
     } finally {

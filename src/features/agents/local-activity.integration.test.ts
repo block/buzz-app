@@ -77,6 +77,8 @@ it("carries a verified mention through host handover into all three scopes witho
     port: vi.fn(),
     setPicture: vi.fn(),
     setType: vi.fn(),
+    join: vi.fn(),
+    beginLeave: vi.fn(),
     media: vi.fn(),
     gitAuth: vi.fn(),
     create: vi.fn(),

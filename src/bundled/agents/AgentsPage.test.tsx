@@ -53,6 +53,7 @@ afterEach(() => {
 });
 
 const agent = (name: string, n: number): Agent => ({
+  key: String(n).repeat(64),
   pubkey: String(n).repeat(64),
   name,
   type: "test/echo",
@@ -366,6 +367,11 @@ function setup(
     resumeInterrupted: vi.fn(),
     dismissInterrupted: vi.fn(),
     wake: vi.fn(),
+    memberships: () => [],
+    forget: vi.fn(),
+    joinable: (): readonly Agent[] => [],
+    join: vi.fn(),
+    leave: vi.fn(),
     creationRequests: () => [],
     dismissCreation: vi.fn(),
     approveCreation: vi.fn(),
@@ -1011,6 +1017,39 @@ it("imports an earlier agent as the chosen type and shows it in Your agents", as
   );
 });
 
+it("adds an agent from another community here, keeping its key", async () => {
+  const user = userEvent.setup();
+  const { agents, show } = setup([agent("Ada", 1)]);
+  const bea = { ...agent("Bea", 2), relay: "wss://other.example" };
+  agents.joinable = () => [bea];
+  agents.join.mockImplementation(async () => {
+    const added = { ...bea, relay: "wss://relay.example" };
+    show([agent("Ada", 1), added]);
+    return { agent: added, notes: [] };
+  });
+  await user.click(screen.getByRole("button", { name: "New agent" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Import an agent" }),
+  );
+  const elsewhere = await screen.findByRole("region", {
+    name: "Agents in your other communities",
+  });
+  expect(elsewhere).toHaveTextContent("stay shared");
+  await user.click(
+    within(elsewhere).getByRole("button", {
+      name: "Add Bea from other.example",
+    }),
+  );
+  expect(agents.join).toHaveBeenCalledWith(bea.key);
+  expect(
+    await within(elsewhere).findByRole("button", { name: "Bea added" }),
+  ).toHaveAttribute("aria-disabled", "true");
+  await user.click(screen.getByRole("button", { name: "Close" }));
+  expect(
+    within(screen.getByRole("grid", { name: "Agents" })).getByText("Bea"),
+  ).toBeInTheDocument();
+});
+
 it("queues several imports in a row and keeps the dialog open until they finish", async () => {
   const user = userEvent.setup();
   const { agents } = setup([]);
@@ -1441,12 +1480,12 @@ it("keeps Import open and names each part of a team import that did not come", a
   await user.click(importTeam);
   onImport();
   expect(screen.getByRole("alert")).toHaveTextContent(
-    "Couldn't save team Late Shift. Imported Bea; add them in Teams. Kept out: Cy, in another community.",
+    "Couldn't save team Late Shift. Imported Bea; add them in Teams. Not added: Cy, in your other communities. Use Add team to bring them here.",
   );
   await user.click(importTeam);
   onImport();
   expect(screen.getByRole("alert")).toHaveTextContent(
-    "Imported team Late Shift. Kept out: Cy, in another community.",
+    "Imported team Late Shift. Not added: Cy, in your other communities. Use Add team to bring them here.",
   );
 });
 

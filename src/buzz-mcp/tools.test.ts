@@ -63,6 +63,7 @@ function fake(
     });
   };
   const client: BuzzClient = {
+    key: me,
     pubkey: me,
     query: vi.fn(async (filters: readonly Filter[]) => {
       const newest = [...events, ...kept].sort(

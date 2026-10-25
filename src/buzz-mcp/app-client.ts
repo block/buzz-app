@@ -39,6 +39,7 @@ export function appClient(
   };
   return {
     pubkey: agent.pubkey,
+    key: agent.key,
     owner: agent.owner,
     relayAuthor: options.relayAuthor,
     signingAuthority: options.signingAuthority,

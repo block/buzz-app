@@ -2,15 +2,17 @@ import type { ChannelSummary } from "../../features/relay/contracts";
 import type { ComposerSession } from "../../features/messages/composer-session";
 import type { MentionRecipient } from "../../features/messages/mention-draft";
 import { knownAgentPubkeys } from "../../features/agents/known";
+import type { Agent } from "../../features/agents/service";
+import { communityHost } from "../../features/messages/community-host";
 import {
   allowsOutsideMentions,
   mentionAdmission,
 } from "../../features/messages/mention-admission";
 
 /** The viewer's agents offered outside a stream or forum when the viewer can add members. */
-function availableMentionAgents(
+function availableMentionAgents<T extends { pubkey: string }>(
   channel: ChannelSummary | undefined,
-  agents: readonly { pubkey: string; name: string }[],
+  agents: readonly T[],
   canInvite: boolean | undefined,
 ) {
   return channel?.members &&
@@ -23,7 +25,9 @@ function availableMentionAgents(
 /** Row detail for an outside choice. Nobody can be added to a DM. */
 export function outsideMentionDetail(
   channel: Pick<ChannelSummary, "channelType"> | undefined,
+  elsewhere?: string,
 ) {
+  if (elsewhere) return `In ${elsewhere}`;
   return channel?.channelType === "dm"
     ? "Not in DM · Will not be notified"
     : "Not in channel · Choose whether to add when you send";
@@ -36,6 +40,8 @@ export function mentionCandidates(
   inviteAgents = false,
   roster?: readonly MentionRecipient[],
   directory: readonly (MentionRecipient & { isAgent?: true })[] = [],
+  /** The owner's agents in their other communities (`agents.joinable()`). */
+  elsewhere: readonly Pick<Agent, "pubkey" | "name" | "relay">[] = [],
 ) {
   const channel = session.channels
     .list()
@@ -60,6 +66,21 @@ export function mentionCandidates(
     choices.set(person.pubkey, { pubkey: person.pubkey, name: person.name });
   if (!roster && !inviteAgents && allowsOutsideMentions(channel))
     for (const person of directory) choices.set(person.pubkey, person);
+  // Another community's agent is never a member or an agent here; it only
+  // takes a row no one in this community has. Sending asks before it joins.
+  const hosts = new Map<string, string>();
+  if (!roster && !inviteAgents)
+    for (const agent of availableMentionAgents(
+      channel,
+      elsewhere,
+      session.outbox?.supports(9000),
+    )) {
+      const host = communityHost(agent.relay);
+      if (!host || choices.has(agent.pubkey) || memberKeys.has(agent.pubkey))
+        continue;
+      choices.set(agent.pubkey, { pubkey: agent.pubkey, name: agent.name });
+      hosts.set(agent.pubkey, host);
+    }
   for (const pubkey of members)
     choices.set(pubkey, {
       pubkey,
@@ -75,7 +96,12 @@ export function mentionCandidates(
     .map((recipient) => ({
       recipient,
       member: memberKeys.has(recipient.pubkey),
+      /** The host of the owner's other community this agent is in. */
+      ...(hosts.has(recipient.pubkey)
+        ? { elsewhere: hosts.get(recipient.pubkey) }
+        : {}),
       agent:
+        hosts.has(recipient.pubkey) ||
         known.has(recipient.pubkey) ||
         directory.some((p) => p.pubkey === recipient.pubkey && p.isAgent),
       owned:
@@ -93,6 +119,7 @@ export function mentionCandidates(
             ...agents
               .filter((a) => a.pubkey === recipient.pubkey)
               .map((a) => a.name),
+            hosts.has(recipient.pubkey) ? recipient.name : undefined,
           ].filter((name): name is string => !!name),
         ),
       ],

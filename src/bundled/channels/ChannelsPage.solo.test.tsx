@@ -52,7 +52,15 @@ function fixture({
   people = [],
   unloaded = false,
   departed = false,
+  ownedBy,
+  archived = false,
+  viewerNamed = false,
 }: {
+  /** The viewer's own profile has loaded too. */
+  viewerNamed?: boolean;
+  /** Someone other than the viewer or its agent created the chat. */
+  ownedBy?: string;
+  archived?: boolean;
   /** Other people in the chat besides the viewer and its agent. */
   people?: readonly string[];
   /** The people's profiles never load, so nothing confirms they are people. */
@@ -98,8 +106,9 @@ function fixture({
     name: "Planning",
     channelType: type,
     private: true as const,
-    creator: placed ? viewer.pubkey : agent,
+    creator: ownedBy ?? (placed ? viewer.pubkey : agent),
     members: [viewer.pubkey, agent, ...people],
+    ...(archived && { archived }),
   };
   let list = { status: "ready" as const, channels: [channel] };
   const listListeners = new Set<() => void>();
@@ -146,9 +155,12 @@ function fixture({
     },
   };
   // A stable snapshot, as useSyncExternalStore requires.
-  const profiles = new Map(
-    unloaded ? [] : people.map((key) => [key, { name: "Teammate" }] as const),
-  );
+  const profiles = new Map<string, { name: string }>([
+    ...(unloaded
+      ? []
+      : people.map((key) => [key, { name: "Teammate" }] as const)),
+    ...(viewerNamed ? [[viewer.pubkey, { name: "Viewer" }] as const] : []),
+  ]);
   const session = {
     ...owner.session,
     profiles: {
@@ -836,6 +848,54 @@ it("keeps Chat settings in the chat actions menu, not as a separate heading butt
   f.mount();
   await screen.findByRole("button", { name: "Chat actions" });
   expect(screen.queryByRole("button", { name: "Chat settings" })).toBeNull();
+});
+
+it("names the owner on the access controls of someone else's shared chat", async () => {
+  const person = "e".repeat(64);
+  const f = fixture({ placed: false, ownedBy: person, people: [person] });
+  f.mountWithSidebar();
+  const user = userEvent.setup();
+  // The owner's avatar stands in for the people icon on both controls.
+  const header = await screen.findByRole("button", {
+    name: "Share access, Teammate’s chat",
+  });
+  expect(header).toHaveTextContent("T");
+  await user.hover(header);
+  expect(await screen.findByRole("tooltip")).toHaveTextContent(
+    "Teammate’s chat",
+  );
+  const mark = screen.getByRole("button", { name: "Teammate’s chat" });
+  expect(mark).toHaveTextContent("T");
+  await user.click(mark);
+  expect(
+    await screen.findByRole("dialog", { name: /Share access/ }),
+  ).toBeInTheDocument();
+});
+
+it.each([
+  ["the viewer's own chat", { people: ["e".repeat(64)], viewerNamed: true }],
+  [
+    "a chat whose owner's profile has not loaded",
+    {
+      placed: false,
+      ownedBy: "e".repeat(64),
+      people: ["e".repeat(64)],
+      unloaded: true,
+    },
+  ],
+])("names no owner on %s", async (_, options) => {
+  fixture(options).mountWithSidebar();
+  expect(
+    await screen.findByRole("button", { name: "Share access" }),
+  ).toBeInTheDocument();
+  expect(screen.queryByText(/’s chat/)).toBeNull();
+});
+
+it("marks an archived chat once and keeps only its lifecycle actions", async () => {
+  fixture({ archived: true }).mount();
+  await screen.findByRole("button", { name: "Chat actions" });
+  expect(screen.getAllByText("Archived")).toHaveLength(1);
+  expect(screen.queryByRole("button", { name: "Share access" })).toBeNull();
 });
 
 it("does not recreate a consumed linked draft on history navigation", () => {

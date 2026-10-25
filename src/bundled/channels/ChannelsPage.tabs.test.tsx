@@ -87,6 +87,12 @@ async function page(
     ),
     roster(authority, "beta", [viewer.pubkey]),
     metadata(authority, "beta", "Beta", undefined, [["t", "stream"]]),
+    roster(authority, "gamma", [viewer.pubkey]),
+    metadata(authority, "gamma", "Gamma", undefined, [
+      ["t", "stream"],
+      ["private"],
+      ["t", SOLO_LABEL],
+    ]),
   ];
   const owner = createRelaySession(
     {
@@ -588,6 +594,52 @@ it.each(["side", "main"] as const)(
     expect(target).toHaveFocus();
   },
 );
+
+it("gives a Solo chat's side tab its own header actions, opening it in the main view", async () => {
+  const open = vi.fn(async () => ({ status: "opened" as const }));
+  const h = await page("stream", {
+    open,
+    snapshot: () => ({ entry: { id: "visit" }, attempt: {} }),
+  } as unknown as Navigation);
+  const tabs = renderHook(() => useChannelTabState(h.session, "alpha"));
+  act(() =>
+    tabs.result.current.setTabs((items) => [
+      ...items,
+      { id: "conversation:beta", kind: "conversation", channelId: "beta" },
+      { id: "conversation:gamma", kind: "conversation", channelId: "gamma" },
+    ]),
+  );
+  await h.user.click(await screen.findByRole("tab", { name: "Gamma" }));
+  expect(
+    await screen.findByRole("button", { name: "Share access" }),
+  ).toBeInTheDocument();
+  await h.user.click(screen.getByRole("button", { name: "Chat actions" }));
+  const menu = within(
+    await screen.findByRole("menu", { name: "Chat actions" }),
+  );
+  expect(menu.getAllByRole("menuitem")[0]).toHaveTextContent(
+    "Open in main view",
+  );
+  // No host beside another conversation can finish a conversion.
+  expect(
+    menu.queryByRole("menuitem", { name: "Convert to channel" }),
+  ).toBeNull();
+  await h.user.click(menu.getByRole("menuitem", { name: "Open in main view" }));
+  await vi.waitFor(() =>
+    expect(open).toHaveBeenLastCalledWith({
+      version: 1,
+      kind: "conversation",
+      scope: {
+        viewer: h.viewer,
+        communityOrigin: h.scope.slice(0, -(h.viewer.length + 1)),
+      },
+      channelId: "gamma",
+    }),
+  );
+  // A team channel's tab keeps the panel's own header.
+  await h.user.click(screen.getByRole("tab", { name: "Beta" }));
+  expect(screen.queryByRole("button", { name: "Chat actions" })).toBeNull();
+});
 
 it("opens another conversation's tab in its channel, but not the current channel's threads", async () => {
   const open = vi.fn(async () => ({ status: "opened" as const }));

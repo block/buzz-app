@@ -874,3 +874,42 @@ it("drops a cancelled source after provider selection without cancelling ordinar
   await session.send("ordinary message");
   expect(process.turns.map((turn) => turn.text)).toEqual(["ordinary message"]);
 });
+
+it("does not steer a stopped run after an Attention prompt refresh", async () => {
+  const { open, process, goose } = await start();
+  process.hold = true;
+  const session = await open();
+  const first = session.send("one");
+  await vi.waitFor(() => expect(process.turns).toHaveLength(1));
+  let release!: () => void;
+  let refreshing!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const started = new Promise<void>((resolve) => {
+    refreshing = resolve;
+  });
+  const second = session.send("old wake", {
+    current: () => true,
+    refresh: async () => {
+      refreshing();
+      await gate;
+      return "updated wake";
+    },
+  });
+  try {
+    await started;
+    session.interrupt();
+  } finally {
+    release();
+  }
+  await Promise.all([first, second]);
+  await session.idle();
+  await flush();
+  expect(
+    process.received.filter(
+      (message) => message.method === "_goose/unstable/session/steer",
+    ),
+  ).toEqual([]);
+  await goose.close(session);
+});

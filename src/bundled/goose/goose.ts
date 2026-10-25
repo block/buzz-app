@@ -673,6 +673,7 @@ export class GooseSession {
             )
           : undefined);
       if (activity.refresh) text = steerPrompt(await activity.refresh());
+      if (!live()) return;
       if (activity.current && !activity.current()) {
         this.discard(waiter);
         return;

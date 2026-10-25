@@ -2328,3 +2328,40 @@ it("refreshes Attention instructions after Claude starts", async () => {
     f.runtime.dispose();
   }
 });
+
+it("drops an Attention wake stopped while its final prompt refresh waits", async () => {
+  const f = setup();
+  let release!: () => void;
+  let refreshing!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const started = new Promise<void>((resolve) => {
+    refreshing = resolve;
+  });
+  let builds = 0;
+  const wakeText = async () => {
+    if (++builds === 2) {
+      refreshing();
+      await gate;
+    }
+    return "Attention work";
+  };
+  const interruptible = vi.fn();
+  const workingUntil = vi.fn<Delivery["workingUntil"]>();
+  try {
+    await f.deliver(
+      { ...pluginWake(), type: "attention", topLevel: true },
+      { wakeText, interruptible, workingUntil },
+    );
+    await started;
+    await vi.waitFor(() => expect(interruptible).toHaveBeenCalled());
+    await interruptible.mock.calls[0]?.[0]();
+    release();
+    await Promise.all(workingUntil.mock.calls.map(([done]) => done));
+    expect(f.claudes().flatMap((p) => p.prompts)).toEqual([]);
+  } finally {
+    release();
+    f.runtime.dispose();
+  }
+});

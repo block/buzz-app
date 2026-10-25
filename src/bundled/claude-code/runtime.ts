@@ -539,7 +539,7 @@ export class ClaudeRuntime {
           delivered = entry.sessions.deliver(key, text, event.created_at, {
             ...(wake
               ? {
-                  current,
+                  current: () => !interrupted && (!current || current()),
                   refresh: async (fresh = false) => {
                     const text = this.review(
                       entry,
@@ -597,7 +597,10 @@ export class ClaudeRuntime {
         if (!wait) await handed;
         // The turn outlives `run`, which the host is told so it shows it as working.
         workingUntil(done);
-        interruptible?.(() => entry.sessions.interrupt(key));
+        interruptible?.(() => {
+          interrupted = true;
+          return entry.sessions.interrupt(key);
+        });
         this.notify();
         this.watch(done, async (error) => {
           if (error) await this.report(agent, channel, event, error, topLevel);

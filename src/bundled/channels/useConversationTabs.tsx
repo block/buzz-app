@@ -85,8 +85,11 @@ export function useConversationTabs({
   scope: string;
   channels: readonly ChannelSummary[];
   conversationIcon(channel: ChannelSummary): ReactNode;
-  /** Header actions for a conversation tab, owned by the page. */
-  conversationToolbar?: ((channel: ChannelSummary) => ReactNode) | undefined;
+  /** Header actions for a conversation tab, owned by the page; `open` shows
+   * the conversation in its channel. */
+  conversationToolbar?:
+    | ((channel: ChannelSummary, open?: () => void) => ReactNode)
+    | undefined;
   extensions?: ConversationExtensions | undefined;
   leadingIds: string[];
   continuingVisit: boolean;
@@ -711,6 +714,24 @@ export function useConversationTabs({
   function tabItem(tab: Tab) {
     const target = tabChannel(tab);
     const usable = !!target;
+    // The current conversation's own threads are already in its channel.
+    const openInChannel =
+      target && navigation && viewer && tab.channelId !== currentId
+        ? () =>
+            void navigation.open({
+              version: 1,
+              kind: "conversation",
+              scope: {
+                viewer,
+                communityOrigin: scope.slice(0, -(viewer.length + 1)),
+              },
+              channelId: tab.channelId,
+              ...(tab.messageId && { messageId: tab.messageId }),
+              ...(tab.kind === "thread" && {
+                threadRootId: rootOfTab(tab),
+              }),
+            })
+        : undefined;
     return {
       id: tab.id,
       label:
@@ -727,37 +748,15 @@ export function useConversationTabs({
         ),
       close: () => closeConversationTab(tab.id),
       ...(tab.kind === "conversation" &&
-        target && { toolbar: conversationToolbar?.(target) }),
+        target && { toolbar: conversationToolbar?.(target, openInChannel) }),
       ...(tab.kind === "thread" && {
         attentionRequest: tab.attentionRequest,
         move: (delta: -1 | 1) => moveBy(tab, delta),
         rename: (name: string) => tabState.renameTab(tab.id, name),
       }),
-      // The current conversation's own threads are already in its channel.
-      ...(target &&
-        navigation &&
-        viewer &&
-        tab.channelId !== currentId && {
-          actions: [
-            {
-              label: "Open in channel",
-              run: () =>
-                void navigation.open({
-                  version: 1,
-                  kind: "conversation",
-                  scope: {
-                    viewer,
-                    communityOrigin: scope.slice(0, -(viewer.length + 1)),
-                  },
-                  channelId: tab.channelId,
-                  ...(tab.messageId && { messageId: tab.messageId }),
-                  ...(tab.kind === "thread" && {
-                    threadRootId: rootOfTab(tab),
-                  }),
-                }),
-            },
-          ],
-        }),
+      ...(openInChannel && {
+        actions: [{ label: "Open in channel", run: openInChannel }],
+      }),
       content:
         !usable || !target ? (
           <p role="status" className={styles.empty}>

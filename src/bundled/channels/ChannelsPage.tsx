@@ -786,28 +786,16 @@ function ChannelWorkspace({
     channels,
     conversationIcon,
     // A Solo chat beside another conversation keeps its own header actions.
-    conversationToolbar: (channel) =>
+    conversationToolbar: (channel, open) =>
       channel.channelType === "solo" && (
         <SoloToolbar
+          key={channel.id}
           session={queries}
           scope={scope}
           channel={channel}
           navigator={navigator}
           signal={navigation?.signal}
-          onOpen={
-            navigator && viewer
-              ? () =>
-                  void navigator.open({
-                    version: 1,
-                    kind: "conversation",
-                    scope: {
-                      viewer,
-                      communityOrigin: scope.slice(0, -(viewer.length + 1)),
-                    },
-                    channelId: channel.id,
-                  })
-              : undefined
-          }
+          onOpen={open}
           onLifecycle={(action, trigger) =>
             handoff?.openLifecycle(channel, action, trigger, navigation?.signal)
           }

@@ -57,7 +57,9 @@ type SoloToolbarProps = {
 /** The header of a conversation shown with the Solo treatment. */
 export function SoloHeading(props: SoloToolbarProps) {
   return (
-    <SoloTitle channel={props.channel} actions={<SoloToolbar {...props} />} />
+    <SoloTitle channel={props.channel}>
+      <SoloToolbar {...props} />
+    </SoloTitle>
   );
 }
 

@@ -313,6 +313,13 @@
     :is([data-channel-activity], [data-solo-shared]) {
     opacity: 0;
   }
+  /* Hidden Shared takes no clicks or focus meant for what shows instead. */
+  .organizedRow:has(
+    [data-channel-activity],
+    [data-solo-working-indicator]:not(:empty)
+  ) [data-solo-shared] {
+    visibility: hidden;
+  }
   /* Shared never moves under the pointer; the menu opens beside it. */
   .organizedRow:is(
     :hover,
@@ -321,6 +328,7 @@
     :has([aria-expanded="true"][aria-haspopup="menu"])
   ) [data-solo-shared] {
     opacity: 1;
+    visibility: visible;
   }
   .organizedRow:has([data-solo-shared]) [data-solo-row-action] {
     inset-inline-end: calc(

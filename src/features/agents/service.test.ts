@@ -7520,6 +7520,13 @@ it("gives a run its owner's channel templates with the owner's agents each adds"
 
 describe("Attention plugin sources", () => {
   const root = "e".repeat(64);
+  async function sourceFixture(options?: Parameters<typeof setup>[0]) {
+    const fixture = await setup(options);
+    fixture.native.query.mockResolvedValue([
+      event(root, { tags: [["h", channel]] }),
+    ]);
+    return fixture;
+  }
   const watches = {
     "interest/pr": {
       type: "interest" as const,
@@ -7547,7 +7554,7 @@ describe("Attention plugin sources", () => {
             answer = resolve;
           }),
       );
-      const { service, run, plugin, native } = await setup({ jev });
+      const { service, run, plugin, native } = await sourceFixture({ jev });
       plugin.agents.addAttentionSource({
         id: "command",
         run: async ({ emit }) => {
@@ -7606,7 +7613,7 @@ describe("Attention plugin sources", () => {
   it("starts sources only for active plugin revisions and cancels them on deactivation", async () => {
     let active = false;
     const listeners = new Set<() => void>();
-    const { service, plugin, native } = await setup({
+    const { service, plugin, native } = await sourceFixture({
       pluginActive: () => active,
       subscribePlugin: (listener: () => void) => {
         listeners.add(listener);
@@ -7637,7 +7644,7 @@ describe("Attention plugin sources", () => {
   it("waits for provider teardown before starting it again after plugin reactivation", async () => {
     let active = true;
     const listeners = new Set<() => void>();
-    const { service, plugin, native } = await setup({
+    const { service, plugin, native } = await sourceFixture({
       pluginActive: () => active,
       subscribePlugin: (listener: () => void) => {
         listeners.add(listener);
@@ -7681,7 +7688,7 @@ describe("Attention plugin sources", () => {
     }
   });
   it("delivers source output to the saved conversation and cancels execution when Attention is disabled", async () => {
-    const { service, run, plugin, native } = await setup();
+    const { service, run, plugin, native } = await sourceFixture();
     let input:
       | Parameters<import("./attention-sources").AttentionSource["run"]>[0]
       | undefined;
@@ -7715,7 +7722,7 @@ describe("Attention plugin sources", () => {
   it.each([false, true])(
     "settles a completed producer's final turn without losing stopped work (stopped: %s)",
     async (stopped) => {
-      const { service, run, plugin, native } = await setup();
+      const { service, run, plugin, native } = await sourceFixture();
       let release!: (outcome: WorkOutcome) => void;
       const held = new Promise<WorkOutcome>((resolve) => {
         release = resolve;
@@ -7762,7 +7769,7 @@ describe("Attention plugin sources", () => {
   it.each(["fails", "stops"])(
     "keeps a subscription when delivery %s before its producer completes",
     async (outcome) => {
-      const { service, run, plugin, native } = await setup();
+      const { service, run, plugin, native } = await sourceFixture();
       let finish!: () => void;
       const held = new Promise<void>((resolve) => {
         finish = resolve;
@@ -7796,7 +7803,8 @@ describe("Attention plugin sources", () => {
     },
   );
   it("delivers nonempty output, preserves queued output on completion, and does not rerun after restart", async () => {
-    const { service, run, plugin, native, storage, ctx } = await setup();
+    const { service, run, plugin, native, storage, ctx } =
+      await sourceFixture();
     let emitSource: ((text: string) => void) | undefined;
     let finishSource = () => {};
     plugin.agents.addAttentionSource({
@@ -7829,7 +7837,7 @@ describe("Attention plugin sources", () => {
     );
     const identities = await native.list();
     await ctx.fiber.dispose();
-    const reloaded = await setup({ storage, identities });
+    const reloaded = await sourceFixture({ storage, identities });
     const produce = vi.fn(async () => {});
     reloaded.plugin.agents.addAttentionSource({ id: "command", run: produce });
     await vi.waitFor(() =>

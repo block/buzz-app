@@ -256,6 +256,10 @@ pub(crate) struct AppAgentSummary {
     deleted: bool,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     deleting: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    home: Option<String>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    joining: bool,
 }
 impl From<AppAgent> for AppAgentSummary {
     fn from(agent: AppAgent) -> Self {
@@ -268,6 +272,8 @@ impl From<AppAgent> for AppAgentSummary {
             picture: agent.picture,
             deleted: agent.deleted,
             deleting: agent.deleting,
+            home: agent.home,
+            joining: agent.joining,
         }
     }
 }
@@ -1073,6 +1079,24 @@ mod tests {
         };
         let (_, read) = host.key(agent).await.unwrap();
         assert_eq!(read.pubkey(), key.pubkey());
+    }
+
+    #[test]
+    fn a_membership_reaches_the_webview_with_its_home_and_whether_it_is_joining() {
+        let key = Secret::generate().unwrap();
+        let home = agent_at("wss://home.example".into(), &key);
+        let summary = |agent| serde_json::to_value(AppAgentSummary::from(agent)).unwrap();
+        let at_home = summary(home.clone());
+        assert!(at_home.get("home").is_none() && at_home.get("joining").is_none());
+        let joined = AppAgent {
+            relay: "wss://other.example".into(),
+            home: Some(home.relay.clone()),
+            joining: true,
+            ..home
+        };
+        let joined = summary(joined);
+        assert_eq!(joined["home"], "wss://home.example");
+        assert_eq!(joined["joining"], true);
     }
 
     #[tokio::test]

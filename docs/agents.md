@@ -624,7 +624,9 @@ in its home record and applies everywhere.
   in the source community's media is fetched there and uploaded here. Add writes a
   fresh kind 30177 record and unarchives the agent here. Native saves the new row
   as joining until its key is saved, so a crash in between leaves no membership
-  without a key; adding it again, or Delete, finishes that row.
+  without a key; adding it again, or Delete, finishes that row. A Join holds a
+  lock across apps until its row and key are settled, which another app's Add or
+  key removal waits on.
 - **Custody** is the agent's, shared by its runners in each community: their
   claims and releases run one at a time, and it is released only while none runs.
 - **Delete** leaves every community, the one shown last and only once the others

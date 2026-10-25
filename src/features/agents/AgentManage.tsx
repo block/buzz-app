@@ -43,6 +43,8 @@ export function AgentDelete({
   const [confirming, setConfirming] = useState(false);
   const [removing, setRemoving] = useState(false);
   const [error, setError] = useState("");
+  // Forgot where it couldn't reach, so Delete is what is left to press.
+  const [forgot, setForgot] = useState(false);
   const memberships =
     agent.place === "here" ? agents.memberships(agent.pubkey) : [];
   const several = memberships.length > 1;
@@ -54,6 +56,7 @@ export function AgentDelete({
   const remove = async () => {
     setRemoving(true);
     setError("");
+    setForgot(false);
     try {
       await agents.remove(agent.key);
       setConfirming(false);
@@ -68,8 +71,10 @@ export function AgentDelete({
     setError("");
     try {
       await agents.forget(key);
-      if (agents.memberships(agent.pubkey).length) setRemoving(false);
-      else {
+      if (agents.memberships(agent.pubkey).length) {
+        setForgot(true);
+        setRemoving(false);
+      } else {
         setConfirming(false);
         onRemoved();
       }
@@ -119,7 +124,7 @@ export function AgentDelete({
           </>
         }
       >
-        {several || error || unreachable.length ? (
+        {several || error || unreachable.length || forgot ? (
           <div className="flex flex-col gap-3">
             {several && (
               <ul
@@ -161,6 +166,11 @@ export function AgentDelete({
               <p className="m-0 text-body-sm text-secondary">
                 Forget deletes it from this device without reaching that
                 community, so it may stay in its channels there.
+              </p>
+            )}
+            {forgot && !unreachable.length && (
+              <p className="m-0 text-body-sm text-secondary">
+                Delete again to finish here.
               </p>
             )}
             {!several && unreachable[0] && (

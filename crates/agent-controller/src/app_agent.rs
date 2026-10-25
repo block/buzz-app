@@ -388,6 +388,16 @@ impl AppAgents {
     /// Runs `change` on the saved list while holding the cross-process lock, and
     /// saves what it returns.
     fn update<T>(&self, change: impl FnOnce(&mut Vec<AppAgent>) -> Result<T>) -> Result<T> {
+        let _lock = self.lock("lock")?;
+        let mut agents = self.list()?;
+        let result = change(&mut agents)?;
+        self.write(&agents)?;
+        Ok(result)
+    }
+    /// Takes the cross-process lock in the file beside the list with
+    /// `extension`, which is held until the returned file is dropped, or its
+    /// process ends.
+    fn lock(&self, extension: &str) -> Result<std::fs::File> {
         let dir = self.path.parent().ok_or("Invalid agent identity storage")?;
         std::fs::create_dir_all(dir).map_err(|_| "Could not create agent identity storage")?;
         let mut options = std::fs::OpenOptions::new();
@@ -398,13 +408,17 @@ impl AppAgents {
             options.mode(0o600);
         }
         let lock = options
-            .open(self.path.with_extension("lock"))
+            .open(self.path.with_extension(extension))
             .map_err(|_| "Could not open agent identity lock")?;
         lock.lock().map_err(|_| "Could not lock agent identities")?;
-        let mut agents = self.list()?;
-        let result = change(&mut agents)?;
-        self.write(&agents)?;
-        Ok(result)
+        Ok(lock)
+    }
+    /// Takes the lock a Join holds from saving its row until its key and row
+    /// are settled, and that removing keys waits on, so no other app changes a
+    /// membership's key meanwhile. A row still joining under it is one a
+    /// crash left.
+    fn keys_lock(&self) -> Result<std::fs::File> {
+        self.lock("keys.lock")
     }
     /// Saves a plain list while every agent is only in the community it was
     /// made in, as older builds read it. Once one has been added to another,
@@ -580,9 +594,10 @@ impl AppAgents {
     /// `picture` (one that community serves) and its own profile there. Saves the
     /// row as joining, then the key under the row's own ID, then the row as
     /// joined, so a crash between them never leaves a membership without its
-    /// key. Refused while it is leaving `from` or being deleted, and while it
-    /// is in `destination` or still leaving it; a deleted row there awaiting
-    /// cleanup, or one a crash left joining, is taken back.
+    /// key, all under the keys lock, so another app's Join or removal waits
+    /// for it to settle. Refused while it is leaving `from` or being deleted,
+    /// and while it is in `destination` or still leaving it; a deleted row
+    /// there awaiting cleanup, or one a crash left joining, is taken back.
     pub fn join(
         &self,
         pubkey: &str,
@@ -598,6 +613,7 @@ impl AppAgents {
         {
             return Err("Use an HTTPS image URL without credentials".into());
         }
+        let _keys = self.keys_lock()?;
         let source = self.get(pubkey, &from)?;
         let key = source.read_key(credentials)?;
         let agent = self.update(|agents| {
@@ -639,8 +655,6 @@ impl AppAgents {
                     .map_err(|_| "Agent key could not be verified".into())
             })
             .and_then(|()| {
-                // A Delete or another copy's Remove may have taken the row
-                // meanwhile; its key then goes too.
                 self.update(|agents| {
                     let joined = agents
                         .iter_mut()
@@ -731,6 +745,7 @@ impl AppAgents {
     /// their own copies of the key. Absence is success.
     pub fn remove(&self, pubkey: &str, relay: &str, credentials: &dyn Credentials) -> Result<()> {
         let relay = canonical_relay(relay)?;
+        let _keys = self.keys_lock()?;
         let Some(agent) = self
             .list()?
             .into_iter()
@@ -753,6 +768,7 @@ impl AppAgents {
     /// Deletes every key it still has, as an erase that removes agents does
     /// before the rows go with app data. Absence is success, so it repeats safely.
     pub fn delete_keys(&self, credentials: &dyn Credentials) -> Result<()> {
+        let _keys = self.keys_lock()?;
         for agent in self.list()?.into_iter().filter(|agent| !agent.deleted) {
             credentials.delete(&agent.credential_id(), &agent.pubkey)?;
         }

@@ -920,11 +920,12 @@ fn refuses_an_unknown_list_version() {
 }
 
 #[test]
-fn a_join_its_delete_overtakes_leaves_no_key_behind() {
+fn a_join_another_app_starts_meanwhile_waits_for_it_and_is_refused() {
     const OTHER: &str = "wss://other.example";
-    /// Another copy of the app deletes the agent while this one saves its key.
-    struct Racing<'a>(&'a Memory, &'a AppAgents, &'a str);
-    impl Credentials for Racing<'_> {
+    use std::sync::mpsc::{channel, Receiver, Sender};
+    /// Holds this app's Join while it saves the key, until let go.
+    struct Gated<'a>(&'a Memory, Sender<()>, Mutex<Receiver<()>>);
+    impl Credentials for Gated<'_> {
         fn read_legacy(&self, source: crate::LegacySource, pubkey: &str) -> Result<Secret> {
             self.0.read_legacy(source, pubkey)
         }
@@ -932,9 +933,8 @@ fn a_join_its_delete_overtakes_leaves_no_key_behind() {
             self.0.read(id, pubkey)
         }
         fn add(&self, id: &str, key: &Secret) -> Result<()> {
-            self.1.begin_delete(self.2).unwrap();
-            self.1.remove(self.2, OTHER, self.0).unwrap();
-            self.1.forget(self.2, OTHER).unwrap();
+            self.1.send(()).unwrap();
+            self.2.lock().unwrap().recv().unwrap();
             self.0.add(id, key)
         }
         fn delete(&self, id: &str, pubkey: &str) -> Result<()> {
@@ -944,19 +944,23 @@ fn a_join_its_delete_overtakes_leaves_no_key_behind() {
     let dir = tempfile::tempdir().unwrap();
     let credentials = Memory::default();
     let (agents, agent) = created(dir.path(), &credentials);
-    let racing = Racing(&credentials, &agents, &agent.pubkey);
-    assert!(agents
-        .join(&agent.pubkey, RELAY, OTHER, None, &racing)
-        .is_err());
-    assert_eq!(
-        agents.list().unwrap(),
-        [AppAgent {
-            deleting: true,
-            ..agent.clone()
-        }]
-    );
-    assert_eq!(
-        credentials.0.lock().unwrap().keys().collect::<Vec<_>>(),
-        [&agent.credential_id()]
-    );
+    let (adding, added) = channel();
+    let (go, gate) = channel();
+    let gated = Gated(&credentials, adding, Mutex::new(gate));
+    // The other app, with its own handle on the same list.
+    let other = AppAgents::open(dir.path().join("agents/identities.json"));
+    let (first, second) = std::thread::scope(|scope| {
+        let first = scope.spawn(|| agents.join(&agent.pubkey, RELAY, OTHER, None, &gated));
+        added.recv().unwrap();
+        let second = scope.spawn(|| other.join(&agent.pubkey, RELAY, OTHER, None, &credentials));
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        let waited = !second.is_finished();
+        go.send(()).unwrap();
+        assert!(waited);
+        (first.join().unwrap(), second.join().unwrap())
+    });
+    let joined = first.unwrap();
+    assert!(second.unwrap_err().contains("already in that community"));
+    assert_eq!(agents.list().unwrap(), [agent.clone(), joined.clone()]);
+    assert!(joined.read_key(&credentials).is_ok());
 }

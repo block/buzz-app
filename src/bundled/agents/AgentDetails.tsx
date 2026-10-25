@@ -389,13 +389,21 @@ export function AgentDetails({
                     {inSeveral(agents, agent) && (
                       <PreferenceRow
                         title="Remove from this community"
-                        subtitle={`Also in ${agents
-                          .memberships(agent.pubkey)
-                          .filter((membership) => membership.key !== agent.key)
-                          .map(({ origin }) =>
-                            origin.replace(/^https:\/\//, ""),
-                          )
-                          .join(", ")}, where it stays.`}
+                        subtitle={
+                          agent.deleting
+                            ? "Its Remove didn't finish, so it stays stopped here. Remove it again to finish."
+                            : `Also in ${agents
+                                .memberships(agent.pubkey)
+                                .filter(
+                                  (membership) =>
+                                    membership.key !== agent.key &&
+                                    !membership.deleting,
+                                )
+                                .map(({ origin }) =>
+                                  origin.replace(/^https:\/\//, ""),
+                                )
+                                .join(", ")}, where it stays.`
+                        }
                         trailing={
                           <AgentRemoveHere
                             agents={agents}
@@ -419,6 +427,7 @@ export function AgentDetails({
                       title="Delete agent"
                       subtitle={
                         agent.deleting &&
+                        !inSeveral(agents, agent) &&
                         "Its Delete didn't finish, so it stays stopped. Delete it again to finish."
                       }
                       trailing={

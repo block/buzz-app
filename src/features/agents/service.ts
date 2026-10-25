@@ -154,7 +154,8 @@ export type Agent<Config = unknown> = Readonly<{
   /** Imported, but whether it is still archived in its community could not
    * be checked; `unarchive` tries again. */
   archiveUnchecked?: true;
-  /** Its Delete did not finish: it is stopped until Delete runs again. */
+  /** Its Delete, or its Remove from this community, did not finish: it is
+   * stopped here until that runs again. */
   deleting?: true;
   attention: Readonly<Record<string, AttentionObject>>;
   /** Stored attention objects that are invalid or over a limit, by slug. */
@@ -946,10 +947,14 @@ export type Agents = {
    * be reached stays, and the rejection names it. */
   remove(agent: AgentKey): Promise<void>;
   /** The communities the owner's agent `pubkey` is in on this device, as
-   * Delete leaves them: each one's origin, and whether it is connected. */
-  memberships(
-    pubkey: string,
-  ): readonly Readonly<{ key: AgentKey; origin: string; connected: boolean }>[];
+   * Delete leaves them: each one's origin, whether it is connected, and
+   * whether a Delete or Remove there started and hasn't finished. */
+  memberships(pubkey: string): readonly Readonly<{
+    key: AgentKey;
+    origin: string;
+    connected: boolean;
+    deleting?: true;
+  }>[];
   /** Deletes the agent from a community Delete cannot reach without leaving
    * it there: it may stay in that community's channels. */
   forget(agent: AgentKey): Promise<void>;
@@ -2722,6 +2727,7 @@ export class AgentsService extends Service implements Agents {
       key: member.key,
       origin: originOf(member.relay) ?? member.relay,
       connected: !!this.bindingOf(member),
+      ...(member.deleting && { deleting: true as const }),
     }));
   }
   async forget(key: AgentKey) {

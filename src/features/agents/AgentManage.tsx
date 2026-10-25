@@ -13,11 +13,13 @@ const message = (error: unknown) =>
 const hostOf = (origin: string) => origin.replace(/^https:\/\//, "");
 
 /** Whether the agent shown here is also in another of the owner's
- * communities, so it can be removed from this one alone. */
+ * communities that it isn't leaving, so it can be removed from this one
+ * alone, or again after a Remove that didn't finish. */
 export const inSeveral = (agents: Agents, agent: Agent) =>
   agent.place === "here" &&
-  !agent.deleting &&
-  agents.memberships(agent.pubkey).length > 1;
+  agents
+    .memberships(agent.pubkey)
+    .some((membership) => membership.key !== agent.key && !membership.deleting);
 
 /** What adding the same agent to another community shares and what it keeps
  * there, as every place that adds one says it. */
@@ -49,10 +51,9 @@ export function AgentDelete({
     agent.place === "here" ? agents.memberships(agent.pubkey) : [];
   const several = memberships.length > 1;
   // Only a Delete that started can be given up on where it can't reach.
-  const unreachable =
-    agent.deleting || error
-      ? memberships.filter((membership) => !membership.connected)
-      : [];
+  const unreachable = memberships.filter(
+    (membership) => membership.deleting && !membership.connected,
+  );
   const remove = async () => {
     setRemoving(true);
     setError("");

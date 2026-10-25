@@ -367,7 +367,9 @@ function setup(
     resumeInterrupted: vi.fn(),
     dismissInterrupted: vi.fn(),
     wake: vi.fn(),
-    memberships: () => [],
+    memberships: vi.fn(
+      (_pubkey: string): ReturnType<Agents["memberships"]> => [],
+    ),
     forget: vi.fn(),
     joinable: (): readonly Agent[] => [],
     join: vi.fn(),
@@ -1675,6 +1677,56 @@ it("keeps a failed Delete's agent and its warning on screen", async () => {
   await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
   expect(screen.getByText(/Its Delete didn't finish/)).toBeInTheDocument();
   expect(screen.getByRole("gridcell", { name: "Ada" })).toBeInTheDocument();
+});
+
+it("keeps a failed Remove from this community open to retry here alone", async () => {
+  const user = userEvent.setup();
+  const ada = agent("Ada", 1);
+  const { agents, show } = setup([ada]);
+  let leaving = false;
+  agents.memberships.mockImplementation(() => [
+    {
+      key: ada.key,
+      origin: "https://relay.example",
+      connected: true,
+      ...(leaving && { deleting: true as const }),
+    },
+    {
+      key: `${ada.pubkey}@other.example`,
+      origin: "https://other.example",
+      connected: true,
+    },
+  ]);
+  const failure = "Ada hasn't left relay.example yet.";
+  agents.leave.mockImplementationOnce(async () => {
+    leaving = true;
+    show([{ ...ada, deleting: true }]);
+    throw new Error(failure);
+  });
+  await user.click(screen.getByRole("gridcell", { name: "Ada" }));
+  await user.click(screen.getByRole("tab", { name: "Settings" }));
+  const remove = () =>
+    user.click(
+      screen.getByRole("button", { name: "Remove from this community" }),
+    );
+  await remove();
+  let dialog = await screen.findByRole("dialog", {
+    name: "Remove Ada from relay.example?",
+  });
+  await user.click(within(dialog).getByRole("button", { name: "Remove" }));
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(failure);
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  expect(screen.getByText(/Its Remove didn't finish/)).toBeInTheDocument();
+  expect(screen.queryByText(/Its Delete didn't finish/)).toBeNull();
+  await remove();
+  dialog = await screen.findByRole("dialog", {
+    name: "Remove Ada from relay.example?",
+  });
+  await user.click(within(dialog).getByRole("button", { name: "Remove" }));
+  await waitFor(() => expect(dialog).not.toBeInTheDocument());
+  expect(agents.leave).toHaveBeenCalledTimes(2);
+  expect(agents.leave).toHaveBeenLastCalledWith(ada.key);
+  expect(agents.remove).not.toHaveBeenCalled();
 });
 
 it("opens deletion from the card menu without selecting it and requires confirmation", async () => {

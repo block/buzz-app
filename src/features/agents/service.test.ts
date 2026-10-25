@@ -2114,8 +2114,18 @@ describe("an agent in several communities", () => {
     expect(leaveChannels).not.toHaveBeenCalled();
     expect(service.find(bot)?.deleting).toBe(true);
     expect(service.memberships(bot)).toEqual([
-      { key: bot, origin: "https://relay.example.test", connected: true },
-      { key: away, origin: "https://other.example.test", connected: false },
+      {
+        key: bot,
+        origin: "https://relay.example.test",
+        connected: true,
+        deleting: true,
+      },
+      {
+        key: away,
+        origin: "https://other.example.test",
+        connected: false,
+        deleting: true,
+      },
     ]);
     await service.forget(away);
     expect(forgetDefaultAgent).not.toHaveBeenCalled();
@@ -2145,7 +2155,7 @@ describe("an agent in several communities", () => {
     ]);
   });
 
-  it("lists a rename in one community while it is still leaving another", async () => {
+  it("lists a rename in one community while it is still leaving another, then finishes leaving it", async () => {
     const { service } = await joined();
     leaveChannels.mockRejectedValueOnce(new Error("offline"));
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -2163,6 +2173,11 @@ describe("an agent in several communities", () => {
     );
     await settle();
     expect(records.publish).toHaveBeenCalledOnce();
+    // Removing it there again finishes, and it stays here.
+    await service.leave(away);
+    expect(service.memberships(bot)).toEqual([
+      { key: bot, origin: "https://relay.example.test", connected: true },
+    ]);
   });
 
   it("keeps the agent held while another community's claim is still being answered", async () => {

@@ -26,7 +26,13 @@ afterEach(() => {
 });
 async function fixture(
   thread = false,
-  options: { destinationType?: string; alone?: boolean; shared?: boolean } = {},
+  options: {
+    destinationType?: string;
+    alone?: boolean;
+    shared?: boolean;
+    /** The other person has a profile name. */
+    named?: boolean;
+  } = {},
 ) {
   const viewer = keypair(),
     relay = keypair(),
@@ -79,6 +85,16 @@ async function fixture(
           ...[source, destination].map((id) =>
             roster(relay, id, members.get(id) ?? [], clock),
           ),
+          ...(options.named
+            ? [
+                signed(person, {
+                  kind: 0,
+                  created_at: clock,
+                  tags: [],
+                  content: JSON.stringify({ name: "Kenny" }),
+                }),
+              ]
+            : []),
           ...published,
         ].filter((event) =>
           filters.some((filter) => matchesEvent(event, filter)),
@@ -282,13 +298,42 @@ it("offers only link-only when the viewer can't share the chat", async () => {
   expect(f.published[0]?.kind).toBe(9);
 });
 
-it("sends a chat link into a DM without asking or granting access", async () => {
+it("asks before sending a chat link into a DM, then shares with its other person", async () => {
   const f = await fixture(false, { destinationType: "dm" });
+  await userEvent.click(screen.getByRole("button", { name: "Send message" }));
+  const dialog = await screen.findByRole("dialog", {
+    name: "Share access to this chat?",
+  });
+  expect(dialog).toHaveTextContent(
+    "Share gives the 1 other person in this DM access to the full chat history",
+  );
+  expect(f.publish).not.toHaveBeenCalled();
+  await userEvent.click(screen.getByRole("button", { name: "Share and send" }));
+  await waitFor(() =>
+    expect(f.published.filter((event) => event.kind === 9)).toHaveLength(1),
+  );
+  expect(f.members.get(source)).toContain(f.person.pubkey);
+  expect(f.published.map((event) => event.kind)).toEqual([9000, 9]);
+});
+
+it("names who in a DM gets access once their profile is known", async () => {
+  const f = await fixture(false, { destinationType: "dm", named: true });
+  await f.session.profiles.ensure([f.person.pubkey]);
+  await userEvent.click(screen.getByRole("button", { name: "Send message" }));
+  const dialog = await screen.findByRole("dialog", {
+    name: "Share access to this chat?",
+  });
+  expect(dialog).toHaveTextContent(
+    "Share gives Kenny access to the full chat history",
+  );
+});
+
+it("sends a chat link into a DM without asking when everyone has access", async () => {
+  const f = await fixture(false, { destinationType: "dm", shared: true });
   await userEvent.click(screen.getByRole("button", { name: "Send message" }));
   await waitFor(() => expect(f.published).toHaveLength(1));
   expect(f.published[0]?.kind).toBe(9);
   expect(screen.queryByRole("dialog")).toBeNull();
-  expect(f.members.get(source)).not.toContain(f.person.pubkey);
 });
 
 it("grants nothing and sends nothing when the draft changes while consent is open", async () => {

@@ -206,7 +206,6 @@ function setup(
     agent,
     session,
     solo,
-    core,
     connection,
     core,
   };

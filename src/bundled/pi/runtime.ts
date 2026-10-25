@@ -467,7 +467,10 @@ export class PiRuntime {
     const same = prior?.topLevel === topLevel;
     const wait = prior && (same ? prior.handed : prior.settled);
     const request = event.id;
-    let submitted: { submission: number; conversation: number } | undefined;
+    let submitted:
+      | { submission: number; conversation: number }
+      | false
+      | undefined;
     let sends = 0;
     // A delivery during a session action waits for it, past its handover.
     const control = `${agent.pubkey}/${key}`;
@@ -818,7 +821,7 @@ export class PiRuntime {
     pubkey: string,
     params: object,
     current: () => boolean,
-  ): Promise<{ submission: number; conversation: number } | undefined> {
+  ): Promise<{ submission: number; conversation: number } | false | undefined> {
     try {
       return await this.pi.request("deliver", params);
     } catch (error) {

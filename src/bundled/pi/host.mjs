@@ -730,7 +730,7 @@ export function serve({
             ? () => call("prompt", { agent, request: turn.request })
             : undefined,
         );
-        if (!submitted) return;
+        if (!submitted) return false;
         // Recorded once Pi has the turn: one that could not start leaves the
         // messages it would have been shown for the next.
         await harness.commit(async (tx) => {

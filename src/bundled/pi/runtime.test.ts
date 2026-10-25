@@ -1885,6 +1885,7 @@ it.each([true, false])(
             "prompt",
           );
           refreshed = answer.result;
+          if (!answer.result) return false;
         }
         return { submission: 1, conversation: CONVERSATION };
       },
@@ -1916,7 +1917,11 @@ it.each([true, false])(
         expect(JSON.stringify(refreshed)).not.toContain(
           "Old Interest instructions",
         );
-      } else expect(refreshed).toBe(false);
+      } else {
+        expect(refreshed).toBe(false);
+        await expect(f.settled(receipt)).resolves.toEqual({ ok: true });
+        expect(f.published).toEqual([]);
+      }
     } finally {
       queued.resolve();
       f.runtime.dispose();

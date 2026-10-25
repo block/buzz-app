@@ -277,7 +277,7 @@ promptQueue.release();
 const submitted = await Promise.all([r1, r2]);
 await Promise.all(submitted.map(({ submission }) => pi.rpc("wait", { agent: promptAgent, submission })));
 out.refresh = { calls: promptCalls, entries: JSON.stringify((await pi.rpc("entries", { agent: promptAgent, conversation: submitted[0].conversation })).entries) };
-await pi.rpc("deliver", refreshing("R3", 999));
+out.refresh.dropped = await pi.rpc("deliver", refreshing("R3", 999));
 out.refresh.seen = (await pi.rpc("place", { agent: promptAgent, key: "refresh" })).seen;
 await pi.stop();
 // Pi's auth.json: a change that returns nothing, as pi-ai's refresh does when
@@ -482,6 +482,7 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
     expect(out.refresh.entries).toContain("Updated Interest instructions");
     expect(out.refresh.entries).not.toContain("Old Interest instructions");
     expect(out.refresh.seen).toBe(200);
+    expect(out.refresh.dropped).toBe(false);
     const signIn = { type: "oauth", access: "a", refresh: "r", expires: 1 };
     expect(out.auth).toEqual({ result: signIn, stored: signIn });
     expect(out.command).toMatch(

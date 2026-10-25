@@ -1,6 +1,8 @@
-import { stageSessionCards } from "./composer-session-cards";
-import { sessionReferenceIds } from "../sessions/shared-session-marker";
-import { ComposerSessionCards } from "./ComposerSessionCards";
+import { useChatLinkSharing } from "./useChatLinkSharing";
+import { accentButtonStyle } from "../../shared/theme/accent";
+import { stageChatCards } from "./composer-chat-cards";
+import { chatCardIds } from "./chat-cards";
+import { ComposerChatCards } from "./ComposerChatCards";
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import { TypingPresentation } from "../conversation/typing-presentation";
 import { useTypingBroadcast } from "./useTypingBroadcast";
@@ -461,7 +463,7 @@ function Composer({
   const [conflict, setConflict] = useState(false);
   const [storageFailed, setStorageFailed] = useState(false);
   const [value, updateDraft] = useState(() =>
-    stageSessionCards(
+    stageChatCards(
       mentionDraft(
         accepted?.next ??
           submission?.recoveredDraft ??
@@ -470,10 +472,10 @@ function Composer({
       list.channels,
     ),
   );
-  const sessionCards = value.sessionCards;
+  const chatCards = value.chatCards;
   const editorDraft = useMemo(() => {
-    if (!value.sessionCards) return value;
-    const { sessionCards: _cards, ...caption } = value;
+    if (!value.chatCards) return value;
+    const { chatCards: _cards, ...caption } = value;
     return caption;
   }, [value]);
   const draft = value.text;
@@ -600,6 +602,13 @@ function Composer({
     }
     focus();
   }, [disabled]);
+  const linkSharing = useChatLinkSharing(
+    fullSession(session),
+    channelId,
+    () => {
+      if (permitted.current) input.current?.focus();
+    },
+  );
   const nonmembers = useNonmemberMentions(session, channelId, () => {
     if (permitted.current) input.current?.focus();
   });
@@ -618,13 +627,12 @@ function Composer({
     [],
   );
   const saveDraft = (next: MentionDraft) => {
-    next = stageSessionCards(
+    next = stageChatCards(
       {
         ...next,
-        ...((next.sessionCards ?? valueRef.current.sessionCards)
+        ...((next.chatCards ?? valueRef.current.chatCards)
           ? {
-              sessionCards:
-                next.sessionCards ?? valueRef.current.sessionCards ?? [],
+              chatCards: next.chatCards ?? valueRef.current.chatCards ?? [],
             }
           : {}),
       },
@@ -775,7 +783,7 @@ function Composer({
   function loadSaved(raw: string | null) {
     let next: MentionDraft;
     try {
-      next = stageSessionCards(
+      next = stageChatCards(
         mentionDraft(JSON.parse(raw ?? "null")),
         list.channels,
       );
@@ -962,12 +970,10 @@ function Composer({
       value: valueRef.current,
       restore: input.current.checkpoint(),
     };
-    const next = stageSessionCards(
+    const next = stageChatCards(
       mentionDraft(
         editing.start(current, (body) =>
-          composerMarkdown(
-            stageSessionCards(mentionDraft(body), list.channels),
-          ),
+          composerMarkdown(stageChatCards(mentionDraft(body), list.channels)),
         ),
       ),
       list.channels,
@@ -1186,6 +1192,16 @@ function Composer({
     setError(undefined);
     return true;
   }
+  function replaceRecipientsIfEmpty(recipients: readonly MentionRecipient[]) {
+    const current = valueRef.current;
+    const prose = [...current.recipients]
+      .sort((a, b) => b.start - a.start)
+      .reduce(
+        (text, tag) => text.slice(0, tag.start) + text.slice(tag.end),
+        current.text,
+      );
+    return !prose.trim() && replaceRecipients(recipients);
+  }
   function insertResource(resource: ComposerResource): true | string {
     if (
       !permitted.current ||
@@ -1354,7 +1370,7 @@ function Composer({
       if (editDisabled || editing.locked) return;
       if (
         !valueRef.current.text.trim() &&
-        !valueRef.current.sessionCards?.length
+        !valueRef.current.chatCards?.length
       ) {
         if (editing.target.attachments.length) {
           setError(
@@ -1399,7 +1415,7 @@ function Composer({
     // A new conversation is named from its message, so files alone cannot start it.
     if (
       !draft.trim() &&
-      !sessionCards?.length &&
+      !chatCards?.length &&
       (!!submission || !attachments.items.length)
     )
       return;
@@ -1531,12 +1547,32 @@ function Composer({
         ),
       );
       const tuned = Object.keys(sentPicks).length > 0;
-      const stagedSessions = new Set(
-        sessionReferenceIds((captured.sessionCards ?? []).join("\n\n")),
+      const stagedChats = new Set(
+        chatCardIds((captured.chatCards ?? []).join("\n\n")),
       );
-      const sharedSessions = sessionReferenceIds(content).filter((id) =>
-        stagedSessions.has(id),
+      const linkedChats = chatCardIds(content).filter((id) =>
+        stagedChats.has(id),
       );
+      if (linkedChats.length) {
+        setSending(true);
+        setError(undefined);
+        const current = () =>
+          permitted.current &&
+          valueRef.current === captured &&
+          viewRevision(scope, draftKey) === savedRevision &&
+          sameAttachmentSelection(
+            attachments.store.snapshot(),
+            capturedAttachments,
+          );
+        if (!(await linkSharing.prepare(linkedChats, attempt.signal, current)))
+          return;
+        attempt.signal.throwIfAborted();
+        if (viewRevision(scope, draftKey) !== savedRevision) {
+          setConflict(true);
+          return;
+        }
+        if (!current()) return;
+      }
       // Destination and content are fixed here; a background send never retargets.
       function publishNow(
         uploaded: readonly UploadedAttachment[],
@@ -1581,19 +1617,13 @@ function Composer({
               content,
               recipients,
               uploaded,
-              ...(replyParentId ||
-              references.length ||
-              tuned ||
-              sharedSessions.length
+              ...(replyParentId || references.length || tuned
                 ? [replyParentId]
                 : []),
-              ...(references.length || tuned || sharedSessions.length
-                ? [references]
-                : []),
-              ...(tuned || sharedSessions.length ? [sentPicks] : []),
-              ...(sharedSessions.length ? [sharedSessions] : []),
+              ...(references.length || tuned ? [references] : []),
+              ...(tuned ? [sentPicks] : []),
             )
-          : references.length || tuned || sharedSessions.length
+          : references.length || tuned
             ? sender.messages.send(
                 channelId,
                 content,
@@ -1601,8 +1631,7 @@ function Composer({
                 uploaded,
                 undefined,
                 references,
-                ...(tuned || sharedSessions.length ? [sentPicks] : []),
-                ...(sharedSessions.length ? [sharedSessions] : []),
+                ...(tuned ? [sentPicks] : []),
               )
             : sender.messages.send(channelId, content, recipients, uploaded);
       }
@@ -1676,8 +1705,8 @@ function Composer({
               (valueRef.current.text !== next.text ||
                 JSON.stringify(valueRef.current.recipients) !==
                   JSON.stringify(next.recipients) ||
-                JSON.stringify(valueRef.current.sessionCards ?? []) !==
-                  JSON.stringify(next.sessionCards ?? [])) &&
+                JSON.stringify(valueRef.current.chatCards ?? []) !==
+                  JSON.stringify(next.chatCards ?? [])) &&
               JSON.stringify(valueRef.current) !== capturedRevision
             )
               return "conflict";
@@ -1695,8 +1724,8 @@ function Composer({
                 valueRef.current.text === next.text &&
                 JSON.stringify(valueRef.current.recipients) ===
                   JSON.stringify(next.recipients) &&
-                JSON.stringify(valueRef.current.sessionCards ?? []) ===
-                  JSON.stringify(next.sessionCards ?? [])
+                JSON.stringify(valueRef.current.chatCards ?? []) ===
+                  JSON.stringify(next.chatCards ?? [])
               )
             )
               return "conflict";
@@ -1856,6 +1885,7 @@ function Composer({
     <SelectedMentionContext.Provider value={value.recipients}>
       {context}
       {active && nonmembers.dialog}
+      {active && linkSharing.dialog}
       {!submission && !threadRootId && host && (
         <QueuedFollowUps
           session={host}
@@ -1913,20 +1943,6 @@ function Composer({
           send();
         }}
       >
-        {editing.target && (
-          <div className={styles.composerEditHeader}>
-            <PencilSimpleIcon size={18} />
-            <span>Editing message</span>
-            <IconButton
-              type="button"
-              size="sm"
-              aria-label={editing.locked ? "Close edit" : "Cancel edit"}
-              disabled={editing.busy}
-              onClick={editing.close}
-              icon={<XIcon size={18} />}
-            />
-          </div>
-        )}
         <label className="sr-only" htmlFor={inputId}>
           {label}
         </label>
@@ -1953,9 +1969,24 @@ function Composer({
             onDismiss={() => setAttachmentError(undefined)}
           />
         )}
-        <ComposerReplyContext>
-          {!editing.target && replyContext}
-        </ComposerReplyContext>
+        <ComposerContext key={editing.target ? "edit" : "reply"}>
+          {editing.target ? (
+            <div className={styles.replyContext}>
+              <PencilSimpleIcon size={18} aria-hidden="true" />
+              <div>Editing message</div>
+              <IconButton
+                type="button"
+                size="sm"
+                aria-label={editing.locked ? "Close edit" : "Cancel edit"}
+                disabled={editing.busy}
+                onClick={editing.close}
+                icon={<XIcon size={16} aria-hidden="true" />}
+              />
+            </div>
+          ) : (
+            replyContext
+          )}
+        </ComposerContext>
         <div className={styles.composerContent}>
           {!editing.target && (
             <ComposerAttachments
@@ -1982,8 +2013,8 @@ function Composer({
               }}
             />
           )}
-          <ComposerSessionCards
-            cards={sessionCards ?? []}
+          <ComposerChatCards
+            cards={chatCards ?? []}
             session={session}
             scope={scope}
             channelId={channelId}
@@ -1992,10 +2023,9 @@ function Composer({
             remove={(index) => {
               saveDraft({
                 ...valueRef.current,
-                sessionCards:
-                  valueRef.current.sessionCards?.filter(
-                    (_, i) => i !== index,
-                  ) ?? [],
+                chatCards:
+                  valueRef.current.chatCards?.filter((_, i) => i !== index) ??
+                  [],
               });
               input.current?.focus();
             }}
@@ -2046,7 +2076,7 @@ function Composer({
               maxLength={Math.max(
                 0,
                 16000 -
-                  (sessionCards?.reduce(
+                  (chatCards?.reduce(
                     (size, card) => size + card.length + 2,
                     0,
                   ) ?? 0),
@@ -2098,7 +2128,7 @@ function Composer({
                     !valueRef.current.recipients.length) ||
                     automaticTag.current ===
                       JSON.stringify(valueRef.current)) &&
-                  !valueRef.current.sessionCards?.length &&
+                  !valueRef.current.chatCards?.length &&
                   !attachments.items.length
                 ) {
                   const target = lastEditableMessage(session, editableRows());
@@ -2180,6 +2210,7 @@ function Composer({
                     insertMention={insertMention}
                     insertMentions={insertMentions}
                     replaceRecipients={replaceRecipients}
+                    replaceRecipientsIfEmpty={replaceRecipientsIfEmpty}
                     insertResource={insertResource}
                     focus={() => input.current?.focus()}
                   />
@@ -2208,12 +2239,13 @@ function Composer({
               )}
             <IconButton
               variant={
-                draft.trim() || sessionCards?.length || attachments.items.length
+                draft.trim() || chatCards?.length || attachments.items.length
                   ? "primary"
                   : "ghost"
               }
               size="toolbar"
               type="submit"
+              style={editing.target ? undefined : accentButtonStyle}
               aria-label={editing.target ? "Save changes" : "Send message"}
               title={
                 editing.target
@@ -2238,7 +2270,7 @@ function Composer({
                 submission?.disabled ||
                 (!editing.target && attachments.blocked) ||
                 (!draft.trim() &&
-                  !sessionCards?.length &&
+                  !chatCards?.length &&
                   (!!submission || !attachments.items.length) &&
                   !(
                     editing.target &&
@@ -2334,8 +2366,8 @@ function Composer({
   );
 }
 
-/** Retain the last preview for collapse; reply semantics clear immediately. */
-function ComposerReplyContext({ children }: { children: ReactNode }) {
+/** Retain the last preview for collapse; context semantics clear immediately. */
+function ComposerContext({ children }: { children: ReactNode }) {
   const open = !!children;
   const [lastContext, setLastContext] = useState(children);
   if (open && children !== lastContext) setLastContext(children);

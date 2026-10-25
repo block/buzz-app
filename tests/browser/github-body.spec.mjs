@@ -17,7 +17,7 @@ const picture =
 const redirected =
   "https://objects.githubusercontent.com/github-production-user-asset-6210df/659873452-after.mp4";
 const videoPath = fileURLToPath(
-  new URL("../fixtures/message-gallery/assets/sample.mp4", import.meta.url),
+  new URL("../fixtures/github-body.mp4", import.meta.url),
 );
 const imagePath = fileURLToPath(
   new URL("../fixtures/attachment-media/still.png", import.meta.url),
@@ -125,8 +125,8 @@ test("PR media plays under the packaged media policy in a narrow GitHub panel", 
     panel.locator("ul:not(.contains-task-list):not([aria-label])"),
   ).toHaveCSS("list-style-type", "disc");
   for (let index = 0; index < 2; index++) {
-    const preview = panel.locator("[data-video-preview]").nth(index);
-    const video = preview.locator("video");
+    const video = videos.nth(index);
+    const preview = video.locator("..");
     // The two-second fixture must not end while a slow runner prepares Pause.
     await video.evaluate((element) => {
       element.loop = true;

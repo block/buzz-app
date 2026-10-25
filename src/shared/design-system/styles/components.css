@@ -626,7 +626,9 @@
   .buzz-preview-card {
     display: grid;
     width: max-content;
-    max-width: min(18rem, 75vw);
+    max-width: min(18rem, 75vw, var(--available-width, 100vw));
+    max-height: var(--available-height);
+    overflow-y: auto;
     gap: var(--space-1);
     @apply floating-surface;
     padding: var(--space-4);
@@ -1387,7 +1389,19 @@
      applying nested shared selectors inside CSS Modules would rename their targets. */
   .buzz-sidebar-navigation {
     display: contents;
-    @apply interaction-navigation;
+    --affordance-navigation-quiet: var(--affordance-sidebar-hover);
+    --affordance-navigation-selected: var(--surface-sidebar-selected);
+    --text-row: var(--text-sidebar-hover);
+    --text-row-subtle: var(--text-sidebar-hover);
+    --text-row-metadata: var(--text-sidebar-hover);
+    --text-row-selected: var(--text-sidebar-selected);
+    --text-row-selected-subtle: var(--text-sidebar-selected);
+    --text-row-selected-metadata: var(--text-sidebar-selected);
+    --interaction-selected: var(--surface-sidebar-selected);
+    --interaction-selected-text: var(--text-sidebar-selected);
+    --interaction-selected-metadata: var(--text-sidebar-selected);
+    --interaction-row-text: var(--text-sidebar-hover);
+    --interaction-row-metadata: var(--text-sidebar-hover);
     --size-row: var(--space-6);
     --affordance-panel-hover: var(--affordance-navigation-quiet);
     --interaction-row-hover: var(--affordance-navigation-quiet);

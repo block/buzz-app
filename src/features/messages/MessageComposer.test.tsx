@@ -2502,6 +2502,7 @@ const oldBuzzAgents = () => {
     snapshot: () => snapshot,
     types: () => types,
     find: () => undefined,
+    joinable: () => [],
     portable: async () => ({
       agents: [first, second].map((agent) => ({
         ...agent,

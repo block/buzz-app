@@ -490,6 +490,8 @@ export type RunnerHost = {
 
 export class AgentRunners {
   private readonly runners = new Map<string, Runner>();
+  /** Each agent's last claim or release, which its next waits for. */
+  private readonly custody = new Map<string, Promise<void>>();
   /** The synced revisions each agent's current run started from. */
   readonly started = new Runs();
   /** Agents whose community was live at the last resume. */
@@ -2412,21 +2414,39 @@ export class AgentRunners {
     if (before !== this.runs(runner.key)) this.host.ownershipChanged?.();
     return held;
   }
-  private async claim(runner: Runner) {
-    try {
-      return this.claimed(
-        runner,
-        (await this.host.custody?.claim(runner.member.pubkey)) ?? false,
-      );
-    } catch (error) {
-      this.claimed(runner, true);
-      // Answering twice beats not answering at all.
-      console.warn(
-        `Agent ${this.host.agent(runner.key)?.name} was not claimed`,
-        error,
-      );
-      return true;
-    }
+  private claim(runner: Runner) {
+    return this.custodied(runner.member.pubkey, async () => {
+      try {
+        return this.claimed(
+          runner,
+          (await this.host.custody?.claim(runner.member.pubkey)) ?? false,
+        );
+      } catch (error) {
+        this.claimed(runner, true);
+        // Answering twice beats not answering at all.
+        console.warn(
+          `Agent ${this.host.agent(runner.key)?.name} was not claimed`,
+          error,
+        );
+        return true;
+      }
+    });
+  }
+  /** Runs `step` once the agent's earlier claims and releases settle.
+   * Custody holds the agent, which its runners in each community share, so
+   * one never lets go while another's claim is answered but not yet known. */
+  private custodied<T>(pubkey: string, step: () => Promise<T>): Promise<T> {
+    const prior = this.custody.get(pubkey);
+    const done = prior ? prior.then(step) : step();
+    const settled = done.then(
+      () => {},
+      () => {},
+    );
+    this.custody.set(pubkey, settled);
+    void settled.then(() => {
+      if (this.custody.get(pubkey) === settled) this.custody.delete(pubkey);
+    });
+    return done;
   }
   /** The notice lists an agent's saved turns only while this copy holds it,
    * so a change in holding lists it again. */
@@ -2436,25 +2456,28 @@ export class AgentRunners {
   }
   /** Claims exclusively for a provider migration. Unlike turn execution,
    * uncertainty is unsafe here because changing native type is destructive. */
-  private async claimForRetype(runner: Runner) {
-    return this.claimed(
-      runner,
-      (await this.host.custody?.claim(runner.member.pubkey)) ?? false,
+  private claimForRetype(runner: Runner) {
+    return this.custodied(runner.member.pubkey, async () =>
+      this.claimed(
+        runner,
+        (await this.host.custody?.claim(runner.member.pubkey)) ?? false,
+      ),
     );
   }
   private async release(runner: Runner) {
     if (!runner.mayHold) return;
     this.claimed(runner, false);
-    // Custody holds the agent, not one of its communities: it stays held
-    // while the agent runs here in another.
     const { pubkey } = runner.member;
-    for (const other of this.runners.values())
-      if (other.member.pubkey === pubkey && this.runs(other.key)) return;
-    await this.host.custody
-      ?.release(pubkey)
-      .catch((error) =>
-        console.warn(`Agent ${pubkey} was not released`, error),
-      );
+    await this.custodied(pubkey, async () => {
+      // It stays held while the agent runs here in another community.
+      for (const other of this.runners.values())
+        if (other.member.pubkey === pubkey && this.runs(other.key)) return;
+      await this.host.custody
+        ?.release(pubkey)
+        .catch((error) =>
+          console.warn(`Agent ${pubkey} was not released`, error),
+        );
+    });
   }
 
   private async rootInChannel(

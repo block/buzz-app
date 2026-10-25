@@ -3,6 +3,7 @@ import type { ComposerSession } from "./composer-session";
 import { canAddMembers } from "../channel-members/members";
 import { communityHost } from "./community-host";
 import type { Agent, Agents } from "../agents/service";
+import { sameAgent } from "../agents/AgentManage";
 import { splitPartition } from "../relay/partition";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -116,7 +117,9 @@ export function useBringAgents(
         }}
         title={
           pending &&
-          `Bring ${many ? `${pending.agents.length} agents` : pending.agents[0]?.name} into ${here}?`
+          (pending.reviewed
+            ? `${many ? `${pending.agents.length} agents are` : `${pending.agents[0]?.name} is`} in ${here}`
+            : `Bring ${many ? `${pending.agents.length} agents` : pending.agents[0]?.name} into ${here}?`)
         }
         description={
           pending && describe(pending.agents, canAdd, !!pending.reviewed)
@@ -189,8 +192,8 @@ function describe(
   ].join(", ");
   return `${
     many
-      ? `They are in ${other}. Bringing them here adds the same agents, so their names, types and settings stay shared. Their memory, conversations and what they pay attention to here are their own.`
-      : `${agents[0]?.name} is in ${other}. Bringing it here adds the same agent, so its name, type and settings stay shared. Its memory, conversations and what it pays attention to here are its own.`
+      ? `They are in ${other}. Bringing them here adds the same agents. ${sameAgent(true)}`
+      : `${agents[0]?.name} is in ${other}. Bringing it here adds the same agent. ${sameAgent()}`
   }${
     canAdd
       ? ""

@@ -611,8 +611,10 @@ agent's, so rename and retype change every row.
 Everything this device keeps for one membership is keyed by its `AgentKey`
 (`src/features/agents/membership.ts`): the bare pubkey in the agent's home
 community, `pubkey@<encoded host>` elsewhere. The home is the first community the
-agent was in, recorded in its home record (`home`) before its first join. Keys from
-before multi-community agents are home keys, so nothing is migrated. Each
+agent was in. Native saves it on every row Add creates (`home`), so every copy of
+the app derives the same keys whichever rows remain, and the saved list stays
+versioned, which older builds refuse, while any row has it. Keys from before
+multi-community agents are home keys, so nothing is migrated. Each
 membership has its own record (attention, timers, catch-up), runner (queues and
 rate limits), interrupted turns and harness sessions. The agent's config lives only
 in its home record and applies everywhere.
@@ -620,7 +622,13 @@ in its home record and applies everywhere.
 - **Add** (`Agents.join`, Import → "From your other communities") adds the agent
   to the selected community with the same key, name, type and settings. A picture
   in the source community's media is fetched there and uploaded here. Add writes a
-  fresh kind 30177 record and unarchives the agent here.
+  fresh kind 30177 record and unarchives the agent here. Native saves the new row
+  as joining until its key is saved, so a crash in between leaves no membership
+  without a key; adding it again, or Delete, finishes that row.
+- **Custody** is the agent's, shared by its runners in each community: their
+  claims and releases run one at a time, and it is released only while none runs.
+- **Delete** leaves every community, the one shown last and only once the others
+  are done, so one it cannot reach keeps it listed here with Forget.
 - **Remove from this community** (`Agents.leave`) runs Delete's cleanup in that
   community only and keeps the agent in its others. It is refused for the last
   community, which only Delete leaves. The membership's harness sessions and the

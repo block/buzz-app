@@ -19,6 +19,13 @@ export const inSeveral = (agents: Agents, agent: Agent) =>
   !agent.deleting &&
   agents.memberships(agent.pubkey).length > 1;
 
+/** What adding the same agent to another community shares and what it keeps
+ * there, as every place that adds one says it. */
+export const sameAgent = (many = false) =>
+  many
+    ? "Their names, types and settings, including their instructions, models and workspace folders, are shared, so a change to them applies in every community. Their pictures and what they pay attention to are their own in each. Memory is kept per community, so anything they saved here before comes back, and so do their conversations here."
+    : "Its name, type and settings, including its instructions, model and workspace folder, are shared, so a change to them applies in every community. Its picture and what it pays attention to are its own in each. Memory is kept per community, so anything it saved here before comes back, and so do its conversations here.";
+
 /** Delete, after a confirmation that says what it does. One that cannot
  * finish keeps the dialog open with what is left; the agent stays listed.
  * A community Delete cannot reach can then be given up on. */
@@ -112,7 +119,7 @@ export function AgentDelete({
           </>
         }
       >
-        {several || error ? (
+        {several || error || unreachable.length ? (
           <div className="flex flex-col gap-3">
             {several && (
               <ul
@@ -148,15 +155,20 @@ export function AgentDelete({
             {error ? (
               <p role="alert" className="m-0 text-body-sm text-danger">
                 {error}
-                {unreachable.length > 0 &&
-                  " Forget deletes it from this device without reaching that community, so it may stay in its channels there."}
               </p>
             ) : null}
+            {unreachable.length > 0 && (
+              <p className="m-0 text-body-sm text-secondary">
+                Forget deletes it from this device without reaching that
+                community, so it may stay in its channels there.
+              </p>
+            )}
             {!several && unreachable[0] && (
               <div>
                 <Button
                   size="compact"
-                  variant="outline"
+                  // Its last key goes with it.
+                  variant="destructive"
                   disabled={removing}
                   onClick={() => void forget(unreachable[0]?.key ?? "")}
                 >

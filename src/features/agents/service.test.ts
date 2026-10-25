@@ -2101,7 +2101,7 @@ describe("an agent in several communities", () => {
     expect(service.find(bot)?.attention).toEqual({});
   });
 
-  it("deletes from every community, names one it could not reach, and forgets it there", async () => {
+  it("deletes from every community, the one shown last, and forgets one it could not reach", async () => {
     const { service, leave, select } = await joined();
     select("https://relay.example.test");
     leave("https://other.example.test");
@@ -2110,14 +2110,87 @@ describe("an agent in several communities", () => {
       "Echo isn't deleted yet and may still be in some channels. It stays stopped; Delete it again to finish. It is still in other.example.test.",
     );
     warn.mockRestore();
-    expect(service.find(bot)).toBeUndefined();
+    // It stays here, stopped, so the owner can give up on the other.
+    expect(leaveChannels).not.toHaveBeenCalled();
+    expect(service.find(bot)?.deleting).toBe(true);
     expect(service.memberships(bot)).toEqual([
+      { key: bot, origin: "https://relay.example.test", connected: true },
       { key: away, origin: "https://other.example.test", connected: false },
     ]);
-    expect(forgetDefaultAgent).not.toHaveBeenCalled();
     await service.forget(away);
+    expect(forgetDefaultAgent).not.toHaveBeenCalled();
+    await service.remove(bot);
     expect(service.memberships(bot)).toEqual([]);
     expect(forgetDefaultAgent).toHaveBeenCalledWith(bot);
+  });
+
+  it("keeps its key in a community it joined after its home is left, in any copy of the app", async () => {
+    const { service, select, second } = await setup({
+      identities: [
+        {
+          pubkey: bot,
+          relay: "wss://other.example.test",
+          home: "wss://relay.example.test",
+          owner: viewer,
+          type: "example/echo",
+          name: "Echo",
+          deleted: false,
+        },
+      ],
+    });
+    select(second.origin);
+    await vi.waitFor(() => expect(service.find(bot)?.key).toBe(away));
+    expect(service.memberships(bot)).toEqual([
+      { key: away, origin: "https://other.example.test", connected: true },
+    ]);
+  });
+
+  it("lists a rename in one community while it is still leaving another", async () => {
+    const { service } = await joined();
+    leaveChannels.mockRejectedValueOnce(new Error("offline"));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await expect(service.leave(away)).rejects.toThrow(
+      "Echo hasn't left other.example.test yet",
+    );
+    warn.mockRestore();
+    records.publish.mockClear();
+    await service.save(bot, { name: "Echo Two" });
+    await vi.waitFor(() => expect(records.publish).toHaveBeenCalledOnce());
+    expect(records.publish).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ pubkey: bot, name: "Echo Two" }),
+      expect.anything(),
+    );
+    await settle();
+    expect(records.publish).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the agent held while another community's claim is still being answered", async () => {
+    const { service, native, run, select, second, connect } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
+    // Its runner in the community it joins claims it, unanswered for now.
+    let answer = (_: boolean) => {};
+    native.claim.mockImplementationOnce(
+      () => new Promise<boolean>((resolve) => (answer = resolve)),
+    );
+    native.claim.mockClear();
+    select(second.origin);
+    await vi.waitFor(() =>
+      expect(service.joinable().map((agent) => agent.key)).toEqual([bot]),
+    );
+    await service.join(bot);
+    await vi.waitFor(() => expect(native.claim).toHaveBeenCalledOnce());
+    // Its home community goes away meanwhile.
+    connect(false);
+    await settle();
+    expect(native.release).not.toHaveBeenCalled();
+    answer(true);
+    second.emit({ events: [mention("there")] });
+    await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
+    expect(run.mock.calls[0]?.[0].agent.key).toBe(away);
+    await settle();
+    expect(native.release).not.toHaveBeenCalled();
   });
 
   it("changes its type only while no community is running a turn", async () => {

@@ -57,6 +57,18 @@ pub struct AppAgent {
     /// of the app runs it in this community.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub deleting: bool,
+    /// The `wss://` origin of the agent's home community, the first it was
+    /// in, on a row `join` added; absent, this row's community is its home.
+    /// Its home membership keeps the state saved under its bare pubkey, so
+    /// every copy of the app must agree on it whichever rows remain.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub home: Option<String>,
+    /// `join` saved it and has not yet saved its key: no copy of the app
+    /// runs it, and it does not count as a community the agent stays in. One
+    /// a crash left is taken back by adding the agent there again, or goes
+    /// with its Delete.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub joining: bool,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -69,6 +81,10 @@ pub struct Published {
     pub created_at: u64,
 }
 impl AppAgent {
+    /// Whether it is this agent in the community at `relay`, with its key there.
+    fn live(&self, pubkey: &str, relay: &str) -> bool {
+        self.pubkey == pubkey && self.relay == relay && !self.deleted && !self.joining
+    }
     fn credential_id(&self) -> String {
         agent_id(&self.pubkey, &self.relay)
     }
@@ -366,7 +382,7 @@ impl AppAgents {
         let relay = canonical_relay(relay)?;
         self.list()?
             .into_iter()
-            .find(|agent| agent.pubkey == pubkey && agent.relay == relay && !agent.deleted)
+            .find(|agent| agent.live(pubkey, &relay))
             .ok_or_else(|| "No such agent on this device".into())
     }
     /// Runs `change` on the saved list while holding the cross-process lock, and
@@ -390,13 +406,15 @@ impl AppAgents {
         self.write(&agents)?;
         Ok(result)
     }
-    /// Saves a plain list while each agent is in one community, as older builds
-    /// read it. Once one is in several, the list is versioned, so an older
-    /// build, which would act on only one of its rows, refuses the file.
+    /// Saves a plain list while every agent is only in the community it was
+    /// made in, as older builds read it. Once one has been added to another,
+    /// the list is versioned, so an older build, which keys an agent's state by
+    /// its pubkey in whichever community it finds it, refuses the file. It
+    /// stays versioned after the agent leaves its home, as its other rows
+    /// still name it.
     fn write(&self, agents: &[AppAgent]) -> Result<()> {
-        let mut pubkeys = std::collections::HashSet::new();
-        let several = agents.iter().any(|agent| !pubkeys.insert(&agent.pubkey));
-        let bytes = if several {
+        let joined = agents.iter().any(|agent| agent.home.is_some());
+        let bytes = if joined {
             serde_json::to_vec_pretty(
                 &serde_json::json!({ "version": MULTI_COMMUNITY, "agents": agents }),
             )
@@ -414,7 +432,7 @@ impl AppAgents {
         self.update(|agents| {
             let agent = agents
                 .iter_mut()
-                .find(|agent| agent.pubkey == pubkey && agent.relay == relay && !agent.deleted)
+                .find(|agent| agent.live(pubkey, &relay))
                 .ok_or("No such agent on this device")?;
             change(agent);
             Ok(())
@@ -511,6 +529,8 @@ impl AppAgents {
             profile: None,
             deleted: false,
             deleting: false,
+            home: None,
+            joining: false,
         };
         let id = agent.credential_id();
         // A harness agent saved for the same community keeps this key under the
@@ -558,9 +578,11 @@ impl AppAgents {
     /// Adds the agent, as it is in the community at `from`, to the community at
     /// `destination`: the same key, owner attestation, type and name, with
     /// `picture` (one that community serves) and its own profile there. Saves the
-    /// row, then the key under the row's own ID, as `commit` does. Refused while
-    /// it is leaving `from` or being deleted, and while it is in `destination`
-    /// or still leaving it; a deleted row there awaiting cleanup is taken back.
+    /// row as joining, then the key under the row's own ID, then the row as
+    /// joined, so a crash between them never leaves a membership without its
+    /// key. Refused while it is leaving `from` or being deleted, and while it
+    /// is in `destination` or still leaving it; a deleted row there awaiting
+    /// cleanup, or one a crash left joining, is taken back.
     pub fn join(
         &self,
         pubkey: &str,
@@ -581,15 +603,12 @@ impl AppAgents {
         let agent = self.update(|agents| {
             let source = agents
                 .iter()
-                .find(|agent| agent.pubkey == pubkey && agent.relay == from && !agent.deleted)
+                .find(|agent| agent.live(pubkey, &from))
                 .ok_or("No such agent on this device")?;
             if source.deleting {
                 return Err(format!("{} is being deleted", source.name));
             }
-            if let Some(there) = agents
-                .iter()
-                .find(|agent| agent.pubkey == pubkey && agent.relay == relay && !agent.deleted)
-            {
+            if let Some(there) = agents.iter().find(|agent| agent.live(pubkey, &relay)) {
                 return Err(if there.deleting {
                     format!("{} is still leaving that community", there.name)
                 } else {
@@ -602,6 +621,8 @@ impl AppAgents {
                 profile: None,
                 deleted: false,
                 deleting: false,
+                home: Some(source.home.clone().unwrap_or_else(|| source.relay.clone())),
+                joining: true,
                 ..source.clone()
             };
             agents.retain(|saved| saved.pubkey != pubkey || saved.relay != relay);
@@ -609,22 +630,37 @@ impl AppAgents {
             Ok(agent)
         })?;
         let id = agent.credential_id();
-        let saved = credentials.add(&id, &key).and_then(|()| {
-            agent
-                .read_key(credentials)
-                .map(drop)
-                .map_err(|_| "Agent key could not be verified".into())
-        });
-        if let Err(error) = saved {
+        let saved = credentials
+            .add(&id, &key)
+            .and_then(|()| {
+                agent
+                    .read_key(credentials)
+                    .map(drop)
+                    .map_err(|_| "Agent key could not be verified".into())
+            })
+            .and_then(|()| {
+                // A Delete or another copy's Remove may have taken the row
+                // meanwhile; its key then goes too.
+                self.update(|agents| {
+                    let joined = agents
+                        .iter_mut()
+                        .find(|saved| saved.pubkey == pubkey && saved.relay == relay)
+                        .filter(|saved| !saved.deleted && saved.joining)
+                        .ok_or("The agent was removed while it was being added")?;
+                    joined.joining = false;
+                    Ok(joined.clone())
+                })
+            });
+        saved.inspect_err(|_| {
             if credentials.delete(&id, pubkey).is_ok() {
                 let _ = self.update(|agents| {
-                    agents.retain(|saved| saved.pubkey != pubkey || saved.relay != relay);
+                    agents.retain(|saved| {
+                        saved.pubkey != pubkey || saved.relay != relay || !saved.joining
+                    });
                     Ok(())
                 });
             }
-            return Err(error);
-        }
-        Ok(agent)
+        })
     }
     /// Renames it in every community it is in.
     pub fn rename(&self, pubkey: &str, name: &str) -> Result<()> {
@@ -673,11 +709,15 @@ impl AppAgents {
         let relay = canonical_relay(relay)?;
         self.update(|agents| {
             let stays = agents.iter().any(|agent| {
-                agent.pubkey == pubkey && agent.relay != relay && !agent.deleted && !agent.deleting
+                agent.pubkey == pubkey
+                    && agent.relay != relay
+                    && !agent.deleted
+                    && !agent.joining
+                    && !agent.deleting
             });
             let agent = agents
                 .iter_mut()
-                .find(|agent| agent.pubkey == pubkey && agent.relay == relay && !agent.deleted)
+                .find(|agent| agent.live(pubkey, &relay))
                 .ok_or("No such agent on this device")?;
             if !stays && !agent.deleting {
                 return Err("Its last community goes only when it is deleted".into());
@@ -699,7 +739,16 @@ impl AppAgents {
             return Ok(());
         };
         credentials.delete(&agent.credential_id(), &agent.pubkey)?;
-        self.edit(pubkey, &relay, |agent| agent.deleted = true)
+        // A row a crash left joining goes the same way.
+        self.update(|agents| {
+            if let Some(agent) = agents
+                .iter_mut()
+                .find(|agent| agent.pubkey == pubkey && agent.relay == relay && !agent.deleted)
+            {
+                agent.deleted = true;
+            }
+            Ok(())
+        })
     }
     /// Deletes every key it still has, as an erase that removes agents does
     /// before the rows go with app data. Absence is success, so it repeats safely.

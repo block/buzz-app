@@ -1040,7 +1040,7 @@ const blank = (key: AgentKey): AgentRecord => ({
  * attention and timers. */
 const ownRecord = (
   key: AgentKey,
-  { home: _, config: __, ...record }: AgentRecord,
+  { config: _, ...record }: AgentRecord,
 ): AgentRecord => ({ ...record, pubkey: key, config: undefined });
 /** `record` with the owner's `change` to its settings; throws when the
  * change is not valid for it. */
@@ -2359,13 +2359,7 @@ export class AgentsService extends Service implements Agents {
       relayOrigin(binding.origin),
       binding.viewer,
     );
-    // Its first community is its home, whose record keeps its config.
-    const home = originOf(identity.relay);
-    let record: AgentRecord = {
-      ...settings,
-      pubkey: identity.pubkey,
-      ...(home ? { home } : {}),
-    };
+    let record: AgentRecord = { ...settings, pubkey: identity.pubkey };
     try {
       if (made.config !== undefined)
         record = { ...record, config: made.config };
@@ -2654,26 +2648,41 @@ export class AgentsService extends Service implements Agents {
     // Saved first, so neither a relaunch nor another copy runs it again.
     await native.beginDelete(pubkey);
     await this.refresh();
-    const several = this.liveRows(pubkey).length > 1;
+    // The community shown goes last, and only once the others are done, so
+    // one that is not stays listed here with Forget.
+    const shown = this.selectedOrigin();
+    const rows = this.liveRows(pubkey);
+    const here = rows.filter((member) => originOf(member.relay) === shown);
     const left: Member[] = [];
     let offline = false;
-    for (const member of this.liveRows(pubkey)) {
+    for (const member of [
+      ...rows.filter((row) => !here.includes(row)),
+      ...here,
+    ]) {
+      if (left.length && here.includes(member)) continue;
       const departed = await this.depart(member);
       if (departed === "done") continue;
       left.push(member);
       offline ||= departed === "offline";
     }
     const unfinished = `${identity.name} isn't deleted yet and may still be in some channels. It stays stopped; Delete it again to finish.`;
-    // Shows it gone from the communities it did leave.
-    if (left.length && several) await this.refresh();
-    if (left.length && !several)
+    if (left.length && rows.length === 1)
       throw new Error(
         offline ? `${unfinished} Its community isn't connected.` : unfinished,
       );
-    if (left.length)
+    if (left.length) {
+      // Shows it gone from the communities it did leave.
+      await this.refresh();
       throw new Error(
         `${unfinished} It is still in ${left.map(hostOf).join(", ")}.`,
       );
+    }
+    // An Add a crash cut short left a row, and maybe its key, but no member.
+    for (const row of await native.list())
+      if (row.pubkey === pubkey && row.joining && !row.deleted) {
+        await native.remove(row);
+        await native.forget(row);
+      }
     for (const origin of this.listings.keys()) this.unlist(origin, pubkey);
     // Drops its settings.
     await this.refresh();
@@ -2763,15 +2772,8 @@ export class AgentsService extends Service implements Agents {
       this.liveRows(pubkey).some((member) => originOf(member.relay) === origin)
     )
       throw new Error(`${name} is already here`);
-    // Recorded before its first join, so its home keeps its bare key however
-    // its communities are listed later.
-    const home = this.homeOf(pubkey) ?? originOf(source.relay) ?? origin;
-    if (!this.records[pubkey]?.home)
-      await this.change(pubkey, (saved) => ({
-        ...(saved ?? this.settingsOf(source)),
-        home,
-      }));
-    const target = agentKey(pubkey, origin, home);
+    // Native gives the row it adds its home, the source's.
+    const target = agentKey(pubkey, origin, homeOf(source));
     // A cleanup still running from its leaving here must not touch it now.
     await this.reclaim(target);
     try {
@@ -3061,7 +3063,7 @@ export class AgentsService extends Service implements Agents {
         identity.deleting ||
         identity.owner !== binding.viewer ||
         originOf(identity.relay) !== origin ||
-        this.listing.has(identity.pubkey)
+        this.listing.has(identity.key)
       )
         continue;
       const picture = recordPicture(identity.picture);
@@ -3072,8 +3074,8 @@ export class AgentsService extends Service implements Agents {
         row.runtime === identity.type
       )
         continue;
-      const { pubkey } = identity;
-      this.listing.add(pubkey);
+      const { key, pubkey } = identity;
+      this.listing.add(key);
       this.writeListing(origin, binding, {
         pubkey,
         name: identity.name,
@@ -3082,13 +3084,13 @@ export class AgentsService extends Service implements Agents {
         prior: row?.prior,
       }).then(
         () => {
-          this.listing.delete(pubkey);
+          this.listing.delete(key);
           // Lists a rename or new picture made while this write was under way.
           if (this.bound.get(origin)?.binding === binding)
             this.list(origin, binding);
         },
         (error) => {
-          this.listing.delete(pubkey);
+          this.listing.delete(key);
           if (!binding.controller.signal.aborted)
             console.warn(`Agent ${identity.name} was not listed`, error);
         },
@@ -3102,7 +3104,7 @@ export class AgentsService extends Service implements Agents {
     binding: Binding,
     entry: Listing & { runtime: string },
   ) {
-    if (this.isDeleting(entry.pubkey)) return;
+    if (this.isDeleting(origin, entry.pubkey)) return;
     const prior = await publishAgentRecord(
       binding.session,
       entry,
@@ -3112,9 +3114,14 @@ export class AgentsService extends Service implements Agents {
     this.setRow(origin, entry.pubkey, Object.freeze({ ...entry, prior }));
     this.update();
   }
-  private isDeleting(pubkey: string) {
+  /** Whether its Delete, or its leaving the community at `origin`, started
+   * there; in its other communities it is still listed. */
+  private isDeleting(origin: string, pubkey: string) {
     return this.identities.some(
-      (identity) => identity.pubkey === pubkey && identity.deleting,
+      (identity) =>
+        identity.pubkey === pubkey &&
+        originOf(identity.relay) === origin &&
+        identity.deleting,
     );
   }
   private unlist(origin: string, pubkey: string) {
@@ -3338,23 +3345,18 @@ export class AgentsService extends Service implements Agents {
       (identity) => identity.key === key && !identity.deleted,
     );
   }
-  /** The origin of the agent's home community: as its record has it, or else
-   * the first of `rows` it is in, as it was its only one until its home was
-   * recorded. */
-  private homeOf(
-    pubkey: string,
-    rows: readonly AgentIdentity[] = this.identities,
-  ) {
-    const row = rows.find((identity) => identity.pubkey === pubkey);
-    return this.records[pubkey]?.home ?? originOf(row?.relay ?? "");
-  }
   /** Each row as a membership, with its key. */
   private withKeys(rows: readonly AgentIdentity[]): readonly Member[] {
-    return rows.map((row) => {
-      const origin = originOf(row.relay) ?? row.relay;
-      const home = this.homeOf(row.pubkey, rows) ?? origin;
-      return Object.freeze({ ...row, key: agentKey(row.pubkey, origin, home) });
-    });
+    return rows.map((row) =>
+      Object.freeze({
+        ...row,
+        key: agentKey(
+          row.pubkey,
+          originOf(row.relay) ?? row.relay,
+          homeOf(row),
+        ),
+      }),
+    );
   }
   /** The agent's home record, which keeps its config: as saved or, without
    * one, its type's defaults, kept in memory until a save stores them.
@@ -3486,7 +3488,8 @@ export class AgentsService extends Service implements Agents {
       const rows = await this.native.list();
       // A newer list is on its way; this one may predate a change.
       if (turn !== this.listed) return;
-      const identities = this.withKeys(rows);
+      // One still joining has no key there yet, and is no membership.
+      const identities = this.withKeys(rows.filter((row) => !row.joining));
       this.identities = identities;
       // A read that succeeds ends the failure the last one reported.
       const { error: _, ...state } = this.state;
@@ -4010,6 +4013,12 @@ async function handOnMainAgent(session: RelaySession, pubkey: string) {
   forgetDefaultAgent(pubkey);
 }
 /** The membership's community, as its owner knows it. */
+/** The origin of the agent's home community, as native saved it on the row:
+ * the community it was first in, where its membership's key is its pubkey. */
+function homeOf(row: Pick<AgentIdentity, "relay" | "home">) {
+  const relay = row.home ?? row.relay;
+  return originOf(relay) ?? relay;
+}
 function hostOf({ relay }: Pick<AgentIdentity, "relay">) {
   return originOf(relay) ? new URL(relay).host : relay;
 }

@@ -28,6 +28,7 @@ import {
   AgentDelete,
   AgentRemoveHere,
   inSeveral,
+  sameAgent,
 } from "../../features/agents/AgentManage";
 import { AttentionSummary } from "../../features/agents/AttentionPanel";
 import { useAgents, useChannelChoices } from "../../features/agents/react";
@@ -1348,10 +1349,7 @@ function ImportAgents({
         >
           <InlineHeader title="From your other communities" />
           <p className="m-0 text-body-sm text-secondary">
-            Adds the same agent here. Its name, type and settings, including its
-            instructions, model and workspace folder, stay shared, so a change
-            to them applies in every community. Its picture, what it pays
-            attention to, its memory and its conversations here are its own.
+            Adds the same agent here. {sameAgent()}
           </p>
           <div className={cardStyles.grid}>
             {elsewhere.map((agent) => (

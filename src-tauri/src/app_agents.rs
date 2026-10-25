@@ -1068,6 +1068,8 @@ mod tests {
             about: None,
             deleted: false,
             deleting: false,
+            home: None,
+            joining: false,
         };
         let (_, read) = host.key(agent).await.unwrap();
         assert_eq!(read.pubkey(), key.pubkey());
@@ -1151,6 +1153,8 @@ mod tests {
             about: None,
             deleted: false,
             deleting: false,
+            home: None,
+            joining: false,
         }
     }
 

@@ -65,10 +65,6 @@ export type AgentRecord = Readonly<{
    * community. Saved as `pubkey`, which every record had before agents
    * joined more than one community. */
   pubkey: AgentKey;
-  /** The origin of the community the agent was first seen in, whose
-   * membership's key is its pubkey. Only that record has it, and it never
-   * changes, so what the agent keeps under its pubkey stays its home's. */
-  home?: string;
   /** Keyed by slug (`interest/<id>` or `watch/<id>`). */
   attention: Readonly<Record<string, AttentionObject>>;
   /** Stored objects that are invalid or over a limit. They do nothing, and stay
@@ -95,7 +91,6 @@ export const STORAGE_KEY = "buzz.agents.v1";
 export const RECORD_PREFIX = "buzz.agent.v1:";
 export const recordKey = (key: AgentKey) => `${RECORD_PREFIX}${key}`;
 const PUBKEY = /^[0-9a-f]{64}$/;
-const ORIGIN = /^https:\/\/[^/?#\\\s@]+$/;
 const group = (value: AttentionValue) =>
   value.type === "interest" ? "Interests" : "watches and timers";
 
@@ -173,11 +168,6 @@ function readRecord(
       timers[slug] = state;
   return {
     pubkey: key,
-    ...(PUBKEY.test(key) &&
-    typeof record.home === "string" &&
-    ORIGIN.test(record.home)
-      ? { home: record.home }
-      : {}),
     attention,
     skipped,
     config: record.config,

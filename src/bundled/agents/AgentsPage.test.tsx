@@ -1034,7 +1034,7 @@ it("adds an agent from another community here, keeping its key", async () => {
   const elsewhere = await screen.findByRole("region", {
     name: "Agents in your other communities",
   });
-  expect(elsewhere).toHaveTextContent("stay shared");
+  expect(elsewhere).toHaveTextContent("Memory is kept per community");
   await user.click(
     within(elsewhere).getByRole("button", {
       name: "Add Bea from other.example",

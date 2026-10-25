@@ -21,6 +21,11 @@ export type AgentIdentity = Readonly<{
   /** Its Delete, or its leaving this community, started and has not
    * finished. It stays stopped here until that is pressed again. */
   deleting?: true;
+  /** The `wss://` origin of its home community, the first it was in, on a
+   * membership added to another; absent, this community is its home. */
+  home?: string;
+  /** Its Add here was saved but its key not yet: nothing runs or counts it. */
+  joining?: true;
 }>;
 /** An agent in one community: what calls made there as the agent name. */
 export type Membership = Readonly<{ pubkey: string; relay: string }>;

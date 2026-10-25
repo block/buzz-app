@@ -369,6 +369,7 @@ export function fakeNative(identities: AgentIdentity[] = []) {
         const { picture: _, deleting: __, ...rest } = source;
         const joined: AgentIdentity = {
           ...rest,
+          home: source.home ?? source.relay,
           relay,
           ...(picture && { picture }),
           deleted: false,

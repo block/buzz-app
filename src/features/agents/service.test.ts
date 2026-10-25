@@ -4558,61 +4558,117 @@ const catchUpReads = (session: RelaySession) =>
     .filter((filter) => filter.kinds?.includes(9));
 const nowSeconds = () => Math.floor(Date.now() / 1000);
 
-it("flushes earlier catch-up events before a later event with a held destination", async () => {
-  vi.useFakeTimers({ toFake: ["Date"] });
-  try {
-    const { service, run, history, recover, session, confirm } = await setup({
-      identities: [echo],
+it.each([false, true])(
+  "flushes earlier catch-up events before a later event with a held destination (at capacity: %s)",
+  async (atCapacity) => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
     });
-    const destination = "11111111-1111-1111-1111-111111111111";
-    const list = session.channels.list();
-    let cached = true;
-    vi.spyOn(session.channels, "list").mockImplementation(() => ({
-      ...list,
-      channels: [
-        ...list.channels,
+    try {
+      const {
+        service,
+        run,
+        history,
+        recover,
+        session,
+        confirm,
+        emit,
+        storage,
+      } = await setup({
+        identities: [echo],
+        ...(atCapacity
+          ? {
+              answer: async () => {
+                await blocked;
+              },
+            }
+          : {}),
+      });
+      const destination = "11111111-1111-1111-1111-111111111111";
+      const list = session.channels.list();
+      let cached = true;
+      vi.spyOn(session.channels, "list").mockImplementation(() => ({
+        ...list,
+        channels: [
+          ...list.channels,
+          {
+            id: destination,
+            name: "Destination",
+            members: [viewer, bot],
+            ...(cached ? { cached: true as const } : {}),
+          },
+        ],
+      }));
+      const start = nowSeconds();
+      vi.setSystemTime(start * 1000);
+      await service.save(bot, {
+        attentionEnabled: true,
+        attention: {
+          ...chat,
+          "watch/channel": null,
+          "watch/report": {
+            ...chat["watch/chat"],
+            tags: { t: ["second"] },
+            channel: destination,
+          },
+        },
+      });
+      await settle();
+      const prior = atCapacity
+        ? Array.from({ length: 8 }, (_, i) =>
+            posted(`live ${i}`, start + 1 + i),
+          )
+        : [];
+      if (atCapacity) {
+        vi.setSystemTime((start + 9) * 1000);
+        emit({ channelId: channel, events: prior });
+        await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+        await settle();
+      }
+      vi.setSystemTime((start + 60) * 1000);
+      history.push(
+        posted("first", start + 10),
+        eventDto(
+          message(author, channel, "second", start + 20, [["t", "second"]]),
+        ),
+      );
+      recover();
+      if (atCapacity) {
+        await vi.waitFor(() =>
+          expect(
+            Object.values(readCheckpoints(storage)).some(
+              ({ after }) => after?.created_at === start + 10,
+            ),
+          ).toBe(true),
+        );
+        release();
+      }
+      const expected = [
+        ...prior.map(({ content }) => content),
+        "first",
+        "second",
+      ];
+      await vi.waitFor(() => expect(heard(run)).toContain("second"), {
+        timeout: 5_000,
+      });
+      expect(heard(run)).toEqual(expected);
+      cached = false;
+      confirm("saved", [viewer, bot]);
+      await vi.waitFor(
+        () => expect(run).toHaveBeenCalledTimes(expected.length + 1),
         {
-          id: destination,
-          name: "Destination",
-          members: [viewer, bot],
-          ...(cached ? { cached: true as const } : {}),
+          timeout: 5_000,
         },
-      ],
-    }));
-    const start = nowSeconds();
-    vi.setSystemTime(start * 1000);
-    await service.save(bot, {
-      attentionEnabled: true,
-      attention: {
-        ...chat,
-        "watch/channel": null,
-        "watch/report": {
-          ...chat["watch/chat"],
-          tags: { t: ["second"] },
-          channel: destination,
-        },
-      },
-    });
-    await settle();
-    vi.setSystemTime((start + 60) * 1000);
-    history.push(
-      posted("first", start + 10),
-      eventDto(
-        message(author, channel, "second", start + 20, [["t", "second"]]),
-      ),
-    );
-    recover();
-    await vi.waitFor(() => expect(heard(run)).toEqual(["first", "second"]));
-    cached = false;
-    confirm("saved", [viewer, bot]);
-    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(3), {
-      timeout: 5_000,
-    });
-    expect(heard(run).slice(0, 2)).toEqual(["first", "second"]);
-  } finally {
-    vi.useRealTimers();
-  }
-});
+      );
+      expect(heard(run).slice(0, expected.length)).toEqual(expected);
+    } finally {
+      release();
+      vi.useRealTimers();
+    }
+  },
+);
 
 it("catches a kind 9 watch up on what it missed, oldest first in batches, and not again after a restart", async () => {
   vi.useFakeTimers({ toFake: ["Date"] });

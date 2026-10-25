@@ -265,7 +265,10 @@ export class AgentSessions {
       }
       const live = this.live.get(key);
       if (!live) break;
-      if (!live.session.open || (!live.session.busy && this.stale(live))) {
+      if (
+        !live.session.open ||
+        (!live.session.busy && (this.stale(live) || this.leveled(live, effort)))
+      ) {
         this.drop(key, live);
         break;
       }
@@ -412,12 +415,17 @@ export class AgentSessions {
     for (const live of this.once.values()) if (live) void this.close(live);
   }
 
-  /** Opened with old settings, or on a thinking level when goose's own is
-   * chosen now, which only a new session runs on. */
+  /** Opened with old settings, which only a new session runs on. */
   private stale(live: Live) {
-    return (
-      live.fingerprint !== this.options.fingerprint() ||
-      Boolean(live.session.effort && !this.options.choice().effort)
+    return live.fingerprint !== this.options.fingerprint();
+  }
+  /** On a thinking level, when a turn with neither a pick nor a saved level
+   * wants goose's own. goose names no value for its own, so only a new
+   * session runs on it; checked as that turn comes, so a session put on a
+   * picked level keeps its conversation until then. */
+  private leveled(live: Live, effort?: string) {
+    return Boolean(
+      live.session.effort && !effort && !this.options.choice().effort,
     );
   }
 

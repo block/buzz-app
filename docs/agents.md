@@ -272,6 +272,7 @@ selected community's agents, with their settings.
 - `session.agentChoices` (the communities service hands it to each session), which
   marks matching agents `managed`. New message and mention choices read that flag.
 
+An agent in several communities has one row per community.
 `sameCommunityAgents` keeps only rows whose `owner` is the viewer and whose
 `relayUrl` maps to this session's community partition. Local agents carry no
 process status, so a stopped agent is as selectable as a running one.
@@ -593,6 +594,42 @@ the background. The agent stays listed and stopped, including after a relaunch, 
 a note in its settings that Delete didn't finish; pressing Delete again reruns the
 whole cleanup. Rows deleted by older builds, whose key is already erased, only have
 the owner's agent record deleted and the row dropped.
+
+An agent in several communities leaves each of them this way, one at a time,
+and its key is erased once none is left. One whose community can't be reached
+stays `deleting` there, and the Delete dialog names it. **Forget** then drops that
+membership without reaching its community (`Agents.forget`), so the agent may stay
+in that community's channels.
+
+### Agents in several communities
+
+One agent identity can be a member of several of the owner's communities, each
+added by the owner. The native store keeps one row per (pubkey, relay); each row
+has its own copy of the key and its own profile and picture. Name and type are the
+agent's, so rename and retype change every row.
+
+Everything this device keeps for one membership is keyed by its `AgentKey`
+(`src/features/agents/membership.ts`): the bare pubkey in the agent's home
+community, `pubkey@<encoded host>` elsewhere. The home is the first community the
+agent was in, recorded in its home record (`home`) before its first join. Keys from
+before multi-community agents are home keys, so nothing is migrated. Each
+membership has its own record (attention, timers, catch-up), runner (queues and
+rate limits), interrupted turns and harness sessions. The agent's config lives only
+in its home record and applies everywhere.
+
+- **Add** (`Agents.join`, Import → "From your other communities") adds the agent
+  to the selected community with the same key, name, type and settings. A picture
+  in the source community's media is fetched there and uploaded here. Add writes a
+  fresh kind 30177 record and unarchives the agent here.
+- **Remove from this community** (`Agents.leave`) runs Delete's cleanup in that
+  community only and keeps the agent in its others. It is refused for the last
+  community, which only Delete leaves. The membership's harness sessions and the
+  agent's memory in that community stay, so they come back if it is added again;
+  its attention there does not.
+- **Teams** are shared by every community. A community shows a team with a member
+  there, or with none anywhere. A member's team roster lists only teammates in the
+  same community, and the editor keeps members that are only elsewhere.
+- **Hosted agents** stay in one community, as their provider holds the key.
 
 `removeRelayAgent` applies the same steps to a relay-only agent: archive when
 consent exists, delete the owner's kind 30177 record (NIP-09), then remove it from

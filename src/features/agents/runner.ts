@@ -1723,6 +1723,7 @@ export class AgentRunners {
         if (trigger.type === "source") {
           this.sourceJobs.delete(job);
           const object = job.matched?.object;
+          if (object && !live()) this.failedSources.add(object);
           if (
             object &&
             sourceCompleted(this.host.record(agent.pubkey).sourceRuns, object)

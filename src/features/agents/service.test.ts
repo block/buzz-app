@@ -7542,10 +7542,14 @@ describe("Attention plugin sources", () => {
       config: { command: ["check"] },
     },
   };
-  it.each(["pass", "filter", "failure", "cancel"])(
+  it.each(["pass", "filter", "failure", "cancel-pass", "cancel-filter"])(
     "holds completed sources through classification: %s",
     async (outcome) => {
-      const pass = outcome === "pass" || outcome === "failure";
+      const cancelled = outcome.startsWith("cancel-");
+      const pass =
+        outcome === "pass" ||
+        outcome === "failure" ||
+        outcome === "cancel-pass";
       const jev = fakeJev();
       let answer!: (value: DecisionResult) => void;
       jev.decide.mockImplementation(
@@ -7587,16 +7591,20 @@ describe("Attention plugin sources", () => {
       expect(state).toEqual({
         source: { provider: "example/command", text: "build failed" },
       });
-      if (outcome === "cancel")
-        await service.save(bot, { attentionEnabled: false });
+      if (cancelled) await service.save(bot, { attentionEnabled: false });
       answer(
         outcome === "failure"
           ? failure("service_error")
           : answered(pass ? 0.9 : 0.1),
       );
-      if (outcome === "cancel") {
+      if (cancelled) {
         await settle();
         expect(run).not.toHaveBeenCalled();
+        expect(service.find(bot)?.attention["watch/pr"]).toBeDefined();
+        expect(service.find(bot)?.sourceRuns?.["watch/pr"]).toBeDefined();
+        expect(service.find(bot)?.attentionHistory?.["watch/pr"]?.output).toBe(
+          "build failed",
+        );
         return;
       }
       await vi.waitFor(() =>

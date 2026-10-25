@@ -483,6 +483,7 @@ export class GooseSession {
   /** A `session/prompt` is in flight. */
   private prompting = false;
   private steering = 0;
+  private steered = Promise.resolve();
   /** Turns to run, each with the model and level it was asked for, if any. */
   private readonly queue: {
     text: string;
@@ -669,10 +670,17 @@ export class GooseSession {
     effort?: string,
   ) {
     this.steering++;
+    const prior = this.steered;
+    let release!: () => void;
+    this.steered = new Promise<void>((resolve) => {
+      release = resolve;
+    });
     // Work the owner stopped, or that ended meanwhile, takes no more.
     const live = () =>
       this.waiters.includes(waiter) && !this.stopped?.waiters.includes(waiter);
     try {
+      await prior;
+      if (!live()) return;
       const runId =
         this.runId ??
         (this.prompting
@@ -715,6 +723,7 @@ export class GooseSession {
         this.acknowledge(activity, waiter);
       }
     } finally {
+      release();
       this.steering--;
       // Runs the next turn, or ends work whose turn ended during the steer.
       void this.pump();

@@ -944,3 +944,42 @@ it("does not steer a stopped run after an Attention prompt refresh", async () =>
   ).toEqual([]);
   await goose.close(session);
 });
+
+it("keeps Goose steers in order across an Attention refresh", async () => {
+  const { open, process, goose } = await start();
+  process.hold = true;
+  const session = await open();
+  const first = session.send("one");
+  await vi.waitFor(() => expect(process.turns).toHaveLength(1));
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let ready!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    ready = resolve;
+  });
+  const second = session.send("old wake", {
+    current: () => true,
+    refresh: async () => {
+      ready();
+      await gate;
+      return "updated wake";
+    },
+  });
+  await entered;
+  const third = session.send("later mention");
+  try {
+    await flush();
+    expect(process.turns[0]?.steered).toEqual([]);
+    release();
+    await vi.waitFor(() => expect(process.turns[0]?.steered).toHaveLength(2));
+    expect(process.turns[0]?.steered[0]).toContain("updated wake");
+    expect(process.turns[0]?.steered[1]).toBe("later mention");
+  } finally {
+    release();
+    await flush();
+    await goose.close(session);
+    await Promise.all([first, second, third]);
+  }
+});

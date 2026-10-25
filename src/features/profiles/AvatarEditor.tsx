@@ -357,15 +357,15 @@ function EmojiPreview({
   );
 }
 
-function EmojiArtwork({
+export function EmojiArtwork({
   emoji,
   scale,
   offset,
   animate,
 }: {
   emoji: string;
-  scale: number | undefined;
-  offset: number | undefined;
+  scale?: number | undefined;
+  offset?: number | undefined;
   animate: boolean;
 }) {
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -738,7 +738,7 @@ const rootScale = () =>
   (Number.parseFloat(getComputedStyle(document.documentElement).fontSize) ||
     16) / 16;
 
-function AvatarEmojiPicker({
+export function AvatarEmojiPicker({
   onSelect,
   disabled,
 }: {

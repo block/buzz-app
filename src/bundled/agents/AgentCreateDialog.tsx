@@ -114,7 +114,6 @@ export function AgentCreateDialog({
   const [config, setConfig] = useState(() => seed(type));
   const preview = migration(type);
   const [dirty, setDirty] = useState(Boolean(update));
-  const [configRevision, setConfigRevision] = useState(0);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const [avatarBusy, setAvatarBusy] = useState(false);
@@ -129,18 +128,22 @@ export function AgentCreateDialog({
   const close = () => setOpen(false);
   const chooseModel = (item: RegisteredAgentType, next: unknown) => {
     setTypeKey(item.key);
-    setConfig(
-      !update && next && typeof next === "object" && "instructions" in next
-        ? { ...next, instructions: "" }
-        : next,
-    );
-    setConfigRevision((revision) => revision + 1);
+    setConfig(next);
     setDirty(true);
     setError("");
   };
   const choose = (key: string) => {
     const item = types.find((candidate) => candidate.key === key);
-    if (item && key !== type?.key) chooseModel(item, seed(item));
+    if (!item || key === type?.key) return;
+    const next = seed(item);
+    // Typed instructions follow a new agent to its new harness.
+    const instructions = update
+      ? undefined
+      : type?.carry?.(config).instructions;
+    chooseModel(
+      item,
+      instructions && item.adopt ? item.adopt({ instructions }, next) : next,
+    );
   };
   const create = async () => {
     if (!type || pending || avatarBusy) return;
@@ -251,7 +254,7 @@ export function AgentCreateDialog({
                   ref={nameField}
                   placeholder="Name"
                   value={name}
-                  disabled={pending || avatarBusy}
+                  disabled={pending}
                   onChange={(event) => {
                     setName(event.target.value);
                     namePrompt.named(event.target.value);
@@ -264,7 +267,7 @@ export function AgentCreateDialog({
           </div>
           {Create ? (
             <Create
-              key={`${type.key}:${configRevision}`}
+              key={type.key}
               config={config}
               disabled={pending}
               onChange={(next) => {

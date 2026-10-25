@@ -26,6 +26,7 @@ import {
   DotsThreeIcon,
   ImageIcon,
   SmileyIcon,
+  XIcon,
 } from "../../shared/design-system/icons";
 import { ProfileBackdrop } from "../../features/profiles/ProfileBackdrop";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
@@ -105,7 +106,21 @@ export function AgentAvatarPicker({
   const color =
     selection.kind === "emoji" ? selection.color : lastColor.current;
   const [emojiOpen, setEmojiOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
+  // The chosen file shows at once; it stays the artwork after its upload lands.
+  const [local, setLocal] = useState<{
+    url: string;
+    picture?: string;
+    progress?: number;
+  } | null>(null);
+  const uploading = local && local.picture === undefined ? local : null;
+  const busy = !!uploading;
+  const localUrl = local?.url;
+  useEffect(
+    () => () => {
+      if (localUrl) URL.revokeObjectURL(localUrl);
+    },
+    [localUrl],
+  );
   const [error, setError] = useState("");
   const input = useRef<HTMLInputElement>(null);
   const pending = useRef<AbortController | null>(null);
@@ -181,29 +196,45 @@ export function AgentAvatarPicker({
     if (!community || pending.current || disabled) return;
     const request = new AbortController();
     pending.current = request;
-    setBusy(true);
+    const url = URL.createObjectURL(file);
+    setLocal({ url });
     onBusyChange(true);
     setError("");
     try {
-      const value = await uploadAvatar(file, community, request.signal);
-      if (!request.signal.aborted) {
-        onChange({ kind: "image", picture: value });
-      }
+      const value = await uploadAvatar(
+        file,
+        community,
+        request.signal,
+        (sent, total) => {
+          if (!request.signal.aborted && total)
+            setLocal({ url, progress: sent / total });
+        },
+      );
+      if (request.signal.aborted) return;
+      setLocal({ url, picture: value });
+      onChange({ kind: "image", picture: value });
     } catch (reason) {
-      if (!request.signal.aborted)
-        setError(
-          reason instanceof Error
-            ? reason.message
-            : "Image upload failed. Try again.",
-        );
+      if (request.signal.aborted) return;
+      setLocal(null);
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : "Image upload failed. Try again.",
+      );
     } finally {
       if (!request.signal.aborted) {
         pending.current = null;
-        setBusy(false);
         onBusyChange(false);
       }
     }
   };
+  const cancelUpload = () => {
+    pending.current?.abort();
+    pending.current = null;
+    setLocal(null);
+    onBusyChange(false);
+  };
+  const shown = local?.picture === picture ? local?.url : undefined;
   const locked = disabled || busy;
   return (
     <div
@@ -216,8 +247,10 @@ export function AgentAvatarPicker({
           : undefined
       }
     >
-      {mode !== "emoji" && (
-        <ProfileBackdrop src={selected?.preview ?? preview} />
+      {(busy || mode !== "emoji") && (
+        <ProfileBackdrop
+          src={uploading?.url ?? selected?.preview ?? shown ?? preview}
+        />
       )}
       <div className="flex items-center justify-between gap-3 p-3">
         <span className="text-body-sm text-secondary">Choose an avatar</span>
@@ -297,7 +330,70 @@ export function AgentAvatarPicker({
       />
       <div className={styles.avatarBrowser}>
         <div ref={center} className={styles.avatarSelected}>
-          {mode === "emoji" ? (
+          {uploading ? (
+            <div className={styles.avatarUploading}>
+              <Avatar
+                src={uploading.url}
+                alt="Uploading avatar"
+                fallback={name}
+                size="fill"
+                shape="circle"
+              />
+              <span className={styles.uploadCancel}>
+                <IconButton
+                  variant="glass"
+                  shape="round"
+                  size="large"
+                  aria-label="Cancel upload"
+                  icon={
+                    <span className={styles.uploadControl}>
+                      <svg
+                        viewBox="0 0 24 24"
+                        role="progressbar"
+                        aria-label="Uploading image"
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        aria-valuenow={
+                          uploading.progress === undefined
+                            ? undefined
+                            : Math.round(uploading.progress * 100)
+                        }
+                        className={
+                          uploading.progress === undefined
+                            ? styles.uploadPreparing
+                            : undefined
+                        }
+                      >
+                        <circle
+                          cx="12"
+                          cy="12"
+                          r="9"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="3"
+                          opacity="0.5"
+                        />
+                        <circle
+                          className={styles.uploadArc}
+                          cx="12"
+                          cy="12"
+                          r="9"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="3"
+                          pathLength="100"
+                          strokeDasharray={`${uploading.progress === undefined ? 25 : uploading.progress * 100} 100`}
+                          transform="rotate(-90 12 12)"
+                        />
+                      </svg>
+                      <XIcon aria-hidden="true" />
+                    </span>
+                  }
+                  onClick={cancelUpload}
+                />
+              </span>
+            </div>
+          ) : mode === "emoji" ? (
             <PopoverRoot open={emojiOpen} onOpenChange={setEmojiOpen}>
               <PopoverTrigger
                 render={
@@ -331,7 +427,7 @@ export function AgentAvatarPicker({
             <PackedAgentAvatar avatar={selected} />
           ) : (
             <Avatar
-              src={preview}
+              src={shown ?? preview}
               alt="Selected avatar"
               fallback={name}
               size="fill"
@@ -435,7 +531,7 @@ export function AgentAvatarPicker({
         </div>
       </div>
       {busy && (
-        <p role="status" className="m-0 text-body-sm text-secondary">
+        <p role="status" className="sr-only">
           Uploading image…
         </p>
       )}

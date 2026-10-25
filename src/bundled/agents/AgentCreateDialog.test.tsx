@@ -12,7 +12,7 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { CreateModelChoices } from "../../features/agents/CreateModelChoices";
 import { AgentInstructions } from "../../features/agents/AgentInstructions";
 import { agentAvatars } from "../../features/agents/avatar-packs";
@@ -60,6 +60,16 @@ vi.mock("motion/react", async (actual) => ({
 }));
 
 afterEach(cleanup);
+// jsdom has no object URLs; an upload previews its file through one.
+beforeEach(() => {
+  vi.stubGlobal(
+    "URL",
+    Object.assign(URL, {
+      createObjectURL: vi.fn(() => "blob:upload"),
+      revokeObjectURL: vi.fn(),
+    }),
+  );
+});
 // jsdom lacks both; tests that need them install stubs, removed here along
 // with stubbed frames and media queries.
 afterEach(() => {
@@ -317,6 +327,54 @@ it("opens the file picker directly and recovers from an upload failure", async (
   );
 });
 
+it("previews an upload in place with progress and cancel, keeping Name editable", async () => {
+  const { agents, dialog, user } = setup(
+    [echo],
+    undefined,
+    "https://a.example",
+  );
+  let report: (sent: number, total: number) => void = () => {};
+  let signal: AbortSignal | undefined;
+  vi.mocked(uploadAvatar).mockImplementationOnce(
+    (_file, _community, abort, progress) => {
+      signal = abort;
+      report = progress ?? report;
+      return new Promise<string>(() => {});
+    },
+  );
+  const file = new File(["image"], "image.png", { type: "image/png" });
+  fireEvent.change(within(dialog).getByLabelText("Upload an image"), {
+    target: { files: [file] },
+  });
+  expect(
+    await within(dialog).findByRole("img", { name: "Uploading avatar" }),
+  ).toBeInTheDocument();
+  expect(URL.createObjectURL).toHaveBeenCalledWith(file);
+  const ring = within(dialog).getByRole("progressbar", {
+    name: "Uploading image",
+  });
+  expect(ring).not.toHaveAttribute("aria-valuenow");
+  act(() => report(1, 4));
+  expect(ring).toHaveAttribute("aria-valuenow", "25");
+  // Only Create waits on the upload.
+  await user.type(within(dialog).getByLabelText("Name"), "Nova");
+  expect(createButton()).toBeDisabled();
+
+  await user.click(
+    within(dialog).getByRole("button", { name: "Cancel upload" }),
+  );
+  expect(signal?.aborted).toBe(true);
+  expect(within(dialog).queryByRole("progressbar")).not.toBeInTheDocument();
+  expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:upload");
+  await user.click(createButton());
+  expect(agents.create).toHaveBeenCalledWith(
+    expect.objectContaining({
+      name: "Nova",
+      picture: expect.not.stringContaining("blob:"),
+    }),
+  );
+});
+
 it("keeps every bundled avatar available after switching from an uploaded image", async () => {
   const { dialog, user } = setup([echo], undefined, "https://a.example");
   const dock = within(dialog).getByRole("group", { name: "Agent avatars" });
@@ -511,7 +569,7 @@ it("jumps instead of gliding, and skips the shake, under reduced motion", async 
   expect(Element.prototype.animate).not.toHaveBeenCalled();
 });
 
-it("switches harness, keeping other defaults but clearing instructions", async () => {
+it("switches harness, starting over on the new type's defaults", async () => {
   const { agents, dialog, user } = setup([echo, notes]);
   await user.type(within(dialog).getByLabelText("Name"), "Nova");
 
@@ -532,7 +590,7 @@ it("switches harness, keeping other defaults but clearing instructions", async (
     type: "test/notes",
     name: "Nova",
     picture: expect.stringMatching(/^https:\/\//),
-    config: { notes: "start", instructions: "" },
+    config: { notes: "start", instructions: "Be brief." },
   });
 });
 
@@ -654,27 +712,41 @@ const withModels = (type: RegisteredAgentType): RegisteredAgentType => ({
   },
 });
 
-it("clears instructions when choosing a harness or model", async () => {
-  const { agents, dialog, user } = setup([withModels(echo), withModels(notes)]);
+it("keeps typed instructions when choosing a harness or model", async () => {
+  // Both types carry instructions, as the bundled harnesses do.
+  const carrying = (key: string, title: string): RegisteredAgentType => ({
+    ...withModels(notes),
+    key,
+    title,
+    carry: (config) => ({ instructions: (config as Notes).instructions }),
+    adopt: (carry, config) => ({
+      ...(config as Notes),
+      instructions: carry.instructions ?? (config as Notes).instructions,
+    }),
+  });
+  const { agents, dialog, user } = setup([
+    carrying("test/notes", "Notes"),
+    carrying("test/other", "Other"),
+  ]);
   await user.type(within(dialog).getByLabelText("Name"), "Nova");
-  await user.click(within(dialog).getByRole("combobox", { name: "Harness" }));
-  await user.click(await screen.findByRole("option", { name: "Notes" }));
   const instructions = within(dialog).getByLabelText("Instructions");
-  expect(instructions).toHaveValue("");
-  await user.type(instructions, "Clear this on model change.");
-  const model = within(dialog).getByRole("combobox", { name: "Model" });
-  await user.click(model);
+  await user.clear(instructions);
+  await user.type(instructions, "Keep this.");
+  await user.click(within(dialog).getByRole("combobox", { name: "Harness" }));
+  await user.click(await screen.findByRole("option", { name: "Other" }));
+  expect(within(dialog).getByLabelText("Instructions")).toHaveValue(
+    "Keep this.",
+  );
+  await user.click(within(dialog).getByRole("combobox", { name: "Model" }));
   await user.click(await screen.findByRole("option", { name: "Deep" }));
-  expect(within(dialog).getByLabelText("Instructions")).toHaveValue("");
+  expect(within(dialog).getByLabelText("Instructions")).toHaveValue(
+    "Keep this.",
+  );
   await user.click(createButton());
   expect(agents.create).toHaveBeenCalledWith(
     expect.objectContaining({
-      type: notes.key,
-      config: {
-        notes: "start",
-        instructions: "",
-        model: "deep",
-      },
+      type: "test/other",
+      config: { notes: "start", instructions: "Keep this.", model: "deep" },
     }),
   );
 });

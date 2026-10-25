@@ -29,17 +29,16 @@ export function rememberedMentions(
 
 /** The agent the viewer's latest top-level message in these rows tagged that
  * can still be tagged here. Off, like the follow-up draft, when agents aren't
- * remembered. */
+ * remembered, and until agent choices are complete: a partial roster would
+ * pick an older agent in place of the latest one. */
 export function lastMentionedAgent(
   session: ComposerSession,
   rows: readonly ChannelMessage[],
   admits: (pubkey: string) => boolean,
 ): string | undefined {
-  if (!rememberAgentsPreference()) return;
-  const agents = knownAgentPubkeys(
-    session.profiles.snapshot(),
-    session.agentChoices.snapshot(),
-  );
+  const choices = session.agentChoices.snapshot();
+  if (!rememberAgentsPreference() || !choices.complete) return;
+  const agents = knownAgentPubkeys(session.profiles.snapshot(), choices);
   for (let index = rows.length - 1; index >= 0; index--) {
     const row = rows[index];
     if (!row || row.authorId !== session.viewer || row.threadRootId) continue;

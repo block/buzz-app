@@ -223,6 +223,9 @@ export type MessageComposerProps = {
   ownSoloConversation?: boolean | undefined;
   /** Seeds an empty new-chat draft; follow-ups use remembered mentions. */
   defaultMention?: MentionRecipient | undefined;
+  /** Whether a retained tab shows this composer, apart from its read policy.
+   * Showing a Solo chat again re-tags the agent last tagged there. */
+  shown?: boolean | undefined;
   /** Sending needs at least one tagged recipient. */
   requireMention?: boolean | undefined;
   chatPresentation?: boolean | undefined;
@@ -371,6 +374,7 @@ function Composer({
   soloConversation,
   ownSoloConversation = false,
   defaultMention,
+  shown = true,
   requireMention = false,
   chatPresentation = false,
   activityClickOpensPanel = false,
@@ -1264,16 +1268,23 @@ function Composer({
         ?.channelType === "solo");
   // A saved Solo chat is seeded with the agent the viewer last tagged there.
   const restoresAgent = solo && !submission && !threadRootId && !defaultMention;
+  // It waits for the history and for complete agent evidence.
   const subscribeRows = useCallback(
-    (listener: () => void) =>
-      (restoresAgent &&
-        session.channels.subscribeWindow?.(channelId, listener)) ||
-      (() => {}),
-    [restoresAgent, session.channels, channelId],
+    (listener: () => void) => {
+      if (!restoresAgent) return () => {};
+      const rows = session.channels.subscribeWindow?.(channelId, listener);
+      const choices = session.agentChoices.subscribe(listener);
+      return () => {
+        rows?.();
+        choices();
+      };
+    },
+    [restoresAgent, session.channels, session.agentChoices, channelId],
   );
   // Only an empty untagged draft looks, so typing doesn't rescan the history.
+  const presented = active && shown;
   const seeking =
-    restoresAgent && active && !value.recipients.length && !draft.trim();
+    restoresAgent && presented && !value.recipients.length && !draft.trim();
   const lastAgent = useSyncExternalStore(subscribeRows, () =>
     seeking
       ? lastMentionedAgent(
@@ -1300,9 +1311,9 @@ function Composer({
   const autoTagged = useRef<string | undefined>(undefined);
   const automaticTag = useRef<string | undefined>(undefined);
   useEffect(() => {
-    if (!active) autoTagged.current = undefined;
+    if (!presented) autoTagged.current = undefined;
     if (
-      !active ||
+      !presented ||
       sendPending ||
       completion.composing.current ||
       editing.target ||

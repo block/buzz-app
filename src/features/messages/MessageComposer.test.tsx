@@ -8310,9 +8310,16 @@ it("tags the agent last tagged in a Solo chat whenever an empty composer is show
   act(() => h.input().removeRecipient(second.pubkey));
   h.fill("");
   expect(h.input()).toHaveValue("");
-  // Coming back to the chat tags the agent again.
+  // Coming back to the chat tags the agent again, whether the conversation or
+  // its retained tab is shown again.
   h.present(false);
   h.present(true);
+  expect(h.input()).toHaveValue("@Bea ");
+  act(() => h.input().removeRecipient(second.pubkey));
+  h.fill("");
+  h.retarget({ shown: false });
+  expect(h.input()).toHaveValue("");
+  h.retarget({ shown: true });
   expect(h.input()).toHaveValue("@Bea ");
   // Text without a tag is left as written.
   act(() => h.input().removeRecipient(second.pubkey));
@@ -8327,6 +8334,46 @@ it("tags the agent last tagged in a Solo chat whenever an empty composer is show
   h.present(true);
   expect(h.input()).toHaveValue("");
   setRememberAgentsPreference(true);
+});
+
+it("waits for complete agent choices before tagging the agent last tagged in a Solo chat", () => {
+  const viewer = "e".repeat(64);
+  // The local agent is usable before the library holding the latest agent loads.
+  const control = localAgentsFixture([
+    { ...localAgent, pubkey: first.pubkey, name: "Ada" },
+  ]);
+  const h = mount(
+    { scope: `https://relay.example.test:${"d".repeat(64)}` },
+    control,
+    viewer,
+  );
+  h.setLibrary([], "loading");
+  h.retarget({
+    ownSoloConversation: true,
+    requireMention: true,
+    session: {
+      ...h.session,
+      channels: { ...h.session.channels, list: () => soloList },
+    } as unknown as RelaySession,
+  });
+  h.setRows([
+    editableMessage({
+      id: "1".repeat(64),
+      authorId: viewer,
+      mentions: [first.pubkey],
+    }),
+    editableMessage({
+      id: "2".repeat(64),
+      authorId: viewer,
+      mentions: [second.pubkey],
+    }),
+  ]);
+  expect(h.input()).toHaveValue("");
+  h.setLibrary([{ pubkey: second.pubkey, name: "Bea" }]);
+  expect(h.input()).toHaveValue("@Bea ");
+  expect(h.commands().recipients).toEqual([
+    { pubkey: second.pubkey, name: "Bea" },
+  ]);
 });
 
 it("keeps remembered agents while typing during upload without taking focus when publication finishes", async () => {

@@ -2557,6 +2557,62 @@ it("shows what an import still needs before sending", async () => {
   expect(port).toHaveBeenCalledOnce();
 });
 
+it.each([
+  ["without notes", []],
+  ["with notes", ["Honey's picture didn't come over."]],
+])(
+  "drops an import that finishes %s after its send stopped",
+  async (_, notes) => {
+    const { agents, port } = oldBuzzAgents();
+    const late = deferred<Awaited<ReturnType<Agents["port"]>>>();
+    port.mockReturnValueOnce(late.promise);
+    const h = mount({}, undefined, undefined, agents);
+    fireEvent.click(screen.getByRole("button", { name: "First Honey" }));
+    h.submit();
+    await screen.findByRole("dialog", { name: "Import Honey?" });
+    fireEvent.click(screen.getByRole("button", { name: "Import and send" }));
+    h.retarget({ disabled: true });
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    h.retarget({ disabled: false });
+    h.submit();
+    await screen.findByRole("dialog", { name: "Import Honey?" });
+    await act(async () => late.resolve({ agent: {} as never, notes }));
+    expect(
+      screen.getByRole("dialog", { name: "Import Honey?" }),
+    ).toBeInTheDocument();
+    expect(h.messages.send).not.toHaveBeenCalled();
+  },
+);
+
+it("keeps focus on the import action while it runs, fails and finishes", async () => {
+  const { agents, port } = oldBuzzAgents();
+  const failed = deferred<Awaited<ReturnType<Agents["port"]>>>();
+  const done = deferred<Awaited<ReturnType<Agents["port"]>>>();
+  port.mockReturnValueOnce(failed.promise).mockReturnValueOnce(done.promise);
+  const h = mount({}, undefined, undefined, agents);
+  fireEvent.click(screen.getByRole("button", { name: "First Honey" }));
+  h.submit();
+  await screen.findByRole("dialog", { name: "Import Honey?" });
+  const action = screen.getByRole("button", { name: "Import and send" });
+  await waitFor(() => expect(action).toHaveFocus());
+  fireEvent.click(action);
+  expect(action).toHaveAttribute("aria-busy", "true");
+  expect(action).toHaveFocus();
+  await act(async () => failed.reject(new Error("No disk space.")));
+  expect(await screen.findByRole("alert")).toHaveTextContent("No disk space.");
+  expect(action).toHaveFocus();
+  fireEvent.click(action);
+  await act(async () =>
+    done.resolve({ agent: {} as never, notes: ["Honey stays archived."] }),
+  );
+  await screen.findByRole("dialog", { name: "Honey was imported" });
+  expect(action).toHaveTextContent("Send");
+  expect(action).toHaveFocus();
+  expect(h.messages.send).not.toHaveBeenCalled();
+});
+
 it("asks again when a send without importing stops at a later prompt", async () => {
   const { agents, port } = oldBuzzAgents();
   const h = mount({}, undefined, undefined, agents);

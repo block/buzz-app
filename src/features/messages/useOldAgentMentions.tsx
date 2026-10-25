@@ -34,19 +34,24 @@ export function useOldAgentMentions(
   // Importing gives the agent a key here, so a hosted type cannot take one.
   const types = agents?.types().filter((item) => !item.remote) ?? [];
   const chosen = types.find((item) => item.key === type) ?? types[0];
+  // The import came through with notes, and only sending is left.
+  const imported = !!pending?.notes && !pending.error;
   async function port() {
     if (!agents || !pending || !chosen || importing.current) return;
     importing.current = true;
-    const request = pending;
+    // A retry starts clean, without the last attempt's error or notes.
+    const { found, signal, current, finish } = pending;
+    const request = { found, signal, current, finish };
     setPending({ ...request, busy: true });
     const notes: string[] = [];
+    const check = () => {
+      request.signal.throwIfAborted();
+      if (!request.current())
+        throw new Error("The draft changed. Close this dialog and send again.");
+    };
     try {
       for (const agent of request.found) {
-        request.signal.throwIfAborted();
-        if (!request.current())
-          throw new Error(
-            "The draft changed. Close this dialog and send again.",
-          );
+        check();
         // A retry after a partial failure skips the ones that came over.
         if (agents.find(agent.pubkey)) continue;
         const ported = await agents.port({
@@ -56,6 +61,8 @@ export function useOldAgentMentions(
         });
         notes.push(...ported.notes);
       }
+      // A send stopped while the last import ran leaves this request behind.
+      check();
       // As on the Agents page, what still needs a hand is said before moving on.
       if (notes.length) setPending({ ...request, busy: false, notes });
       else request.finish([]);
@@ -128,7 +135,7 @@ export function useOldAgentMentions(
           if (!open) pending?.finish(null);
         }}
         title={
-          pending?.notes && !pending.error
+          imported
             ? pending.found.length === 1
               ? `${pending.found[0]?.name} was imported`
               : "These agents were imported"
@@ -138,7 +145,7 @@ export function useOldAgentMentions(
         }
         description={
           pending &&
-          (pending.notes && !pending.error
+          (imported
             ? "Send when you're ready. Closing this keeps your draft."
             : describe(pending.found, !!chosen?.adopt))
         }
@@ -149,17 +156,9 @@ export function useOldAgentMentions(
           return false;
         }}
         actions={
-          pending?.notes && !pending.error ? (
-            <Button
-              ref={importAction}
-              type="button"
-              variant="prominent"
-              onClick={() => pending.finish([])}
-            >
-              Send
-            </Button>
-          ) : (
-            <>
+          // One primary button through every step, so its focus survives.
+          <>
+            {!imported && (
               <Button
                 type="button"
                 disabled={pending?.busy}
@@ -169,20 +168,21 @@ export function useOldAgentMentions(
               >
                 Just send
               </Button>
-              <Button
-                ref={importAction}
-                type="button"
-                variant="prominent"
-                disabled={pending?.busy || !chosen}
-                onClick={() => void port()}
-              >
-                {pending?.busy ? "Importing…" : "Import and send"}
-              </Button>
-            </>
-          )
+            )}
+            <Button
+              ref={importAction}
+              type="button"
+              variant="prominent"
+              loading={!!pending?.busy}
+              disabled={!imported && !chosen}
+              onClick={() => (imported ? pending.finish([]) : void port())}
+            >
+              {imported ? "Send" : "Import and send"}
+            </Button>
+          </>
         }
       >
-        {types.length > 1 && !(pending?.notes && !pending.error) && (
+        {types.length > 1 && !imported && (
           <div className="flex">
             <Select
               label="Import as"

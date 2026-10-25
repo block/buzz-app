@@ -45,7 +45,7 @@ const Places = defineDoc({
   scope: "session",
   initial: () => ({}),
 });
-/** A plugin wake's reply destination belongs to its request, independently
+/** An Attention wake's reply destination belongs to its request, independently
  * of the conversation's tool defaults. Recorded before submission for recovery. */
 const Replies = defineDoc({
   kind: "buzz.replies",

@@ -235,9 +235,6 @@ const classifications = (trigger: Trigger) =>
       : 0;
 const sizeOf = (event: RelayEvent) => JSON.stringify(event).length;
 type CompiledWatch = Omit<WatchTrigger, "type" | "event">;
-/** One agent's runtime, for as long as its identity exists. Edits do not
- * replace it: each job reads the agent as it is when the job starts, and the
- * watches are recompiled only when its attention changes. */
 type PendingEvent = {
   event: RelayEvent;
   channelId?: string;
@@ -245,6 +242,9 @@ type PendingEvent = {
 };
 type Heard = { triggers: Trigger[]; held?: true };
 
+/** One agent's runtime, for as long as its identity exists. Edits do not
+ * replace it: each job reads the agent as it is when the job starts, and the
+ * watches are recompiled only when its attention changes. */
 type Runner = {
   readonly pubkey: string;
   /** The registration whose `run` it calls; a new one aborts the in-flight run. */

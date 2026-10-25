@@ -7253,8 +7253,10 @@ it.each([undefined, "e".repeat(64)])(
   async (root) => {
     vi.useFakeTimers({ now: 1_000_000 });
     const runOnce = vi.fn(async () => ({ ok: true }));
-    const { service, run } = await setup({ runOnce });
+    const { service, run, native } = await setup({ runOnce });
     await service.create({ type: "example/echo", name: "Echo" });
+    if (root)
+      native.query.mockResolvedValue([event(root, { tags: [["h", channel]] })]);
     await service.save(bot, {
       attentionEnabled: true,
       attention: {
@@ -7304,6 +7306,7 @@ it("delivers matched events to their configured address rather than the listenin
   await service.create({ type: "example/echo", name: "Echo" });
   const destination = "11111111-1111-1111-1111-111111111111";
   const root = "e".repeat(64);
+  native.query.mockResolvedValue([event(root, { tags: [["h", destination]] })]);
   const list = session.channels.list();
   vi.spyOn(session.channels, "list").mockReturnValue({
     ...list,
@@ -7761,5 +7764,37 @@ it.each([true, false])(
     confirm("saved", [viewer, bot]);
     await settle();
     expect(run).toHaveBeenCalledTimes(member ? 1 : 0);
+  },
+);
+
+it.each(["other-channel", "missing"])(
+  "does not deliver Attention to a root outside its channel (%s)",
+  async (where) => {
+    const { service, run, emit, native } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    const root = "e".repeat(64);
+    native.query.mockResolvedValue(
+      where === "missing"
+        ? []
+        : [
+            event(root, {
+              tags: [["h", "another-channel"]],
+              content: "Private root",
+            }),
+          ],
+    );
+    const watch = service.find(bot)?.attention["watch/channel"]?.value;
+    if (watch?.type !== "event") throw new Error("fixture");
+    await service.save(bot, {
+      attentionEnabled: true,
+      attention: { "watch/channel": { ...watch, channel, root } },
+    });
+    emit({ channelId: channel, events: [deploy("mismatched-root")] });
+    await settle();
+    await settle();
+    expect(run).not.toHaveBeenCalled();
+    expect(native.query).toHaveBeenCalledWith(bot, [
+      { ids: [root], kinds: [9, 40002], "#h": [channel], limit: 1 },
+    ]);
   },
 );

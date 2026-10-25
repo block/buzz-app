@@ -2081,6 +2081,26 @@ export class AgentRunners {
       if (addressed(trigger)) return run(delivery);
       if (anchor) {
         if (!delivery.current()) return;
+        if (anchor.root) {
+          const roots = await handle.query([
+            {
+              ids: [anchor.root],
+              kinds: [9, 40002],
+              "#h": [anchor.channel],
+              limit: 1,
+            },
+          ]);
+          if (
+            !roots.some(
+              (event) =>
+                event.id === anchor.root &&
+                [9, 40002].includes(event.kind) &&
+                channelOf(event) === anchor.channel,
+            )
+          )
+            throw new Error("The delivery root is not in its channel");
+          if (!delivery.current()) return;
+        }
         const wakeText = () =>
           wakePrompt(
             handle,

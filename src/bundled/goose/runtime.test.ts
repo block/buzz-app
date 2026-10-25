@@ -789,7 +789,7 @@ it("shows a turn a reload stopped what it already posted, and to carry on", asyn
   await flush(100);
   expect(g.read).toHaveBeenCalledWith(
     [
-      { ids: [mention.id], limit: 1 },
+      { ids: [mention.id], "#h": [channel], limit: 1 },
       { kinds: [9, 40002], "#h": [channel], "#e": [mention.id], limit: 200 },
     ],
     expect.anything(),
@@ -1457,4 +1457,28 @@ it("drops an Attention wake stopped while its final prompt refresh waits", async
     release();
     f.runtime.dispose();
   }
+});
+
+it("keeps foreign-channel roots out of conversation context", async () => {
+  const root = message("1", "Private root", {
+    tags: [["h", "another-channel"]],
+  });
+  const mention = message("2", "@Goose look", {
+    tags: [
+      ["h", channel],
+      ["e", root.id, "", "reply"],
+    ],
+  });
+  const f = setup({ thread: [root], hold: true });
+  await f.deliver(mention);
+  await flush(100);
+  expect(f.goose()?.turns[0]?.text).toContain("@Goose look");
+  expect(f.goose()?.turns[0]?.text).not.toContain("Private root");
+  expect(f.read).toHaveBeenCalledWith(
+    [
+      { ids: [root.id], "#h": [channel], limit: 1 },
+      { kinds: [9, 40002], "#h": [channel], "#e": [root.id], limit: 200 },
+    ],
+    expect.anything(),
+  );
 });

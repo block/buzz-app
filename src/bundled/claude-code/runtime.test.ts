@@ -2365,3 +2365,22 @@ it("drops an Attention wake stopped while its final prompt refresh waits", async
     f.runtime.dispose();
   }
 });
+
+it("keeps foreign-channel roots out of conversation context", async () => {
+  const root = message("1", "Private root", {
+    tags: [["h", "another-channel"]],
+  });
+  const mention = message("2", "@Claude look", {
+    tags: [
+      ["h", channel],
+      ["e", root.id, "", "reply"],
+    ],
+  });
+  const f = setup([root]);
+  await f.deliver({ type: "mention", event: mention });
+  await flush(10);
+  const text = f.claudes().find((process) => process.prompts.length)
+    ?.prompts[0];
+  expect(text).toContain("@Claude look");
+  expect(text).not.toContain("Private root");
+});

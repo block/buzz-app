@@ -1928,3 +1928,17 @@ it.each([true, false])(
     }
   },
 );
+
+it("keeps foreign-channel roots out of conversation context", async () => {
+  const f = setup();
+  f.session.read.mockResolvedValue([
+    { ...root, tags: [["h", "another-channel"]], content: "Private root" },
+  ]);
+  await f.deliver({ type: "mention", event: reply("2", "@Pi look") }).run;
+  expect(String(f.host.requests("deliver")[0]?.params.text)).toContain(
+    "@Pi look",
+  );
+  expect(String(f.host.requests("deliver")[0]?.params.text)).not.toContain(
+    "Private root",
+  );
+});

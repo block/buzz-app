@@ -354,7 +354,9 @@ function AgentChoice({
                 model()
               ) : (
                 <span>
-                  {runs.id ? "No thinking options" : "Model unavailable"}
+                  {runs.id
+                    ? `${runs.label} · No thinking options`
+                    : "Model unavailable"}
                 </span>
               )}
             </div>
@@ -384,7 +386,6 @@ function SessionActions({
   const agents = useContext(AgentsContext);
   const state = useSessionState(agents, [pubkey], place);
   const [started, setStarted] = useState<object>();
-  const [announcement, setAnnouncement] = useState("");
   const [hintDismissed, setHintDismissed] = useState(false);
   useEffect(() => {
     if (!started) return;
@@ -392,21 +393,21 @@ function SessionActions({
     return () => clearTimeout(timer);
   }, [started]);
   const act = async (action: SessionControlAction) => {
+    // Clearing first empties the live region, so a repeated success is
+    // announced again.
     onFeedback("");
-    setAnnouncement("");
+    setStarted(undefined);
     try {
       await agents?.session(pubkey, place, action);
       if (action === "new") {
         setHintDismissed(false);
         setStarted({});
-        setAnnouncement("New session started");
       } else {
         onFeedback(
           action === "compact" ? "Session compacted" : "Interrupt requested",
         );
       }
     } catch (error) {
-      if (action === "new") setStarted(undefined);
       onFeedback(
         error instanceof Error ? error.message : "Session action failed",
       );
@@ -415,7 +416,7 @@ function SessionActions({
   return (
     <fieldset className={styles.actions} aria-label={`${name}'s session`}>
       <span className="sr-only" role="status">
-        {started ? announcement : ""}
+        {started ? "New session started" : ""}
       </span>
       {(
         [

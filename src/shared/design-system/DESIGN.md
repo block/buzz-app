@@ -1261,7 +1261,7 @@ keeps only the fade.
 ToastProvider mounts one headless [Sonner](https://sonner.emilkowal.ski) Toaster
 in the host, portaled outside the app layout to the bottom right. Features and
 plugins use the shared Toast API, never their own Toaster or direct Sonner calls.
-Toast cards reuse `floating-surface`, including its `--shadow-sm` elevation; the
+Toast cards reuse `floating-surface`, including its `--shadow-panel` elevation; the
 scrollable viewport leaves room for the shadow and keyboard focus.
 Buzz owns the floating surface, semantic colors, type roles, Button and IconButton;
 headless content inherits the host theme and text size without an OS-theme override.

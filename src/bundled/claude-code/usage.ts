@@ -463,25 +463,22 @@ export async function readUsage(
   };
   const found: SessionUsage[] = [];
   const queue = [...new Set([...savedNames, ...named])];
-  // A read stopped takes no more files; ones it started still fill the cache.
+  // One file at a time per worker: a read stopped takes no more files, and
+  // ones it started still fill the cache.
   const worker = async () => {
     for (let name = queue.shift(); name; name = queue.shift()) {
       signal.throwIfAborted();
       const main = await read(name);
-      signal.throwIfAborted();
       if (!main) continue;
       const id = name.slice(0, -".jsonl".length);
-      const subagents = new Map(
-        await Promise.all(
-          (current.subagents.get(id) ?? []).map(
-            async (path) =>
-              [
-                path.slice(path.lastIndexOf("/") + 1, -".jsonl".length),
-                await read(path),
-              ] as const,
-          ),
-        ),
-      );
+      const subagents = new Map<string, Digest | undefined>();
+      for (const path of current.subagents.get(id) ?? []) {
+        signal.throwIfAborted();
+        subagents.set(
+          path.slice(path.lastIndexOf("/") + 1, -".jsonl".length),
+          await read(path),
+        );
+      }
       const session = combine(id, main, subagents, agent, savedNames.has(name));
       if (session && session.lastAt >= since)
         found.push(await withRevision(session));

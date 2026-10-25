@@ -240,8 +240,10 @@ export async function loadPackages(dir, limit = PACKAGE_MS) {
         registry.install(extension);
         installed.push(extension);
       }
-      if (providers.some((provider) => typeof provider?.id !== "string"))
-        throw new Error("A provider it returns has no id");
+      if (!providers.every(isProvider))
+        throw new Error(
+          "A provider it returns needs an id, name, auth and getModels",
+        );
       loaded.extensions.push(...extensions);
       loaded.providers.push(...providers);
     } catch (error) {
@@ -254,6 +256,15 @@ export async function loadPackages(dir, limit = PACKAGE_MS) {
   }
   return loaded;
 }
+
+/** Whether a provider has what listing Pi's providers reads, which one made
+ * without pi-ai's `createProvider` may lack: without it, the list fails for
+ * every agent. */
+const isProvider = (provider) =>
+  typeof provider?.id === "string" &&
+  typeof provider.name === "string" &&
+  Boolean(provider.auth?.apiKey || provider.auth?.oauth) &&
+  typeof provider.getModels === "function";
 
 /** What the package in a folder adds, from each of its durable entries. */
 async function loadPackage(root) {

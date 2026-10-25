@@ -83,9 +83,10 @@ Things to know:
   - Don't use `enum` or `namespace`.
 - **Names are unique.** An extension can't be named `buzz`, `coding-tools`,
   `tool-search` or the name of another package's extension.
-- **`pi` ignores `pi.durable`.** One package can serve both: keep a
-  `pi.extensions` entry for `pi` next to `pi.durable`. A package only for Buzz
-  must not have an `index.ts` or `index.js`, which `pi` loads by default.
+- **`pi` ignores `pi.durable`.** It reads only the `extensions`, `skills`,
+  `prompts` and `themes` lists under `pi`, so a package with only `pi.durable`
+  gives `pi` nothing. One package can serve both: keep a `pi.extensions` entry
+  for `pi` next to `pi.durable`.
 
 ## 2. Add a provider (optional)
 
@@ -126,6 +127,9 @@ export default () => ({
   ],
 });
 ```
+
+A provider takes the place of any with the same `id`, whether one of Pi's own
+or one from a package earlier in the list, so give yours an `id` of its own.
 
 Buzz's provider settings take only API keys. For a provider whose sign-in
 opens a browser, sign in with `pi` first: run `pi`, then `/login`. Buzz and
@@ -174,6 +178,8 @@ package fails when:
 - Its setup throws or takes longer than 30 seconds.
 - An extension has a problem Pi durable rejects, such as a section key that
   isn't lowercase, or a name that's already taken.
+- A provider lacks an `id`, `name`, `auth` or `getModels`. One made with
+  `createProvider` has them all.
 - Its source isn't a local folder, or its `pi.durable` isn't a list.
 
 When a provider is missing from the **Provider** list, its package didn't load.

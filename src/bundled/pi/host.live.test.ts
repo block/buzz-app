@@ -263,7 +263,8 @@ console.log(JSON.stringify(out));
 `;
 
 /** Loads the Pi packages in a Pi folder's settings, then runs a turn on the
- * provider one adds, as the host does when Buzz starts it. */
+ * provider one adds, as the host does when Buzz starts it. A package that
+ * hangs is in a Pi folder of its own, loaded with a short limit. */
 const PACKAGES_DRIVER = `
 import { PassThrough } from "node:stream";
 import { createInterface } from "node:readline";
@@ -271,9 +272,9 @@ import { pathToFileURL } from "node:url";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import { loadPackages, serve } from "./host.mjs";
-const [data, dir] = process.argv.slice(2);
-const out = { none: await loadPackages(data) };
-const packages = await loadPackages(dir, 100);
+const [data, dir, slow] = process.argv.slice(2);
+const out = { none: await loadPackages(data), slow: (await loadPackages(slow, 100)).errors };
+const packages = await loadPackages(dir);
 out.errors = packages.errors;
 out.extensions = packages.extensions.map((extension) => extension.name);
 out.providers = packages.providers.map((provider) => provider.id);
@@ -338,6 +339,12 @@ const PACKAGES: Record<string, Record<string, string>> = {
       '{ "type": "module", "pi": { "durable": ["./durable.js"] } }',
     "durable.js":
       'export default () => ({ extensions: [{ name: "invalid", sections: [{ key: "Bad Key", render: () => "" }] }] });',
+  },
+  "half-provider": {
+    "package.json":
+      '{ "type": "module", "pi": { "durable": ["./durable.js"] } }',
+    "durable.js":
+      'export default () => ({ providers: [{ id: "half", name: "Half" }] });',
   },
   "not-a-list": {
     "package.json": '{ "type": "module", "pi": { "durable": "./durable.js" } }',
@@ -582,14 +589,20 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
         packages: [
           "npm:pi-example",
           "../broken",
-          "../hangs",
           "../clash",
           "../invalid",
+          "../half-provider",
           "../not-a-list",
           "../pi-only",
           { source: "~/good" },
         ],
       }),
+    );
+    const slow = join(packages, "slow");
+    await mkdir(slow);
+    await writeFile(
+      join(slow, "settings.json"),
+      JSON.stringify({ packages: ["../hangs"] }),
     );
     const { stdout } = await run(
       process.execPath,
@@ -598,6 +611,7 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
         join(folder, "driver.mjs"),
         folder,
         dir,
+        slow,
       ],
       {
         cwd: folder,
@@ -608,17 +622,23 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
     );
     const out = JSON.parse(stdout.trim().split("\n").at(-1) ?? "{}");
     expect(out.none).toEqual({ extensions: [], providers: [], errors: [] });
+    expect(out.slow).toEqual([
+      { source: "../hangs", error: "It took over 0.1 seconds" },
+    ]);
     expect(out.errors).toEqual([
       {
         source: "npm:pi-example",
         error: "Buzz loads only Pi packages in a local folder",
       },
       { source: "../broken", error: "No token" },
-      { source: "../hangs", error: "It took over 0.1 seconds" },
       { source: "../clash", error: "Another extension is named coding-tools" },
       {
         source: "../invalid",
         error: 'Section key "Bad Key" must match /^[a-z][a-z0-9_-]*$/',
+      },
+      {
+        source: "../half-provider",
+        error: "A provider it returns needs an id, name, auth and getModels",
       },
       {
         source: "../not-a-list",

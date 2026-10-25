@@ -227,7 +227,7 @@ function describe(found: readonly PortableAgent[], adopts: boolean) {
       : "names and avatars";
   return `${names} ${one ? "is" : "are"} set up in the preview version of Buzz. Are you ready to import ${
     one ? "it" : "them"
-  } to Buzz 1.0? This will keep ${one ? "its" : "their"} ${kept} but will start running ${
+  } to Buzz 1.0? This will keep ${one ? "its" : "their"} ${kept} and start running ${
     one ? "it" : "them"
   } in this app.`;
 }

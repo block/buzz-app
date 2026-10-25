@@ -669,12 +669,14 @@ html[data-keyboard-navigation]
     }
   }
 
-  /* Ordinary form dialogs scroll beneath their full-height sticky chrome. */
+  /* Ordinary form dialogs scroll beneath their full-height sticky chrome.
+     Stable-height dialogs keep their expanding body so actions stay put. */
   .buzz-dialog:not([data-stepped]):not(
     [data-navigation]
   )[data-body-layout="flow"]:not([data-presentation="search"]):not(
     [data-placement="right"],
-    [data-size="expanded"]
+    [data-size="expanded"],
+    [data-height^="stable"]
   ) {
     display: block;
     overflow-x: hidden;

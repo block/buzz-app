@@ -156,7 +156,8 @@ help, status, warnings, and section-specific explanations with their content.
 Ordinary flow Dialogs use sticky header and footer bars over the scrolling body.
 Their full backgrounds combine a surface-color gradient and progressive blur;
 labels and actions remain sharp. Reduced transparency uses an opaque surface.
-Navigated, stepped, and internally scrolling dialogs retain their existing layout.
+Navigated, stepped, stable-height, and internally scrolling dialogs retain their
+existing layout.
 
 Put the completion action in the `actions` footer, with Cancel/Close before it. Keep other
 task controls in the body; reserve `headerActions` for contextual utilities beside

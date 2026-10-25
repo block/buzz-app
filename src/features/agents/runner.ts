@@ -2238,17 +2238,34 @@ export class AgentRunners {
       pubkey: agent.pubkey,
       name: agent.name,
       owner: agent.owner,
-      publish: async (event: AgentEventTemplate) => this.publish(runner, event),
-      query: async (filters: readonly object[]) =>
-        this.require().query(agent, filters),
-      searchProfiles: async (query: string, limit: number) =>
-        this.require().searchProfiles(agent, query, limit),
-      upload: async (data: string, mime: string) =>
-        this.require().upload(agent, data, mime),
-      media: async (url: string) => this.require().media(agent, url),
-      gitAuth: async (owner: string, repo: string) =>
-        this.require().gitAuth(agent, owner, repo),
+      // What acts as the agent stops with it: a turn still working once it
+      // is deleted, removed from this community or retyped can't.
+      publish: async (event: AgentEventTemplate) => {
+        lifetime.throwIfAborted();
+        return this.publish(runner, event);
+      },
+      query: async (filters: readonly object[]) => {
+        lifetime.throwIfAborted();
+        return this.require().query(agent, filters);
+      },
+      searchProfiles: async (query: string, limit: number) => {
+        lifetime.throwIfAborted();
+        return this.require().searchProfiles(agent, query, limit);
+      },
+      upload: async (data: string, mime: string) => {
+        lifetime.throwIfAborted();
+        return this.require().upload(agent, data, mime);
+      },
+      media: async (url: string) => {
+        lifetime.throwIfAborted();
+        return this.require().media(agent, url);
+      },
+      gitAuth: async (owner: string, repo: string) => {
+        lifetime.throwIfAborted();
+        return this.require().gitAuth(agent, owner, repo);
+      },
       remember: async (slug: string, body: string, after: number) => {
+        lifetime.throwIfAborted();
         const event = await this.require().remember(agent, slug, body, after);
         this.host.remembered(agent.key, slug, body);
         return event;

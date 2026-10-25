@@ -768,7 +768,8 @@ export type AgentsSnapshot = Readonly<{
   /** The selected community's agents, while it is connected. */
   agents: readonly Agent[];
   /** Every agent kept running here, whichever community is selected: the
-   * viewer's agents in each joined community not disconnected. */
+   * viewer's agents in each joined community not disconnected, but none
+   * whose Delete or Remove there is unfinished. */
   running: readonly Agent[];
   /** Running agents that were working when the app last closed or reloaded,
    * until the owner resumes or forgets those turns. */
@@ -3776,18 +3777,22 @@ export class AgentsService extends Service implements Agents {
 
   // Joins identities, records and the connections into the running and visible
   // agents, and keeps one runner per saved agent. Runners outlive edits and
-  // reconnects; one is retired only when its agent is deleted, and its run is
-  // aborted when the agent's type is replaced.
+  // reconnects; one is retired only when its agent is deleted or its Remove
+  // starts, and its run is aborted when the agent's type is replaced.
   private update() {
     const identities = this.identities.filter((identity) => !identity.deleted);
-    const running: Agent[] = [];
+    const alive: Agent[] = [];
     for (const identity of identities) {
       if (!this.alive(identity)) continue;
       const record = this.recordOf(identity);
       // Reuse the frozen agent while nothing visible changed, so subscribers see
       // a stable snapshot.
-      const prior = this.agent(identity.key);
-      running.push(
+      const prior =
+        this.agent(identity.key) ??
+        this.state.agents.find(
+          (agent) => agent.key === identity.key && agent.deleting,
+        );
+      alive.push(
         prior &&
           prior.name === identity.name &&
           prior.picture === identity.picture &&
@@ -3803,14 +3808,16 @@ export class AgentsService extends Service implements Agents {
           : this.view(identity, record),
       );
     }
+    // An unfinished Delete or Remove stays listed, but nothing runs it: its
+    // types' plugins stop what they keep for it.
+    const running = alive.filter((agent) => !agent.deleting);
     const selected = originOf(this.communities.snapshot().selected ?? "");
     const agents = [
-      ...running.filter(
+      ...alive.filter(
         (agent) => originOf(agent.relay) === selected && this.bindingOf(agent),
       ),
       ...this.listedAgents(selected),
     ];
-    // An unfinished Delete or Remove stays listed, but nothing runs it.
     this.runners.reconcile(
       identities
         .filter((identity) => !identity.deleting)

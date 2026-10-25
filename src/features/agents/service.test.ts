@@ -2155,14 +2155,24 @@ describe("an agent in several communities", () => {
     ]);
   });
 
-  it("lists a rename in one community while it is still leaving another, then finishes leaving it", async () => {
-    const { service } = await joined();
+  it("stops it in a community it is still leaving, lists a rename there, then finishes leaving it", async () => {
+    const { service, run, second } = await joined();
+    second.emit({ events: [mention("there")] });
+    await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
+    const turn = run.mock.calls[0]?.[0].agent;
     leaveChannels.mockRejectedValueOnce(new Error("offline"));
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     await expect(service.leave(away)).rejects.toThrow(
       "Echo hasn't left other.example.test yet",
     );
     warn.mockRestore();
+    // Shown there, stopped: its plugins stop it, and a turn still working
+    // can't act as it.
+    expect(service.find(bot)).toMatchObject({ key: away, deleting: true });
+    expect(service.snapshot().running.map((agent) => agent.key)).toEqual([bot]);
+    await expect(
+      turn?.publish({ kind: 9, content: "Late", tags: [["h", channel]] }),
+    ).rejects.toThrow();
     records.publish.mockClear();
     await service.save(bot, { name: "Echo Two" });
     await vi.waitFor(() => expect(records.publish).toHaveBeenCalledOnce());

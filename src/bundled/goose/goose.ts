@@ -482,7 +482,7 @@ export class GooseSession {
   private runWaiters: ((runId: string | undefined) => void)[] = [];
   /** A `session/prompt` is in flight. */
   private prompting = false;
-  private steering = 0;
+  private readonly steering = new Set<Waiter>();
   private steered = Promise.resolve();
   /** Turns to run, each with the model and level it was asked for, if any. */
   private readonly queue: {
@@ -599,7 +599,7 @@ export class GooseSession {
    * another message is still waiting for its answer. goose still ends its turn
    * with one more model call, whose text nobody posts. */
   finished() {
-    if (this.pending === 1 && !this.queue.length && !this.steering)
+    if (this.pending === 1 && !this.queue.length && !this.steering.size)
       this.settle({ ok: true });
   }
 
@@ -610,6 +610,7 @@ export class GooseSession {
   interrupt() {
     if (!this.working || this.closed) return;
     this.queue.length = 0;
+    this.steered = Promise.resolve();
     this.stopped = {
       waiters: [...this.waiters],
       receipts: new Set(this.active.values()),
@@ -669,7 +670,7 @@ export class GooseSession {
     model?: string,
     effort?: string,
   ) {
-    this.steering++;
+    this.steering.add(waiter);
     const prior = this.steered;
     let release!: () => void;
     this.steered = new Promise<void>((resolve) => {
@@ -711,7 +712,12 @@ export class GooseSession {
         }
       }
       if (live()) {
-        this.queue.push({
+        const next = this.queue.findIndex(
+          (turn) =>
+            turn.waiter &&
+            this.waiters.indexOf(turn.waiter) > this.waiters.indexOf(waiter),
+        );
+        this.queue.splice(next < 0 ? this.queue.length : next, 0, {
           text,
           ...(activity.delivered ? { delivered: activity.delivered } : {}),
           ...(activity.current ? { current: activity.current } : {}),
@@ -724,7 +730,7 @@ export class GooseSession {
       }
     } finally {
       release();
-      this.steering--;
+      this.steering.delete(waiter);
       // Runs the next turn, or ends work whose turn ended during the steer.
       void this.pump();
     }
@@ -739,11 +745,19 @@ export class GooseSession {
     waiter({ ok: true, undelivered: true });
   }
 
+  private get handingOff() {
+    return [...this.steering].some(
+      (waiter) =>
+        this.waiters.includes(waiter) &&
+        !this.stopped?.waiters.includes(waiter),
+    );
+  }
+
   private async pump() {
-    if (this.prompting) return;
+    if (this.prompting || this.handingOff) return;
     this.prompting = true;
     try {
-      while (this.queue.length && !this.closed) {
+      while (this.queue.length && !this.handingOff && !this.closed) {
         // Stopped work has ended, and messages sent since run as new work.
         if (this.stopped) this.endStopped();
         const { text, model, effort, current, refresh, waiter, delivered } =
@@ -779,7 +793,7 @@ export class GooseSession {
       this.runId = undefined;
       this.ranAs(undefined);
     }
-    if (!this.steering && !this.closed) this.done();
+    if (!this.steering.size && !this.closed) this.done();
     this.wake();
   }
 
@@ -920,7 +934,10 @@ export class GooseSession {
   private quiet() {
     return (
       this.closed ||
-      (!this.prompting && !this.steering && !this.pending && !this.queue.length)
+      (!this.prompting &&
+        !this.steering.size &&
+        !this.pending &&
+        !this.queue.length)
     );
   }
   private wake() {

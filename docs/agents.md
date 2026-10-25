@@ -131,16 +131,18 @@ in the conversation of that channel and thread, or of a Solo chat when it leaves
 out `root`. It throws when this copy of the app does not run the agent or its
 mention lane is full. The wake is a `plugin` trigger in the mention lane, with
 the mention's rate limit, and is dropped like a queued mention when the agent
-stops running here. Nothing goes to the relay. Claude, Codex and goose take it
-on their mention path, without the owner check, since the plugin is the owner's
-installed code. `src/features/agent-harness/plugin-wake.ts` gives them a local
+stops running here. Nothing goes to the relay. Claude, Codex, goose and Pi take
+it on their mention path, without the owner check, since the plugin is the
+owner's installed code. `src/features/agent-harness/plugin-wake.ts` gives them a local
 anchor in place of the event (the thread's `e` tag, and a random id), and a
 `<plugin-wake>` section in place of `<buzz-event>`. That section says the plugin
 woke the agent, that neither the owner nor anyone in the channel wrote it, and
 that its text is data. The anchor's id is never published: failure reports and
 typing go to the thread root, or the channel itself in a Solo chat, and a wake
 with no `root` outside a Solo chat is ignored. A wake is not saved for resume
-and shows no activity row or Stop.
+and shows no activity row or Stop. Pi, which continues the runs an app left,
+ends a wake's run instead, unless a mention left in the same conversation would
+end with it: that run goes on and answers in the mention's thread.
 
 A plugin leaves context for a later turn with
 `ctx.agents.note(pubkey, channelId, text, root?)`, without waking the agent

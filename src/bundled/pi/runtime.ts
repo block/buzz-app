@@ -23,6 +23,10 @@ import {
   READ_TIMEOUT_MS,
 } from "../../features/agent-harness/core-memory";
 import { readProject } from "../../features/agent-harness/project";
+import {
+  wakeAnchor,
+  wakeLands,
+} from "../../features/agent-harness/plugin-wake";
 import { fromOwner, workflowOf } from "../../features/agents/owner-attestation";
 import type { AgentReads } from "../../features/agents/reads";
 import type {
@@ -90,6 +94,9 @@ const NAMES_TIMEOUT_MS = 2_000;
 /** How long an adopted run's mention is looked for. */
 const READ_MS = 10_000;
 const CHAT = [9, 40002];
+/** Starts a plugin wake's request, which no relay event's id does, so a run
+ * an earlier app left is known as a wake's. */
+const WAKE = "plugin/";
 
 /** Where a mention's turn replies: its thread, or the top of a Solo chat. */
 type Where = Readonly<{ channel: string; root: string; topLevel: boolean }>;
@@ -413,9 +420,13 @@ export class PiRuntime {
     interruptible,
   }: Delivery) {
     // Watches and timers come as standalone turns (`runOnce`).
-    if (trigger.type !== "mention") return ignored?.();
+    if (trigger.type !== "mention" && trigger.type !== "plugin")
+      return ignored?.();
+    // A plugin's wake is the owner's installed code, not a message to check.
+    const wake = trigger.type === "plugin" ? trigger : undefined;
     // Pi runs commands as you; mentions need owner or delegated authority.
     if (
+      trigger.type === "mention" &&
       !(await fromOwner(
         trigger.event,
         agent.owner,
@@ -427,7 +438,8 @@ export class PiRuntime {
     const entry = this.entry(agent, config(raw));
     entry.handle = agent;
     entry.team = team ?? "";
-    const { event } = trigger;
+    const event =
+      trigger.type === "plugin" ? wakeAnchor(trigger) : trigger.event;
     const channel = channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1];
     if (!channel) return;
     const topLevel =
@@ -436,6 +448,7 @@ export class PiRuntime {
         channel,
         signal,
       )) ?? false;
+    if (wake && !wakeLands(wake, topLevel)) return ignored?.();
     // Frozen with the policy: a scope change while this waits must not move
     // its prompt to another conversation than the one it is delivered to.
     const key = await this.key(entry, agent.pubkey, event, channel, topLevel);
@@ -447,7 +460,7 @@ export class PiRuntime {
     const prior = entry.policies.get(key);
     const same = prior?.topLevel === topLevel;
     const wait = prior && (same ? prior.handed : prior.settled);
-    const request = event.id;
+    const request = wake ? `${WAKE}${wake.id}` : event.id;
     let submitted!: { submission: number; conversation: number };
     let sends = 0;
     // A delivery during a session action waits for it, past its handover.
@@ -476,6 +489,7 @@ export class PiRuntime {
           )),
           agent: agent.pubkey,
           label: "@mention",
+          ...(wake ? { wake } : {}),
         }),
       );
       // A conversation's tools default to its thread; a conversation shared
@@ -803,9 +817,9 @@ export class PiRuntime {
    * unfinished in Pi's storage, which any delivery continues, in whatever
    * thread: they show as working, and their answers are posted and failures
    * reported as a delivery's are, but Stop is not restored. Standalone turns'
-   * runs are ended instead, and rejects when they could not be, as Pi would
-   * continue them. `current` is the request being delivered, which its own
-   * run waits for. */
+   * and plugin wakes' runs are ended instead, and rejects when they could not
+   * be, as Pi would continue them. `current` is the request being delivered,
+   * which its own run waits for. */
   private async adopt(entry: Entry, pubkey: string, current?: string) {
     const { submissions: unfinished } = await this.pi.request<{
       submissions: readonly {
@@ -818,6 +832,13 @@ export class PiRuntime {
     const taken: Receipt[] = [];
     const waits: (() => Promise<void>)[] = [];
     const dropped: { submission: number; conversation: number }[] = [];
+    const aborted = new Set<number>();
+    // The conversations with a mention's run to continue.
+    const mentioned = new Set(
+      unfinished.flatMap(({ conversation, request, context }) =>
+        context && !request.startsWith(WAKE) ? [conversation] : [],
+      ),
+    );
     for (const { submission, conversation, request, context } of unfinished) {
       const { handle } = entry;
       if (
@@ -827,6 +848,14 @@ export class PiRuntime {
         entry.standalone.has(request)
       )
         continue;
+      // A plugin's wake ends with the app, as in other harnesses, unless
+      // ending it would end a mention's run in its conversation too. Then it
+      // goes on, answered in the mention's thread: a wake has no relay event
+      // to find its own thread by.
+      if (request.startsWith(WAKE)) {
+        if (!mentioned.has(conversation)) aborted.add(conversation);
+        continue;
+      }
       // A watch's or timer's run ends with the app, as other harnesses' do:
       // continued, it would have no deadline, lane or Stop.
       if (!context) {
@@ -889,14 +918,20 @@ export class PiRuntime {
     // Only once every run's sends are counted: a wait continues all of them,
     // and one could send while a later run's thread is still looked up.
     // Ending the others continues none; until they are ended, nothing waits.
-    if (dropped.length)
-      try {
+    try {
+      if (dropped.length)
         await this.pi.request("drop", { agent: pubkey, submissions: dropped });
-      } catch (error) {
-        for (const [request, receipt] of entry.receipts)
-          if (taken.includes(receipt)) this.forget(entry, request);
-        throw error;
-      }
+      // A wake's run is in its thread's conversation, where the next turn
+      // would join it if it were only marked, and end untaken with it.
+      // Aborting the conversation waits for the run to end; as that continues
+      // every left run, it comes once the others are dropped.
+      for (const conversation of aborted)
+        await this.pi.request("abort", { agent: pubkey, conversation });
+    } catch (error) {
+      for (const [request, receipt] of entry.receipts)
+        if (taken.includes(receipt)) this.forget(entry, request);
+      throw error;
+    }
     for (const wait of waits) void wait();
     this.notify();
   }

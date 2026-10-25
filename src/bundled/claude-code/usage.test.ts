@@ -457,6 +457,50 @@ it("starts no more reads once the read is stopped", async () => {
   expect(reads).toHaveLength(8);
 });
 
+it("starts no subagent reads once the read is stopped", async () => {
+  home = mkdtempSync(join(tmpdir(), "claude-usage-"));
+  const project = join(home, ".claude/projects/-Users-me--buzz");
+  mkdirSync(join(project, "one/subagents"), { recursive: true });
+  writeFileSync(
+    join(project, "one.jsonl"),
+    `${threadPrompt()}\n${reply(1000, "m1", usage(1, 2))}`,
+  );
+  for (let index = 0; index < 4; index += 1)
+    writeFileSync(
+      join(project, `one/subagents/agent-${index}.jsonl`),
+      reply(1500, `s${index}`, usage(3, 4), "claude-opus-5-5", {
+        isSidechain: true,
+      }),
+    );
+  const reads: string[] = [];
+  const host = desktop(home, reads);
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const controller = new AbortController();
+  const read = readUsage(
+    {
+      ...host,
+      readFile: async (path) => {
+        const file = await host.readFile(path);
+        await held;
+        return file;
+      },
+    },
+    "~/.buzz",
+    agent,
+    [],
+    0,
+    controller.signal,
+  );
+  await vi.waitFor(() => expect(reads).toEqual(["one.jsonl"]));
+  controller.abort();
+  release();
+  await expect(read).rejects.toThrow();
+  expect(reads).toEqual(["one.jsonl"]);
+});
+
 /** Runs the manifest's processes for real, `~` being `home`; the workspace
  * resolves to /Users/me/.buzz. */
 it("fails rather than undercount when a search fails partway", async () => {

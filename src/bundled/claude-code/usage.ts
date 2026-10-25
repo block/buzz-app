@@ -468,6 +468,7 @@ export async function readUsage(
     for (let name = queue.shift(); name; name = queue.shift()) {
       signal.throwIfAborted();
       const main = await read(name);
+      signal.throwIfAborted();
       if (!main) continue;
       const id = name.slice(0, -".jsonl".length);
       const subagents = new Map(

@@ -424,7 +424,7 @@ it("adds a person at once under the chat's share rule, by Add or Enter", async (
   const user = userEvent.setup();
   t.mount();
   await user.click(screen.getByRole("button", { name: "Access" }));
-  const dialog = screen.getByRole("dialog", { name: "Share" });
+  const dialog = screen.getByRole("dialog", { name: "Share access" });
   await waitForAccess(dialog);
   await user.type(search(dialog), "Aria");
   const results = await within(dialog).findByRole("region", {
@@ -457,7 +457,7 @@ it("Copy alone neither saves selections nor grants access", async () => {
   const user = userEvent.setup();
   t.mount();
   await user.click(screen.getByRole("button", { name: "Access" }));
-  const dialog = screen.getByRole("dialog", { name: "Share" });
+  const dialog = screen.getByRole("dialog", { name: "Share access" });
   const clipboard = vi
     .spyOn(navigator.clipboard, "writeText")
     .mockResolvedValue();
@@ -481,10 +481,10 @@ it("Copy alone neither saves selections nor grants access", async () => {
   await user.click(within(dialog).getByRole("button", { name: "Close" }));
   await user.click(screen.getByRole("button", { name: "Access" }));
   expect(
-    search(screen.getByRole("dialog", { name: "Share" })),
+    search(screen.getByRole("dialog", { name: "Share access" })),
   ).toHaveValue("");
   expect(
-    within(screen.getByRole("dialog", { name: "Share" })).getByRole(
+    within(screen.getByRole("dialog", { name: "Share access" })).getByRole(
       "button",
       { name: "Copy link" },
     ),
@@ -500,7 +500,7 @@ it("shares to a channel by giving its current members access, then posts one lin
   const user = userEvent.setup();
   t.mount();
   await user.click(screen.getByRole("button", { name: "Access" }));
-  const dialog = screen.getByRole("dialog", { name: "Share" });
+  const dialog = screen.getByRole("dialog", { name: "Share access" });
   await chooseDestination(user, dialog);
   expect(within(dialog).getByRole("button", { name: "Share" })).toBeEnabled();
   await user.click(within(dialog).getByRole("button", { name: "Share" }));
@@ -527,7 +527,7 @@ it("Done never promotes or removes a Solo chat, and conversion stays in the chat
   const user = userEvent.setup();
   t.mount();
   await user.click(screen.getByRole("button", { name: "Access" }));
-  const dialog = screen.getByRole("dialog", { name: "Share" });
+  const dialog = screen.getByRole("dialog", { name: "Share access" });
   expect(within(dialog).queryByRole("textbox", { name: "Name" })).toBeNull();
   expect(within(dialog).queryByRole("switch")).toBeNull();
   expect(
@@ -549,7 +549,7 @@ it("leaves agents to mentions but includes channel bots without waking them", as
   const user = userEvent.setup();
   t.mount();
   await user.click(screen.getByRole("button", { name: "Access" }));
-  const dialog = screen.getByRole("dialog", { name: "Share" });
+  const dialog = screen.getByRole("dialog", { name: "Share access" });
   await waitForAccess(dialog);
   await user.type(search(dialog), "Helper");
   const results = await within(dialog).findByRole("region", {
@@ -581,7 +581,7 @@ it("shows loading and failed current access with refresh, never an empty roster"
   t.mount();
   try {
     await user.click(screen.getByRole("button", { name: "Access" }));
-    const dialog = screen.getByRole("dialog", { name: "Share" });
+    const dialog = screen.getByRole("dialog", { name: "Share access" });
     const access = within(dialog).getByRole("region", { name: "Member list" });
     expect(
       within(access).getByRole("status", { name: "Loading members" }),
@@ -642,7 +642,7 @@ it("groups agents and people by role while only verified additional humans mark 
   const user = userEvent.setup();
   t.mount();
   await user.click(screen.getByRole("button", { name: "Access" }));
-  let dialog = screen.getByRole("dialog", { name: "Share" });
+  let dialog = screen.getByRole("dialog", { name: "Share access" });
   const agents = await within(dialog).findByRole("region", { name: "Agents" });
   await within(agents).findByText("Helper Bot");
   expect(within(agents).getByRole("heading")).toHaveTextContent("Agents · 1");
@@ -670,7 +670,7 @@ it("groups agents and people by role while only verified additional humans mark 
     expect(document.querySelector("[data-solo-shared]")).not.toBeNull(),
   );
   await user.click(screen.getByRole("button", { name: "Access" }));
-  dialog = screen.getByRole("dialog", { name: "Share" });
+  dialog = screen.getByRole("dialog", { name: "Share access" });
   expect(
     await within(dialog).findByRole("region", { name: "People" }),
   ).toHaveTextContent("Guest Human");
@@ -718,7 +718,7 @@ it("offers matching people and channels as labelled results without public keys"
   const user = userEvent.setup();
   t.mount();
   await user.click(screen.getByRole("button", { name: "Access" }));
-  const dialog = screen.getByRole("dialog", { name: "Share" });
+  const dialog = screen.getByRole("dialog", { name: "Share access" });
   expect(
     await within(dialog).findByRole("region", { name: "People" }),
   ).toHaveTextContent("Aria");
@@ -761,7 +761,7 @@ it("distinguishes namesakes in results and adds only the chosen identity", async
   const user = userEvent.setup();
   t.mount();
   await user.click(screen.getByRole("button", { name: "Access" }));
-  const dialog = screen.getByRole("dialog", { name: "Share" });
+  const dialog = screen.getByRole("dialog", { name: "Share access" });
   await waitForAccess(dialog);
   await user.type(search(dialog), "Morgan");
   const firstAdd = await within(dialog).findByRole("button", {
@@ -796,7 +796,7 @@ it("lets the chat owner remove someone with access from the row menu", async () 
   const user = userEvent.setup();
   t.mount();
   await user.click(screen.getByRole("button", { name: "Access" }));
-  const dialog = screen.getByRole("dialog", { name: "Share" });
+  const dialog = screen.getByRole("dialog", { name: "Share access" });
   const people = await within(dialog).findByRole("region", { name: "People" });
   await user.click(
     await within(people).findByRole("button", { name: "Actions for Aria" }),

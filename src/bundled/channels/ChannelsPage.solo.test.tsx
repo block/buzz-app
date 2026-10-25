@@ -728,7 +728,7 @@ it("offers the same chat actions from the header and the sidebar row", async () 
     "Chat settings",
     "Move to",
     "Copy",
-    "Share",
+    "Share access",
     "Convert to channel",
     "Archive chat",
     "Delete chat",

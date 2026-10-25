@@ -162,7 +162,7 @@ export function SoloChatMenuItems({
             <MenuIcon>
               <ShareIcon size={14} />
             </MenuIcon>
-            Share
+            Share access
           </MenuItem>
           {onConvert && canConvertToChannel(session, channel) && (
             <MenuItem onClick={onConvert}>

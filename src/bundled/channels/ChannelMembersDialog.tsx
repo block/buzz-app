@@ -1230,7 +1230,7 @@ export function ChannelMembersDialog({
           ? selection.role === "remove"
             ? `Remove ${removalTarget} from ${place}`
             : "Change member role?"
-          : (title ?? (solo ? "Share" : "Channel access"))
+          : (title ?? (solo ? "Share access" : "Manage members"))
       }
       height={selection ? "content" : "stable"}
       bodyLayout={selection ? "flow" : "flex"}

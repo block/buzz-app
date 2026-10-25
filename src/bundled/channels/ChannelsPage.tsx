@@ -1684,8 +1684,8 @@ function ChannelWorkspace({
                               minWidth: "var(--size-control-sm)",
                               paddingInline: "var(--space-1)",
                             }}
-                            aria-label="Access"
-                            title="Access"
+                            aria-label="Manage members"
+                            title="Manage members"
                             aria-haspopup="dialog"
                             ref={membersHeaderTrigger}
                             aria-expanded={membersOpen}

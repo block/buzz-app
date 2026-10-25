@@ -207,6 +207,7 @@ function setup(
     session,
     solo,
     connection,
+    core,
   };
 }
 
@@ -1835,3 +1836,90 @@ it("ignores unrelated plugin wakes", async () => {
     f.runtime.dispose();
   }
 });
+
+it("refreshes Attention instructions after model preparation", async () => {
+  const memory = deferred<string | null>();
+  const f = setup();
+  let instructions = "Old Interest instructions";
+  const wakeText = vi.fn(async () => instructions);
+  f.core.mockImplementationOnce(() => memory.promise);
+  try {
+    const receipt = f.deliver(
+      {
+        type: "attention",
+        channel,
+        root: root.id,
+        id: "f".repeat(64),
+        at: 200_000,
+        text: instructions,
+      },
+      { wakeText },
+    );
+    await vi.waitFor(() => expect(f.core).toHaveBeenCalled());
+    instructions = "Updated Interest instructions";
+    memory.resolve(null);
+    await receipt.run;
+    expect(f.host.requests("deliver")[0]?.params.text).toContain(instructions);
+    expect(f.host.requests("deliver")[0]?.params.text).not.toContain(
+      "Old Interest instructions",
+    );
+  } finally {
+    memory.resolve(null);
+    f.runtime.dispose();
+  }
+});
+
+it.each([true, false])(
+  "refreshes or drops an Attention wake after the host queue (current: %s)",
+  async (valid) => {
+    const queued = deferred<void>();
+    let instructions = "Old Interest instructions";
+    let current = true;
+    let refreshed: unknown;
+    const f = setup({
+      deliver: async (params, process) => {
+        await queued.promise;
+        if (params.refresh) {
+          const answer = await process.tool(
+            { agent: self, request: params.request },
+            "prompt",
+          );
+          refreshed = answer.result;
+        }
+        return { submission: 1, conversation: CONVERSATION };
+      },
+    });
+    try {
+      const receipt = f.deliver(
+        {
+          type: "attention",
+          channel,
+          root: root.id,
+          id: "f".repeat(64),
+          at: 200_000,
+          text: instructions,
+        },
+        { wakeText: async () => instructions, current: () => current },
+      );
+      await vi.waitFor(() =>
+        expect(f.host.requests("deliver")).toHaveLength(1),
+      );
+      instructions = "Updated Interest instructions";
+      current = valid;
+      queued.resolve();
+      await receipt.run;
+      if (valid) {
+        expect(refreshed).toMatchObject({
+          text: expect.stringContaining(instructions),
+          steer: expect.stringContaining(instructions),
+        });
+        expect(JSON.stringify(refreshed)).not.toContain(
+          "Old Interest instructions",
+        );
+      } else expect(refreshed).toBe(false);
+    } finally {
+      queued.resolve();
+      f.runtime.dispose();
+    }
+  },
+);

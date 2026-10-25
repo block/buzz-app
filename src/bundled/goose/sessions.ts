@@ -301,13 +301,22 @@ export class AgentSessions {
         return {
           settled: Promise.resolve({ ok: true, undelivered: true } as Settled),
         };
+      const refresh = activity.refresh;
       return {
         settled: this.answer(
           key,
           live,
           seen,
           text,
-          { ...activity, ...(current ? { current } : {}) },
+          {
+            ...activity,
+            ...(current ? { current } : {}),
+            ...(refresh
+              ? {
+                  refresh: () => refresh(!first),
+                }
+              : {}),
+          },
           model,
         ),
       };

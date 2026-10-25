@@ -5,6 +5,7 @@
 // next new conversation, so that starts without a spawn. A one-off turn (a
 // watch or timer wake) gets a new session of its own, which is never saved,
 // resumed or shared.
+import { steerPrompt } from "./prompt";
 import {
   ClaudeProcess,
   type ClaudeLaunch,
@@ -186,6 +187,7 @@ export class AgentSessions {
     {
       steer = text,
       current,
+      refresh,
       fresh,
       pick = {},
       contextRoot,
@@ -196,6 +198,7 @@ export class AgentSessions {
     }: Readonly<{
       steer?: string;
       current?: () => boolean;
+      refresh?: (fresh?: boolean) => Promise<string>;
       fresh?: () => Promise<string>;
       pick?: TurnPick;
       /** The thread whose history was supplied to a shared channel session. */
@@ -221,6 +224,11 @@ export class AgentSessions {
       live = undefined;
     }
     if (live) {
+      if (refresh) {
+        text = await refresh();
+        steer = steerPrompt(text);
+      }
+      if (current && !current()) return { ok: true, undelivered: true };
       this.touch(key, live, seen, contextRoot);
       return this.answer(key, live, live.process.busy ? steer : text, {
         ...pick,
@@ -234,6 +242,7 @@ export class AgentSessions {
     const opened = await this.open(key, saved?.id, 0);
     if (!("process" in opened)) return opened;
     live = opened;
+    if (refresh) text = await refresh();
     if (current && !current()) return { ok: true, undelivered: true };
     this.touch(key, live, seen, contextRoot);
     const activity = {
@@ -264,6 +273,7 @@ export class AgentSessions {
       return this.deliver(key, retry, seen, {
         pick,
         ...(current ? { current } : {}),
+        ...(refresh ? { refresh: () => refresh(true) } : {}),
         ...(contextRoot ? { contextRoot } : {}),
         ...activity,
       });

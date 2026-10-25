@@ -126,6 +126,8 @@ type Receipt = Pick<Delivery, "step" | "acknowledged" | "superseded"> & {
   where: Where;
   /** A recovered turn holds its posting policy until its answer settles. */
   settled?: Promise<void>;
+  /** An Attention prompt rebuilt when the host is ready to submit. */
+  prompt?: () => Promise<{ text: string; steer: string } | undefined>;
   /** Where Pi placed it in a run: its conversation, its entry there, and the
    * conversation's `send` calls then. */
   placed?: Readonly<{ conversation: number; entry: number; sends: number }>;
@@ -208,6 +210,9 @@ export class PiRuntime {
     this.pi = new Pi(() => this.spawn, {
       tool: (call) => this.tool(call),
       event: (event) => this.event(event),
+      prompt: ({ agent, request }) =>
+        this.agents.get(agent)?.receipts.get(request)?.prompt?.() ??
+        Promise.resolve(undefined),
     });
     this.setup = new PiSetup(this.pi);
   }
@@ -487,26 +492,27 @@ export class PiRuntime {
         agent: agent.pubkey,
         key,
       });
-      const text = this.review(
-        entry,
-        turnPrompt({
-          ...(await this.turn(
-            agent.pubkey,
-            event,
-            channel,
-            key,
-            topLevel,
-            seen,
-            solo,
-          )),
-          agent: agent.pubkey,
-          label: "@mention",
-          channelLevel: topLevel && !solo,
-          ...(wake
-            ? { wake: { ...wake, text: (await wakeText?.()) ?? wake.text } }
-            : {}),
-        }),
-      );
+      const prompt = async () =>
+        this.review(
+          entry,
+          turnPrompt({
+            ...(await this.turn(
+              agent.pubkey,
+              event,
+              channel,
+              key,
+              topLevel,
+              seen,
+              solo,
+            )),
+            agent: agent.pubkey,
+            label: "@mention",
+            channelLevel: topLevel && !solo,
+            ...(wake
+              ? { wake: { ...wake, text: (await wakeText?.()) ?? wake.text } }
+              : {}),
+          }),
+        );
       // A conversation's tools default to its thread; a conversation shared
       // by several threads is told which to reply in instead.
       const context: Context = topLevel
@@ -519,11 +525,22 @@ export class PiRuntime {
         key,
         scope: topLevel ? channel : root,
         where,
+        ...(wake
+          ? {
+              prompt: async () => {
+                const text = await prompt();
+                return !interrupted && (!current || current())
+                  ? { text, steer: steerPrompt(text) }
+                  : undefined;
+              },
+            }
+          : {}),
         ...(step ? { step } : {}),
         ...(acknowledged ? { acknowledged } : {}),
         ...(superseded ? { superseded } : {}),
       });
       const picked = await this.turnOf(entry, agent.pubkey, model, effort);
+      const text = await prompt();
       this.live(entry, agent.pubkey);
       if (interrupted || (wake && current && !current())) return;
       submitted = await this.deliver(
@@ -537,7 +554,7 @@ export class PiRuntime {
           text,
           steer: steerPrompt(text),
           request,
-          ...(wake ? { reply: where } : {}),
+          ...(wake ? { reply: where, refresh: true } : {}),
           ...picked,
         },
         () => !interrupted && (!wake || !current || current()),

@@ -1376,3 +1376,36 @@ it("refreshes a queued subscription's instructions when its policy wait ends", a
     f.runtime.dispose();
   }
 });
+
+it("refreshes Attention instructions after Goose startup", async () => {
+  const f = setup({ hold: true });
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  f.core.mockImplementationOnce(async () => {
+    await gate;
+    return undefined;
+  });
+  let instructions = "Old Interest instructions";
+  try {
+    await f.run(
+      { ...pluginWake(), topLevel: true, text: instructions },
+      {
+        wakeText: async () => instructions,
+      },
+    );
+    await vi.waitFor(() => expect(f.core).toHaveBeenCalled());
+    instructions = "Updated Interest instructions";
+    release();
+    await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+    expect(f.goose()?.turns[0]?.text).toContain(instructions);
+    expect(f.goose()?.turns[0]?.text).not.toContain(
+      "Old Interest instructions",
+    );
+    f.goose()?.turns[0]?.finish();
+  } finally {
+    release();
+    f.runtime.dispose();
+  }
+});

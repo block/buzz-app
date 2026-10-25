@@ -441,7 +441,19 @@ export class GooseRuntime {
                 : { channel, root: threadReference(event)?.rootId ?? event.id },
           );
           delivered = entry.sessions.deliver(key, text, shown, {
-            ...(wake ? { current } : {}),
+            ...(wake
+              ? {
+                  current,
+                  refresh: async (fresh = false) => {
+                    const text = this.review(
+                      entry,
+                      (await prompt(fresh, key)).text,
+                      notes,
+                    );
+                    return text;
+                  },
+                }
+              : {}),
             steer: steerPrompt(text),
             fresh: async () =>
               this.review(entry, (await prompt(true, key)).text, notes),

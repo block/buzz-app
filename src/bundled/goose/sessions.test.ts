@@ -976,3 +976,65 @@ it.each([false, true])(
     sessions.dispose();
   },
 );
+
+it.each(["startup", "provider"] as const)(
+  "refreshes an Attention prompt after %s waits",
+  async (boundary) => {
+    const fake = fakeSpawn();
+    let release!: () => void;
+    let waiting!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const started = new Promise<void>((resolve) => {
+      waiting = resolve;
+    });
+    const spawn: typeof fake.spawn = async (id, options) => {
+      const process = await fake.spawn(id, options);
+      return {
+        ...process,
+        write: async (data) => {
+          if (
+            boundary === "provider" &&
+            id === "goose" &&
+            data.includes('"method":"session/set_config_option"')
+          ) {
+            waiting();
+            await gate;
+          }
+          return process.write(data);
+        },
+      };
+    };
+    const sessions = new AgentSessions({
+      resolveDirectory: fake.resolveDirectory,
+      tools,
+      process: new SharedProcess({ ...fake, spawn }, fake.serve),
+      pool: new ServerPool(),
+      launch: async () => {
+        if (boundary === "startup") {
+          waiting();
+          await gate;
+        }
+        return { workspace: "/w", systemPrompt: "" };
+      },
+      choice: () => ({ provider: "openai", model: "gpt-4.1" }),
+      fingerprint: () => "",
+    });
+    let instructions = "Old Interest instructions";
+    const late = sessions.deliver("source", instructions, 1, {
+      refresh: async () => instructions,
+    });
+    try {
+      await started;
+      instructions = "Updated Interest instructions";
+    } finally {
+      release();
+    }
+    await late;
+    expect(fake.geese.flatMap((g) => g.turns).map((t) => t.text)).toEqual([
+      instructions,
+    ]);
+    sessions.dispose();
+  },
+);

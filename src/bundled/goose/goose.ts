@@ -3,6 +3,7 @@
 // workspace. Each session gets its own loopback HTTP MCP server for its agent's
 // Buzz tools, which the app serves and answers: goose is given its address and
 // token in `session/new`, never a Buzz key.
+import { steerPrompt } from "../claude-code/prompt";
 import type {
   HostMcpServer,
   HostProcess,
@@ -49,6 +50,8 @@ export type Settled = Readonly<{
 
 export type ActivityReceipt = Readonly<{
   current?: () => boolean;
+  /** Rebuilds an Attention prompt after startup or queue waits. */
+  refresh?: (fresh?: boolean) => Promise<string>;
   /** The prompt was handed to goose, after cancellation and provider checks. */
   delivered?: () => void;
   /** Steps show on the latest acknowledged message of each scope. */
@@ -485,6 +488,7 @@ export class GooseSession {
     text: string;
     model?: string;
     current?: () => boolean;
+    refresh?: ActivityReceipt["refresh"];
     waiter?: Waiter;
     delivered?: () => void;
   }[] = [];
@@ -573,6 +577,7 @@ export class GooseSession {
         text,
         ...(activity.delivered ? { delivered: activity.delivered } : {}),
         ...(activity.current ? { current: activity.current } : {}),
+        ...(activity.refresh ? { refresh: activity.refresh } : {}),
         waiter,
         ...(model ? { model } : {}),
       });
@@ -667,6 +672,7 @@ export class GooseSession {
               this.runWaiters.push(resolve),
             )
           : undefined);
+      if (activity.refresh) text = steerPrompt(await activity.refresh());
       if (activity.current && !activity.current()) {
         this.discard(waiter);
         return;
@@ -692,6 +698,7 @@ export class GooseSession {
           text,
           ...(activity.delivered ? { delivered: activity.delivered } : {}),
           ...(activity.current ? { current: activity.current } : {}),
+          ...(activity.refresh ? { refresh: activity.refresh } : {}),
           waiter,
           ...(model ? { model } : {}),
         });
@@ -720,12 +727,13 @@ export class GooseSession {
       while (this.queue.length && !this.closed) {
         // Stopped work has ended, and messages sent since run as new work.
         if (this.stopped) this.endStopped();
-        const { text, model, current, waiter, delivered } =
+        const { text, model, current, refresh, waiter, delivered } =
           this.queue.shift() ?? {
             text: "",
           };
         try {
           await this.select(model);
+          const prompt = refresh ? await refresh() : text;
           // The owner stopped it while its provider switch was going.
           if (this.stopped) {
             this.cancelEnded();
@@ -738,7 +746,7 @@ export class GooseSession {
           delivered?.();
           const { stopReason } = (await this.goose.request("session/prompt", {
             sessionId: this.id,
-            prompt: [{ type: "text", text }],
+            prompt: [{ type: "text", text: prompt }],
           })) as { stopReason?: string };
           if (stopReason === "cancelled") this.cancelEnded();
           if (stopReason === "refusal")

@@ -257,6 +257,10 @@
   flex: 1;
   min-height: 0;
 }
+.form[data-error] {
+  /* Let the error scroll clear the footer's negative outer gutter. */
+  padding-bottom: var(--space-3);
+}
 .identity[data-avatar-active] {
   flex: 1;
   min-height: 0;

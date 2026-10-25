@@ -26,7 +26,14 @@ const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 // A failed save's error sits below the whole form, often out of view.
 const reveal = (element: HTMLElement | null) => {
-  element?.scrollIntoView({ block: "nearest" });
+  if (!element) return;
+  element.scrollIntoView({ block: "nearest" });
+  const popup = element.closest<HTMLElement>(".buzz-dialog");
+  const footer = popup?.querySelector<HTMLElement>(".buzz-dialog-actions");
+  if (!popup || !footer) return;
+  const covered =
+    element.getBoundingClientRect().bottom - footer.getBoundingClientRect().top;
+  if (covered > 0) popup.scrollTop += covered;
 };
 
 /** Use each registered provider's icon in creation and library cards. */
@@ -203,6 +210,7 @@ export function AgentCreateDialog({
       <form
         id={form}
         className={styles.form}
+        data-error={error ? "" : undefined}
         aria-label={edited ? `Edit ${edited.name}` : "New agent"}
         onSubmit={(event) => {
           event.preventDefault();

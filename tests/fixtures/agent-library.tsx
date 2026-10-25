@@ -100,6 +100,8 @@ let updates: readonly AgentUpdateRequest[] = changing
     ]
   : [];
 const changed: NewAgent[] = [];
+const failFirstApproval = new URLSearchParams(location.search).has("fail");
+let approvalAttempts = 0;
 let requests: readonly AgentCreationRequest[] = reviewing
   ? [
       {
@@ -136,6 +138,8 @@ const agents = {
   creationRequests: () => requests,
   dismissCreation,
   approveCreation: async (_id: string, input: NewAgent) => {
+    if (failFirstApproval && ++approvalAttempts === 1)
+      throw new Error("Credential store refused");
     reviewed.push(input);
     dismissCreation();
     return {} as Agent;

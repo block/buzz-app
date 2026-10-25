@@ -774,13 +774,15 @@ function Inventory({
               // biome-ignore lint/a11y/useFocusableInteractive: Roving focus belongs to the gridcell, not its row wrapper.
               <div role="row" className="contents" key={agent.pubkey}>
                 <InventoryCard
-                  tag={isMain ? (
-                    <Tooltip content="Main agent">
-                      <span role="img" aria-label="Main agent">
-                        <StarFilledIcon size={16} aria-hidden="true" />
-                      </span>
-                    </Tooltip>
-                  ) : undefined}
+                  tag={
+                    isMain ? (
+                      <Tooltip content="Main agent">
+                        <span role="img" aria-label="Main agent">
+                          <StarFilledIcon size={16} aria-hidden="true" />
+                        </span>
+                      </Tooltip>
+                    ) : undefined
+                  }
                   main={
                     onMakeDefault
                       ? {

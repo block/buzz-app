@@ -7727,9 +7727,9 @@ describe("Attention plugin sources", () => {
     expect(input?.signal.aborted).toBe(true);
     expect(() => input?.emit("late")).toThrow(/no longer/);
   });
-  it.each([false, true])(
-    "settles a completed producer's final turn without losing stopped work (stopped: %s)",
-    async (stopped) => {
+  it.each(["success", "stopped", "invalidated"])(
+    "settles a completed producer's final turn without losing work (%s)",
+    async (outcome) => {
       const { service, run, plugin, native } = await sourceFixture();
       let release!: (outcome: WorkOutcome) => void;
       const held = new Promise<WorkOutcome>((resolve) => {
@@ -7758,11 +7758,17 @@ describe("Attention plugin sources", () => {
           service.find(bot)?.attentionHistory?.["watch/pr"]?.lastWokeAt,
         ).toEqual(expect.any(Number));
         expect(service.find(bot)?.attention["watch/pr"]).toBeDefined();
+        if (outcome === "invalidated") {
+          await service.save(bot, { attentionEnabled: false });
+          expect(run.mock.calls[0]?.[0].current()).toBe(false);
+        }
       } finally {
-        release(stopped ? { ok: true, stopped: true } : { ok: true });
+        release(
+          outcome === "stopped" ? { ok: true, stopped: true } : { ok: true },
+        );
       }
       await settle();
-      if (stopped) {
+      if (outcome !== "success") {
         expect(service.find(bot)?.attention["watch/pr"]).toBeDefined();
         expect(service.find(bot)?.attentionHistory?.["watch/pr"]?.output).toBe(
           "final output\n",
@@ -7860,17 +7866,19 @@ describe("Attention plugin sources", () => {
 
 it.each(
   [undefined, "e".repeat(64)].flatMap((root) =>
-    [false, true].map((stopped) => ({ root, stopped })),
+    ["success", "stopped", "invalidated"].map((outcome) => ({ root, outcome })),
   ),
 )(
-  "delivers a timer once and retains stopped work (root: $root, stopped: $stopped)",
-  async ({ root, stopped }) => {
+  "delivers a timer once and retains unfinished work (root: $root, outcome: $outcome)",
+  async ({ root, outcome }) => {
     vi.useFakeTimers({ now: 1_000_000 });
     const runOnce = vi.fn(async () => ({ ok: true }));
     const { service, run, native } = await setup({ runOnce });
-    run.mockImplementation(({ workingUntil }) =>
-      workingUntil(Promise.resolve({ ok: true, stopped })),
-    );
+    let release!: (outcome: WorkOutcome) => void;
+    const held = new Promise<WorkOutcome>((resolve) => {
+      release = resolve;
+    });
+    run.mockImplementation(({ workingUntil }) => workingUntil(held));
     await service.create({ type: "example/echo", name: "Echo" });
     if (root)
       native.query.mockResolvedValue([event(root, { tags: [["h", channel]] })]);
@@ -7910,10 +7918,20 @@ it.each(
     expect(trigger.text).toContain("Be brief.");
     expect(trigger.text).toContain("spent: true");
     expect(trigger.text).not.toContain("no default destination");
+    try {
+      if (outcome === "invalidated") {
+        await service.save(bot, { attentionEnabled: false });
+        expect(run.mock.calls[0]?.[0].current()).toBe(false);
+      }
+    } finally {
+      release(
+        outcome === "stopped" ? { ok: true, stopped: true } : { ok: true },
+      );
+    }
     await vi.advanceTimersByTimeAsync(180_000);
     expect(run).toHaveBeenCalledTimes(1);
     expect(runOnce).not.toHaveBeenCalled();
-    if (stopped) {
+    if (outcome !== "success") {
       expect(service.find(bot)?.attention["watch/once"]).toBeDefined();
       expect(service.find(bot)?.timers["watch/once"]?.used).toBe(1);
     } else {

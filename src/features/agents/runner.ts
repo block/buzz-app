@@ -2276,7 +2276,12 @@ export class AgentRunners {
     void working.settled
       .then(async () => {
         this.sourceJobs.delete(job);
-        if (lifetime.aborted || !working.ok() || !attempted) {
+        if (
+          lifetime.aborted ||
+          !working.ok() ||
+          !attempted ||
+          !this.stillCurrent(runner, job)
+        ) {
           if (trigger.type === "source" && job.matched)
             this.failedSources.add(job.matched.object);
           return;

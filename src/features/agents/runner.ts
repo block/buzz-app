@@ -1289,7 +1289,7 @@ export class AgentRunners {
           : !fanning && listened,
       );
       if (heard.held) {
-        this.fanOut(runner, agent, event, triggers, slug, skipped);
+        if (!taken) this.fanOut(runner, agent, event, triggers, slug, skipped);
         break;
       }
       const nextMentions = [...mentions];

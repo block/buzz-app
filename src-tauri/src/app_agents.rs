@@ -4,7 +4,7 @@
 //! to the agent's community.
 use buzz_agent_controller::{
     inline_picture, AppAgent, AppAgents, Carry, Credentials, OldStores, PlatformCredentials,
-    PortSource, Portables, Published, Secret, CREDENTIALS_BUSY,
+    PortSource, Portables, Published, Removal, Secret, CREDENTIALS_BUSY,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -44,6 +44,9 @@ pub(crate) struct AppAgentHost {
     /// so each is newer than the last; Delete takes it too, so no publication
     /// outlives the key.
     profiles: Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
+    /// Each agent this copy is taking out of a community; see
+    /// `AppAgents::hold_removal`.
+    removals: Arc<Mutex<HashMap<String, Removal>>>,
     hosting: Arc<Hosting>,
 }
 impl AppAgentHost {
@@ -63,6 +66,7 @@ impl AppAgentHost {
             credentials: Arc::new(PlatformCredentials::default()),
             keys: Arc::default(),
             profiles: Arc::default(),
+            removals: Arc::default(),
             hosting: Arc::new(Hosting {
                 dir: hosts,
                 packaged,
@@ -73,6 +77,11 @@ impl AppAgentHost {
     /// The saved identities, for readers outside Agents such as the inventory.
     pub(crate) fn agents(&self) -> Result<AppAgents, String> {
         self.agents.clone()
+    }
+    fn removals(&self) -> std::sync::MutexGuard<'_, HashMap<String, Removal>> {
+        self.removals
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
     fn keys(&self) -> std::sync::MutexGuard<'_, HashMap<String, Arc<Secret>>> {
         self.keys
@@ -129,7 +138,13 @@ impl AppAgentHost {
             let mut keys = host.keys();
             keys.remove(&pubkey);
             let agents = host.agents.clone()?;
-            agents.remove(&pubkey, &relay, host.credentials.as_ref())?;
+            let removals = host.removals();
+            let removal = removals
+                .get(&pubkey)
+                .filter(|removal| removal.is(&pubkey, &relay))
+                .ok_or("Its removal from that community isn't held by this app")?;
+            agents.remove(removal, host.credentials.as_ref())?;
+            drop(removals);
             if !agents
                 .list()?
                 .iter()
@@ -516,6 +531,38 @@ pub(crate) async fn app_agent_begin_leave(
 ) -> Result<(), String> {
     let agents = state.agents.clone()?;
     blocking(move || agents.begin_leave(&pubkey, &relay)).await
+}
+
+/// Holds its removal from the community at `relay` for this copy of the app,
+/// until `app_agent_release_removal`; see `AppAgents::hold_removal`.
+#[tauri::command]
+pub(crate) async fn app_agent_hold_removal(
+    state: tauri::State<'_, AppAgentHost>,
+    pubkey: String,
+    relay: String,
+) -> Result<(), String> {
+    let host = state.inner().clone();
+    blocking(move || {
+        let removal = host.agents.clone()?.hold_removal(&pubkey, &relay)?;
+        host.removals().insert(pubkey, removal);
+        Ok(())
+    })
+    .await
+}
+
+#[tauri::command]
+pub(crate) fn app_agent_release_removal(
+    state: tauri::State<'_, AppAgentHost>,
+    pubkey: String,
+    relay: String,
+) {
+    let mut removals = state.removals();
+    if removals
+        .get(&pubkey)
+        .is_some_and(|removal| removal.is(&pubkey, &relay))
+    {
+        removals.remove(&pubkey);
+    }
 }
 
 #[tauri::command]

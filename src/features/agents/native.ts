@@ -136,7 +136,14 @@ export type AgentsNative = {
   beginLeave(member: Membership): Promise<void>;
   /** Marks its Delete as started in every community. */
   beginDelete(pubkey: string): Promise<void>;
-  /** Marks it deleted in one community; the key goes with its last one. */
+  /** Takes its removal from one community, whose Delete or leaving started,
+   * for this copy of the app, until `releaseRemoval`: no other copy's cleanup
+   * there runs meanwhile, nor starts once its row there goes. Refused while
+   * another copy holds it. */
+  holdRemoval(member: Membership): Promise<void>;
+  releaseRemoval(member: Membership): Promise<void>;
+  /** Marks it deleted in one community, under `holdRemoval`; the key goes
+   * with its last one. */
   remove(member: Membership): Promise<void>;
   /** Drops it from a community it is deleted in. */
   forget(member: Membership): Promise<void>;
@@ -210,6 +217,10 @@ export const nativeAgents = (): AgentsNative | undefined =>
         beginLeave: ({ pubkey, relay }) =>
           invoke("app_agent_begin_leave", { pubkey, relay }),
         beginDelete: (pubkey) => invoke("app_agent_begin_delete", { pubkey }),
+        holdRemoval: ({ pubkey, relay }) =>
+          invoke("app_agent_hold_removal", { pubkey, relay }),
+        releaseRemoval: ({ pubkey, relay }) =>
+          invoke("app_agent_release_removal", { pubkey, relay }),
         remove: ({ pubkey, relay }) =>
           invoke("app_agent_delete", { pubkey, relay }),
         forget: ({ pubkey, relay }) =>

@@ -2691,27 +2691,47 @@ export class AgentsService extends Service implements Agents {
   /** Takes the membership out of its community: it leaves every channel and
    * is archived there, and its record there is deleted, and only then its key
    * and row here. Nothing is deleted when its community is offline or the
-   * cleanup fails. */
+   * cleanup fails. All of it runs under its removal held for this copy of the
+   * app, so a cleanup from another copy can't undo its being added there
+   * again afterwards. */
   private async depart(member: Member) {
     const native = this.native;
     const binding = this.bindingOf(member);
     if (!native || !binding) return "offline";
     const { pubkey } = member;
     try {
-      const signal = AbortSignal.any([
-        binding.controller.signal,
-        AbortSignal.timeout(CLEANUP_TIMEOUT_MS),
-      ]);
-      await leaveCommunity(binding.session, pubkey, signal);
-      await deleteAgentRecord(binding.session, binding.viewer, pubkey, signal);
+      await native.holdRemoval(member);
     } catch (error) {
       console.warn(`Agent ${member.name} did not leave ${member.relay}`, error);
       return "failed";
     }
-    await native.remove(member);
-    this.setArchiveUnchecked(member.key, false);
-    this.unlist(binding.origin, pubkey);
-    await native.forget(member);
+    try {
+      try {
+        const signal = AbortSignal.any([
+          binding.controller.signal,
+          AbortSignal.timeout(CLEANUP_TIMEOUT_MS),
+        ]);
+        await leaveCommunity(binding.session, pubkey, signal);
+        await deleteAgentRecord(
+          binding.session,
+          binding.viewer,
+          pubkey,
+          signal,
+        );
+      } catch (error) {
+        console.warn(
+          `Agent ${member.name} did not leave ${member.relay}`,
+          error,
+        );
+        return "failed";
+      }
+      await native.remove(member);
+      this.setArchiveUnchecked(member.key, false);
+      this.unlist(binding.origin, pubkey);
+      await native.forget(member);
+    } finally {
+      await native.releaseRemoval(member);
+    }
     // So the community's agent choices no longer offer it.
     await binding.session.agentChoices.refresh(true, { fresh: true });
     return "done";
@@ -2731,10 +2751,15 @@ export class AgentsService extends Service implements Agents {
     if (!native || !member) throw new Error("No such agent on this device");
     if (!member.deleting)
       throw new Error("Only an agent whose Delete started can be forgotten");
-    await native.remove(member);
-    this.setArchiveUnchecked(key, false);
-    this.unlist(originOf(member.relay) ?? "", member.pubkey);
-    await native.forget(member);
+    await native.holdRemoval(member);
+    try {
+      await native.remove(member);
+      this.setArchiveUnchecked(key, false);
+      this.unlist(originOf(member.relay) ?? "", member.pubkey);
+      await native.forget(member);
+    } finally {
+      await native.releaseRemoval(member);
+    }
     await this.refresh();
     if (!this.liveRows(member.pubkey).length) forgetDefaultAgent(member.pubkey);
   }

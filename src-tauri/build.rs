@@ -148,6 +148,8 @@ fn main() {
             "app_agent_delete",
             "app_agent_begin_delete",
             "app_agent_begin_leave",
+            "app_agent_hold_removal",
+            "app_agent_release_removal",
             "app_agent_join",
             "app_agent_forget",
             "app_agent_publish",

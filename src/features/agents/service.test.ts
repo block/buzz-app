@@ -2134,6 +2134,32 @@ describe("an agent in several communities", () => {
     expect(forgetDefaultAgent).toHaveBeenCalledWith(bot);
   });
 
+  it("lets one copy of the app at a time take it out of a community", async () => {
+    const identities: AgentIdentity[] = [];
+    const { service } = await joined({ identities });
+    // Another copy of the app, reading and writing the same native agents.
+    const other = await setup({ identities });
+    other.select(other.second.origin);
+    await vi.waitFor(() => expect(other.service.find(bot)?.key).toBe(away));
+    let release = () => {};
+    leaveChannels.mockImplementationOnce(
+      () => new Promise<void>((resolve) => (release = resolve)),
+    );
+    const leaving = service.leave(away);
+    await vi.waitFor(() => expect(leaveChannels).toHaveBeenCalledOnce());
+    // Its Remove there meanwhile sends nothing to the community.
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await expect(other.service.leave(away)).rejects.toThrow(
+      "Echo hasn't left other.example.test yet",
+    );
+    warn.mockRestore();
+    expect(leaveChannels).toHaveBeenCalledOnce();
+    expect(other.native.remove).not.toHaveBeenCalled();
+    release();
+    await leaving;
+    expect((await service.join(bot)).agent.key).toBe(away);
+  });
+
   it("keeps its key in a community it joined after its home is left, in any copy of the app", async () => {
     const { service, select, second } = await setup({
       identities: [

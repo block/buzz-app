@@ -744,15 +744,68 @@ impl AppAgents {
             Ok(())
         })
     }
-    /// Deletes its key in the community at `relay`, then marks that row deleted,
-    /// so a failed deletion can be retried. Only a row whose Delete or leaving
-    /// started goes, so a late removal from another copy of the app never takes
-    /// one added there again since. Its rows in other communities keep their own
-    /// copies of the key. With the last of them goes any Join a crash cut short,
-    /// first, so nothing is left with a key and no agent shown. Absence is
-    /// success.
-    pub fn remove(&self, pubkey: &str, relay: &str, credentials: &dyn Credentials) -> Result<()> {
+    /// Takes, for this copy of the app, taking the agent out of the community at
+    /// `relay`, once its Delete or leaving there started. Its cleanup there and
+    /// `remove` run under it, so no other copy's cleanup runs alongside, and
+    /// once its row goes none can start, nor reach a membership added there
+    /// again since. Held until the returned value is dropped, or its process
+    /// ends. Refused while another holds it for the agent in any community.
+    #[allow(clippy::incompatible_msrv)] // `File` locking, as `lock` does.
+    pub fn hold_removal(&self, pubkey: &str, relay: &str) -> Result<Removal> {
         let relay = canonical_relay(relay)?;
+        let removing = || -> Result<AppAgent> {
+            let agent = self
+                .list()?
+                .into_iter()
+                .find(|agent| agent.pubkey == pubkey && agent.relay == relay && !agent.deleted)
+                .ok_or("No such agent on this device")?;
+            if !agent.deleting {
+                return Err(format!(
+                    "{} isn't being removed from that community",
+                    agent.name
+                ));
+            }
+            Ok(agent)
+        };
+        let agent = removing()?;
+        let dir = self.path.parent().ok_or("Invalid agent identity storage")?;
+        let dir = dir.join("removals");
+        std::fs::create_dir_all(&dir).map_err(|_| "Could not create agent identity storage")?;
+        // The pubkey is a row's, so hex: a plain file name.
+        let held = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(dir.join(format!("{}.lock", agent.pubkey)))
+            .map_err(|_| "Could not open agent identity lock")?;
+        match held.try_lock() {
+            Ok(()) => {}
+            Err(std::fs::TryLockError::WouldBlock) => {
+                return Err(format!(
+                    "{} is being removed in another copy of the app",
+                    agent.name
+                ))
+            }
+            Err(std::fs::TryLockError::Error(_)) => {
+                return Err("Could not lock agent identities".into())
+            }
+        }
+        // Read again under it, as another copy may have finished meanwhile.
+        removing()?;
+        Ok(Removal {
+            pubkey: agent.pubkey,
+            relay,
+            _held: held,
+        })
+    }
+    /// Deletes its key in the community `removal` holds, then marks that row
+    /// deleted, so a failed deletion can be retried. Its rows in other
+    /// communities keep their own copies of the key. With the last of them goes
+    /// any Join a crash cut short, first, so nothing is left with a key and no
+    /// agent shown. Absence is success.
+    pub fn remove(&self, removal: &Removal, credentials: &dyn Credentials) -> Result<()> {
+        let (pubkey, relay) = (removal.pubkey.as_str(), removal.relay.as_str());
         let _keys = self.keys_lock()?;
         let rows = self.list()?;
         let Some(agent) = rows
@@ -761,12 +814,6 @@ impl AppAgents {
         else {
             return Ok(());
         };
-        if !agent.deleting {
-            return Err(format!(
-                "{} isn't being removed from that community",
-                agent.name
-            ));
-        }
         // Under the keys lock, a joining row is no Join under way.
         let last = !rows
             .iter()
@@ -816,6 +863,21 @@ impl AppAgents {
             agents.retain(|agent| agent.pubkey != pubkey || agent.relay != relay || !agent.deleted);
             Ok(())
         })
+    }
+}
+
+/// One copy of the app taking an agent out of a community: see
+/// `AppAgents::hold_removal`. Dropping it lets go.
+#[derive(Debug)]
+pub struct Removal {
+    pubkey: String,
+    relay: String,
+    _held: std::fs::File,
+}
+impl Removal {
+    /// Whether it is the agent's removal from the community at `relay`.
+    pub fn is(&self, pubkey: &str, relay: &str) -> bool {
+        canonical_relay(relay).is_ok_and(|relay| self.pubkey == pubkey && self.relay == relay)
     }
 }
 

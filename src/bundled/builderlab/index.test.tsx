@@ -102,6 +102,8 @@ function provideAgents(
     setType: vi.fn(),
     join: vi.fn(),
     beginLeave: vi.fn(),
+    holdRemoval: vi.fn(),
+    releaseRemoval: vi.fn(),
     remove: vi.fn(),
     forget: vi.fn(),
     publish: vi.fn(),

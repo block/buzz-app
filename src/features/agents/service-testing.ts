@@ -274,9 +274,19 @@ export function fakeCommunities(...joined: ReturnType<typeof fakeRelay>[]) {
   };
 }
 
+/** Agents whose removal from a community a copy of the app holds, shared by
+ * every fake native over the same identities, as native's lock is. */
+const removing = new WeakMap<AgentIdentity[], Set<string>>();
+function held(identities: AgentIdentity[]) {
+  const removals = removing.get(identities) ?? new Set<string>();
+  removing.set(identities, removals);
+  return removals;
+}
+
 export function fakeNative(identities: AgentIdentity[] = []) {
   let published = 0;
   const keys = [bot, sibling];
+  const removals = held(identities);
   const wss = (relay: string) => relay.replace(/^https:/, "wss:");
   /** Its live row in the membership's community, as native finds it. */
   const at = ({ pubkey, relay }: Membership) =>
@@ -412,7 +422,23 @@ export function fakeNative(identities: AgentIdentity[] = []) {
       steps.push("stop");
       change(pubkey, { deleting: true });
     }),
+    holdRemoval: vi.fn(async (member: Membership) => {
+      const row = identities[at(member)];
+      if (!row) throw new Error("No such agent on this device");
+      if (!row.deleting)
+        throw new Error(`${row.name} isn't being removed from that community`);
+      if (removals.has(member.pubkey))
+        throw new Error(
+          `${row.name} is being removed in another copy of the app`,
+        );
+      removals.add(member.pubkey);
+    }),
+    releaseRemoval: vi.fn(async (member: Membership) => {
+      removals.delete(member.pubkey);
+    }),
     remove: vi.fn(async (member: Membership) => {
+      if (!removals.has(member.pubkey))
+        throw new Error("Its removal isn't held by this app");
       steps.push("key");
       edit(member, { deleted: true });
     }),

@@ -7,7 +7,7 @@ import type {
   SessionUsage,
   UsageObservation,
 } from "../../features/agents/service";
-import { withRevision } from "../../features/agents/session-usage";
+import { limited, withRevision } from "../../features/agents/session-usage";
 import type { Host } from "../../features/host/service";
 import type { Spawn } from "./claude";
 import { workspaceProject } from "./transcript";
@@ -245,23 +245,6 @@ export type UsageHost = Readonly<{
   readFile: NonNullable<Host["readFile"]>;
 }>;
 
-/** Runs each `work` once one of `places` is free. */
-function limited(places: number) {
-  let busy = 0;
-  const waiting: (() => void)[] = [];
-  return async <T>(work: () => Promise<T>) => {
-    if (busy >= places)
-      await new Promise<void>((resolve) => waiting.push(resolve));
-    else busy += 1;
-    try {
-      return await work();
-    } finally {
-      const next = waiting.shift();
-      if (next) next();
-      else busy -= 1;
-    }
-  };
-}
 const reader = limited(READERS);
 const searching = limited(SEARCHES);
 
@@ -328,8 +311,9 @@ const list = (spawn: Spawn, project: string, minutes?: number) =>
     [0],
   );
 
-/** Records the agent each of the session files at `paths` names first, one
- * search for every agent: the search stops at a file's first prompt. */
+/** Records the agent each of the session files at `paths`, none with an agent
+ * yet, names first, one search for every agent: the search stops at a file's
+ * first prompt. */
 async function search(
   spawn: Spawn,
   project: string,
@@ -338,18 +322,15 @@ async function search(
 ) {
   // No match exits 1.
   const found = await output(spawn, "owners", project, paths, [0, 1]);
-  const owners = new Map<string, string>();
   for (const line of found) {
     const match = /^([^/]+\.jsonl):Agent: ([0-9a-f]{64})$/.exec(line);
     // The first is the opening context's; a later one on its line is quoted.
-    if (match?.[1] && match[2] && !owners.has(match[1]))
-      owners.set(match[1], match[2]);
+    if (match?.[1] && match[2] && !state.owners.has(match[1]))
+      state.owners.set(match[1], match[2]);
   }
-  for (const [name, owner] of owners) {
-    state.owners.set(name, owner);
-    state.unowned.delete(name);
-  }
-  return owners;
+  for (const name of paths)
+    if (state.owners.has(name)) state.unowned.delete(name);
+    else state.unowned.add(name);
 }
 
 /** Brings `state` up to date with the project's files: the digests of files
@@ -408,11 +389,7 @@ async function refresh(spawn: Spawn, project: string, state: Project) {
   );
   await Promise.all(
     batches.map((batch) =>
-      searching(async () => {
-        const owners = await search(spawn, project, state, batch);
-        for (const name of batch)
-          if (!owners.has(name)) state.unowned.add(name);
-      }),
+      searching(() => search(spawn, project, state, batch)),
     ),
   );
   state.paths = paths;
@@ -484,15 +461,18 @@ export async function readUsage(
     });
     return pending;
   };
-  const sessions = await Promise.all(
-    [...new Set([...savedNames, ...named])].map(async (name) => {
-      const main = await read(name);
+  const found: SessionUsage[] = [];
+  const queue = [...new Set([...savedNames, ...named])];
+  // A read stopped takes no more files; ones it started still fill the cache.
+  const worker = async () => {
+    for (let name = queue.shift(); name; name = queue.shift()) {
       signal.throwIfAborted();
-      if (!main) return undefined;
+      const main = await read(name);
+      if (!main) continue;
       const id = name.slice(0, -".jsonl".length);
       const subagents = new Map(
         await Promise.all(
-          [...(current.subagents.get(id) ?? [])].map(
+          (current.subagents.get(id) ?? []).map(
             async (path) =>
               [
                 path.slice(path.lastIndexOf("/") + 1, -".jsonl".length),
@@ -501,14 +481,12 @@ export async function readUsage(
           ),
         ),
       );
-      signal.throwIfAborted();
       const session = combine(id, main, subagents, agent, savedNames.has(name));
-      return session && session.lastAt >= since
-        ? withRevision(session)
-        : undefined;
-    }),
-  );
-  return sessions
-    .filter((session) => session !== undefined)
-    .sort((a, b) => b.lastAt - a.lastAt);
+      if (session && session.lastAt >= since)
+        found.push(await withRevision(session));
+    }
+  };
+  await Promise.all(Array.from({ length: READERS }, worker));
+  signal.throwIfAborted();
+  return found.sort((a, b) => b.lastAt - a.lastAt);
 }

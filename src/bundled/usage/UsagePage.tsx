@@ -54,7 +54,6 @@ const SERIES = 4;
 const ALL = "all";
 
 type Load = Readonly<{
-  loading: boolean;
   /** When the shown usage was read. */
   now: number;
   usage: readonly AgentUsage[];
@@ -94,7 +93,6 @@ function useUsage(agents: Agents, keys: string, reload: number) {
       (current) =>
         current && {
           ...current,
-          loading: targets.length > 0,
           pending: targets,
         },
     );
@@ -118,7 +116,6 @@ function useUsage(agents: Agents, keys: string, reload: number) {
       return prices.then((unpriced) => {
         if (controller.signal.aborted) return;
         setLoad((current) => ({
-          loading: pending.size > 0,
           now,
           usage: targets.flatMap((target) => {
             const kept = current?.usage.find(
@@ -133,11 +130,12 @@ function useUsage(agents: Agents, keys: string, reload: number) {
               },
             ];
           }),
-          // One still being read stays named until its read again ends.
+          // Earlier failures stay named until every read ends, so the Try
+          // again that started them stays put.
           failed: targets.filter(
             (target) =>
               failed.has(keyOf(target)) ||
-              (pending.has(keyOf(target)) &&
+              (pending.size > 0 &&
                 !!current?.failed.some(
                   (agent) => keyOf(agent) === keyOf(target),
                 )),
@@ -153,7 +151,6 @@ function useUsage(agents: Agents, keys: string, reload: number) {
       setLoad(
         (current) =>
           current ?? {
-            loading: false,
             now,
             usage: [],
             failed: [],
@@ -298,7 +295,7 @@ export function UsagePage({
     };
   }, [load, agentFilter, harnessFilter, days]);
   const result = shown?.result;
-  const loading = !load || load.loading;
+  const loading = !load || load.pending.length > 0;
   const refresh = useRef<HTMLButtonElement>(null);
   const retrying = useRef(false);
   // A retry that succeeds removes its button: focus moves to Refresh, unless

@@ -7,14 +7,15 @@ import type {
   SessionUsage,
   UsageObservation,
 } from "../../features/agents/service";
-import { withRevision } from "../../features/agents/session-usage";
+import { limited, withRevision } from "../../features/agents/session-usage";
 import type { Host } from "../../features/host/service";
 import type { AppServer, Spawn } from "./rpc";
 import { withServer } from "./transcript";
 
 type Json = Record<string, unknown>;
 type Thread = { id: string; path: string | null; updatedAt: number };
-/** Files read at once. */
+/** Files read at once, by every agent's read together: the app refuses more
+ * than 16 native reads at a time, and Claude's usage reads take 8. */
 const READERS = 4;
 /** How long after Codex last updated a thread its rollout is read again:
  * Codex keeps the time to the second, so a line written in the same second as
@@ -25,6 +26,7 @@ const SETTLE_MS = 2_000;
 type Read = Readonly<{ stamp: string; session?: SessionUsage | undefined }>;
 /** Per host and agent, by thread id; a plugin that reloads starts over. */
 const cache = new WeakMap<Spawn, Map<string, Map<string, Read>>>();
+const reader = limited(READERS);
 
 const object = (value: unknown): Json | undefined =>
   value !== null && typeof value === "object" && !Array.isArray(value)
@@ -227,9 +229,12 @@ export async function readUsage(
   const rollout = async ({ path }: Thread) => {
     if (!path?.endsWith(".jsonl")) return undefined;
     try {
-      const file = new TextDecoder().decode(await host.readFile(path));
+      const file = await reader(() => {
+        signal.throwIfAborted();
+        return host.readFile(path);
+      });
       signal.throwIfAborted();
-      return file;
+      return new TextDecoder().decode(file);
     } catch (error) {
       signal.throwIfAborted();
       if (/no such file/i.test(error instanceof Error ? error.message : ""))

@@ -419,6 +419,44 @@ it("shares one listing between agents read together", async () => {
   expect(listings).toEqual(["list"]);
 });
 
+it("starts no more reads once the read is stopped", async () => {
+  home = mkdtempSync(join(tmpdir(), "claude-usage-"));
+  const project = join(home, ".claude/projects/-Users-me--buzz");
+  mkdirSync(project, { recursive: true });
+  for (let index = 0; index < 20; index += 1)
+    writeFileSync(
+      join(project, `s${index}.jsonl`),
+      `${threadPrompt()}\n${reply(1000, `m${index}`, usage(1, 2))}`,
+    );
+  const reads: string[] = [];
+  const host = desktop(home, reads);
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const controller = new AbortController();
+  const read = readUsage(
+    {
+      ...host,
+      readFile: async (path) => {
+        const file = await host.readFile(path);
+        await held;
+        return file;
+      },
+    },
+    "~/.buzz",
+    agent,
+    [],
+    0,
+    controller.signal,
+  );
+  await vi.waitFor(() => expect(reads).toHaveLength(8));
+  controller.abort();
+  release();
+  await expect(read).rejects.toThrow();
+  expect(reads).toHaveLength(8);
+});
+
 /** Runs the manifest's processes for real, `~` being `home`; the workspace
  * resolves to /Users/me/.buzz. */
 it("fails rather than undercount when a search fails partway", async () => {

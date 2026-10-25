@@ -281,6 +281,53 @@ it("names the agents it could not read and reads them again", async () => {
   );
 });
 
+it("keeps the keyboard on Try again until every agent it reads again is read", async () => {
+  const pixel = agent("Pixel");
+  let fail = true;
+  let held: Promise<void> | undefined;
+  let finish = () => {};
+  render(
+    <UsagePage
+      agents={host([pixel, agent("Relay")], async (target) => {
+        if (target === pixel) {
+          if (fail) throw new Error("no workspace");
+          return [session("a", 750_000)];
+        }
+        await held;
+        return [session("b", 250_000)];
+      })}
+      open={vi.fn()}
+    />,
+  );
+  const retry = await screen.findByRole(
+    "button",
+    { name: "Try again" },
+    { timeout: 2000 },
+  );
+  // Pixel now reads at once, while Relay is held.
+  fail = false;
+  held = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  retry.focus();
+  await userEvent.setup().keyboard("{Enter}");
+  // Pixel's read is shown; it stays named as failed until Relay's ends.
+  expect(
+    await screen.findByText(
+      summary(
+        "Your 2 agents ran 2 sessions in the last 30 days. Pixel accounts for 75% of the counted cost, mostly on Claude Opus 5.5.",
+      ),
+    ),
+  ).toBeTruthy();
+  expect(retry.isConnected).toBe(true);
+  expect(document.activeElement).toBe(retry);
+  finish();
+  await vi.waitFor(() => expect(screen.queryByRole("status")).toBeNull());
+  expect(document.activeElement).toBe(
+    screen.getByRole("button", { name: "Refresh usage" }),
+  );
+});
+
 it("says when prices could not load, keeps the sessions shown and loads them again", async () => {
   vi.mocked(loadPrices).mockRejectedValueOnce(new Error("chunk failed"));
   render(

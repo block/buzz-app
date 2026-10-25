@@ -292,6 +292,70 @@ it("finds the agent's threads by name, reads their rollouts, and later only thos
   expect(reads).toEqual(["gone.jsonl"]);
 });
 
+it("reads at most four rollouts at once, across agents and their subagents", async () => {
+  const updatedAt = (hour + 1000) / 1000;
+  const threads = [
+    { who: agent, name: "Sol" },
+    { who: other, name: "Ra" },
+  ].flatMap(({ who, name }) => [
+    {
+      id: name,
+      parentThreadId: undefined as string | undefined,
+      name: `Buzz #dev · ${name}`,
+      who,
+      updatedAt,
+    },
+    ...[1, 2, 3].map((index) => ({
+      id: `${name}-${index}`,
+      parentThreadId: name,
+      name: "",
+      who,
+      updatedAt,
+    })),
+  ]);
+  const spawn = processes((params) => ({
+    data: threads
+      .filter((thread) =>
+        params.parentThreadId
+          ? thread.parentThreadId === params.parentThreadId
+          : thread.name.includes(String(params.searchTerm)),
+      )
+      .map((thread) => ({ ...thread, path: `/${thread.id}.jsonl` })),
+    nextCursor: null,
+  }));
+  let open = 0;
+  let most = 0;
+  const readFile = async (path: string) => {
+    const thread = threads.find(({ id }) => path === `/${id}.jsonl`);
+    open += 1;
+    most = Math.max(most, open);
+    await new Promise((resolve) => setTimeout(resolve));
+    open -= 1;
+    return new TextEncoder().encode(
+      thread?.parentThreadId
+        ? subagent
+        : [instructions(thread?.who), prompt, record(1000, 4, 0, 2)].join("\n"),
+    );
+  };
+  const found = await Promise.all(
+    [
+      { pubkey: agent, name: "Sol" },
+      { pubkey: other, name: "Ra" },
+    ].map((who) =>
+      readUsage(
+        { spawn, readFile },
+        who,
+        hour - HOUR,
+        new AbortController().signal,
+      ),
+    ),
+  );
+  expect(
+    found.map((sessions) => sessions.map((session) => session.id)),
+  ).toEqual([["Sol"], ["Ra"]]);
+  expect(most).toBe(4);
+});
+
 /** `thread/list` as `list` answers it, from a fake app-server, and the
  * manifest's `read` for real. */
 function processes(list: (params: Record<string, unknown>) => unknown) {

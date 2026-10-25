@@ -6519,75 +6519,89 @@ it("Enter invites a nonmember before sending", async () => {
   expect(h.messages.send.mock.calls[0]?.[2]).toEqual([first.pubkey]);
 });
 
-it("asks before bringing another community's agent in, then adds it and sends", async () => {
-  const calls: string[] = [];
-  const join = vi.fn(async () => {
-    calls.push("join");
-    return { agent: {} as never, notes: [] };
-  });
-  const snapshot = { agents: [] };
-  const types: never[] = [];
-  const agents = {
-    snapshot: () => snapshot,
-    subscribe: () => () => {},
-    find: () => undefined,
-    types: () => types,
-    joinable: () => [
-      {
-        key: first.pubkey,
-        pubkey: first.pubkey,
-        name: "Honey",
-        relay: "wss://oss.example.com",
-      },
-    ],
-    join,
-  } as unknown as Agents;
-  const h = mount({}, undefined, undefined, agents);
-  const add = vi.fn(async () => {
-    calls.push("add");
-  });
-  const list = {
-    status: "ready",
-    channels: [
-      { id: "channel", channelType: "stream", members: ["d".repeat(64)] },
-    ],
-  };
-  Object.assign(h.session, {
-    viewer: "d".repeat(64),
-    scope: `https://relay.example.test:${"d".repeat(64)}`,
-    channels: { list: () => list, subscribeList: () => () => {} },
-    memberAdditions: { add },
-  });
-  h.messages.send.mockImplementation(() => {
-    calls.push("send");
-    return "channel-id";
-  });
-  act(() => h.commands().insertMention(first));
-  fireEvent.submit(screen.getByRole("form"));
-  expect(await screen.findByRole("dialog")).toHaveTextContent(
-    "Bring Honey into relay.example.test?",
-  );
-  expect(screen.getByRole("dialog")).toHaveTextContent(
-    "Honey is in oss.example.com. Bringing it here adds the same agent",
-  );
-  // Enter on the initial focus declines: nothing joins, sends, or is lost.
-  const safe = screen.getByRole("button", { name: "Don't bring" });
-  await waitFor(() => expect(safe).toHaveFocus());
-  await userEvent.setup().keyboard("{Enter}");
-  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-  expect(join).not.toHaveBeenCalled();
-  expect(add).not.toHaveBeenCalled();
-  expect(h.messages.send).not.toHaveBeenCalled();
-  expect(h.input()).toHaveValue("@Honey ");
-  // Confirming joins first, then adds to the channel, then sends.
-  fireEvent.submit(screen.getByRole("form"));
-  fireEvent.click(await screen.findByRole("button", { name: "Bring it here" }));
-  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
-  expect(join).toHaveBeenCalledWith(first.pubkey);
-  expect(calls).toEqual(["join", "add", "send"]);
-  expect(h.messages.send.mock.calls[0]?.[2]).toEqual([first.pubkey]);
-  expect(screen.queryByRole("dialog")).toBeNull();
-});
+it.each([
+  ["", false],
+  [", taking it out of its archive here after a Remove", true],
+])(
+  "asks before bringing another community's agent in, then adds it and sends%s",
+  async (_, archived) => {
+    const calls: string[] = [];
+    const join = vi.fn(async () => {
+      calls.push("join");
+      return { agent: {} as never, notes: [] };
+    });
+    const snapshot = { agents: [] };
+    const types: never[] = [];
+    const agents = {
+      snapshot: () => snapshot,
+      subscribe: () => () => {},
+      find: () => undefined,
+      types: () => types,
+      joinable: () => [
+        {
+          key: first.pubkey,
+          pubkey: first.pubkey,
+          name: "Honey",
+          relay: "wss://oss.example.com",
+        },
+      ],
+      join,
+    } as unknown as Agents;
+    const h = mount({}, undefined, undefined, agents);
+    const add = vi.fn(async () => {
+      calls.push("add");
+    });
+    const list = {
+      status: "ready",
+      channels: [
+        { id: "channel", channelType: "stream", members: ["d".repeat(64)] },
+      ],
+    };
+    Object.assign(h.session, {
+      viewer: "d".repeat(64),
+      scope: `https://relay.example.test:${"d".repeat(64)}`,
+      channels: { list: () => list, subscribeList: () => () => {} },
+      memberAdditions: { add },
+      ...(archived && {
+        archives: {
+          state: (key: string) =>
+            key === first.pubkey ? "archived" : "not-archived",
+        },
+      }),
+    });
+    h.messages.send.mockImplementation(() => {
+      calls.push("send");
+      return "channel-id";
+    });
+    act(() => h.commands().insertMention(first));
+    fireEvent.submit(screen.getByRole("form"));
+    expect(await screen.findByRole("dialog")).toHaveTextContent(
+      "Bring Honey into relay.example.test?",
+    );
+    expect(screen.getByRole("dialog")).toHaveTextContent(
+      "Honey is in oss.example.com. Bringing it here adds the same agent",
+    );
+    // Enter on the initial focus declines: nothing joins, sends, or is lost.
+    const safe = screen.getByRole("button", { name: "Don't bring" });
+    await waitFor(() => expect(safe).toHaveFocus());
+    await userEvent.setup().keyboard("{Enter}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(join).not.toHaveBeenCalled();
+    expect(add).not.toHaveBeenCalled();
+    expect(h.messages.send).not.toHaveBeenCalled();
+    expect(h.input()).toHaveValue("@Honey ");
+    // Confirming joins first, then adds to the channel, then sends.
+    fireEvent.submit(screen.getByRole("form"));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Bring it here" }),
+    );
+    await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+    expect(join).toHaveBeenCalledWith(first.pubkey);
+    expect(calls).toEqual(["join", "add", "send"]);
+    expect(h.messages.send.mock.calls[0]?.[2]).toEqual([first.pubkey]);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  },
+);
 
 it.each(["close", "escape"])(
   "%s preserves the captured draft and returns focus without adding or sending",

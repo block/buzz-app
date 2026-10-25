@@ -6,6 +6,7 @@ import type { Agent } from "../../features/agents/service";
 import { communityHost } from "../../features/messages/community-host";
 import {
   allowsOutsideMentions,
+  archivedMention,
   mentionAdmission,
 } from "../../features/messages/mention-admission";
 
@@ -76,7 +77,12 @@ export function mentionCandidates(
       session.outbox?.supports(9000),
     )) {
       const host = communityHost(agent.relay);
-      if (!host || choices.has(agent.pubkey) || memberKeys.has(agent.pubkey))
+      // Its row here, archived when it was removed, is the one it takes.
+      if (
+        !host ||
+        memberKeys.has(agent.pubkey) ||
+        (choices.has(agent.pubkey) && !archivedMention(session, agent.pubkey))
+      )
         continue;
       choices.set(agent.pubkey, { pubkey: agent.pubkey, name: agent.name });
       hosts.set(agent.pubkey, host);
@@ -90,7 +96,13 @@ export function mentionCandidates(
         pubkey.slice(0, 12),
     });
   // Offer only what the composer will accept.
-  const admits = mentionAdmission(session, channelId, inviteAgents, roster);
+  const admits = mentionAdmission(
+    session,
+    channelId,
+    inviteAgents,
+    roster,
+    new Set(hosts.keys()),
+  );
   return [...choices.values()]
     .filter((p) => admits(p.pubkey))
     .map((recipient) => ({

@@ -1308,10 +1308,20 @@ function ImportAgents({
     }
   };
   const yours = new Set(found?.here);
-  // The owner's agents in their other communities, as offered when the
-  // dialog opened, so one added here stays listed as added.
+  // The owner's agents in their other communities, as offered since the
+  // dialog opened, so one added here stays listed as added, and those its
+  // community lists only once it connects still come.
   const { snapshot } = useAgents(agents);
-  const [offered] = useState(() => agents.joinable());
+  const [offered, setOffered] = useState(() => agents.joinable());
+  // biome-ignore lint/correctness/useExhaustiveDependencies: What it can join changes with the snapshot.
+  useEffect(() => {
+    setOffered((shown) => {
+      const more = agents
+        .joinable()
+        .filter((agent) => !shown.some((item) => item.key === agent.key));
+      return more.length ? [...shown, ...more] : shown;
+    });
+  }, [agents, snapshot]);
   const joinable = new Map(
     agents.joinable().map((agent) => [agent.pubkey, agent]),
   );

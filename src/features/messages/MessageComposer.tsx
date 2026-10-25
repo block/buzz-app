@@ -497,6 +497,16 @@ function Composer({
   const [picks, setPicks] = useState<MentionPicks>({});
   const resolvedPicks = useRef<MentionPicks>({});
   const agents = useContext(AgentsContext);
+  /** Who a draft may address here now, the owner's agents from their other
+   * communities included. */
+  const admits = () =>
+    mentionAdmission(
+      session,
+      channelId,
+      agentChoices,
+      mentionRoster,
+      new Set((agents?.joinable() ?? []).map((agent) => agent.pubkey)),
+    );
   const sessionPlace = useMemo(
     () => ({
       channelId,
@@ -1034,15 +1044,7 @@ function Composer({
       text = editMentionText(recipient);
       recipient = undefined;
     }
-    if (
-      recipient &&
-      !mentionAdmission(
-        session,
-        channelId,
-        agentChoices,
-        mentionRoster,
-      )(recipient.pubkey)
-    ) {
+    if (recipient && !admits()(recipient.pubkey)) {
       setError(
         "This recipient is no longer available. Remove it or refresh choices.",
       );
@@ -1137,13 +1139,8 @@ function Composer({
     // Message edits only add references, never new notification intent.
     if (editing.target)
       return insert(unique.map(editMentionText).join(""), undefined, range);
-    const admits = mentionAdmission(
-      session,
-      channelId,
-      agentChoices,
-      mentionRoster,
-    );
-    if (unique.some((person) => !admits(person.pubkey))) {
+    const admitted = admits();
+    if (unique.some((person) => !admitted(person.pubkey))) {
       setError(
         "A team member is no longer available. Refresh choices before trying again.",
       );
@@ -1192,13 +1189,8 @@ function Composer({
     const unique = [
       ...new Map(recipients.map((person) => [person.pubkey, person])).values(),
     ];
-    const admits = mentionAdmission(
-      session,
-      channelId,
-      agentChoices,
-      mentionRoster,
-    );
-    if (unique.length > 32 || unique.some((person) => !admits(person.pubkey)))
+    const admitted = admits();
+    if (unique.length > 32 || unique.some((person) => !admitted(person.pubkey)))
       return false;
     if (!input.current.replaceRecipients(unique)) return false;
     completion.invalidate();
@@ -1336,15 +1328,7 @@ function Composer({
       autoTagged.current = draftKey;
       return;
     }
-    if (
-      seedMention &&
-      mentionAdmission(
-        session,
-        channelId,
-        agentChoices,
-        mentionRoster,
-      )(seedMention.pubkey)
-    ) {
+    if (seedMention && admits()(seedMention.pubkey)) {
       if (
         insert(
           `@${seedMention.name} `,
@@ -1514,7 +1498,14 @@ function Composer({
         agentKeys,
       );
     try {
-      if (captured.recipients.some((p) => archivedMention(session, p.pubkey)))
+      const bringable = new Set(
+        (agents?.joinable() ?? []).map((agent) => agent.pubkey),
+      );
+      if (
+        captured.recipients.some(
+          (p) => archivedMention(session, p.pubkey) && !bringable.has(p.pubkey),
+        )
+      )
         throw new Error(
           "A selected recipient is archived. Remove it before sending.",
         );

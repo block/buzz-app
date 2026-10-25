@@ -8,6 +8,10 @@ import { splitPartition } from "../relay/partition";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Button } from "../../shared/design-system/ui/Button";
 
+const sentence = (text: string) => text.replace(/\.?$/, ".");
+const named = (agents: readonly Agent[]) =>
+  agents.map((agent) => agent.name).join(", ");
+
 type Pending = {
   agents: readonly Agent[];
   signal: AbortSignal;
@@ -59,7 +63,9 @@ export function useBringAgents(
       for (const agent of request.agents) {
         check();
         if (!joined.has(agent.pubkey)) {
-          notes.push(...(await agents.join(agent.key)).notes);
+          // Another window may have brought it meanwhile.
+          if (agents.find(agent.pubkey)?.place !== "here")
+            notes.push(...(await agents.join(agent.key)).notes);
           joined.add(agent.pubkey);
         }
         if (canAdd && !added.has(agent.pubkey)) {
@@ -76,13 +82,19 @@ export function useBringAgents(
         setPending({
           ...request,
           busy: false,
-          error: reason instanceof Error ? reason.message : String(reason),
+          error: sentence(
+            reason instanceof Error ? reason.message : String(reason),
+          ),
         });
     } finally {
       working.current = false;
     }
   }
   const many = (pending?.agents.length ?? 0) > 1;
+  const brought =
+    pending?.agents.filter((agent) =>
+      pending.progress.joined.has(agent.pubkey),
+    ) ?? [];
   return {
     prepare(
       people: readonly Agent[],
@@ -118,8 +130,8 @@ export function useBringAgents(
         title={
           pending &&
           (pending.reviewed
-            ? `${many ? `${pending.agents.length} agents are` : `${pending.agents[0]?.name} is`} in ${here}`
-            : `Bring ${many ? `${pending.agents.length} agents` : pending.agents[0]?.name} into ${here}?`)
+            ? `${named(pending.agents)} ${many ? "are" : "is"} in ${here}`
+            : `Bring ${named(pending.agents)} into ${here}?`)
         }
         description={
           pending && describe(pending.agents, canAdd, !!pending.reviewed)
@@ -143,7 +155,8 @@ export function useBringAgents(
             <Button
               type="button"
               variant="prominent"
-              disabled={pending?.busy}
+              // Keeps its label and focus, so Enter goes on to Send.
+              loading={!!pending?.busy}
               onClick={() =>
                 pending?.reviewed
                   ? pending.finish([...pending.progress.added])
@@ -152,11 +165,9 @@ export function useBringAgents(
             >
               {pending?.reviewed
                 ? "Send"
-                : pending?.busy
-                  ? "Bringing…"
-                  : many
-                    ? "Bring them here"
-                    : "Bring it here"}
+                : many
+                  ? "Bring them here"
+                  : "Bring it here"}
             </Button>
           </>
         }
@@ -167,7 +178,9 @@ export function useBringAgents(
         {pending?.error ? (
           <p role="alert">
             {pending.error} Your draft is kept.
-            {many ? " Some of them may already be here." : ""}
+            {brought.length
+              ? ` ${named(brought)} ${brought.length > 1 ? "are" : "is"} now in ${here}.`
+              : ""}
           </p>
         ) : null}
       </Dialog>

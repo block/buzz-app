@@ -730,7 +730,12 @@ test("unified chat naming and lifetime retain host focus and save only explicit 
 }) => {
   await page.goto(app.origin);
   await newChat(page);
-  // Chat settings lives in the chat actions menu, which keeps return focus.
+  // A New chat draft keeps its own Chat settings button; a created chat
+  // reaches settings through its Chat actions menu. Each keeps return focus.
+  const draftActions = page.getByRole("button", {
+    name: "Chat settings",
+    exact: true,
+  });
   const actions = page.getByRole("button", {
     name: "Chat actions",
     exact: true,
@@ -741,7 +746,7 @@ test("unified chat naming and lifetime retain host focus and save only explicit 
       .getByRole("menuitem", { name: "Chat settings", exact: true })
       .click();
   };
-  await openSettings();
+  await draftActions.click();
   const settings = page.getByRole("dialog", {
     name: "Edit chat",
     exact: true,
@@ -816,9 +821,9 @@ test("unified chat naming and lifetime retain host focus and save only explicit 
   await expect(draftSave).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(settings).not.toBeVisible();
-  await expect(actions).toBeFocused();
+  await expect(draftActions).toBeFocused();
   expect(app.report.detailsPublications ?? []).toHaveLength(0);
-  await openSettings();
+  await draftActions.click();
   await expect(canvas).toHaveValue("Keep this local draft");
   await expect(draftName).toHaveValue(
     "Make contrast meet accessibility standards",

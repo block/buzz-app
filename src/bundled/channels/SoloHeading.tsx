@@ -208,8 +208,9 @@ export function SoloToolbar({
 
 /** Reports failed moves started from Solo headers. The sidebar may be hidden,
  * so a header move reports its own failure. The page owns this, so recovery
- * outlives header remounts and side tab switches. A move stays tracked until it
- * succeeds or its failure is dismissed. */
+ * outlives header remounts and side tab switches. A chat stays tracked while
+ * the store keeps a move record for it, pending or failed, and until its
+ * failure is dismissed. */
 export function useSoloMoveRecovery(session: RelaySession) {
   const preferences = session.soloPreferences;
   const placement = useSyncExternalStore(
@@ -228,20 +229,16 @@ export function useSoloMoveRecovery(session: RelaySession) {
       }),
     [],
   );
-  const track = useCallback(
-    (channelId: string, move: Promise<unknown>) => {
-      setTracked((current) =>
-        current.has(channelId) ? current : new Set(current).add(channelId),
-      );
-      void move.then(
-        () => untrack(channelId),
-        () => {},
-      );
-    },
-    [untrack],
-  );
-  // A move settled elsewhere, such as the sidebar's own Retry or Dismiss,
-  // leaves no record and is no longer the header's to report.
+  const track = useCallback((channelId: string, move: Promise<unknown>) => {
+    setTracked((current) =>
+      current.has(channelId) ? current : new Set(current).add(channelId),
+    );
+    // The store reports the failure; one move succeeding says nothing about
+    // a newer one still queued for the same chat.
+    void move.catch(() => {});
+  }, []);
+  // Success, or a move settled elsewhere such as the sidebar's own Retry or
+  // Dismiss, leaves no record and is no longer the header's to report.
   useEffect(() => {
     for (const channelId of tracked)
       if (!placement.moves?.some((move) => move.channelId === channelId))

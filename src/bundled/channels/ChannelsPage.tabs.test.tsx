@@ -741,6 +741,101 @@ it("keeps a side tab's failed move recoverable after switching tabs", async () =
   expect(screen.queryByText("Chat wasn’t moved")).toBeNull();
 });
 
+it("keeps a newer header move recoverable after an earlier one succeeds", async () => {
+  const base = {
+    status: "ready",
+    data: {
+      sections: [
+        { id: "work", name: "Work", order: 0 },
+        { id: "home", name: "Home", order: 1 },
+      ],
+      assignments: {},
+      starred: [],
+      muted: [],
+    },
+  } as unknown as ReturnType<RelaySession["soloPreferences"]["snapshot"]>;
+  let current = base;
+  const listeners = new Set<() => void>();
+  const publish = (next: typeof current) => {
+    current = next;
+    for (const listener of listeners) listener();
+  };
+  const move = (
+    id: number,
+    sectionId: string,
+    state: { pending: true } | { pending: false; error: string },
+  ) => ({ id, channelId: "gamma", destination: { sectionId }, ...state });
+  const withMoves = (...moves: ReturnType<typeof move>[]) =>
+    ({ ...base, moves }) as unknown as typeof current;
+  // The store queues both writes; each settles only when the test says so.
+  const settle: {
+    resolve(): void;
+    reject(error: Error): void;
+  }[] = [];
+  const queued: ReturnType<typeof move>[] = [];
+  const assign = vi.fn(
+    (_channelId: string, sectionId = "") =>
+      new Promise<void>((resolve, reject) => {
+        settle.push({ resolve, reject });
+        queued.push(move(settle.length, sectionId, { pending: true }));
+        publish(withMoves(...queued));
+      }),
+  );
+  const h = await page(
+    "stream",
+    {
+      open: vi.fn(async () => ({ status: "opened" as const })),
+      snapshot: () => ({ entry: { id: "visit" }, attempt: {} }),
+    } as unknown as Navigation,
+    false,
+    undefined,
+    {
+      writable: true,
+      snapshot: () => current,
+      subscribe: (listener: () => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      assign,
+      retryMove: vi.fn(() => new Promise<never>(() => {})),
+    } as unknown as RelaySession["soloPreferences"],
+  );
+  const tabs = renderHook(() => useChannelTabState(h.session, "alpha"));
+  act(() =>
+    tabs.result.current.setTabs((items) => [
+      ...items,
+      { id: "conversation:gamma", kind: "conversation", channelId: "gamma" },
+    ]),
+  );
+  await h.user.click(await screen.findByRole("tab", { name: "Gamma" }));
+  const moveTo = async (name: string) => {
+    await h.user.click(
+      await screen.findByRole("button", { name: "Chat actions" }),
+    );
+    (await screen.findByRole("menuitem", { name: "Move to" })).focus();
+    await h.user.keyboard("{ArrowRight}");
+    await h.user.click(await screen.findByRole("menuitem", { name }));
+  };
+  await moveTo("Work");
+  await moveTo("Home");
+  expect(settle).toHaveLength(2);
+  // The earlier move succeeds while the newer one is still queued.
+  await act(async () => {
+    publish(withMoves(move(2, "home", { pending: true })));
+    settle[0]?.resolve();
+  });
+  await act(async () => {
+    publish(
+      withMoves(
+        move(2, "home", { pending: false, error: "Relay unavailable" }),
+      ),
+    );
+    settle[1]?.reject(new Error("Relay unavailable"));
+  });
+  expect(await screen.findByText("Chat wasn’t moved")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Retry move" })).toBeVisible();
+});
+
 it("opens another conversation's tab in its channel, but not the current channel's threads", async () => {
   const open = vi.fn(async () => ({ status: "opened" as const }));
   const h = await page("stream", {

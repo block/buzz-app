@@ -2,6 +2,8 @@ use super::*;
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
+const RELAY: &str = "wss://relay.example";
+
 #[derive(Default)]
 struct Memory(Mutex<BTreeMap<String, String>>, Faults);
 /// Credential-store operations to refuse, standing in for a denied or busy store.
@@ -84,17 +86,17 @@ fn creates_saves_and_removes_an_identity_with_its_key() {
     );
     assert_eq!(agent.events_url(), "https://relay.example/events");
     assert_eq!(agents.list().unwrap(), std::slice::from_ref(&agent));
-    assert_eq!(agents.get(&agent.pubkey).unwrap(), agent);
+    assert_eq!(agents.get(&agent.pubkey, RELAY).unwrap(), agent);
     assert!(agent.read_key(&credentials).is_ok());
     // The key goes at once; the row stays, marked, for its community's cleanup.
-    agents.remove(&agent.pubkey, &credentials).unwrap();
+    agents.remove(&agent.pubkey, RELAY, &credentials).unwrap();
     assert_eq!(rows(&agents), [(agent.pubkey.clone(), true)]);
-    assert!(agents.get(&agent.pubkey).is_err());
+    assert!(agents.get(&agent.pubkey, RELAY).is_err());
     assert!(agents.rename(&agent.pubkey, "Bea").is_err());
     assert!(agent.read_key(&credentials).is_err());
     // Removing again is success.
-    agents.remove(&agent.pubkey, &credentials).unwrap();
-    agents.forget(&agent.pubkey).unwrap();
+    agents.remove(&agent.pubkey, RELAY, &credentials).unwrap();
+    agents.forget(&agent.pubkey, RELAY).unwrap();
     assert!(agents.list().unwrap().is_empty());
 }
 
@@ -103,8 +105,8 @@ fn forgets_only_deleted_rows() {
     let dir = tempfile::tempdir().unwrap();
     let credentials = Memory::default();
     let (agents, agent) = created(dir.path(), &credentials);
-    agents.forget(&agent.pubkey).unwrap();
-    assert_eq!(agents.get(&agent.pubkey).unwrap(), agent);
+    agents.forget(&agent.pubkey, RELAY).unwrap();
+    assert_eq!(agents.get(&agent.pubkey, RELAY).unwrap(), agent);
 }
 
 #[test]
@@ -132,7 +134,7 @@ fn an_unfinished_delete_keeps_its_key_and_refuses_import_from_any_copy() {
         serde_json::from_str(&crate::secret::test_attestation(key.pubkey())).unwrap();
     let (agent, _) = agents.commit(adopt(), &auth, &credentials).unwrap();
     agents.begin_delete(&agent.pubkey).unwrap();
-    let saved = other.get(&agent.pubkey).unwrap();
+    let saved = other.get(&agent.pubkey, RELAY).unwrap();
     assert!(saved.deleting && !saved.deleted);
     assert!(saved.read_key(&credentials).is_ok());
     assert_eq!(
@@ -140,8 +142,8 @@ fn an_unfinished_delete_keeps_its_key_and_refuses_import_from_any_copy() {
         Some("That agent is already here".into())
     );
     // Only finishing the Delete lets it be imported again.
-    agents.remove(&agent.pubkey, &credentials).unwrap();
-    agents.forget(&agent.pubkey).unwrap();
+    agents.remove(&agent.pubkey, RELAY, &credentials).unwrap();
+    agents.forget(&agent.pubkey, RELAY).unwrap();
     let (back, _) = other.commit(adopt(), &auth, &credentials).unwrap();
     assert!(!back.deleting);
 }
@@ -168,12 +170,12 @@ fn re_import_takes_back_a_deleted_row() {
         serde_json::from_str(&crate::secret::test_attestation(key.pubkey())).unwrap();
     let (agent, _) = agents.commit(adopt(), &auth, &credentials).unwrap();
     assert!(agents.commit(adopt(), &auth, &credentials).is_err());
-    agents.remove(&agent.pubkey, &credentials).unwrap();
+    agents.remove(&agent.pubkey, RELAY, &credentials).unwrap();
     let (back, _) = agents.commit(adopt(), &auth, &credentials).unwrap();
     assert_eq!(rows(&agents), [(back.pubkey.clone(), false)]);
     // Its cleanup, if still running, has nothing to drop.
-    agents.forget(&back.pubkey).unwrap();
-    assert_eq!(agents.get(&back.pubkey).unwrap(), back);
+    agents.forget(&back.pubkey, RELAY).unwrap();
+    assert_eq!(agents.get(&back.pubkey, RELAY).unwrap(), back);
 }
 
 #[test]
@@ -183,7 +185,7 @@ fn changes_only_a_live_agents_type() {
     let (agents, agent) = created(dir.path(), &credentials);
     agents.set_type(&agent.pubkey, "q/u").unwrap();
     assert!(agents.set_type(&agent.pubkey, "").is_err());
-    let changed = agents.get(&agent.pubkey).unwrap();
+    let changed = agents.get(&agent.pubkey, RELAY).unwrap();
     assert_eq!(
         changed,
         AppAgent {
@@ -191,7 +193,7 @@ fn changes_only_a_live_agents_type() {
             ..agent.clone()
         }
     );
-    agents.remove(&agent.pubkey, &credentials).unwrap();
+    agents.remove(&agent.pubkey, RELAY, &credentials).unwrap();
     assert!(agents.set_type(&agent.pubkey, "p/t").is_err());
 }
 
@@ -214,13 +216,15 @@ fn renames_and_profiles_replace_the_last_accepted_profile() {
         about: None,
         created_at,
     };
-    agents.published(&agent.pubkey, published(future)).unwrap();
     agents
-        .published(&agent.pubkey, published(future - 1))
+        .published(&agent.pubkey, RELAY, published(future))
+        .unwrap();
+    agents
+        .published(&agent.pubkey, RELAY, published(future - 1))
         .unwrap();
     agents.rename(&agent.pubkey, "  Bea ").unwrap();
     assert!(agents.rename(&agent.pubkey, " ").is_err());
-    let renamed = agents.get(&agent.pubkey).unwrap();
+    let renamed = agents.get(&agent.pubkey, RELAY).unwrap();
     assert_eq!(renamed.name, "Bea");
     assert_eq!(renamed.profile, Some(published(future)));
     let next = renamed.profile_event(&key).unwrap();
@@ -241,19 +245,21 @@ fn a_set_picture_is_published_and_can_be_cleared() {
         "nope",
     ] {
         assert!(agents
-            .set_picture(&agent.pubkey, Some(refused.into()))
+            .set_picture(&agent.pubkey, RELAY, Some(refused.into()))
             .is_err());
     }
-    agents.set_picture(&agent.pubkey, Some(url.into())).unwrap();
-    let pictured = agents.get(&agent.pubkey).unwrap();
+    agents
+        .set_picture(&agent.pubkey, RELAY, Some(url.into()))
+        .unwrap();
+    let pictured = agents.get(&agent.pubkey, RELAY).unwrap();
     assert_eq!(pictured.picture.as_deref(), Some(url));
     assert!(!pictured.profile_is_current());
     assert_eq!(
         pictured.profile_event(&key).unwrap()["content"],
         format!(r#"{{"bot":true,"name":"Ada","picture":"{url}"}}"#)
     );
-    agents.set_picture(&agent.pubkey, None).unwrap();
-    assert_eq!(agents.get(&agent.pubkey).unwrap().picture, None);
+    agents.set_picture(&agent.pubkey, RELAY, None).unwrap();
+    assert_eq!(agents.get(&agent.pubkey, RELAY).unwrap().picture, None);
 }
 
 #[test]
@@ -262,11 +268,11 @@ fn a_failed_key_deletion_keeps_the_identity_for_a_retry() {
     let credentials = Memory::default();
     let (agents, agent) = created(dir.path(), &credentials);
     set(&credentials.1.delete, true);
-    assert!(agents.remove(&agent.pubkey, &credentials).is_err());
+    assert!(agents.remove(&agent.pubkey, RELAY, &credentials).is_err());
     assert_eq!(agents.list().unwrap(), std::slice::from_ref(&agent));
     assert!(agent.read_key(&credentials).is_ok());
     set(&credentials.1.delete, false);
-    agents.remove(&agent.pubkey, &credentials).unwrap();
+    agents.remove(&agent.pubkey, RELAY, &credentials).unwrap();
     assert_eq!(rows(&agents), [(agent.pubkey, true)]);
     assert!(credentials.0.lock().unwrap().is_empty());
 }
@@ -299,7 +305,9 @@ fn a_failed_key_save_leaves_no_orphaned_key() {
     set(&credentials.1.read, false);
     set(&credentials.1.delete, false);
     assert!(stranded.read_key(&credentials).is_ok());
-    agents.remove(&stranded.pubkey, &credentials).unwrap();
+    agents
+        .remove(&stranded.pubkey, RELAY, &credentials)
+        .unwrap();
     assert_eq!(rows(&agents), [(stranded.pubkey, true)]);
     assert!(credentials.0.lock().unwrap().is_empty());
 }
@@ -561,7 +569,7 @@ fn an_adopted_key_keeps_its_identity_picture_and_shared_saved_key() {
         .unwrap()
         .contains_key("adopted"));
     assert_eq!(
-        agents.get(&pubkey).unwrap().about.as_deref(),
+        agents.get(&pubkey, RELAY).unwrap().about.as_deref(),
         Some("Reviews pull requests")
     );
     let profile = agent
@@ -651,7 +659,7 @@ fn saved_public_profile_survives_updates_and_is_signed() {
     std::fs::write(&agents.path, saved.to_string()).unwrap();
     agents.rename(&agent.pubkey, "Bea").unwrap();
     let reopened = AppAgents::open(agents.path.clone());
-    let agent = reopened.get(&agent.pubkey).unwrap();
+    let agent = reopened.get(&agent.pubkey, RELAY).unwrap();
     let event = agent
         .profile_event(&agent.read_key(&credentials).unwrap())
         .unwrap();
@@ -669,6 +677,7 @@ fn saved_public_profile_survives_updates_and_is_signed() {
     reopened
         .published(
             &agent.pubkey,
+            RELAY,
             Published {
                 name: agent.name.clone(),
                 picture: agent.picture.clone(),
@@ -677,7 +686,10 @@ fn saved_public_profile_survives_updates_and_is_signed() {
             },
         )
         .unwrap();
-    assert!(reopened.get(&agent.pubkey).unwrap().profile_is_current());
+    assert!(reopened
+        .get(&agent.pubkey, RELAY)
+        .unwrap()
+        .profile_is_current());
     let accepted = std::fs::read(&reopened.path).unwrap();
     // Each metadata-only change/clear must publish, even without a rename.
     for field in ["picture", "about"] {
@@ -685,7 +697,7 @@ fn saved_public_profile_survives_updates_and_is_signed() {
             let mut changed: serde_json::Value = serde_json::from_slice(&accepted).unwrap();
             changed[0][field] = serde_json::json!(replacement);
             std::fs::write(&reopened.path, changed.to_string()).unwrap();
-            let changed = reopened.get(&agent.pubkey).unwrap();
+            let changed = reopened.get(&agent.pubkey, RELAY).unwrap();
             assert!(!changed.profile_is_current());
             let event = changed
                 .profile_event(&agent.read_key(&credentials).unwrap())
@@ -712,7 +724,7 @@ fn old_adopted_flags_are_read_then_dropped_without_relaxing_the_schema() {
         let mut saved = original.clone();
         saved[0]["adopted"] = adopted.into();
         std::fs::write(&agents.path, saved.to_string()).unwrap();
-        assert_eq!(agents.get(&agent.pubkey).unwrap(), agent);
+        assert_eq!(agents.get(&agent.pubkey, RELAY).unwrap(), agent);
         agents.rename(&agent.pubkey, "Bea").unwrap();
         let rewritten: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&agents.path).unwrap()).unwrap();
@@ -727,4 +739,111 @@ fn old_adopted_flags_are_read_then_dropped_without_relaxing_the_schema() {
         std::fs::write(&agents.path, saved.to_string()).unwrap();
         assert!(agents.list().is_err());
     }
+}
+
+#[test]
+fn joins_communities_and_leaves_them_one_at_a_time() {
+    const OTHER: &str = "wss://other.example";
+    let dir = tempfile::tempdir().unwrap();
+    let credentials = Memory::default();
+    let (agents, agent) = created(dir.path(), &credentials);
+    let path = dir.path().join("agents/identities.json");
+    let saved =
+        || serde_json::from_slice::<serde_json::Value>(&std::fs::read(&path).unwrap()).unwrap();
+    // One community each: the plain list older builds read.
+    assert!(saved().is_array());
+
+    let picture = "https://other.example/media/a.png";
+    let joined = agents
+        .join(
+            &agent.pubkey,
+            RELAY,
+            "https://other.example/",
+            Some(picture.into()),
+            &credentials,
+        )
+        .unwrap();
+    assert_eq!(
+        (
+            joined.relay.as_str(),
+            joined.picture.as_deref(),
+            &joined.auth
+        ),
+        (OTHER, Some(picture), &agent.auth)
+    );
+    assert_eq!(
+        joined.read_key(&credentials).unwrap().pubkey(),
+        agent.pubkey
+    );
+    assert!(agents
+        .join(&agent.pubkey, RELAY, OTHER, None, &credentials)
+        .is_err());
+    // Several communities: versioned, so an older build refuses the list.
+    assert_eq!(saved()["version"], 2);
+    assert_eq!(agents.list().unwrap(), [agent.clone(), joined.clone()]);
+
+    // Names and types are the agent's; pictures and profiles each community's.
+    agents.rename(&agent.pubkey, "Bea").unwrap();
+    agents.set_picture(&agent.pubkey, RELAY, None).unwrap();
+    let [here, there] = agents.list().unwrap().try_into().unwrap();
+    assert_eq!((here.name.as_str(), there.name.as_str()), ("Bea", "Bea"));
+    assert_eq!(
+        (here.picture, there.picture.as_deref()),
+        (None, Some(picture))
+    );
+
+    // Leaving one community keeps the agent, and its key, in the other.
+    agents.begin_leave(&agent.pubkey, OTHER).unwrap();
+    assert!(agents
+        .join(&agent.pubkey, RELAY, OTHER, None, &credentials)
+        .is_err());
+    assert!(agents.begin_leave(&agent.pubkey, RELAY).is_err());
+    agents.remove(&agent.pubkey, OTHER, &credentials).unwrap();
+    agents.forget(&agent.pubkey, OTHER).unwrap();
+    assert!(saved().is_array());
+    assert!(agents
+        .get(&agent.pubkey, RELAY)
+        .unwrap()
+        .read_key(&credentials)
+        .is_ok());
+
+    // Delete marks every community; none can be joined while it runs.
+    agents
+        .join(&agent.pubkey, RELAY, OTHER, None, &credentials)
+        .unwrap();
+    agents.begin_delete(&agent.pubkey).unwrap();
+    assert!(agents.list().unwrap().iter().all(|agent| agent.deleting));
+    agents.remove(&agent.pubkey, RELAY, &credentials).unwrap();
+    assert!(agents
+        .join(&agent.pubkey, OTHER, RELAY, None, &credentials)
+        .is_err());
+    agents.remove(&agent.pubkey, OTHER, &credentials).unwrap();
+    assert!(credentials.0.lock().unwrap().is_empty());
+}
+
+#[test]
+fn a_failed_join_leaves_the_agent_where_it_was() {
+    let dir = tempfile::tempdir().unwrap();
+    let credentials = Memory::default();
+    let (agents, agent) = created(dir.path(), &credentials);
+    set(&credentials.1.add, true);
+    assert!(agents
+        .join(
+            &agent.pubkey,
+            RELAY,
+            "wss://other.example",
+            None,
+            &credentials
+        )
+        .is_err());
+    assert_eq!(agents.list().unwrap(), std::slice::from_ref(&agent));
+    assert!(agent.read_key(&credentials).is_ok());
+}
+
+#[test]
+fn refuses_an_unknown_list_version() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("identities.json");
+    std::fs::write(&path, r#"{"version":3,"agents":[]}"#).unwrap();
+    assert!(AppAgents::open(path).list().is_err());
 }

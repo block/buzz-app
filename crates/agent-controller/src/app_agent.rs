@@ -2,7 +2,9 @@
 //! harness agents: there is no process, harness setting or controller record.
 //! Native keeps each key and its owner attestation and signs only bounded kinds,
 //! bounded requests to its community, and its memory.
-//! The saved identities are the agent list: each row names its type and name.
+//! The saved identities are the agent list: each row is one agent in one
+//! community, and names its type and name. An agent in several communities has
+//! a row in each, sharing its key, owner attestation, type and name.
 use crate::config::{agent_id, canonical_key, canonical_relay};
 use crate::secret::validate_attestation;
 use crate::{Credentials, Result, Secret};
@@ -25,7 +27,7 @@ const KINDS: [u16; 16] = [
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AppAgent {
     pub pubkey: String,
-    /// Canonical `wss://` community origin the agent was created for.
+    /// Canonical `wss://` origin of the community this row is the agent in.
     pub relay: String,
     pub owner: String,
     /// The owner's NIP-OA `auth` tag as a JSON array string.
@@ -42,15 +44,17 @@ pub struct AppAgent {
     pub picture: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub about: Option<String>,
-    /// The last profile its community accepted.
+    /// The last profile this row's community accepted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile: Option<Published>,
-    /// Its key is gone. The row stays until its community confirms it left its
-    /// channels and was archived, which the owner signs, not the agent.
+    /// Its key is gone from this community. The row stays until its community
+    /// confirms it left its channels and was archived, which the owner signs,
+    /// not the agent.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub deleted: bool,
-    /// Its Delete started and has not finished. It keeps its key, so it cannot
-    /// be imported again, and no copy of the app runs it.
+    /// Its Delete, or its leaving this community, started and has not
+    /// finished. It keeps its key, so it cannot be imported again, and no copy
+    /// of the app runs it in this community.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub deleting: bool,
 }
@@ -331,8 +335,18 @@ impl AppAgents {
                 // Older development builds persisted this boolean. Ignore only
                 // that obsolete field; all other row/schema checks still apply.
                 let malformed = || "Saved agent identities are malformed".to_owned();
-                let mut rows: serde_json::Value =
+                let saved: serde_json::Value =
                     serde_json::from_slice(&bytes).map_err(|_| malformed())?;
+                let mut rows = match saved {
+                    serde_json::Value::Array(_) => saved,
+                    serde_json::Value::Object(mut saved)
+                        if saved.len() == 2
+                            && saved.get("version") == Some(&MULTI_COMMUNITY.into()) =>
+                    {
+                        saved.remove("agents").ok_or_else(malformed)?
+                    }
+                    _ => return Err(malformed()),
+                };
                 for row in rows.as_array_mut().ok_or_else(malformed)? {
                     if let Some(adopted) = row.as_object_mut().and_then(|row| row.remove("adopted"))
                     {
@@ -347,11 +361,12 @@ impl AppAgents {
             Err(_) => Err("Could not read saved agent identities".into()),
         }
     }
-    /// An agent that still has its key.
-    pub fn get(&self, pubkey: &str) -> Result<AppAgent> {
+    /// An agent that still has its key in the community at `relay`.
+    pub fn get(&self, pubkey: &str, relay: &str) -> Result<AppAgent> {
+        let relay = canonical_relay(relay)?;
         self.list()?
             .into_iter()
-            .find(|agent| agent.pubkey == pubkey && !agent.deleted)
+            .find(|agent| agent.pubkey == pubkey && agent.relay == relay && !agent.deleted)
             .ok_or_else(|| "No such agent on this device".into())
     }
     /// Runs `change` on the saved list while holding the cross-process lock, and
@@ -375,21 +390,50 @@ impl AppAgents {
         self.write(&agents)?;
         Ok(result)
     }
+    /// Saves a plain list while each agent is in one community, as older builds
+    /// read it. Once one is in several, the list is versioned, so an older
+    /// build, which would act on only one of its rows, refuses the file.
     fn write(&self, agents: &[AppAgent]) -> Result<()> {
-        let bytes =
-            serde_json::to_vec_pretty(agents).map_err(|_| "Could not encode agent identities")?;
+        let mut pubkeys = std::collections::HashSet::new();
+        let several = agents.iter().any(|agent| !pubkeys.insert(&agent.pubkey));
+        let bytes = if several {
+            serde_json::to_vec_pretty(
+                &serde_json::json!({ "version": MULTI_COMMUNITY, "agents": agents }),
+            )
+        } else {
+            serde_json::to_vec_pretty(agents)
+        }
+        .map_err(|_| "Could not encode agent identities")?;
         let temp = self.path.with_extension("tmp");
         std::fs::write(&temp, bytes).map_err(|_| "Could not save agent identities")?;
         std::fs::rename(&temp, &self.path).map_err(|_| "Could not save agent identities".into())
     }
-    /// Changes one agent that still has its key.
-    fn edit(&self, pubkey: &str, change: impl FnOnce(&mut AppAgent)) -> Result<()> {
+    /// Changes the agent in the community at `relay`, while it has its key there.
+    fn edit(&self, pubkey: &str, relay: &str, change: impl FnOnce(&mut AppAgent)) -> Result<()> {
+        let relay = canonical_relay(relay)?;
         self.update(|agents| {
             let agent = agents
                 .iter_mut()
-                .find(|agent| agent.pubkey == pubkey && !agent.deleted)
+                .find(|agent| agent.pubkey == pubkey && agent.relay == relay && !agent.deleted)
                 .ok_or("No such agent on this device")?;
             change(agent);
+            Ok(())
+        })
+    }
+    /// Changes the agent in every community it still has its key in.
+    fn edit_all(&self, pubkey: &str, change: impl Fn(&mut AppAgent)) -> Result<()> {
+        self.update(|agents| {
+            let mut found = false;
+            for agent in agents
+                .iter_mut()
+                .filter(|agent| agent.pubkey == pubkey && !agent.deleted)
+            {
+                change(agent);
+                found = true;
+            }
+            if !found {
+                return Err("No such agent on this device".into());
+            }
             Ok(())
         })
     }
@@ -481,7 +525,7 @@ impl AppAgents {
             {
                 return Err("That agent is already here".into());
             }
-            agents.retain(|saved| saved.pubkey != agent.pubkey);
+            agents.retain(|saved| saved.pubkey != agent.pubkey || saved.relay != agent.relay);
             agents.push(agent.clone());
             Ok(())
         })?;
@@ -502,7 +546,8 @@ impl AppAgents {
             }
             if prepared.adopted || credentials.delete(&id, &agent.pubkey).is_ok() {
                 let _ = self.update(|agents| {
-                    agents.retain(|saved| saved.pubkey != agent.pubkey);
+                    agents
+                        .retain(|saved| saved.pubkey != agent.pubkey || saved.relay != agent.relay);
                     Ok(())
                 });
             }
@@ -510,29 +555,103 @@ impl AppAgents {
         }
         Ok((agent, prepared.key))
     }
-    pub fn rename(&self, pubkey: &str, name: &str) -> Result<()> {
-        let name = valid_name(name)?;
-        self.edit(pubkey, |agent| agent.name = name)
-    }
-    /// Makes it an agent of another type; its identity and profile stay.
-    pub fn set_type(&self, pubkey: &str, agent_type: &str) -> Result<()> {
-        valid_type(agent_type)?;
-        self.edit(pubkey, |agent| agent.agent_type = agent_type.into())
-    }
-    /// Sets or, with `None`, clears the profile picture: an `https` URL without
-    /// credentials.
-    pub fn set_picture(&self, pubkey: &str, picture: Option<String>) -> Result<()> {
+    /// Adds the agent, as it is in the community at `from`, to the community at
+    /// `destination`: the same key, owner attestation, type and name, with
+    /// `picture` (one that community serves) and its own profile there. Saves the
+    /// row, then the key under the row's own ID, as `commit` does. Refused while
+    /// it is leaving `from` or being deleted, and while it is in `destination`
+    /// or still leaving it; a deleted row there awaiting cleanup is taken back.
+    pub fn join(
+        &self,
+        pubkey: &str,
+        from: &str,
+        destination: &str,
+        picture: Option<String>,
+        credentials: &dyn Credentials,
+    ) -> Result<AppAgent> {
+        let (from, relay) = (canonical_relay(from)?, canonical_relay(destination)?);
         if picture
             .as_deref()
             .is_some_and(|url| !crate::port::public_picture(url))
         {
             return Err("Use an HTTPS image URL without credentials".into());
         }
-        self.edit(pubkey, |agent| agent.picture = picture)
+        let source = self.get(pubkey, &from)?;
+        let key = source.read_key(credentials)?;
+        let agent = self.update(|agents| {
+            let source = agents
+                .iter()
+                .find(|agent| agent.pubkey == pubkey && agent.relay == from && !agent.deleted)
+                .ok_or("No such agent on this device")?;
+            if source.deleting {
+                return Err(format!("{} is being deleted", source.name));
+            }
+            if let Some(there) = agents
+                .iter()
+                .find(|agent| agent.pubkey == pubkey && agent.relay == relay && !agent.deleted)
+            {
+                return Err(if there.deleting {
+                    format!("{} is still leaving that community", there.name)
+                } else {
+                    format!("{} is already in that community", there.name)
+                });
+            }
+            let agent = AppAgent {
+                relay: relay.clone(),
+                picture: picture.clone(),
+                profile: None,
+                deleted: false,
+                deleting: false,
+                ..source.clone()
+            };
+            agents.retain(|saved| saved.pubkey != pubkey || saved.relay != relay);
+            agents.push(agent.clone());
+            Ok(agent)
+        })?;
+        let id = agent.credential_id();
+        let saved = credentials.add(&id, &key).and_then(|()| {
+            agent
+                .read_key(credentials)
+                .map(drop)
+                .map_err(|_| "Agent key could not be verified".into())
+        });
+        if let Err(error) = saved {
+            if credentials.delete(&id, pubkey).is_ok() {
+                let _ = self.update(|agents| {
+                    agents.retain(|saved| saved.pubkey != pubkey || saved.relay != relay);
+                    Ok(())
+                });
+            }
+            return Err(error);
+        }
+        Ok(agent)
     }
-    /// Records a profile its community accepted, unless a newer one already is.
-    pub fn published(&self, pubkey: &str, profile: Published) -> Result<()> {
-        self.edit(pubkey, |agent| {
+    /// Renames it in every community it is in.
+    pub fn rename(&self, pubkey: &str, name: &str) -> Result<()> {
+        let name = valid_name(name)?;
+        self.edit_all(pubkey, |agent| agent.name = name.clone())
+    }
+    /// Makes it an agent of another type in every community it is in; its
+    /// identity and profiles stay.
+    pub fn set_type(&self, pubkey: &str, agent_type: &str) -> Result<()> {
+        valid_type(agent_type)?;
+        self.edit_all(pubkey, |agent| agent.agent_type = agent_type.into())
+    }
+    /// Sets or, with `None`, clears its profile picture in the community at
+    /// `relay`: an `https` URL without credentials, which that community serves.
+    pub fn set_picture(&self, pubkey: &str, relay: &str, picture: Option<String>) -> Result<()> {
+        if picture
+            .as_deref()
+            .is_some_and(|url| !crate::port::public_picture(url))
+        {
+            return Err("Use an HTTPS image URL without credentials".into());
+        }
+        self.edit(pubkey, relay, |agent| agent.picture = picture)
+    }
+    /// Records a profile the community at `relay` accepted, unless a newer one
+    /// already is.
+    pub fn published(&self, pubkey: &str, relay: &str, profile: Published) -> Result<()> {
+        self.edit(pubkey, relay, |agent| {
             if agent
                 .profile
                 .as_ref()
@@ -542,22 +661,45 @@ impl AppAgents {
             }
         })
     }
-    /// Marks its Delete as started, which only finishing it clears.
+    /// Marks its Delete as started in every community it is in, which only
+    /// finishing it there clears. From here, it joins no other community.
     pub fn begin_delete(&self, pubkey: &str) -> Result<()> {
-        self.edit(pubkey, |agent| agent.deleting = true)
+        self.edit_all(pubkey, |agent| agent.deleting = true)
     }
-    /// Deletes the key, then marks the row deleted, so a failed deletion can be
-    /// retried. Absence is success.
-    pub fn remove(&self, pubkey: &str, credentials: &dyn Credentials) -> Result<()> {
+    /// Marks its leaving the community at `relay` as started, which only
+    /// finishing it clears. Refused unless it stays in another community: its
+    /// last one goes with Delete, which deletes the agent.
+    pub fn begin_leave(&self, pubkey: &str, relay: &str) -> Result<()> {
+        let relay = canonical_relay(relay)?;
+        self.update(|agents| {
+            let stays = agents.iter().any(|agent| {
+                agent.pubkey == pubkey && agent.relay != relay && !agent.deleted && !agent.deleting
+            });
+            let agent = agents
+                .iter_mut()
+                .find(|agent| agent.pubkey == pubkey && agent.relay == relay && !agent.deleted)
+                .ok_or("No such agent on this device")?;
+            if !stays && !agent.deleting {
+                return Err("Its last community goes only when it is deleted".into());
+            }
+            agent.deleting = true;
+            Ok(())
+        })
+    }
+    /// Deletes its key in the community at `relay`, then marks that row deleted,
+    /// so a failed deletion can be retried. Its rows in other communities keep
+    /// their own copies of the key. Absence is success.
+    pub fn remove(&self, pubkey: &str, relay: &str, credentials: &dyn Credentials) -> Result<()> {
+        let relay = canonical_relay(relay)?;
         let Some(agent) = self
             .list()?
             .into_iter()
-            .find(|agent| agent.pubkey == pubkey && !agent.deleted)
+            .find(|agent| agent.pubkey == pubkey && agent.relay == relay && !agent.deleted)
         else {
             return Ok(());
         };
         credentials.delete(&agent.credential_id(), &agent.pubkey)?;
-        self.edit(pubkey, |agent| agent.deleted = true)
+        self.edit(pubkey, &relay, |agent| agent.deleted = true)
     }
     /// Deletes every key it still has, as an erase that removes agents does
     /// before the rows go with app data. Absence is success, so it repeats safely.
@@ -567,14 +709,19 @@ impl AppAgents {
         }
         Ok(())
     }
-    /// Drops a deleted row once its community has been cleaned up.
-    pub fn forget(&self, pubkey: &str) -> Result<()> {
+    /// Drops its deleted row in the community at `relay` once that community
+    /// has been cleaned up.
+    pub fn forget(&self, pubkey: &str, relay: &str) -> Result<()> {
+        let relay = canonical_relay(relay)?;
         self.update(|agents| {
-            agents.retain(|agent| agent.pubkey != pubkey || !agent.deleted);
+            agents.retain(|agent| agent.pubkey != pubkey || agent.relay != relay || !agent.deleted);
             Ok(())
         })
     }
 }
+
+/// The version of the saved list once an agent is in several communities.
+const MULTI_COMMUNITY: u64 = 2;
 
 fn valid_name(name: &str) -> Result<String> {
     let name = name.trim();

@@ -589,6 +589,8 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         app_agents::app_agent_set_type,
         app_agents::app_agent_delete,
         app_agents::app_agent_begin_delete,
+        app_agents::app_agent_begin_leave,
+        app_agents::app_agent_join,
         app_agents::app_agent_forget,
         app_agents::app_agent_publish,
         app_agents::app_agent_publish_profile,

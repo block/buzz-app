@@ -40,8 +40,9 @@ pub(crate) struct AppAgentHost {
     /// credential store, whose lock refuses rather than waits. Waiting on this
     /// lock instead lets concurrent publications queue for that first read.
     keys: Arc<Mutex<HashMap<String, Arc<Secret>>>>,
-    /// One profile publication per agent at a time, so each is newer than the
-    /// last; Delete takes it too, so no publication outlives the key.
+    /// One profile publication per agent at a time, in any of its communities,
+    /// so each is newer than the last; Delete takes it too, so no publication
+    /// outlives the key.
     profiles: Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
     hosting: Arc<Hosting>,
 }
@@ -114,11 +115,12 @@ impl AppAgentHost {
         })
         .await
     }
-    /// Deletes the key once any profile publication in flight has settled, so
-    /// the community's cleanup sees every profile it will ever have. The row
-    /// stays, marked deleted, until the WebView has cleaned up the community and
-    /// calls `app_agent_forget`.
-    async fn delete(&self, pubkey: String) -> Result<(), String> {
+    /// Deletes its key in the community at `relay` once any profile publication
+    /// in flight has settled, so the community's cleanup sees every profile it
+    /// will ever have. The row stays, marked deleted, until the WebView has
+    /// cleaned up the community and calls `app_agent_forget`. This copy of the
+    /// app stops running the agent once it is in no community.
+    async fn delete(&self, pubkey: String, relay: String) -> Result<(), String> {
         let turn = self.profile_turn(&pubkey);
         let _turn = turn.lock().await;
         let host = self.clone();
@@ -126,18 +128,25 @@ impl AppAgentHost {
             // Held across the deletion, so no publication re-reads the key meanwhile.
             let mut keys = host.keys();
             keys.remove(&pubkey);
-            host.hosting.held().remove(&pubkey);
-            host.agents
-                .clone()?
-                .remove(&pubkey, host.credentials.as_ref())
+            let agents = host.agents.clone()?;
+            agents.remove(&pubkey, &relay, host.credentials.as_ref())?;
+            if !agents
+                .list()?
+                .iter()
+                .any(|agent| agent.pubkey == pubkey && !agent.deleted)
+            {
+                host.hosting.held().remove(&pubkey);
+            }
+            Ok(())
         })
         .await
     }
-    /// The agent, if it still has its key. One deleted elsewhere loses its cached key.
-    async fn agent(&self, pubkey: String) -> Result<AppAgent, String> {
+    /// The agent in the community at `relay`, if it still has its key there.
+    /// One deleted elsewhere loses its cached key.
+    async fn agent(&self, pubkey: String, relay: String) -> Result<AppAgent, String> {
         let host = self.clone();
         blocking(move || {
-            let agent = host.agents.clone()?.get(&pubkey);
+            let agent = host.agents.clone()?.get(&pubkey, &relay);
             if agent.is_err() {
                 host.keys().remove(&pubkey);
             }
@@ -390,8 +399,12 @@ pub(crate) async fn app_agent_port(
         let uploaded = async {
             let receipt = upload(&agent, &key, bytes, mime).await?;
             let url = receipt["url"].as_str().ok_or("Upload returned no URL")?;
-            let (pubkey, picture) = (agent.pubkey.clone(), Some(url.to_owned()));
-            blocking(move || agents.set_picture(&pubkey, picture)).await?;
+            let (pubkey, relay, picture) = (
+                agent.pubkey.clone(),
+                agent.relay.clone(),
+                Some(url.to_owned()),
+            );
+            blocking(move || agents.set_picture(&pubkey, &relay, picture)).await?;
             Ok::<_, String>(url.to_owned())
         };
         match uploaded.await {
@@ -429,22 +442,54 @@ pub(crate) async fn app_agent_set_type(
     blocking(move || agents.set_type(&pubkey, &agent_type)).await
 }
 
+/// Sets its picture in the community at `relay`, one that community serves.
 #[tauri::command]
 pub(crate) async fn app_agent_set_picture(
     state: tauri::State<'_, AppAgentHost>,
     pubkey: String,
+    relay: String,
     picture: Option<String>,
 ) -> Result<(), String> {
     let agents = state.agents.clone()?;
-    blocking(move || agents.set_picture(&pubkey, picture)).await
+    blocking(move || agents.set_picture(&pubkey, &relay, picture)).await
+}
+
+/// Adds the agent, as it is in the community at `from`, to the community at
+/// `destination`, with the same key and owner attestation; see `AppAgents::join`.
+#[tauri::command]
+pub(crate) async fn app_agent_join(
+    state: tauri::State<'_, AppAgentHost>,
+    pubkey: String,
+    from: String,
+    destination: String,
+    picture: Option<String>,
+) -> Result<AppAgentSummary, String> {
+    let host = state.inner().clone();
+    blocking(move || {
+        // Held so no first key read meets this write in the credential store.
+        let _keys = host.keys();
+        host.credentials.retry();
+        let agents = host.agents.clone()?;
+        Ok(agents
+            .join(
+                &pubkey,
+                &from,
+                &destination,
+                picture,
+                host.credentials.as_ref(),
+            )?
+            .into())
+    })
+    .await
 }
 
 #[tauri::command]
 pub(crate) async fn app_agent_delete(
     state: tauri::State<'_, AppAgentHost>,
     pubkey: String,
+    relay: String,
 ) -> Result<(), String> {
-    state.delete(pubkey).await
+    state.delete(pubkey, relay).await
 }
 
 #[tauri::command]
@@ -456,13 +501,25 @@ pub(crate) async fn app_agent_begin_delete(
     blocking(move || agents.begin_delete(&pubkey)).await
 }
 
+/// Starts its leaving the community at `relay`; see `AppAgents::begin_leave`.
+#[tauri::command]
+pub(crate) async fn app_agent_begin_leave(
+    state: tauri::State<'_, AppAgentHost>,
+    pubkey: String,
+    relay: String,
+) -> Result<(), String> {
+    let agents = state.agents.clone()?;
+    blocking(move || agents.begin_leave(&pubkey, &relay)).await
+}
+
 #[tauri::command]
 pub(crate) async fn app_agent_forget(
     state: tauri::State<'_, AppAgentHost>,
     pubkey: String,
+    relay: String,
 ) -> Result<(), String> {
     let agents = state.agents.clone()?;
-    blocking(move || agents.forget(&pubkey)).await
+    blocking(move || agents.forget(&pubkey, &relay)).await
 }
 
 /// Whether this copy of the app runs the agent; see `Hosting`.
@@ -495,9 +552,10 @@ pub(crate) struct AppAgentEvent {
 pub(crate) async fn app_agent_publish(
     state: tauri::State<'_, AppAgentHost>,
     pubkey: String,
+    relay: String,
     event: AppAgentEvent,
 ) -> Result<Value, String> {
-    let (agent, key) = state.key(state.agent(pubkey).await?).await?;
+    let (agent, key) = state.key(state.agent(pubkey, relay).await?).await?;
     let signed = agent.sign(&key, event.kind, event.content, event.tags)?;
     post(&agent, &key, signed).await
 }
@@ -508,10 +566,11 @@ pub(crate) async fn app_agent_publish(
 pub(crate) async fn app_agent_publish_profile(
     state: tauri::State<'_, AppAgentHost>,
     pubkey: String,
+    relay: String,
 ) -> Result<(), String> {
     let turn = state.profile_turn(&pubkey);
     let _turn = turn.lock().await;
-    let agent = state.agent(pubkey).await?;
+    let agent = state.agent(pubkey, relay).await?;
     if agent.profile_is_current() {
         return Ok(());
     }
@@ -525,6 +584,7 @@ pub(crate) async fn app_agent_publish_profile(
     blocking(move || {
         agents.published(
             &agent.pubkey,
+            &agent.relay,
             Published {
                 name: agent.name,
                 picture: agent.picture,
@@ -542,12 +602,13 @@ pub(crate) async fn app_agent_publish_profile(
 pub(crate) async fn app_agent_query(
     state: tauri::State<'_, AppAgentHost>,
     pubkey: String,
+    relay: String,
     filters: Vec<Value>,
 ) -> Result<Value, String> {
     if filters.is_empty() || filters.len() > 8 {
         return Err("Agents read with one to eight filters".into());
     }
-    let (agent, key) = state.key(state.agent(pubkey).await?).await?;
+    let (agent, key) = state.key(state.agent(pubkey, relay).await?).await?;
     read(&agent, &key, &filters).await
 }
 
@@ -596,10 +657,11 @@ async fn signed_read(
 pub(crate) async fn app_agent_search_profiles(
     state: tauri::State<'_, AppAgentHost>,
     pubkey: String,
+    relay: String,
     query: String,
     limit: u32,
 ) -> Result<Option<Value>, String> {
-    let (agent, key) = state.key(state.agent(pubkey).await?).await?;
+    let (agent, key) = state.key(state.agent(pubkey, relay).await?).await?;
     search_profiles(&agent, &key, &query, limit).await
 }
 
@@ -652,6 +714,7 @@ fn mime_type(value: &str) -> Option<String> {
 pub(crate) async fn app_agent_upload(
     state: tauri::State<'_, AppAgentHost>,
     pubkey: String,
+    relay: String,
     data: String,
     mime: String,
 ) -> Result<Value, String> {
@@ -665,7 +728,7 @@ pub(crate) async fn app_agent_upload(
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(data)
         .map_err(|_| "Invalid upload data")?;
-    let (agent, key) = state.key(state.agent(pubkey).await?).await?;
+    let (agent, key) = state.key(state.agent(pubkey, relay).await?).await?;
     upload(&agent, &key, bytes, &mime).await
 }
 
@@ -716,11 +779,12 @@ async fn upload(
 pub(crate) async fn app_agent_git_auth(
     state: tauri::State<'_, AppAgentHost>,
     pubkey: String,
+    relay: String,
     owner: String,
     repo: String,
 ) -> Result<Value, String> {
     use base64::Engine;
-    let (agent, key) = state.key(state.agent(pubkey).await?).await?;
+    let (agent, key) = state.key(state.agent(pubkey, relay).await?).await?;
     let (url, auth) = agent.git_auth(&key, &owner, &repo)?;
     let auth = serde_json::to_vec(&auth).map_err(|_| "Could not authorize Git")?;
     Ok(serde_json::json!({
@@ -761,11 +825,12 @@ pub(crate) struct AgentMedia {
 pub(crate) async fn app_agent_media(
     state: tauri::State<'_, AppAgentHost>,
     pubkey: String,
+    relay: String,
     url: String,
 ) -> Result<AgentMedia, String> {
     use base64::Engine;
     let dir = std::env::temp_dir().join("buzz-agent-media");
-    let (agent, key) = state.key(state.agent(pubkey).await?).await?;
+    let (agent, key) = state.key(state.agent(pubkey, relay).await?).await?;
     let url = agent.media_url(&url)?;
     let auth =
         serde_json::to_vec(&agent.media_auth(&key)?).map_err(|_| "Could not authorize media")?;
@@ -863,11 +928,12 @@ async fn save_media(
 pub(crate) async fn app_agent_remember(
     state: tauri::State<'_, AppAgentHost>,
     pubkey: String,
+    relay: String,
     slug: String,
     body: String,
     after: u64,
 ) -> Result<Value, String> {
-    let (agent, key) = state.key(state.agent(pubkey).await?).await?;
+    let (agent, key) = state.key(state.agent(pubkey, relay).await?).await?;
     let signed = agent.memory(&key, &slug, &body, after)?;
     post(&agent, &key, signed).await
 }
@@ -1021,7 +1087,7 @@ mod tests {
         let mut deleting = tokio::spawn({
             let host = host.clone();
             let pubkey = pubkey.clone();
-            async move { host.delete(pubkey).await }
+            async move { host.delete(pubkey, "wss://relay.example".into()).await }
         });
         // Unblocked, deleting an absent agent takes well under this.
         let waited = std::time::Duration::from_millis(300);

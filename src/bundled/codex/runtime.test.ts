@@ -1083,6 +1083,10 @@ it("ends a turn's input with the notes plugins left for it in its channel", asyn
   expect(params.input[0]?.text).toMatch(
     /<\/buzz-event>\n\n\(I interrupted your reply\)/,
   );
+  // Its context names the membership, which its usage is read by.
+  expect(params.input[0]?.text).toContain(
+    `{"agent":"${delivery.agent.key}","channel_id"`,
+  );
   expect(notes).toHaveBeenCalledOnce();
   expect(notes).toHaveBeenCalledWith("channel", root);
 });

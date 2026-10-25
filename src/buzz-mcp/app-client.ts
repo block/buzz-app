@@ -84,7 +84,7 @@ export function appClient(
     },
     publish: (event) => {
       check();
-      return agent.publish(event);
+      return agent.publish(event, check);
     },
     upload: (data, mime) => {
       check();

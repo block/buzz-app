@@ -8760,7 +8760,7 @@ it.each(["live", "replay", "catch-up"] as const)(
 it.each(["close", "unload", "abort"])(
   "connects a different plugin and revokes pending writes on %s",
   async (reason) => {
-    const { service, plugin, ctx, native } = await setup();
+    const { service, plugin, ctx, native, session } = await setup();
     await service.create({ type: "example/echo", name: "Echo" });
     await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
     let request!: import("../host/service").McpHandler;
@@ -8836,6 +8836,24 @@ it.each(["close", "unload", "abort"])(
       },
     });
     await vi.waitFor(() => expect(readFile).toHaveBeenCalledTimes(1));
+    let finishStart!: () => void;
+    const starting = new Promise<void>((resolve) => {
+      finishStart = resolve;
+    });
+    const started = vi
+      .spyOn(session.channelWrites, "starting")
+      .mockImplementation((id) => (id === channel ? starting : undefined));
+    native.publish.mockClear();
+    const sending = request({
+      id: 4,
+      method: "tools/call",
+      params: {
+        name: "send",
+        arguments: { text: "revoked message", audience: "everyone" },
+      },
+    });
+    await vi.waitFor(() => expect(started).toHaveBeenCalledWith(channel));
+    expect(native.publish).not.toHaveBeenCalled();
     if (reason === "close") await connection.close();
     else if (reason === "abort") controller.abort();
     else {
@@ -8843,9 +8861,12 @@ it.each(["close", "unload", "abort"])(
       await closed;
     }
     finishRead(new TextEncoder().encode("revoked output"));
+    finishStart();
     await expect(pending).rejects.toThrow();
+    await expect(sending).rejects.toThrow();
     expect(native.remember).not.toHaveBeenCalled();
-    await expect(request({ id: 4, method: "tools/list" })).rejects.toThrow();
+    expect(native.publish).not.toHaveBeenCalled();
+    await expect(request({ id: 5, method: "tools/list" })).rejects.toThrow();
   },
 );
 

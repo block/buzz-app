@@ -2360,7 +2360,8 @@ export class AgentRunners {
       pubkey: agent.pubkey,
       name: agent.name,
       owner: agent.owner,
-      publish: async (event: AgentEventTemplate) => this.publish(runner, event),
+      publish: async (event: AgentEventTemplate, check?: () => void) =>
+        this.publish(runner, event, check),
       query: async (filters: readonly object[]) =>
         this.require().query(agent.pubkey, filters),
       searchProfiles: async (query: string, limit: number) =>
@@ -2687,13 +2688,18 @@ export class AgentRunners {
       throw new Error("Agents run only in the desktop app");
     return this.host.custody;
   }
-  private async publish(runner: Runner, event: AgentEventTemplate) {
+  private async publish(
+    runner: Runner,
+    event: AgentEventTemplate,
+    check?: () => void,
+  ) {
     const channel = event.tags?.find((tag) => tag[0] === "h")?.[1];
     const agent = this.host.agent(runner.pubkey);
     // The relay takes a reply in a starting chat only once it confirms it;
     // a failed start leaves the relay to refuse it.
     if (channel && agent)
       await this.host.starting?.(agent, channel)?.catch(() => {});
+    check?.();
     const signed = await this.require().publish(runner.pubkey, event);
     bounded(runner.wrote, signed.id);
     return signed;

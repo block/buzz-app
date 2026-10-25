@@ -1,4 +1,5 @@
 import { knownAgentPubkeys } from "../agents/known";
+import type { ChannelMessage } from "../relay/contracts";
 import type { ComposerSession } from "./composer-session";
 import { archivedMention } from "./mention-admission";
 import { followupDraft, type MentionDraft } from "./mention-draft";
@@ -24,4 +25,25 @@ export function rememberedMentions(
         )
       : [],
   );
+}
+
+/** The agent the viewer's latest top-level message in these rows tagged that
+ * can still be tagged here. Off, like the follow-up draft, when agents aren't
+ * remembered. */
+export function lastMentionedAgent(
+  session: ComposerSession,
+  rows: readonly ChannelMessage[],
+  admits: (pubkey: string) => boolean,
+): string | undefined {
+  if (!rememberAgentsPreference()) return;
+  const agents = knownAgentPubkeys(
+    session.profiles.snapshot(),
+    session.agentChoices.snapshot(),
+  );
+  for (let index = rows.length - 1; index >= 0; index--) {
+    const row = rows[index];
+    if (!row || row.authorId !== session.viewer || row.threadRootId) continue;
+    const agent = row.mentions.find((key) => agents.has(key) && admits(key));
+    if (agent) return agent;
+  }
 }

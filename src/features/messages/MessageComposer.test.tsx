@@ -8259,6 +8259,76 @@ it("edits the last message from an untouched automatic tag and restores that tag
   expect(h.input()).not.toHaveAccessibleName("Edit message");
 });
 
+it("tags the agent last tagged in a Solo chat whenever an empty composer is shown", () => {
+  const viewer = "e".repeat(64);
+  const h = mount({}, undefined, viewer);
+  h.setLibrary([first, second]);
+  h.setProfiles(
+    new Map([
+      [first.pubkey, { name: "Ada", isAgent: true }],
+      [second.pubkey, { name: "Bea", isAgent: true }],
+    ]),
+  );
+  h.retarget({
+    ownSoloConversation: true,
+    requireMention: true,
+    session: {
+      ...h.session,
+      channels: { ...h.session.channels, list: () => soloList },
+    } as unknown as RelaySession,
+  });
+  expect(h.input()).toHaveValue("");
+  h.setRows([
+    editableMessage({
+      id: "1".repeat(64),
+      authorId: viewer,
+      mentions: [first.pubkey],
+    }),
+    editableMessage({
+      id: "2".repeat(64),
+      authorId: viewer,
+      mentions: [second.pubkey],
+    }),
+    // Neither an agent's message nor a thread reply chooses the agent.
+    editableMessage({
+      id: "3".repeat(64),
+      authorId: second.pubkey,
+      mentions: [first.pubkey],
+    }),
+    editableMessage({
+      id: "4".repeat(64),
+      authorId: viewer,
+      mentions: [first.pubkey],
+      threadRootId: "1".repeat(64),
+    }),
+  ]);
+  expect(h.input()).toHaveValue("@Bea ");
+  expect(h.commands().recipients).toEqual([
+    { pubkey: second.pubkey, name: "Bea" },
+  ]);
+  // A removed tag stays removed while the chat is shown.
+  act(() => h.input().removeRecipient(second.pubkey));
+  h.fill("");
+  expect(h.input()).toHaveValue("");
+  // Coming back to the chat tags the agent again.
+  h.present(false);
+  h.present(true);
+  expect(h.input()).toHaveValue("@Bea ");
+  // Text without a tag is left as written.
+  act(() => h.input().removeRecipient(second.pubkey));
+  h.fill("for people");
+  h.present(false);
+  h.present(true);
+  expect(h.input()).toHaveValue("for people");
+  // Off with remembered agents.
+  h.fill("");
+  setRememberAgentsPreference(false);
+  h.present(false);
+  h.present(true);
+  expect(h.input()).toHaveValue("");
+  setRememberAgentsPreference(true);
+});
+
 it("keeps remembered agents while typing during upload without taking focus when publication finishes", async () => {
   const key = keypair();
   const agent = { pubkey: key.pubkey, name: "Honey" };

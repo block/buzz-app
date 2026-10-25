@@ -37,7 +37,7 @@ import { useNonmemberMentions } from "./useNonmemberMentions";
 import { useOldAgentMentions } from "./useOldAgentMentions";
 import { useKnownAgentPubkeys } from "../agents/use-known";
 import { knownAgentPubkeys } from "../agents/known";
-import { rememberedMentions } from "./remembered-mentions";
+import { lastMentionedAgent, rememberedMentions } from "./remembered-mentions";
 import { useAgentChoices } from "../agents/use-choices";
 import { ownSolo } from "../solo/labels";
 import { soloHasPeople, soloRoster, useSoloHasPeople } from "../solo/people";
@@ -1262,13 +1262,46 @@ function Composer({
     (!ownSoloConversation ||
       session.channels.list().channels.find((item) => item.id === channelId)
         ?.channelType === "solo");
-  // Only a fresh chat is seeded with the default. Once it has content, respect
-  // edits and removals; accepted sends use the shared remembered-mention draft.
+  // A saved Solo chat is seeded with the agent the viewer last tagged there.
+  const restoresAgent = solo && !submission && !threadRootId && !defaultMention;
+  const subscribeRows = useCallback(
+    (listener: () => void) =>
+      (restoresAgent &&
+        session.channels.subscribeWindow?.(channelId, listener)) ||
+      (() => {}),
+    [restoresAgent, session.channels, channelId],
+  );
+  // Only an empty untagged draft looks, so typing doesn't rescan the history.
+  const seeking =
+    restoresAgent && active && !value.recipients.length && !draft.trim();
+  const lastAgent = useSyncExternalStore(subscribeRows, () =>
+    seeking
+      ? lastMentionedAgent(
+          session,
+          session.channels.window?.(channelId).rows ?? [],
+          mentionAdmission(session, channelId, agentChoices, mentionRoster),
+        )
+      : undefined,
+  );
+  const seedMention =
+    defaultMention ??
+    (lastAgent
+      ? (pastedMentionRecipient(
+          session,
+          channelId,
+          lastAgent,
+          agentChoices,
+          mentionRoster,
+        ) ?? undefined)
+      : undefined);
+  // Each time the composer is shown, an empty untagged draft is seeded with
+  // that agent. Once it has content, respect edits and removals until the
+  // composer is shown again; accepted sends use the remembered-mention draft.
   const autoTagged = useRef<string | undefined>(undefined);
   const automaticTag = useRef<string | undefined>(undefined);
   useEffect(() => {
+    if (!active) autoTagged.current = undefined;
     if (
-      !defaultMention ||
       !active ||
       sendPending ||
       completion.composing.current ||
@@ -1288,17 +1321,18 @@ function Composer({
       return;
     }
     if (
+      seedMention &&
       mentionAdmission(
         session,
         channelId,
         agentChoices,
         mentionRoster,
-      )(defaultMention.pubkey)
+      )(seedMention.pubkey)
     ) {
       if (
         insert(
-          `@${defaultMention.name} `,
-          defaultMention,
+          `@${seedMention.name} `,
+          seedMention,
           { start: 0, end: 0, query: "" },
           undefined,
           false,

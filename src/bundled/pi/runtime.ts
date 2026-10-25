@@ -853,7 +853,10 @@ export class PiRuntime {
       // goes on, answered in the mention's thread: a wake has no relay event
       // to find its own thread by.
       if (request.startsWith(WAKE)) {
-        if (!mentioned.has(conversation)) aborted.add(conversation);
+        if (!mentioned.has(conversation)) {
+          dropped.push({ submission, conversation });
+          aborted.add(conversation);
+        }
         continue;
       }
       // A watch's or timer's run ends with the app, as other harnesses' do:
@@ -922,9 +925,9 @@ export class PiRuntime {
       if (dropped.length)
         await this.pi.request("drop", { agent: pubkey, submissions: dropped });
       // A wake's run is in its thread's conversation, where the next turn
-      // would join it if it were only marked, and end untaken with it.
-      // Aborting the conversation waits for the run to end; as that continues
-      // every left run, it comes once the others are dropped.
+      // would join it while it is only marked, and end untaken with it.
+      // Aborting the conversation waits for the run to end. As that continues
+      // every left run, it comes once all of them are marked.
       for (const conversation of aborted)
         await this.pi.request("abort", { agent: pubkey, conversation });
     } catch (error) {

@@ -1377,6 +1377,7 @@ it("answers and reports left runs of a conversation threads share in their menti
 
 it("ends a plugin wake's run an earlier app left, unless that would end a mention's left in its conversation", async () => {
   const alone = `plugin/${"e".repeat(64)}`;
+  const another = `plugin/${"d".repeat(64)}`;
   const shared = `plugin/${"f".repeat(64)}`;
   const later = reply("8", "@Pi also check the docs");
   const left = (submission: number, conversation: number, request: string) => ({
@@ -1392,6 +1393,7 @@ it("ends a plugin wake's run an earlier app left, unless that would end a mentio
         left(61, 11, alone),
         left(62, 12, shared),
         left(63, 12, later.id),
+        left(64, 13, another),
       ],
     }),
     abort: () => ended.promise,
@@ -1406,17 +1408,27 @@ it("ends a plugin wake's run an earlier app left, unless that would end a mentio
     ),
   );
   const turn = deliver({ type: "mention", event: reply("2", "@Pi look") });
-  // Its conversation is aborted, not its run marked, so a turn handed to it
-  // next starts a run rather than joining one that ends without taking it.
-  await vi.waitFor(() =>
-    expect(host.requests("abort").map((item) => item.params)).toEqual([
-      { agent: self, conversation: 11 },
-    ]),
-  );
-  expect(host.requests("drop")).toEqual([]);
+  // Every wake's run is marked before any conversation is aborted, as an
+  // abort continues the runs not yet marked.
+  await vi.waitFor(() => expect(host.requests("abort")).toHaveLength(1));
+  expect(host.requests("drop").map((item) => item.params)).toEqual([
+    {
+      agent: self,
+      submissions: [
+        { submission: 61, conversation: 11 },
+        { submission: 64, conversation: 13 },
+      ],
+    },
+  ]);
+  // Its conversation is aborted too, so a turn handed to it next starts a run
+  // rather than joining one that ends without taking it.
   expect(host.requests("deliver")).toEqual([]);
   ended.resolve();
   await turn.run;
+  expect(host.requests("abort").map((item) => item.params)).toEqual([
+    { agent: self, conversation: 11 },
+    { agent: self, conversation: 13 },
+  ]);
   expect(host.requests("deliver")).toHaveLength(1);
   // The run the wake shares goes on, and answers in the mention's thread.
   await vi.waitFor(() => expect(published).toHaveLength(1));

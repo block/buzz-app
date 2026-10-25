@@ -7913,3 +7913,85 @@ it.each([false, true])(
     expect(run).toHaveBeenCalledTimes(2);
   },
 );
+
+it.each(["live", "replay", "catch-up"] as const)(
+  "does not revive a rejected destination while another match waits (%s)",
+  async (mode) => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const { service, run, emit, history, recover, confirm, session } =
+        await setup({
+          identities: [echo],
+        });
+      const rejected = "11111111-1111-1111-1111-111111111111";
+      const pending = "22222222-2222-2222-2222-222222222222";
+      const list = session.channels.list();
+      let joined = false;
+      let cached = true;
+      let checked = false;
+      vi.spyOn(session.channels, "list").mockImplementation(() => {
+        checked = true;
+        return {
+          ...list,
+          channels: [
+            ...list.channels,
+            {
+              id: rejected,
+              name: "Rejected",
+              members: joined ? [viewer, bot] : [viewer],
+            },
+            {
+              id: pending,
+              name: "Pending",
+              members: [viewer, bot],
+              ...(cached ? { cached: true as const } : {}),
+            },
+          ],
+        };
+      });
+      const start = nowSeconds();
+      vi.setSystemTime(start * 1000);
+      await service.save(bot, {
+        attentionEnabled: true,
+        attention: {
+          "watch/channel": null,
+          "watch/rejected": { ...chat["watch/chat"], channel: rejected },
+          "watch/pending": { ...chat["watch/chat"], channel: pending },
+        },
+      });
+      await settle();
+      checked = false;
+      const event = posted("held event", start + 10);
+      vi.setSystemTime((start + 60) * 1000);
+      if (mode === "catch-up") {
+        history.push(event);
+        recover();
+      } else
+        emit({
+          channelId: channel,
+          events: [event],
+          ...(mode === "replay" ? { replay: true as const } : {}),
+        });
+      await vi.waitFor(() => expect(checked).toBe(true));
+      await settle();
+      joined = true;
+      confirm("saved", [viewer, bot]);
+      await settle();
+      cached = false;
+      confirm("saved", [viewer, bot]);
+      await vi.waitFor(() => expect(run).toHaveBeenCalled(), {
+        timeout: 5_000,
+      });
+      await settle();
+      expect(
+        run.mock.calls.map(([delivery]) =>
+          delivery.trigger.type === "attention"
+            ? delivery.trigger.channel
+            : delivery.trigger.type,
+        ),
+      ).toEqual([pending]);
+    } finally {
+      vi.useRealTimers();
+    }
+  },
+);

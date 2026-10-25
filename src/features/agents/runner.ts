@@ -240,7 +240,7 @@ type PendingEvent = {
   channelId?: string;
   done?: ReadonlySet<string>;
 };
-type Heard = { triggers: Trigger[]; held?: true };
+type Heard = { triggers: Trigger[]; held?: true; discarded?: string[] };
 
 /** One agent's runtime, for as long as its identity exists. Edits do not
  * replace it: each job reads the agent as it is when the job starts, and the
@@ -272,8 +272,8 @@ type Runner = {
   /** Replayed events waiting, oldest first, until the agent has room for the
    * jobs each makes. */
   readonly backlog: PendingEvent[];
-  /** A missed event catch-up is still giving out, and the watches that have
-   * it: it makes more watch jobs than the agent has room for at once. */
+  /** A missed event catch-up is still giving out, with delivered and rejected
+   * matches retained while its other watches wait. */
   fanning?: { id: string; done: ReadonlySet<string> };
   readonly wrote: Set<string>;
   /** Turns still counted as working, which a change of type waits out. */
@@ -1280,7 +1280,14 @@ export class AgentRunners {
         (!fanning && this.hasSeen(runner, event.id, channel)) ||
         event.pubkey === agent.pubkey
           ? { triggers: [] }
-          : this.heard(runner, agent, event);
+          : this.heard(runner, agent, event, fanning?.done);
+      if (heard.discarded?.length) {
+        this.heardLive(agent, event, new Set(heard.discarded));
+        runner.fanning = {
+          id: event.id,
+          done: new Set([...(fanning?.done ?? []), ...heard.discarded]),
+        };
+      }
       const listened = event.created_at >= pass.community.connection.start;
       const triggers = heard.triggers.filter((trigger) =>
         trigger.type === "watch"
@@ -1478,8 +1485,9 @@ export class AgentRunners {
     done: ReadonlySet<string> = new Set(),
   ) {
     const { triggers } = heard;
-    const delivered = new Set([
+    const completed = new Set([
       ...done,
+      ...(heard.discarded ?? []),
       ...triggers.flatMap((trigger) =>
         trigger.type === "watch" ? [trigger.slug] : [],
       ),
@@ -1488,7 +1496,7 @@ export class AgentRunners {
       runner.held.set(event.id, {
         event,
         ...(channelId ? { channelId } : {}),
-        done: delivered,
+        done: completed,
       });
       if (runner.held.size > HELD_LIMIT) {
         runner.held.delete(runner.held.keys().next().value as string);
@@ -1497,7 +1505,7 @@ export class AgentRunners {
         );
       }
     }
-    this.heardLive(agent, event, heard.held ? delivered : undefined);
+    this.heardLive(agent, event, heard.held ? completed : undefined);
     for (const trigger of triggers) {
       const job = {
         trigger,
@@ -1752,6 +1760,9 @@ export class AgentRunners {
         destinations[index]
           ? [{ type: "watch" as const, event, ...match }]
           : [],
+      ),
+      discarded: matches.flatMap(({ slug }, index) =>
+        destinations[index] === false ? [slug] : [],
       ),
       ...(destinations.includes(undefined) ? { held: true as const } : {}),
     };

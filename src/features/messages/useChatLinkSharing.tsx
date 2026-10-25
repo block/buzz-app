@@ -121,10 +121,19 @@ export function useChatLinkSharing(
       const missing = recipients?.length;
       if (missing === 0) return true;
       const dm = destination?.channelType === "dm";
+      // Names follow the identity policy across the whole DM, so namesakes
+      // who already have access still keep each recipient distinguishable.
+      const participants = session.channels
+        .list()
+        .channels.find((channel) => channel.id === channelId)?.members;
       const profiles = session.profiles.snapshot();
       const names = recipients?.flatMap((key) => {
         const profile = profiles.get(key);
-        return profile && !profile.nameIsFallback ? [profile.name] : [];
+        const name =
+          profile &&
+          !profile.nameIsFallback &&
+          session.names.resolve(key, undefined, participants);
+        return name ? [name] : [];
       });
       // Surface known failures before consent instead of after Share.
       const blocked =

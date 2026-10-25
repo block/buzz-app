@@ -12,6 +12,8 @@ import * as share from "../solo/share";
 import { MessageComposer } from "./MessageComposer";
 import { composerDOMFixture } from "./composer-testing";
 import { writeView } from "../../shared/view-state";
+import { bindNames } from "../identity-names/service";
+import { createAgentDirectory } from "../identity-names/testing";
 
 composerDOMFixture();
 const source = "11111111-1111-4111-8111-111111111111";
@@ -30,8 +32,8 @@ async function fixture(
     destinationType?: string;
     alone?: boolean;
     shared?: boolean;
-    /** The other person has a profile name. */
-    named?: boolean;
+    /** The other people's profile name. */
+    named?: string;
   } = {},
 ) {
   const viewer = keypair(),
@@ -86,14 +88,14 @@ async function fixture(
             roster(relay, id, members.get(id) ?? [], clock),
           ),
           ...(options.named
-            ? [
-                signed(person, {
+            ? [person, late].map((key) =>
+                signed(key, {
                   kind: 0,
                   created_at: clock,
                   tags: [],
-                  content: JSON.stringify({ name: "Kenny" }),
+                  content: JSON.stringify({ name: options.named }),
                 }),
-              ]
+              )
             : []),
           ...published,
         ].filter((event) =>
@@ -113,13 +115,21 @@ async function fixture(
   await vi.waitFor(() =>
     expect(owner.session.channels.list().channels).toHaveLength(2),
   );
+  // The production naming policy, so namesakes are told apart.
+  const session = {
+    ...owner.session,
+    names: bindNames(owner.session, {
+      snapshot: () => [createAgentDirectory()],
+      subscribe: () => () => {},
+    }),
+  };
   const link = `buzz://channel/${source}`;
   const key = `draft:${destination}${thread ? `:thread:${root}` : ""}`;
   writeView(owner.session.scope, key, `${link}\n\nPlease look at this`);
   const view = render(
     <MessageComposer
-      session={owner.session}
-      scope={owner.session.scope}
+      session={session}
+      scope={session.scope}
       channelId={destination}
       channelName="Team"
       {...(thread ? { threadRootId: root } : {})}
@@ -127,7 +137,7 @@ async function fixture(
   );
   return {
     view,
-    session: owner.session,
+    session,
     published,
     publish,
     members,
@@ -317,7 +327,7 @@ it("asks before sending a chat link into a DM, then shares with its other person
 });
 
 it("names who in a DM gets access once their profile is known", async () => {
-  const f = await fixture(false, { destinationType: "dm", named: true });
+  const f = await fixture(false, { destinationType: "dm", named: "Kenny" });
   await f.session.profiles.ensure([f.person.pubkey]);
   await userEvent.click(screen.getByRole("button", { name: "Send message" }));
   const dialog = await screen.findByRole("dialog", {
@@ -326,6 +336,24 @@ it("names who in a DM gets access once their profile is known", async () => {
   expect(dialog).toHaveTextContent(
     "Share gives Kenny access to the full chat history",
   );
+});
+
+it("tells same-named DM members apart when only one gets access", async () => {
+  const f = await fixture(false, {
+    destinationType: "dm",
+    shared: true,
+    named: "Sam",
+  });
+  f.addLate();
+  await f.session.profiles.ensure([f.person.pubkey, f.late.pubkey]);
+  await userEvent.click(screen.getByRole("button", { name: "Send message" }));
+  const dialog = await screen.findByRole("dialog", {
+    name: "Share access to this chat?",
+  });
+  const roster = f.members.get(destination);
+  const late = f.session.names.resolve(f.late.pubkey, undefined, roster);
+  expect(late).toMatch(/^Sam.+/);
+  expect(dialog).toHaveTextContent(`Share gives ${late} access`);
 });
 
 it("sends a chat link into a DM without asking when everyone has access", async () => {

@@ -7720,3 +7720,46 @@ it("refuses change drafts it cannot apply", async () => {
   ).rejects.toThrow("use its pubkey");
   expect(service.updateRequests()).toEqual([]);
 });
+
+it.each([true, false])(
+  "retains an event until destination membership is confirmed (member: %s)",
+  async (member) => {
+    const { service, run, emit, confirm, session } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    const destination = "11111111-1111-1111-1111-111111111111";
+    const list = session.channels.list();
+    let cached = true;
+    let members = [viewer, bot];
+    vi.spyOn(session.channels, "list").mockImplementation(() => ({
+      ...list,
+      channels: [
+        ...list.channels,
+        {
+          id: destination,
+          name: "Destination",
+          members,
+          ...(cached ? { cached: true as const } : {}),
+        },
+      ],
+    }));
+    const watch = service.find(bot)?.attention["watch/channel"]?.value;
+    if (watch?.type !== "event") throw new Error("fixture");
+    await service.save(bot, {
+      attentionEnabled: true,
+      attention: { "watch/channel": { ...watch, channel: destination } },
+    });
+    emit({ channelId: channel, events: [deploy("destination-roster")] });
+    await settle();
+    expect(run).not.toHaveBeenCalled();
+    cached = false;
+    members = member ? [viewer, bot] : [viewer];
+    confirm("saved", [viewer, bot]);
+    if (member) await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    else await settle();
+    expect(run).toHaveBeenCalledTimes(member ? 1 : 0);
+    members = [viewer, bot];
+    confirm("saved", [viewer, bot]);
+    await settle();
+    expect(run).toHaveBeenCalledTimes(member ? 1 : 0);
+  },
+);

@@ -1709,13 +1709,16 @@ export class AgentRunners {
     if (!matches.length) return [];
     const member = this.host.member(agent, event);
     if (member === undefined) return "held";
-    return member
-      ? matches.map((match) => ({
-          type: "watch",
-          event,
-          ...match,
-        }))
-      : [];
+    if (!member) return [];
+    const destinations = matches.map(({ watch }) =>
+      watch.channel
+        ? this.host.member(agent, { tags: [["h", watch.channel]] })
+        : true,
+    );
+    if (destinations.includes(undefined)) return "held";
+    return matches.flatMap((match, index) =>
+      destinations[index] ? [{ type: "watch" as const, event, ...match }] : [],
+    );
   }
   /** The job as it should run now, or undefined when it should not run: a
    * watch's event is matched again against the agent's current attention, so

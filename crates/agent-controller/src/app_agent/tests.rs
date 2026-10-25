@@ -920,12 +920,12 @@ fn refuses_an_unknown_list_version() {
 }
 
 #[test]
-fn a_join_another_app_starts_meanwhile_waits_for_it_and_is_refused() {
+fn a_join_holds_off_other_apps_until_it_settles() {
     const OTHER: &str = "wss://other.example";
-    use std::sync::mpsc::{channel, Receiver, Sender};
-    /// Holds this app's Join while it saves the key, until let go.
-    struct Gated<'a>(&'a Memory, Sender<()>, Mutex<Receiver<()>>);
-    impl Credentials for Gated<'_> {
+    /// Checks, as this app's Join saves the key, that another app can't take
+    /// the keys lock, which its Join or removal of a key waits on.
+    struct Contended<'a>(&'a Memory, &'a std::path::Path);
+    impl Credentials for Contended<'_> {
         fn read_legacy(&self, source: crate::LegacySource, pubkey: &str) -> Result<Secret> {
             self.0.read_legacy(source, pubkey)
         }
@@ -933,8 +933,16 @@ fn a_join_another_app_starts_meanwhile_waits_for_it_and_is_refused() {
             self.0.read(id, pubkey)
         }
         fn add(&self, id: &str, key: &Secret) -> Result<()> {
-            self.1.send(()).unwrap();
-            self.2.lock().unwrap().recv().unwrap();
+            let lock = std::fs::File::options()
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .open(self.1)
+                .unwrap();
+            assert!(matches!(
+                lock.try_lock(),
+                Err(std::fs::TryLockError::WouldBlock)
+            ));
             self.0.add(id, key)
         }
         fn delete(&self, id: &str, pubkey: &str) -> Result<()> {
@@ -944,23 +952,20 @@ fn a_join_another_app_starts_meanwhile_waits_for_it_and_is_refused() {
     let dir = tempfile::tempdir().unwrap();
     let credentials = Memory::default();
     let (agents, agent) = created(dir.path(), &credentials);
-    let (adding, added) = channel();
-    let (go, gate) = channel();
-    let gated = Gated(&credentials, adding, Mutex::new(gate));
-    // The other app, with its own handle on the same list.
+    let lock = dir.path().join("agents/identities.keys.lock");
+    let joined = agents
+        .join(
+            &agent.pubkey,
+            RELAY,
+            OTHER,
+            None,
+            &Contended(&credentials, &lock),
+        )
+        .unwrap();
+    // The other app's Join, once it has the lock, finds it added.
     let other = AppAgents::open(dir.path().join("agents/identities.json"));
-    let (first, second) = std::thread::scope(|scope| {
-        let first = scope.spawn(|| agents.join(&agent.pubkey, RELAY, OTHER, None, &gated));
-        added.recv().unwrap();
-        let second = scope.spawn(|| other.join(&agent.pubkey, RELAY, OTHER, None, &credentials));
-        std::thread::sleep(std::time::Duration::from_millis(200));
-        let waited = !second.is_finished();
-        go.send(()).unwrap();
-        assert!(waited);
-        (first.join().unwrap(), second.join().unwrap())
-    });
-    let joined = first.unwrap();
-    assert!(second.unwrap_err().contains("already in that community"));
+    let refused = other.join(&agent.pubkey, RELAY, OTHER, None, &credentials);
+    assert!(refused.unwrap_err().contains("already in that community"));
     assert_eq!(agents.list().unwrap(), [agent.clone(), joined.clone()]);
     assert!(joined.read_key(&credentials).is_ok());
 }

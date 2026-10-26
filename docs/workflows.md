@@ -11,15 +11,15 @@ See the [capability contract](../src/features/workflows/types.ts).
 - Channel-scoped saved configurations; new drafts start disabled.
 - The landing groups compact workflow rows under prominent channel headings,
   sorted by channel name and filtered in place by channel. The filter lists only
-  channels with loaded workflows and supports multiple selections. Clear all
-  resets the selection without reopening the menu; an empty
-  selection shows all channels. Selection is not persisted across sessions.
+  channels with loaded workflows and supports multiple selections. An empty
+  channel selection shows all channels. Selection is not persisted across sessions.
   My workflows matches the current viewer's saved workflow ownership. Enabled only
   matches the saved enabled setting (omitted means enabled), not confirmed runtime
   activity; unreadable configurations are excluded from this filter. These filters
-  combine with channel selection. All channels is checked only for the unfiltered
-  view; selecting it or Clear all resets every filter. The popup
-  places these choices above a smaller, scrollable two-column channel list.
+  combine with channel selection. The Filters popover summarizes active filters;
+  pressed-state buttons control ownership/enabled attributes, and visible checkboxes
+  select channels in a smaller, scrollable two-column list. Clear all at the top
+  resets every filter.
   Discovery still reads all eligible channels.
   Creating a workflow can still target any eligible channel. Each row runs the
   saved configuration in one click and toggles its configured state. Selecting

@@ -1129,22 +1129,22 @@ it("combines ownership, saved enabled state and channels, and clears every filte
   render(<Harness />);
   const user = userEvent.setup();
   const open = async () => {
-    screen.getByRole("button", { name: "Channels" }).focus();
-    await user.keyboard("{ArrowDown}");
-    await screen.findByRole("menu");
+    screen.getByRole("button", { name: "Filters" }).focus();
+    await user.keyboard("{Enter}");
+    await screen.findByRole("dialog", { name: "Workflow filters" });
   };
   const close = async () => {
     await user.keyboard("{Escape}");
-    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "Workflow filters" }),
+      ).toBeNull(),
+    );
   };
   await screen.findByRole("button", { name: /^Open Mine disabled:/ });
   await open();
-  await user.click(
-    screen.getByRole("menuitemcheckbox", { name: "My workflows" }),
-  );
-  expect(
-    screen.getByRole("menuitemcheckbox", { name: "All channels" }),
-  ).not.toBeChecked();
+  await user.click(screen.getByRole("button", { name: "My workflows" }));
+  expect(screen.getByRole("button", { name: "Clear all" })).toBeEnabled();
   await close();
   expect(
     screen.queryByRole("button", { name: /^Open Other enabled:/ }),
@@ -1153,12 +1153,8 @@ it("combines ownership, saved enabled state and channels, and clears every filte
     screen.getByRole("button", { name: /^Open Mine disabled:/ }),
   ).toBeVisible();
   await open();
-  await user.click(
-    screen.getByRole("menuitemcheckbox", { name: "Enabled only" }),
-  );
-  expect(
-    screen.getByRole("menuitemcheckbox", { name: "All channels" }),
-  ).not.toBeChecked();
+  await user.click(screen.getByRole("button", { name: "Enabled only" }));
+  expect(screen.getByRole("button", { name: "Clear all" })).toBeEnabled();
   await close();
   expect(
     screen.queryByRole("button", { name: /^Open Mine disabled:/ }),
@@ -1167,13 +1163,11 @@ it("combines ownership, saved enabled state and channels, and clears every filte
     screen.getByRole("button", { name: /^Open Mine enabled:/ }),
   ).toBeVisible();
   await open();
-  await user.click(screen.getByRole("menuitemcheckbox", { name: "General" }));
+  await user.click(screen.getByRole("checkbox", { name: "General" }));
   await close();
   expect(screen.getByText("No matching workflows")).toBeVisible();
   await open();
-  await user.click(
-    screen.getByRole("menuitemcheckbox", { name: "My workflows" }),
-  );
+  await user.click(screen.getByRole("button", { name: "My workflows" }));
   await close();
   await waitFor(() =>
     expect(
@@ -1183,44 +1177,38 @@ it("combines ownership, saved enabled state and channels, and clears every filte
   expect(
     screen.queryByRole("button", { name: /^Open Mine enabled:/ }),
   ).toBeNull();
+  await open();
   await user.click(screen.getByRole("button", { name: "Clear all" }));
+  await close();
   await waitFor(() =>
     expect(
       screen.getAllByRole("button", { name: /^Open (Mine|Other)/ }),
     ).toHaveLength(3),
   );
   await open();
-  expect(
-    screen.getByRole("menuitemcheckbox", { name: "My workflows" }),
-  ).not.toBeChecked();
-  expect(
-    screen.getByRole("menuitemcheckbox", { name: "Enabled only" }),
-  ).not.toBeChecked();
-  expect(
-    screen.getByRole("menuitemcheckbox", { name: "All channels" }),
-  ).toBeChecked();
-  await user.click(
-    screen.getByRole("menuitemcheckbox", { name: "My workflows" }),
+  expect(screen.getByRole("button", { name: "My workflows" })).toHaveAttribute(
+    "aria-pressed",
+    "false",
   );
-  await user.click(
-    screen.getByRole("menuitemcheckbox", { name: "Enabled only" }),
+  expect(screen.getByRole("button", { name: "Enabled only" })).toHaveAttribute(
+    "aria-pressed",
+    "false",
   );
-  await user.click(screen.getByRole("menuitemcheckbox", { name: "General" }));
-  await user.click(
-    screen.getByRole("menuitemcheckbox", { name: "All channels" }),
+  expect(screen.getByRole("button", { name: "Clear all" })).toBeDisabled();
+  await user.click(screen.getByRole("button", { name: "My workflows" }));
+  await user.click(screen.getByRole("button", { name: "Enabled only" }));
+  await user.click(screen.getByRole("checkbox", { name: "General" }));
+  await user.click(screen.getByRole("button", { name: "Clear all" }));
+  expect(screen.getByRole("button", { name: "Clear all" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "My workflows" })).toHaveAttribute(
+    "aria-pressed",
+    "false",
   );
-  expect(
-    screen.getByRole("menuitemcheckbox", { name: "All channels" }),
-  ).toBeChecked();
-  expect(
-    screen.getByRole("menuitemcheckbox", { name: "My workflows" }),
-  ).not.toBeChecked();
-  expect(
-    screen.getByRole("menuitemcheckbox", { name: "Enabled only" }),
-  ).not.toBeChecked();
-  expect(
-    screen.getByRole("menuitemcheckbox", { name: "General" }),
-  ).not.toBeChecked();
+  expect(screen.getByRole("button", { name: "Enabled only" })).toHaveAttribute(
+    "aria-pressed",
+    "false",
+  );
+  expect(screen.getByRole("checkbox", { name: "General" })).not.toBeChecked();
   await close();
   await waitFor(() =>
     expect(

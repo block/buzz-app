@@ -26,6 +26,7 @@ import type {
 } from "../../features/workflows/types";
 import {
   CaretDownIcon,
+  HashIcon,
   ArrowRightIcon,
   DotsThreeIcon,
   CalendarIcon,
@@ -49,11 +50,15 @@ import {
   MenuPopup,
   MenuItem,
   MenuIcon,
-  MenuCheckboxItem,
-  MenuGroup,
-  MenuSeparator,
 } from "../../shared/design-system/ui/Menu";
-import { Header } from "../../shared/design-system/ui/Header";
+import { Checkbox } from "../../shared/design-system/ui/Checkbox";
+import {
+  PopoverRoot,
+  PopoverTrigger,
+  PopoverPopup,
+  PopoverTitle,
+} from "../../shared/design-system/ui/Popover";
+import { Header, InlineHeader } from "../../shared/design-system/ui/Header";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { Switch } from "../../shared/design-system/ui/Switch";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
@@ -978,7 +983,6 @@ export function WorkflowLanding({
   );
   const [mineOnly, setMineOnly] = useState(false);
   const [enabledOnly, setEnabledOnly] = useState(false);
-  const filterTrigger = useRef<HTMLButtonElement>(null);
   const [retryRequest, setRetryRequest] = useState(0);
   // Feedback outlives the card, which a filter may unmount.
   const [runRequests, setRunRequests] = useState<readonly string[]>([]);
@@ -1103,82 +1107,101 @@ export function WorkflowLanding({
   return (
     <>
       <div className="workflow-page-filter">
-        <MenuRoot>
-          <MenuTrigger
-            ref={filterTrigger}
-            aria-label="Channels"
+        <PopoverRoot>
+          <PopoverTrigger
+            aria-label="Filters"
             render={
               <Button variant="ghost" size="sm">
                 <span className="workflow-filter-label">
-                  {shown.length === 0
-                    ? "All channels"
-                    : shown.length === 1
-                      ? shown[0]?.name
-                      : `${shown.length} channels`}
-                  {mineOnly ? " · Mine" : ""}
-                  {enabledOnly ? " · Enabled" : ""}
+                  Filters
+                  {[
+                    mineOnly ? "Mine" : "",
+                    enabledOnly ? "Enabled" : "",
+                    shown.length
+                      ? `${shown.length} ${shown.length === 1 ? "channel" : "channels"}`
+                      : "",
+                  ]
+                    .filter(Boolean)
+                    .map((label) => ` · ${label}`)
+                    .join("")}
                 </span>
                 <CaretDownIcon size={16} aria-hidden="true" />
               </Button>
             }
           />
-          <MenuPopup size="wide" style={{ width: "28rem" }}>
-            <MenuCheckboxItem
-              checked={!filtered}
-              closeOnClick={false}
-              onCheckedChange={resetFilters}
+          <PopoverPopup
+            size="wide"
+            aria-label="Workflow filters"
+            style={{ width: "28rem" }}
+          >
+            <div className="workflow-filter-heading">
+              <PopoverTitle>Workflow filters</PopoverTitle>
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={!filtered}
+                onClick={resetFilters}
+              >
+                Clear all
+              </Button>
+            </div>
+            <fieldset
+              className="workflow-filter-presets"
+              aria-label="Workflow attributes"
             >
-              All channels
-            </MenuCheckboxItem>
-            <MenuGroup className="workflow-filter-presets">
-              <MenuCheckboxItem
-                checked={mineOnly}
-                onCheckedChange={setMineOnly}
-                closeOnClick={false}
+              <Button
+                size="sm"
+                variant={mineOnly ? "prominent" : "subtle"}
+                aria-pressed={mineOnly}
+                onClick={() => setMineOnly(!mineOnly)}
               >
                 My workflows
-              </MenuCheckboxItem>
-              <MenuCheckboxItem
-                checked={enabledOnly}
-                onCheckedChange={setEnabledOnly}
-                closeOnClick={false}
+              </Button>
+              <Button
+                size="sm"
+                variant={enabledOnly ? "prominent" : "subtle"}
+                aria-pressed={enabledOnly}
+                onClick={() => setEnabledOnly(!enabledOnly)}
               >
                 Enabled only
-              </MenuCheckboxItem>
-            </MenuGroup>
-            <MenuSeparator />
-            <MenuGroup className="workflow-filter-channels">
-              {populated.map((channel) => (
-                <MenuCheckboxItem
-                  key={channel.id}
-                  checked={filter.includes(channel.id)}
-                  closeOnClick={false}
-                  onCheckedChange={(checked) =>
-                    checked
-                      ? onFilterChange([...filter, channel.id])
-                      : removeFilter(channel.id)
-                  }
-                >
-                  <span className="text-body-sm workflow-filter-label">
-                    {channel.name}
-                  </span>
-                </MenuCheckboxItem>
-              ))}
-            </MenuGroup>
-          </MenuPopup>
-        </MenuRoot>
-        {filtered && (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => {
-              resetFilters();
-              filterTrigger.current?.focus();
-            }}
-          >
-            Clear all
-          </Button>
-        )}
+              </Button>
+            </fieldset>
+            <fieldset
+              className="workflow-filter-channel-section"
+              aria-label="Channels"
+            >
+              <InlineHeader title="Channels" />
+              <div className="workflow-filter-channels">
+                {populated.map((channel) => (
+                  <Checkbox
+                    key={channel.id}
+                    checked={filter.includes(channel.id)}
+                    onCheckedChange={(checked) =>
+                      checked
+                        ? onFilterChange([...filter, channel.id])
+                        : removeFilter(channel.id)
+                    }
+                    label={
+                      <span className="workflow-filter-channel-label text-body-sm">
+                        <HashIcon
+                          className="workflow-filter-channel-icon"
+                          size={14}
+                          aria-hidden="true"
+                        />
+                        <span
+                          className="workflow-filter-label"
+                          title={channel.name}
+                        >
+                          {channel.name}
+                        </span>
+                      </span>
+                    }
+                  />
+                ))}
+              </div>
+            </fieldset>
+          </PopoverPopup>
+        </PopoverRoot>
       </div>
       <WorkflowDeletionNotices
         operations={operations}

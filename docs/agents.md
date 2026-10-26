@@ -608,8 +608,11 @@ whole cleanup. Rows deleted by older builds, whose key is already erased, only h
 the owner's agent record deleted and the row dropped.
 
 An agent in several communities leaves each of them this way, one at a time,
-and its key is erased once none is left. One whose community can't be reached
-stays `deleting` there, and the Delete dialog names it. **Forget** then drops that
+and its key is erased once none is left. Delete marks every row `deleting` with
+one save to each of `identities.json` and `memberships.json` (below), so if the
+app quits between them, some memberships are stopped while others still run
+until Delete is pressed again. One whose community can't be reached stays
+`deleting` there, and the Delete dialog names it. **Forget** then drops that
 membership without reaching its community (`Agents.forget`), so the agent may stay
 in that community's channels.
 

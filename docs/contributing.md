@@ -792,7 +792,8 @@ add setup time; normal warm hooks use the pinned tools already installed.
 that could omit newly added tests. It splits the CI-selected `scan` coverage
 across cached, parallel jobs rather than running the entire recipe several times.
 [Three documented WebKit cases remain local-only](browser-testing.md#ci-coverage-and-local-only-webkit-checks);
-the complete suite still runs with `pnpm test` / `just scan`:
+the complete correctness suite still runs with `pnpm test` / `just scan`.
+The separate perf runner is invoked explicitly as described below:
 
 - **JavaScript:** three runners, each with Biome, one TypeScript check and a frontend
   build. Vitest splits all test files across the runners, with two workers each;
@@ -802,6 +803,11 @@ the complete suite still runs with `pnpm test` / `just scan`:
   tests build Rust and install scaffold dependencies; they are intentionally CI-only
   rather than part of pre-push.
 - **Browser measurements:** Chromium then WebKit, serially on an isolated runner.
+  The job also runs all [perf scenarios](performance.md) once with
+  `bin/pnpm perf --scenario all --repeat 1 --cpu 4`, serially in Chromium.
+  This checks workload completion and measurement/reporting correctness without
+  timing-regression thresholds. Failures block `CI required`; the measurement
+  artifact retains `test-results/perf` alongside the browser evidence.
 - **Browser journeys:** twenty-one runners (nine Chromium and twelve WebKit
   file-level shards), each with two workers. They start alongside measurements on separate
   runners; `CI required` still requires both lanes. A separate required Ubuntu

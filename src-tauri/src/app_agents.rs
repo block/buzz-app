@@ -44,9 +44,7 @@ pub(crate) struct AppAgentHost {
     /// so each is newer than the last; Delete takes it too, so no publication
     /// outlives the key.
     profiles: Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
-    /// Each agent this copy is taking out of a community; see
-    /// `AppAgents::hold_removal`.
-    removals: Arc<Mutex<HashMap<String, Removal>>>,
+    removals: Arc<Mutex<Removals>>,
     hosting: Arc<Hosting>,
 }
 impl AppAgentHost {
@@ -78,14 +76,16 @@ impl AppAgentHost {
     pub(crate) fn agents(&self) -> Result<AppAgents, String> {
         self.agents.clone()
     }
-    fn removals(&self) -> std::sync::MutexGuard<'_, HashMap<String, Removal>> {
+    fn removals(&self) -> std::sync::MutexGuard<'_, Removals> {
         self.removals
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
     /// Lets go of the removals the page held, as a new page starts none.
     pub(crate) fn page_load(&self) {
-        self.removals().clear();
+        let mut removals = self.removals();
+        removals.page += 1;
+        removals.held.clear();
     }
     fn keys(&self) -> std::sync::MutexGuard<'_, HashMap<String, Arc<Secret>>> {
         self.keys
@@ -144,6 +144,7 @@ impl AppAgentHost {
             let agents = host.agents.clone()?;
             let removals = host.removals();
             let removal = removals
+                .held
                 .get(&pubkey)
                 .filter(|removal| removal.is(&pubkey, &relay))
                 .ok_or("Its removal from that community isn't held by this app")?;
@@ -250,6 +251,15 @@ fn open_lock(path: &Path) -> Result<File, String> {
         .truncate(false)
         .open(path)
         .map_err(|_| "Could not open agent hosting lock".to_owned())
+}
+
+/// Each agent the page loaded now is taking out of a community; see
+/// `AppAgents::hold_removal`.
+#[derive(Default)]
+struct Removals {
+    /// Counts page loads, so a hold taken for an earlier page is let go.
+    page: u64,
+    held: HashMap<String, Removal>,
 }
 
 /// Runs blocking file and credential work off the async runtime.
@@ -546,9 +556,15 @@ pub(crate) async fn app_agent_hold_removal(
     relay: String,
 ) -> Result<(), String> {
     let host = state.inner().clone();
+    let page = host.removals().page;
     blocking(move || {
         let removal = host.agents.clone()?.hold_removal(&pubkey, &relay)?;
-        host.removals().insert(pubkey, removal);
+        let mut removals = host.removals();
+        // A page that loaded meanwhile holds none, so it is let go.
+        if removals.page != page {
+            return Err("The app reloaded while it was being removed".into());
+        }
+        removals.held.insert(pubkey, removal);
         Ok(())
     })
     .await
@@ -560,12 +576,12 @@ pub(crate) fn app_agent_release_removal(
     pubkey: String,
     relay: String,
 ) {
-    let mut removals = state.removals();
-    if removals
+    let held = &mut state.removals().held;
+    if held
         .get(&pubkey)
         .is_some_and(|removal| removal.is(&pubkey, &relay))
     {
-        removals.remove(&pubkey);
+        held.remove(&pubkey);
     }
 }
 

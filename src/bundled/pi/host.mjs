@@ -319,8 +319,9 @@ export function serve({
         registry,
         release,
         tools: "",
-        /** The agent's `core` memory as last read, and the note that it has
-         * none: its section and the placeholder's. */
+        /** The agent's `core` memory as its latest turn read it, and the
+         * note that it has none: its section and the placeholder's. None
+         * when that read failed. */
         core: undefined,
         /** Each conversation's tool context, for runs resumed after a restart. */
         contexts: new Map(),
@@ -541,9 +542,10 @@ export function serve({
 
   /** Starts a request in a conversation configured for this turn. One that
    * steers a run working in it, `busy`, changes only what its owner picked,
-   * as in Claude. The agent's `core` memory read for it is the latest. */
+   * as in Claude. The agent's `core` memory read for it is the latest; a
+   * failed read shows none to conversations not yet shown it. */
   async function submit(opened, conversation, turn, busy, refresh) {
-    if (turn.core) opened.core = turn.core;
+    opened.core = turn.core;
     const steers = busy && turn.steer;
     const chosen = await choose(turn);
     const change = steers

@@ -8,10 +8,10 @@ Usage: pr-monitor.sh [--repo owner/repo] [--interval seconds] [--employee-org or
 Read-only monitor for GitHub PR state, comments, review comments, reviews, and CI checks.
 Prints one Markdown paragraph per meaningful change, then exits after merged or closed terminal state.
 
-Comments from the authenticated GitHub user and routine bots (policies/author-defaults.sh)
-are suppressed by default. Add more with --ignore-author
-(repeatable; "[bot]" suffix optional), use --no-ignore-bots for routine bots, or use
---include-self-comments for your own activity. Comment and review events are filtered.
+Comments from the authenticated GitHub user and ignoredAuthors are suppressed.
+Add ignored authors with --ignore-author (repeatable; "[bot]" suffix optional).
+Use --no-ignore-bots to clear the ignored-author list, or --include-self-comments
+for your own activity. Comment and review events are filtered.
 Comment and review authors come from ~/.buzz/preferences/github-pr.json.
 Configure trustedOrganizations, trustedAuthors and ignoredAuthors as GitHub logins.
 Without a valid policy, CI and PR-state monitoring continue and comments are withheld.

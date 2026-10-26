@@ -63,6 +63,8 @@ function SessionResolve({
   const [selected, setSelected] = useState("");
   const [busy, setBusy] = useState(false);
   const [sent, setSent] = useState(false);
+  const resolveButton = useRef<HTMLButtonElement>(null);
+  const retryButton = useRef<HTMLButtonElement>(null);
   const running = useRef(false);
   const alive = useRef(true);
   const notify = useToastNotification();
@@ -77,6 +79,15 @@ function SessionResolve({
     : choices.complete && agents.length === 1
       ? agents[0]?.pubkey
       : undefined;
+  useEffect(() => {
+    if (
+      !busy &&
+      choices.error &&
+      !recipient &&
+      document.activeElement === resolveButton.current
+    )
+      retryButton.current?.focus();
+  }, [busy, choices.error, recipient]);
   const applicable =
     action === "conflicts"
       ? pull.merge === "DIRTY"
@@ -138,6 +149,7 @@ function SessionResolve({
         <span role="alert">
           {choices.error}{" "}
           <Button
+            ref={retryButton}
             size="sm"
             loading={choices.pending}
             onClick={() =>
@@ -178,7 +190,9 @@ function SessionResolve({
         />
       )}
       <Button
+        ref={resolveButton}
         size="sm"
+        focusableWhenDisabled={busy || !!choices.error}
         loading={busy}
         disabled={!recipient || sent}
         title={
@@ -186,7 +200,7 @@ function SessionResolve({
             ? choices.pending
               ? "Loading chat agents…"
               : "Choose an available agent in this chat"
-            : undefined
+            : "Send a resolution request to the selected chat agent"
         }
         onClick={() => void send()}
       >

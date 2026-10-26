@@ -334,3 +334,38 @@ it("keeps keyboard focus through a rejected preparation and retry", async () => 
   await userEvent.keyboard("{Enter}");
   await waitFor(() => expect(h.send).toHaveBeenCalledOnce());
 });
+
+it.each([false, true])(
+  "keeps Resolve mounted during inventory loading and respects moved focus (%s)",
+  async (moveFocus) => {
+    const h = harness({ type: "stream" });
+    let finish!: () => void;
+    h.refreshAgents.mockImplementationOnce(async () => {
+      h.updateChoices({ complete: false, pending: true, selectable: [] });
+      await new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      h.updateChoices({ pending: false, error: "Inventory unavailable" });
+    });
+    const button = screen.getByRole("button", { name: "Resolve failures" });
+    button.focus();
+    try {
+      await userEvent.keyboard("{Enter}");
+      await waitFor(() => expect(h.refreshAgents).toHaveBeenCalledOnce());
+      expect(screen.getByRole("button", { name: "Resolve failures" })).toBe(
+        button,
+      );
+      expect(button).toHaveFocus();
+      expect(button).toHaveAttribute("aria-disabled", "true");
+      if (moveFocus) button.blur();
+    } finally {
+      await act(async () => {
+        finish();
+      });
+    }
+    const retry = screen.getByRole("button", { name: "Retry agents" });
+    if (moveFocus) expect(retry).not.toHaveFocus();
+    else expect(retry).toHaveFocus();
+    expect(h.send).not.toHaveBeenCalled();
+  },
+);

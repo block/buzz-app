@@ -913,10 +913,11 @@ export class PiRuntime {
         entry.standalone.has(request)
       )
         continue;
-      // A plugin's wake ends with the app, as in other harnesses, unless
-      // ending it would end a continued run in its conversation too. Then it
-      // goes on, answered where that run's answer goes: a plugin's wake saves
-      // no destination of its own.
+      // A plugin's wake ends with the app, as in other harnesses, unless its
+      // conversation has a continued request, which ending it would end or
+      // leave queued untaken. Then it goes on, and nothing waits for it, as a
+      // plugin's wake saves no destination of its own: a request that joined
+      // its run answers for both, and a run of its own posts only its sends.
       if (request.startsWith(WAKE)) {
         if (!continued.has(conversation)) {
           dropped.push({ submission, conversation });
@@ -993,22 +994,26 @@ export class PiRuntime {
     // Only once every run's sends are counted: a wait continues all of them,
     // and one could send while a later run's thread is still looked up.
     // Ending the others continues none; until they are ended, nothing waits.
-    try {
-      if (dropped.length)
+    if (dropped.length)
+      try {
         await this.pi.request("drop", { agent: pubkey, submissions: dropped });
-      // A wake's run is in its thread's conversation, where the next turn
-      // would join it while it is only marked, and end untaken with it.
-      // Aborting the conversation waits for the run to end. As that continues
-      // every left run, it comes once all of them are marked.
+      } catch (error) {
+        for (const [request, receipt] of entry.receipts)
+          if (taken.includes(receipt)) this.forget(entry, request);
+        throw error;
+      }
+    // A wake's run is in its thread's conversation, where the next turn would
+    // join it while it is only marked, and end untaken with it. Aborting the
+    // conversation waits for the run to end. As that continues every left
+    // run, it comes once all of them are marked, and their waits start even
+    // when an abort fails: what they answer meanwhile is still posted.
+    try {
       for (const conversation of aborted)
         await this.pi.request("abort", { agent: pubkey, conversation });
-    } catch (error) {
-      for (const [request, receipt] of entry.receipts)
-        if (taken.includes(receipt)) this.forget(entry, request);
-      throw error;
+    } finally {
+      for (const wait of waits) void wait();
+      this.notify();
     }
-    for (const wait of waits) void wait();
-    this.notify();
   }
 
   /** The thread a mention is in, or opens; itself when it cannot be read. */

@@ -1449,6 +1449,50 @@ it("ends a plugin wake's run an earlier app left, unless that would end a mentio
   expect(JSON.stringify(session.read.mock.calls)).not.toContain("plugin/");
 });
 
+it("still answers a left mention when aborting a later wake's conversation fails", async () => {
+  const later = reply("8", "@Pi also check the docs");
+  const left = (submission: number, conversation: number, request: string) => ({
+    submission,
+    conversation,
+    request,
+    context: { channel },
+  });
+  const { host, deliver, settled, published, session } = setup({
+    unfinished: () => ({
+      submissions: [
+        left(61, 11, `plugin/${"e".repeat(64)}`),
+        left(64, 13, `plugin/${"d".repeat(64)}`),
+        left(63, 12, later.id),
+      ],
+    }),
+    abort: ({ conversation }) => {
+      if (conversation === 13) throw new Error("database is locked");
+    },
+    wait: ({ submission }) =>
+      submission === 63
+        ? { status: "done", answer: 9, text: "Fixed the docs." }
+        : new Promise(() => {}),
+  });
+  session.read.mockImplementation(async (filters?: { ids?: string[] }[]) =>
+    [later, root].filter((event) =>
+      (filters?.[0]?.ids ?? [root.id]).includes(event.id),
+    ),
+  );
+  const first = deliver({ type: "mention", event: reply("2", "@Pi look") });
+  await first.run.catch(() => undefined);
+  await expect(settled(first)).resolves.toEqual({
+    ok: false,
+    error: "database is locked",
+  });
+  expect(host.requests("deliver")).toEqual([]);
+  // The first abort continued the mention's run, which is still waited for.
+  await vi.waitFor(() =>
+    expect(published.map((event) => event.content)).toContain(
+      "Fixed the docs.",
+    ),
+  );
+});
+
 it("waits for a turn again in a new host when the host stops", async () => {
   let hosts = 0;
   const { host, deliver, settled, published } = setup({

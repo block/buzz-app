@@ -140,9 +140,10 @@ that its text is data. The anchor's id is never published: failure reports and
 typing go to the thread root, or the channel itself in a Solo chat, and a wake
 with no `root` outside a Solo chat is ignored. A wake is not saved for resume
 and shows no activity row or Stop. Pi, which continues the runs an app left,
-ends a wake's run instead, unless a mention's or Attention wake's run left in
-the same conversation would end with it: then it goes on, and answers where
-that run does.
+ends a wake's run instead, unless a mention or Attention wake left in the same
+conversation would end with it or stay queued behind it. Then the wake's run
+goes on: when the other request joined it, their answer is posted, and
+otherwise only what the wake's run sends is.
 
 A plugin leaves context for a later turn with
 `ctx.agents.note(pubkey, channelId, text, root?)`, without waking the agent

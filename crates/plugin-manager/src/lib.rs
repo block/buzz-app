@@ -598,20 +598,30 @@ pub enum InstallationResult {
     },
 }
 /// The desktop app data folder a CLI targets by default: a debug CLI the
-/// development app's, a release CLI the installed app's. A release CLI refuses
-/// while only the pre-1.0 folder exists: creating the new one, or writing the old
-/// one while the app moves it, would leave both and stop that move.
+/// development app's, a release CLI the installed app's. Each refuses while the
+/// app has yet to fill that folder from the installed app's older one: creating
+/// it would stop the development copy, or leave both and stop the release move.
 fn default_home() -> Result<PathBuf> {
     let data =
         dirs::data_dir().ok_or("Cannot determine application data directory; set BUZZODZ_HOME")?;
-    if cfg!(debug_assertions) {
-        return Ok(data.join("xyz.block.buzz.desktop.dev"));
+    let (home, older, open): (_, &[_], _) = if cfg!(debug_assertions) {
+        (
+            "xyz.block.buzz.desktop.dev",
+            &["xyz.block.buzz.desktop", "dev.local.buzz.foundation"],
+            "Development Buzz has not copied the installed app's storage yet. Run `just desktop` once",
+        )
+    } else {
+        (
+            "xyz.block.buzz.desktop",
+            &["dev.local.buzz.foundation"],
+            "Buzz has not moved its storage to its 1.0 folder yet. Open Buzz once",
+        )
+    };
+    let home = data.join(home);
+    if !home.exists() && older.iter().any(|old| data.join(old).exists()) {
+        return Err(format!("{open}, then try again, or pass --home."));
     }
-    let current = data.join("xyz.block.buzz.desktop");
-    if !current.exists() && data.join("dev.local.buzz.foundation").exists() {
-        return Err("Buzz has not moved its storage to its 1.0 folder yet. Open Buzz once, then try again, or pass --home.".into());
-    }
-    Ok(current)
+    Ok(home)
 }
 #[derive(Clone)]
 pub struct Manager {

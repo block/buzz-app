@@ -1651,6 +1651,7 @@ fn installed(root: &Path, source: &str) -> Vec<PathBuf> {
         fs::create_dir_all(base.join(source).join("nested")).unwrap();
         fs::write(base.join(source).join("nested").join(file), source).unwrap();
     }
+    fs::create_dir_all(seeds[1].join(source).join("archive")).unwrap();
     seeds
 }
 
@@ -1676,6 +1677,9 @@ fn a_first_development_launch_copies_the_installed_storage_once() {
         }
         assert!(!base.join(format!("{DEV}.seeding")).exists());
     }
+    // Development builds never read the release archive.
+    assert!(seeds[1].join(CURRENT).join("archive").exists());
+    assert!(!seeds[1].join(DEV).join("archive").exists());
     let archive = seeds[1].join(DEV).join("nested/archive.sqlite3");
     fs::write(&archive, "updated").unwrap();
     fs::remove_dir_all(seeds[0].join(DEV)).unwrap();
@@ -1722,7 +1726,72 @@ fn development_launches_copy_the_installed_storage_and_take_only_their_sign_out(
     for base in &dev.seeds {
         assert!(release.contains(&(base.join(LEGACY), base.join(CURRENT))));
     }
-    assert!(!dev.seeds.contains(&dirs::cache_dir().unwrap()));
+    // Windows keeps caches in local data, which holds WebView2's storage.
+    let cache = dirs::cache_dir().unwrap();
+    assert!(cache == dirs::data_local_dir().unwrap() || !dev.seeds.contains(&cache));
     assert_eq!(seeds(CURRENT), Some(Vec::new()));
     assert_eq!(seeds(LEGACY), Some(Vec::new()));
+}
+
+#[test]
+fn a_split_release_move_seeds_each_folder_from_where_it_is() {
+    use legacy_identifier::{CURRENT, DEV, LEGACY};
+    let (dir, paths) = fixture();
+    // The release move renamed app data, then stopped before WebKit.
+    let seeds = installed(dir.path(), LEGACY);
+    fs::rename(seeds[1].join(LEGACY), seeds[1].join(CURRENT)).unwrap();
+    let paths = Paths {
+        seeds: seeds.clone(),
+        ..paths
+    };
+    let _instance = boot(&paths, no_agents, || panic!("no sign-out")).unwrap();
+    assert!(seeds[0].join(DEV).join("nested/localstorage").exists());
+    assert!(seeds[1].join(DEV).join("nested/archive.sqlite3").exists());
+}
+
+#[test]
+fn a_development_seed_waits_for_the_installed_app_to_finish_signing_out() {
+    use legacy_identifier::{DEV, LEGACY};
+    let (dir, paths) = fixture();
+    let seeds = installed(dir.path(), LEGACY);
+    let marker = seeds[1].join(marker_name(
+        LEGACY,
+        buzz_credential_store::human_service(false),
+    ));
+    fs::write(&marker, "").unwrap();
+    let paths = Paths {
+        seeds: seeds.clone(),
+        ..paths
+    };
+    let error = boot(&paths, no_agents, || panic!("no sign-out"))
+        .err()
+        .unwrap();
+    assert!(error.contains("finish signing out"), "{error}");
+    assert!(!seeds[0].join(DEV).exists() && !seeds[1].join(DEV).exists());
+    fs::remove_file(&marker).unwrap();
+    let _instance = boot(&paths, no_agents, || panic!("no sign-out")).unwrap();
+    assert!(seeds[1].join(DEV).join("nested/archive.sqlite3").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_development_seed_never_links_into_the_installed_storage() {
+    use legacy_identifier::{DEV, LEGACY};
+    use std::os::unix::fs::symlink;
+    let (dir, paths) = fixture();
+    let seeds = installed(dir.path(), LEGACY);
+    // The installed app data lives elsewhere, and links to a folder inside it.
+    let moved = dir.path().join("moved");
+    fs::rename(seeds[1].join(LEGACY), &moved).unwrap();
+    symlink(&moved, seeds[1].join(LEGACY)).unwrap();
+    symlink(moved.join("nested"), moved.join("link")).unwrap();
+    let paths = Paths {
+        seeds: seeds.clone(),
+        ..paths
+    };
+    let _instance = boot(&paths, no_agents, || panic!("no sign-out")).unwrap();
+    let copy = seeds[1].join(DEV);
+    assert!(fs::symlink_metadata(&copy).unwrap().is_dir());
+    assert!(copy.join("nested/archive.sqlite3").exists());
+    assert!(fs::symlink_metadata(copy.join("link")).is_err());
 }

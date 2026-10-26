@@ -129,7 +129,8 @@ application-data folder (`xyz.block.buzz.desktop/profiles` for the installed app
 (`just cli`, `pnpm buzzodz`) defaults to the development folder and a release CLI
 to the installed app's. A release CLI refuses while only the pre-1.0
 `dev.local.buzz.foundation` folder exists; open Buzz once to move it, or pass
-`--home`.
+`--home`. A debug CLI likewise refuses before the first `just desktop` has copied
+the installed app's storage into the development folder.
 
 ```sh
 BUZZODZ_PROFILE=experiment just desktop

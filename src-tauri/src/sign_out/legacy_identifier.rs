@@ -17,6 +17,7 @@ const BUSY: &str = "Quit every other Buzz window, then open Buzz again to finish
 const AGENT_STOPPING: &str =
     "An agent is still stopping. Open Buzz again in a moment to finish moving its storage.";
 const FAILED: &str = "Buzz couldn't finish moving its storage. Open Buzz again to retry.";
+const SIGN_OUT_PENDING: &str = "Open the installed Buzz to finish signing out, then open this build again. Nothing was copied.";
 
 /// Each path the legacy identifier names, with its new name. The release
 /// identifier takes them all; development (`.dev`) only its own pending sign-out,
@@ -59,8 +60,8 @@ pub(super) fn moves(identifier: &str) -> Option<Vec<(PathBuf, PathBuf)>> {
 
 /// Where a first development launch copies the installed app's folders: config,
 /// local data (the Windows and Linux WebView), macOS WebKit storage, and app data
-/// last, since its copy marks the seed finished. Caches are left. None unless
-/// this is the development identifier.
+/// last, since its copy marks the seed finished. Separate caches are left. None
+/// unless this is the development identifier.
 pub(super) fn seeds(identifier: &str) -> Option<Vec<PathBuf>> {
     if identifier != DEV {
         return Some(Vec::new());
@@ -92,7 +93,7 @@ pub(super) fn migrate(
     let mut done = false;
     let ready = wait_for(|| {
         done =
-            matches!(due(moves), Ok(due) if due.is_empty()) && matches!(seeding(seeds), Ok(None));
+            matches!(due(moves), Ok(due) if due.is_empty()) && matches!(seeding(seeds), Ok(false));
         if done {
             Ok(())
         } else {
@@ -107,7 +108,7 @@ pub(super) fn migrate(
     }
     let moved = (|| {
         // Look again under the lock, so a conflict is reported before any wait.
-        if due(moves)?.is_empty() && seeding(seeds)?.is_none() {
+        if due(moves)?.is_empty() && !seeding(seeds)? {
             return Ok(());
         }
         // An agent still stopping may write its folders; look once more after.
@@ -117,8 +118,8 @@ pub(super) fn migrate(
         for (old, new) in due(moves)? {
             fs::rename(old, new).map_err(failed)?;
         }
-        if let Some(source) = seeding(seeds)? {
-            seed(seeds, source).map_err(failed)?;
+        if seeding(seeds)? {
+            seed(seeds).map_err(failed)?;
         }
         Ok(())
     })();
@@ -154,29 +155,42 @@ fn due(moves: &[(PathBuf, PathBuf)]) -> Result<Vec<&(PathBuf, PathBuf)>, String>
     Ok(due)
 }
 
-/// The installed app's identifier to copy from while this development launch
-/// has no app data of its own: its 1.0 folders once it has moved them.
-fn seeding(bases: &[PathBuf]) -> Result<Option<&'static str>, String> {
+/// Whether this development launch lacks app data the installed app has. It
+/// refuses while the installed app has a sign-out to finish, so storage the user
+/// asked to erase is never copied.
+fn seeding(bases: &[PathBuf]) -> Result<bool, String> {
     let Some(data) = bases.last() else {
-        return Ok(None);
+        return Ok(false);
     };
     if present(&data.join(DEV)).map_err(failed)? {
-        return Ok(None);
+        return Ok(false);
     }
+    let release = buzz_credential_store::human_service(false);
+    let mut due = false;
     for source in [CURRENT, LEGACY] {
-        if present(&data.join(source)).map_err(failed)? {
-            return Ok(Some(source));
+        if present(&data.join(marker_name(source, release))).map_err(failed)? {
+            return Err(SIGN_OUT_PENDING.into());
         }
+        due |= data.join(source).exists();
     }
-    Ok(None)
+    Ok(due)
 }
 
 /// Copy each folder this launch lacks through a sibling renamed into place, so
 /// an interrupted seed leaves only what the next launch discards and redoes.
-fn seed(bases: &[PathBuf], source: &str) -> std::io::Result<()> {
+/// Each comes from wherever the installed app keeps it, since a release move
+/// cut short leaves some under each name.
+fn seed(bases: &[PathBuf]) -> std::io::Result<()> {
     for base in bases {
-        let (from, to) = (base.join(source), base.join(DEV));
-        if !present(&from)? || present(&to)? {
+        let to = base.join(DEV);
+        let Some(from) = [CURRENT, LEGACY]
+            .map(|source| base.join(source))
+            .into_iter()
+            .find(|from| from.exists())
+        else {
+            continue;
+        };
+        if present(&to)? {
             continue;
         }
         let partial = base.join(format!("{DEV}.seeding"));
@@ -184,27 +198,36 @@ fn seed(bases: &[PathBuf], source: &str) -> std::io::Result<()> {
             Err(error) if error.kind() != ErrorKind::NotFound => return Err(error),
             _ => {}
         }
-        copy(&from, &partial)?;
+        // Development builds keep history in `archive-debug` (`archive/mod.rs`).
+        let skip = (Some(base) == bases.last()).then_some("archive");
+        // A linked folder copies what it links to, so the copy stands apart.
+        copy(&fs::canonicalize(from)?, &partial, skip)?;
         fs::rename(&partial, &to)?;
     }
     Ok(())
 }
 
-/// Copies a tree, recreating links rather than following them (on Unix; other
-/// platforms skip them, as they skip every other special file).
-fn copy(from: &Path, to: &Path) -> std::io::Result<()> {
-    let kind = fs::symlink_metadata(from)?.file_type();
-    if kind.is_dir() {
+/// Copies a tree with its folder permissions, leaving out `skip` at its top and
+/// any link or special file inside, so the copy shares nothing with the source.
+fn copy(from: &Path, to: &Path, skip: Option<&str>) -> std::io::Result<()> {
+    let metadata = fs::symlink_metadata(from)?;
+    if metadata.is_dir() {
         fs::create_dir(to)?;
         for entry in fs::read_dir(from)? {
             let entry = entry?;
-            copy(&entry.path(), &to.join(entry.file_name()))?;
+            if skip.is_some_and(|skip| entry.file_name() == skip) {
+                continue;
+            }
+            copy(&entry.path(), &to.join(entry.file_name()), None)?;
         }
-    } else if kind.is_file() {
+        fs::set_permissions(to, metadata.permissions())?;
+    } else if metadata.is_file() {
         fs::copy(from, to)?;
-    } else if kind.is_symlink() {
-        #[cfg(unix)]
-        std::os::unix::fs::symlink(fs::read_link(from)?, to)?;
+    } else {
+        eprintln!(
+            "buzz: copy development storage: left out {}",
+            from.display()
+        );
     }
     Ok(())
 }

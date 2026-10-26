@@ -163,11 +163,14 @@ is safely the one to keep, and an erase would miss the legacy one. A failure exi
 with a native alert, and the next launch moves what is left. Development launches
 (`just desktop`, `just desktop-bundle`) use `xyz.block.buzz.desktop.dev`, so they
 keep their own app data and plugin storage and never take or block the installed
-app's. The first one copies the installed app's app data, config, local data and
-macOS WebKit storage (`xyz.block.buzz.desktop`, else `dev.local.buzz.foundation`)
-under the same locks, so the installed app must be closed once, and takes a
-pending development sign-out marker; it leaves the installed app's storage in
-place, and an interrupted copy finishes at the next launch. Credential service
+app's. The first one copies the installed app's app data (without the release-only
+`archive`), config, local data and macOS WebKit storage, each from
+`xyz.block.buzz.desktop`, else `dev.local.buzz.foundation`, under the same locks,
+so the installed app must be closed once, and takes a pending development
+sign-out marker. It refuses while the installed app has a sign-out pending, so it
+never copies storage being erased. A linked folder copies what it links to; links
+inside are left out, so the copy shares nothing with the installed app's storage,
+which stays in place. An interrupted copy finishes at the next launch. Credential service
 names don't change; on macOS, Keychain may ask once to allow the renamed app to use each saved item.
 
 A sign-out needs its key lock alone, so every other copy using that key must be

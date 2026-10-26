@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { SearchField } from "../../shared/design-system/ui/SearchField";
 import { Button } from "../../shared/design-system/ui/Button";
 import { fetchKlipyGifs, type KlipyGif } from "../../features/relay/gifs";
@@ -40,6 +40,7 @@ export function GifPicker({
   const [gifs, setGifs] = useState<KlipyGif[]>();
   const [error, setError] = useState<string>();
   const [attempt, retry] = useState(0);
+  const unavailableId = useId();
   const input = useRef<HTMLInputElement>(null);
   useLayoutEffect(() => {
     input.current?.focus();
@@ -73,6 +74,7 @@ export function GifPicker({
         <SearchField
           variant="capsule"
           inputRef={input}
+          aria-describedby={unavailable ? unavailableId : undefined}
           label="Search GIFs"
           placeholder="Search GIFs"
           spellCheck={false}
@@ -94,9 +96,15 @@ export function GifPicker({
             className={styles.gifEmpty}
             role={retryDiscovery ? "alert" : "status"}
           >
-            <p>{unavailable}</p>
+            <p id={unavailableId}>{unavailable}</p>
             {retryDiscovery && (
-              <Button type="button" onClick={retryDiscovery}>
+              <Button
+                type="button"
+                onClick={() => {
+                  input.current?.focus();
+                  retryDiscovery();
+                }}
+              >
                 Retry GIF availability
               </Button>
             )}
@@ -114,7 +122,13 @@ export function GifPicker({
         ) : error ? (
           <div className={styles.gifEmpty} role="alert">
             <p>{error}</p>
-            <Button type="button" onClick={() => retry(attempt + 1)}>
+            <Button
+              type="button"
+              onClick={() => {
+                input.current?.focus();
+                retry(attempt + 1);
+              }}
+            >
               Try again
             </Button>
           </div>

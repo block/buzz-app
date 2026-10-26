@@ -472,6 +472,60 @@ for (const initial of ["invalid response", "unsupported relay"]) {
   });
 }
 
+// Browser coverage is needed for focus when an activated Retry button unmounts.
+test("GIF shortcut retry keeps keyboard focus through repeated discovery failure", async ({
+  page,
+  app,
+}) => {
+  let attempts = 0;
+  let releaseRetry;
+  const retryResponse = new Promise((resolve) => {
+    releaseRetry = resolve;
+  });
+  await page.route("**/api/relay/*/gif-info", async (route) => {
+    attempts += 1;
+    if (attempts <= 2) {
+      if (attempts === 2) await retryResponse;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: "{",
+      });
+    } else await fulfillGifInfo(route);
+  });
+  await page.route("**/api/relay/*/gifs", (route) =>
+    route.fulfill({ json: { result: true, data: { data: [] } } }),
+  );
+  await page.goto(app.origin);
+  await openPage(page, "Messages");
+  await page
+    .getByRole("textbox", { name: "Message #Alpha", exact: true })
+    .focus();
+  await page.keyboard.press("ControlOrMeta+g");
+  const search = page.getByRole("searchbox", { name: "Search GIFs" });
+  const retry = page.getByRole("button", { name: "Retry GIF availability" });
+  await expect(retry).toBeVisible();
+  await expect(search).toHaveAccessibleDescription(
+    "Could not check GIF availability.",
+  );
+  try {
+    await retry.focus();
+    await retry.press("Enter");
+    await expect.poll(() => attempts).toBe(2);
+    await expect(retry).toHaveCount(0);
+    await expect(search).toBeFocused();
+  } finally {
+    releaseRetry();
+  }
+  await expect(retry).toBeVisible();
+  await expect(search).toBeFocused();
+  await retry.focus();
+  await retry.press("Enter");
+  await expect(page.getByText("No GIFs found.", { exact: true })).toBeVisible();
+  await expect(search).toBeFocused();
+  await expect(search).not.toHaveAttribute("aria-describedby");
+});
+
 test.describe("GIF send roundtrip", () => {
   test.use({
     productionBroker: true,

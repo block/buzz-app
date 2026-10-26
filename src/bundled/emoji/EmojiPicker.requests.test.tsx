@@ -1,9 +1,17 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "../../features/relay/session";
 import { relayGifRequests } from "../../features/relay/gifs";
+import { createGifShortcut } from "./gif-shortcut";
 import { EmojiPicker } from "./EmojiPicker";
 
 afterEach(() => {
@@ -55,7 +63,12 @@ it("uses the supplied window owner for GIF discovery, search, retry and selectio
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Search offline",
     );
-    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    const retry = screen.getByRole("button", { name: "Try again" });
+    retry.focus();
+    fireEvent.click(retry);
+    expect(
+      screen.getByRole("searchbox", { name: "Search GIFs" }),
+    ).toHaveFocus();
     fireEvent.click(
       await screen.findByRole("button", { name: "Choose Hello" }),
     );
@@ -178,11 +191,23 @@ it.each([false, "error"])(
       expect(
         screen.getByRole("searchbox", { name: "Search GIFs" }),
       ).toHaveFocus();
+      expect(
+        screen.getByRole("searchbox", { name: "Search GIFs" }),
+      ).toHaveAccessibleDescription(
+        result === false
+          ? "GIFs are not available in this community."
+          : "Could not check GIF availability.",
+      );
       expect(search).not.toHaveBeenCalled();
       if (result === "error") {
-        fireEvent.click(
-          screen.getByRole("button", { name: "Retry GIF availability" }),
-        );
+        const retry = screen.getByRole("button", {
+          name: "Retry GIF availability",
+        });
+        retry.focus();
+        fireEvent.click(retry);
+        expect(
+          screen.getByRole("searchbox", { name: "Search GIFs" }),
+        ).toHaveFocus();
         await vi.waitFor(() => expect(search).toHaveBeenCalledOnce());
       }
     } finally {
@@ -259,6 +284,62 @@ it("honors companion shortcut overrides and cross-window changes", async () => {
     expect(
       await screen.findByRole("searchbox", { name: "Search GIFs" }),
     ).toHaveFocus();
+  } finally {
+    owner.dispose();
+  }
+});
+
+it("keeps the newest composer shortcut target when older discovery completes", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  const owner = createRelaySession(null);
+  const shortcut = createGifShortcut();
+  let settle!: (value: boolean) => void;
+  const olderSupports = vi.fn(
+    () =>
+      new Promise<boolean>((resolve) => {
+        settle = resolve;
+      }),
+  );
+  const newerSupports = vi.fn(async () => true);
+  const search = vi.fn(async () => []);
+  try {
+    render(
+      <>
+        <button type="button">Outside</button>
+        {[
+          { key: "old", supports: olderSupports },
+          { key: "new", supports: newerSupports },
+        ].map(({ key, supports }) => (
+          <form key={key} aria-label={key}>
+            <EmojiPicker
+              session={owner.session}
+              scope={`https://example.test:${"ab".repeat(32)}`}
+              disabled={false}
+              insert={vi.fn()}
+              gifShortcut={shortcut}
+              gifRequests={{ supports, search }}
+            />
+          </form>
+        ))}
+      </>,
+    );
+    fireEvent.pointerEnter(
+      within(screen.getByRole("form", { name: "old" })).getByRole("button", {
+        name: "Emoji and GIFS",
+      }),
+    );
+    expect(olderSupports).toHaveBeenCalledOnce();
+    await act(async () => settle(true));
+    screen.getByRole("button", { name: "Outside" }).focus();
+    act(() => shortcut.run());
+    await screen.findByRole("searchbox", { name: "Search GIFs" });
+    expect(newerSupports).toHaveBeenCalledOnce();
   } finally {
     owner.dispose();
   }

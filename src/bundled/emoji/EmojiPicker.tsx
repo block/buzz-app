@@ -96,6 +96,8 @@ export function EmojiPicker({
       ? gifAvailability.supported
       : undefined
     : false;
+  const currentGifs = useRef(gifs);
+  currentGifs.current = gifs;
   const showGifTab = gifs === true || tab === "gifs";
   const catalog = useSyncExternalStore(
     session.emoji.subscribe,
@@ -154,7 +156,7 @@ export function EmojiPicker({
     if (!form || reaction || disabled || !community || !active) return;
     const open = () => {
       accepted.current = false;
-      if (gifs !== true) setGifAvailability(undefined);
+      if (currentGifs.current !== true) setGifAvailability(undefined);
       setGifDiscoveryRequested(true);
       setTab("gifs");
       setOpen(true);
@@ -187,7 +189,7 @@ export function EmojiPicker({
       form.removeEventListener("keydown", openGifs, true);
       bindings.dispose();
     };
-  }, [community, disabled, reaction, gifs, active, gifShortcut]);
+  }, [community, disabled, reaction, active, gifShortcut]);
   useEffect(() => {
     if (
       !community ||

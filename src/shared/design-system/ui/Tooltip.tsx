@@ -2,6 +2,8 @@ import { Tooltip as BaseTooltip } from "@base-ui/react/tooltip";
 import {
   cloneElement,
   useId,
+  useEffect,
+  useRef,
   useState,
   type AriaAttributes,
   type ReactElement,
@@ -49,6 +51,28 @@ export function Tooltip({
   const id = useId();
   const [trigger, setTrigger] = useState<HTMLElement | null>(null);
   const [localOpen, setLocalOpen] = useState(false);
+  const pressed = useRef(false);
+  // Focus returning to a pressed trigger, such as when its menu closes, is not
+  // a request for the hint. Base UI blocks this only once the hint has opened,
+  // which a resting hover may not have done yet. Tabbing ends the press.
+  useEffect(() => {
+    if (!trigger) return;
+    const win = trigger.ownerDocument.defaultView ?? window;
+    const release = (event: KeyboardEvent) => {
+      if (event.key !== "Tab") return;
+      pressed.current = false;
+      win.removeEventListener("keydown", release, true);
+    };
+    const press = () => {
+      pressed.current = true;
+      win.addEventListener("keydown", release, true);
+    };
+    trigger.addEventListener("pointerdown", press);
+    return () => {
+      trigger.removeEventListener("pointerdown", press);
+      win.removeEventListener("keydown", release, true);
+    };
+  }, [trigger]);
   const open = controlledOpen ?? localOpen;
   const expanded =
     children.props["aria-expanded"] === true ||
@@ -60,7 +84,11 @@ export function Tooltip({
   return (
     <BaseTooltip.Root
       open={open}
-      onOpenChange={(next) => {
+      onOpenChange={(next, details) => {
+        if (next && details.reason === "trigger-focus" && pressed.current) {
+          details.cancel();
+          return;
+        }
         setLocalOpen(next);
         onOpenChange?.(next);
       }}

@@ -1526,6 +1526,32 @@ fn a_launch_waiting_on_a_copy_that_finished_the_move_carries_on() {
     drop(running);
 }
 
+#[test]
+fn a_conflict_seen_without_the_lock_is_confirmed_under_it() {
+    let (dir, paths) = fixture();
+    let before = data(dir.path());
+    let paths = legacy(paths);
+    let running = boot(&paths_for(dir.path(), OTHER_KEY), no_agents, || {
+        panic!("no sign-out")
+    })
+    .unwrap();
+    // The running copy has moved everything; a stray legacy folder stands in for
+    // a scan that read it before that rename and its new name after.
+    for (old, new) in &paths.moves {
+        if old.exists() {
+            fs::rename(old, new).unwrap();
+        }
+    }
+    let stray = paths.moves[1].0.clone();
+    fs::create_dir(&stray).unwrap();
+    HANDOFF.set(Some(Box::new(move || {
+        let _ = fs::remove_dir(&stray);
+    })));
+    let _instance = boot(&paths, no_agents, || panic!("no sign-out")).unwrap();
+    assert_eq!(data(dir.path()), before);
+    drop(running);
+}
+
 #[cfg(unix)]
 #[test]
 fn a_linked_legacy_folder_moves_as_the_link() {

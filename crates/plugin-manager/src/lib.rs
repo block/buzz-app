@@ -597,6 +597,25 @@ pub enum InstallationResult {
         can_reset: bool,
     },
 }
+/// The desktop app data folder a CLI targets by default: a debug CLI the
+/// development app's, a release CLI the installed app's. Until the installed app
+/// moves its pre-1.0 folder, that one: creating the new folder first would leave
+/// both and stop the move.
+fn default_home() -> Option<PathBuf> {
+    let data = dirs::data_dir()?;
+    if cfg!(debug_assertions) {
+        return Some(data.join("xyz.block.buzz.desktop.dev"));
+    }
+    let (legacy, current) = (
+        data.join("dev.local.buzz.foundation"),
+        data.join("xyz.block.buzz.desktop"),
+    );
+    Some(if !current.exists() && legacy.exists() {
+        legacy
+    } else {
+        current
+    })
+}
 #[derive(Clone)]
 pub struct Manager {
     root: PathBuf,
@@ -613,7 +632,7 @@ impl Manager {
         valid_id(profile)?;
         let home = home
             .or_else(|| std::env::var_os("BUZZODZ_HOME").map(PathBuf::from))
-            .or_else(|| dirs::data_dir().map(|p| p.join("xyz.block.buzz.desktop")))
+            .or_else(default_home)
             .ok_or("Cannot determine application data directory; set BUZZODZ_HOME")?;
         if !home.is_absolute() {
             return Err("Plugin home must be an absolute path".into());

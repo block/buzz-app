@@ -31,7 +31,7 @@ const AGENT_STOPPING: &str =
     "Erasing didn't finish because an agent is still stopping; nothing was removed. Open Buzz again to retry.";
 const ALREADY: &str = "Buzz is already signing out.";
 const LINKED: &str = "Erasing is unavailable because a Buzz storage folder is a link or couldn't be checked; nothing was removed";
-const DEV_WIPE: &str = "Erasing is unavailable in development builds because they share agent keys and plugin storage with the installed Buzz";
+const DEV_WIPE: &str = "Erasing is unavailable in development builds because they share agent keys with the installed Buzz";
 pub(crate) mod legacy_identifier;
 // TEMPORARY agents rename: remove after 2026-10-18; see the migration module.
 pub(crate) mod migrate_agents;
@@ -752,8 +752,8 @@ fn refusal(
     } else if remove_agents && !wipe {
         Some("Removing agents is part of erasing this device")
     } else if wipe && debug {
-        // Debug builds have their own human key, but share agent keys and plugin
-        // storage with the installed app, so only plain sign-out is safe.
+        // Debug builds have their own human key, but share agent keys with the
+        // installed app, so only plain sign-out is safe.
         Some(DEV_WIPE)
     } else if wipe && plugin_home {
         Some("Erasing is unavailable while BUZZODZ_HOME moves plugin storage")

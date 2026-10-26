@@ -57,11 +57,9 @@ pub(super) fn migrate(
     all: &File,
     ownership: &Path,
 ) -> Result<(), String> {
-    if due(moves)?.is_empty() {
-        return Ok(());
-    }
     // Every Buzz, older builds included, holds the all-Buzz lock shared while
-    // it runs. One that finished the move meanwhile leaves nothing due.
+    // it runs. Without the lock a scan is only a hint: one that finished the move
+    // leaves nothing due, but a conflict may be a rename seen half done.
     let mut done = false;
     let ready = wait_for(|| {
         done = matches!(due(moves), Ok(due) if due.is_empty());

@@ -130,7 +130,7 @@ it("preserves a failed draft and saves new Interest instructions on retry", asyn
   } as unknown as Context);
   render(
     React.createElement(Form, {
-      running: [{ pubkey: "a", name: "Ada" }] as never,
+      running: [{ key: "membership-a", pubkey: "a", name: "Ada" }] as never,
       channels: [],
       close,
     }),
@@ -154,7 +154,7 @@ it("preserves a failed draft and saves new Interest instructions on retry", asyn
   fireEvent.click(screen.getByRole("button", { name: "Create watch" }));
   await waitFor(() => expect(close).toHaveBeenCalledOnce());
   const [key, patch] = save.mock.calls[1] ?? [];
-  expect(key).toBe("a");
+  expect(key).toBe("membership-a");
   expect(patch.attentionEnabled).toBe(true);
   const values = Object.values(patch.attention);
   expect(values).toHaveLength(2);
@@ -278,6 +278,7 @@ it("autofills a thread channel and saves event selectors with an existing shared
     React.createElement(Form, {
       running: [
         {
+          key: "membership-a",
           pubkey: "a",
           name: "Ada",
           attention: {

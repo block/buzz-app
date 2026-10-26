@@ -21,6 +21,7 @@ let snapshot = {
   status: "ready",
   running: [
     {
+      key: "membership-a",
       pubkey: "a".repeat(64),
       owner: "f".repeat(64),
       relay: "wss://example.com",

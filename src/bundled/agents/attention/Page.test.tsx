@@ -73,6 +73,7 @@ it("hides agents without subscriptions, reacts to changes and surfaces save erro
   let changed = () => {};
   let enabled = true;
   const record = () => ({
+    key: "membership-a",
     pubkey: "a",
     owner: viewer,
     relay: "wss://example.com",
@@ -112,6 +113,7 @@ it("hides agents without subscriptions, reacts to changes and surfaces save erro
       {
         ...record(),
         name: "Bo",
+        key: "membership-b",
         pubkey: "b",
         owner: viewer,
         relay: "wss://example.com",
@@ -174,7 +176,9 @@ it("hides agents without subscriptions, reacts to changes and surfaces save erro
   await waitFor(() =>
     expect(screen.getByRole("alert").textContent).toBe("Save failed"),
   );
-  expect(save).toHaveBeenCalledWith("a", { attentionEnabled: false });
+  expect(save).toHaveBeenCalledWith("membership-a", {
+    attentionEnabled: false,
+  });
   await act(async () => {
     enabled = false;
     snapshot = { ...snapshot, running: [record()] };
@@ -211,6 +215,7 @@ it.each(["source", "event", "timer"] as const)(
             };
     const value = { ...watch, enabled: true, interest_id: "release", channel };
     let agent = {
+      key: "membership-a",
       pubkey: "a",
       owner: viewer,
       relay: "wss://example.com",
@@ -268,7 +273,7 @@ it.each(["source", "event", "timer"] as const)(
             .getAttribute("aria-checked"),
         ).toBe("false"),
       );
-      expect(save).toHaveBeenLastCalledWith("a", {
+      expect(save).toHaveBeenLastCalledWith("membership-a", {
         attention: { "watch/check": { ...value, enabled: false } },
       });
       expect(remove.hasAttribute("disabled")).toBe(true);
@@ -282,7 +287,7 @@ it.each(["source", "event", "timer"] as const)(
         screen.queryByRole("switch", { name: "Watch release" }),
       ).toBeNull(),
     );
-    expect(save).toHaveBeenLastCalledWith("a", {
+    expect(save).toHaveBeenLastCalledWith("membership-a", {
       attention: { "watch/check": null },
     });
     expect(agent.attention["interest/release"]).toBeTruthy();
@@ -293,6 +298,7 @@ it.each(["source", "event", "timer"] as const)(
 
 it("keeps subscription controls disabled while saving and preserves the row on failure", async () => {
   const record = {
+    key: "membership-a",
     pubkey: "a",
     owner: viewer,
     relay: "wss://example.com",
@@ -356,6 +362,7 @@ it("keeps subscription controls disabled while saving and preserves the row on f
 it("resolves agent avatars through relay media, updates pictures and falls back on failure", async () => {
   let changed = () => {};
   let agent = {
+    key: "membership-a",
     pubkey: "a",
     owner: viewer,
     relay: "wss://example.com",
@@ -421,6 +428,7 @@ it("enables a chosen empty agent without creating subscriptions and reports fail
     status: "ready",
     running: [
       {
+        key: "membership-b",
         pubkey: "b",
         owner: viewer,
         relay: "wss://example.com",
@@ -464,7 +472,9 @@ it("enables a chosen empty agent without creating subscriptions and reports fail
       "Attention enabled for Bo",
     ),
   );
-  expect(save).toHaveBeenLastCalledWith("b", { attentionEnabled: true });
+  expect(save).toHaveBeenLastCalledWith("membership-b", {
+    attentionEnabled: true,
+  });
   expect(screen.queryByRole("form")).toBeNull();
   expect(screen.queryByRole("region", { name: "Bo" })).toBeNull();
 });
@@ -477,6 +487,7 @@ it.each([undefined, "missing"])(
       status: "ready",
       running: [
         {
+          key: "membership-a",
           pubkey: "a",
           owner: viewer,
           relay: "wss://example.com",
@@ -518,7 +529,7 @@ it.each([undefined, "missing"])(
     fireEvent.click(
       within(repair).getByRole("button", { name: "Delete watch/check" }),
     );
-    expect(save).toHaveBeenCalledWith("a", {
+    expect(save).toHaveBeenCalledWith("membership-a", {
       attention: { "watch/check": null },
     });
   },
@@ -530,6 +541,7 @@ it("keeps unreadable legacy watches visible and removes only the selected object
     status: "ready",
     running: [
       {
+        key: "membership-a",
         pubkey: "a",
         owner: viewer,
         relay: "wss://example.com",
@@ -558,7 +570,7 @@ it("keeps unreadable legacy watches visible and removes only the selected object
     screen.getByRole("button", { name: "Remove unreadable watch/old" }),
   );
   await waitFor(() =>
-    expect(save).toHaveBeenCalledWith("a", {
+    expect(save).toHaveBeenCalledWith("membership-a", {
       attention: { "watch/old": null },
     }),
   );
@@ -569,6 +581,7 @@ it("scans subscription types and each subscription destination while keeping raw
     status: "ready",
     running: [
       {
+        key: "membership-a",
         pubkey: "a",
         owner: viewer,
         relay: "wss://example.com",
@@ -674,6 +687,7 @@ it("keeps overview, creation choices and destination navigation in the selected 
     channel,
   };
   const agent = {
+    key: "membership-a",
     pubkey: "a",
     owner: viewer,
     relay: "wss://example.com",
@@ -707,8 +721,20 @@ it("keeps overview, creation choices and destination navigation in the selected 
     status: "ready",
     running: [
       agent,
-      { ...agent, pubkey: "b", name: "Bo", relay: "wss://other.example" },
-      { ...agent, pubkey: "c", name: "Cy", owner: "e".repeat(64) },
+      {
+        ...agent,
+        key: "membership-b",
+        pubkey: "a",
+        name: "Bo",
+        relay: "wss://other.example",
+      },
+      {
+        ...agent,
+        key: "membership-c",
+        pubkey: "c",
+        name: "Cy",
+        owner: "e".repeat(64),
+      },
     ],
   };
   const open = vi.fn(),
@@ -755,4 +781,10 @@ it("keeps overview, creation choices and destination navigation in the selected 
   expect(screen.queryByRole("region", { name: "Ada" })).toBeNull();
   expect(screen.getByRole("region", { name: "Bo" })).toBeTruthy();
   expect(save).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("switch", { name: "Attention for Bo" }));
+  await waitFor(() =>
+    expect(save).toHaveBeenCalledWith("membership-b", {
+      attentionEnabled: false,
+    }),
+  );
 });

@@ -265,7 +265,7 @@ export function createPage({
             : "On";
     const change = (value: Watch | null) =>
       action.run(() =>
-        agents.save(agent.pubkey, { attention: { [slug]: value } }),
+        agents.save(agent.key, { attention: { [slug]: value } }),
       );
     const section = (label: string, content: ReturnType<typeof h>) =>
       h(
@@ -605,7 +605,7 @@ export function createPage({
             disabled: action.pending,
             onClick: () =>
               void action.run(() =>
-                agents.save(agent.pubkey, {
+                agents.save(agent.key, {
                   attentionEnabled: !agent.attentionEnabled,
                 }),
               ),
@@ -626,7 +626,7 @@ export function createPage({
               disabled: action.pending,
               onClick: () =>
                 void action.run(() =>
-                  agents.save(agent.pubkey, {
+                  agents.save(agent.key, {
                     attention: { [object.slug]: null },
                   }),
                 ),
@@ -737,7 +737,7 @@ export function createPage({
                 disabled={action.pending}
                 onClick={() =>
                   void action.run(() =>
-                    agents.save(agent.pubkey, {
+                    agents.save(agent.key, {
                       attention: { [object.slug]: null },
                     }),
                   )
@@ -792,9 +792,9 @@ export function createPage({
     );
     const enable = () =>
       action.run(async () => {
-        const agent = running.find((agent) => agent.pubkey === selected);
+        const agent = running.find((agent) => agent.key === selected);
         if (!agent) throw new Error("Choose an available agent.");
-        await agents.save(agent.pubkey, { attentionEnabled: true });
+        await agents.save(agent.key, { attentionEnabled: true });
         setNotice(
           `Attention enabled for ${agent.name}. Watches appear here when the agent creates them.`,
         );
@@ -876,7 +876,7 @@ export function createPage({
                     options: [
                       { value: "", label: "Choose an agent" },
                       ...running.map((agent) => ({
-                        value: agent.pubkey,
+                        value: agent.key,
                         label: agent.name,
                       })),
                     ],
@@ -909,7 +909,7 @@ export function createPage({
             ),
           ...visible.map((agent) =>
             h(AgentPanel, {
-              key: agent.pubkey,
+              key: agent.key,
               agent: agent as Agent,
               channels,
               scope: connection.scope,

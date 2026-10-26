@@ -331,11 +331,11 @@ export function createRecipeForm({
       setPending(true);
       setError("");
       try {
-        if (!running.some((value) => value.pubkey === agent))
+        if (!running.some((value) => value.key === agent))
           throw new Error("Choose an available agent.");
         if (
           recipe.interest &&
-          running.find((value) => value.pubkey === agent)?.attention[
+          running.find((value) => value.key === agent)?.attention[
             `interest/${recipe.interest}`
           ]?.value.type !== "interest"
         )
@@ -412,7 +412,7 @@ export function createRecipeForm({
           [
             { value: "", label: "Choose an agent" },
             ...running.map((value) => ({
-              value: value.pubkey,
+              value: value.key,
               label: value.name,
             })),
           ],
@@ -439,7 +439,7 @@ export function createRecipeForm({
           [
             { value: "", label: "Create a new Interest" },
             ...Object.entries(
-              running.find((value) => value.pubkey === agent)?.attention ?? {},
+              running.find((value) => value.key === agent)?.attention ?? {},
             )
               .filter(([, object]) => object.value.type === "interest")
               .map(([slug]) => ({

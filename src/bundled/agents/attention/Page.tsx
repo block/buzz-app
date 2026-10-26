@@ -1,3 +1,5 @@
+import { relayOrigin } from "../../../features/communities/destination";
+import { relayPartition } from "../../../features/relay/partition";
 import { GitHubPolicyPanel } from "./GitHubPolicyEditor";
 import { avatarMedia } from "../../../shared/avatar-source";
 import { Avatar } from "../../../shared/design-system/ui/Avatar";
@@ -747,7 +749,17 @@ export function createPage({
       queries?.list ?? emptyChannels,
       queries?.list ?? emptyChannels,
     ).channels;
-    const visible = snapshot.running.filter(
+    const running = snapshot.running.filter((agent) => {
+      try {
+        return (
+          relayPartition(relayOrigin(agent.relay), agent.owner) ===
+          connection.scope
+        );
+      } catch {
+        return false;
+      }
+    });
+    const visible = running.filter(
       (agent) =>
         Object.values(agent.attention).some(
           (object) => object.value.type !== "interest",
@@ -755,9 +767,7 @@ export function createPage({
     );
     const enable = () =>
       action.run(async () => {
-        const agent = snapshot.running.find(
-          (agent) => agent.pubkey === selected,
-        );
+        const agent = running.find((agent) => agent.pubkey === selected);
         if (!agent) throw new Error("Choose an available agent.");
         await agents.save(agent.pubkey, { attentionEnabled: true });
         setNotice(
@@ -782,6 +792,7 @@ export function createPage({
           "aria-label": "New subscription",
           title: "New subscription",
           onClick: () => setRecipeOpen(!recipeOpen),
+          disabled: !running.length,
           "aria-expanded": recipeOpen,
         }),
       }),
@@ -794,11 +805,11 @@ export function createPage({
           h(
             "p",
             { className: "text-body-sm text-subtle" },
-            "Subscriptions watch for changes and wake your agents.",
+            "Subscriptions in the selected community watch for changes and wake your agents.",
           ),
           <GitHubPolicyPanel host={host} />,
           !visible.length &&
-            snapshot.running.some((agent) => !agent.attentionEnabled) && (
+            running.some((agent) => !agent.attentionEnabled) && (
               <Button
                 {...{
                   ...button,
@@ -813,7 +824,7 @@ export function createPage({
             ),
           recipeOpen &&
             h(RecipeForm, {
-              running: snapshot.running,
+              running,
               channels,
               close: () => setRecipeOpen(false),
             }),
@@ -839,7 +850,7 @@ export function createPage({
                     label: "Agents",
                     options: [
                       { value: "", label: "Choose an agent" },
-                      ...snapshot.running.map((agent) => ({
+                      ...running.map((agent) => ({
                         value: agent.pubkey,
                         label: agent.name,
                       })),
@@ -865,7 +876,7 @@ export function createPage({
               notice,
             ),
           !visible.length &&
-            snapshot.running.length > 0 &&
+            running.length > 0 &&
             h(
               "p",
               { className: "text-body-sm text-secondary" },
@@ -885,16 +896,18 @@ export function createPage({
               ),
             }),
           ),
-          !snapshot.running.length &&
+          !running.length &&
             h(
               "p",
               {
                 className: "text-body-sm text-secondary",
                 role: snapshot.status === "loading" ? "status" : undefined,
               },
-              snapshot.status === "loading"
-                ? "Loading agents…"
-                : snapshot.error || "No local agents are available.",
+              !connection.scope
+                ? "Choose a community to manage its agent subscriptions."
+                : snapshot.status === "loading"
+                  ? "Loading agents…"
+                  : snapshot.error || "No local agents are available.",
             ),
         ),
       ),

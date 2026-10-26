@@ -22,6 +22,8 @@ let snapshot = {
   running: [
     {
       pubkey: "a".repeat(64),
+      owner: "f".repeat(64),
+      relay: "wss://example.com",
       name: "Ada",
       attentionEnabled: true,
       timers: {},
@@ -45,7 +47,7 @@ const channels = {
 };
 const connection = {
   status: "ready",
-  scope: "https://example.com:viewer",
+  scope: `https://example.com:${"f".repeat(64)}`,
   session: {
     media: () => "",
     channels: {

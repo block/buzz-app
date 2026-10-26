@@ -124,7 +124,7 @@ test("group icons resolve custom media without overlapping labels, and the creat
   await move.focus();
   await page.keyboard.press("ArrowRight");
   const menu = page.getByRole("menu", {
-    name: "Move Beta to section",
+    name: `Move ${channelName} to section`,
     exact: true,
   });
   const work = menu.getByRole("menuitemradio", { name: "Work", exact: true });

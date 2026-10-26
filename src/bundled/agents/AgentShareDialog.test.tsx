@@ -44,7 +44,7 @@ const echo = {
 function community() {
   const heads: EventData[] = [];
   const listeners = new Set<() => void>();
-  let pending: { id: string; event: EventData } | undefined;
+  let pending: { event: EventData; delivery: string } | undefined;
   const outbox = {
     supports: (kind: number) => kind === 30175,
     ready: async () => {},
@@ -55,11 +55,10 @@ function community() {
         pubkey: owner,
         created_at: heads.length + 1,
       } as EventData;
-      pending = { id: event.id, event };
+      pending = { event, delivery: "sending" };
       return event.id;
     }),
-    snapshot: () =>
-      pending ? [{ event: pending.event, delivery: "sending" }] : [],
+    snapshot: () => (pending ? [pending] : []),
     subscribe: (listener: () => void) => {
       listeners.add(listener);
       return () => listeners.delete(listener);
@@ -72,11 +71,20 @@ function community() {
     pending = undefined;
     for (const listener of listeners) listener();
   };
+  /** The relay never answers, whether or not it `landed`. */
+  const lose = (landed: boolean) => {
+    if (!pending) return;
+    if (landed) heads.push(pending.event);
+    pending = { ...pending, delivery: "unknown" };
+    for (const listener of listeners) listener();
+  };
   const read = vi.fn(async () => [...heads]);
   return {
     session: { read, outbox } as unknown as RelaySession,
     outbox,
     accept,
+    lose,
+    read,
   };
 }
 
@@ -168,6 +176,59 @@ it("says why sharing failed and keeps the catalog as it was", async () => {
   );
   expect(outbox.send).not.toHaveBeenCalled();
   expect(toggle).not.toBeChecked();
+});
+
+it("asks the relay what an unanswered publish did before saying it failed", async () => {
+  const user = userEvent.setup();
+  const { session, outbox, lose } = community();
+  render(
+    <AgentShareDialog
+      agent={agent}
+      type={echo}
+      session={session}
+      onClose={() => {}}
+    />,
+  );
+  const toggle = screen.getByRole("switch", { name: "Share to catalog" });
+  await vi.waitFor(() => expect(toggle).not.toHaveAttribute("aria-disabled"));
+  await user.click(toggle);
+  await vi.waitFor(() => expect(outbox.send).toHaveBeenCalledTimes(1));
+  lose(true);
+  expect(
+    await screen.findByText("Published Ada to the community catalog."),
+  ).toBeInTheDocument();
+  expect(toggle).toBeChecked();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+
+  await user.click(toggle);
+  await vi.waitFor(() => expect(outbox.send).toHaveBeenCalledTimes(2));
+  lose(false);
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Failed to update catalog sharing. Try again.",
+  );
+  expect(toggle).toBeChecked();
+});
+
+it("reads the catalog again after the first read fails", async () => {
+  const user = userEvent.setup();
+  const { session, read } = community();
+  read.mockRejectedValueOnce(new Error("offline"));
+  render(
+    <AgentShareDialog
+      agent={agent}
+      type={echo}
+      session={session}
+      onClose={() => {}}
+    />,
+  );
+  const toggle = screen.getByRole("switch", { name: "Share to catalog" });
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Could not read the community catalog. Check the community connection, then retry.",
+  );
+  expect(toggle).toHaveAttribute("aria-disabled", "true");
+  await user.click(screen.getByRole("button", { name: "Try again" }));
+  await vi.waitFor(() => expect(toggle).not.toHaveAttribute("aria-disabled"));
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });
 
 it("exports the agent as an .agent.json snapshot", async () => {

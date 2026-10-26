@@ -123,14 +123,14 @@ it("publishes a catalog entry the marketplace lists as it was shared", () => {
   ]);
 });
 
-it("reads back what it exports", () => {
+it("reads back what it exports", async () => {
   const definition = shareable(
     agent(saved, "https://media.example/ada.png"),
     echo,
   );
-  expect(
-    readSnapshot(new TextEncoder().encode(snapshotJson(definition))),
-  ).toEqual(definition);
+  expect(await readSnapshot(new Blob([snapshotJson(definition)]))).toEqual(
+    definition,
+  );
 });
 
 /** A PNG holding `text` in a tEXt chunk, as block/buzz writes `.agent.png`. */
@@ -157,7 +157,7 @@ function png(text: string) {
   return bytes;
 }
 
-it("imports a block/buzz snapshot, leaving behind what an agent here has no place for", () => {
+it("imports a block/buzz snapshot, leaving behind what an agent here has no place for", async () => {
   const manifest = JSON.stringify({
     format: "buzz-agent-snapshot",
     version: 1,
@@ -187,32 +187,51 @@ it("imports a block/buzz snapshot, leaving behind what an agent here has no plac
     provider: "anthropic",
     model: "claude-opus",
   };
-  expect(readSnapshot(new TextEncoder().encode(manifest))).toEqual(expected);
-  expect(readSnapshot(png(`buzz_agent_snapshot\0${btoa(manifest)}`))).toEqual(
-    expected,
-  );
+  expect(await readSnapshot(new Blob([manifest]))).toEqual(expected);
+  expect(
+    await readSnapshot(
+      new Blob([png(`buzz_agent_snapshot\0${btoa(manifest)}`)]),
+    ),
+  ).toEqual(expected);
 });
 
-it("rejects files that are not agent snapshots", () => {
-  const read = (value: unknown) => () =>
-    readSnapshot(new TextEncoder().encode(JSON.stringify(value)));
-  expect(() => readSnapshot(new TextEncoder().encode("{"))).toThrow(
+it("rejects files that are not agent snapshots", async () => {
+  const read = (value: unknown) =>
+    readSnapshot(new Blob([JSON.stringify(value)]));
+  await expect(readSnapshot(new Blob(["{"]))).rejects.toThrow(
     "Invalid snapshot JSON.",
   );
-  expect(read({ format: "buzz-team-snapshot", version: 1 })).toThrow(
-    "Unsupported snapshot format.",
-  );
-  expect(read({ format: "buzz-agent-snapshot", version: 2 })).toThrow(
-    "Unsupported snapshot version.",
-  );
-  expect(
+  await expect(
+    read({ format: "buzz-team-snapshot", version: 1 }),
+  ).rejects.toThrow("Unsupported snapshot format.");
+  await expect(
+    read({ format: "buzz-agent-snapshot", version: 2 }),
+  ).rejects.toThrow("Unsupported snapshot version.");
+  await expect(
     read({ format: "buzz-agent-snapshot", version: 1, definition: {} }),
-  ).toThrow("Display name is required");
-  expect(() => readSnapshot(png("Comment\0hello"))).toThrow(
+  ).rejects.toThrow("Display name is required");
+  await expect(readSnapshot(new Blob([png("Comment\0hello")]))).rejects.toThrow(
     "PNG does not contain a buzz_agent_snapshot tEXt chunk.",
   );
-  expect(() => readSnapshot(png("buzz_agent_snapshot\0%%%"))).toThrow(
-    "Invalid PNG snapshot.",
+  await expect(
+    readSnapshot(new Blob([png("buzz_agent_snapshot\0%%%")])),
+  ).rejects.toThrow("Invalid PNG snapshot.");
+});
+
+it("refuses an oversized file without reading it in", async () => {
+  const huge = (start: BlobPart) =>
+    ({
+      size: 10 * 1024 * 1024 + 1,
+      slice: () => new Blob([start]),
+      arrayBuffer: () => {
+        throw new Error("read the whole file");
+      },
+    }) as unknown as Blob;
+  await expect(readSnapshot(huge("{"))).rejects.toThrow(
+    "Snapshot exceeds the size limit.",
+  );
+  await expect(readSnapshot(huge(png("")))).rejects.toThrow(
+    "Snapshot exceeds the size limit.",
   );
 });
 
@@ -284,7 +303,8 @@ it("reads the owner's newest head and replaces it, shared or not", async () => {
   );
   delivery = "accepted";
   for (const listener of listeners) listener();
-  await published;
+  // The accepted event is the new head.
+  expect(await published).toEqual({ id: "sent" });
   expect(outbox.dismiss).toHaveBeenCalledWith("sent");
   await expect(
     publishShare(

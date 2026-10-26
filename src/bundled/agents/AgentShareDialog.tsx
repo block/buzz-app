@@ -35,44 +35,59 @@ export function AgentShareDialog({
   const [pending, setPending] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
+  // The read failed; clearing it reads again.
+  const [unread, setUnread] = useState(false);
   const attempt = useRef<AbortController>(null);
   useEffect(() => {
+    if (unread) return;
     const controller = new AbortController();
     attempt.current = controller;
     catalogHead(session, agent.owner, agent.pubkey, controller.signal).then(
       setHead,
-      () =>
-        !controller.signal.aborted &&
-        setError(
-          "Could not read the community catalog. Check the community connection, then retry.",
-        ),
+      () => !controller.signal.aborted && setUnread(true),
     );
     return () => controller.abort();
-  }, [session, agent.owner, agent.pubkey]);
+  }, [session, agent.owner, agent.pubkey, unread]);
   const share = async (shared: boolean) => {
     const signal = attempt.current?.signal;
     if (head === null || pending || !signal) return;
     setPending(true);
     setNotice("");
     setError("");
+    let next = head;
     try {
       // Unsharing keeps what was shared, so it never depends on the agent
       // still being shareable.
       const content =
         !shared && head ? head.content : catalogContent(shareable(agent, type));
-      await publishShare(session, agent.pubkey, content, shared, head, signal);
-      setHead(await catalogHead(session, agent.owner, agent.pubkey, signal));
+      next = await publishShare(
+        session,
+        agent.pubkey,
+        content,
+        shared,
+        head,
+        signal,
+      );
+    } catch (reason) {
+      // A publish the relay never answered may still have landed; ask it.
+      next = await catalogHead(
+        session,
+        agent.owner,
+        agent.pubkey,
+        signal,
+      ).catch(() => head);
+      if (!signal.aborted && isShared(next) !== shared)
+        setError(`Failed to update catalog sharing. ${message(reason)}`);
+    }
+    if (signal.aborted) return;
+    setHead(next);
+    if (isShared(next) === shared)
       setNotice(
         shared
           ? `Published ${agent.name} to the community catalog.`
           : `${agent.name} is no longer discoverable in the community catalog.`,
       );
-    } catch (reason) {
-      if (!signal.aborted)
-        setError(`Failed to update catalog sharing. ${message(reason)}`);
-    } finally {
-      if (!signal.aborted) setPending(false);
-    }
+    setPending(false);
   };
   const exportAgent = () => {
     setNotice("");
@@ -135,6 +150,15 @@ export function AgentShareDialog({
           <p role="alert" className="m-0 text-body-sm text-danger">
             {error}
           </p>
+        )}
+        {unread && (
+          <div role="alert" className="flex flex-col items-start gap-2">
+            <p className="m-0 text-body-sm text-danger">
+              Could not read the community catalog. Check the community
+              connection, then retry.
+            </p>
+            <Button onClick={() => setUnread(false)}>Try again</Button>
+          </div>
         )}
       </div>
     </Dialog>

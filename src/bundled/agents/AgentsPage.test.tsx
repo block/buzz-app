@@ -1431,6 +1431,10 @@ it("imports an exported agent file as a new agent of the type that runs it", asy
   const confirmation = await screen.findByRole("dialog", {
     name: "Import Scout",
   });
+  // What the new agent will follow is shown before it is accepted.
+  expect(
+    within(confirmation).getByRole("region", { name: "Agent instructions" }),
+  ).toHaveTextContent("Scout ahead.");
   await user.click(
     within(confirmation).getByRole("button", { name: "Import" }),
   );

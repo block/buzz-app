@@ -86,6 +86,7 @@ import { ChoiceRow } from "../../shared/design-system/ui/ChoiceRow";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { Field } from "../../shared/design-system/ui/Field";
+import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { Panel } from "../../shared/design-system/ui/Panel";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Input } from "../../shared/design-system/ui/Input";
@@ -1504,9 +1505,6 @@ function ImportAgents({
             .join(" ")}
         </p>
       )}
-      {only === "agents" && (
-        <FileImport agents={agents} types={types} onImported={onImported} />
-      )}
       {found?.warnings.map((warning) => (
         <p key={warning} className="m-0 text-body-sm text-secondary">
           {warning}
@@ -1674,6 +1672,9 @@ function ImportAgents({
             importShared(confirming);
           }}
         />
+      )}
+      {only === "agents" && (
+        <FileImport agents={agents} types={types} onImported={onImported} />
       )}
     </div>
   );
@@ -1934,13 +1935,20 @@ function FileImport({
   const read = async (file: File) => {
     setError("");
     try {
-      setShared(readSnapshot(new Uint8Array(await file.arrayBuffer())));
+      setShared(await readSnapshot(file));
     } catch (reason) {
       setError(`Failed to read agent snapshot file. ${message(reason)}`);
     }
   };
   return (
-    <div className="flex flex-col items-start gap-2">
+    <section
+      aria-label="Import snapshot"
+      className="flex flex-col items-start gap-2"
+    >
+      <InlineHeader
+        title="Import snapshot"
+        subtitle="A new agent will be created with a fresh keypair. The imported agent is independent of the source — identity never travels."
+      />
       <Button
         ref={trigger}
         size="compact"
@@ -1979,7 +1987,7 @@ function FileImport({
           finalFocus={trigger}
         />
       )}
-    </div>
+    </section>
   );
 }
 

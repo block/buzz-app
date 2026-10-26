@@ -858,14 +858,17 @@ behind, and text that looks like a credential refuses the share or export.
 agent's pubkey and `["shared","true"]`, replacing the head a strong read found
 (`supersedes`). Turning it off republishes that head's content without the tag;
 the relay then shows it only to its author, and Marketplace lists only shared
-heads. The native signer and the development broker admit only this owner
+heads. A publish the relay never answers is settled by reading the head again
+before the dialog reports success or failure. The native signer and the development broker admit only this owner
 envelope (`src-tauri/src/relay/catalog.rs`, `catalog-envelope.ts`).
 
 **Export agent** downloads `{name}.agent.json` in the `buzz-agent-snapshot`
 version 1 format that block/buzz and earlier Buzz write, without memory.
 **Import an agent** → **Choose file** reads `.agent.json` and `.agent.png`
-(base64 manifest in a `buzz_agent_snapshot` tEXt chunk) from any of them and
-opens the Marketplace import dialog, so the copy is a new agent with a new key.
+(base64 manifest in a `buzz_agent_snapshot` tEXt chunk) from any of them,
+refusing files over 5 MiB (JSON) or 10 MiB (PNG) before reading them, and opens
+the Marketplace import dialog, which shows the instructions, so the copy is a
+new agent with a new key.
 Memory, an inline avatar, respond-to, parallelism and timeouts in an imported
 file stay behind. Teams have no catalog or file export.
 

@@ -516,6 +516,16 @@ export function SharedImportDialog({
             </>
           )
         )}
+        {/* What the new agent will do is never hidden behind a summary. */}
+        <section aria-label="Agent instructions">
+          <InlineHeader
+            title="Agent instructions"
+            subtitle="Review the instructions this agent will follow after import."
+          />
+          <div className={styles.instructions}>
+            {shared.instructions || "No system prompt included."}
+          </div>
+        </section>
         {error && (
           <p role="alert" className="m-0 text-body-sm text-danger">
             {error}

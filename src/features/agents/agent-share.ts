@@ -108,8 +108,9 @@ export async function catalogHead(
 export const isShared = (head: EventData | undefined) =>
   !!head?.tags.some(([name, value]) => name === "shared" && value === "true");
 
-/** Replaces `head` with `content`, shared or not, once the relay accepts it.
- * Unshared, the relay keeps it from everyone but its author. */
+/** Replaces `head` with `content`, shared or not, and settles with the new head
+ * once the relay accepts it. Unshared, the relay keeps it from everyone but its
+ * author. */
 export async function publishShare(
   session: Pick<RelaySession, "outbox">,
   pubkey: string,
@@ -117,7 +118,7 @@ export async function publishShare(
   shared: boolean,
   head: EventData | undefined,
   signal: AbortSignal,
-): Promise<void> {
+): Promise<EventData> {
   const outbox = session.outbox;
   if (!outbox?.supports(AGENT_CATALOG_KIND))
     throw new Error("This community cannot update catalog sharing.");
@@ -133,8 +134,11 @@ export async function publishShare(
     undefined,
     () => !signal.aborted,
   );
+  const sent = outbox.snapshot().find((item) => item.event.id === id)?.event;
+  if (!sent) throw new Error("Try again.");
   await delivered(outbox, id, signal, "Try again.");
   await outbox.dismiss(id);
+  return sent;
 }
 
 /** A buzz-agent-snapshot v1 `.agent.json` without memory. */
@@ -181,12 +185,15 @@ function pngManifest(bytes: Uint8Array): Uint8Array {
   }
 }
 
-/** Reads an `.agent.json` or `.agent.png` snapshot. What a Buzz agent has no
- * place for, such as memory or an inline avatar, stays behind. */
-export function readSnapshot(bytes: Uint8Array): SharedDefinition {
-  const png = PNG.every((byte, i) => bytes[i] === byte);
-  if (bytes.length > (png ? MAX_PNG_BYTES : MAX_JSON_BYTES))
+/** Reads an `.agent.json` or `.agent.png` snapshot, refusing an oversized one
+ * before reading it in. What a Buzz agent has no place for, such as memory or
+ * an inline avatar, stays behind. */
+export async function readSnapshot(file: Blob): Promise<SharedDefinition> {
+  const head = new Uint8Array(await file.slice(0, PNG.length).arrayBuffer());
+  const png = PNG.every((byte, i) => head[i] === byte);
+  if (file.size > (png ? MAX_PNG_BYTES : MAX_JSON_BYTES))
     throw new Error("Snapshot exceeds the size limit.");
+  const bytes = new Uint8Array(await file.arrayBuffer());
   const manifest = png ? pngManifest(bytes) : bytes;
   let snapshot: Record<string, unknown> | undefined;
   try {

@@ -148,6 +148,20 @@ it("requires a choice when several chat agents are available", async () => {
     ]),
   );
 });
+it.each(["failures", "conflicts"] as const)(
+  "hides the %s action when discovery is complete with no chat agents",
+  (action) => {
+    harness({ action, members: [] });
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+  },
+);
+it("keeps the action while an empty agent inventory is incomplete", () => {
+  harness({ members: [], complete: false });
+  expect(
+    screen.getByRole("button", { name: "Resolve failures" }),
+  ).toBeDisabled();
+});
 it("does not infer a recipient from incomplete inventory", () => {
   harness({ complete: false });
   expect(

@@ -89,7 +89,8 @@ function SessionResolve({
     channel.archived ||
     channel.readOnly ||
     !["open", "draft"].includes(pull.state) ||
-    !applicable
+    !applicable ||
+    (choices.complete && agents.length === 0)
   )
     return null;
   async function send() {

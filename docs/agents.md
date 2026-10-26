@@ -6,8 +6,10 @@ Agents (`src/bundled/agents`, `src/features/agents`) is the app's only agent
 system: it creates, runs and deletes the viewer's agents. This document covers
 what the rest of the app knows about agents: shared selection, mentions, archive
 display, activity, names, inventory and usage. The v1 Agents page, Profiles plugin,
-Channel templates plugin, agent snapshots, team bundles, community catalog are gone, as are the native `agent_control_*`,
-model-discovery and harness-install commands behind them.
+Channel templates plugin and team bundles are gone, as are the native `agent_control_*`,
+model-discovery and harness-install commands behind them. Agents keeps sharing
+agents to the community catalog and exporting them; see
+[Sharing and exporting agents](#sharing-and-exporting-agents).
 
 Agents was called Agents2 while v1 still shipped. Startup now moves its identity
 folder to `agents/identities.json` and its browser settings to `buzz.agents.v1`
@@ -841,6 +843,31 @@ or runtime admission. Messages, mention choices, activity, conversation labels a
 new notifications consume this view. Mention parsing still uses signed identity
 evidence before resolving its visible label. The portable policy is specified in
 `src/bundled/identity-naming/README.md`.
+
+## Sharing and exporting agents
+
+An agent's card menu offers **Share** when its type has `exportShared`, the
+inverse of `importShared`: the catalog `runtime` (`claude`, `codex`, `goose`,
+`pi`), `provider` and `model` of its config. Instructions come from the type's
+`carry`. `src/features/agents/agent-share.ts` builds one allowlisted definition
+for both paths: name, instructions, runtime, provider, model and an HTTPS
+picture. Workspace, keys, environment, memory and every other setting stay
+behind, and text that looks like a credential refuses the share or export.
+
+**Share to catalog** publishes the owner's kind 30175 head with `d` set to the
+agent's pubkey and `["shared","true"]`, replacing the head a strong read found
+(`supersedes`). Turning it off republishes that head's content without the tag;
+the relay then shows it only to its author, and Marketplace lists only shared
+heads. The native signer and the development broker admit only this owner
+envelope (`src-tauri/src/relay/catalog.rs`, `catalog-envelope.ts`).
+
+**Export agent** downloads `{name}.agent.json` in the `buzz-agent-snapshot`
+version 1 format that block/buzz and earlier Buzz write, without memory.
+**Import an agent** → **Choose file** reads `.agent.json` and `.agent.png`
+(base64 manifest in a `buzz_agent_snapshot` tEXt chunk) from any of them and
+opens the Marketplace import dialog, so the copy is a new agent with a new key.
+Memory, an inline avatar, respond-to, parallelism and timeouts in an imported
+file stay behind. Teams have no catalog or file export.
 
 ## Community inventory
 

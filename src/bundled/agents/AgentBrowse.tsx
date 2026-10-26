@@ -9,6 +9,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import { flushSync } from "react-dom";
+import type { SharedDefinition } from "../../features/agents/agent-share";
 import { AGENT_CATALOG_KIND } from "../../features/agents/catalog-envelope";
 import { ModelIcon } from "../../features/agents/ModelPicker";
 import type {
@@ -369,7 +370,8 @@ function ImportShared({
   );
 }
 
-function SharedImportDialog({
+/** Imports a shared definition as a new agent, from the marketplace or a file. */
+export function SharedImportDialog({
   shared,
   agents,
   types,
@@ -377,7 +379,7 @@ function SharedImportDialog({
   onClose,
   finalFocus,
 }: Importing & {
-  shared: SharedAgent;
+  shared: SharedDefinition;
   onClose(): void;
   finalFocus: React.RefObject<HTMLButtonElement | null>;
 }) {

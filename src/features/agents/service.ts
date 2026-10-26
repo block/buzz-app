@@ -655,6 +655,13 @@ export type AgentType<Config = unknown> = {
     provider?: string;
     model: string;
   }): Config | undefined;
+  /** The inverse of `importShared`: the catalog runtime, provider and model a
+   * share or export of `config` records. Without it, its agents are not shared. */
+  exportShared?(config: Config): Readonly<{
+    runtime: string;
+    provider?: string;
+    model: string;
+  }>;
   /** What of `config` another type may adopt when the agent changes type.
    * Without it, all of its settings stay behind. */
   carry?(config: Config): Carry;

@@ -1390,6 +1390,67 @@ it("shows the matching community images and follows their presentation updates",
   expect(agents.join).not.toHaveBeenCalled();
 });
 
+it("imports an exported agent file as a new agent of the type that runs it", async () => {
+  const user = userEvent.setup();
+  const scout = {
+    key: "test/scout",
+    title: "Scout",
+    defaults: () => ({ config: { model: "" } }),
+    importShared: (source: { runtime?: string; model: string }) =>
+      source.runtime === "scout" ? { model: source.model } : undefined,
+  } as unknown as RegisteredAgentType;
+  const { agents } = setup([agent("Ada", 1)], { more: [scout] });
+  await user.click(screen.getByRole("button", { name: "New agent" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Import an agent" }),
+  );
+  const dialog = screen.getByRole("dialog", { name: "Import an agent" });
+  const file = (text: string) =>
+    new File([text], "Scout.agent.json", { type: "application/json" });
+  await user.upload(within(dialog).getByLabelText("Choose file"), file("{"));
+  expect(within(dialog).getByRole("alert")).toHaveTextContent(
+    "Failed to read agent snapshot file. Invalid snapshot JSON.",
+  );
+  await user.upload(
+    within(dialog).getByLabelText("Choose file"),
+    file(
+      JSON.stringify({
+        format: "buzz-agent-snapshot",
+        version: 1,
+        definition: {
+          name: "Scout",
+          systemPrompt: "Scout ahead.",
+          runtime: "scout",
+          model: "scout-1",
+        },
+        profile: { displayName: "Scout" },
+        memory: { level: "none", entries: [] },
+      }),
+    ),
+  );
+  const confirmation = await screen.findByRole("dialog", {
+    name: "Import Scout",
+  });
+  await user.click(
+    within(confirmation).getByRole("button", { name: "Import" }),
+  );
+  expect(agents.port).toHaveBeenCalledWith({
+    source: "shared",
+    type: "test/scout",
+    name: "Scout",
+    instructions: "Scout ahead.",
+    config: { model: "scout-1" },
+  });
+  await vi.waitFor(() =>
+    expect(
+      screen.queryByRole("dialog", { name: "Import Scout" }),
+    ).not.toBeInTheDocument(),
+  );
+  expect(
+    screen.getByRole("dialog", { name: "Import an agent" }),
+  ).toBeInTheDocument();
+});
+
 it("queues several imports in a row and keeps the dialog open until they finish", async () => {
   const user = userEvent.setup();
   const { agents } = setup([]);

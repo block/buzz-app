@@ -21,6 +21,7 @@ export const inject = [
   "agents",
   "communityReader",
   "shortcuts",
+  "adminAccess",
 ];
 export const apply: PluginModule["apply"] = (ctx) => {
   registerCanvas(ctx);
@@ -84,6 +85,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     run: () => archive.current?.run(),
   });
   const agents = ctx.agents;
+  const membership = ctx.adminAccess.membership;
   ctx.settingsCards.register({
     id: "templates",
     title: "Channel templates",
@@ -113,6 +115,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         companion={companion}
         agents={agents}
         communities={ctx.communityReader}
+        membership={membership}
       />
     ),
   });

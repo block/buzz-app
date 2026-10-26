@@ -6,6 +6,7 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
 } from "@testing-library/react";
 import { StrictMode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
@@ -479,33 +480,34 @@ function mountCapturable(url: string) {
   return { ...view, video, seek };
 }
 
+// jsdom's FileReader encodes the stubbed "frame" JPEG blob.
+const FRAME = `data:image/jpeg;base64,${btoa("frame")}`;
 function stubCanvas(context: boolean) {
   const drawImage = vi.fn();
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(
     (context ? { drawImage } : null) as unknown as CanvasRenderingContext2D,
   );
-  const toDataURL = vi
-    .spyOn(HTMLCanvasElement.prototype, "toDataURL")
-    .mockReturnValue("data:image/jpeg;base64,frame");
-  return { drawImage, toDataURL };
+  const toBlob = vi
+    .spyOn(HTMLCanvasElement.prototype, "toBlob")
+    .mockImplementation((callback) =>
+      callback(new Blob(["frame"], { type: "image/jpeg" })),
+    );
+  return { drawImage, toBlob };
 }
 
-it("reuses a captured opening frame when a virtualized preview remounts", () => {
-  const { drawImage, toDataURL } = stubCanvas(true);
+it("reuses a captured opening frame when a virtualized preview remounts", async () => {
+  const { drawImage, toBlob } = stubCanvas(true);
   const url = "https://fixture.test/remount.mp4";
   const first = mountCapturable(url);
   expect(first.video).not.toHaveAttribute("poster");
   fireEvent.loadedData(first.video);
   expect(first.seek).toHaveBeenCalledWith(0.1);
   fireEvent.seeked(first.video);
-  expect(first.video).toHaveAttribute("poster", "data:image/jpeg;base64,frame");
+  await waitFor(() => expect(first.video).toHaveAttribute("poster", FRAME));
   first.unmount();
 
   const second = mountCapturable(url);
-  expect(second.video).toHaveAttribute(
-    "poster",
-    "data:image/jpeg;base64,frame",
-  );
+  expect(second.video).toHaveAttribute("poster", FRAME);
   expect(second.video.style.getPropertyValue("--media-ratio")).toBe(
     "1280 / 720",
   );
@@ -513,20 +515,20 @@ it("reuses a captured opening frame when a virtualized preview remounts", () => 
   fireEvent.seeked(second.video);
   expect(second.seek).not.toHaveBeenCalled();
   expect(drawImage).toHaveBeenCalledTimes(1);
-  expect(toDataURL).toHaveBeenCalledTimes(1);
+  expect(toBlob).toHaveBeenCalledTimes(1);
 });
 
 it.each([
   ["a timecode seek", true, 12],
   ["an undrawn canvas", false, 0.1],
-])("keeps %s capture with its own mount", (_, context, seekedAt) => {
+])("keeps %s capture with its own mount", async (_, context, seekedAt) => {
   stubCanvas(context);
   const url = `https://fixture.test/${seekedAt}-${context}.mp4`;
   const first = mountCapturable(url);
   fireEvent.loadedData(first.video);
   first.video.currentTime = seekedAt;
   fireEvent.seeked(first.video);
-  expect(first.video).toHaveAttribute("poster");
+  await waitFor(() => expect(first.video).toHaveAttribute("poster", FRAME));
   first.unmount();
 
   const second = mountCapturable(url);

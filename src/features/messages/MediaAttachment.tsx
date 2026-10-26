@@ -259,26 +259,37 @@ export function MediaAttachment({
             );
             const context = canvas.getContext("2d");
             context?.drawImage(element, 0, 0, canvas.width, canvas.height);
-            const poster = canvas.toDataURL("image/jpeg", 0.8);
+            const { videoWidth: width, videoHeight: height } = element;
             // Only a drawn opening frame is shared; an explicit timecode seek
             // or a blank export stays with this mount.
-            if (
+            const shared =
               source &&
               context &&
               opening &&
-              Math.abs(element.currentTime - opening.time) < 0.01 &&
-              poster.startsWith("data:image/jpeg;")
-            )
-              rememberOpeningFrame(
-                source,
-                {
-                  poster,
-                  width: element.videoWidth,
-                  height: element.videoHeight,
-                },
-                opening.capture,
-              );
-            setCapturedPreview(poster);
+              Math.abs(element.currentTime - opening.time) < 0.01
+                ? { source, capture: opening.capture }
+                : undefined;
+            // Encode off the main thread; a synchronous JPEG export blocks it.
+            canvas.toBlob(
+              (blob) => {
+                if (!blob) return;
+                const reader = new FileReader();
+                reader.onload = () => {
+                  const poster = reader.result;
+                  if (typeof poster !== "string") return;
+                  if (shared && poster.startsWith("data:image/jpeg;"))
+                    rememberOpeningFrame(
+                      shared.source,
+                      { poster, width, height },
+                      shared.capture,
+                    );
+                  setCapturedPreview(poster);
+                };
+                reader.readAsDataURL(blob);
+              },
+              "image/jpeg",
+              0.8,
+            );
           } catch {
             // A decoded frame may still paint in the video when canvas export
             // is unavailable; the poster capture is only a compatibility aid.

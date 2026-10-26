@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { Context } from "@deepseek-ai/cordis";
-import { isTauri } from "@tauri-apps/api/core";
+import { invoke, isTauri } from "@tauri-apps/api/core";
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, expect, it, vi } from "vitest";
@@ -13,7 +13,10 @@ import { createAppearance } from "../shared/theme/service";
 import { registerAppShortcuts } from "./shortcuts";
 
 const close = vi.hoisted(() => vi.fn(async () => {}));
-vi.mock("@tauri-apps/api/core", () => ({ isTauri: vi.fn(() => true) }));
+vi.mock("@tauri-apps/api/core", () => ({
+  isTauri: vi.fn(() => true),
+  invoke: vi.fn(async () => {}),
+}));
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({ close }),
 }));
@@ -25,6 +28,7 @@ afterEach(() => {
   delete document.documentElement.dataset.keyboardNavigation;
   vi.restoreAllMocks();
   close.mockClear();
+  vi.mocked(invoke).mockClear();
   vi.mocked(isTauri).mockReturnValue(true);
 });
 
@@ -91,13 +95,10 @@ function press(
   return event;
 }
 
-it.each(["Win32"])(
-  "%s closes tabs from the composer, never the window; ignores held repeats",
+it.each(["Win32", "Linux x86_64"])(
+  "%s closes the window from the composer without consuming tabs; ignores held repeats",
   async (platform) => {
     const h = harness(platform);
-    vi.spyOn(HTMLElement.prototype, "getClientRects").mockReturnValue([
-      {},
-    ] as unknown as DOMRectList);
     try {
       render(
         <>
@@ -108,29 +109,23 @@ it.each(["Win32"])(
       const composer = screen.getByRole("textbox", { name: "Main composer" });
       composer.focus();
       expect(press(composer).defaultPrevented).toBe(true);
-      expect(
-        screen.queryByRole("tab", { name: "First" }),
-      ).not.toBeInTheDocument();
-      expect(screen.getByRole("tab", { name: "Second" })).toBeInTheDocument();
-      expect(close).not.toHaveBeenCalled();
-      expect(press(document.body, { repeat: true }).defaultPrevented).toBe(
-        true,
-      );
-      expect(screen.getByRole("tab", { name: "Second" })).toBeInTheDocument();
+      expect(close).toHaveBeenCalledOnce();
+      expect(screen.getAllByRole("tab")).toHaveLength(2);
+      expect(press(composer, { repeat: true }).defaultPrevented).toBe(true);
+      expect(close).toHaveBeenCalledOnce();
+      cleanup();
       press();
-      expect(screen.queryByRole("tab")).not.toBeInTheDocument();
-      expect(close).not.toHaveBeenCalled();
-      press(document.body, { repeat: true });
-      expect(close).not.toHaveBeenCalled();
+      expect(close).toHaveBeenCalledTimes(2);
+      h.remove();
       press();
-      expect(close).not.toHaveBeenCalled();
+      expect(close).toHaveBeenCalledTimes(2);
     } finally {
       await h.dispose();
     }
   },
 );
 
-it.each(["Win32"])(
+it.each(["Win32", "Linux x86_64"])(
   "%s preserves terminal Ctrl+W before PTY translation and blocks competing plugins",
   async (platform) => {
     const h = harness(platform);
@@ -167,8 +162,8 @@ it.each(["Win32"])(
       expect(pluginRun).not.toHaveBeenCalled();
       input.blur();
       press();
-      expect(tabClose).toHaveBeenCalledOnce();
-      expect(close).not.toHaveBeenCalled();
+      expect(tabClose).not.toHaveBeenCalled();
+      expect(close).toHaveBeenCalledOnce();
     } finally {
       window.removeEventListener("buzz:close-active-tab", tabClose);
       await h.dispose();
@@ -176,7 +171,7 @@ it.each(["Win32"])(
   },
 );
 
-it("does nothing behind a modal, with or without a tab consumer", async () => {
+it("closes the window from a modal without closing tabs behind it", async () => {
   const h = harness();
   const tabClose = vi.fn((event: Event) => event.preventDefault());
   render(
@@ -188,18 +183,18 @@ it("does nothing behind a modal, with or without a tab consumer", async () => {
   input.focus();
   try {
     press(input);
-    expect(close).not.toHaveBeenCalled();
+    expect(close).toHaveBeenCalledOnce();
     window.addEventListener("buzz:close-active-tab", tabClose);
     press(input);
     expect(tabClose).not.toHaveBeenCalled();
-    expect(close).not.toHaveBeenCalled();
+    expect(close).toHaveBeenCalledTimes(2);
   } finally {
     window.removeEventListener("buzz:close-active-tab", tabClose);
     await h.dispose();
   }
 });
 
-it("leaves hidden tabs intact and keeps the window open", async () => {
+it("closes the window while leaving hidden tabs intact", async () => {
   const h = harness();
   try {
     render(
@@ -208,8 +203,48 @@ it("leaves hidden tabs intact and keeps the window open", async () => {
       </div>,
     );
     press();
-    expect(close).not.toHaveBeenCalled();
+    expect(close).toHaveBeenCalledOnce();
     expect(screen.getAllByRole("tab", { hidden: true })).toHaveLength(2);
+  } finally {
+    await h.dispose();
+  }
+});
+
+it.each(["Win32", "Linux x86_64"])(
+  "%s explicitly quits even from a terminal inside a modal",
+  async (platform) => {
+    const h = harness(platform);
+    render(
+      <dialog open>
+        <div className="xterm">
+          <textarea aria-label="Terminal" />
+        </div>
+      </dialog>,
+    );
+    const terminal = screen.getByRole("textbox", { name: "Terminal" });
+    terminal.focus();
+    try {
+      expect(press(terminal, { key: "q" }).defaultPrevented).toBe(true);
+      expect(invoke).toHaveBeenCalledExactlyOnceWith("quit_app");
+      press(terminal, { key: "q", repeat: true });
+      expect(invoke).toHaveBeenCalledOnce();
+      expect(close).not.toHaveBeenCalled();
+    } finally {
+      await h.dispose();
+    }
+  },
+);
+
+it("reports a failed window close through the existing dispatcher", async () => {
+  const h = harness();
+  const error = new Error("close refused");
+  const log = vi.spyOn(console, "error").mockImplementation(() => {});
+  close.mockRejectedValueOnce(error);
+  try {
+    press();
+    await vi.waitFor(() =>
+      expect(log).toHaveBeenCalledWith("Shortcut failed: close-window", error),
+    );
   } finally {
     await h.dispose();
   }
@@ -228,7 +263,9 @@ it.each([
         h.shortcuts
           .hostSnapshot()
           .some(({ id }) =>
-            ["close-tab", "next-tab", "previous-tab"].includes(id),
+            ["close-window", "quit-app", "next-tab", "previous-tab"].includes(
+              id,
+            ),
           ),
       ).toBe(false);
       expect(press().defaultPrevented).toBe(false);

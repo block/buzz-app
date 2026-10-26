@@ -4,6 +4,8 @@ mod browser;
 #[cfg(target_os = "macos")]
 mod close_menu;
 mod oauth_callback;
+#[cfg(windows)]
+mod tray;
 use oauth_callback::{
     oauth_callback_begin, oauth_callback_cancel, oauth_callback_wait, OAuthCallbackHost,
 };
@@ -481,8 +483,17 @@ async fn update_restart<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(
     app.request_restart();
     Ok(())
 }
+#[tauri::command]
+fn quit_app<R: tauri::Runtime>(window: tauri::WebviewWindow<R>) -> Result<(), String> {
+    if window.label() != "main" {
+        return Err("Only the main window can quit Buzz".into());
+    }
+    window.app_handle().exit(0);
+    Ok(())
+}
 fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static {
     tauri::generate_handler![
+        quit_app,
         huddle_window_reset_incoming,
         huddle_window_open,
         huddle_window_update,
@@ -694,6 +705,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(move |app| {
+            #[cfg(windows)]
+            tray::install(app.handle())?;
             #[cfg(target_os = "linux")]
             {
                 use gtk::prelude::GtkSettingsExt;
@@ -876,16 +889,8 @@ pub fn run() {
         .on_window_event(|window, event| {
             if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed | tauri::WindowEvent::CloseRequested { .. }) { window.state::<pairing::Pairing>().cancel_all(); }
             if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed) { window.state::<relay::Spools>().cancel_all(&window.state::<relay::Uploads>()); }
-            #[cfg(target_os = "macos")]
-            if window.label() == "main" {
-                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                    // Keep the webview and running agents alive until explicit Quit.
-                    api.prevent_close();
-                    if let Err(error) = window.hide() {
-                        eprintln!("Could not close Buzz window: {error}");
-                    }
-                    return;
-                }
+            if window_controls::close_requested(window, event) {
+                return;
             }
             browser::window_event(window, event);
         })

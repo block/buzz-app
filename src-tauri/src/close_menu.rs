@@ -1,6 +1,5 @@
-//! Cmd+W is a menu action that only ever closes a tab, never the window: with
-//! no tab to close it does nothing. Cmd+Shift+W clears the current channel's tabs.
-//! The red button still closes the window.
+//! Cmd+W requests a window close, retaining the webview and agents through the
+//! main window's close handler. Cmd+Shift+W clears the current channel's tabs.
 //! Ctrl+Tab bypasses macOS menu highlighting latency. Menu commands and the
 //! native key handler both work while a raw guest webview owns keyboard focus.
 use std::{cell::RefCell, ptr::NonNull};
@@ -22,7 +21,7 @@ const SWITCH: &str = include_str!("switch-tab-request.js");
 
 pub(crate) fn menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     let menu = Menu::default(app)?;
-    let close = MenuItem::with_id(app, CLOSE, "Close Tab", true, Some("CmdOrCtrl+W"))?;
+    let close = MenuItem::with_id(app, CLOSE, "Close Window", true, Some("CmdOrCtrl+W"))?;
     let close_all = MenuItem::with_id(
         app,
         CLOSE_ALL,
@@ -74,8 +73,20 @@ pub(crate) fn menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
 }
 
 pub(crate) fn handle<R: Runtime>(app: &AppHandle<R>, event: tauri::menu::MenuEvent) {
+    if event.id().as_ref() == CLOSE {
+        if let Some(window) = app.get_webview_window("main") {
+            if window.is_visible().unwrap_or(false)
+                && !window.is_minimized().unwrap_or(true)
+                && window.is_focused().unwrap_or(false)
+            {
+                if let Err(error) = window.close() {
+                    eprintln!("Could not close Buzz window: {error}");
+                }
+            }
+        }
+        return;
+    }
     let script = match event.id().as_ref() {
-        CLOSE => format!("{{ const tabEvent = \"buzz:close-active-tab\";\n{REQUEST}}}"),
         CLOSE_ALL => format!("{{ const tabEvent = \"buzz:close-all-tabs\";\n{REQUEST}}}"),
         // A block keeps the binding out of the page's global scope.
         NEXT => format!("{{ const tabEvent = \"buzz:next-tab\";\n{SWITCH}}}"),

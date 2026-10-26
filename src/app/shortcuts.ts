@@ -1,4 +1,5 @@
-import { isTauri } from "@tauri-apps/api/core";
+import { invoke, isTauri } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { isApplePlatform } from "../features/shortcuts/format";
 import type { ShortcutsService } from "../features/shortcuts/service";
 import type { Appearance } from "../shared/theme/service";
@@ -25,6 +26,7 @@ export const HOST_SHORTCUT_ORDER = {
   close: 85,
   focus: 86,
   reload: 90,
+  quit: 100,
 } as const;
 
 export function registerAppShortcuts(
@@ -129,20 +131,25 @@ export function registerAppShortcuts(
   if (isTauri() && !isApplePlatform(navigator.platform)) {
     remove.push(
       shortcuts.registerHost({
-        id: "close-tab",
-        title: "Close tab",
+        id: "quit-app",
+        title: "Quit Buzz",
+        binding: { key: "q", mod: true },
+        order: HOST_SHORTCUT_ORDER.quit,
+        allowInEditable: true,
+        allowInModal: true,
+        run: () => invoke<void>("quit_app"),
+      }),
+      shortcuts.registerHost({
+        id: "close-window",
+        title: "Close window",
         binding: { key: "w", mod: true },
         order: HOST_SHORTCUT_ORDER.close,
         allowInEditable: true,
         // xterm hands keys to this dispatcher before writing PTY bytes. Keep
         // Ctrl+W as shell word deletion in both the terminal tab and drawer.
         when: () => !document.activeElement?.closest(".xterm"),
-        // Only ever closes a tab: with nothing to close, the window stays.
-        run: () => {
-          window.dispatchEvent(
-            new Event("buzz:close-active-tab", { cancelable: true }),
-          );
-        },
+        allowInModal: true,
+        run: () => getCurrentWindow().close(),
       }),
       ...(
         [

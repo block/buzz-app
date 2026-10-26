@@ -1804,14 +1804,13 @@ html[data-keyboard-navigation] .membership .membershipName:focus-visible {
    with its digits but still ends the stack as its last member, overlapping
    the previous avatar by --avatar-overlap like every avatar before it. */
 .membershipAvatarCount {
-  /* Positioned so it paints over the avatar it overlaps, in DOM order like
-     .membershipAvatar; with the opaque fill that alone keeps the "+" from
-     ever being covered. The 2px border plus --space-1h left padding exceed
-     --avatar-overlap, so the "+" starts just past the overlapped avatar's
-     right edge rather than over its silhouette. That clearance relies on the
-     padding matching --avatar-overlap (both --space-1h); revisit the padding
-     if the overlap token is retuned. */
-  position: relative;
+  /* Left unpositioned so the positioned .membershipAvatar siblings paint over
+     it: the avatar covers the pill's leading --avatar-overlap and the pill
+     reads as sitting behind the stack. The "+" stays fully visible because
+     the 2px border plus --space-1h left padding exceed --avatar-overlap, so
+     the glyph starts just past the covering avatar's right edge. That
+     clearance relies on the padding matching --avatar-overlap (both
+     --space-1h); revisit the padding if the overlap token is retuned. */
   display: inline-flex;
   align-items: center;
   justify-content: center;

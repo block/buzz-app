@@ -398,7 +398,11 @@ export class GooseSetup {
         } finally {
           // goose keeps every session; this one is not worth keeping.
           await goose
-            .request("session/delete", { sessionId: opened.sessionId })
+            .request(
+              "session/delete",
+              { sessionId: opened.sessionId },
+              REQUEST_TIMEOUT_MS,
+            )
             .catch(() => undefined);
         }
       });

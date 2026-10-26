@@ -29,7 +29,11 @@ import {
   ComboboxExamples,
 } from "./FormSpecimens";
 import { ToastSpecimens } from "./ToastSpecimens";
-import { ButtonSpecimen, IconButtonSpecimen } from "./ButtonSpecimens";
+import {
+  ButtonSpecimen,
+  IconButtonSpecimen,
+  SplitButtonSpecimen,
+} from "./ButtonSpecimens";
 import { AlertDialog } from "../../../../src/shared/design-system/ui/AlertDialog";
 import { DialogSpecimens } from "./DialogSpecimens";
 import { Tooltip } from "../../../../src/shared/design-system/ui/Tooltip";
@@ -2113,6 +2117,7 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
   workspace: BentoSpecimen,
   button: ButtonSpecimen,
   "icon-button": IconButtonSpecimen,
+  "split-button": SplitButtonSpecimen,
   avatar: AvatarSpecimen,
   "avatar-stack": AvatarStackSpecimen,
   "shimmer-text": ShimmerTextSpecimen,

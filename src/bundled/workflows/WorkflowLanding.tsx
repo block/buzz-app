@@ -7,6 +7,7 @@ import {
 import { WORKFLOW_CHANNEL_BATCH } from "../../features/workflows/queries";
 import {
   type ReactNode,
+  type Ref,
   useEffect,
   useId,
   useMemo,
@@ -837,7 +838,13 @@ function WorkflowCard({
 }
 
 /** Exiting filters/results stop accepting input before their fade completes. */
-function WorkflowListTransition({ children }: { children: ReactNode }) {
+function WorkflowListTransition({
+  children,
+  ref,
+}: {
+  children: ReactNode;
+  ref?: Ref<HTMLDivElement>;
+}) {
   const present = useIsPresent();
   const reducedMotion = useReducedMotion();
   const instant =
@@ -846,6 +853,7 @@ function WorkflowListTransition({ children }: { children: ReactNode }) {
       document.documentElement.hasAttribute("data-keyboard-navigation"));
   return (
     <motion.div
+      ref={ref}
       className="workflow-list-transition"
       layout={instant ? false : "position"}
       inert={!present}
@@ -1112,7 +1120,7 @@ export function WorkflowLanding({
             </MenuGroup>
           </MenuPopup>
         </MenuRoot>
-        <AnimatePresence key={presenceKey} initial={false}>
+        <AnimatePresence key={presenceKey} initial={false} mode="popLayout">
           {shown.map((channel) => (
             <WorkflowListTransition key={channel.id}>
               <Button
@@ -1184,7 +1192,7 @@ export function WorkflowLanding({
             }
           }}
         >
-          <AnimatePresence key={presenceKey} initial={false}>
+          <AnimatePresence key={presenceKey} initial={false} mode="popLayout">
             {visible
               .filter((channel) => {
                 const data = snapshots[channel.id]?.data;

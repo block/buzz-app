@@ -702,13 +702,13 @@
     color: var(--text-subtle);
   }
 
-  /* A fallback initial (the only span child) keeps the component's body line
-     box, which can be taller than small artwork; centre the overflowing track
-     rather than letting it start at the top. Only there: centring also stops
-     the track stretching, and a percentage-sized artwork child (the packed
-     video wrapper) would shrink to the video's intrinsic height until its
-     poster or metadata arrives. */
-  .buzz-avatar:has(> span) {
+  /* A fallback initial (marked data-avatar-fallback by Avatar.tsx) keeps the
+     component's body line box, which can be taller than small artwork; centre
+     the overflowing track rather than letting it start at the top. Only there:
+     centring also stops the track stretching, and a percentage-sized artwork
+     child (the packed video wrapper) would shrink to the video's intrinsic
+     height until its poster or metadata arrives. */
+  .buzz-avatar:has(> [data-avatar-fallback]) {
     place-content: center;
   }
 

@@ -27,6 +27,12 @@ it("saves the shared policy shape, preserving exact user-specified bot and autho
       onClose={vi.fn()}
     />,
   );
+  for (const input of screen.getAllByRole("textbox")) {
+    expect(input).toHaveAttribute("autocorrect", "off");
+    expect(input).toHaveAttribute("autocapitalize", "none");
+    expect(input).toHaveAttribute("spellcheck", "false");
+    expect(input).toHaveAttribute("autocomplete", "off");
+  }
   fireEvent.change(
     screen.getByRole("textbox", { name: "Trusted organizations" }),
     { target: { value: "example-org\n" } },

@@ -41,6 +41,10 @@ export function GitHubPolicyEditor({
     <Field label={label} description={description}>
       <Textarea
         rows={3}
+        autoCorrect="off"
+        autoCapitalize="none"
+        spellCheck={false}
+        autoComplete="off"
         value={draft[key]}
         disabled={pending}
         onChange={(event) => {
@@ -112,17 +116,17 @@ export function GitHubPolicyEditor({
         {field(
           "trustedOrganizations",
           "Trusted organizations",
-          "One GitHub organization login per line.",
+          "One GitHub organization login per line. No commas.",
         )}
         {field(
           "trustedAuthors",
           "Trusted commenters",
-          "One exact GitHub login per line, including bot logins.",
+          "One exact GitHub login per line, including bot logins. No commas.",
         )}
         {field(
           "ignoredAuthors",
           "Ignored commenters",
-          "One exact GitHub login per line. These never wake agents, even in a trusted organization.",
+          "One exact GitHub login per line. No commas. These never wake agents, even in a trusted organization.",
         )}
         {error && (
           <p role="alert" className="text-body-sm text-danger">

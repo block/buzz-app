@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   ArrowsClockwiseIcon,
@@ -7,6 +7,8 @@ import {
 } from "../../shared/design-system/icons";
 import { useNativeDownload } from "./use-native-download";
 import { isNativeMediaSource } from "./attachment-source";
+
+const FAILURE_DURATION = 6000;
 
 export function MediaDownloadAction({
   source,
@@ -53,10 +55,20 @@ function NativeMediaDownload({
   onFeedbackVisible?: ((visible: boolean) => void) | undefined;
 }) {
   const { state, download } = useNativeDownload(source, name, savedDuration);
+  // The failure notice expires like the copy error; the retry icon remains.
+  const [failureExpired, setFailureExpired] = useState(false);
+  const failureShown = state === "failed" && !failureExpired;
   useEffect(() => {
-    onFeedbackVisible?.(state !== "idle");
+    if (!failureShown) return;
+    const timer = setTimeout(() => setFailureExpired(true), FAILURE_DURATION);
+    return () => clearTimeout(timer);
+  }, [failureShown]);
+  const feedbackVisible =
+    state === "pending" || state === "saved" || failureShown;
+  useEffect(() => {
+    onFeedbackVisible?.(feedbackVisible);
     return () => onFeedbackVisible?.(false);
-  }, [state, onFeedbackVisible]);
+  }, [feedbackVisible, onFeedbackVisible]);
   return (
     <>
       <IconButton
@@ -69,7 +81,10 @@ function NativeMediaDownload({
           state === "failed" ? `Retry download ${kind}` : `Download ${kind}`
         }
         loading={state === "pending"}
-        onClick={() => void download()}
+        onClick={() => {
+          setFailureExpired(false);
+          void download();
+        }}
         icon={
           state === "failed" ? (
             <ArrowsClockwiseIcon size={17} aria-hidden="true" />
@@ -80,12 +95,11 @@ function NativeMediaDownload({
           )
         }
       />
+      {/* Stays mounted so screen readers announce the first change. */}
       <span
-        data-download-feedback={state === "idle" ? undefined : ""}
-        role={
-          state === "idle" ? undefined : state === "failed" ? "alert" : "status"
-        }
-        className={state === "idle" ? "sr-only" : undefined}
+        data-download-feedback={feedbackVisible ? "" : undefined}
+        role={failureShown ? "alert" : "status"}
+        className={feedbackVisible ? undefined : "sr-only"}
       >
         {state === "pending"
           ? "Downloading…"
@@ -93,7 +107,7 @@ function NativeMediaDownload({
             ? compact
               ? "Downloaded"
               : "Saved to Downloads"
-            : state === "failed"
+            : failureShown
               ? compact
                 ? "Download failed"
                 : "Couldn’t download. Try again."

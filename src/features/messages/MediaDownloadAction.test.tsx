@@ -141,11 +141,52 @@ it("keeps the voice-note confirmation visible for ten seconds after saving", asy
     act(() => vi.advanceTimersByTime(9999));
     expect(screen.getByRole("status")).toHaveTextContent("Downloaded");
     act(() => vi.advanceTimersByTime(1));
-    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toBeEmptyDOMElement();
   } finally {
     vi.useRealTimers();
   }
 });
+
+it.each<Kind>(["video", "audio", "voice note"])(
+  "keeps the %s status region mounted before the first download",
+  async (kind) => {
+    render(<Surface kind={kind} />);
+    await screen.findByRole("button", { name: `Download ${kind}` });
+    expect(screen.getByRole("status")).toBeEmptyDOMElement();
+  },
+);
+
+it.each<Kind>(["video", "audio", "voice note"])(
+  "clears the %s failure notice after six seconds but keeps retry",
+  async (kind) => {
+    vi.mocked(invoke).mockImplementation(async (command) => {
+      if (command === "media_download") throw new Error("offline");
+      return "http://127.0.0.1:4321/token/";
+    });
+    render(<Surface kind={kind} />);
+    const button = await screen.findByRole("button", {
+      name: `Download ${kind}`,
+    });
+    vi.useFakeTimers();
+    try {
+      await act(async () => fireEvent.click(button));
+      expect(screen.getByRole("alert")).not.toBeEmptyDOMElement();
+      if (kind === "video")
+        expect(button.closest("[data-controls-revealed]")).not.toBeNull();
+      act(() => vi.advanceTimersByTime(5999));
+      expect(screen.getByRole("alert")).not.toBeEmptyDOMElement();
+      act(() => vi.advanceTimersByTime(1));
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(screen.getByRole("status")).toBeEmptyDOMElement();
+      expect(button.closest("[data-controls-revealed]")).toBeNull();
+      expect(button).toHaveAccessibleName(`Retry download ${kind}`);
+      await act(async () => fireEvent.click(button));
+      expect(screen.getByRole("alert")).not.toBeEmptyDOMElement();
+    } finally {
+      vi.useRealTimers();
+    }
+  },
+);
 
 it.each<Kind>(["video", "audio", "voice note"])(
   "does not add a download action to an unsent %s preview",

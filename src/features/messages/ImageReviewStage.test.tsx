@@ -565,7 +565,10 @@ it("offers native copy independently of browser clipboard support", async () => 
     "buzz-media://localhost/https%3A%2F%2Ffixture.test%2Fmedia%2Faaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   );
   expect(broker).not.toHaveBeenCalled();
-  expect(await screen.findByRole("status")).toHaveTextContent("Image copied");
+  expect(await screen.findByText("Image copied")).toHaveAttribute(
+    "role",
+    "status",
+  );
 
   native.mockRejectedValueOnce(new Error("clipboard denied"));
   fireEvent.click(button);
@@ -906,7 +909,7 @@ it("keeps image download controls visible and focused while blocking pending rep
   act(() => vi.advanceTimersByTime(3999));
   expect(stage).toHaveAttribute("data-controls-revealed");
   act(() => vi.advanceTimersByTime(1));
-  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  expect(screen.getByRole("status")).toBeEmptyDOMElement();
   expect(stage).not.toHaveAttribute("data-controls-revealed");
 });
 
@@ -945,7 +948,7 @@ it.each(["success", "failure"])(
         ? gate.resolve()
         : gate.reject(new Error("old failure")),
     );
-    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toBeEmptyDOMElement();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Download image" }),

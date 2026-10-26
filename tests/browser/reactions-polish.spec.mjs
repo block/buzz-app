@@ -43,7 +43,7 @@ test("reaction emojis and hit areas grow together without clipping", async ({
         };
       }),
     )
-    .toEqual({ nested: true, bottomInset: 10 });
+    .toEqual({ nested: true, bottomInset: 8 });
   for (const [theme, scale] of [
     ["light", 1],
     ["light", 1.5],

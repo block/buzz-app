@@ -1,6 +1,6 @@
 # Scheduled agent command example
 
-This Linux/macOS plugin uses the first-party `agents.spawn` launcher. Load this folder in Settings → Plugins on a desktop build of this PR, then ask a local agent with Attention enabled to create an Interest and a source watch:
+This Linux/macOS plugin uses the first-party `agents.spawn` launcher. Load this folder in Settings → Plugins on a desktop build with agent command support, then ask a local agent with Attention enabled to create an Interest and a source watch:
 
 ```json
 {

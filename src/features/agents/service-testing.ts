@@ -376,10 +376,12 @@ export function fakeNative(identities: AgentIdentity[] = []) {
         const relay = wss(destination);
         if (at({ pubkey, relay }) >= 0)
           throw new Error(`${source.name} is already in that community`);
-        const { picture: _, deleting: __, ...rest } = source;
+        const { picture: _, deleting: __, home: ___, ...rest } = source;
+        const home = source.home ?? source.relay;
         const joined: AgentIdentity = {
           ...rest,
-          home: source.home ?? source.relay,
+          // Back in its home, it is the home row again.
+          ...(home !== relay && { home }),
           relay,
           ...(picture && { picture }),
           deleted: false,

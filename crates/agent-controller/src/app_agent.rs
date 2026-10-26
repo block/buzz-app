@@ -9,7 +9,7 @@ use crate::config::{agent_id, canonical_key, canonical_relay};
 use crate::secret::validate_attestation;
 use crate::{Credentials, Result, Secret};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// What a plugin agent may publish: a deletion (5), a reaction (7), a message
 /// (9), a channel member change (9000, 9001), edit (9002), creation (9007),
@@ -58,7 +58,8 @@ pub struct AppAgent {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub deleting: bool,
     /// The `wss://` origin of the agent's home community, the first it was
-    /// in, on a row `join` added; absent, this row's community is its home.
+    /// in, on a row `join` added elsewhere; absent, this row's community is its
+    /// home.
     /// Its home membership keeps the state saved under its bare pubkey, so
     /// every copy of the app must agree on it whichever rows remain.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -333,9 +334,10 @@ impl NewAppAgent {
     }
 }
 
-/// The saved identities, one JSON file under app data. Reads see a whole file
-/// (writes rename into place); each read-modify-write holds a file lock beside it,
-/// since more than one app instance can share the directory.
+/// The saved identities, a JSON file under app data and, beside it, one with the
+/// rows `join` added (`JOINED`). Reads see whole files (writes rename into
+/// place); each read-modify-write holds a file lock beside them, since more than
+/// one app instance can share the directory.
 #[derive(Clone)]
 pub struct AppAgents {
     path: PathBuf,
@@ -346,36 +348,74 @@ impl AppAgents {
     }
     /// Every row, deleted ones included.
     pub fn list(&self) -> Result<Vec<AppAgent>> {
-        match std::fs::read(&self.path) {
-            Ok(bytes) => {
-                // Older development builds persisted this boolean. Ignore only
-                // that obsolete field; all other row/schema checks still apply.
-                let malformed = || "Saved agent identities are malformed".to_owned();
-                let saved: serde_json::Value =
-                    serde_json::from_slice(&bytes).map_err(|_| malformed())?;
-                let mut rows = match saved {
-                    serde_json::Value::Array(_) => saved,
-                    serde_json::Value::Object(mut saved)
-                        if saved.len() == 2
-                            && saved.get("version") == Some(&MULTI_COMMUNITY.into()) =>
-                    {
-                        saved.remove("agents").ok_or_else(malformed)?
-                    }
-                    _ => return Err(malformed()),
+        self.read().map(|(rows, _)| rows)
+    }
+    /// Saves an earlier development build's versioned list apart, as `write`
+    /// does, so older builds can read it again.
+    pub fn upgrade(&self) -> Result<()> {
+        if self.read()?.1 {
+            self.update(|_| Ok(()))?;
+        }
+        Ok(())
+    }
+    /// Every row, and whether they are an earlier development build's
+    /// versioned list, which holds them all.
+    fn read(&self) -> Result<(Vec<AppAgent>, bool)> {
+        let malformed = || "Saved agent identities are malformed".to_owned();
+        let made = match read_rows(&self.path)? {
+            None => vec![],
+            Some(serde_json::Value::Array(rows)) => parse_rows(rows)?,
+            Some(serde_json::Value::Object(mut saved))
+                if saved.len() == 2 && saved.get("version") == Some(&MULTI_COMMUNITY.into()) =>
+            {
+                let Some(serde_json::Value::Array(rows)) = saved.remove("agents") else {
+                    return Err(malformed());
                 };
-                for row in rows.as_array_mut().ok_or_else(malformed)? {
-                    if let Some(adopted) = row.as_object_mut().and_then(|row| row.remove("adopted"))
-                    {
-                        if !adopted.is_boolean() {
-                            return Err(malformed());
-                        }
+                let mut rows = parse_rows(rows)?;
+                // It saved an agent added back to its home with `home`.
+                for row in &mut rows {
+                    if row.home.as_ref() == Some(&row.relay) {
+                        row.home = None;
                     }
                 }
-                serde_json::from_value(rows).map_err(|_| malformed())
+                return Ok((rows, true));
             }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(vec![]),
-            Err(_) => Err("Could not read saved agent identities".into()),
-        }
+            Some(_) => return Err(malformed()),
+        };
+        let joined = match read_rows(&self.joined())? {
+            None => vec![],
+            Some(serde_json::Value::Array(rows)) => parse_rows(rows)?,
+            Some(_) => return Err(malformed()),
+        };
+        // Older builds edit only the plain list: an agent they imported again
+        // where it was added takes that row's place, and its home row, while
+        // it has one, holds the agent's name and type, so neither they nor a
+        // write cut short between the files leaves its rows disagreeing. A row
+        // in both is one a write moved to the plain list.
+        let joined: Vec<AppAgent> = joined
+            .into_iter()
+            .filter(|row| {
+                !made
+                    .iter()
+                    .any(|other| other.pubkey == row.pubkey && other.relay == row.relay)
+            })
+            .map(|mut row| {
+                if let Some(home) = made.iter().find(|home| {
+                    home.pubkey == row.pubkey
+                        && row.home.as_ref() == Some(&home.relay)
+                        && !home.deleted
+                }) {
+                    row.name.clone_from(&home.name);
+                    row.agent_type.clone_from(&home.agent_type);
+                }
+                row
+            })
+            .collect();
+        Ok((made.into_iter().chain(joined).collect(), false))
+    }
+    /// Where the rows `join` added are saved, beside the others.
+    fn joined(&self) -> PathBuf {
+        self.path.with_file_name(JOINED)
     }
     /// An agent that still has its key in the community at `relay`.
     pub fn get(&self, pubkey: &str, relay: &str) -> Result<AppAgent> {
@@ -389,9 +429,9 @@ impl AppAgents {
     /// saves what it returns.
     fn update<T>(&self, change: impl FnOnce(&mut Vec<AppAgent>) -> Result<T>) -> Result<T> {
         let _lock = self.lock("lock")?;
-        let mut agents = self.list()?;
+        let (mut agents, versioned) = self.read()?;
         let result = change(&mut agents)?;
-        self.write(&agents)?;
+        self.write(&agents, versioned)?;
         Ok(result)
     }
     /// Takes the cross-process lock in the file beside the list with
@@ -420,25 +460,32 @@ impl AppAgents {
     fn keys_lock(&self) -> Result<std::fs::File> {
         self.lock("keys.lock")
     }
-    /// Saves a plain list while every agent is only in the community it was
-    /// made in, as older builds read it. Once one has been added to another,
-    /// the list is versioned, so an older build, which keys an agent's state by
-    /// its pubkey in whichever community it finds it, refuses the file. It
-    /// stays versioned after the agent leaves its home, as its other rows
-    /// still name it.
-    fn write(&self, agents: &[AppAgent]) -> Result<()> {
-        let joined = agents.iter().any(|agent| agent.home.is_some());
-        let bytes = if joined {
-            serde_json::to_vec_pretty(
-                &serde_json::json!({ "version": MULTI_COMMUNITY, "agents": agents }),
-            )
+    /// Saves the agents' memberships elsewhere than their homes, and Joins not
+    /// yet settled, apart from the others, which stay the plain list older
+    /// builds read: they refuse a row with fields they don't know, and would
+    /// take a membership's state for the one under its bare pubkey. A row moves
+    /// only to the plain list, as its Join settles, which is saved first, so a
+    /// write cut short leaves it in both, where the plain one is read. From an
+    /// earlier development build's versioned list, the other rows are saved
+    /// first instead, as the list still holds every row until it is replaced.
+    fn write(&self, agents: &[AppAgent], versioned: bool) -> Result<()> {
+        let (joined, made): (Vec<&AppAgent>, Vec<&AppAgent>) = agents
+            .iter()
+            .partition(|agent| agent.home.is_some() || agent.joining);
+        let path = self.joined();
+        let save_joined = || {
+            if !joined.is_empty() || path.exists() {
+                save_rows(&path, &joined)?;
+            }
+            Ok(())
+        };
+        if versioned {
+            save_joined()?;
+            save_rows(&self.path, &made)
         } else {
-            serde_json::to_vec_pretty(agents)
+            save_rows(&self.path, &made)?;
+            save_joined()
         }
-        .map_err(|_| "Could not encode agent identities")?;
-        let temp = self.path.with_extension("tmp");
-        std::fs::write(&temp, bytes).map_err(|_| "Could not save agent identities")?;
-        std::fs::rename(&temp, &self.path).map_err(|_| "Could not save agent identities".into())
     }
     /// Changes the agent in the community at `relay`, while it has its key there.
     fn edit(&self, pubkey: &str, relay: &str, change: impl FnOnce(&mut AppAgent)) -> Result<()> {
@@ -637,7 +684,9 @@ impl AppAgents {
                 profile: None,
                 deleted: false,
                 deleting: false,
-                home: Some(source.home.clone().unwrap_or_else(|| source.relay.clone())),
+                // Back in its home, it is the home row again.
+                home: Some(source.home.clone().unwrap_or_else(|| source.relay.clone()))
+                    .filter(|home| *home != relay),
                 joining: true,
                 ..source.clone()
             };
@@ -881,8 +930,43 @@ impl Removal {
     }
 }
 
-/// The version of the saved list once an agent is in several communities.
+/// The version of the list earlier development builds saved once an agent was
+/// in several communities.
 const MULTI_COMMUNITY: u64 = 2;
+/// The file beside the saved identities with the rows `join` added.
+pub const JOINED: &str = "memberships.json";
+
+/// Saved rows as this build reads them. Older development builds persisted
+/// `adopted`; only that obsolete field is ignored, and all other row/schema
+/// checks still apply.
+fn parse_rows(mut rows: Vec<serde_json::Value>) -> Result<Vec<AppAgent>> {
+    let malformed = || "Saved agent identities are malformed".to_owned();
+    for row in &mut rows {
+        if let Some(adopted) = row.as_object_mut().and_then(|row| row.remove("adopted")) {
+            if !adopted.is_boolean() {
+                return Err(malformed());
+            }
+        }
+    }
+    serde_json::from_value(serde_json::Value::Array(rows)).map_err(|_| malformed())
+}
+/// The JSON saved at `path`; none when there is no file.
+fn read_rows(path: &Path) -> Result<Option<serde_json::Value>> {
+    match std::fs::read(path) {
+        Ok(bytes) => serde_json::from_slice(&bytes)
+            .map(Some)
+            .map_err(|_| "Saved agent identities are malformed".into()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(_) => Err("Could not read saved agent identities".into()),
+    }
+}
+/// Replaces the rows saved at `path` whole.
+fn save_rows(path: &Path, rows: &[&AppAgent]) -> Result<()> {
+    let bytes = serde_json::to_vec_pretty(rows).map_err(|_| "Could not encode agent identities")?;
+    let temp = path.with_extension("tmp");
+    std::fs::write(&temp, bytes).map_err(|_| "Could not save agent identities")?;
+    std::fs::rename(&temp, path).map_err(|_| "Could not save agent identities".into())
+}
 
 fn valid_name(name: &str) -> Result<String> {
     let name = name.trim();

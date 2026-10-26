@@ -611,10 +611,18 @@ agent's, so rename and retype change every row.
 Everything this device keeps for one membership is keyed by its `AgentKey`
 (`src/features/agents/membership.ts`): the bare pubkey in the agent's home
 community, `pubkey@<encoded host>` elsewhere. The home is the first community the
-agent was in. Native saves it on every row Add creates (`home`), so every copy of
-the app derives the same keys whichever rows remain, and the saved list stays
-versioned, which older builds refuse, while any row has it. Keys from before
-multi-community agents are home keys, so nothing is migrated. Each
+agent was in. Native saves it on every row Add creates elsewhere (`home`), so every
+copy of the app derives the same keys whichever rows remain; one Add creates back
+in the home is the home row again. Those rows, and Adds not yet settled, are saved
+apart, in `agents/memberships.json`; `agents/identities.json` stays the plain list, in the
+fields older builds know, so they keep running each agent in its home and see none
+of its other communities. While the agent has its home row, that row holds its
+name and type, which older builds may change, and a row an older build imports
+again where the agent was added takes the added row's place. An older build's
+Delete or erase acts only on home rows: the agent stays in its other communities,
+and an erase can drop `memberships.json` and leave those rows' keys in the
+keychain. Keys from before multi-community agents are home keys, so nothing is
+migrated. Each
 membership has its own record (attention, timers, catch-up), runner (queues and
 rate limits), interrupted turns and harness sessions. The agent's config lives only
 in its home record and applies everywhere.
@@ -817,9 +825,10 @@ evidence before resolving its visible label. The portable policy is specified in
 `agentLibrary` is the display inventory behind `agentChoices`. Each session reads
 the owner's kind-30175 profiles and kind-30177 identities from its accessible relay,
 and also the host's saved Buzz library. The development broker's
-`/api/relay/agent-library` and the native host both read `agents/identities.json`
-under the app data directory; native reads it through its owner, `AppAgents`, and
-the broker caps it at 8 MiB / 2000 records. A missing store is an empty local
+`/api/relay/agent-library` reads `agents/identities.json` under the app data
+directory, leaving out an agent that is only in communities it was added to, and
+caps it at 8 MiB / 2000 records; the native host reads it and
+`agents/memberships.json` through their owner, `AppAgents`. A missing store is an empty local
 inventory; neither host falls back to retired stores. Deleted identities are
 omitted and identities configured in multiple communities are joined by public key.
 The host read is read-only: it writes no configuration, migrates no identities,

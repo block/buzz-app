@@ -4,6 +4,29 @@ use std::sync::Mutex;
 
 const RELAY: &str = "wss://relay.example";
 
+/// A row as builds before agents could be in several communities read it,
+/// which refuses the whole list on a field it doesn't know.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[allow(dead_code)]
+struct OlderRow {
+    pubkey: String,
+    relay: String,
+    owner: String,
+    auth: String,
+    #[serde(rename = "type", default)]
+    agent_type: String,
+    #[serde(default)]
+    name: String,
+    picture: Option<String>,
+    about: Option<String>,
+    profile: Option<Published>,
+    #[serde(default)]
+    deleted: bool,
+    #[serde(default)]
+    deleting: bool,
+}
+
 #[derive(Default)]
 struct Memory(Mutex<BTreeMap<String, String>>, Faults);
 /// Credential-store operations to refuse, standing in for a denied or busy store.
@@ -764,10 +787,22 @@ fn joins_communities_and_leaves_them_one_at_a_time() {
     let credentials = Memory::default();
     let (agents, agent) = created(dir.path(), &credentials);
     let path = dir.path().join("agents/identities.json");
-    let saved =
-        || serde_json::from_slice::<serde_json::Value>(&std::fs::read(&path).unwrap()).unwrap();
-    // One community each: the plain list older builds read.
-    assert!(saved().is_array());
+    let read = |name: &str| {
+        serde_json::from_slice::<serde_json::Value>(
+            &std::fs::read(path.with_file_name(name)).unwrap(),
+        )
+        .unwrap()
+    };
+    // Older builds read the plain list, in the fields they know, and nothing
+    // of the communities the agent was added to.
+    let saved = || {
+        let saved = read("identities.json");
+        for row in saved.as_array().unwrap() {
+            assert!(serde_json::from_value::<OlderRow>(row.clone()).is_ok());
+        }
+        saved
+    };
+    assert_eq!(saved().as_array().unwrap().len(), 1);
 
     let picture = "https://other.example/media/a.png";
     let joined = agents
@@ -794,8 +829,8 @@ fn joins_communities_and_leaves_them_one_at_a_time() {
     assert!(agents
         .join(&agent.pubkey, RELAY, OTHER, None, &credentials)
         .is_err());
-    // Several communities: versioned, so an older build refuses the list.
-    assert_eq!(saved()["version"], 2);
+    assert_eq!(saved().as_array().unwrap().len(), 1);
+    assert_eq!(read(JOINED).as_array().unwrap().len(), 1);
     assert_eq!(agents.list().unwrap(), [agent.clone(), joined.clone()]);
 
     // Names and types are the agent's; pictures and profiles each community's.
@@ -822,7 +857,8 @@ fn joins_communities_and_leaves_them_one_at_a_time() {
     agents.remove(&removal, &credentials).unwrap();
     agents.forget(&agent.pubkey, OTHER).unwrap();
     drop(removal);
-    assert!(saved().is_array());
+    assert_eq!(saved().as_array().unwrap().len(), 1);
+    assert_eq!(read(JOINED), serde_json::json!([]));
     assert!(agents
         .get(&agent.pubkey, RELAY)
         .unwrap()
@@ -848,7 +884,7 @@ fn joins_communities_and_leaves_them_one_at_a_time() {
 }
 
 #[test]
-fn a_membership_keeps_its_home_and_the_list_its_version_once_the_home_is_left() {
+fn a_membership_keeps_its_home_once_the_home_is_left() {
     const OTHER: &str = "wss://other.example";
     let dir = tempfile::tempdir().unwrap();
     let credentials = Memory::default();
@@ -860,17 +896,21 @@ fn a_membership_keeps_its_home_and_the_list_its_version_once_the_home_is_left() 
     agents.begin_leave(&agent.pubkey, RELAY).unwrap();
     remove(&agents, &agent.pubkey, RELAY, &credentials).unwrap();
     agents.forget(&agent.pubkey, RELAY).unwrap();
-    // An older build would take the bare pubkey's state for this membership.
+    // Kept from older builds, which would take the bare pubkey's state for it.
     let saved: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&agents.path).unwrap()).unwrap();
-    assert_eq!(saved["version"], 2);
+    assert_eq!(saved, serde_json::json!([]));
     let [there] = agents.list().unwrap().try_into().unwrap();
     assert_eq!(there.home.as_deref(), Some(RELAY));
-    // Back home, it is home again, from whichever row it joins.
+    // Back home, it is the home row again, which older builds read.
     let home = agents
         .join(&agent.pubkey, OTHER, RELAY, None, &credentials)
         .unwrap();
-    assert_eq!(home.home.as_deref(), Some(RELAY));
+    assert_eq!(home.home, None);
+    let saved: Vec<OlderRow> =
+        serde_json::from_slice(&std::fs::read(&agents.path).unwrap()).unwrap();
+    assert_eq!(saved.len(), 1);
+    assert_eq!(agents.list().unwrap().len(), 2);
 }
 
 #[test]
@@ -945,6 +985,74 @@ fn a_failed_join_leaves_the_agent_where_it_was() {
         .is_err());
     assert_eq!(agents.list().unwrap(), std::slice::from_ref(&agent));
     assert!(agent.read_key(&credentials).is_ok());
+}
+
+#[test]
+fn reads_an_earlier_development_build_s_versioned_list_and_saves_it_apart() {
+    const OTHER: &str = "wss://other.example";
+    let dir = tempfile::tempdir().unwrap();
+    let credentials = Memory::default();
+    let (agents, agent) = created(dir.path(), &credentials);
+    let joined = agents
+        .join(&agent.pubkey, RELAY, OTHER, None, &credentials)
+        .unwrap();
+    let rows = agents.list().unwrap();
+    // It saved an agent added back to its home with `home`.
+    let mut saved = serde_json::to_value(&rows).unwrap();
+    saved[0]["home"] = RELAY.into();
+    std::fs::write(
+        &agents.path,
+        serde_json::json!({ "version": 2, "agents": saved }).to_string(),
+    )
+    .unwrap();
+    // Its versioned list holds every row; the other file is read only after.
+    std::fs::write(agents.joined(), "[]").unwrap();
+    assert_eq!(agents.list().unwrap(), rows);
+    // Opening the app saves it apart, unchanged, before anything else does.
+    agents.upgrade().unwrap();
+    let saved: Vec<OlderRow> =
+        serde_json::from_slice(&std::fs::read(&agents.path).unwrap()).unwrap();
+    assert_eq!(saved.len(), 1);
+    assert_eq!(agents.list().unwrap(), rows);
+    assert_eq!(agents.get(&agent.pubkey, OTHER).unwrap(), joined);
+}
+
+#[test]
+fn the_plain_list_older_builds_edit_holds_the_agent_s_name_type_and_rows() {
+    const OTHER: &str = "wss://other.example";
+    let dir = tempfile::tempdir().unwrap();
+    let credentials = Memory::default();
+    let (agents, agent) = created(dir.path(), &credentials);
+    agents
+        .join(&agent.pubkey, RELAY, OTHER, None, &credentials)
+        .unwrap();
+    // As an older build renames and retypes it, or as a write cut short
+    // between the files leaves only the added rows changed.
+    let edit = |change: &dyn Fn(&mut Vec<serde_json::Value>)| {
+        let mut rows: Vec<serde_json::Value> =
+            serde_json::from_slice(&std::fs::read(&agents.path).unwrap()).unwrap();
+        change(&mut rows);
+        std::fs::write(&agents.path, serde_json::to_vec(&rows).unwrap()).unwrap();
+    };
+    edit(&|rows| {
+        rows[0]["name"] = "Bea".into();
+        rows[0]["type"] = "plugin/other".into();
+    });
+    for row in agents.list().unwrap() {
+        assert_eq!(
+            (row.name.as_str(), row.agent_type.as_str()),
+            ("Bea", "plugin/other")
+        );
+    }
+    // An agent an older build imported again where it was added is that row.
+    edit(&|rows| {
+        let mut again = rows[0].clone();
+        again["relay"] = OTHER.into();
+        rows.push(again);
+    });
+    let rows = agents.list().unwrap();
+    assert_eq!(rows.len(), 2);
+    assert!(rows.iter().all(|row| row.home.is_none()));
 }
 
 #[test]

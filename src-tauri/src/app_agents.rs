@@ -59,7 +59,14 @@ impl AppAgentHost {
             .map_err(Clone::clone)
             .and_then(|path| Ok(path.parent().ok_or("Invalid agent storage")?.join("hosts")));
         Self {
-            agents: path.map(AppAgents::open),
+            agents: path.map(|path| {
+                let agents = AppAgents::open(path);
+                // So an older build can read the list again.
+                if let Err(error) = agents.upgrade() {
+                    eprintln!("Saved agent identities were not upgraded: {error}");
+                }
+                agents
+            }),
             old,
             credentials: Arc::new(PlatformCredentials::default()),
             keys: Arc::default(),

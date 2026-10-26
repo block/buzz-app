@@ -1,7 +1,12 @@
 import { appClient } from "../../buzz-mcp/app-client";
 import { respond } from "../../buzz-mcp/rpc";
 import { connectMcp } from "../../buzz-mcp/connection";
-import type { HostMcpServer } from "../host/service";
+import type {
+  HostMcpServer,
+  HostProcess,
+  HostProcessOptions,
+} from "../host/service";
+import { spawnAgentCommand } from "./command";
 import { sourceCompleted } from "./attention";
 import { createLocalAgentActivity } from "./local-activity";
 import {
@@ -906,6 +911,19 @@ export type Agents = {
       cwd?: string;
     }>,
   ): Promise<HostMcpServer>;
+  /** Starts a process declared by the calling plugin with the agent's Buzz
+   * identity. Child processes inherit its MCP session and agent-scoped `buzz`.
+   * Abort, agent stop, Attention off, or plugin unload stops it and revokes access. */
+  spawn(
+    pubkey: string,
+    process: string,
+    options: Omit<HostProcessOptions, "mcp"> &
+      Readonly<{
+        signal: AbortSignal;
+        channel?: string;
+        root?: string;
+      }>,
+  ): Promise<HostProcess>;
   /** The owner's connection to a running agent's community, which need not be
    * the selected one: read the agent's conversations through this. */
   relay(pubkey: string): RelayData | undefined;
@@ -1929,6 +1947,29 @@ export class AgentsService extends Service implements Agents {
           );
       },
       options.signal,
+    );
+  }
+  async spawn(
+    pubkey: string,
+    process: string,
+    options: Parameters<Agents["spawn"]>[2],
+  ): Promise<HostProcess> {
+    const host = this.ctx.host;
+    if (!host?.spawn)
+      throw new Error("Agent commands require a desktop process host");
+    const handle = this.runners.handle(pubkey);
+    if (!handle) throw new Error("This agent is not running here");
+    const spawn = host.spawn.bind(host);
+    return spawnAgentCommand(
+      {
+        connect: (signal) => this.connect(pubkey, { ...options, signal }),
+        spawn: (settings) => spawn(process, settings),
+        subscribe: (changed) => this.subscribe(changed),
+        check: () => {
+          if (!handle.attention.enabled()) throw new Error("Attention is off");
+        },
+      },
+      options,
     );
   }
   note(pubkey: string, channelId: string, text: string, root?: string) {

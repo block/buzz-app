@@ -277,6 +277,7 @@ function setup(
     relay: () => undefined,
     handle: () => undefined,
     connect: vi.fn(),
+    spawn: vi.fn(),
     sessionState: () => "unavailable" as const,
     session: vi.fn(async () => {}),
     register: vi.fn(),

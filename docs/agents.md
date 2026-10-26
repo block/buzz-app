@@ -910,3 +910,9 @@ Event matches wait for confirmation of both listening and destination rosters. C
 Conversation wakes are local, have no signed message to resume, and never publish their synthetic anchor ids. Pi saves an Attention wake's reply destination separately from its tool context so a recovered answer keeps its destination. Ordinary plugin wakes retain the separate contract above.
 
 Subscription runtime history stays on this device, outside configuration: the last wake time and up to 40 lines (16 KiB) of source output. Missing history on an older subscription is unknown. A completed source or spent timer is removed after its final queued turn succeeds, including work handed to `workingUntil`. A failed source delivery retains the subscription and output.
+
+## Commands using an agent's identity
+
+An installed desktop plugin can call `agents.spawn(pubkey, processId, { signal, args, cwd, channel, root, onStdout, onStderr })`. The process must be declared in the calling plugin's `host.processes`, and the plugin must declare `host.mcp` (and `host.files` when its tools read local paths). The host retains process permission checks and signing keys. The bundled command helper initializes one MCP session, adds an agent-scoped `buzz` to PATH and passes that session to the command and its children. `buzz tools` lists tools; `buzz <tool> --field value` and `buzz call <tool> '<JSON object>'` invoke them. There is no owner-identity fallback.
+
+Abort, Attention off, agent stop, plugin unload, command exit or closing the MCP transport revokes command access. Killing a command uses the existing host process group/job cleanup for descendants. OS access is the same as the app user's. Scheduling and output delivery remain the source plugin's responsibility, so command identity does not require moving Attention into Agents. See the [executable scheduled-source example](../tests/fixtures/agent-command/README.md), including the scope of its fixture-based custody evidence.

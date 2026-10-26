@@ -9215,3 +9215,228 @@ it("rejects invalid source discovery metadata", async () => {
       } as unknown as AttentionSource),
     ).toThrow(/plugin source/);
 });
+
+// Opt in with scripts/test-agent-command.mjs, which builds the actual bundled
+// helper. The service owns agent identity; this fixture substitutes native custody
+// and HTTP transport, not scheduling, MCP dispatch or the command/child binaries.
+it.runIf(process.env.BUZZ_AGENT_COMMAND_BINARY)(
+  "runs a scheduled command and its child through the scheduling agent's MCP identity",
+  async () => {
+    const { createServer } = await import("node:http");
+    const { spawn } = await import("node:child_process");
+    const { apply } = await import(
+      "../../../tests/fixtures/agent-command/plugin.js"
+    );
+    const { ctx, service, native, run } = await setup();
+    let initialize = 0;
+    let closed!: () => void;
+    const stopped = new Promise<void>((resolve) => {
+      closed = resolve;
+    });
+    const children: import("node:child_process").ChildProcess[] = [];
+    const server = createServer();
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
+    const address = server.address();
+    if (!address || typeof address === "string") throw Error("fixture address");
+    const url = `http://127.0.0.1:${address.port}/mcp`;
+    ctx.provide("host", {
+      serveMcp: async (handler: import("../host/service").McpHandler) => {
+        server.on("request", async (request, response) => {
+          try {
+            if (request.headers.authorization !== "Bearer command-agent") {
+              response.writeHead(401).end();
+              return;
+            }
+            const chunks: Buffer[] = [];
+            for await (const chunk of request) chunks.push(Buffer.from(chunk));
+            const message = JSON.parse(Buffer.concat(chunks).toString());
+            if (message.method === "initialize") {
+              initialize++;
+              response.setHeader("Mcp-Session-Id", "command-session");
+            } else if (
+              request.headers["mcp-session-id"] !== "command-session"
+            ) {
+              response.writeHead(400).end();
+              return;
+            }
+            response.setHeader("Content-Type", "application/json");
+            response.end(JSON.stringify(await handler(message)));
+          } catch {
+            response.writeHead(500).end();
+          }
+        });
+        return {
+          url,
+          headers: [{ name: "Authorization", value: "Bearer command-agent" }],
+          close: async () => {
+            server.close();
+            closed();
+          },
+          closed: stopped,
+        };
+      },
+      spawn: async (
+        _id: string,
+        options: import("../host/service").HostProcessOptions,
+      ) => {
+        const child = spawn(
+          process.env.BUZZ_AGENT_COMMAND_BINARY!,
+          [
+            "--launch",
+            "bash",
+            "-c",
+            'exec "$@"',
+            "command",
+            ...(options.args ?? []),
+          ],
+          {
+            env: {
+              PATH: process.env.PATH,
+              BUZZ_AGENT_CONNECTION: JSON.stringify(options.mcp),
+            },
+            stdio: ["pipe", "pipe", "pipe"],
+            detached: true,
+          },
+        );
+        children.push(child);
+        child.stdout.on("data", (chunk) =>
+          options.onStdout?.(chunk.toString()),
+        );
+        child.stderr.on("data", (chunk) =>
+          options.onStderr?.(chunk.toString()),
+        );
+        return {
+          write: async () => {},
+          end: async () => {
+            child.stdin.end();
+          },
+          kill: async () => {
+            if (child.exitCode === null && child.pid)
+              process.kill(-child.pid, "SIGTERM");
+          },
+          exited: new Promise<number | null>((resolve, reject) => {
+            child.once("error", reject);
+            child.once("close", resolve);
+          }),
+        };
+      },
+    } as unknown as import("../host/service").Host);
+    const consumer = ctx.extend({
+      pluginOwner: Object.freeze({
+        id: "buzz.agent-command-example",
+        revision: "one",
+      }),
+    });
+    apply({ agents: consumer.agents });
+    try {
+      await service.create({ type: "example/echo", name: "Echo" });
+      await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
+      await service.save(bot, {
+        attentionEnabled: true,
+        attention: {
+          "interest/identity": {
+            type: "interest",
+            instructions: "Check command identity",
+          },
+          "watch/identity": {
+            type: "source",
+            provider: "buzz.agent-command-example/command",
+            interest_id: "identity",
+            enabled: true,
+            channel,
+            config: {
+              command: [
+                "bash",
+                "-c",
+                `buzz mem_set --slug command-parent --text parent && bash -c 'buzz mem_set --slug command-child --text child' && echo identity-complete`,
+              ],
+            },
+          },
+        },
+      });
+      await vi.waitFor(
+        () => {
+          expect(native.remember).toHaveBeenCalledWith(
+            bot,
+            "mem/command-parent",
+            "parent",
+            expect.any(Number),
+          );
+          expect(native.remember).toHaveBeenCalledWith(
+            bot,
+            "mem/command-child",
+            "child",
+            expect.any(Number),
+          );
+        },
+        { timeout: 10_000 },
+      );
+      await vi.waitFor(() => expect(run).toHaveBeenCalled(), {
+        timeout: 10_000,
+      });
+      expect(initialize).toBe(1);
+      expect(
+        native.remember.mock.calls.every(([pubkey]) => pubkey === bot),
+      ).toBe(true);
+      expect(run.mock.calls[0]?.[0].trigger).toMatchObject({
+        type: "attention",
+        text: expect.stringContaining("identity-complete"),
+      });
+    } finally {
+      await service.save(bot, { attentionEnabled: false });
+      for (const child of children)
+        if (child.exitCode === null && child.pid) {
+          try {
+            process.kill(-child.pid, "SIGKILL");
+          } catch {
+            /* Already reaped. */
+          }
+        }
+      server.closeAllConnections();
+      server.close();
+    }
+  },
+  20_000,
+);
+
+it("refuses agent commands while Attention is off and kills one when Attention turns off", async () => {
+  const { ctx, service, native } = await setup();
+  let close!: () => void;
+  const closed = new Promise<void>((resolve) => {
+    close = resolve;
+  });
+  const kill = vi.fn(async () => {});
+  const spawn = vi.fn(async () => ({
+    exited: new Promise<number | null>(() => {}),
+    kill,
+    write: async () => {},
+    end: async () => {},
+  }));
+  ctx.provide("host", {
+    spawn,
+    serveMcp: async () => ({
+      url: "http://127.0.0.1:1234/mcp",
+      headers: [],
+      closed,
+      close: async () => {
+        close();
+      },
+    }),
+  } as unknown as import("../host/service").Host);
+  const consumer = ctx.extend({
+    pluginOwner: Object.freeze({ id: "consumer", revision: "one" }),
+  });
+  await service.create({ type: "example/echo", name: "Echo" });
+  await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
+  const controller = new AbortController();
+  await expect(
+    consumer.agents.spawn(bot, "command", { signal: controller.signal }),
+  ).rejects.toThrow(/Attention is off/);
+  expect(spawn).not.toHaveBeenCalled();
+  await service.save(bot, { attentionEnabled: true });
+  await consumer.agents.spawn(bot, "command", { signal: controller.signal });
+  await service.save(bot, { attentionEnabled: false });
+  await vi.waitFor(() => expect(kill).toHaveBeenCalledTimes(1));
+});

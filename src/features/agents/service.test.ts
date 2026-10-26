@@ -9222,6 +9222,8 @@ it("rejects invalid source discovery metadata", async () => {
 it.runIf(process.env.BUZZ_AGENT_COMMAND_BINARY)(
   "runs a scheduled command and its child through the scheduling agent's MCP identity",
   async () => {
+    const binary = process.env.BUZZ_AGENT_COMMAND_BINARY;
+    if (!binary) throw new Error("The command helper binary is required");
     const { createServer } = await import("node:http");
     const { spawn } = await import("node:child_process");
     const { apply } = await import(
@@ -9282,7 +9284,7 @@ it.runIf(process.env.BUZZ_AGENT_COMMAND_BINARY)(
         options: import("../host/service").HostProcessOptions,
       ) => {
         const child = spawn(
-          process.env.BUZZ_AGENT_COMMAND_BINARY!,
+          binary,
           [
             "--launch",
             "bash",

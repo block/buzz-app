@@ -544,6 +544,7 @@ function fixture(
     attention,
     objects,
     attentionWrite,
+    events,
     query,
     fileReads,
     memoryOpen,
@@ -4293,4 +4294,35 @@ it("allows an addressed channel turn to reply in an existing thread", async () =
     expect.any(Function),
   );
   await f.complete(0);
+});
+
+it("refuses a handoff from a channel-scoped Codex session to another of its channel's threads", async () => {
+  const f = fixture();
+  const handoff = vi.fn();
+  f.events.push({
+    id: "d".repeat(64),
+    pubkey: owner,
+    kind: 39000,
+    content: "",
+    created_at: 1,
+    tags: [["d", "channel"]],
+  } as EventData);
+  const other = f.delivery("other thread", "e".repeat(64));
+  if (other.trigger.type !== "mention") throw new Error("Expected mention");
+  const first = f.delivery("@Codex hi");
+  await f.runtime.run({
+    ...first,
+    agent: { ...first.agent, handoff } as Delivery["agent"],
+    config: { ...(first.config as object), scope: "channel" },
+  });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const result = await f.tool("self_handoff", {
+    channel: "channel",
+    thread: other.trigger.event.id,
+    text: "carry on",
+  });
+  expect(JSON.stringify(result?.result)).toContain(
+    "That is this conversation.",
+  );
+  expect(handoff).not.toHaveBeenCalled();
 });

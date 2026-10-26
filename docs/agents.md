@@ -633,7 +633,8 @@ apart, in `agents/memberships.json`; `agents/identities.json` stays the plain li
 fields older builds know, so they keep running each agent in its home and see none
 of its other communities. While the agent has its home row, that row holds its
 name and type, which older builds may change, and a row an older build imports
-again where the agent was added takes the added row's place. An older build's
+again where the agent was added takes the added row's place, without its home,
+so the agent's activity there reads its home's sessions. An older build's
 Delete or erase acts only on home rows: the agent stays in its other communities,
 and an erase can drop `memberships.json` and leave those rows' keys in the
 keychain. Keys from before multi-community agents are home keys, so nothing is

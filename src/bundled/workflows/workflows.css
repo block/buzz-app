@@ -34,7 +34,14 @@
   gap: var(--space-3);
   margin-bottom: var(--space-4);
 }
-.workflow-page-filter > .buzz-button {
+.workflow-list-transition {
+  min-width: 0;
+}
+.workflow-page-filter > .buzz-button,
+.workflow-page-filter > .workflow-list-transition {
+  max-width: 100%;
+}
+.workflow-page-filter > .workflow-list-transition > .buzz-button {
   max-width: 100%;
 }
 .workflow-filter-label {

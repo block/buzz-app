@@ -1,5 +1,12 @@
+import {
+  AnimatePresence,
+  motion,
+  useIsPresent,
+  useReducedMotion,
+} from "motion/react";
 import { WORKFLOW_CHANNEL_BATCH } from "../../features/workflows/queries";
 import {
+  type ReactNode,
   useEffect,
   useId,
   useMemo,
@@ -435,6 +442,7 @@ function WorkflowCard({
   onDelete: (definition: WorkflowDefinition) => void;
   onOpen: (definition: WorkflowDefinition, channel: ChannelSummary) => void;
 }) {
+  const present = useIsPresent();
   const [confirmDelete, setConfirmDelete] = useState(false);
   const deletion = [...operations]
     .reverse()
@@ -734,7 +742,10 @@ function WorkflowCard({
   );
   return (
     <>
-      {selected && detailTarget && createPortal(detail, detailTarget)}
+      {present &&
+        selected &&
+        detailTarget &&
+        createPortal(detail, detailTarget)}
       <article className="workflow-card" data-selected={selected || undefined}>
         <div className="workflow-card-row">
           <NavigationItem
@@ -791,7 +802,7 @@ function WorkflowCard({
           {status}
         </span>
       </article>
-      {confirmDelete && (
+      {present && confirmDelete && (
         <ConfirmAction
           title="Delete this workflow?"
           description="The saved workflow may remain visible. Work already running may continue."
@@ -805,7 +816,7 @@ function WorkflowCard({
           }}
         />
       )}
-      {confirmEnable && (
+      {present && confirmEnable && (
         <ConfirmAction
           title={warning?.title ?? "Turn on this workflow?"}
           description={
@@ -822,6 +833,30 @@ function WorkflowCard({
         />
       )}
     </>
+  );
+}
+
+/** Exiting filters/results stop accepting input before their fade completes. */
+function WorkflowListTransition({ children }: { children: ReactNode }) {
+  const present = useIsPresent();
+  const reducedMotion = useReducedMotion();
+  const instant =
+    reducedMotion ||
+    (typeof document !== "undefined" &&
+      document.documentElement.hasAttribute("data-keyboard-navigation"));
+  return (
+    <motion.div
+      className="workflow-list-transition"
+      layout={instant ? false : "position"}
+      inert={!present}
+      aria-hidden={!present || undefined}
+      initial={{ opacity: instant ? 1 : 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: instant ? 0 : 0.15, ease: [0.2, 0.8, 0.2, 1] }}
+    >
+      {children}
+    </motion.div>
   );
 }
 
@@ -1016,6 +1051,11 @@ export function WorkflowLanding({
       snapshots[channel.id]?.status === "idle" ||
       snapshots[channel.id]?.status === "unavailable",
   );
+  // Filter exits may animate; membership changes/access clears must purge at once.
+  const presenceKey = `${channels
+    .map((channel) => channel.id)
+    .sort()
+    .join(":")}/${cleared}`;
   const settledEmpty =
     !paused &&
     !reading &&
@@ -1072,21 +1112,24 @@ export function WorkflowLanding({
             </MenuGroup>
           </MenuPopup>
         </MenuRoot>
-        {shown.map((channel) => (
-          <Button
-            key={channel.id}
-            size="sm"
-            variant="subtle"
-            aria-label={`Remove ${channel.name} channel filter`}
-            onClick={() => {
-              removeFilter(channel.id);
-              filterTrigger.current?.focus();
-            }}
-          >
-            <span className="workflow-filter-label">{channel.name}</span>
-            <XIcon size={16} aria-hidden="true" />
-          </Button>
-        ))}
+        <AnimatePresence key={presenceKey} initial={false}>
+          {shown.map((channel) => (
+            <WorkflowListTransition key={channel.id}>
+              <Button
+                size="sm"
+                variant="subtle"
+                aria-label={`Remove ${channel.name} channel filter`}
+                onClick={() => {
+                  removeFilter(channel.id);
+                  filterTrigger.current?.focus();
+                }}
+              >
+                <span className="workflow-filter-label">{channel.name}</span>
+                <XIcon size={16} aria-hidden="true" />
+              </Button>
+            </WorkflowListTransition>
+          ))}
+        </AnimatePresence>
         {shown.length > 0 && (
           <Button
             variant="ghost"
@@ -1141,23 +1184,31 @@ export function WorkflowLanding({
             }
           }}
         >
-          {visible.map((channel) => (
-            <WorkflowChannelCards
-              capability={capability}
-              channel={channel}
-              detailTarget={detailTarget}
-              key={channel.id}
-              onOpen={onOpen}
-              onDelete={onDelete}
-              onSelect={onSelect}
-              onRun={runRequest}
-              onError={setError}
-              operations={operations}
-              selected={selected}
-              snapshot={snapshots[channel.id]}
-              viewer={viewer}
-            />
-          ))}
+          <AnimatePresence key={presenceKey} initial={false}>
+            {visible
+              .filter((channel) => {
+                const data = snapshots[channel.id]?.data;
+                return data && (data.items.length > 0 || data.partial);
+              })
+              .map((channel) => (
+                <WorkflowListTransition key={channel.id}>
+                  <WorkflowChannelCards
+                    capability={capability}
+                    channel={channel}
+                    detailTarget={detailTarget}
+                    onOpen={onOpen}
+                    onDelete={onDelete}
+                    onSelect={onSelect}
+                    onRun={runRequest}
+                    onError={setError}
+                    operations={operations}
+                    selected={selected}
+                    snapshot={snapshots[channel.id]}
+                    viewer={viewer}
+                  />
+                </WorkflowListTransition>
+              ))}
+          </AnimatePresence>
         </div>
       )}
       <p

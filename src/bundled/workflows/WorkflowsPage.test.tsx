@@ -964,10 +964,18 @@ it("opens a selected card in the side pane and drops a stale channel filter", as
     screen.getByRole("button", { name: /^Open Message helper:/ }),
   ).toBeVisible();
   await user.click(
+    screen.getByRole("button", { name: /^Open Message helper:/ }),
+  );
+  expect(
+    screen.getByRole("region", { name: "Workflow details" }),
+  ).toBeVisible();
+  await user.click(
     screen.getByRole("button", {
       name: "Remove Fixture channel channel filter",
     }),
   );
+  expect(screen.queryByRole("region", { name: "Workflow details" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Channels" })).toHaveFocus();
   expect(
     screen.queryByRole("button", { name: /^Open Message helper:/ }),
   ).toBeNull();

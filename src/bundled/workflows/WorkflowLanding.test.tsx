@@ -369,9 +369,11 @@ it("keeps session purge coverage after removing a completed batch member without
     expect(fixture.reads).toHaveLength(1);
     fixture.refresh();
     await fixture.finish(1, [event(a.id)]);
-    expect(
-      screen.getByRole("button", { name: /^Open Message helper:/ }),
-    ).toBeVisible();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: /^Open Message helper:/ }),
+      ).toBeVisible(),
+    );
   } finally {
     fixture.close();
   }
@@ -532,9 +534,11 @@ it("queues verified readback after an older pending read and rereads only the sa
       [a.id, b.id],
       [a.id],
     ]);
-    expect(
-      screen.getByRole("button", { name: /^Open Message helper:/ }),
-    ).toBeVisible();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: /^Open Message helper:/ }),
+      ).toBeVisible(),
+    );
     fixture.change([b, a]);
     expect(fixture.reads).toHaveLength(3);
     fixture.readback(a.id, "second-revision");
@@ -588,9 +592,11 @@ it("reuses fresh session cache and does not replay readback on landing remount",
       expect(screen.getByRole("status")).toBeEmptyDOMElement(),
     );
     expect(fixture.reads).toHaveLength(1);
-    expect(
-      screen.getByRole("button", { name: /^Open Message helper:/ }),
-    ).toBeVisible();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: /^Open Message helper:/ }),
+      ).toBeVisible(),
+    );
   } finally {
     fixture.close();
   }
@@ -611,17 +617,21 @@ it("rereads an overlapping landing batch after queued verified readback", async 
       [a.id, b.id],
       [a.id],
     ]);
-    expect(
-      screen.getByRole("button", { name: /^Open Message helper:/ }),
-    ).toBeVisible();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: /^Open Message helper:/ }),
+      ).toBeVisible(),
+    );
 
     fixture.remount();
     await waitFor(() => expect(fixture.reads).toHaveLength(3));
     expect(fixture.reads[2]?.ids).toEqual([a.id, b.id]);
     await fixture.finish(2, [saved]);
-    expect(
-      screen.getByRole("button", { name: /^Open Message helper:/ }),
-    ).toBeVisible();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: /^Open Message helper:/ }),
+      ).toBeVisible(),
+    );
   } finally {
     fixture.close();
   }
@@ -660,13 +670,17 @@ it("shows stale cached cards on remount while refreshing and retrying", async ()
     now = 10_001;
     fixture.remount();
     await waitFor(() => expect(fixture.reads).toHaveLength(2));
-    expect(
-      screen.getByRole("button", { name: /^Open Message helper:/ }),
-    ).toBeVisible();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: /^Open Message helper:/ }),
+      ).toBeVisible(),
+    );
     await act(async () => fixture.reads[1]?.reject(new Error("offline")));
-    expect(
-      screen.getByRole("button", { name: /^Open Message helper:/ }),
-    ).toBeVisible();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: /^Open Message helper:/ }),
+      ).toBeVisible(),
+    );
     expect(screen.getByRole("button", { name: "Retry" })).toBeVisible();
   } finally {
     fixture.close();

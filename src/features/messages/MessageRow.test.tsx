@@ -1247,7 +1247,6 @@ it.each(["peer", "own"] as const)(
               "Mark unread",
               "Copy message",
               "Send to channel",
-              "Edit message",
               "Delete message",
               "Follow thread",
               "Report",

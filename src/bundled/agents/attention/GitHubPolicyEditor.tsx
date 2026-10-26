@@ -77,6 +77,8 @@ export function GitHubPolicyEditor({
       open
       title="GitHub comment authors"
       description="Comments and reviews from these authors wake your agents."
+      headerGap="compact"
+      bodyLayout="flex"
       preventClose={pending}
       onOpenChange={(next) => {
         if (!next && !pending) onClose();
@@ -101,7 +103,7 @@ export function GitHubPolicyEditor({
       <form
         id={form}
         aria-label="GitHub author allowlist"
-        className="grid gap-4"
+        className="grid min-h-0 gap-4 overflow-y-auto"
         onSubmit={(event) => {
           event.preventDefault();
           void submit();

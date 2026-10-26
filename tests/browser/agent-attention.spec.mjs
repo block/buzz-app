@@ -74,6 +74,19 @@ test("the allowlist warning opens editable shared settings with usable narrow-la
       const save = page.getByRole("button", { name: "Save", exact: true });
       await save.scrollIntoViewIfNeeded();
       await expect(save).toBeInViewport();
+      await expect
+        .poll(() =>
+          form.evaluate((el) => {
+            const footer = el
+              .closest('[role="dialog"]')
+              .querySelector(".buzz-dialog-actions");
+            return (
+              el.getBoundingClientRect().bottom <=
+              footer.getBoundingClientRect().top
+            );
+          }),
+        )
+        .toBe(true);
       expect(
         await page
           .locator(".attention-page")

@@ -536,3 +536,35 @@ it.each([
   fireEvent.loadedData(second.video);
   expect(second.seek).toHaveBeenCalledWith(0.1);
 });
+
+it("keeps the opening frame when a later seek's encode would finish first", async () => {
+  const { toBlob } = stubCanvas(true);
+  const pending: Array<() => void> = [];
+  toBlob.mockImplementation((callback) => {
+    const frame = pending.length ? "later" : "frame";
+    pending.push(() => callback(new Blob([frame], { type: "image/jpeg" })));
+  });
+  const url = "https://fixture.test/reordered.mp4";
+  const first = mountCapturable(url);
+  fireEvent.loadedData(first.video);
+  fireEvent.seeked(first.video);
+  first.video.currentTime = 12;
+  fireEvent.seeked(first.video);
+  for (const complete of pending.reverse()) complete();
+  await waitFor(() => expect(first.video).toHaveAttribute("poster", FRAME));
+  first.unmount();
+
+  expect(mountCapturable(url).video).toHaveAttribute("poster", FRAME);
+});
+
+it("lets a later seek capture after an encode fails", async () => {
+  const { toBlob } = stubCanvas(true);
+  toBlob.mockImplementationOnce((callback) => callback(null));
+  const first = mountCapturable("https://fixture.test/retry.mp4");
+  fireEvent.loadedData(first.video);
+  fireEvent.seeked(first.video);
+  first.video.currentTime = 12;
+  fireEvent.seeked(first.video);
+  await waitFor(() => expect(first.video).toHaveAttribute("poster", FRAME));
+  expect(toBlob).toHaveBeenCalledTimes(2);
+});

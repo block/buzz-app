@@ -111,6 +111,7 @@ export function MediaAttachment({
   const [failed, setFailed] = useState(false);
   const captured = source ? openingFrame(source) : undefined;
   const openingSeek = useRef<{ time: number; capture: number }>(undefined);
+  const encoding = useRef(false);
   const [capturedPreview, setCapturedPreview] = useState(captured?.poster);
   const [measuredDimensions, setMeasuredDimensions] = useState<
     { width: number; height: number } | undefined
@@ -248,7 +249,12 @@ export function MediaAttachment({
         const element = event.currentTarget;
         const opening = openingSeek.current;
         openingSeek.current = undefined;
-        if (!preview && !capturedPreview && element.videoWidth > 0) {
+        if (
+          !preview &&
+          !capturedPreview &&
+          !encoding.current &&
+          element.videoWidth > 0
+        ) {
           try {
             const canvas = document.createElement("canvas");
             const scale = Math.min(1, 640 / element.videoWidth);
@@ -269,22 +275,30 @@ export function MediaAttachment({
               Math.abs(element.currentTime - opening.time) < 0.01
                 ? { source, capture: opening.capture }
                 : undefined;
-            // Encode off the main thread; a synchronous JPEG export blocks it.
+            // Chromium encodes toBlob off the main thread; WebKit still
+            // encodes inline. The first seek owns the poster until its
+            // encode fails.
+            encoding.current = true;
             canvas.toBlob(
               (blob) => {
-                if (!blob) return;
+                if (!blob) {
+                  encoding.current = false;
+                  return;
+                }
                 const reader = new FileReader();
-                reader.onload = () => {
+                reader.onloadend = () => {
                   const poster = reader.result;
-                  if (typeof poster !== "string") return;
+                  if (typeof poster !== "string") {
+                    encoding.current = false;
+                    return;
+                  }
                   if (shared && poster.startsWith("data:image/jpeg;"))
                     rememberOpeningFrame(
                       shared.source,
                       { poster, width, height },
                       shared.capture,
                     );
-                  // A later seek's encode must not replace the first frame.
-                  setCapturedPreview((current) => current ?? poster);
+                  setCapturedPreview(poster);
                 };
                 reader.readAsDataURL(blob);
               },
@@ -292,6 +306,7 @@ export function MediaAttachment({
               0.8,
             );
           } catch {
+            encoding.current = false;
             // A decoded frame may still paint in the video when canvas export
             // is unavailable; the poster capture is only a compatibility aid.
           }

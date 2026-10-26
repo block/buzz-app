@@ -11,12 +11,13 @@ The **Desktop previews** workflow builds all supported desktop platforms from
 - **Provenance:** `SOURCE_COMMIT` and one `SHA256SUMS` covering all nine asset files.
 
 `<app-version>` is the `version` in `src-tauri/tauri.conf.json`. Previews install
-at the same `/Applications/Buzz.app` as internal desktop releases, and tools that
-compare `CFBundleShortVersionString` replace a preview that sorts below the newest
-release. `X.Y.Z-preview.<run>.<attempt>` sorts above `X.Y.Z` and below any later
-version, so keep `<app-version>` at or above the newest released version: raise it
-to at least `X.Y.Z` before or with publishing `desktop-vX.Y.Z`. It is `1.0.0`,
-above the legacy `block/buzz` 0.x releases. Never lower it.
+at the same `/Applications/Buzz.app` as internal desktop releases, and Munki
+replaces a preview whose `CFBundleShortVersionString` sorts below the newest
+release. Munki sorts `X.Y.Z-preview.<run>.<attempt>` above `X.Y.Z` and below any
+later version, so keep `<app-version>` at or above the newest released version:
+raise it to at least `X.Y.Z` before or with publishing `desktop-vX.Y.Z` or
+`desktop-vX.Y.Z-beta.N`. It is `0.7.0`, above the legacy `block/buzz` 0.5
+releases. Never lower it.
 
 Publication waits for all three platform jobs, their existing payload checks and
 the Windows/Linux updater signatures. A failed platform blocks publication and
@@ -77,7 +78,7 @@ an existing version from `main`:
 
 ```sh
 gh workflow run release.yml --repo block/buzz-app --ref main \
-  -f promote_version=1.0.0-preview.<run>.<attempt>
+  -f promote_version=0.7.0-preview.<run>.<attempt>
 ```
 
 After the first eligible build publishes, exercise discovery, signature

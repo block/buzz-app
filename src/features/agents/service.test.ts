@@ -9403,42 +9403,47 @@ it.runIf(process.env.BUZZ_AGENT_COMMAND_BINARY)(
   20_000,
 );
 
-it("refuses agent commands while Attention is off and kills one when Attention turns off", async () => {
-  const { ctx, service, native } = await setup();
-  let close!: () => void;
-  const closed = new Promise<void>((resolve) => {
-    close = resolve;
-  });
-  const kill = vi.fn(async () => {});
-  const spawn = vi.fn(async () => ({
-    exited: new Promise<number | null>(() => {}),
-    kill,
-    write: async () => {},
-    end: async () => {},
-  }));
-  ctx.provide("host", {
-    spawn,
-    serveMcp: async () => ({
-      url: "http://127.0.0.1:1234/mcp",
-      headers: [],
-      closed,
-      close: async () => {
-        close();
-      },
-    }),
-  } as unknown as import("../host/service").Host);
-  const consumer = ctx.extend({
-    pluginOwner: Object.freeze({ id: "consumer", revision: "one" }),
-  });
-  await service.create({ type: "example/echo", name: "Echo" });
-  await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
-  const controller = new AbortController();
-  await expect(
-    consumer.agents.spawn(bot, "command", { signal: controller.signal }),
-  ).rejects.toThrow(/Attention is off/);
-  expect(spawn).not.toHaveBeenCalled();
-  await service.save(bot, { attentionEnabled: true });
-  await consumer.agents.spawn(bot, "command", { signal: controller.signal });
-  await service.save(bot, { attentionEnabled: false });
-  await vi.waitFor(() => expect(kill).toHaveBeenCalledTimes(1));
-});
+it.each(["Attention turns off", "the community reconnects"])(
+  "refuses commands while Attention is off and kills one when %s",
+  async (reason) => {
+    const { ctx, service, native, connect } = await setup();
+    let close!: () => void;
+    const closed = new Promise<void>((resolve) => {
+      close = resolve;
+    });
+    const kill = vi.fn(async () => {});
+    const spawn = vi.fn(async () => ({
+      exited: new Promise<number | null>(() => {}),
+      kill,
+      write: async () => {},
+      end: async () => {},
+    }));
+    ctx.provide("host", {
+      spawn,
+      serveMcp: async () => ({
+        url: "http://127.0.0.1:1234/mcp",
+        headers: [],
+        closed,
+        close: async () => {
+          close();
+        },
+      }),
+    } as unknown as import("../host/service").Host);
+    const consumer = ctx.extend({
+      pluginOwner: Object.freeze({ id: "consumer", revision: "one" }),
+    });
+    await service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
+    const controller = new AbortController();
+    await expect(
+      consumer.agents.spawn(bot, "command", { signal: controller.signal }),
+    ).rejects.toThrow(/Attention is off/);
+    expect(spawn).not.toHaveBeenCalled();
+    await service.save(bot, { attentionEnabled: true });
+    await consumer.agents.spawn(bot, "command", { signal: controller.signal });
+    if (reason === "Attention turns off")
+      await service.save(bot, { attentionEnabled: false });
+    else connect(true);
+    await vi.waitFor(() => expect(kill).toHaveBeenCalledTimes(1));
+  },
+);

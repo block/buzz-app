@@ -1959,14 +1959,28 @@ export class AgentsService extends Service implements Agents {
       throw new Error("Agent commands require a desktop process host");
     const handle = this.runners.handle(pubkey);
     if (!handle) throw new Error("This agent is not running here");
+    const source = ownerReads(this.relay(pubkey), pubkey);
+    if (!source) throw new Error("The agent's community is not connected");
     const spawn = host.spawn.bind(host);
     return spawnAgentCommand(
       {
         connect: (signal) => this.connect(pubkey, { ...options, signal }),
         spawn: (settings) => spawn(process, settings),
-        subscribe: (changed) => this.subscribe(changed),
+        subscribe: (changed) => {
+          const agent = this.subscribe(changed);
+          const community = this.relay(pubkey)?.subscribe(changed);
+          return () => {
+            agent();
+            community?.();
+          };
+        },
         check: () => {
           if (!handle.attention.enabled()) throw new Error("Attention is off");
+          if (
+            ownerReads(this.relay(pubkey), pubkey)?.connection !==
+            source.connection
+          )
+            throw new Error("The agent's community connection changed");
         },
       },
       options,

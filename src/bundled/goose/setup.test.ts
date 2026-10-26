@@ -565,6 +565,20 @@ it("invalidates runtime defaults only after a successful save", async () => {
   expect(changed).toHaveBeenCalledTimes(1);
 });
 
+it("reports a provider's saved key before the save resolves", async () => {
+  const saved = new Map<string, Set<string>>();
+  const changed = vi.fn(async (provider: string) => {
+    expect(saved.get(provider)).toEqual(new Set(["ANTHROPIC_API_KEY"]));
+  });
+  const goose = new GooseSetup(
+    fakeSpawn({ providers: PROVIDERS, saved }),
+    undefined,
+    changed,
+  );
+  await goose.save("anthropic", { ANTHROPIC_API_KEY: "sk-test" });
+  expect(changed).toHaveBeenCalledExactlyOnceWith("anthropic");
+});
+
 it("blocks dismissal throughout credential persistence and clears blocking on failure", async () => {
   const { setup: goose } = setup();
   await goose.check();

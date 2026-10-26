@@ -198,6 +198,11 @@ export class GooseRuntime {
       if (!entry.config.provider.trim()) entry.sessions.reconfigure();
   }
 
+  /** Has the shared goose reload a provider's key saved by Settings. */
+  credentialsChanged(provider: string) {
+    return this.goose.refresh(provider);
+  }
+
   sync(agents: readonly Agent[]) {
     const current = new Set(agents.map((agent) => agent.pubkey));
     for (const [pubkey, entry] of this.agents)

@@ -388,6 +388,8 @@ export function fakeSpawn(
           options.saved?.set(providerId, set);
           return reply(id, { status: { providerId, isConfigured: true } });
         }
+        case "_goose/unstable/providers/inventory/refresh":
+          return reply(id, { started: params.providerIds, skipped: [] });
         case "_goose/unstable/providers/supported-models/list":
           return reply(id, {
             providerId: params.providerId,

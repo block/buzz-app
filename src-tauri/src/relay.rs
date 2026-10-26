@@ -1704,13 +1704,13 @@ pub(crate) async fn media_download<R: tauri::Runtime>(
     Ok(())
 }
 
-/// Saves an agent snapshot the app built to Downloads as media is saved.
-/// WKWebView cannot save a `blob:` link without a sandbox failure.
+/// Saves an agent snapshot the app built to Downloads as media is saved, and
+/// returns where. WKWebView cannot save a `blob:` link without a sandbox failure.
 #[tauri::command]
 pub(crate) async fn file_download<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     request: tauri::ipc::Request<'_>,
-) -> Result<()> {
+) -> Result<String> {
     use tauri::Manager as _;
     let filename = request
         .headers()
@@ -1738,10 +1738,11 @@ pub(crate) async fn file_download<R: tauri::Runtime>(
         .path()
         .download_dir()
         .map_err(|_| "Downloads unavailable")?;
-    tauri::async_runtime::spawn_blocking(move || save_download(&directory, &filename, &body))
-        .await
-        .map_err(|_| "Download interrupted".to_owned())??;
-    Ok(())
+    let path =
+        tauri::async_runtime::spawn_blocking(move || save_download(&directory, &filename, &body))
+            .await
+            .map_err(|_| "Download interrupted".to_owned())??;
+    Ok(path.to_string_lossy().into_owned())
 }
 
 /// `buzz-media://localhost/<percent-encoded relay media URL>`, the shape of

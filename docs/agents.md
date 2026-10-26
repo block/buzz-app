@@ -873,7 +873,8 @@ and earlier Buzz write, without memory. The PNG is the picture redrawn at
 512×512, or a transparent pixel when it is missing or takes over 5 seconds to
 load, with the manifest in a `buzz_agent_snapshot` tEXt chunk. Desktop saves it
 to Downloads through `file_download` (`src-tauri/src/relay.rs`), as media is
-saved, since WKWebView cannot save a `blob:` link cleanly. It takes only
+saved, since WKWebView cannot save a `blob:` link cleanly, and returns the
+saved path, which the dialog shows. It takes only
 `.agent.png` and `.agent.json` names, and a repeat export is saved as
 `{name} (1).agent.png`.
 **Import an agent** → **Choose file** reads `.agent.json` and `.agent.png`

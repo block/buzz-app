@@ -426,6 +426,7 @@ it("exports without the picture when it does not load in time", async () => {
 it("saves an .agent.png natively on desktop, never through a blob link", async () => {
   const user = userEvent.setup();
   desktop.tauri = true;
+  desktop.invoke.mockResolvedValueOnce("/Users/ada/Downloads/Ada.agent.png");
   const click = vi.spyOn(HTMLAnchorElement.prototype, "click");
   try {
     render(
@@ -440,8 +441,9 @@ it("saves an .agent.png natively on desktop, never through a blob link", async (
       screen.getByRole("combobox", { name: "File format" }),
     ).toHaveTextContent("PNG");
     await user.click(screen.getByRole("button", { name: "Export agent" }));
+    // Desktop says where the file went.
     expect(await screen.findByRole("status")).toHaveTextContent(
-      "Exported Ada.",
+      "Exported Ada to /Users/ada/Downloads/Ada.agent.png.",
     );
     expect(click).not.toHaveBeenCalled();
     expect(desktop.invoke).toHaveBeenCalledOnce();

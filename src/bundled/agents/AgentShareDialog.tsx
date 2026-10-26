@@ -76,8 +76,9 @@ function fileName(name: string, format: string) {
   return `${plain}.agent.${format}`;
 }
 
-/** Desktop saves natively; a browser downloads the file. */
-async function save(file: Blob, name: string) {
+/** Desktop saves natively and says where; a browser downloads the file to
+ * wherever its settings say. */
+async function save(file: Blob, name: string): Promise<string | undefined> {
   if (isTauri()) return downloadNativeFile(file, name);
   const url = URL.createObjectURL(file);
   const link = document.createElement("a");
@@ -165,8 +166,10 @@ export function AgentShareDialog({
         format === "png"
           ? snapshotPng(definition, await artwork(agent.picture, session))
           : new Blob([snapshotJson(definition)], { type: "application/json" });
-      await save(file, fileName(agent.name, format));
-      setNotice(`Exported ${agent.name}.`);
+      const path = await save(file, fileName(agent.name, format));
+      setNotice(
+        path ? `Exported ${agent.name} to ${path}.` : `Exported ${agent.name}.`,
+      );
     } catch (reason) {
       setError(`Failed to export agent snapshot. ${message(reason)}`);
     }
@@ -212,7 +215,10 @@ export function AgentShareDialog({
           />
         </SettingsGroup>
         {notice && (
-          <p role="status" className="m-0 text-body-sm text-secondary">
+          <p
+            role="status"
+            className="m-0 text-body-sm text-secondary wrap-anywhere"
+          >
             {notice}
           </p>
         )}

@@ -5,10 +5,12 @@ export async function downloadNativeMedia(source: string, name = "") {
   await invoke("media_download", { source, name });
 }
 
-/** Saves a file the app built to Downloads the way media is saved; WKWebView
- * logs a sandbox failure for a `blob:` download. */
+/** Saves a file the app built to Downloads the way media is saved, and resolves
+ * with its path; WKWebView logs a sandbox failure for a `blob:` download. */
 export async function downloadNativeFile(file: Blob, name: string) {
-  await invoke("file_download", new Uint8Array(await file.arrayBuffer()), {
-    headers: { "x-buzz-file-name": encodeURIComponent(name) },
-  });
+  return invoke<string>(
+    "file_download",
+    new Uint8Array(await file.arrayBuffer()),
+    { headers: { "x-buzz-file-name": encodeURIComponent(name) } },
+  );
 }

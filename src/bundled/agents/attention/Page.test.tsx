@@ -140,11 +140,11 @@ it("hides agents without subscriptions, reacts to changes and surfaces save erro
   expect(screen.queryByRole("region", { name: "Bo" })).toBeNull();
   const ada = screen.getByRole("region", { name: "Ada" });
   expect(within(ada).getByRole("heading", { name: "task" })).toBeTruthy();
-  expect(within(ada).getByText("1 subscription")).toBeTruthy();
+  expect(within(ada).getByText("1 interest · 1 watch")).toBeTruthy();
   fireEvent.click(
     within(ada).getByRole("button", { name: "Details for task" }),
   );
-  expect(within(ada).getByText("Woke 3m ago")).toBeTruthy();
+  expect(within(ada).getByText("Last woke 3m ago")).toBeTruthy();
   expect(within(ada).getByText("build succeeded")).toBeTruthy();
   expect(within(ada).getByRole("heading", { name: "Command" })).toBeTruthy();
   expect(ada.querySelector(".attention-details code")?.textContent).toBe(
@@ -154,7 +154,7 @@ it("hides agents without subscriptions, reacts to changes and surfaces save erro
     ada.querySelector(
       ".attention-instructions summary .attention-instructions-preview",
     ),
-  ).toBeNull();
+  ).not.toBeNull();
   expect(
     ada.querySelector(".attention-instructions-preview")?.textContent,
   ).toBe("Keep releases moving.");
@@ -164,7 +164,7 @@ it("hides agents without subscriptions, reacts to changes and surfaces save erro
   expect(
     within(screen.getByRole("region", { name: "Interest task" })).getByRole(
       "switch",
-      { name: "Subscription task" },
+      { name: "Watch task" },
     ),
   ).toBeTruthy();
   expect(within(ada).getByText("Paused")).toBeTruthy();
@@ -258,15 +258,13 @@ it.each(["source", "event", "timer"] as const)(
       relay: { snapshot: () => disconnected, subscribe: () => () => {} },
     } as unknown as Context;
     render(React.createElement(createPage(ctx)));
-    fireEvent.click(
-      screen.getByRole("switch", { name: "Subscription release" }),
-    );
+    fireEvent.click(screen.getByRole("switch", { name: "Watch release" }));
     const remove = screen.getByRole("button", { name: "Delete release" });
     try {
       await waitFor(() =>
         expect(
           screen
-            .getByRole("switch", { name: "Subscription release" })
+            .getByRole("switch", { name: "Watch release" })
             .getAttribute("aria-checked"),
         ).toBe("false"),
       );
@@ -281,7 +279,7 @@ it.each(["source", "event", "timer"] as const)(
     fireEvent.click(screen.getByRole("button", { name: "Delete release" }));
     await waitFor(() =>
       expect(
-        screen.queryByRole("switch", { name: "Subscription release" }),
+        screen.queryByRole("switch", { name: "Watch release" }),
       ).toBeNull(),
     );
     expect(save).toHaveBeenLastCalledWith("a", {
@@ -289,7 +287,7 @@ it.each(["source", "event", "timer"] as const)(
     });
     expect(agent.attention["interest/release"]).toBeTruthy();
     expect(screen.queryByRole("region", { name: "Ada" })).toBeNull();
-    expect(screen.getByText(/No subscriptions yet/)).toBeTruthy();
+    expect(screen.getByText(/No watches yet/)).toBeTruthy();
   },
 );
 
@@ -302,6 +300,11 @@ it("keeps subscription controls disabled while saving and preserves the row on f
     attentionEnabled: true,
     timers: {},
     attention: {
+      "interest/task": {
+        slug: "interest/task",
+        modifiedAt: 1,
+        value: { type: "interest", instructions: "Check builds" },
+      },
       "watch/check": {
         slug: "watch/check",
         modifiedAt: 1,
@@ -330,7 +333,7 @@ it("keeps subscription controls disabled while saving and preserves the row on f
   } as unknown as Context;
   render(React.createElement(createPage(ctx)));
   const toggle = screen.getByRole("switch", {
-    name: "Subscription Build",
+    name: "Watch Build",
   }) as HTMLButtonElement;
   const remove = screen.getByRole("button", {
     name: "Delete Build",
@@ -466,53 +469,60 @@ it("enables a chosen empty agent without creating subscriptions and reports fail
   expect(screen.queryByRole("region", { name: "Bo" })).toBeNull();
 });
 
-it("shows a standalone subscription without a synthetic Interest group or a data rewrite", () => {
-  const save = vi.fn();
-  const snapshot = {
-    status: "ready",
-    running: [
-      {
-        pubkey: "a",
-        owner: viewer,
-        relay: "wss://example.com",
-        name: "Ada",
-        attentionEnabled: true,
-        timers: {},
-        attention: {
-          "watch/check": {
-            slug: "watch/check",
-            modifiedAt: 1,
-            value: {
-              type: "source",
-              name: "Release check",
-              enabled: false,
-              prompt: "Report blockers",
-              provider: "attention/command",
-              config: { command: ["check"] },
+it.each([undefined, "missing"])(
+  "shows an orphan watch as a repair state when its Interest is %s",
+  (interest_id) => {
+    const save = vi.fn();
+    const snapshot = {
+      status: "ready",
+      running: [
+        {
+          pubkey: "a",
+          owner: viewer,
+          relay: "wss://example.com",
+          name: "Ada",
+          attentionEnabled: true,
+          timers: {},
+          attention: {
+            "watch/check": {
+              slug: "watch/check",
+              modifiedAt: 1,
+              value: {
+                type: "source",
+                interest_id,
+                name: "Release check",
+                enabled: false,
+                prompt: "Report blockers",
+                provider: "attention/command",
+                config: { command: ["check"] },
+              },
             },
           },
         },
-      },
-    ],
-  };
-  const disconnected = { status: "disconnected", ...community };
-  const ctx = {
-    react: React,
-    agents: { snapshot: () => snapshot, subscribe: () => () => {}, save },
-    relay: { snapshot: () => disconnected, subscribe: () => () => {} },
-  } as unknown as Context;
-  render(React.createElement(createPage(ctx)));
-  expect(
-    screen.getByRole("switch", { name: "Subscription Release check" }),
-  ).toBeTruthy();
-  expect(screen.queryByRole("region", { name: /^Interest / })).toBeNull();
-  fireEvent.click(
-    screen.getByRole("button", { name: "Details for Release check" }),
-  );
-  expect(screen.queryByText("Report blockers")).toBeNull();
-  expect(screen.getByText("Paused")).toBeTruthy();
-  expect(save).not.toHaveBeenCalled();
-});
+      ],
+    };
+    const disconnected = { status: "disconnected", ...community };
+    const ctx = {
+      react: React,
+      agents: { snapshot: () => snapshot, subscribe: () => () => {}, save },
+      relay: { snapshot: () => disconnected, subscribe: () => () => {} },
+    } as unknown as Context;
+    render(React.createElement(createPage(ctx)));
+    const repair = screen.getByRole("region", { name: "Without an interest" });
+    expect(within(repair).getByText("watch/check")).toBeTruthy();
+    expect(
+      screen.queryByRole("switch", { name: "Watch Release check" }),
+    ).toBeNull();
+    expect(screen.queryByRole("region", { name: /^Interest / })).toBeNull();
+    expect(save).not.toHaveBeenCalled();
+    fireEvent.click(
+      within(repair).getByRole("button", { name: "Delete watch/check" }),
+    );
+    expect(save).toHaveBeenCalledWith("a", {
+      attention: { "watch/check": null },
+    });
+  },
+);
 
 it("keeps unreadable legacy watches visible and removes only the selected object", async () => {
   const save = vi.fn().mockResolvedValue(undefined);
@@ -642,9 +652,7 @@ it("scans subscription types and each subscription destination while keeping raw
   expect(screen.queryByText("On")).toBeNull();
   expect(screen.queryByText("Shared instructions")).toBeNull();
   expect(screen.queryByText("Show raw")).toBeNull();
-  expect(
-    screen.getAllByRole("button", { name: "New subscription" }),
-  ).toHaveLength(1);
+  expect(screen.getAllByRole("button", { name: "New watch" })).toHaveLength(1);
   expect(
     screen.queryByRole("button", { name: "Details for Release checks" }),
   ).toBeNull();
@@ -658,6 +666,7 @@ it("scans subscription types and each subscription destination while keeping raw
 it("keeps overview, creation choices and destination navigation in the selected community", async () => {
   const watch = {
     type: "source",
+    interest_id: "task",
     name: "Build",
     enabled: true,
     provider: "attention/command",
@@ -672,6 +681,11 @@ it("keeps overview, creation choices and destination navigation in the selected 
     attentionEnabled: true,
     timers: {},
     attention: {
+      "interest/task": {
+        slug: "interest/task",
+        modifiedAt: 1,
+        value: { type: "interest", instructions: "Check builds" },
+      },
       "watch/check": { slug: "watch/check", modifiedAt: 1, value: watch },
     },
   };
@@ -723,7 +737,7 @@ it("keeps overview, creation choices and destination navigation in the selected 
       channelId: channel,
     }),
   );
-  fireEvent.click(screen.getByRole("button", { name: "New subscription" }));
+  fireEvent.click(screen.getByRole("button", { name: "New watch" }));
   const user = userEvent.setup();
   await user.click(screen.getByRole("combobox", { name: "Agent" }));
   expect(await screen.findByRole("option", { name: "Ada" })).toBeTruthy();

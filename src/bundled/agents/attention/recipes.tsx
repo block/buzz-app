@@ -400,7 +400,7 @@ export function createRecipeForm({
     return (
       <form
         className="attention-card attention-recipe"
-        aria-label="New subscription"
+        aria-label="New watch"
         onSubmit={(event) => {
           event.preventDefault();
           void submit();
@@ -542,7 +542,7 @@ export function createRecipeForm({
         )}
         <div className="attention-actions">
           <Button type="submit" size="sm" variant="primary" disabled={pending}>
-            Create subscription
+            Create watch
           </Button>
           <Button
             type="button"

@@ -162,16 +162,22 @@ export function GitHubPolicyPanel({
         </p>
       )}
       {status?.warning && (
-        <p role="status" className="text-body-sm text-warning">
-          {status.warning}
-        </p>
+        <div role="status" className="attention-policy-notice">
+          <h3 className="text-label-sm text-warning">
+            GitHub comments and reviews are off
+          </h3>
+          <p className="text-body-sm text-secondary">
+            Configure trusted organizations and/or individual commenters to
+            receive them. CI and PR-state monitoring continue.
+          </p>
+        </div>
       )}
       {status?.error && (
         <p role="alert" className="text-body-sm text-danger">
           {status.error}
         </p>
       )}
-      {status && (
+      {open && status && (
         <p className="text-caption text-subtle">
           Preferences file: <code>{status.path}</code>
         </p>
@@ -180,7 +186,7 @@ export function GitHubPolicyPanel({
         {status && (
           <Button
             size="sm"
-            variant="ghost"
+            variant="subtle"
             aria-expanded={open}
             disabled={saving}
             onClick={() => {
@@ -188,7 +194,7 @@ export function GitHubPolicyPanel({
               if (!open) setRetry((value) => value + 1);
             }}
           >
-            {open ? "Cancel editing allowlist" : "Edit GitHub author allowlist"}
+            {open ? "Cancel editing allowlist" : "Edit allowlist"}
           </Button>
         )}
         {error && (

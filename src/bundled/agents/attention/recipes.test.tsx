@@ -142,7 +142,7 @@ it("preserves a failed draft and saves new Interest instructions on retry", asyn
   fireEvent.change(screen.getByLabelText("Pull request URL"), {
     target: { value: "https://github.com/example/project/pull/42" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "Create subscription" }));
+  fireEvent.click(screen.getByRole("button", { name: "Create watch" }));
   await waitFor(() =>
     expect(screen.getByRole("alert").textContent).toBe("Save failed"),
   );
@@ -151,7 +151,7 @@ it("preserves a failed draft and saves new Interest instructions on retry", asyn
       .value,
   ).toBe("Review failures");
   expect(close).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole("button", { name: "Create subscription" }));
+  fireEvent.click(screen.getByRole("button", { name: "Create watch" }));
   await waitFor(() => expect(close).toHaveBeenCalledOnce());
   const [key, patch] = save.mock.calls[1] ?? [];
   expect(key).toBe("a");
@@ -316,7 +316,7 @@ it("autofills a thread channel and saves event selectors with an existing shared
   expect(
     (screen.getByLabelText("Channel (optional)") as HTMLInputElement).value,
   ).toBe("Release planning");
-  fireEvent.click(screen.getByRole("button", { name: "Create subscription" }));
+  fireEvent.click(screen.getByRole("button", { name: "Create watch" }));
   await waitFor(() => expect(close).toHaveBeenCalledOnce());
   const values = Object.values(save.mock.calls[0]?.[1].attention ?? {});
   expect(values).toHaveLength(1);

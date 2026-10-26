@@ -56,7 +56,7 @@ async function fixture() {
 }
 async function edit() {
   fireEvent.click(
-    await screen.findByRole("button", { name: "Edit GitHub author allowlist" }),
+    await screen.findByRole("button", { name: "Edit allowlist" }),
   );
   return screen.findByRole("textbox", { name: "Trusted organizations" });
 }
@@ -64,8 +64,9 @@ it("shows the shared warning and saves through the adapter to the same file, pre
   const { host, path } = await fixture();
   render(<GitHubPolicyPanel host={host} />);
   expect(
-    await screen.findByText(/No GitHub author allowlist configured/),
-  ).toHaveTextContent(/CI and PR-state monitoring will continue/);
+    await screen.findByText(/GitHub comments and reviews are off/),
+  ).toBeTruthy();
+  expect(screen.getByText(/CI and PR-state monitoring continue/)).toBeTruthy();
   const organizations = await edit();
   fireEvent.change(organizations, { target: { value: "example-org" } });
   const authors = screen.getByRole("textbox", { name: "Trusted commenters" });
@@ -79,9 +80,7 @@ it("shows the shared warning and saves through the adapter to the same file, pre
     trustedAuthors: ["review-bot[bot]"],
     ignoredAuthors: [],
   });
-  expect(
-    screen.queryByText(/No GitHub author allowlist configured/),
-  ).toBeNull();
+  expect(screen.queryByText(/GitHub comments and reviews are off/)).toBeNull();
   fireEvent.change(authors, { target: { value: "bad/login" } });
   fireEvent.click(screen.getByRole("button", { name: "Save allowlist" }));
   await screen.findByText("trustedAuthors must contain GitHub logins");
@@ -103,7 +102,7 @@ it("shows the shared warning and saves through the adapter to the same file, pre
     { target: { value: "" } },
   );
   fireEvent.click(screen.getByRole("button", { name: "Save allowlist" }));
-  await screen.findByText(/No GitHub author allowlist configured/);
+  await screen.findByText(/GitHub comments and reviews are off/);
   expect(JSON.parse(await readFile(path, "utf8")).trustedAuthors).toEqual([]);
 });
 it("reports invalid file contents and recovers from a failed initial read without inventing a policy", async () => {
@@ -121,7 +120,7 @@ it("reports invalid file contents and recovers from a failed initial read withou
   fireEvent.click(
     screen.getByRole("button", { name: "Retry GitHub author settings" }),
   );
-  await screen.findByText(/No GitHub author allowlist configured/);
+  await screen.findByText(/GitHub comments and reviews are off/);
   await waitFor(() =>
     expect(screen.getByRole("alert")).toHaveTextContent(/property name/),
   );

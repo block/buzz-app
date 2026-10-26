@@ -1,3 +1,4 @@
+import { attentionOf } from "../../../features/agents/attention";
 import { relayOrigin } from "../../../features/communities/destination";
 import { relayPartition } from "../../../features/relay/partition";
 import { GitHubPolicyPanel } from "./GitHubPolicyEditor";
@@ -231,8 +232,8 @@ export function createPage({
       }
     ).attentionHistory?.[slug];
     const woke = history?.lastWokeAt
-      ? `Woke ${Math.max(0, Math.floor((Date.now() / 1000 - history.lastWokeAt) / 60))}m ago`
-      : "Wake history unavailable";
+      ? `Last woke ${Math.max(0, Math.floor((Date.now() / 1000 - history.lastWokeAt) / 60))}m ago`
+      : undefined;
     const timer = agent.timers[slug];
     const description = describe(
       watch,
@@ -302,7 +303,7 @@ export function createPage({
       : watch.type === "event"
         ? watch.channels === "all"
           ? "All joined channels"
-          : watch.channels.map((id) => `#${name(id)}`).join(", ")
+          : watch.channels.map((id) => name(id)).join(", ")
         : watch.type === "timer"
           ? description.title
           : watch.provider === "attention/command" &&
@@ -377,7 +378,17 @@ export function createPage({
                     ).toLocaleString()
                   : label.text,
             },
-            target,
+            watch.type === "event" && watch.channels !== "all"
+              ? watch.channels.map((id, index) =>
+                  h(
+                    "span",
+                    { key: id, className: "attention-destination-label" },
+                    index > 0 ? ", " : null,
+                    h(channelIcon(find(id)), { size: 16, "aria-hidden": true }),
+                    name(id),
+                  ),
+                )
+              : target,
           ),
           pr &&
             h(
@@ -407,7 +418,7 @@ export function createPage({
           !completed &&
             !description.spent &&
             h(Switch, {
-              label: `Subscription ${label.text}`,
+              label: `Watch ${label.text}`,
               checked: watch.enabled,
               disabled: action.pending,
               onClick: () => void change({ ...watch, enabled: !watch.enabled }),
@@ -418,7 +429,7 @@ export function createPage({
               shape: "icon",
               type: "button",
               "aria-label": `Delete ${label.text}`,
-              title: "Delete subscription",
+              title: "Delete watch",
               disabled: action.pending,
               onClick: () => void change(null),
             }}
@@ -427,7 +438,8 @@ export function createPage({
           </Button>,
         ),
       ),
-      h("p", { className: "text-caption text-subtle attention-meta" }, woke),
+      woke &&
+        h("p", { className: "text-caption text-subtle attention-meta" }, woke),
       problem(action.error),
       open &&
         h(
@@ -547,14 +559,8 @@ export function createPage({
     const action = useAction();
     const find = (id: string) => channels.find((channel) => channel.id === id);
     const name = (id: string) => find(id)?.name ?? `Channel ${id.slice(0, 8)}`;
-    const objects = Object.values(agent.attention);
+    const { interests, watches, orphans } = attentionOf(agent.attention);
     const skipped = Object.values(agent.skipped ?? {});
-    const watches = objects.filter(
-      (object) => object.value.type !== "interest",
-    );
-    const interests = objects.filter(
-      (object) => object.value.type === "interest",
-    );
     return h(
       "section",
       { className: "attention-agent", "aria-label": agent.name },
@@ -575,22 +581,18 @@ export function createPage({
           h(
             "span",
             { className: "text-caption text-subtle" },
-            `${watches.length} subscription${watches.length === 1 ? "" : "s"}`,
+            `${interests.length} interest${interests.length === 1 ? "" : "s"} · ${watches.length} watch${watches.length === 1 ? "" : "es"}`,
           ),
         ),
         h(
           "div",
           { className: "attention-agent-toggle" },
-          h(
-            "span",
-            { className: "text-caption text-subtle" },
-            "All subscriptions",
-          ),
+          h("span", { className: "text-caption text-subtle" }, "Attention"),
           h(Switch, {
             label: `Attention for ${agent.name}`,
             tooltip: agent.attentionEnabled
-              ? "Pause all subscriptions"
-              : "Resume all subscriptions",
+              ? "Pause this agent’s watches"
+              : "Resume this agent’s watches",
             checked: agent.attentionEnabled,
             disabled: action.pending,
             onClick: () =>
@@ -603,23 +605,6 @@ export function createPage({
         ),
       ),
       problem(action.error),
-      h(
-        "ul",
-        { className: "attention-list" },
-        ...watches
-          .filter((object) => !(object.value as Watch).interest_id)
-          .map((object) =>
-            h(Subscription, {
-              key: object.slug,
-              agent,
-              slug: object.slug,
-              watch: object.value as Watch,
-              name,
-              find,
-              scope,
-            }),
-          ),
-      ),
       ...skipped.map((object) =>
         h(
           "section",
@@ -641,17 +626,9 @@ export function createPage({
           >{`Remove unreadable ${object.slug}`}</Button>,
         ),
       ),
-      ...Array.from(
-        new Set([
-          ...interests.map((object) => object.slug.slice("interest/".length)),
-          ...watches.flatMap((object) =>
-            (object.value as Watch).interest_id
-              ? [(object.value as Watch).interest_id ?? ""]
-              : [],
-          ),
-        ]),
-      ).map((id) => {
-        const interest = agent.attention[`interest/${id}`]?.value;
+      ...interests.map((object) => {
+        const id = object.slug.slice("interest/".length);
+        const interest = object.value;
         const subscriptions = watches.filter(
           (object) => (object.value as Watch).interest_id === id,
         );
@@ -674,6 +651,7 @@ export function createPage({
           h(
             "div",
             { className: "attention-interest-head" },
+            h("span", { className: "text-caption text-subtle" }, "Interest"),
             h("h4", { className: "text-label" }, label),
           ),
           h(
@@ -683,29 +661,30 @@ export function createPage({
               "summary",
               { className: "attention-disclosure text-caption text-subtle" },
               h(CaretRightIcon, { size: 16, "aria-hidden": true }),
-              "Instructions",
-              h("span", { className: "attention-show-more" }, "Show more"),
-              h("span", { className: "attention-show-less" }, "Show less"),
+              h(
+                "span",
+                { className: "attention-instructions-preview" },
+                heading(
+                  instructions
+                    .split("\n")
+                    .find((line) => line.trim() && !/^#+\s/.test(line)) ||
+                    firstLine,
+                ).text,
+              ),
             ),
             <InstructionsMarkdown text={instructions} />,
           ),
-          h(
-            "p",
-            {
-              className:
-                "attention-instructions-preview text-caption text-subtle",
-            },
-            heading(
-              instructions
-                .split("\n")
-                .find((line) => line.trim() && !/^#+\s/.test(line)) || "",
-            ).text,
-          ),
+          !subscriptions.length &&
+            h(
+              "p",
+              { className: "text-body-sm text-subtle" },
+              "No watches yet, so nothing wakes this interest.",
+            ),
           h(
             "ul",
             {
               className: "attention-list",
-              "aria-label": `${label} subscriptions`,
+              "aria-label": `${label} watches`,
             },
             ...subscriptions.map((object) =>
               h(Subscription, {
@@ -721,6 +700,39 @@ export function createPage({
           ),
         );
       }),
+      orphans.length > 0 &&
+        h(
+          "section",
+          {
+            className: "attention-interest",
+            "aria-label": "Without an interest",
+          },
+          h("h4", { className: "text-label" }, "Without an interest"),
+          h(
+            "p",
+            { className: "text-body-sm text-subtle" },
+            "These saved watches have no matching Interest. Remove them and create watches under an Interest.",
+          ),
+          ...orphans.map((object) =>
+            h(
+              "div",
+              { key: object.slug, className: "attention-agent-head" },
+              h("span", { className: "text-body-sm" }, object.slug),
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={action.pending}
+                onClick={() =>
+                  void action.run(() =>
+                    agents.save(agent.pubkey, {
+                      attention: { [object.slug]: null },
+                    }),
+                  )
+                }
+              >{`Delete ${object.slug}`}</Button>,
+            ),
+          ),
+        ),
     );
   }
   return function AttentionPage() {
@@ -771,7 +783,7 @@ export function createPage({
         if (!agent) throw new Error("Choose an available agent.");
         await agents.save(agent.pubkey, { attentionEnabled: true });
         setNotice(
-          `Attention enabled for ${agent.name}. Subscriptions appear here when the agent creates them.`,
+          `Attention enabled for ${agent.name}. Watches appear here when the agent creates them.`,
         );
         setAdding(false);
       });
@@ -789,8 +801,8 @@ export function createPage({
           size: "sm",
           variant: "ghost",
           icon: h(PlusIcon, { size: 16, "aria-hidden": true }),
-          "aria-label": "New subscription",
-          title: "New subscription",
+          "aria-label": "New watch",
+          title: "New watch",
           onClick: () => setRecipeOpen(!recipeOpen),
           disabled: !running.length,
           "aria-expanded": recipeOpen,
@@ -805,7 +817,7 @@ export function createPage({
           h(
             "p",
             { className: "text-body-sm text-subtle" },
-            "Subscriptions in the selected community watch for changes and wake your agents.",
+            "Interests and watches in this community wake your agents.",
           ),
           <GitHubPolicyPanel host={host} />,
           !visible.length &&
@@ -880,7 +892,7 @@ export function createPage({
             h(
               "p",
               { className: "text-body-sm text-secondary" },
-              "No subscriptions yet. Create a subscription, or enable Attention for an agent and ask it to watch something.",
+              "No watches yet. Create a watch, or enable Attention for an agent and ask it to watch something.",
             ),
           ...visible.map((agent) =>
             h(AgentPanel, {
@@ -904,7 +916,7 @@ export function createPage({
                 role: snapshot.status === "loading" ? "status" : undefined,
               },
               !connection.scope
-                ? "Choose a community to manage its agent subscriptions."
+                ? "Choose a community to manage its agent watches."
                 : snapshot.status === "loading"
                   ? "Loading agents…"
                   : snapshot.error || "No local agents are available.",

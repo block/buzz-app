@@ -60,16 +60,18 @@
 }
 .attention-agent-head {
   justify-content: space-between;
-  padding-inline: var(--space-4);
 }
 .attention-agent-toggle {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding-inline-end: calc(var(--space-8) + var(--space-4) + var(--space-2));
 }
 .attention-agent {
   container-type: inline-size;
+  padding: var(--space-4);
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-control);
+  background: var(--surface-panel);
 }
 .attention-agent-name {
   display: flex;
@@ -120,11 +122,8 @@
   height: 1rem;
 }
 .attention-interest-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-start;
-  gap: var(--space-3);
+  display: grid;
+  gap: var(--space-1);
 }
 .attention-instructions summary {
   width: 100%;
@@ -134,13 +133,9 @@
   min-width: 0;
 }
 .attention-instructions-preview {
-  margin-block-start: var(--space-2);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.attention-instructions[open] + .attention-instructions-preview {
-  display: none;
 }
 .attention-destination-label {
   display: inline-flex;
@@ -165,9 +160,6 @@
 @container (max-width: 30rem) {
   .attention-type {
     flex-basis: var(--space-8);
-  }
-  .attention-type-label {
-    display: none;
   }
   .attention-subtitle {
     display: none;
@@ -255,10 +247,8 @@
   display: grid;
   gap: var(--space-3);
   min-width: 0;
-  padding: var(--space-4);
-  border: 1px solid var(--border-standard);
-  border-radius: var(--radius-control);
-  background: var(--surface-panel);
+  padding-block-start: var(--space-4);
+  border-top: 1px solid var(--border-standard);
 }
 .attention-interest > p {
   white-space: pre-wrap;
@@ -281,15 +271,6 @@
 details[open] > .attention-disclosure > svg {
   transform: rotate(90deg);
 }
-.attention-show-less {
-  display: none;
-}
-details[open] > .attention-disclosure .attention-show-more {
-  display: none;
-}
-details[open] > .attention-disclosure .attention-show-less {
-  display: inline;
-}
 @container (max-width: 30rem) {
   .attention-details {
     padding-inline-start: var(--space-4);
@@ -310,7 +291,7 @@ details[open] > .attention-disclosure .attention-show-less {
     margin-inline-start: auto;
   }
   .attention-type {
-    flex-basis: 1rem;
+    flex-basis: auto;
   }
   .attention-head {
     grid-template-columns: minmax(0, 1fr) auto auto;
@@ -356,4 +337,9 @@ details[open] > .attention-disclosure .attention-show-less {
   display: grid;
   gap: var(--space-3);
   min-width: 0;
+}
+
+.attention-policy-notice {
+  display: grid;
+  gap: var(--space-2);
 }

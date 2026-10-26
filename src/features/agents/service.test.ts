@@ -8844,119 +8844,6 @@ it.each(["live", "replay", "catch-up"] as const)(
   },
 );
 
-it.each(["close", "unload", "abort"])(
-  "connects a different plugin and revokes pending writes on %s",
-  async (reason) => {
-    const { service, plugin, ctx, native, session } = await setup();
-    await service.create({ type: "example/echo", name: "Echo" });
-    await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
-    let request!: import("../host/service").McpHandler;
-    let stop!: () => void;
-    const closed = new Promise<void>((resolve) => {
-      stop = resolve;
-    });
-    const close = vi.fn(async () => {
-      stop();
-    });
-    let finishRead!: (bytes: Uint8Array) => void;
-    const readFile = vi.fn(
-      () =>
-        new Promise<Uint8Array>((resolve) => {
-          finishRead = resolve;
-        }),
-    );
-    ctx.provide("host", {
-      readFile,
-      serveMcp: async (handler: import("../host/service").McpHandler) => {
-        request = handler;
-        return {
-          url: "http://127.0.0.1:1234/mcp",
-          headers: [],
-          close,
-          closed,
-        };
-      },
-    } as unknown as import("../host/service").Host);
-    const consumer = ctx.extend({
-      pluginOwner: Object.freeze({ id: "consumer", revision: "one" }),
-    });
-    expect(consumer.agents.handle(bot)).toBeUndefined();
-    const controller = new AbortController();
-    await expect(
-      service.connect(bot, { signal: controller.signal }),
-    ).rejects.toThrow(/installed plugin/);
-    await expect(
-      consumer.agents.connect("missing", { signal: controller.signal }),
-    ).rejects.toThrow(/not running/);
-    const connection = await consumer.agents.connect(bot, {
-      signal: controller.signal,
-      channel,
-    });
-    await request({
-      id: 1,
-      method: "tools/call",
-      params: { name: "read", arguments: { channel } },
-    });
-    expect(native.query).toHaveBeenCalledWith(bot, expect.any(Array));
-    const result = await request({
-      id: 2,
-      method: "tools/call",
-      params: {
-        name: "mem_set",
-        arguments: { slug: "source-test", text: "agent-owned output" },
-      },
-    });
-    expect(result).not.toHaveProperty("result.isError", true);
-    expect(native.remember).toHaveBeenCalledWith(
-      bot,
-      "mem/source-test",
-      "agent-owned output",
-      expect.any(Number),
-    );
-    native.remember.mockClear();
-    const pending = request({
-      id: 3,
-      method: "tools/call",
-      params: {
-        name: "mem_set",
-        arguments: { slug: "revoked", path: "pending.txt" },
-      },
-    });
-    await vi.waitFor(() => expect(readFile).toHaveBeenCalledTimes(1));
-    let finishStart!: () => void;
-    const starting = new Promise<void>((resolve) => {
-      finishStart = resolve;
-    });
-    const started = vi
-      .spyOn(session.channelWrites, "starting")
-      .mockImplementation((id) => (id === channel ? starting : undefined));
-    native.publish.mockClear();
-    const sending = request({
-      id: 4,
-      method: "tools/call",
-      params: {
-        name: "send",
-        arguments: { text: "revoked message", audience: "everyone" },
-      },
-    });
-    await vi.waitFor(() => expect(started).toHaveBeenCalledWith(channel));
-    expect(native.publish).not.toHaveBeenCalled();
-    if (reason === "close") await connection.close();
-    else if (reason === "abort") controller.abort();
-    else {
-      stop();
-      await closed;
-    }
-    finishRead(new TextEncoder().encode("revoked output"));
-    finishStart();
-    await expect(pending).rejects.toThrow();
-    await expect(sending).rejects.toThrow();
-    expect(native.remember).not.toHaveBeenCalled();
-    expect(native.publish).not.toHaveBeenCalled();
-    await expect(request({ id: 5, method: "tools/list" })).rejects.toThrow();
-  },
-);
-
 it.each(["abort", "community"])(
   "refuses an Attention write queued before %s revocation",
   async (reason) => {
@@ -9063,92 +8950,6 @@ it("keeps classifying after source completion storage fails", async () => {
   expect(jev.decide).toHaveBeenCalledTimes(2);
 });
 
-it.each(["before", "during"])(
-  "withholds connection memory when its agent type changes %s the read",
-  async (phase) => {
-    const { service, plugin, ctx, session } = await setup();
-    ctx
-      .extend({
-        pluginOwner: Object.freeze({ id: "replacement", revision: "one" }),
-      })
-      .agents.register({
-        id: "echo",
-        title: "Replacement",
-        defaults: () => ({ config: {} }),
-        adopt: () => ({}),
-        run: vi.fn(),
-      });
-    await service.create({ type: "example/echo", name: "Echo" });
-    await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
-    let request!: import("../host/service").McpHandler;
-    let close!: () => void;
-    const closed = new Promise<void>((resolve) => {
-      close = resolve;
-    });
-    ctx.provide("host", {
-      serveMcp: async (handler: import("../host/service").McpHandler) => {
-        request = handler;
-        return {
-          url: "http://127.0.0.1/mcp",
-          headers: [],
-          close: async () => {
-            close();
-          },
-          closed,
-        };
-      },
-    } as unknown as import("../host/service").Host);
-    const consumer = ctx.extend({
-      pluginOwner: Object.freeze({ id: "consumer", revision: "one" }),
-    });
-    const connection = await consumer.agents.connect(bot, {
-      signal: new AbortController().signal,
-    });
-    let release!: () => void;
-    const held = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const read = vi
-      .spyOn(session.agentMemories, "read")
-      .mockImplementation(async () => {
-        if (phase === "during") await held;
-        return {
-          entries: [
-            {
-              slug: "core",
-              body: "REVOKED-PRIVATE-MEMORY",
-              eventId: "f".repeat(64),
-              createdAt: 1,
-            },
-          ],
-          partial: false,
-        };
-      });
-    read.mockClear();
-    const call = () =>
-      request({
-        id: 1,
-        method: "tools/call",
-        params: { name: "mem_get", arguments: { slug: "core" } },
-      });
-    const pending = phase === "during" ? call() : undefined;
-    try {
-      if (pending)
-        await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(1));
-      await service.retype(bot, "replacement/echo");
-      expect(service.find(bot)?.type).toBe("replacement/echo");
-      release();
-      const result = await (pending ?? call());
-      expect(JSON.stringify(result)).not.toContain("REVOKED-PRIVATE-MEMORY");
-      expect(result).toHaveProperty("result.isError", true);
-    } finally {
-      release();
-      await pending?.catch(() => {});
-      await connection.close();
-    }
-  },
-);
-
 it("discovers only active source providers and forgets unloaded registrations", async () => {
   let active = false;
   let changed = () => {};
@@ -9214,4 +9015,9 @@ it("rejects invalid source discovery metadata", async () => {
         ...metadata,
       } as unknown as AttentionSource),
     ).toThrow(/plugin source/);
+});
+
+it("does not expose an agent connection to plugins", async () => {
+  const { plugin } = await setup();
+  expect(plugin.agents).not.toHaveProperty("connect");
 });

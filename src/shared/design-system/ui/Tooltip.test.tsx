@@ -147,6 +147,25 @@ describe("hover intent", () => {
     expect(screen.getByRole("tooltip")).toHaveTextContent("Go back");
   });
 
+  it("keeps a pressed trigger's hint closed when focus returns, until Tab", async () => {
+    render(
+      <Tooltip content="Go back" hint="familiar">
+        <button type="button">Back</button>
+      </Tooltip>,
+    );
+    const back = screen.getByRole("button", { name: "Back" });
+    // A menu opened by the press closes and hands focus back to its trigger.
+    fireEvent.pointerDown(back, { pointerType: "mouse" });
+    act(() => back.focus());
+    await rest(0);
+    expect(screen.queryByRole("tooltip")).toBeNull();
+    act(() => back.blur());
+    fireEvent.keyDown(window, { key: "Tab" });
+    act(() => back.focus());
+    await rest(0);
+    expect(screen.getByRole("tooltip")).toHaveTextContent("Go back");
+  });
+
   it("opens a neighbor at once while a hint in the same provider is showing", async () => {
     render(
       <TooltipProvider>

@@ -52,6 +52,8 @@ function CopyAddress({
   const [copied, setCopied] = useState(false);
   const [hint, setHint] = useState(false);
   const visible = useRef(false);
+  // A toast already confirmed this copy; the hint must not repeat it.
+  const toasted = useRef(false);
   const pointerType = useRef("");
   const attempt = useRef(0);
   const notify = useToastNotification();
@@ -68,8 +70,10 @@ function CopyAddress({
       await navigator.clipboard.writeText(url);
       if (current === attempt.current) {
         setCopied(true);
-        if (!visible.current || pointerType.current === "touch")
+        if (!visible.current || pointerType.current === "touch") {
+          toasted.current = true;
           notify("Community URL copied.", "success");
+        }
       }
     } catch {
       if (current === attempt.current)
@@ -91,6 +95,7 @@ function CopyAddress({
         follow="pointer"
         open={hint}
         onOpenChange={(open) => {
+          if (open && toasted.current) return;
           visible.current = open;
           setHint(open);
           if (!open) setCopied(false);
@@ -114,6 +119,7 @@ function CopyAddress({
             pointerType.current = event.pointerType;
           }}
           onPointerLeave={() => {
+            toasted.current = false;
             visible.current = false;
             setHint(false);
             setCopied(false);

@@ -11,6 +11,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { CommunityAddress } from "./CommunityAddress";
 import type { CommunityReader } from "../features/communities/service";
 import { ToastProvider } from "../shared/design-system/ui/Toast";
+import { HELPFUL_HINT_REST_MS } from "../shared/design-system/ui/hoverIntent";
 
 const communities: CommunityReader = {
   subscribe: () => () => {},
@@ -89,6 +90,44 @@ it("reports clipboard refusal without claiming success and allows retry", async 
   fireEvent.click(button);
   expect(await screen.findByText("Community URL copied.")).toBeInTheDocument();
   expect(writeText).toHaveBeenCalledTimes(2);
+});
+
+it("a click before the hint rests confirms once, by toast", async () => {
+  vi.useFakeTimers();
+  vi.stubGlobal("navigator", {
+    clipboard: { writeText: vi.fn().mockResolvedValue(undefined) },
+  });
+  render(
+    <ToastProvider>
+      <CommunityAddress
+        communities={communities}
+        community={{ id: "https://community.example", name: "Community" }}
+      />
+    </ToastProvider>,
+  );
+  const button = screen.getByRole("button", {
+    name: "Copy community URL, community.example",
+  });
+  fireEvent.mouseEnter(button);
+  fireEvent.mouseMove(button);
+  act(() => vi.advanceTimersByTime(100));
+  fireEvent.pointerDown(button, { pointerType: "mouse" });
+  fireEvent.mouseDown(button);
+  fireEvent.pointerUp(button, { pointerType: "mouse" });
+  fireEvent.mouseUp(button);
+  await act(async () => fireEvent.click(button));
+  // The pointer settles after the click, restarting the hint's rest.
+  fireEvent.mouseMove(button);
+  act(() => vi.advanceTimersByTime(HELPFUL_HINT_REST_MS));
+  expect(screen.getAllByText("Community URL copied.")).toHaveLength(2);
+  expect(screen.queryByRole("tooltip")).toBeNull();
+  // Leaving ends that confirmation; the next resting hover offers Copy again.
+  fireEvent.pointerLeave(button, { pointerType: "mouse" });
+  fireEvent.mouseLeave(button);
+  fireEvent.mouseEnter(button);
+  fireEvent.mouseMove(button);
+  act(() => vi.advanceTimersByTime(HELPFUL_HINT_REST_MS));
+  expect(screen.getByRole("tooltip")).toHaveTextContent("Copy");
 });
 
 it("a later copy result wins and changing community clears the old confirmation", async () => {

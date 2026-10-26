@@ -597,7 +597,8 @@ impl AppAgents {
         // A harness agent saved for the same community keeps this key under the
         // same ID. It is shared, never added again or deleted on failure here.
         let shared = prepared.adopted && credentials.read(&id, &agent.pubkey)?.is_some();
-        self.update(|agents| {
+        let mut pushed = false;
+        let added = self.update(|agents| {
             // A deleted row awaiting its community cleanup is taken back.
             if prepared.adopted
                 && agents
@@ -608,8 +609,16 @@ impl AppAgents {
             }
             agents.retain(|saved| saved.pubkey != agent.pubkey || saved.relay != agent.relay);
             agents.push(agent.clone());
+            pushed = true;
             Ok(())
-        })?;
+        });
+        // When only the other file failed to save, the row is on disk, and
+        // that file holds the same rows as before, so its key is saved too.
+        if let Err(error) = added {
+            if !pushed || !self.list()?.contains(&agent) {
+                return Err(error);
+            }
+        }
         if shared {
             return Ok((agent, prepared.key));
         }
@@ -697,7 +706,7 @@ impl AppAgents {
         let id = agent.credential_id();
         // A Join a crash cut short may have saved the key already: only this
         // agent's key reads back under its ID.
-        let saved = (if agent.read_key(credentials).is_ok() {
+        let saved = if agent.read_key(credentials).is_ok() {
             Ok(())
         } else {
             credentials.add(&id, &key).and_then(|()| {
@@ -706,18 +715,7 @@ impl AppAgents {
                     .map(drop)
                     .map_err(|_| "Agent key could not be verified".into())
             })
-        })
-        .and_then(|()| {
-            self.update(|agents| {
-                let joined = agents
-                    .iter_mut()
-                    .find(|saved| saved.pubkey == pubkey && saved.relay == relay)
-                    .filter(|saved| !saved.deleted && saved.joining)
-                    .ok_or("The agent was removed while it was being added")?;
-                joined.joining = false;
-                Ok(joined.clone())
-            })
-        });
+        };
         saved.inspect_err(|_| {
             if credentials.delete(&id, pubkey).is_ok() {
                 let _ = self.update(|agents| {
@@ -727,6 +725,17 @@ impl AppAgents {
                     Ok(())
                 });
             }
+        })?;
+        // The verified key stays: settling can fail after the plain list saved
+        // the row, and a row still joining settles when it is added again.
+        self.update(|agents| {
+            let joined = agents
+                .iter_mut()
+                .find(|saved| saved.pubkey == pubkey && saved.relay == relay)
+                .filter(|saved| !saved.deleted && saved.joining)
+                .ok_or("The agent was removed while it was being added")?;
+            joined.joining = false;
+            Ok(joined.clone())
         })
     }
     /// Renames it in every community it is in.
@@ -965,6 +974,8 @@ fn save_rows(path: &Path, rows: &[&AppAgent]) -> Result<()> {
     let bytes = serde_json::to_vec_pretty(rows).map_err(|_| "Could not encode agent identities")?;
     let temp = path.with_extension("tmp");
     std::fs::write(&temp, bytes).map_err(|_| "Could not save agent identities")?;
+    #[cfg(test)]
+    tests::before_rename()?;
     std::fs::rename(&temp, path).map_err(|_| "Could not save agent identities".into())
 }
 

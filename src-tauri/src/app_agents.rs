@@ -141,20 +141,24 @@ impl AppAgentHost {
     /// cleaned up the community and calls `app_agent_forget`. This copy of the
     /// app stops running the agent once it is in no community.
     async fn delete(&self, pubkey: String, relay: String) -> Result<(), String> {
+        let page = self.removals().page;
         let turn = self.profile_turn(&pubkey);
         let _turn = turn.lock().await;
         let host = self.clone();
         blocking(move || {
             // Held across the deletion, so no publication re-reads the key meanwhile.
             let mut keys = host.keys();
-            keys.remove(&pubkey);
             let agents = host.agents.clone()?;
             let removals = host.removals();
+            if removals.page != page {
+                return Err("The app reloaded while it was being removed".into());
+            }
             let removal = removals
                 .held
                 .get(&pubkey)
                 .filter(|removal| removal.is(&pubkey, &relay))
                 .ok_or("Its removal from that community isn't held by this app")?;
+            keys.remove(&pubkey);
             agents.remove(removal, host.credentials.as_ref())?;
             drop(removals);
             if !agents
@@ -1101,7 +1105,7 @@ mod tests {
     use std::sync::atomic::{AtomicU32, Ordering};
 
     /// One saved key, behind a store that is busy for the first few reads.
-    struct Busy(String, AtomicU32);
+    struct Busy(Mutex<Option<String>>, AtomicU32);
     impl Credentials for Busy {
         fn read_legacy(
             &self,
@@ -1115,13 +1119,19 @@ mod tests {
                 self.1.fetch_sub(1, Ordering::SeqCst);
                 return Err(CREDENTIALS_BUSY.into());
             }
-            Secret::parse(&self.0, pubkey).map(Some)
+            self.0
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(|hex| Secret::parse(hex, pubkey))
+                .transpose()
         }
         fn add(&self, _: &str, _: &Secret) -> Result<(), String> {
             unreachable!()
         }
         fn delete(&self, _: &str, _: &str) -> Result<(), String> {
-            unreachable!()
+            self.0.lock().unwrap().take();
+            Ok(())
         }
     }
 
@@ -1131,7 +1141,10 @@ mod tests {
         let host = AppAgentHost {
             agents: Err("unused".into()),
             old: Err("unused".into()),
-            credentials: Arc::new(Busy(key.hex().to_string(), AtomicU32::new(3))),
+            credentials: Arc::new(Busy(
+                Mutex::new(Some(key.hex().to_string())),
+                AtomicU32::new(3),
+            )),
             keys: Arc::default(),
             profiles: Arc::default(),
             removals: Arc::default(),
@@ -1175,27 +1188,57 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn delete_waits_for_a_profile_publication_in_flight() {
+    async fn delete_waits_for_a_profile_and_refuses_a_reloaded_pages_hold() {
         let dir = tempfile::tempdir().unwrap();
-        let host = AppAgentHost::new(
-            Ok(dir.path().join("identities.json")),
-            Err("unused".into()),
-            true,
+        let path = dir.path().join("identities.json");
+        let key = Secret::generate().unwrap();
+        let agent = AppAgent {
+            deleting: true,
+            ..agent_at("wss://relay.example".into(), &key)
+        };
+        std::fs::write(&path, serde_json::to_vec(&[&agent]).unwrap()).unwrap();
+        let mut host = AppAgentHost::new(Ok(path), Err("unused".into()), true);
+        host.credentials = Arc::new(Busy(
+            Mutex::new(Some(key.hex().to_string())),
+            AtomicU32::new(0),
+        ));
+        let agents = host.agents().unwrap();
+        host.keys().insert(agent.pubkey.clone(), Arc::new(key));
+        host.removals().held.insert(
+            agent.pubkey.clone(),
+            agents.hold_removal(&agent.pubkey, &agent.relay).unwrap(),
         );
-        let pubkey = "c".repeat(64);
-        let turn = host.profile_turn(&pubkey);
+        let turn = host.profile_turn(&agent.pubkey);
         let publishing = turn.lock().await;
-        let mut deleting = tokio::spawn({
-            let host = host.clone();
-            let pubkey = pubkey.clone();
-            async move { host.delete(pubkey, "wss://relay.example".into()).await }
-        });
-        // Unblocked, deleting an absent agent takes well under this.
-        let waited = std::time::Duration::from_millis(300);
-        assert!(tokio::time::timeout(waited, &mut deleting).await.is_err());
+        let mut deleting = Box::pin(host.delete(agent.pubkey.clone(), agent.relay.clone()));
+        // Poll through the generation capture into the held publication lock.
+        assert!(matches!(
+            futures_util::poll!(&mut deleting),
+            std::task::Poll::Pending
+        ));
+        host.page_load();
+        host.removals().held.insert(
+            agent.pubkey.clone(),
+            agents.hold_removal(&agent.pubkey, &agent.relay).unwrap(),
+        );
         drop(publishing);
-        // Then refused, as no removal is held for it.
-        assert!(deleting.await.unwrap().is_err());
+        assert_eq!(
+            deleting.await.unwrap_err(),
+            "The app reloaded while it was being removed"
+        );
+        assert_eq!(agents.list().unwrap(), std::slice::from_ref(&agent));
+        assert!(agent.read_key(host.credentials.as_ref()).is_ok());
+        assert!(host.keys().contains_key(&agent.pubkey));
+        assert!(host.removals().held.contains_key(&agent.pubkey));
+        // Only the current page may finish cleanup using its own hold.
+        host.delete(agent.pubkey.clone(), agent.relay.clone())
+            .await
+            .unwrap();
+        assert!(agents.list().unwrap()[0].deleted);
+        assert!(agent.read_key(host.credentials.as_ref()).is_err());
+        assert!(!host.keys().contains_key(&agent.pubkey));
+        agents.forget(&agent.pubkey, &agent.relay).unwrap();
+        assert!(agents.list().unwrap().is_empty());
     }
 
     /// Answers one HTTP request with `status` and `body`, and returns the

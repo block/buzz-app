@@ -2,6 +2,24 @@ use super::*;
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
+thread_local! {
+    // Fail one rename on this test's thread, after the preceding file committed.
+    static FAIL_RENAME: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+pub(super) fn before_rename() -> Result<()> {
+    FAIL_RENAME.with(|remaining| match remaining.get() {
+        0 => Ok(()),
+        n => {
+            remaining.set(n - 1);
+            if n == 1 {
+                Err("Injected identity rename failure".into())
+            } else {
+                Ok(())
+            }
+        }
+    })
+}
+
 const RELAY: &str = "wss://relay.example";
 
 /// A row as builds before agents could be in several communities read it,
@@ -1112,4 +1130,47 @@ fn a_join_holds_off_other_apps_until_it_settles() {
     assert!(refused.unwrap_err().contains("already in that community"));
     assert_eq!(agents.list().unwrap(), [agent.clone(), joined.clone()]);
     assert!(joined.read_key(&credentials).is_ok());
+}
+
+#[test]
+fn a_save_cut_short_leaves_a_new_membership_with_its_key() {
+    const OTHER: &str = "wss://other.example";
+    // Create fails saving the second file; a Join back to the home fails
+    // saving the second file as it settles, after the plain list saved it.
+    for joining_home in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let credentials = Memory::default();
+        let (agents, source) = created(dir.path(), &credentials);
+        std::fs::write(agents.joined(), "[]").unwrap();
+        let prepared = AppAgents::prepare(RELAY, &owner(), "p/t", "Bea").unwrap();
+        let auth: Vec<String> =
+            serde_json::from_str(&crate::secret::test_attestation(prepared.pubkey())).unwrap();
+        let pubkey = if joining_home {
+            agents
+                .join(&source.pubkey, RELAY, OTHER, None, &credentials)
+                .unwrap();
+            agents.begin_leave(&source.pubkey, RELAY).unwrap();
+            remove(&agents, &source.pubkey, RELAY, &credentials).unwrap();
+            agents.forget(&source.pubkey, RELAY).unwrap();
+            FAIL_RENAME.set(4);
+            let joined = agents.join(&source.pubkey, OTHER, RELAY, None, &credentials);
+            assert_eq!(joined.unwrap_err(), "Injected identity rename failure");
+            source.pubkey.clone()
+        } else {
+            FAIL_RENAME.set(2);
+            agents
+                .commit(prepared, &auth, &credentials)
+                .unwrap()
+                .0
+                .pubkey
+        };
+        assert_eq!(FAIL_RENAME.get(), 0);
+        let reopened = AppAgents::open(agents.path.clone());
+        let saved = reopened.get(&pubkey, RELAY).unwrap();
+        assert!(!saved.joining);
+        assert!(saved.read_key(&credentials).is_ok());
+        let plain: Vec<OlderRow> =
+            serde_json::from_slice(&std::fs::read(&agents.path).unwrap()).unwrap();
+        assert!(plain.iter().any(|row| row.pubkey == pubkey));
+    }
 }

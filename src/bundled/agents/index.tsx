@@ -1,3 +1,4 @@
+import { createPage } from "./attention/Page";
 import type { PluginModule } from "../../plugins/api";
 import { registerAttention } from "../../features/agents/attention-command";
 import { registerDiscovery } from "../../features/agents/attention-discovery";
@@ -9,6 +10,13 @@ export const apply: PluginModule["apply"] = (ctx) => {
   registerAttention(ctx);
   registerDiscovery(ctx.agents);
   const { agents, relay, navigation: navigator } = ctx;
+  ctx.pages.register({
+    id: "attention",
+    title: "Agent Attention",
+    layout: "workspace",
+    primary: true,
+    component: createPage({ agents, relay, navigation: navigator }),
+  });
   ctx.pages.register({
     id: "agents",
     title: "Agents",

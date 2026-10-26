@@ -105,6 +105,23 @@ export function ComposerModels({
     selection.snapshot,
     selection.snapshot,
   );
+  // The type each pick was first seen under: a retype drops it, even while
+  // the new type's choices load or once they fail to, as none showed it.
+  const pickedFor = useRef<Record<string, string | undefined>>({});
+  useLayoutEffect(() => {
+    const typeOf = (pubkey: string) =>
+      mentioned.find((item) => item.pubkey === pubkey)?.type;
+    const kept = Object.fromEntries(
+      Object.entries(value).filter(([pubkey]) => {
+        pickedFor.current[pubkey] ??= typeOf(pubkey);
+        const was = pickedFor.current[pubkey];
+        return !was || typeOf(pubkey) === was;
+      }),
+    );
+    for (const pubkey of Object.keys(pickedFor.current))
+      if (!(pubkey in kept)) delete pickedFor.current[pubkey];
+    if (Object.keys(kept).length !== Object.keys(value).length) onChange(kept);
+  }, [mentioned, value, onChange]);
   const thumb = useRef<HTMLInputElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   // Publish the displayed defaults separately from the user's draft picks.

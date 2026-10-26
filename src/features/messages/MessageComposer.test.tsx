@@ -2488,6 +2488,78 @@ it("opens the model picker while discovery is pending, then fills its controls",
   ).not.toBeInTheDocument();
 });
 
+it.each(["pending", "failed"] as const)(
+  "drops a pick made for the agent's previous type while the new type's discovery is %s",
+  async (discovery) => {
+    const tunable = {
+      current: "fast",
+      models: [
+        {
+          id: "fast",
+          label: "Fast",
+          efforts: [
+            { id: "low", label: "Low" },
+            { id: "high", label: "High" },
+          ],
+        },
+      ],
+    };
+    const agent = {
+      key: first.pubkey,
+      pubkey: first.pubkey,
+      name: "Honey",
+      type: "test/agent",
+    };
+    let snapshot = { status: "ready", agents: [agent] };
+    const listeners = new Set<() => void>();
+    const types = [
+      { key: "test/agent", models: () => tunable },
+      {
+        key: "test/other",
+        models: () =>
+          discovery === "pending"
+            ? new Promise(() => {})
+            : Promise.reject(new Error("offline")),
+      },
+    ];
+    const agents = {
+      find: (pubkey: string) =>
+        snapshot.agents.find((agent) => agent.pubkey === pubkey),
+      joinable: () => [],
+      sessionState: () => "unavailable" as const,
+      subscribe: (listener: () => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      snapshot: () => snapshot,
+      types: () => types,
+    } as unknown as Agents;
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const h = mount({}, undefined, undefined, agents);
+    await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+    await h.user.click(
+      await screen.findByRole("button", { name: /Model.*effort/ }),
+    );
+    const slider = await screen.findByLabelText("Effort for Honey's next run");
+    slider.focus();
+    await h.user.keyboard("{ArrowRight}");
+    expect(slider).toHaveAttribute("aria-valuetext", "High");
+    await h.user.keyboard("{Escape}");
+    // Retyped elsewhere: the new type's choices never show the old pick.
+    act(() => {
+      snapshot = {
+        status: "ready",
+        agents: [{ ...agent, type: "test/other" }],
+      };
+      for (const listener of listeners) listener();
+    });
+    await h.user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(h.messages.send).toHaveBeenCalledOnce();
+    const picks = h.messages.send.mock.calls[0]?.[6];
+    expect(picks?.[first.pubkey]).toBeUndefined();
+  },
+);
+
 /** Agents with none here yet, where an earlier Buzz saved `first` and `second`. */
 const oldBuzzAgents = () => {
   const port = vi.fn<Agents["port"]>(async () => ({

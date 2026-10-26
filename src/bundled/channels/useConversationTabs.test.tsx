@@ -26,15 +26,26 @@ import { setThreadPlacementPreference } from "../../features/messages/thread-pre
 import { channelTabs, tabPane, useChannelTabState } from "./useChannelTabState";
 import { useConversationTabs } from "./useConversationTabs";
 
-// Thread rows are memoized; count real renders past that boundary. The
-// composer is independent UI with its own suite.
+// For every test in this file: thread rows are memoized, so count real renders
+// past that boundary and keep each row's latest link opener. The composer is
+// independent UI with its own suite.
 const rowRenders = vi.hoisted(() => [] as string[]);
+const rowOpeners = vi.hoisted(
+  () => new Map<string, (url: string) => boolean>(),
+);
 vi.mock("../../features/messages/MessageRow", async (original) => {
   const { memo } = await import("react");
   return {
     ...(await original<object>()),
-    MessageRow: memo(function CountedRow({ row }: { row: { id: string } }) {
+    MessageRow: memo(function CountedRow({
+      row,
+      onOpenLink,
+    }: {
+      row: { id: string };
+      onOpenLink(url: string): boolean;
+    }) {
       rowRenders.push(row.id);
+      rowOpeners.set(row.id, onOpenLink);
       return <article data-message-id={row.id} />;
     }),
   };
@@ -1622,7 +1633,13 @@ it("a hidden retained thread tab's rows re-render for new panels, not channel-li
     snapshot: () => ({ status: "ready", session }),
   } as unknown as RelayData;
   let state!: ReturnType<typeof useChannelTabState>;
-  function Harness({ list }: { list: typeof channels }) {
+  function Harness({
+    list,
+    openLink,
+  }: {
+    list: typeof channels;
+    openLink(url: string): boolean;
+  }) {
     state = useChannelTabState(session, "alpha");
     const workspace = useConversationTabs({
       state,
@@ -1636,7 +1653,7 @@ it("a hidden retained thread tab's rows re-render for new panels, not channel-li
       leadingIds: [],
       continuingVisit: true,
       isLive: () => true,
-      openLink: () => false,
+      openLink,
     });
     return <>{workspace.hosts}</>;
   }
@@ -1650,7 +1667,8 @@ it("a hidden retained thread tab's rows re-render for new panels, not channel-li
   onTestFinished(() => {
     vi.unstubAllGlobals();
   });
-  const view = render(<Harness list={channels} />);
+  const first = vi.fn(() => false);
+  const view = render(<Harness list={channels} openLink={first} />);
   act(() => state.openThreadTab("alpha", roots.r1, roots.r1));
   act(() => state.openThreadTab("alpha", roots.r2, roots.r2));
   act(() => state.select(`thread:alpha:${roots.r1}`));
@@ -1661,8 +1679,15 @@ it("a hidden retained thread tab's rows re-render for new panels, not channel-li
   // A preview change replaces the list and the changed channel's summary.
   channels = [{ id: "alpha", name: "Alpha" }];
   list = { status: "ready", channels };
-  view.rerender(<Harness list={channels} />);
+  const latest = vi.fn(() => true);
+  view.rerender(<Harness list={channels} openLink={latest} />);
   expect(rowRenders).toEqual([]);
+  // The retained row's stable opener still reaches the page's latest handler.
+  expect(rowOpeners.get(`${roots.r1}:reply`)?.("https://example.com/")).toBe(
+    true,
+  );
+  expect(latest).toHaveBeenCalledWith("https://example.com/");
+  expect(first).not.toHaveBeenCalled();
   // Rows decide which links are openable while rendering, so new panels reach them.
   available = [{ key: "app", title: "App" } as RegisteredPanel];
   act(() => {

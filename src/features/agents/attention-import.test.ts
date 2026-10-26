@@ -15,14 +15,23 @@ const registration = {
   command: ["check"],
   cwd: "/tmp",
 };
+const relay = () => ({
+  snapshot: () => ({
+    status: "ready",
+    session: {
+      channels: { list: () => ({ channels: [{ id: registration.channel }] }) },
+    },
+  }),
+});
 it("saves the Interest and watch before archiving and preserves Attention off", async () => {
   const order: string[] = [];
-  const agent = { place: "here", attention: {} } as Agent;
+  const agent = { key: "agent", place: "here", attention: {} } as Agent;
   const save = vi.fn(async () => {
     order.push("saved");
   });
   const agents = {
     find: () => undefined,
+    relay,
     snapshot: () => ({ running: [{ ...agent, pubkey: "agent" }] }),
     save,
   } as unknown as Agents;
@@ -69,8 +78,11 @@ it("keeps a registration recoverable when saving fails", async () => {
     };
   });
   const agents = {
+    relay,
     snapshot: () => ({
-      running: [{ pubkey: "agent", place: "here", attention: {} }],
+      running: [
+        { pubkey: "agent", key: "agent", place: "here", attention: {} },
+      ],
     }),
     save: async () => {
       throw new Error("disk full");
@@ -89,8 +101,16 @@ it("archives a pending legacy wake only after queuing it for its original conver
     text: "Review complete",
   };
   const agents = {
+    relay,
     snapshot: () => ({
-      running: [{ pubkey: "agent", place: "here", attentionEnabled: true }],
+      running: [
+        {
+          pubkey: "agent",
+          key: "agent",
+          place: "here",
+          attentionEnabled: true,
+        },
+      ],
     }),
     wake: (_agent: string, delivery: object) => {
       expect(delivery).toEqual({
@@ -127,8 +147,8 @@ it("retries retained imports when another community's local recipient becomes av
   let changed = () => {};
   const save = vi.fn(async () => {});
   const agents = {
+    relay,
     snapshot: () => ({ running }),
-    relay: () => ({ snapshot: () => ({ status: "ready" }) }),
     subscribe: (listener: () => void) => {
       changed = listener;
       return () => {};
@@ -146,13 +166,15 @@ it("retries retained imports when another community's local recipient becomes av
     };
   });
   const stop = watchAttentionImport(agents, { spawn });
-  running = [{ pubkey: "other", place: "here", attention: {} } as Agent];
+  running = [
+    { pubkey: "other", key: "other", place: "here", attention: {} } as Agent,
+  ];
   changed();
   await vi.waitFor(() => expect(warning).toHaveBeenCalled());
   expect(save).not.toHaveBeenCalled();
   running = [
     ...running,
-    { pubkey: "agent", place: "here", attention: {} } as Agent,
+    { pubkey: "agent", key: "agent", place: "here", attention: {} } as Agent,
   ];
   changed();
   await vi.waitFor(() =>
@@ -176,10 +198,12 @@ it("retains a registration when its existing Interest has different instructions
   const save = vi.fn();
   await importAttention(
     {
+      relay,
       snapshot: () => ({
         running: [
           {
             pubkey: "agent",
+            key: "agent",
             place: "here",
             attention: {
               "interest/monitor-check": {
@@ -195,4 +219,127 @@ it("retains a registration when its existing Interest has different instructions
   );
   expect(save).not.toHaveBeenCalled();
   expect(spawn).toHaveBeenCalledTimes(1);
+});
+
+it.each([
+  ["registration", true],
+  ["wake", true],
+  ["registration", false],
+  ["wake", false],
+])(
+  "imports %s into its destination membership (home present: %s)",
+  async (kind, hasHome) => {
+    const home = {
+      key: "agent",
+      pubkey: "agent",
+      place: "here",
+      attention: {},
+      attentionEnabled: true,
+    };
+    const target = { ...home, key: "agent@other.example" };
+    const save = vi.fn(async () => {}),
+      wake = vi.fn();
+    const agents = {
+      snapshot: () => ({ running: hasHome ? [home, target] : [target] }),
+      save,
+      wake,
+      relay: (key: string) => ({
+        snapshot: () => ({
+          status: "ready",
+          session: {
+            channels: {
+              list: () => ({
+                channels:
+                  key === target.key ? [{ id: registration.channel }] : [],
+              }),
+            },
+          },
+        }),
+      }),
+    } as unknown as Agents;
+    const spawn = vi.fn(async (_id: string, options?: HostProcessOptions) => {
+      if (!options?.args?.length)
+        options?.onStdout?.(
+          JSON.stringify([
+            kind === "registration"
+              ? registration
+              : {
+                  file: "wake.json",
+                  signature: "abc",
+                  wake: {
+                    agent: "agent",
+                    channel: registration.channel,
+                    text: "Review complete",
+                  },
+                },
+          ]),
+        );
+      return {
+        write: async () => {},
+        end: async () => {},
+        kill: async () => {},
+        exited: Promise.resolve(0),
+      };
+    });
+    await importAttention(agents, { spawn });
+    expect(kind === "registration" ? save : wake).toHaveBeenCalledWith(
+      target.key,
+      expect.anything(),
+    );
+    expect(spawn).toHaveBeenCalledTimes(2);
+  },
+);
+
+it("retains ambiguous destination memberships without saving or archiving", async () => {
+  const save = vi.fn();
+  const agents = {
+    relay,
+    snapshot: () => ({
+      running: ["agent", "agent@other.example"].map((key) => ({
+        key,
+        pubkey: "agent",
+        place: "here",
+        attention: {},
+      })),
+    }),
+    save,
+  } as unknown as Agents;
+  const spawn = vi.fn(async (_id: string, options?: HostProcessOptions) => {
+    options?.onStdout?.(JSON.stringify([registration]));
+    return {
+      write: async () => {},
+      end: async () => {},
+      kill: async () => {},
+      exited: Promise.resolve(0),
+    };
+  });
+  await importAttention(agents, { spawn });
+  expect(save).not.toHaveBeenCalled();
+  expect(spawn).toHaveBeenCalledTimes(1);
+});
+
+it("reads retry connection status using the membership key", async () => {
+  const lookup = vi.fn(relay);
+  const agents = {
+    relay: lookup,
+    snapshot: () => ({
+      running: [
+        { key: "agent@other.example", pubkey: "agent", attentionEnabled: true },
+      ],
+    }),
+    subscribe: () => () => {},
+  } as unknown as Agents;
+  const stop = watchAttentionImport(agents, {
+    spawn: async (_id, options) => {
+      options?.onStdout?.("[]");
+      return {
+        write: async () => {},
+        end: async () => {},
+        kill: async () => {},
+        exited: Promise.resolve(0),
+      };
+    },
+  });
+  expect(lookup).toHaveBeenCalledWith("agent@other.example");
+  stop();
 });

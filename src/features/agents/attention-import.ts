@@ -35,6 +35,23 @@ export async function importAttention(
       throw new Error("Attention migration failed");
     return output;
   };
+  const recipient = (pubkey: string, channel: string) => {
+    const [agent, ...others] = agents.snapshot().running.filter((agent) => {
+      if (agent.pubkey !== pubkey || agent.place !== "here") return false;
+      const relay = agents.relay(agent.key)?.snapshot();
+      if (relay?.status !== "ready") return false;
+      const channels = relay.session.channels;
+      return (
+        channels.list().channels.some(({ id }) => id === channel) ||
+        Boolean(channels.get?.(channel))
+      );
+    });
+    if (!agent || others.length)
+      throw new Error(
+        "Recipient destination membership is unavailable or ambiguous",
+      );
+    return agent;
+  };
   const registrations: (
     | Registration
     | {
@@ -47,12 +64,10 @@ export async function importAttention(
     try {
       if ("wake" in item) {
         const wake = item.wake;
-        const agent = agents
-          .snapshot()
-          .running.find((agent) => agent.pubkey === wake.agent);
-        if (agent?.place !== "here" || !agent.attentionEnabled)
+        const agent = recipient(wake.agent, wake.channel);
+        if (!agent.attentionEnabled)
           throw new Error("Recipient Attention is not enabled");
-        agents.wake(wake.agent, {
+        agents.wake(agent.key, {
           channel: wake.channel,
           ...(wake.thread ? { root: wake.thread } : {}),
           text: wake.text,
@@ -62,11 +77,7 @@ export async function importAttention(
       }
       const id = `monitor-${item.name}`;
       for (const pubkey of item.agents) {
-        const agent = agents
-          .snapshot()
-          .running.find((agent) => agent.pubkey === pubkey);
-        if (agent?.place !== "here")
-          throw new Error("Recipient is not a local agent");
+        const agent = recipient(pubkey, item.channel);
         const attention: Record<string, AttentionValue> = {};
         const interest = `interest/${id}`,
           watch = `watch/${id}`;
@@ -99,7 +110,7 @@ export async function importAttention(
           };
         if (!agent.attention[watch]) attention[watch] = value;
         if (Object.keys(attention).length)
-          await agents.save(pubkey, { attention });
+          await agents.save(agent.key, { attention });
       }
       await run(["archive", item.file, item.signature]);
     } catch (error) {
@@ -123,11 +134,16 @@ export function watchAttentionImport(
   const migrate = () => {
     const snapshot = agents.snapshot();
     const recipients = JSON.stringify(
-      snapshot.running.map((agent) => [
-        agent.pubkey,
-        agent.attentionEnabled,
-        agents.relay(agent.pubkey)?.snapshot().status,
-      ]),
+      snapshot.running.map((agent) => {
+        const relay = agents.relay(agent.key)?.snapshot();
+        return [
+          agent.key,
+          agent.attentionEnabled,
+          relay?.status,
+          relay?.generation,
+          relay?.session.channels.list().channels.map(({ id }) => id),
+        ];
+      }),
     );
     if (
       stopped ||

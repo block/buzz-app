@@ -2465,19 +2465,34 @@ export class AgentRunners {
         const member = this.host.member(agent, {
           tags: [["h", object.channel]],
         });
-        if (
-          member === true &&
-          object.root &&
-          !(await this.rootInChannel(pubkey, object.channel, object.root))
-        )
-          return {
-            ...result,
-            delivery: {
-              status: "blocked" as const,
-              reason:
-                "Delivery root was not found in its channel. Set root to an accessible message in that channel or remove root for channel-level delivery. Rearm a spent timer to retry it.",
-            },
-          };
+        if (member === true && object.root) {
+          let valid: boolean;
+          try {
+            valid = await this.rootInChannel(
+              pubkey,
+              object.channel,
+              object.root,
+            );
+          } catch {
+            return {
+              ...result,
+              delivery: {
+                status: "held" as const,
+                reason:
+                  "Could not verify the delivery root. Retry when relay reads are available; you can still edit or disable this watch.",
+              },
+            };
+          }
+          if (!valid)
+            return {
+              ...result,
+              delivery: {
+                status: "blocked" as const,
+                reason:
+                  "Delivery root was not found in its channel. Set root to an accessible message in that channel or remove root for channel-level delivery. Rearm a spent timer to retry it.",
+              },
+            };
+        }
         return member === true
           ? result
           : {

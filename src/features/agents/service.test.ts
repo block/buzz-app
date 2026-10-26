@@ -1,4 +1,5 @@
 import { appClient } from "../../buzz-mcp/app-client";
+import { callAttentionTool } from "../../buzz-mcp/attention";
 import { callTool } from "../../buzz-mcp/tools";
 import { createLocalAgentActivity, type WorkOutcome } from "./local-activity";
 import { createHash } from "node:crypto";
@@ -8011,6 +8012,48 @@ it.each(["other-channel", "missing"])(
     );
     emit({ channelId: channel, events: [deploy("corrected-root")] });
     await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  },
+);
+
+it.each(["watch_update", "watch_disable"] as const)(
+  "keeps rooted watch status and local %s available when root verification rejects",
+  async (operation) => {
+    const { service, native, plugin } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    const root = "e".repeat(64);
+    native.query.mockResolvedValue([event(root, { tags: [["h", channel]] })]);
+    const watch = service.find(bot)?.attention["watch/channel"]?.value;
+    if (watch?.type !== "event") throw new Error("fixture");
+    await service.save(bot, {
+      attentionEnabled: true,
+      attention: { "watch/channel": { ...watch, channel, root } },
+    });
+    await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+    const handle = plugin.agents.handle(bot);
+    if (!handle) throw new Error("Missing handle");
+    const before = await handle.attention.show("watch/channel");
+    native.query.mockRejectedValue(new Error("Relay read refused"));
+    const shown = JSON.parse(
+      (await callAttentionTool(handle.attention, "watch_show", {
+        id: "channel",
+      })) as string,
+    );
+    expect(shown).toMatchObject({
+      object: before.object,
+      expected_state: before.expected_state,
+      delivery: { status: "held", reason: expect.stringMatching(/verif/i) },
+    });
+    const result = JSON.parse(
+      (await callAttentionTool(handle.attention, operation, {
+        id: "channel",
+        expected_state: before.expected_state,
+        ...(operation === "watch_update" ? { clear: ["root"] } : {}),
+      })) as string,
+    );
+    expect(result.object.enabled).toBe(operation !== "watch_disable");
+    if (operation === "watch_update")
+      expect(result.object).not.toHaveProperty("root");
+    else expect(result.object.root).toBe(root);
   },
 );
 

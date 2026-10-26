@@ -1496,9 +1496,10 @@ If later edits or restore would stop it from sending as that link (a preceding `
 surrounding backticks, code/link formatting), the host turns it into the ordinary
 text that will actually be sent, as it does for broken mention intent.
 
-**User intent outlives the tool that created it.** Disabling Mentions removes its
-chooser, not selected recipients, their inline chips and avatar removal controls,
-scoped drafts or pending messages. Editing or deleting a selected mention removes
+**User intent outlives the tool that created it.** If the built-in Mentions chooser
+is unavailable because activation failed, selected recipients, their inline chips
+and avatar removal controls, scoped drafts and pending messages remain available.
+Editing or deleting a selected mention removes
 its explicit mention intent. Removing an avatar clears that identity's explicit
 mention intent without changing the authored text. A Solo chat
 still needs a tagged agent to send. The session

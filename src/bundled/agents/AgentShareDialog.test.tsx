@@ -283,6 +283,38 @@ it("exports the agent as an .agent.json snapshot", async () => {
   click.mockRestore();
 });
 
+it("names a desktop export so every platform accepts it", async () => {
+  const user = userEvent.setup();
+  desktop.tauri = true;
+  desktop.invoke.mockClear();
+  try {
+    const names: [string, string][] = [
+      ["Con", "Con-agent.agent.png"],
+      ["lpt1", "lpt1-agent.agent.png"],
+      ["Console", "Console.agent.png"],
+      ["x".repeat(300), `${"x".repeat(64)}.agent.png`],
+    ];
+    for (const [name, file] of names) {
+      render(
+        <AgentShareDialog
+          agent={{ ...agent, name }}
+          type={echo}
+          session={community().session}
+          onClose={() => {}}
+        />,
+      );
+      await user.click(screen.getByRole("button", { name: "Export agent" }));
+      expect(await screen.findByRole("status")).toHaveTextContent("Exported");
+      expect(desktop.invoke.mock.lastCall?.[2]).toEqual({
+        headers: { "x-buzz-file-name": file },
+      });
+      cleanup();
+    }
+  } finally {
+    desktop.tauri = false;
+  }
+});
+
 it("saves an .agent.png natively on desktop, never through a blob link", async () => {
   const user = userEvent.setup();
   desktop.tauri = true;

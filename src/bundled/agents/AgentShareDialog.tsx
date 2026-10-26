@@ -53,6 +53,16 @@ async function artwork(picture: string | undefined, session: RelaySession) {
   }
 }
 
+/** A plain, bounded file name on every desktop, where Windows reserves device
+ * names such as `CON` whatever the extension. */
+function fileName(name: string, format: string) {
+  const stem = name.replace(/[^a-zA-Z0-9_-]+/g, "-").slice(0, 64);
+  const plain = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(stem)
+    ? `${stem}-agent`
+    : stem;
+  return `${plain}.agent.${format}`;
+}
+
 /** Desktop saves natively; a browser downloads the file. */
 async function save(file: Blob, name: string) {
   if (isTauri()) return downloadNativeFile(file, name);
@@ -147,10 +157,7 @@ export function AgentShareDialog({
         format === "png"
           ? snapshotPng(definition, await artwork(agent.picture, session))
           : new Blob([snapshotJson(definition)], { type: "application/json" });
-      await save(
-        file,
-        `${agent.name.replace(/[^a-zA-Z0-9_-]+/g, "-")}.agent.${format}`,
-      );
+      await save(file, fileName(agent.name, format));
       setNotice(`Exported ${agent.name}.`);
     } catch (reason) {
       setError(`Failed to export agent snapshot. ${message(reason)}`);

@@ -1,3 +1,4 @@
+import { registerAttention } from "./attention-command";
 import type { AttentionSource } from "./attention-sources";
 import { appClient } from "../../buzz-mcp/app-client";
 import { callAttentionTool } from "../../buzz-mcp/attention";
@@ -10169,3 +10170,21 @@ it.each([
     }
   },
 );
+
+it("registers Buzz-owned command sources with saved provider keys", async () => {
+  const { service, plugin } = await setup();
+  const core = plugin.extend({
+    pluginOwner: { id: "buzz.agents", revision: "bundled" },
+  });
+  registerAttention({ agents: core.agents });
+  expect(service.attentionProviders()).toEqual([
+    expect.objectContaining({ provider: "attention/command", builtIn: true }),
+    expect.objectContaining({ provider: "attention/github-pr", builtIn: true }),
+  ]);
+  const external = plugin.extend({
+    pluginOwner: { id: "attention", revision: "old" },
+  });
+  expect(() => registerAttention({ agents: external.agents })).toThrow(
+    /built into Buzz/,
+  );
+});

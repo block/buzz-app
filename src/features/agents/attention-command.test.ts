@@ -1,0 +1,216 @@
+import { expect, it, vi, afterEach } from "vitest";
+import { registerAttention } from "./attention-command";
+import type { AttentionSource } from "./attention-sources";
+
+afterEach(() => vi.useRealTimers());
+type Input = Parameters<AttentionSource["run"]>[0];
+function harness(connected = true) {
+  let ready!: () => void;
+  const spawned = new Promise<void>((resolve) => {
+    ready = resolve;
+  });
+  let run!: (input: Input) => Promise<void>;
+  let output!: (text: string) => void;
+  let exit!: (code: number) => void;
+  const kill = vi.fn(async () => {
+    exit(0);
+  });
+  const controller = new AbortController(),
+    emit = vi.fn();
+  const spawn = connected
+    ? vi.fn(
+        async (_id: string, options: { onStdout?: (data: string) => void }) => {
+          output = options.onStdout ?? (() => {});
+          controller.signal.addEventListener(
+            "abort",
+            () => {
+              void kill();
+            },
+            { once: true },
+          );
+          ready();
+          return {
+            write: async () => {},
+            end: async () => {},
+            kill,
+            exited: new Promise<number>((resolve) => {
+              exit = resolve;
+            }),
+          };
+        },
+      )
+    : undefined;
+  registerAttention({
+    agents: {
+      addAttentionSource: (source) => {
+        if (source.id === "command") run = source.run;
+      },
+    },
+  });
+  return {
+    run,
+    spawn: spawn as Input["spawn"],
+    spawned,
+    controller,
+    emit,
+    kill,
+    output: (text: string) => output(text),
+    exit: (code: number) => exit(code),
+  };
+}
+
+it("batches each burst, retries a refused queue, and drains the final output", async () => {
+  vi.useFakeTimers();
+  const h = harness();
+  const done = h.run({
+    spawn: h.spawn,
+    agent: "a",
+    watch: {
+      type: "source",
+      interest_id: "test",
+      enabled: true,
+      provider: "attention/command",
+      channel: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+      config: { command: ["check"] },
+    },
+    signal: h.controller.signal,
+    emit: h.emit,
+  });
+  await Promise.resolve();
+  h.output("first");
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(h.emit).toHaveBeenLastCalledWith("first");
+  h.emit.mockImplementationOnce(() => {
+    throw new Error("busy");
+  });
+  h.output("second");
+  await vi.advanceTimersByTimeAsync(1000);
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(h.emit).toHaveBeenLastCalledWith("second");
+  h.output("last");
+  h.exit(0);
+  await done;
+  expect(h.emit).toHaveBeenLastCalledWith("last");
+});
+it("kills execution on cancellation and discards buffered output", async () => {
+  const h = harness(true);
+  const done = h.run({
+    spawn: h.spawn,
+    agent: "a",
+    watch: {
+      type: "source",
+      interest_id: "test",
+      enabled: true,
+      provider: "attention/command",
+      channel: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+      config: { command: ["check"] },
+    },
+    signal: h.controller.signal,
+    emit: h.emit,
+  });
+  await h.spawned;
+  h.output("pending");
+  h.controller.abort();
+  await done;
+  expect(h.kill).toHaveBeenCalledTimes(1);
+  expect(h.emit).not.toHaveBeenCalled();
+});
+
+it("reports a process startup failure to the owning conversation", async () => {
+  let run!: (input: Input) => Promise<void>;
+  registerAttention({
+    agents: {
+      addAttentionSource: (source) => {
+        if (source.id === "command") run = source.run;
+      },
+    },
+  });
+  const emit = vi.fn();
+  await run({
+    spawn: async () => {
+      throw new Error("program unavailable");
+    },
+    agent: "a",
+    watch: {
+      type: "source",
+      interest_id: "test",
+      enabled: true,
+      provider: "attention/command",
+      channel: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+      config: { command: ["check"] },
+    },
+    signal: new AbortController().signal,
+    emit,
+  });
+  expect(emit).toHaveBeenCalledWith(
+    expect.stringContaining("program unavailable"),
+  );
+});
+
+it.each(["command", "github-pr"])(
+  "uses only the run-bound launcher for %s",
+  async (id) => {
+    let run!: (input: Input) => Promise<void>;
+    const agents = {
+      addAttentionSource: (source: AttentionSource) => {
+        if (source.id === id) run = source.run;
+      },
+    };
+    const spawn = vi.fn(async function (this: unknown) {
+      expect(this).toBeUndefined();
+      return {
+        write: async () => {},
+        end: async () => {},
+        kill: async () => {},
+        exited: Promise.resolve(0),
+      };
+    });
+    registerAttention({ agents });
+    const signal = new AbortController().signal;
+    const pr = "https://github.com/block/buzz-app/pull/1630";
+    await run({
+      spawn,
+      agent: "agent",
+      watch: {
+        type: "source",
+        interest_id: "test",
+        enabled: true,
+        provider: `attention/${id}`,
+        channel: "channel",
+        root: "root",
+        config: { command: ["check"], pr, cwd: "/work" },
+      },
+      signal,
+      emit: vi.fn(),
+    });
+    expect(spawn).toHaveBeenCalledWith(
+      id === "command" ? "attention-command" : "attention-pr",
+      {
+        args: id === "command" ? ["check"] : ["--interval", "60", pr],
+        cwd: "/work",
+        onStdout: expect.any(Function),
+        onStderr: expect.any(Function),
+      },
+    );
+  },
+);
+
+it("refuses commands when the host has no agent launcher", async () => {
+  const h = harness(false);
+  await expect(
+    h.run({
+      spawn: h.spawn,
+      agent: "agent",
+      watch: {
+        type: "source",
+        interest_id: "test",
+        enabled: true,
+        provider: "attention/command",
+        config: { command: ["check"] },
+      },
+      signal: h.controller.signal,
+      emit: h.emit,
+    }),
+  ).rejects.toThrow("cannot run commands as the agent");
+  expect(h.emit).not.toHaveBeenCalled();
+});

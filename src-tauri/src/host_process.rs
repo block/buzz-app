@@ -319,6 +319,11 @@ pub(crate) async fn plugin_host_process_spawn<R: tauri::Runtime>(
     }
     let path = effective_path();
     let program = program_path(&declared, || app.path().resource_dir().ok(), &path)?;
+    let interpreter = declared
+        .interpreter
+        .as_ref()
+        .map(|name| resolve_program(name, &path));
+    let executable = interpreter.as_ref().unwrap_or(&program);
     let mut command = if mcp.is_some() {
         let resources = app.path().resource_dir().map_err(|_| "No app resources")?;
         let helper = if cfg!(windows) {
@@ -327,11 +332,14 @@ pub(crate) async fn plugin_host_process_spawn<R: tauri::Runtime>(
             "buzz-agent-command"
         };
         let mut command = Command::new(resources.join("bin").join(helper));
-        command.arg("--launch").arg(&program);
+        command.arg("--launch").arg(executable);
         command
     } else {
-        Command::new(program)
+        Command::new(executable)
     };
+    if interpreter.is_some() {
+        command.arg(&program);
+    }
     command
         .args(&declared.args)
         .args(&args)

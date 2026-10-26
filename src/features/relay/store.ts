@@ -219,7 +219,7 @@ export function createChannelStore(
   });
   let startup: Promise<void> | undefined;
   let discoveryObserved = false;
-  // Profile bursts rewrite the whole startup record; save once they settle.
+  // Profile bursts rewrite the whole startup record; save at most once per 500ms.
   let discoverySave: ReturnType<typeof setTimeout> | undefined;
   let preparing = false;
   let warming = false;

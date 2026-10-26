@@ -45,6 +45,14 @@ const Places = defineDoc({
   scope: "session",
   initial: () => ({}),
 });
+/** An Attention wake's reply destination belongs to its request, independently
+ * of the conversation's tool defaults. Recorded before submission for recovery. */
+const Replies = defineDoc({
+  kind: "buzz.replies",
+  version: 1,
+  scope: "session",
+  initial: () => ({}),
+});
 /** Messages that arrive while Pi works join its run at the next boundary. */
 const SETTINGS = { steeringMode: "all" };
 /** Pi's own default thinking level, for a model that thinks. */
@@ -533,7 +541,7 @@ export function serve({
   /** Starts a request in a conversation configured for this turn. One that
    * steers a run working in it, `busy`, changes only what its owner picked,
    * as in Claude. The agent's `core` memory read for it is the latest. */
-  async function submit(opened, conversation, turn, busy) {
+  async function submit(opened, conversation, turn, busy, refresh) {
     if (turn.core) opened.core = turn.core;
     const steers = busy && turn.steer;
     const chosen = await choose(turn);
@@ -552,6 +560,11 @@ export function serve({
         };
     if (Object.keys(change).length)
       await conversation.configure(change, context);
+    if (refresh) {
+      const prompt = await refresh();
+      if (!prompt) return;
+      turn = { ...turn, ...prompt };
+    }
     const submission = await conversation.submit(
       {
         type: "input",
@@ -700,7 +713,7 @@ export function serve({
     },
     /** A turn for a conversation key: its Pi conversation, made the first
      * time, takes the request, or steers its run if one is working. */
-    async deliver({ agent, key, at, context: tools, ...turn }) {
+    async deliver({ agent, key, at, context: tools, reply, refresh, ...turn }) {
       const opened = await agentOf(agent);
       const prior = opened.queues.get(key);
       const delivered = (async () => {
@@ -728,7 +741,20 @@ export function serve({
         }
         opened.contexts.set(conversation.id, tools);
         const { busy } = await watch(opened, conversation.id);
-        const submitted = await submit(opened, conversation, turn, busy);
+        if (reply)
+          await harness.commit(async (tx) => {
+            (await tx.doc(Replies))[turn.request] = reply;
+          }, context);
+        const submitted = await submit(
+          opened,
+          conversation,
+          turn,
+          busy,
+          refresh
+            ? () => call("prompt", { agent, request: turn.request })
+            : undefined,
+        );
+        if (!submitted) return false;
         // Recorded once Pi has the turn: one that could not start leaves the
         // messages it would have been shown for the next.
         await harness.commit(async (tx) => {
@@ -766,6 +792,7 @@ export function serve({
     async unfinished({ agent }) {
       const opened = await agentOf(agent);
       const { submissions } = await opened.harness.inspect(context);
+      const replies = (await opened.harness.snapshot(Replies, context)) ?? {};
       return {
         submissions: submissions.flatMap(
           ({ id, conversationId, requestId }) => {
@@ -776,6 +803,9 @@ export function serve({
                     submission: id,
                     conversation: conversationId,
                     request: requestId,
+                    ...(replies[requestId]
+                      ? { reply: replies[requestId] }
+                      : {}),
                     ...(place ? { context: place } : {}),
                   },
                 ]
@@ -808,10 +838,24 @@ export function serve({
       }
     },
     /** How a request settled: its answer's text, or why it has none. */
-    async wait({ agent, submission }) {
+    async wait({ agent, submission, request }) {
       // Its run is in Pi's storage: the plugin opens the agent again.
       if (failed.has(agent)) return { status: "reopen" };
-      return settle(await agentOf(agent), submission);
+      const opened = await agentOf(agent);
+      const result = await settle(opened, submission);
+      if (
+        request &&
+        (result.status === "done" || result.status === "unanswered")
+      ) {
+        try {
+          await opened.harness.commit(async (tx) => {
+            delete (await tx.doc(Replies))[request];
+          }, context);
+        } catch (error) {
+          console.warn("Pi could not clear a wake's reply destination", error);
+        }
+      }
+      return result;
     },
     async abort({ agent, conversation }) {
       const { harness } = await agentOf(agent);

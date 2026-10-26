@@ -1775,11 +1775,11 @@ export class AgentsService extends Service implements Agents {
                 ...(options.channel === undefined
                   ? {}
                   : { channel: options.channel }),
-                ...(options.root === undefined
-                  ? topLevel
-                    ? { topLevel: true }
-                    : {}
-                  : { root: options.root }),
+                ...(topLevel
+                  ? { topLevel: true }
+                  : options.root === undefined
+                    ? {}
+                    : { root: options.root }),
               },
               message,
             );

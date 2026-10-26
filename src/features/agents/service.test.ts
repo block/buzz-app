@@ -9748,9 +9748,14 @@ it.each([undefined, "d".repeat(64)])(
   },
 );
 
-it.each(["stream", "solo"] as const)(
-  "allows explicit command replies according to the %s destination",
-  async (channelType) => {
+it.each([
+  ["stream", false],
+  ["stream", true],
+  ["solo", false],
+  ["solo", true],
+] as const)(
+  "allows explicit command replies according to the %s destination (saved root: %s)",
+  async (channelType, savedRoot) => {
     const { service, ctx, native, session } = await setup();
     const list = session.channels.list();
     vi.spyOn(session.channels, "list").mockReturnValue({
@@ -9776,11 +9781,12 @@ it.each(["stream", "solo"] as const)(
       pluginOwner: Object.freeze({ id: "consumer", revision: "one" }),
     });
     await service.create({ type: "example/echo", name: "Echo" });
+    const root = "e".repeat(64);
     const process = await sourceCommand(service, consumer, {
       signal: new AbortController().signal,
       channel,
+      ...(savedRoot ? { root } : {}),
     });
-    const root = "e".repeat(64);
     native.query.mockResolvedValue([event(root, { tags: [["h", channel]] })]);
     native.publish.mockClear();
     try {

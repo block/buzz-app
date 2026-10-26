@@ -16,7 +16,7 @@ test("Agent Attention fits both themes and sizes and creates a subscription by k
     for (const width of [390, 1280]) {
       await page.setViewportSize({ width, height: 900 });
       await page.evaluate((theme) => {
-        document.documentElement.classList.toggle("dark", theme === "dark");
+        document.documentElement.dataset.colorMode = theme;
         document.documentElement.style.fontSize = "20px";
       }, theme);
       await expect(create).toBeInViewport();

@@ -69,10 +69,11 @@ export function mentionDraft(value: unknown): MentionDraft {
       .map(({ pubkey, name, start, end }) => ({ pubkey, name, start, end })),
   };
 }
-/** Addressing alone is not something the person wrote: a draft holding only
- * recipients carries over in the composer but is not listed as a draft. */
-export function hasDraftContent(value: MentionDraft): boolean {
-  if (value.chatCards?.length) return true;
+/** What counts as a draft everywhere: text, an attached chat, or `files`.
+ * Addressing alone is not something the person wrote: a draft holding only
+ * recipients carries over in the composer but is not a draft. */
+export function hasDraftContent(value: MentionDraft, files = 0): boolean {
+  if (files > 0 || value.chatCards?.length) return true;
   let rest = value.text;
   for (const { start, end } of [...value.recipients].sort(
     (a, b) => b.start - a.start,

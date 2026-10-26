@@ -25,7 +25,10 @@ import {
   hasDraftContent,
   mentionDraft,
 } from "../../features/messages/mention-draft";
-import { clearAttachmentDraft } from "../../features/messages/attachment-draft";
+import {
+  attachmentDraftCount,
+  clearAttachmentDraft,
+} from "../../features/messages/attachment-draft";
 import {
   clearView,
   draftCoordinates,
@@ -105,7 +108,11 @@ export function DraftsView({
   // The composer owns draft contents and storage; Inbox only enumerates its scope.
   const saved = listDraftViews(
     session.scope,
-    (value) => hasDraftContent(mentionDraft(value)),
+    (value, key) =>
+      hasDraftContent(
+        mentionDraft(value),
+        attachmentDraftCount(session, `${session.scope}:${key}`),
+      ),
     selected,
   );
   void revision;

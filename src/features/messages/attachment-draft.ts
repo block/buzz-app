@@ -71,6 +71,11 @@ export function transferAttachmentDraft(
 
 const drafts = new WeakMap<ComposerSession, Map<string, AttachmentDraft>>();
 
+/** Files held for a composer `key`, without creating its draft. */
+export function attachmentDraftCount(session: ComposerSession, key: string) {
+  return drafts.get(session)?.get(key)?.snapshot().length ?? 0;
+}
+
 export const MAX_ATTACHMENT_FILES = 10;
 const MAX_RETAINED_BYTES = 2 * UPLOAD_MAX_BYTES;
 

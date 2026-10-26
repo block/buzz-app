@@ -179,4 +179,5 @@ it("recipients alone are not draft content; prose or chat cards are", () => {
     ),
   ).toBe(true);
   expect(hasDraftContent({ ...tags, chatCards: ["card"] })).toBe(true);
+  expect(hasDraftContent(tags, 1)).toBe(true);
 });

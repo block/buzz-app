@@ -1062,6 +1062,41 @@ it("tag-only composer state is kept in storage but never listed as a draft", asy
   ).not.toBeInTheDocument();
   expect(readView(h.owner.session.scope, "draft:dm-room", "")).toEqual(tagOnly);
 });
+it("lists a tagged draft that holds attached files", async () => {
+  const h = fixture({
+    withDm: true,
+    withWriter: true,
+    upload: async () => ({
+      name: "note.txt",
+      url: "https://relay.test/media/note.txt",
+      type: "text/plain",
+      size: 4,
+      sha256: "a".repeat(64),
+    }),
+  });
+  writeView(h.owner.session.scope, "draft:dm-room", {
+    text: "@Alice ",
+    recipients: [{ pubkey: h.alice.pubkey, name: "Alice", start: 0, end: 6 }],
+  });
+  const files = renderHook(() =>
+    useAttachmentDraft(
+      h.observedSession,
+      `${h.owner.session.scope}:draft:dm-room`,
+      "dm-room",
+    ),
+  );
+  act(() => {
+    files.result.current.store.add([
+      new File(["note"], "note.txt", { type: "text/plain" }),
+    ]);
+  });
+  render(h.view);
+  await screen.findByText("Please review this");
+  await chooseFilter("Drafts");
+  expect(
+    screen.getByRole("button", { name: "Open draft for Alice" }),
+  ).toBeInTheDocument();
+});
 it("hands keyboard focus into draft deletion and back on cancel without changing the saved draft", async () => {
   const h = fixture({ withWriter: true });
   writeView(h.owner.session.scope, "draft:room", "Keep this draft");

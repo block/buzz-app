@@ -1,3 +1,4 @@
+import { parseBuzzLink } from "../../../features/navigation/buzz-links";
 import * as React from "react";
 import { Field } from "../../../shared/design-system/ui/Field";
 import { Input } from "../../../shared/design-system/ui/Input";
@@ -35,54 +36,15 @@ const eventId = /^[a-f0-9]{64}$/i;
 export function conversationLink(
   input: string,
 ): { channel: string; root?: string; message?: string } | null {
-  try {
-    const url = new URL(input.trim());
-    if (
-      url.protocol !== "buzz:" ||
-      url.username ||
-      url.password ||
-      url.port ||
-      url.hash
-    )
-      return null;
-    let channel = "",
-      root: string | undefined,
-      message: string | undefined;
-    if (url.hostname === "channel") {
-      const parts = url.pathname.slice(1).split("/").map(decodeURIComponent);
-      if (parts.length > 2) return null;
-      channel = parts[0] ?? "";
-      message = parts[1];
-    } else if (
-      url.hostname === "message" &&
-      (!url.pathname || url.pathname === "/")
-    ) {
-      if (
-        ["channel", "id", "thread"].some(
-          (key) => url.searchParams.getAll(key).length > 1,
-        )
-      )
-        return null;
-      channel = url.searchParams.get("channel") ?? "";
-      message = url.searchParams.get("id") ?? "";
-      if (!eventId.test(message)) return null;
-      root = url.searchParams.get("thread") ?? undefined;
-    } else return null;
-    if (
-      !uuid.test(channel) ||
-      (root !== undefined && !eventId.test(root)) ||
-      (message !== undefined && !eventId.test(message))
-    )
-      return null;
-    return {
-      channel: channel.toLowerCase(),
-      ...(root ? { root: root.toLowerCase() } : {}),
-      ...(message ? { message: message.toLowerCase() } : {}),
-    };
-  } catch {
-    return null;
-  }
+  const link = parseBuzzLink(input.trim());
+  if (link?.format !== "legacy" || !uuid.test(link.channelId)) return null;
+  return {
+    channel: link.channelId.toLowerCase(),
+    ...(link.messageId ? { message: link.messageId } : {}),
+    ...(link.threadRootId ? { root: link.threadRootId } : {}),
+  };
 }
+
 export function channelId(input: string, channels: readonly Channel[]): string {
   const value = input.trim();
   const link = conversationLink(value);

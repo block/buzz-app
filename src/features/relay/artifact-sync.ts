@@ -44,6 +44,9 @@ export type ArtifactSyncView = {
   dispose(): void;
 };
 
+/** Host-only: `restart` drops every held event and starts a new sync. */
+export type ArtifactSyncOwner = ArtifactSyncView & { restart(): void };
+
 const tag = (event: VerifiedEvent, name: string) =>
   event.tags.find((entry) => entry[0] === name)?.[1];
 
@@ -61,7 +64,8 @@ export function createArtifactSyncView(
     | ((filter: ArtifactSyncFilter, sink: ArtifactSyncSink) => () => void)
     | undefined,
   random: () => number = Math.random,
-): ArtifactSyncView {
+  notify: (listener: () => void) => void = (listener) => listener(),
+): ArtifactSyncOwner {
   const filter = artifactSyncFilter(input);
   const listeners = new Set<() => void>();
   let snapshot: ArtifactSyncSnapshot = Object.freeze({
@@ -71,6 +75,7 @@ export function createArtifactSyncView(
   let disposed = false;
   let failures = 0;
   let close: (() => void) | undefined;
+  let generation = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let current = new Map<string, VerifiedEvent>();
   const publish = (patch: Partial<ArtifactSyncSnapshot>) => {
@@ -80,7 +85,7 @@ export function createArtifactSyncView(
       events: Object.freeze([...current.values()]),
       ...patch,
     });
-    for (const listener of [...listeners]) listener();
+    for (const listener of [...listeners]) notify(listener);
   };
   function apply(target: Map<string, VerifiedEvent>, event: VerifiedEvent) {
     const d = tag(event, "d");
@@ -98,7 +103,8 @@ export function createArtifactSyncView(
     if (disposed || !open) return;
     let held: Map<string, VerifiedEvent> | undefined = new Map();
     let done = false;
-    const owned = () => !disposed && !done;
+    const started = generation;
+    const owned = () => !disposed && !done && started === generation;
     close = open(filter, {
       event(event) {
         if (!owned()) return;
@@ -143,6 +149,18 @@ export function createArtifactSyncView(
     subscribe(listener) {
       listeners.add(listener);
       return () => listeners.delete(listener);
+    },
+    restart() {
+      if (disposed || !open) return;
+      // Fence the old sync first: its late EVENT or EOSE must not restore data.
+      generation++;
+      clearTimeout(timer);
+      close?.();
+      close = undefined;
+      current = new Map();
+      failures = 0;
+      publish({ status: "loading" });
+      start();
     },
     dispose() {
       if (disposed) return;

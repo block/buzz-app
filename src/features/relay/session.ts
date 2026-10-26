@@ -111,7 +111,11 @@ import {
   type RecoveryStatus,
 } from "./recovery";
 import { createReminders } from "./reminders";
-import { createArtifactSyncView, type ArtifactSyncView } from "./artifact-sync";
+import {
+  type ArtifactSyncOwner,
+  type ArtifactSyncView,
+  createArtifactSyncView,
+} from "./artifact-sync";
 import {
   retainEvents,
   matchesEvent,
@@ -335,6 +339,8 @@ export function createRelaySession(
       archives.clear();
       workflows.clear();
       for (const purge of views.values()) purge();
+      // The relay reapplies access to a new sync; nothing held survives.
+      for (const view of artifactSyncs) view.restart();
       commit();
       unread.purge();
       inboxFeed.purge();
@@ -951,7 +957,7 @@ export function createRelaySession(
     notify,
   });
   let traffic: LiveSubscription | undefined;
-  const artifactSyncs = new Set<ArtifactSyncView>();
+  const artifactSyncs = new Set<ArtifactSyncOwner>();
   const liveListeners = new Set<() => void>();
   let liveSnapshot: LiveSnapshot = Object.freeze({
     status: transport?.subscribe ? "connecting" : "unavailable",
@@ -2276,14 +2282,16 @@ export function createRelaySession(
                 return () => {};
               }
             : undefined,
+          Math.random,
+          notify,
         );
         artifactSyncs.add(view);
-        const dispose = view.dispose;
         return {
-          ...view,
+          snapshot: view.snapshot,
+          subscribe: view.subscribe,
           dispose() {
             artifactSyncs.delete(view);
-            dispose();
+            view.dispose();
           },
         };
       },
@@ -3008,6 +3016,7 @@ export function createRelaySession(
         catchups.clear();
         catchupQueue.clear();
         for (const clear of views.values()) clear(true);
+        for (const view of artifactSyncs) view.restart();
         recent.clear();
         unread.clear();
         inboxFeed.clear();

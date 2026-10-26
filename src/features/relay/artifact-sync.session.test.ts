@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "./session";
-import { keypair, scriptedTransport } from "./testing";
+import type { RelayEvent } from "./events";
+import { keypair, roster, scriptedTransport, signed } from "./testing";
 import type { ArtifactSyncSink } from "./artifact-sync";
 
 const viewer = keypair(),
@@ -15,11 +16,13 @@ function harness(artifactSync: boolean) {
   const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
   const sinks: ArtifactSyncSink[] = [];
   const closes = vi.fn();
+  let incoming!: (events: readonly RelayEvent[]) => void;
   const owner = createRelaySession({
     ...wire.transport,
     scope: "https://one.example",
     ...(artifactSync ? { artifactSync: true as const } : {}),
     subscribe(callbacks) {
+      incoming = callbacks.receive;
       callbacks.state({ status: "connected", routes: [] });
       return {
         update() {},
@@ -33,8 +36,22 @@ function harness(artifactSync: boolean) {
     },
   });
   owners.push(owner);
-  return { owner, sinks, closes };
+  return {
+    owner,
+    sinks,
+    closes,
+    emit: (events: readonly RelayEvent[]) => incoming(events),
+  };
 }
+const head = (d: string) =>
+  signed(viewer, {
+    kind: 45010,
+    content: d,
+    tags: [
+      ["d", d],
+      ["h", "c1"],
+    ],
+  });
 
 it("reports unsupported when the relay does not advertise sync", () => {
   const { owner, sinks } = harness(false);
@@ -60,6 +77,38 @@ it("refuses a filter the relay would refuse, at the call site", () => {
     owner.session.artifacts.sync({ artifact: "current", limit: 10 }),
   ).toThrow();
 });
+
+it.each(["access loss", "cache clear"])(
+  "drops a live set on %s and fences the old sync's late frames",
+  async (cause) => {
+    const h = harness(true);
+    h.emit([roster(relay, "c1", [viewer.pubkey], 10)]);
+    const view = h.owner.session.artifacts.sync(filter);
+    const secret = head("a");
+    nth(h.sinks, 0).event(secret);
+    nth(h.sinks, 0).eose();
+    expect(view.snapshot().events).toEqual([secret]);
+    const seen: number[] = [];
+    view.subscribe(() => seen.push(view.snapshot().events.length));
+
+    if (cause === "access loss") h.emit([roster(relay, "c1", [], 11)]);
+    else await h.owner.clearCache();
+    // No relay message is needed: the held set is gone at once.
+    expect(view.snapshot()).toEqual({ status: "loading", events: [] });
+    expect(seen).toEqual([0]);
+    expect(h.closes).toHaveBeenCalledOnce();
+    // The relay reapplies access to a new sync.
+    expect(h.sinks).toHaveLength(2);
+
+    nth(h.sinks, 0).event(secret);
+    nth(h.sinks, 0).eose();
+    expect(view.snapshot()).toEqual({ status: "loading", events: [] });
+    const fresh = head("b");
+    nth(h.sinks, 1).event(fresh);
+    nth(h.sinks, 1).eose();
+    expect(view.snapshot()).toEqual({ status: "live", events: [fresh] });
+  },
+);
 
 function nth<T>(items: readonly T[], index: number): T {
   const item = items[index];

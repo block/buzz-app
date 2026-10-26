@@ -227,6 +227,10 @@ it.each(["source", "event", "timer"] as const)(
       },
     };
     let snapshot = { status: "ready", running: [agent] };
+    let finishSave = () => {};
+    const saving = new Promise<void>((resolve) => {
+      finishSave = resolve;
+    });
     const save = vi.fn(
       async (_key: string, patch: { attention: Record<string, unknown> }) => {
         const attention = { ...agent.attention } as Record<string, unknown>;
@@ -237,6 +241,7 @@ it.each(["source", "event", "timer"] as const)(
         agent = { ...agent, attention: attention as typeof agent.attention };
         snapshot = { ...snapshot, running: [agent] };
         changed();
+        await saving;
       },
     );
     const disconnected = { status: "disconnected", ...community };
@@ -256,16 +261,23 @@ it.each(["source", "event", "timer"] as const)(
     fireEvent.click(
       screen.getByRole("switch", { name: "Subscription release" }),
     );
-    await waitFor(() =>
-      expect(
-        screen
-          .getByRole("switch", { name: "Subscription release" })
-          .getAttribute("aria-checked"),
-      ).toBe("false"),
-    );
-    expect(save).toHaveBeenLastCalledWith("a", {
-      attention: { "watch/check": { ...value, enabled: false } },
-    });
+    const remove = screen.getByRole("button", { name: "Delete release" });
+    try {
+      await waitFor(() =>
+        expect(
+          screen
+            .getByRole("switch", { name: "Subscription release" })
+            .getAttribute("aria-checked"),
+        ).toBe("false"),
+      );
+      expect(save).toHaveBeenLastCalledWith("a", {
+        attention: { "watch/check": { ...value, enabled: false } },
+      });
+      expect(remove.hasAttribute("disabled")).toBe(true);
+    } finally {
+      await act(async () => finishSave());
+    }
+    await waitFor(() => expect(remove.hasAttribute("disabled")).toBe(false));
     fireEvent.click(screen.getByRole("button", { name: "Delete release" }));
     await waitFor(() =>
       expect(

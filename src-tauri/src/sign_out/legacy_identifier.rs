@@ -15,7 +15,7 @@ const AGENT_STOPPING: &str =
 const FAILED: &str = "Buzz couldn't finish moving its storage. Open Buzz again to retry.";
 
 /// Each path the legacy identifier names, with its new name; none unless this
-/// is the current identifier, so test and development overlays never take it.
+/// is the release identifier, so development (`.dev`) and test identifiers never take it.
 pub(super) fn moves(identifier: &str) -> Option<Vec<(PathBuf, PathBuf)>> {
     if identifier != CURRENT {
         return Some(Vec::new());
@@ -49,8 +49,7 @@ pub(super) fn moves(identifier: &str) -> Option<Vec<(PathBuf, PathBuf)>> {
 }
 
 /// Rename each legacy path that is still due, before this launch takes its
-/// locks, once no other Buzz or agent runs. A new path that already exists is
-/// never replaced, and its legacy path stays. A failure exits; the next launch
+/// locks, once no other Buzz or agent runs. A failure exits; the next launch
 /// resumes with what is still due.
 #[allow(clippy::incompatible_msrv)] // File locking, like the owning sign_out module.
 pub(super) fn migrate(
@@ -58,24 +57,33 @@ pub(super) fn migrate(
     all: &File,
     ownership: &Path,
 ) -> Result<(), String> {
-    let failed = |error: std::io::Error| {
-        eprintln!("buzz: move legacy storage: {error}");
-        FAILED.to_owned()
-    };
-    if due(moves).map_err(failed)?.is_empty() {
+    if due(moves)?.is_empty() {
         return Ok(());
     }
-    // Every Buzz, older builds included, holds the all-Buzz lock shared while it runs.
-    if !wait_for(|| all.try_lock()) {
+    // Every Buzz, older builds included, holds the all-Buzz lock shared while
+    // it runs. One that finished the move meanwhile leaves nothing due.
+    let mut done = false;
+    let ready = wait_for(|| {
+        done = matches!(due(moves), Ok(due) if due.is_empty());
+        if done {
+            Ok(())
+        } else {
+            all.try_lock()
+        }
+    });
+    if !ready {
         return Err(BUSY.into());
+    }
+    if done {
+        return Ok(());
     }
     let moved = (|| {
         // An agent still stopping may write its folders.
         if !wait_for(|| agents_stopped(ownership)) {
             return Err(AGENT_STOPPING.to_owned());
         }
-        // Look again: another launch may have moved them while this one waited.
-        for (old, new) in due(moves).map_err(failed)? {
+        // Look again under the lock.
+        for (old, new) in due(moves)? {
             fs::rename(old, new).map_err(failed)?;
         }
         Ok(())
@@ -84,14 +92,30 @@ pub(super) fn migrate(
     moved
 }
 
-fn due(moves: &[(PathBuf, PathBuf)]) -> std::io::Result<Vec<&(PathBuf, PathBuf)>> {
+/// The pairs still to move. Both paths present, after a rollback to an older
+/// build for instance, refuses every move and any pending sign-out: neither copy
+/// is safely the one to keep, and an erase would miss the legacy one.
+fn due(moves: &[(PathBuf, PathBuf)]) -> Result<Vec<&(PathBuf, PathBuf)>, String> {
     let mut due = Vec::new();
     for pair in moves {
-        if present(&pair.0)? && !present(&pair.1)? {
-            due.push(pair);
+        match (present(&pair.0).map_err(failed)?, present(&pair.1).map_err(failed)?) {
+            (true, true) => {
+                return Err(format!(
+                    "Buzz found storage from before 1.0 at {} beside this version's at {}. Move one of them elsewhere, then open Buzz again. Nothing was moved.",
+                    pair.0.display(),
+                    pair.1.display()
+                ))
+            }
+            (true, false) => due.push(pair),
+            _ => {}
         }
     }
     Ok(due)
+}
+
+fn failed(error: std::io::Error) -> String {
+    eprintln!("buzz: move legacy storage: {error}");
+    FAILED.to_owned()
 }
 
 /// Whether anything is at `path`. A link counts and is never followed: renaming

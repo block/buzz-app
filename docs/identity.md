@@ -156,9 +156,14 @@ app data (with plugin storage), config, local data, caches, macOS WebKit storage
 their sign-out trash and a pending sign-out marker, so the update keeps
 everything and finishes a sign-out the old build committed. It takes the all-Buzz
 lock alone and waits for every agent ownership lock, so it never moves storage
-another copy or a stopping agent still uses. A path that already exists under
-the new identifier is kept, never replaced. A failure exits with a native alert,
-and the next launch moves what is left. Credential service names don't change;
+another copy or a stopping agent still uses. If any legacy path sits beside its
+new-identifier counterpart, after a rollback for instance, the launch moves
+nothing, finishes no pending sign-out, and exits naming both paths; neither copy
+is safely the one to keep, and an erase would miss the legacy one. A failure exits
+with a native alert, and the next launch moves what is left. Development launches
+(`just desktop`, `just desktop-bundle`) use `xyz.block.buzz.desktop.dev`, so they
+keep their own app data and plugin storage and never take or block the installed
+app's. Credential service names don't change;
 on macOS, Keychain may ask once to allow the renamed app to use each saved item.
 
 A sign-out needs its key lock alone, so every other copy using that key must be

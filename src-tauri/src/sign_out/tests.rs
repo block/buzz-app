@@ -1462,24 +1462,22 @@ fn a_sign_out_the_legacy_build_committed_finishes_after_the_move() {
 }
 
 #[test]
-fn an_existing_new_path_is_kept_and_the_rest_moves() {
-    let (_dir, paths) = fixture();
+fn legacy_storage_beside_current_storage_moves_nothing_and_signs_nothing_out() {
+    let (dir, paths) = fixture();
+    mark(&paths, true, true);
     let paths = legacy(paths);
-    fs::create_dir(&paths.app_data).unwrap();
-    fs::write(paths.app_data.join("archive.sqlite3"), "newer").unwrap();
-    let _instance = boot(&paths, no_agents, || panic!("no sign-out")).unwrap();
-    assert_eq!(
-        fs::read(paths.app_data.join("archive.sqlite3")).unwrap(),
-        b"newer"
-    );
-    assert_eq!(
-        fs::read(paths.moves[1].0.join("archive.sqlite3")).unwrap(),
-        b"archive"
-    );
-    assert_eq!(
-        fs::read(paths.others[0].join("localstorage")).unwrap(),
-        b"prefs"
-    );
+    // An older build ran again after the move: its storage and a current
+    // plain sign-out sit beside a legacy erase.
+    mark(&paths, false, false);
+    let before = data(dir.path());
+    let refused = boot(&paths, no_agents, || panic!("the key must stay"));
+    assert!(refused.err().unwrap().contains("Nothing was moved"));
+    assert_eq!(data(dir.path()), before);
+    fs::remove_file(&paths.moves[4].0).unwrap();
+    fs::create_dir(&paths.others[0]).unwrap();
+    let before = data(dir.path());
+    assert!(boot(&paths, no_agents, || panic!("the key must stay")).is_err());
+    assert_eq!(data(dir.path()), before);
 }
 
 #[test]
@@ -1505,6 +1503,27 @@ fn legacy_storage_waits_for_other_copies_and_stopping_agents() {
     let _instance = boot(&paths, no_agents, || panic!("no sign-out")).unwrap();
     assert!(paths.app_data.join("archive.sqlite3").exists());
     assert!(!paths.moves[1].0.exists());
+}
+
+#[test]
+fn a_launch_waiting_on_a_copy_that_finished_the_move_carries_on() {
+    let (dir, paths) = fixture();
+    let before = data(dir.path());
+    let paths = legacy(paths);
+    let running = boot(&paths_for(dir.path(), OTHER_KEY), no_agents, || {
+        panic!("no sign-out")
+    })
+    .unwrap();
+    // The running copy moves everything while this launch waits for its lock.
+    let moves = paths.moves.clone();
+    HANDOFF.set(Some(Box::new(move || {
+        for (old, new) in moves.iter().filter(|(old, _)| old.exists()) {
+            fs::rename(old, new).unwrap();
+        }
+    })));
+    let _instance = boot(&paths, no_agents, || panic!("no sign-out")).unwrap();
+    assert_eq!(data(dir.path()), before);
+    drop(running);
 }
 
 #[cfg(unix)]

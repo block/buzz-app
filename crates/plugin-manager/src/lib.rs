@@ -624,9 +624,10 @@ impl Manager {
             safe_mode,
         })
     }
-    pub fn from_env() -> Result<Self> {
+    /// Opens the environment's plugin home, else `home`: the desktop passes its own app data folder.
+    pub fn from_env(home: Option<PathBuf>) -> Result<Self> {
         Self::open(
-            None,
+            std::env::var_os("BUZZODZ_HOME").map(PathBuf::from).or(home),
             &std::env::var("BUZZODZ_PROFILE").unwrap_or_else(|_| "default".into()),
             std::env::var("BUZZODZ_SAFE_MODE").as_deref() == Ok("1"),
         )

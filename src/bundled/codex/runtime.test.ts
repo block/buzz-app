@@ -4290,6 +4290,7 @@ it("allows an addressed channel turn to reply in an existing thread", async () =
     expect.objectContaining({
       tags: expect.arrayContaining([["e", root, "", "reply"]]),
     }),
+    expect.any(Function),
   );
   await f.complete(0);
 });

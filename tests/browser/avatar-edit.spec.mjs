@@ -217,10 +217,7 @@ test("avatar custom spectrum supports dragging, keyboard hue and return focus", 
     page
       .getByRole("slider", { name: "Emoji position" })
       .locator("[data-avatar-shape]"),
-  ).toHaveCSS(
-    "background-color",
-    color,
-  );
+  ).toHaveCSS("background-color", color);
   await page.screenshot({
     path: test.info().outputPath("avatar-custom-color.png"),
   });
@@ -242,10 +239,7 @@ test("avatar custom spectrum supports dragging, keyboard hue and return focus", 
     page
       .getByRole("slider", { name: "Emoji position" })
       .locator("[data-avatar-shape]"),
-  ).toHaveCSS(
-    "background-color",
-    color,
-  );
+  ).toHaveCSS("background-color", color);
   const viewport = page
     .getByRole("tablist", { name: "Avatar source" })
     .locator("../../../..");
@@ -491,10 +485,7 @@ test("avatar picker previews pointer selections and respects reduced motion", as
     page
       .getByRole("slider", { name: "Emoji position" })
       .locator("[data-avatar-shape]"),
-  ).toHaveCSS(
-    "background-color",
-    "rgb(99, 198, 242)",
-  );
+  ).toHaveCSS("background-color", "rgb(99, 198, 242)");
   const position = page.getByRole("slider", { name: "Emoji position" });
   const box = await position.boundingBox();
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);

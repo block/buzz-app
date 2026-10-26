@@ -851,8 +851,9 @@ inverse of `importShared`: the catalog `runtime` (`claude`, `codex`, `goose`,
 `pi`), `provider` and `model` of its config. Instructions come from the type's
 `carry`. `src/features/agents/agent-share.ts` builds one allowlisted definition
 for both paths: name, instructions, runtime, provider, model and an HTTPS
-picture. Workspace, keys, environment, memory and every other setting stay
-behind, and text that looks like a credential refuses the share or export.
+picture without a query or fragment. Workspace, keys, environment, memory and
+every other setting stay behind, and text that looks like a credential refuses
+the share or export.
 
 **Share to catalog** publishes the owner's kind 30175 head with `d` set to the
 agent's pubkey and `["shared","true"]`, replacing the head a strong read found

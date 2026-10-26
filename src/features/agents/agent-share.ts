@@ -47,7 +47,10 @@ export function shareable(
       `Agent '${agent.name}' uses a runtime that cannot be shared with the community catalog.`,
     );
   const instructions = type.carry?.(agent.config).instructions ?? "";
-  const picture = https(agent.picture);
+  // A query or fragment can carry a token, so such a picture stays behind
+  // whole, as in earlier Buzz, rather than cut into a broken URL.
+  const source = https(agent.picture);
+  const picture = source && !/[?#]/.test(source) ? source : undefined;
   const definition = {
     name: agent.name,
     ...(picture && { picture }),
@@ -57,7 +60,13 @@ export function shareable(
     instructions,
   };
   if (
-    [definition.name, instructions, definition.model, shared.provider ?? ""]
+    [
+      definition.name,
+      instructions,
+      definition.model,
+      shared.provider ?? "",
+      picture ?? "",
+    ]
       .filter(Boolean)
       .some(credentialLike)
   )

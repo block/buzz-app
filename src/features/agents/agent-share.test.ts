@@ -96,6 +96,26 @@ it("leaves out a picture that is not an HTTPS URL", () => {
   ).not.toHaveProperty("picture");
 });
 
+it("leaves out a picture whose query or fragment could carry a token", () => {
+  for (const picture of [
+    "https://images.example/avatar.png?access_token=syntheticcredential123",
+    "https://images.example/avatar.png#access_token=syntheticcredential123",
+  ]) {
+    const definition = shareable(agent(saved, picture), echo);
+    expect(definition).not.toHaveProperty("picture");
+    for (const text of [catalogContent(definition), snapshotJson(definition)])
+      expect(text).not.toContain("syntheticcredential123");
+  }
+  expect(() =>
+    shareable(
+      agent(saved, "https://images.example/api_key=syntheticcredential123.png"),
+      echo,
+    ),
+  ).toThrow(
+    "Portable configuration appears to contain a credential. Remove it before export.",
+  );
+});
+
 it("publishes a catalog entry the marketplace lists as it was shared", () => {
   const content = catalogContent(shareable(agent(saved), echo));
   const event: EventData = {

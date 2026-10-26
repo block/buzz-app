@@ -3,10 +3,17 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
+import { readSnapshot } from "../../features/agents/agent-share";
 import type { Agent, RegisteredAgentType } from "../../features/agents/service";
 import type { EventData } from "../../features/relay/events";
 import type { RelaySession } from "../../features/relay/session";
 import { AgentShareDialog } from "./AgentShareDialog";
+
+const desktop = vi.hoisted(() => ({ tauri: false, invoke: vi.fn() }));
+vi.mock("@tauri-apps/api/core", () => ({
+  isTauri: () => desktop.tauri,
+  invoke: desktop.invoke,
+}));
 
 afterEach(() => {
   cleanup();
@@ -256,7 +263,10 @@ it("exports the agent as an .agent.json snapshot", async () => {
       onClose={() => {}}
     />,
   );
+  await user.click(screen.getByRole("combobox", { name: "File format" }));
+  await user.click(await screen.findByRole("option", { name: "JSON" }));
   await user.click(screen.getByRole("button", { name: "Export agent" }));
+  expect(await screen.findByRole("status")).toHaveTextContent("Exported Ada.");
   expect(click).toHaveBeenCalledTimes(1);
   expect(JSON.parse((await blobs[0]?.text()) ?? "")).toEqual({
     format: "buzz-agent-snapshot",
@@ -270,6 +280,44 @@ it("exports the agent as an .agent.json snapshot", async () => {
     profile: { displayName: "Ada" },
     memory: { level: "none", entries: [] },
   });
-  expect(screen.getByRole("status")).toHaveTextContent("Exported Ada.");
   click.mockRestore();
+});
+
+it("saves an .agent.png natively on desktop, never through a blob link", async () => {
+  const user = userEvent.setup();
+  desktop.tauri = true;
+  const click = vi.spyOn(HTMLAnchorElement.prototype, "click");
+  try {
+    render(
+      <AgentShareDialog
+        agent={agent}
+        type={echo}
+        session={community().session}
+        onClose={() => {}}
+      />,
+    );
+    expect(
+      screen.getByRole("combobox", { name: "File format" }),
+    ).toHaveTextContent("PNG");
+    await user.click(screen.getByRole("button", { name: "Export agent" }));
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Exported Ada.",
+    );
+    expect(click).not.toHaveBeenCalled();
+    expect(desktop.invoke).toHaveBeenCalledOnce();
+    const [command, bytes, options] = desktop.invoke.mock.calls[0] ?? [];
+    expect(command).toBe("file_download");
+    expect(options).toEqual({
+      headers: { "x-buzz-file-name": "Ada.agent.png" },
+    });
+    expect(await readSnapshot(new Blob([bytes]))).toEqual({
+      name: "Ada",
+      instructions: "Review pull requests.",
+      runtime: "echo",
+      model: "echo-1",
+    });
+  } finally {
+    desktop.tauri = false;
+    click.mockRestore();
+  }
 });

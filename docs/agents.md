@@ -863,8 +863,13 @@ heads. A publish the relay never answers is settled by reading the head again
 before the dialog reports success or failure. The native signer and the development broker admit only this owner
 envelope (`src-tauri/src/relay/catalog.rs`, `catalog-envelope.ts`).
 
-**Export agent** downloads `{name}.agent.json` in the `buzz-agent-snapshot`
-version 1 format that block/buzz and earlier Buzz write, without memory.
+**Export agent** saves `{name}.agent.png` or, by **File format**,
+`{name}.agent.json` in the `buzz-agent-snapshot` version 1 format that block/buzz
+and earlier Buzz write, without memory. The PNG is the picture redrawn at
+512×512, or a transparent pixel, with the manifest in a `buzz_agent_snapshot`
+tEXt chunk. Desktop saves it to Downloads through `file_download`
+(`src-tauri/src/relay.rs`), as media is saved, since WKWebView cannot save a
+`blob:` link cleanly.
 **Import an agent** → **Choose file** reads `.agent.json` and `.agent.png`
 (base64 manifest in a `buzz_agent_snapshot` tEXt chunk) from any of them,
 refusing files over 5 MiB (JSON) or 10 MiB (PNG) before reading them, and opens

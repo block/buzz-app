@@ -1,4 +1,5 @@
 // Share: the agent's catalog listing in its community, and a file export.
+import { isTauri } from "@tauri-apps/api/core";
 import { useEffect, useRef, useState } from "react";
 import {
   catalogContent,
@@ -7,17 +8,62 @@ import {
   publishShare,
   shareable,
   snapshotJson,
+  snapshotPng,
 } from "../../features/agents/agent-share";
 import type { Agent, RegisteredAgentType } from "../../features/agents/service";
 import type { EventData } from "../../features/relay/events";
+import { downloadNativeFile } from "../../features/messages/native-download";
 import type { RelaySession } from "../../features/relay/session";
+import { avatarSource } from "../../shared/avatar-source";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
+import { Select } from "../../shared/design-system/ui/Select";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { SwitchPreferenceRow } from "../../shared/design-system/ui/SwitchPreferenceRow";
 
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
+const FORMATS = [
+  { value: "png", label: "PNG" },
+  { value: "json", label: "JSON" },
+];
+
+/** The picture redrawn as a 512×512 PNG, as earlier Buzz exported it. Missing
+ * or unreadable artwork leaves the snapshot without it. */
+async function artwork(picture: string | undefined, session: RelaySession) {
+  const source = avatarSource(picture);
+  const src = source?.startsWith("data:")
+    ? source
+    : source && session.media(source);
+  if (!src) return undefined;
+  try {
+    const image = new Image();
+    image.crossOrigin = "anonymous";
+    image.src = src;
+    await image.decode();
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = 512;
+    canvas.getContext("2d")?.drawImage(image, 0, 0, 512, 512);
+    const blob = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob(resolve, "image/png"),
+    );
+    return blob ? new Uint8Array(await blob.arrayBuffer()) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Desktop saves natively; a browser downloads the file. */
+async function save(file: Blob, name: string) {
+  if (isTauri()) return downloadNativeFile(file, name);
+  const url = URL.createObjectURL(file);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = name;
+  link.click();
+  // WebKit may still be reading the blob when click() returns.
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
 
 export function AgentShareDialog({
   agent,
@@ -35,6 +81,7 @@ export function AgentShareDialog({
   const [pending, setPending] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
+  const [format, setFormat] = useState<"png" | "json">("png");
   // The read failed; clearing it reads again.
   const [unread, setUnread] = useState(false);
   const attempt = useRef<AbortController>(null);
@@ -89,26 +136,26 @@ export function AgentShareDialog({
       );
     setPending(false);
   };
-  const exportAgent = () => {
+  const exportAgent = async () => {
+    if (pending) return;
+    setPending(true);
     setNotice("");
     setError("");
-    let json: string;
     try {
-      json = snapshotJson(shareable(agent, type));
+      const definition = shareable(agent, type);
+      const file =
+        format === "png"
+          ? snapshotPng(definition, await artwork(agent.picture, session))
+          : new Blob([snapshotJson(definition)], { type: "application/json" });
+      await save(
+        file,
+        `${agent.name.replace(/[^a-zA-Z0-9_-]+/g, "-")}.agent.${format}`,
+      );
+      setNotice(`Exported ${agent.name}.`);
     } catch (reason) {
       setError(`Failed to export agent snapshot. ${message(reason)}`);
-      return;
     }
-    const url = URL.createObjectURL(
-      new Blob([json], { type: "application/json" }),
-    );
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `${agent.name}.agent.json`;
-    link.click();
-    // WebKit may still be reading the blob when click() returns.
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-    setNotice(`Exported ${agent.name}.`);
+    setPending(false);
   };
   return (
     <Dialog
@@ -125,7 +172,7 @@ export function AgentShareDialog({
           <Button disabled={pending} onClick={onClose}>
             Close
           </Button>
-          <Button disabled={pending} onClick={exportAgent}>
+          <Button disabled={pending} onClick={() => void exportAgent()}>
             Export agent
           </Button>
         </>
@@ -139,6 +186,14 @@ export function AgentShareDialog({
             checked={isShared(head ?? undefined)}
             disabled={head === null || pending}
             onCheckedChange={(shared) => void share(shared)}
+          />
+          <Select
+            label="File format"
+            variant="preference"
+            value={format}
+            disabled={pending}
+            groups={[{ label: "", options: FORMATS }]}
+            onValueChange={(value) => setFormat(value as "png" | "json")}
           />
         </SettingsGroup>
         {notice && (

@@ -3,7 +3,7 @@
 // are built from an explicit allowlist: no key, workspace, environment or
 // memory crosses this boundary.
 import { avatarSource } from "../../shared/avatar-source";
-import { pngChunks } from "../messages/image-metadata";
+import { cleanPng, pngChunks } from "../messages/image-metadata";
 import { newer, type EventData } from "../relay/events";
 import type { RelaySession } from "../relay/session";
 import { AGENT_CATALOG_KIND, object } from "./catalog-envelope";
@@ -172,6 +172,45 @@ export function snapshotJson(definition: SharedDefinition): string {
   );
 }
 
+/** A transparent 1×1 PNG, the artwork of a snapshot without a picture. */
+const BLANK =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgAAIAAAUAAXpeqz8AAAAASUVORK5CYII=";
+const bytesOf = (binary: string) =>
+  Uint8Array.from(binary, (char) => char.charCodeAt(0));
+
+function crc32(bytes: Uint8Array) {
+  let value = 0xffffffff;
+  for (const byte of bytes) {
+    value ^= byte;
+    for (let i = 0; i < 8; i++)
+      value = (value >>> 1) ^ (value & 1 ? 0xedb88320 : 0);
+  }
+  return (value ^ 0xffffffff) >>> 0;
+}
+
+/** A buzz-agent-snapshot v1 `.agent.png`: `artwork`, a PNG, with the manifest
+ * in a `buzz_agent_snapshot` tEXt chunk and none of the artwork's metadata. */
+export function snapshotPng(
+  definition: SharedDefinition,
+  artwork = bytesOf(atob(BLANK)),
+): Blob {
+  const manifest = new TextEncoder().encode(snapshotJson(definition));
+  const base64 = btoa(
+    Array.from(manifest, (byte) => String.fromCharCode(byte)).join(""),
+  );
+  // Length, type and data, then the CRC of the type and data.
+  const typed = new TextEncoder().encode(`tEXtbuzz_agent_snapshot\0${base64}`);
+  const chunk = new Uint8Array(typed.length + 8);
+  const view = new DataView(chunk.buffer);
+  view.setUint32(0, typed.length - 4);
+  chunk.set(typed, 4);
+  view.setUint32(typed.length + 4, crc32(typed));
+  const png = cleanPng(artwork, chunk);
+  if (png.size > MAX_PNG_BYTES)
+    throw new Error("Snapshot exceeds the size limit.");
+  return png;
+}
+
 /** The base64 manifest in a snapshot PNG's `buzz_agent_snapshot` tEXt chunk. */
 function pngManifest(bytes: Uint8Array): Uint8Array {
   let chunks: ReturnType<typeof pngChunks>;
@@ -188,7 +227,7 @@ function pngManifest(bytes: Uint8Array): Uint8Array {
     throw new Error("PNG does not contain a buzz_agent_snapshot tEXt chunk.");
   try {
     const encoded = decoder.decode(chunk.payload.subarray(KEYWORD.length));
-    return Uint8Array.from(atob(encoded), (char) => char.charCodeAt(0));
+    return bytesOf(atob(encoded));
   } catch {
     throw new Error("Invalid PNG snapshot.");
   }

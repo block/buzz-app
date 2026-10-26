@@ -1251,6 +1251,8 @@ async fn upload_file(
 /// limit, which also covers images. Video is read by `Range`; an origin that
 /// ignores it is spooled to disk up to `WHOLE_VIDEO_MAX` instead.
 const MAX_MEDIA: usize = 100 * 1024 * 1024;
+/// Largest file the app may save for itself: an agent snapshot PNG.
+const FILE_DOWNLOAD_MAX: usize = 10 * 1024 * 1024;
 /// Largest video an origin that ignores `Range` may send whole: 500 MiB, the
 /// development broker's video limit. A video of exactly this size plays; a
 /// larger `Content-Length` gets 413 before any download, and a response
@@ -1345,9 +1347,18 @@ fn download_target(source: &str) -> Option<Url> {
 /// Never interpret untrusted attachment names as paths. A missing or invalid name
 /// falls back to the validated blob's basename.
 fn download_name<'a>(name: &'a str, url: &'a Url) -> &'a str {
+    if safe_download_name(name) {
+        name
+    } else {
+        url.path().rsplit('/').next().unwrap_or("media")
+    }
+}
+
+/// A plain file name on every desktop platform, never a path.
+fn safe_download_name(name: &str) -> bool {
     let stem = name.split('.').next().unwrap_or("");
     let reserved = stem.trim_end_matches(' ').to_ascii_uppercase();
-    if !name.is_empty()
+    !name.is_empty()
         && name.len() <= 255
         && name != "."
         && name != ".."
@@ -1380,11 +1391,6 @@ fn download_name<'a>(name: &'a str, url: &'a Url) -> &'a str {
                     | '\u{061c}' | '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}'
                     | '\u{2066}'..='\u{2069}')
         })
-    {
-        name
-    } else {
-        url.path().rsplit('/').next().unwrap_or("media")
-    }
 }
 
 /// Fail closed if the OS cannot mark the file as untrusted internet content.
@@ -1692,6 +1698,43 @@ pub(crate) async fn media_download<R: tauri::Runtime>(
     tauri::async_runtime::spawn_blocking(move || save_download(&directory, &filename, &body))
         .await
         .map_err(|_| "Media download interrupted".to_owned())??;
+    Ok(())
+}
+
+/// Saves a file the app built, such as an agent snapshot, to Downloads as media
+/// is saved. WKWebView cannot save a `blob:` link without a sandbox failure.
+#[tauri::command]
+pub(crate) async fn file_download<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    request: tauri::ipc::Request<'_>,
+) -> Result<()> {
+    use tauri::Manager as _;
+    let filename = request
+        .headers()
+        .get("x-buzz-file-name")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| {
+            percent_encoding::percent_decode_str(value)
+                .decode_utf8()
+                .ok()
+        })
+        .filter(|name| safe_download_name(name))
+        .ok_or("Invalid file name")?
+        .into_owned();
+    let tauri::ipc::InvokeBody::Raw(body) = request.body() else {
+        return Err("File body must be raw bytes".into());
+    };
+    if body.is_empty() || body.len() > FILE_DOWNLOAD_MAX {
+        return Err("Invalid file".into());
+    }
+    let body = body.clone();
+    let directory = app
+        .path()
+        .download_dir()
+        .map_err(|_| "Downloads unavailable")?;
+    tauri::async_runtime::spawn_blocking(move || save_download(&directory, &filename, &body))
+        .await
+        .map_err(|_| "Download interrupted".to_owned())??;
     Ok(())
 }
 

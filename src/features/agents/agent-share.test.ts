@@ -1,4 +1,6 @@
+import { crc32 } from "node:zlib";
 import { expect, it, vi } from "vitest";
+import { pngChunks } from "../messages/image-metadata";
 import type { EventData } from "../relay/events";
 import {
   catalogContent,
@@ -8,6 +10,7 @@ import {
   readSnapshot,
   shareable,
   snapshotJson,
+  snapshotPng,
 } from "./agent-share";
 import { validCatalogEnvelope } from "./catalog-envelope";
 import type { Agent, RegisteredAgentType } from "./service";
@@ -213,6 +216,38 @@ it("imports a block/buzz snapshot, leaving behind what an agent here has no plac
       new Blob([png(`buzz_agent_snapshot\0${btoa(manifest)}`)]),
     ),
   ).toEqual(expected);
+});
+
+it("exports an .agent.png that reads back, keeping the artwork but none of its metadata", async () => {
+  const definition = {
+    name: "Ada",
+    instructions: "Review pull requests.",
+    runtime: "echo",
+    model: "echo-1",
+  };
+  const bytes = async (blob: Blob) => new Uint8Array(await blob.arrayBuffer());
+  const blank = await bytes(snapshotPng(definition));
+  expect(await readSnapshot(new Blob([blank]))).toEqual(definition);
+  const chunks = pngChunks(blank);
+  expect(chunks.map(({ kind }) => kind)).toEqual([
+    "IHDR",
+    "tEXt",
+    "IDAT",
+    "IEND",
+  ]);
+  for (const { raw } of chunks)
+    expect(
+      new DataView(raw.buffer, raw.byteOffset).getUint32(raw.length - 4),
+    ).toBe(crc32(raw.subarray(4, raw.length - 4)));
+
+  const art = await bytes(snapshotPng(definition, png("Comment\0private")));
+  expect(pngChunks(art).map(({ kind }) => kind)).toEqual([
+    "IHDR",
+    "tEXt",
+    "IEND",
+  ]);
+  expect(new TextDecoder().decode(art)).not.toContain("private");
+  expect(await readSnapshot(new Blob([art]))).toEqual(definition);
 });
 
 it("rejects files that are not agent snapshots", async () => {

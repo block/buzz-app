@@ -252,7 +252,9 @@ jobs:
             gh release download "v$VERSION" --pattern "$asset" --pattern "$asset.sig" --dir "$RUNNER_TEMP/candidate"
             [[ -s "$RUNNER_TEMP/candidate/$asset" && -s "$RUNNER_TEMP/candidate/$asset.sig" ]]
           done
-          tar -xOzf "$RUNNER_TEMP/candidate/$archive" 'Buzz.app/Contents/MacOS/Buzz' > "$RUNNER_TEMP/candidate/Buzz"
+          # Previews built before the executable became `Buzz` stay re-promotable until pruned.
+          executable=$(tar -tzf "$RUNNER_TEMP/candidate/$archive" | grep -xE 'Buzz\.app/Contents/MacOS/(Buzz|buzz-foundation)')
+          tar -xOzf "$RUNNER_TEMP/candidate/$archive" "$executable" > "$RUNNER_TEMP/candidate/Buzz"
           test -s "$RUNNER_TEMP/candidate/Buzz"
           current=''
           if gh release view preview-feed >/dev/null 2>&1; then

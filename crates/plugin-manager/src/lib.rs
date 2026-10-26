@@ -356,8 +356,13 @@ fn enabled_by_default(id: &str) -> bool {
 }
 /// Bundled ids that older profiles may still hold as installed plugins.
 const FORMERLY_INSTALLED: &[&str] = &["buzz.claude-code", "buzz.codex"];
+/// Host-owned features stay reserved even though they have no catalog entries.
+const BUILT_IN: &[&str] = &["buzz.emoji", "buzz.mentions"];
 fn is_bundled(id: &str) -> bool {
     bundled_manifests().iter().any(|manifest| manifest.id == id)
+}
+fn is_reserved(id: &str) -> bool {
+    BUILT_IN.contains(&id) || is_bundled(id)
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -691,7 +696,7 @@ impl Manager {
         }
         for (id, p) in &r.installed {
             p.manifest.validate()?;
-            if *id != p.manifest.id || is_bundled(id) {
+            if *id != p.manifest.id || is_reserved(id) {
                 return Err("Invalid installed plugin identity".into());
             }
             valid_hash(&p.current)?;
@@ -885,6 +890,9 @@ impl Manager {
     }
     pub fn change(&self, action: &str, id: &str) -> Result<Catalog> {
         valid_id(id)?;
+        if BUILT_IN.contains(&id) {
+            return Err("Built-in conversation features cannot be managed as plugins".into());
+        }
         {
             let _lock = self.lock()?;
             let mut registry = self.read()?;
@@ -962,7 +970,7 @@ impl Manager {
         before_commit: impl FnOnce(),
     ) -> Result<Catalog> {
         valid_id(id)?;
-        if is_bundled(id) {
+        if is_reserved(id) {
             return Err("Bundled plugins cannot be reloaded from disk".into());
         }
         let snapshot = {
@@ -1148,7 +1156,7 @@ impl Release {
             decode_icon(artifact.icon_jpg.as_deref())?.as_deref(),
             image::ImageFormat::Jpeg,
         )?;
-        if is_bundled(&artifact.manifest.id) || artifact.code.trim().is_empty() {
+        if is_reserved(&artifact.manifest.id) || artifact.code.trim().is_empty() {
             return Err("Invalid plugin artifact".into());
         }
         // IMPORTANT: We allow unsigned plugins currently. Before release, we should add UI to restrict the public keys we trust; and also allowlist Block plugins.
@@ -1228,7 +1236,7 @@ fn artifact_from_parts(
 ) -> Result<Vec<u8>> {
     let manifest: Manifest = serde_json::from_str(manifest).map_err(err)?;
     manifest.validate()?;
-    if is_bundled(&manifest.id) {
+    if is_reserved(&manifest.id) {
         return Err("Cannot replace a bundled plugin".into());
     }
     if code.trim().is_empty() {
@@ -1439,6 +1447,24 @@ mod tests {
             })
             .collect();
         assert_eq!(native, expected);
+    }
+
+    #[test]
+    fn prebuilt_artifacts_cannot_claim_built_in_conversation_ids() {
+        for id in ["buzz.emoji", "buzz.mentions"] {
+            let release = Release {
+                bytes: serde_json::to_vec(&serde_json::json!({
+                    "manifest": { "id": id, "name": "Reserved feature", "apiVersion": 1 },
+                    "code": "export function apply() {}"
+                }))
+                .unwrap(),
+                signature: None,
+            };
+            assert_eq!(
+                release.artifact().err().as_deref(),
+                Some("Invalid plugin artifact")
+            );
+        }
     }
 
     #[test]

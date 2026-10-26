@@ -35,6 +35,12 @@ assert_ignored owner-owl test-user 1 "$ignored" owner-owl 1
 assert_ignored test-user test-user 0 "" test-user 1
 assert_emitted test-user test-user 1 "" test-user 1
 
+# GitHub logins are case-insensitive, including exclusions and self identity.
+assert_ignored reviewer test-user 1 REVIEWER reviewer 1
+assert_ignored REVIEWER test-user 1 Reviewer reviewer 1
+assert_ignored 'OWNER-OWL[bot]' test-user 1 owner-owl 'owner-owl[bot]' 1
+assert_ignored TEST-USER test-user 0 "" test-user 1
+
 # Real organization rosters exceed a pipe buffer; early grep success must not
 # cause pipefail to treat a permitted author as denied.
 large_roster=$(printf 'reviewer\n'; seq 1 10000)

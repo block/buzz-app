@@ -15,10 +15,10 @@ comment_author_is_ignored() {
     return 0
   fi
   author="${author%\[bot\]}"
-  if [[ "$include_self" != "1" && -n "$current_user" && "$author" == "$current_user" ]]; then
+  if [[ "$include_self" != "1" && -n "$current_user" ]] && grep -qixF -- "$author" <<< "$current_user"; then
     return 0
   fi
-  if [[ -n "$ignored_authors" ]] && printf '%s\n' "$ignored_authors" | grep -qxF "$author"; then
+  if [[ -n "$ignored_authors" ]] && grep -qixF -- "$author" <<< "$ignored_authors"; then
     return 0
   fi
   return 1

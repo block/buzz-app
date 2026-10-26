@@ -10,6 +10,12 @@ The **Desktop previews** workflow builds all supported desktop platforms from
 - **Linux x64:** Ubuntu 24.04 `.deb` and AppImage, each with its updater `.sig`.
 - **Provenance:** `SOURCE_COMMIT` and one `SHA256SUMS` covering all nine asset files.
 
+`<app-version>` is the `version` in `src-tauri/tauri.conf.json`. It is `1.0.0`
+so every preview sorts above the legacy `block/buzz` 0.x desktop releases, which
+install at the same `/Applications/Buzz.app`. Tools that compare
+`CFBundleShortVersionString` would otherwise replace a preview with legacy Buzz.
+Never lower it.
+
 Publication waits for all three platform jobs, their existing payload checks and
 the Windows/Linux updater signatures. A failed platform blocks publication and
 automatic feed promotion; it does not publish a partial release. Downloads are
@@ -69,7 +75,7 @@ an existing version from `main`:
 
 ```sh
 gh workflow run release.yml --repo block/buzz-app --ref main \
-  -f promote_version=0.0.0-preview.<run>.<attempt>
+  -f promote_version=1.0.0-preview.<run>.<attempt>
 ```
 
 After the first eligible build publishes, exercise discovery, signature

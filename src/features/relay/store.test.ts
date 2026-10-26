@@ -641,7 +641,10 @@ it("keeps a cached denial and never reads for a channel it does not authorize", 
     owner.dispose();
   }
 });
-it("saves the startup snapshot once for a burst of profile changes", async () => {
+it.each([
+  ["saves once after", false],
+  ["drops the pending save when the cache is purged during", true],
+] as const)("%s a burst of profile changes", async (_, purge) => {
   const scripted = scriptedTransport(viewer.pubkey, relay.pubkey);
   const writeStartup = vi.fn(async () => {});
   const owner = createRelaySession(scripted.transport, {
@@ -671,12 +674,16 @@ it("saves the startup snapshot once for a burst of profile changes", async () =>
     await vi.waitFor(() => expect(queries.list().status).toBe("ready"));
     await vi.waitFor(() => expect(writeStartup).toHaveBeenCalled());
     writeStartup.mockClear();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     for (const person of [keypair(), keypair()]) {
       const ensuring = owner.session.profiles.ensure(
         [person.pubkey],
         "foreground",
       );
-      await vi.waitFor(() => expect(scripted.pending).not.toHaveLength(0));
+      // Fake-clock polls advance 1ms each, far inside the save delay.
+      await vi.waitFor(() => expect(scripted.pending).not.toHaveLength(0), {
+        interval: 1,
+      });
       scripted.next().respond([profile(person, { name: "Person" })]);
       await ensuring;
       expect(owner.session.profiles.snapshot().get(person.pubkey)?.name).toBe(
@@ -684,8 +691,17 @@ it("saves the startup snapshot once for a burst of profile changes", async () =>
       );
     }
     expect(writeStartup).not.toHaveBeenCalled();
-    await vi.waitFor(() => expect(writeStartup).toHaveBeenCalledTimes(1));
+    if (purge) {
+      const clearing = owner.clearCache();
+      await vi.advanceTimersByTimeAsync(500);
+      await clearing;
+      expect(writeStartup).not.toHaveBeenCalled();
+    } else {
+      await vi.advanceTimersByTimeAsync(500);
+      expect(writeStartup).toHaveBeenCalledTimes(1);
+    }
   } finally {
+    vi.useRealTimers();
     owner.dispose();
   }
 });

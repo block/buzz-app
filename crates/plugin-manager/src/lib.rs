@@ -598,23 +598,20 @@ pub enum InstallationResult {
     },
 }
 /// The desktop app data folder a CLI targets by default: a debug CLI the
-/// development app's, a release CLI the installed app's. Until the installed app
-/// moves its pre-1.0 folder, that one: creating the new folder first would leave
-/// both and stop the move.
-fn default_home() -> Option<PathBuf> {
-    let data = dirs::data_dir()?;
+/// development app's, a release CLI the installed app's. A release CLI refuses
+/// while only the pre-1.0 folder exists: creating the new one, or writing the old
+/// one while the app moves it, would leave both and stop that move.
+fn default_home() -> Result<PathBuf> {
+    let data =
+        dirs::data_dir().ok_or("Cannot determine application data directory; set BUZZODZ_HOME")?;
     if cfg!(debug_assertions) {
-        return Some(data.join("xyz.block.buzz.desktop.dev"));
+        return Ok(data.join("xyz.block.buzz.desktop.dev"));
     }
-    let (legacy, current) = (
-        data.join("dev.local.buzz.foundation"),
-        data.join("xyz.block.buzz.desktop"),
-    );
-    Some(if !current.exists() && legacy.exists() {
-        legacy
-    } else {
-        current
-    })
+    let current = data.join("xyz.block.buzz.desktop");
+    if !current.exists() && data.join("dev.local.buzz.foundation").exists() {
+        return Err("Buzz has not moved its storage to its 1.0 folder yet. Open Buzz once, then try again, or pass --home.".into());
+    }
+    Ok(current)
 }
 #[derive(Clone)]
 pub struct Manager {
@@ -630,10 +627,10 @@ impl Manager {
 
     pub fn open(home: Option<PathBuf>, profile: &str, safe_mode: bool) -> Result<Self> {
         valid_id(profile)?;
-        let home = home
-            .or_else(|| std::env::var_os("BUZZODZ_HOME").map(PathBuf::from))
-            .or_else(default_home)
-            .ok_or("Cannot determine application data directory; set BUZZODZ_HOME")?;
+        let home = match home.or_else(|| std::env::var_os("BUZZODZ_HOME").map(PathBuf::from)) {
+            Some(home) => home,
+            None => default_home()?,
+        };
         if !home.is_absolute() {
             return Err("Plugin home must be an absolute path".into());
         }

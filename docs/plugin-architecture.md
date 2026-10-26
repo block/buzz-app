@@ -127,12 +127,13 @@ target the same instance. Otherwise, the desktop keeps profiles in its own
 application-data folder (`xyz.block.buzz.desktop/profiles` for the installed app,
 `xyz.block.buzz.desktop.dev/profiles` for development launches). A debug CLI
 (`just cli`, `pnpm buzzodz`) defaults to the development folder and a release CLI
-to the installed app's, or to its pre-1.0 `dev.local.buzz.foundation` folder until
-the app has moved it.
+to the installed app's. A release CLI refuses while only the pre-1.0
+`dev.local.buzz.foundation` folder exists; open Buzz once to move it, or pass
+`--home`.
 
 ```sh
 BUZZODZ_PROFILE=experiment just desktop
-buzzodz --profile experiment plugin list
+pnpm buzzodz --profile experiment plugin list
 ```
 
 `BUZZODZ_SAFE_MODE=1 just desktop` opens the shell without external pages.

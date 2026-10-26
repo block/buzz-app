@@ -28,6 +28,7 @@ import {
 import {
   attachmentDraftCount,
   clearAttachmentDraft,
+  subscribeAttachmentDraftCounts,
 } from "../../features/messages/attachment-draft";
 import {
   clearView,
@@ -76,10 +77,15 @@ export function DraftsView({
   resizeHandle?: ReactNode;
 }) {
   const [revision, update] = useState(0);
-  useEffect(
-    () => subscribeView(session.scope, () => update((value) => value + 1)),
-    [session],
-  );
+  useEffect(() => {
+    const refresh = () => update((value) => value + 1);
+    const stopViews = subscribeView(session.scope, refresh);
+    const stopFiles = subscribeAttachmentDraftCounts(session, refresh);
+    return () => {
+      stopViews();
+      stopFiles();
+    };
+  }, [session]);
   const [selected, setSelected] = useState<string>();
   const invoking = useRef<{ key: string; row: HTMLButtonElement }>(undefined);
   const fallbackRow = useRef<HTMLButtonElement>(null);

@@ -3,7 +3,10 @@ import type { ConversationHostServices } from "../../features/conversation/Conve
 // @vitest-environment jsdom
 import { huddleDescription } from "../../features/huddle/lifecycle";
 import { readView, writeView } from "../../shared/view-state";
-import { useAttachmentDraft } from "../../features/messages/attachment-draft";
+import {
+  attachmentDraft,
+  useAttachmentDraft,
+} from "../../features/messages/attachment-draft";
 import "@testing-library/jest-dom/vitest";
 import { StrictMode } from "react";
 import {
@@ -1095,6 +1098,40 @@ it("lists a tagged draft that holds attached files", async () => {
   await chooseFilter("Drafts");
   expect(
     screen.getByRole("button", { name: "Open draft for Alice" }),
+  ).toBeInTheDocument();
+});
+it("lists a tagged draft as soon as files return to it, with no text change", async () => {
+  const h = fixture({
+    withDm: true,
+    withWriter: true,
+    upload: async () => ({
+      name: "note.txt",
+      url: "https://relay.test/media/note.txt",
+      type: "text/plain",
+      size: 4,
+      sha256: "a".repeat(64),
+    }),
+  });
+  writeView(h.owner.session.scope, "draft:dm-room", {
+    text: "@Alice ",
+    recipients: [{ pubkey: h.alice.pubkey, name: "Alice", start: 0, end: 6 }],
+  });
+  render(h.view);
+  await screen.findByText("Please review this");
+  await chooseFilter("Drafts");
+  expect(
+    screen.queryByRole("button", { name: "Open draft for Alice" }),
+  ).not.toBeInTheDocument();
+  // As when a failed background send hands its files back to the draft.
+  act(() => {
+    attachmentDraft(
+      h.observedSession,
+      `${h.owner.session.scope}:draft:dm-room`,
+      "dm-room",
+    ).add([new File(["note"], "note.txt", { type: "text/plain" })]);
+  });
+  expect(
+    await screen.findByRole("button", { name: "Open draft for Alice" }),
   ).toBeInTheDocument();
 });
 it("hands keyboard focus into draft deletion and back on cancel without changing the saved draft", async () => {

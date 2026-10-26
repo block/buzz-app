@@ -400,8 +400,9 @@ export function serve({
           CORE,
           ({ shown }) => {
             const kept = shown[CORE];
-            if (kept && kept !== opened.core?.placeholder) return kept;
-            return opened.core ? opened.core.text : (kept ?? "");
+            return kept && kept !== opened.core?.placeholder
+              ? kept
+              : (opened.core?.text ?? kept ?? "");
           },
           { tag: false },
         ),

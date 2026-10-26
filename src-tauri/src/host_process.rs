@@ -337,12 +337,8 @@ pub(crate) async fn plugin_host_process_spawn<R: tauri::Runtime>(
     } else {
         Command::new(executable)
     };
-    if interpreter.is_some() {
-        command.arg(&program);
-    }
     command
-        .args(&declared.args)
-        .args(&args)
+        .args(process_arguments(&declared, &program, &args))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -473,6 +469,27 @@ fn program_path(
     }
     let resources = resources().ok_or_else(|| format!("Could not start {}", declared.program))?;
     Ok(resources.join("bin").join(&declared.program))
+}
+
+/// Keep the bundled script path one argument, before declared and caller arguments.
+fn process_arguments(
+    declared: &HostProcess,
+    program: &std::path::Path,
+    args: &[String],
+) -> Vec<std::ffi::OsString> {
+    declared
+        .interpreter
+        .as_ref()
+        .map(|_| program.as_os_str().to_owned())
+        .into_iter()
+        .chain(
+            declared
+                .args
+                .iter()
+                .chain(args)
+                .map(std::ffi::OsString::from),
+        )
+        .collect()
 }
 
 /// The rest of a path written `~/…`, or on Windows also `~\…`.

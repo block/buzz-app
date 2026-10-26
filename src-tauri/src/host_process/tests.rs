@@ -329,3 +329,33 @@ fn process_mcp_connection_has_an_explicit_wire_shape() {
         assert!(serde_json::from_value::<super::ProcessMcpConnection>(invalid).is_err());
     }
 }
+
+#[test]
+fn bundled_interpreters_preserve_script_and_argument_boundaries() {
+    let script: HostProcess = serde_json::from_value(serde_json::json!({
+        "id": "script", "program": "script.py", "bundled": true,
+        "interpreter": "python3", "args": ["--fixed"]
+    }))
+    .unwrap();
+    let program = PathBuf::from("/app with spaces/bin/script.py");
+    assert_eq!(
+        process_arguments(&script, &program, &["two words".into()]),
+        vec![
+            program.into_os_string(),
+            "--fixed".into(),
+            "two words".into()
+        ]
+    );
+    let binary: HostProcess = serde_json::from_value(serde_json::json!({
+        "id": "binary", "program": "binary", "bundled": true, "args": ["--fixed"]
+    }))
+    .unwrap();
+    assert_eq!(
+        process_arguments(
+            &binary,
+            std::path::Path::new("/app/bin/binary"),
+            &["argument".into()]
+        ),
+        vec![std::ffi::OsString::from("--fixed"), "argument".into()]
+    );
+}

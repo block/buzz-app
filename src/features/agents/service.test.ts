@@ -10188,3 +10188,52 @@ it("registers Buzz-owned command sources with saved provider keys", async () => 
     /built into Buzz/,
   );
 });
+
+it.each(["command", "github-pr"])(
+  "starts a saved attention/%s watch after built-in registration",
+  async (id) => {
+    const { service, plugin, ctx } = await setup();
+    const spawn = vi.fn(async () => heldCommand());
+    ctx.provide("host", {
+      spawn,
+      serveMcp: async () => ({
+        url: "http://127.0.0.1/mcp",
+        headers: [],
+        closed: new Promise<void>(() => {}),
+        close: async () => {},
+      }),
+    });
+    await service.create({ type: "example/echo", name: "Echo" });
+    await service.save(bot, {
+      attentionEnabled: true,
+      attention: {
+        "watch/saved": {
+          type: "source",
+          provider: `attention/${id}`,
+          interest_id: "default",
+          enabled: true,
+          config:
+            id === "command"
+              ? { command: ["printf", "hello"] }
+              : { pr: "https://github.com/example/repo/pull/1" },
+        },
+      },
+    });
+    const core = plugin.extend({
+      pluginOwner: { id: "buzz.agents", revision: "bundled" },
+    });
+    registerAttention({ agents: core.agents });
+    await vi.waitFor(() => expect(spawn).toHaveBeenCalledTimes(1));
+    expect(spawn).toHaveBeenCalledWith(
+      id === "command" ? "attention-command" : "attention-pr",
+      expect.objectContaining({
+        args:
+          id === "command"
+            ? ["printf", "hello"]
+            : ["--interval", "60", "https://github.com/example/repo/pull/1"],
+        mcp: expect.objectContaining({ url: "http://127.0.0.1/mcp" }),
+      }),
+    );
+    await service.save(bot, { attentionEnabled: false });
+  },
+);

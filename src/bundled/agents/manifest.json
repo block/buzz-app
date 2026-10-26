@@ -27,6 +27,12 @@
         "program": "buzz-attention-import",
         "bundled": true,
         "interpreter": "python3"
+      },
+      {
+        "id": "attention-policy",
+        "program": "buzz-attention-policy",
+        "bundled": true,
+        "interpreter": "python3"
       }
     ]
   }

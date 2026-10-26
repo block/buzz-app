@@ -129,6 +129,7 @@ it("pauses while a covering pane hides it and resumes when revealed", async () =
   await waitFor(() => expect(pause).toHaveBeenCalledOnce());
   // Readiness and hover may not restart a covered avatar.
   fireEvent.canPlay(video);
+  fireEvent.pointerEnter(video.parentElement as HTMLElement);
   expect(play).toHaveBeenCalledOnce();
   pane.removeAttribute("data-covered");
   await waitFor(() => expect(play).toHaveBeenCalledTimes(2));

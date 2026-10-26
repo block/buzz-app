@@ -319,10 +319,10 @@ export function serve({
         registry,
         release,
         tools: "",
-        /** The agent's `core` memory as its latest turn read it, and the
-         * note that it has none: its section and the placeholder's. None
-         * when that read failed. */
-        core: undefined,
+        /** Each conversation's `core` memory as its latest turn read it,
+         * and the note that it has none: its section and the placeholder's.
+         * None when that read failed. */
+        cores: new Map(),
         /** Each conversation's tool context, for runs resumed after a restart. */
         contexts: new Map(),
         /** Each watched conversation, and whether a run is in it. */
@@ -399,11 +399,12 @@ export function serve({
         // even empty, so it keeps its place before the instructions.
         section(
           CORE,
-          ({ shown }) => {
+          ({ conversationId, shown }) => {
             const kept = shown[CORE];
-            return kept && kept !== opened.core?.placeholder
+            const core = opened.cores.get(conversationId);
+            return kept && kept !== core?.placeholder
               ? kept
-              : (opened.core?.text ?? kept ?? "");
+              : (core?.text ?? kept ?? "");
           },
           { tag: false },
         ),
@@ -542,10 +543,10 @@ export function serve({
 
   /** Starts a request in a conversation configured for this turn. One that
    * steers a run working in it, `busy`, changes only what its owner picked,
-   * as in Claude. The agent's `core` memory read for it is the latest; a
-   * failed read shows none to conversations not yet shown it. */
+   * as in Claude. The agent's `core` memory read for it is the
+   * conversation's latest; a failed read shows it none if not yet shown. */
   async function submit(opened, conversation, turn, busy, refresh) {
-    opened.core = turn.core;
+    opened.cores.set(conversation.id, turn.core);
     const steers = busy && turn.steer;
     const chosen = await choose(turn);
     const change = steers

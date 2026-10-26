@@ -158,7 +158,8 @@ type Entry = {
   >;
   /** Mentions handed to Pi and not settled, by request. */
   receipts: Map<string, Receipt>;
-  /** Standalone turns handed to Pi and not settled, by request. */
+  /** Requests waited for here without a receipt: standalone turns handed to
+   * Pi and not settled, and plugin wakes a left run continues. */
   standalone: Set<string>;
   /** The request each conversation's activity shows, by its scope. */
   active: Map<number, Map<string, Receipt>>;
@@ -436,7 +437,9 @@ export class PiRuntime {
       trigger.type !== "plugin"
     )
       return ignored?.();
-    // A plugin's wake is the owner's installed code, not a message to check.
+    // A wake is not a message to check: a plugin's is the owner's installed
+    // code, and the agent's own handoff comes from a turn already acting
+    // for the owner.
     const wake = trigger.type !== "mention" ? trigger : undefined;
     // Only an Attention wake refreshes its Interest's instructions as Pi takes
     // it, and keeps its own destination for an answer recovered after a stop.
@@ -678,6 +681,7 @@ export class PiRuntime {
         delivery.effort,
       );
       signal.throwIfAborted();
+      if (delivery.current && !delivery.current()) return { ok: true };
       request = `${key}/${crypto.randomUUID()}`;
       entry.standalone.add(request);
       const { submission, conversation } = await this.pi.request<{
@@ -908,14 +912,26 @@ export class PiRuntime {
         continue;
       // A plugin's wake ends with the app, as in other harnesses, unless its
       // conversation has a continued request, which ending it would end or
-      // leave queued untaken. Then it goes on, and nothing waits for it, as a
-      // plugin's wake saves no destination of its own: a request that joined
-      // its run answers for both, and a run of its own posts only its sends.
+      // leave queued untaken. Then it goes on, and nothing is posted for it,
+      // as a plugin's wake saves no destination of its own: a request that
+      // joined its run answers for both, and a run of its own posts only its
+      // sends. It is still waited for, as only then does its run's failure
+      // end what is queued behind it, which reports it.
       if (request.startsWith(WAKE)) {
         if (!continued.has(conversation)) {
           dropped.push({ submission, conversation });
           aborted.add(conversation);
-        }
+        } else
+          waits.push(async () => {
+            entry.standalone.add(request);
+            try {
+              await this.settle(entry, agent, submission);
+            } catch {
+              // Given up, as `settle` says: the next turn takes it on again.
+            } finally {
+              entry.standalone.delete(request);
+            }
+          });
         continue;
       }
       // A watch's or timer's run ends with the app, as other harnesses' do:

@@ -546,6 +546,7 @@ function fixture(
     attention,
     objects,
     attentionWrite,
+    events,
     query,
     fileReads,
     memoryOpen,
@@ -725,7 +726,7 @@ it("keeps an agent's two communities' threads apart, each under its membership's
   await f.complete(0, "HERE");
   await vi.waitFor(() => expect(f.runtime.sessions(elsewhere)).toHaveLength(1));
   const saved = (key: string) =>
-    f.storage.get(`buzz.codex.sessions.v9:${scope}:${key}`);
+    f.storage.get(`buzz.codex.sessions.v12:${scope}:${key}`);
   expect(saved(pubkey)).toBeTruthy();
   expect(saved(elsewhere)).toBeTruthy();
   expect(f.runtime.conversations(pubkey)).toHaveLength(1);
@@ -3202,7 +3203,7 @@ it("lists saved conversations newest first from storage, and moves a started one
   const channel = JSON.stringify(["channel", "channel"]);
   const elsewhere = JSON.stringify(["unlisted", root]);
   f.storage.set(
-    `buzz.codex.sessions.v9:${scope}:${pubkey}`,
+    `buzz.codex.sessions.v12:${scope}:${pubkey}`,
     JSON.stringify({
       [channel]: { threadId: "before-timestamps", workspace: "/w" },
       [thread]: { threadId: "older", workspace: "/w", at: 1 },
@@ -3239,7 +3240,7 @@ it("lists saved conversations newest first from storage, and moves a started one
   expect(latest?.at).toBeGreaterThan(2);
   const stored = Object.keys(
     JSON.parse(
-      f.storage.get(`buzz.codex.sessions.v9:${scope}:${pubkey}`) ?? "{}",
+      f.storage.get(`buzz.codex.sessions.v12:${scope}:${pubkey}`) ?? "{}",
     ),
   );
   expect(stored.at(-1)).toBe(latest?.key);
@@ -3360,7 +3361,7 @@ it("offers the tools plugins add, runs them as the agent here, and starts a new 
     1,
   );
   const saved = JSON.parse(
-    f.storage.get(`buzz.codex.sessions.v9:${scope}:${pubkey}`) ?? "{}",
+    f.storage.get(`buzz.codex.sessions.v12:${scope}:${pubkey}`) ?? "{}",
   );
   expect(Object.values(saved)).toEqual([
     expect.objectContaining({ tools: expect.any(String) }),
@@ -4296,6 +4297,31 @@ it("does not reuse persisted bindings with pre-delivery built-in tool schemas", 
   f.runtime.dispose();
 });
 
+it("drops standalone output invalidated while core memory loads", async () => {
+  const f = fixture();
+  let current = true;
+  f.core.mockImplementationOnce(async () => {
+    current = false;
+    return null;
+  });
+  let finished = false;
+  const running = f.runtime
+    .runOnce({
+      delivery: { ...f.delivery("output"), current: () => current },
+      key: "source/check",
+      signal: new AbortController().signal,
+      prompt: async () => "cancelled output",
+    })
+    .finally(() => {
+      finished = true;
+    });
+  await vi.waitFor(() => expect(finished || f.starts().length > 0).toBe(true));
+  if (f.starts().length) await f.complete(0, "");
+  await running;
+  expect(f.starts()).toEqual([]);
+  f.runtime.dispose();
+});
+
 it("allows an addressed channel turn to reply in an existing thread", async () => {
   const f = fixture();
   const delivery = pluginWake(f);
@@ -4325,6 +4351,38 @@ it("allows an addressed channel turn to reply in an existing thread", async () =
     expect.objectContaining({
       tags: expect.arrayContaining([["e", root, "", "reply"]]),
     }),
+    expect.any(Function),
   );
   await f.complete(0);
+});
+
+it("refuses a handoff from a channel-scoped Codex session to another of its channel's threads", async () => {
+  const f = fixture();
+  const handoff = vi.fn();
+  f.events.push({
+    id: "d".repeat(64),
+    pubkey: owner,
+    kind: 39000,
+    content: "",
+    created_at: 1,
+    tags: [["d", "channel"]],
+  } as EventData);
+  const other = f.delivery("other thread", "e".repeat(64));
+  if (other.trigger.type !== "mention") throw new Error("Expected mention");
+  const first = f.delivery("@Codex hi");
+  await f.runtime.run({
+    ...first,
+    agent: { ...first.agent, handoff } as Delivery["agent"],
+    config: { ...(first.config as object), scope: "channel" },
+  });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const result = await f.tool("self_handoff", {
+    channel: "channel",
+    thread: other.trigger.event.id,
+    text: "carry on",
+  });
+  expect(JSON.stringify(result?.result)).toContain(
+    "That is this conversation.",
+  );
+  expect(handoff).not.toHaveBeenCalled();
 });

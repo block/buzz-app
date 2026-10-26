@@ -253,6 +253,12 @@ live; otherwise it returns `undefined`. A handle kept from earlier fails each
 call while that no longer holds, and for good once the agent's type or its
 plugin is replaced, so ask for it when acting rather than keeping it. Like any type whose agents run here, the type needs `run`.
 
+Plugins can discover active Attention source registrations through `ctx.agents.attentionProviders()`. Each entry includes its `provider` key and optional `description` and JSON-object `configExample` supplied to `addAttentionSource`. The catalog omits executable callbacks and inactive registrations; discovery tools belong in external plugins.
+
+Each Attention source `run` receives `spawn(processId, options)` for commands using that watch's owning agent. The host binds agent identity, watch destination and run lifetime; plugins cannot select another agent or obtain the raw authenticated connection. Declare the process in `host.processes` and request `host.mcp`, plus `host.files` for tools reading local paths. Options supply arguments, working directory, environment and output callbacks.
+
+Buzz revokes command access on return, failure, cancellation, agent stop, provider unload or community reconnection, and closes the process and its descendants. Successfully emitted output remains queued after a producer returns. The key and MCP connection stay in Buzz; commands retain the app user's operating-system privileges and can use the agent's tools while their run remains active.
+
 ```ts
 ctx.pages.register({
   id: "dashboard",

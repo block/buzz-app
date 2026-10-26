@@ -620,9 +620,10 @@ export class CodexRuntime {
   private storageKey(scope: string, agent: AgentKey) {
     // Resume restores the persisted tool schema, so a binding from before a
     // tool change starts fresh. v5 added channel and member management; v6
-    // added the shared session tools; v7 added the shared note tools; v8 added
-    // the agent creation and change tools; v9 adds Attention delivery fields.
-    return `buzz.codex.sessions.v9:${scope}:${agent}`;
+    // added the shared session tools; v7 added shared notes; v8 added agent
+    // creation and changes; v9 added Attention delivery; v10 added plugin sources;
+    // v11 added literal message keywords; v12 adds self-handoff.
+    return `buzz.codex.sessions.v12:${scope}:${agent}`;
   }
   private save(request: Request, entry: Entry, key: string, saved: Saved) {
     // Reinserted so the bounded set keeps the most recently used bindings.
@@ -658,7 +659,9 @@ export class CodexRuntime {
       trigger.type !== "plugin"
     )
       return delivery.ignored?.();
-    // A plugin's wake is the owner's installed code, not a message to check.
+    // A wake is not a message to check: a plugin's is the owner's installed
+    // code, and the agent's own handoff comes from a turn already acting
+    // for the owner.
     const wake = trigger.type !== "mention" ? trigger : undefined;
     const event =
       trigger.type !== "mention" ? wakeAnchor(trigger) : trigger.event;
@@ -944,6 +947,7 @@ export class CodexRuntime {
       once.threadId = started.thread.id;
       server.threads.set(once.threadId, agent.key);
       signal.throwIfAborted();
+      if (!delivery.current()) return { ok: true };
       const turnStarted = await rpc.request<{ turn: { id: string } }>(
         "turn/start",
         {
@@ -1212,6 +1216,9 @@ export class CodexRuntime {
       ? {
           channel: request.conversation.channelId,
           ...(request.toolRoot ? { root: request.toolRoot } : {}),
+          ...(request.toolRoot && !request.conversation.root
+            ? { wholeChannel: true }
+            : {}),
           ...(request.conversation.topLevel &&
           !request.conversation.threadReplies
             ? { topLevel: true }

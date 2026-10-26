@@ -143,7 +143,19 @@ and shows no activity row or Stop. Pi, which continues the runs an app left,
 ends a wake's run instead, unless a mention or Attention wake left in the same
 conversation would end with it or stay queued behind it. Then the wake's run
 goes on: when the other request joined it, their answer is posted, and
-otherwise only what the wake's run sends is.
+otherwise only what the wake's run sends is. Pi still waits for the wake, so a
+run of its own that fails fails what is queued behind it too, which reports it.
+
+An agent hands off to itself in another of its conversations with the
+`self_handoff` tool, which takes a channel, a thread and text. The tool requires
+a channel the agent can see, as `send` does, and a thread in that channel (any
+message of it names its root) unless the channel is a Solo chat. It refuses the
+current conversation, which is the whole channel in a DM, a Solo chat or a
+channel-scoped session. It is the same `plugin` trigger with `from`, the
+conversation it came from, in place of `plugin`, shown in a `<self-handoff>`
+section that names that conversation, says nobody wrote it as a message and that
+its text is data, and that the agent acts only on what its owner asked. Only a
+run's handle hands off.
 
 A plugin leaves context for a later turn with
 `ctx.agents.note(pubkey, channelId, text, root?)`, without waking the agent
@@ -942,7 +954,20 @@ unavailable when nothing was known.
 It is never priced at zero. Sessions count by activity time, whether or not they
 recorded usage. Usage does not read or publish kind-44200 metrics.
 
+
+## Attention subscriptions
+
+Buzz owns Interests and generic event, timer and plugin-source subscriptions. Each subscription may have a delivery `channel` and optional thread `root`; without an address, it starts an independent turn for its Interest. Event `channels` selects where to listen, separately from the delivery address. Subscriptions for an Interest share its queue, and their prompt includes the Interest’s saved task instructions.
+
+Use `watch_add` with `type: "source"`, a `provider` in `plugin/source` form and provider-owned `config`. Plugins register deterministic producers with `agents.addAttentionSource({ id, run })`. The host owns registration, scheduling, cancellation, completion and agent delivery; plugins own producer configuration and execution. Empty output starts no turn. Attention off, disabling or editing the subscription, losing the local agent, and provider unload cancel execution and queued output. After a source completes, its subscription remains until its final queued turn succeeds, then is removed. Failed deliveries retain the subscription and output. A retained completed source can be explicitly enabled again. Buffered output and accepted jobs are not durable acknowledgements.
+
+Source output accepts the same optional classifier questions as event watches. Classification preserves output ordering and completion until the resulting delivery settles. `agents.attentionProviders()` lists active registered provider keys with their optional `description` and `configExample`, including providers from unrelated plugins. Disabled and unloaded registrations disappear from discovery.
+
+The separately installed Attention plugin provides command and GitHub PR producers, the agent-grouped sidebar overview and legacy Monitor import. Those executables and their process declarations are not bundled with Buzz. Its source providers are `attention/command` and `attention/github-pr`. Provider migration and retirement of older plugin runtimes belong to the external plugin and its installer. The core preserves provider ids as saved and applies the same activation rules to every plugin.
+
 ## Attention delivery destinations
+
+Event watches can filter content with `keywords`: 1 to 32 nonblank literal strings, up to 256 bytes each. Matching is case-insensitive and passes when any keyword occurs anywhere in the event content. Keywords combine with the other deterministic selectors and do not require a classifier.
 
 Event watches and timers accept an optional delivery `channel` and thread `root`. The event watch's `channels` still selects where to listen. With an address, the wake continues that conversation with the Interest's instructions. A thread root must be readable by the agent in that destination channel; a missing or mismatched root stops delivery before the harness builds context. Claude, Codex, Goose and Pi accept these Attention triggers. A channel without a root defaults to channel-level posting, while explicit reporting instructions in the Interest can direct another thread or channel within the agent's existing authority. Solo chats retain their personal-chat framing and reply restriction. The address owns the execution conversation and default destination; the Interest owns explicit reporting policy.
 
@@ -951,3 +976,11 @@ Without an address, the subscription runs an independent turn in its Interest's 
 Event matches wait for confirmation of both listening and destination rosters. Confirmed destination nonmembership discards the match. Addressed wakes refresh the Interest instructions after harness startup and queue waits, immediately before submission, while retaining cancellation checks.
 
 Conversation wakes are local, have no signed message to resume, and never publish their synthetic anchor ids. Pi saves an Attention wake's reply destination separately from its tool context so a recovered answer keeps its destination. Ordinary plugin wakes retain the separate contract above.
+
+Subscription runtime history stays on this device, outside configuration: the last wake time and up to 40 lines (16 KiB) of source output. Missing history on an older subscription is unknown. A completed source or spent timer is removed after its final queued turn succeeds, including work handed to `workingUntil`. A failed source delivery retains the subscription and output.
+
+## Commands using an agent's identity
+
+An Attention source run receives `spawn(processId, { args, cwd, env, onStdout, onStderr })`. Buzz binds it to the watch's owning agent, destination and lifetime. There is no public agent connection or caller-selected agent identity. The process must be declared in the calling plugin's `host.processes`, and the plugin must declare `host.mcp` (and `host.files` when its tools read local paths). The host retains process permission checks and signing keys. The bundled command helper initializes one MCP session, adds an agent-scoped `buzz` to PATH and passes that session to the command and its children. `buzz tools` lists tools; `buzz <tool> --field value` and `buzz call <tool> '<JSON object>'` invoke them. There is no owner-identity fallback.
+
+Source return or failure, cancellation, Attention off, agent stop, plugin unload, command exit or closing the MCP transport revokes command access. Successful queued output remains valid after the source returns. Killing a command uses the existing host process group/job cleanup for descendants. OS access is the same as the app user's. Scheduling and output delivery remain the source plugin's responsibility, so command identity does not require moving Attention into Agents. See the [executable scheduled-source example](../tests/fixtures/agent-command/README.md), including the scope of its fixture-based custody evidence.

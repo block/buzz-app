@@ -1,3 +1,13 @@
+import { appClient } from "../../buzz-mcp/app-client";
+import { respond } from "../../buzz-mcp/rpc";
+import { connectMcp } from "../../buzz-mcp/connection";
+import type {
+  HostMcpServer,
+  HostProcess,
+  HostProcessOptions,
+} from "../host/service";
+import { spawnAgentCommand } from "./command";
+import { sourceCompleted } from "./attention";
 import { createLocalAgentActivity } from "./local-activity";
 import {
   AgentConfigStore,
@@ -124,6 +134,7 @@ import {
   type Checkpoints,
 } from "./catch-up";
 import { readInterrupted, writeInterrupted } from "./interrupted";
+import { AttentionSources, type AttentionProducer } from "./attention-sources";
 import { type AddedTool, BUZZ_SESSION } from "../../buzz-mcp/session-tools";
 import { nameSoloChat } from "./solo-chat-name";
 import { forgetDefaultAgent } from "../solo/default-agent";
@@ -162,6 +173,8 @@ export type Agent<Config = unknown> = Readonly<{
   skipped: Readonly<Record<string, SkippedObject>>;
   /** Run state of its timers, by slug; written only by the runtime. */
   timers: Readonly<Record<string, TimerState>>;
+  sourceRuns?: Readonly<Record<string, string>>;
+  attentionHistory?: AgentRecord["attentionHistory"];
   /** Whether its watches and timers wake it. Off keeps every object. */
   attentionEnabled: boolean;
   /** Its type's settings, the same in each of its communities. */
@@ -296,6 +309,18 @@ export type SessionUsage = Readonly<{
   lastAt: number;
   observations: readonly UsageObservation[];
 }>;
+/** A conversation to wake an agent in, and what to tell it there. `root` is
+ * the thread's root event id; leave it out for a Solo chat. */
+export type AgentWake = Readonly<{
+  channel: string;
+  root?: string;
+  text: string;
+}>;
+/** The conversation a self-handoff came from: no channel for a watch's or
+ * timer's standalone turn. */
+export type HandoffSource = Readonly<{ channel?: string; root?: string }>;
+/** A wake the agent sends itself, `from` another of its conversations. */
+export type AgentHandoff = AgentWake & Readonly<{ from: HandoffSource }>;
 /** The agent as `run` holds it. A run's handle works for as long as the
  * agent exists; one from `Agents.handle` fails each call while `handle`
  * would not return it, and for good once the agent's type or its plugin is
@@ -314,7 +339,11 @@ export type AgentHandle = Readonly<{
   updateAgent?(
     input: AgentUpdateInput,
   ): Promise<Readonly<{ requestId: string; saved: false }>>;
-  publish(event: AgentEventTemplate): Promise<RelayEvent>;
+  /** On a run's handle only: wakes this agent in another of its
+   * conversations, as `Agents.wake` would, telling it the wake is its own. */
+  handoff?(handoff: AgentHandoff): void;
+  /** Rechecks an operation lifetime after channel startup, before signing. */
+  publish(event: AgentEventTemplate, check?: () => void): Promise<RelayEvent>;
   /** Reads the community as the agent, seeing only what it may see. */
   query(filters: readonly object[]): Promise<RelayEvent[]>;
   /** Finds profiles by `name` or `display_name`, as the agent, best match
@@ -379,6 +408,8 @@ export type AgentAttention = Readonly<{
     slug: string,
     value: AttentionValue | null,
     options: WriteOptions,
+    /** Rechecked when the queued mutation is applied, including after token calculation. */
+    check?: () => void,
   ): Promise<Shown>;
 }>;
 export type { ClassifierOutcome } from "./classifier";
@@ -386,7 +417,9 @@ export type CaughtUp = Readonly<{
   event: RelayEvent;
   classifier?: ClassifierOutcome;
 }>;
-/** A local wake delivered in a conversation, never a signed message. */
+/** A local wake delivered in a conversation, never a signed message: a
+ * plugin's (`Agents.wake`), the agent's own `from` another of its
+ * conversations (the `self_handoff` tool), or Attention's. */
 export type ConversationWake = Readonly<
   {
     channel: string;
@@ -396,7 +429,11 @@ export type ConversationWake = Readonly<
     text: string;
     id: string;
     at: number;
-  } & ({ type: "plugin"; plugin: string } | { type: "attention" })
+  } & (
+    | { type: "plugin"; plugin: string }
+    | { type: "plugin"; from: HandoffSource }
+    | { type: "attention" }
+  )
 >;
 export type Trigger =
   /** Directly addressed: a chat message that mentions the agent. `resumed`
@@ -430,6 +467,15 @@ export type Trigger =
       events: readonly CaughtUp[];
       /** Older missed events were skipped: catch-up reads a bounded window. */
       skipped?: boolean;
+    }>
+  | Readonly<{
+      type: "source";
+      interest?: Interest;
+      slug: string;
+      watch: import("./attention").SourceWatch;
+      plugin: string;
+      text: string;
+      classifier?: ClassifierOutcome;
     }>
   | Readonly<{
       type: "timer";
@@ -838,6 +884,18 @@ export type NewAgent = Readonly<{
   config?: unknown;
 }>;
 export type Agents = {
+  /** Registers a deterministic source owned by this plugin. Attention controls
+   * its lifetime; output goes privately to the watch's saved conversation.
+   * The provider key is pluginId/id. Local agents only. */
+  addAttentionSource(
+    source: import("./attention-sources").AttentionSource,
+  ): void;
+  /** Active providers, including those contributed by other plugins. */
+  attentionProviders(): readonly Readonly<{
+    provider: string;
+    description?: string;
+    configExample?: Readonly<Record<string, unknown>>;
+  }>[];
   register<Config>(type: AgentType<Config>): void;
   types(): readonly RegisteredAgentType[];
   /** Adds a tool to every agent session in the app, beside the Buzz tools.
@@ -850,13 +908,9 @@ export type Agents = {
   tools(): readonly AddedTool[];
   /** Wakes an agent this copy of the app runs in one of its conversations,
    * as a mention there would, but with no message: the agent is told `text`
-   * comes from this plugin, not its owner, and is data. `root` is the
-   * thread's root event id; leave it out for a Solo chat. Throws when this copy does not run the agent or its queue is full;
+   * comes from this plugin, not its owner, and is data. Throws when this copy does not run the agent or its queue is full;
    * like a mention, a queued wake is dropped if the agent stops running here. */
-  wake(
-    agent: AgentKey,
-    wake: Readonly<{ channel: string; root?: string; text: string }>,
-  ): void;
+  wake(agent: AgentKey, wake: AgentWake): void;
   snapshot(): AgentsSnapshot;
   subscribe(listener: () => void): () => void;
   /** Gives each `interrupted` agent again the turns it was working on, each
@@ -1232,6 +1286,8 @@ export class AgentsService extends Service implements Agents {
   private readonly addedTools;
   /** Every added tool's name, its plugin active or still starting. */
   private readonly toolNames = new Set<string>();
+  private readonly attentionSources;
+  private readonly sourceTails = new Map<string, Promise<void>>();
   private readonly listeners = new Set<() => void>();
   private requests: readonly AgentCreationRequest[] = [];
   private updates: readonly AgentUpdateRequest[] = [];
@@ -1325,6 +1381,7 @@ export class AgentsService extends Service implements Agents {
     super(ctx, "agents");
     this.contributions = createContributions<AgentType>(ctx);
     this.addedTools = createContributions<AddedTool & { id: string }>(ctx);
+    this.attentionSources = createContributions<AttentionProducer>(ctx);
     // Each changes the copy at once and logs a failed save itself.
     void migrateAgentStorage(storage);
     void migrateWatchFilters(storage);
@@ -1527,6 +1584,8 @@ export class AgentsService extends Service implements Agents {
         this.notify();
         return { requestId: id, saved: false };
       },
+      handoff: (agent, { from, ...wake }) =>
+        this.wakeIn(agent.key, wake, { from }),
       templates: (agent) => {
         // The agents Agents shows for this community, as the create dialog
         // offers a template's.
@@ -1564,6 +1623,8 @@ export class AgentsService extends Service implements Agents {
       soloChat: (agent, channel, signal) =>
         soloChat(() => this.relay(agent.key), agent.owner, channel, signal),
       remembered: (key, slug, body) => this.coreMemory.wrote(key, slug, body),
+      woke: (key, object) =>
+        this.history(key, object, undefined, Math.floor(Date.now() / 1000)),
       finished: (key) => void this.coreMemory.refresh(key),
       named: (agent, event, title) =>
         void nameSoloChat(
@@ -1573,6 +1634,27 @@ export class AgentsService extends Service implements Agents {
           event,
           title,
         ).catch((error) => console.warn("Couldn't name the Solo chat", error)),
+    });
+    ctx.effect(() => {
+      const running = new Map<Contribution<AttentionProducer>, () => void>();
+      const reconcile = () => {
+        const active = this.attentionSources.snapshot();
+        for (const [source, stop] of running) {
+          if (active.includes(source)) continue;
+          stop();
+          running.delete(source);
+        }
+        for (const source of active) {
+          if (!running.has(source))
+            running.set(source, this.startAttentionSource(source));
+        }
+      };
+      const unsubscribe = this.attentionSources.subscribe(reconcile);
+      reconcile();
+      return () => {
+        unsubscribe();
+        for (const stop of running.values()) stop();
+      };
     });
     ctx.effect(() => {
       const stops = [
@@ -1700,17 +1782,265 @@ export class AgentsService extends Service implements Agents {
       return () => this.toolNames.delete(tool.name);
     });
   }
-  tools = () => this.addedTools.snapshot();
-  wake(
+  addAttentionSource(source: import("./attention-sources").AttentionSource) {
+    const plugin = this.ctx.pluginOwner?.id;
+    if (
+      !plugin ||
+      !/^[a-z0-9][a-z0-9._-]*$/.test(source.id) ||
+      typeof source.run !== "function" ||
+      (source.description !== undefined &&
+        (typeof source.description !== "string" ||
+          !source.description.trim())) ||
+      (source.configExample !== undefined &&
+        (!source.configExample ||
+          typeof source.configExample !== "object" ||
+          Array.isArray(source.configExample) ||
+          !serializable(source.configExample)))
+    )
+      throw new Error(
+        "A plugin source needs an id, run and valid discovery metadata",
+      );
+    const connect = async (
+      key: AgentKey,
+      options: Readonly<{
+        signal: AbortSignal;
+        channel?: string | undefined;
+        root?: string | undefined;
+        cwd?: string;
+      }>,
+    ): Promise<HostMcpServer> => {
+      if (!this.ctx.pluginOwner)
+        throw new Error("Only an installed plugin connects as an agent");
+      options.signal.throwIfAborted();
+      const handle = this.runners.handle(key);
+      if (!handle) throw new Error("This agent is not running here");
+      const host = this.ctx.host;
+      if (!host?.serveMcp)
+        throw new Error("Agent connections require a desktop MCP host");
+      const reads = () => {
+        const source = ownerReads(this.relay(key), pubkeyOf(key));
+        if (!source) throw new Error("The agent's community is not connected");
+        return source;
+      };
+      const source = reads();
+      const topLevel =
+        options.channel !== undefined &&
+        (await soloChat(
+          () => this.relay(key),
+          handle.owner,
+          options.channel,
+          options.signal,
+        ));
+      return connectMcp(
+        host.serveMcp.bind(host),
+        (signal) => {
+          const client = appClient(handle, {
+            signal,
+            relayAuthor: source.relayAuthor?.(),
+            signingAuthority: source.workflowAuthority(),
+            check: () => {
+              handle.attention.enabled();
+              if (reads().connection !== source.connection)
+                throw new Error("The agent's community connection changed");
+            },
+            read: async (path) => {
+              if (!host.readFile)
+                throw new Error("This plugin cannot read local files");
+              return host.readFile(
+                path,
+                options.cwd === undefined ? undefined : { cwd: options.cwd },
+              );
+            },
+            memories: (slug) => reads().memoryListing(signal, slug),
+          });
+          return (message) =>
+            respond(
+              client,
+              {
+                ...(options.channel === undefined
+                  ? {}
+                  : { channel: options.channel }),
+                ...(topLevel
+                  ? { topLevel: true }
+                  : options.root === undefined
+                    ? {}
+                    : { root: options.root }),
+              },
+              message,
+            );
+        },
+        options.signal,
+      );
+    };
+    const spawn = async (
+      key: AgentKey,
+      process: string,
+      options: Omit<HostProcessOptions, "mcp"> & {
+        signal: AbortSignal;
+        channel?: string | undefined;
+        root?: string | undefined;
+      },
+    ): Promise<HostProcess> => {
+      options.signal.throwIfAborted();
+      const host = this.ctx.host;
+      if (!host?.spawn)
+        throw new Error("Agent commands require a desktop process host");
+      const handle = this.runners.handle(key);
+      if (!handle) throw new Error("This agent is not running here");
+      const source = ownerReads(this.relay(key), pubkeyOf(key));
+      if (!source) throw new Error("The agent's community is not connected");
+      const spawn = host.spawn.bind(host);
+      return spawnAgentCommand(
+        {
+          connect: (signal) => connect(key, { ...options, signal }),
+          spawn: (settings) => spawn(process, settings),
+          subscribe: (changed) => {
+            const agent = this.subscribe(changed);
+            const community = this.relay(key)?.subscribe(changed);
+            return () => {
+              agent();
+              community?.();
+            };
+          },
+          check: () => {
+            if (!handle.attention.enabled())
+              throw new Error("Attention is off");
+            if (
+              ownerReads(this.relay(key), pubkeyOf(key))?.connection !==
+              source.connection
+            )
+              throw new Error("The agent's community connection changed");
+          },
+        },
+        options,
+      );
+    };
+    this.attentionSources.register(this.ctx, {
+      ...source,
+      run: async (input) => {
+        const {
+          agent,
+          watch: { channel, root },
+        } = input;
+        const completed = new AbortController();
+        const signal = AbortSignal.any([input.signal, completed.signal]);
+        try {
+          await source.run({
+            ...input,
+            spawn: (process, options) =>
+              spawn(agent, process, {
+                ...options,
+                signal,
+                channel,
+                root,
+              }),
+          });
+        } finally {
+          completed.abort();
+        }
+      },
+      ...(source.configExample === undefined
+        ? {}
+        : { configExample: JSON.parse(JSON.stringify(source.configExample)) }),
+    });
+  }
+  attentionProviders = () =>
+    this.attentionSources
+      .snapshot()
+      .map(({ key: provider, description, configExample }) => ({
+        provider,
+        ...(description === undefined ? {} : { description }),
+        ...(configExample === undefined
+          ? {}
+          : { configExample: JSON.parse(JSON.stringify(configExample)) }),
+      }));
+  private history(
     key: AgentKey,
-    {
-      channel,
-      root,
-      text,
-    }: Readonly<{ channel: string; root?: string; text: string }>,
+    object: AttentionObject,
+    output?: string,
+    lastWokeAt?: number,
   ) {
+    void this.queued(key, async () => {
+      const record = this.records[key];
+      if (!record || record.attention[object.slug] !== object) return;
+      const prior = record.attentionHistory?.[object.slug];
+      const entry = {
+        ...prior,
+        ...(lastWokeAt !== undefined ? { lastWokeAt } : {}),
+        ...(output !== undefined
+          ? {
+              output: [prior?.output, output]
+                .filter((part) => part !== undefined && part !== "")
+                .join(prior?.output?.endsWith("\n") ? "" : "\n")
+                .slice(-16384)
+                .split("\n")
+                .slice(-40)
+                .join("\n"),
+            }
+          : {}),
+      };
+      await this.commit(key, record, {
+        ...record,
+        attentionHistory: { ...record.attentionHistory, [object.slug]: entry },
+      });
+      this.update();
+    }).catch((error) => console.warn("Attention history was not saved", error));
+  }
+  private startAttentionSource(source: Contribution<AttentionProducer>) {
+    const sources = new AttentionSources(
+      {
+        completed: (key, object) =>
+          sourceCompleted(this.records[key]?.sourceRuns, object),
+        finish: (key, object) => this.runners.completeSource(key, object),
+        emit: (key, object, text, current) => {
+          const agent = this.state.running.find((agent) => agent.key === key);
+          if (
+            !agent?.attentionEnabled ||
+            agent.attention[object.slug] !== object ||
+            !object.value.enabled
+          )
+            throw new Error("This source watch is no longer enabled");
+          this.history(key, object, text);
+          this.runners.wakeSource(
+            key,
+            {
+              type: "source",
+              slug: object.slug,
+              watch: object.value,
+              plugin: source.pluginId,
+              text,
+            },
+            object,
+            current,
+          );
+        },
+      },
+      this.sourceTails,
+    );
+    const update = () =>
+      sources.reconcile(
+        source.key,
+        source,
+        this.state.running.filter((agent) => this.runners.runs(agent.key)),
+      );
+    const unsubscribe = this.subscribe(update);
+    update();
+    return () => {
+      unsubscribe();
+      sources.stop();
+    };
+  }
+  tools = () => this.addedTools.snapshot();
+  wake(key: AgentKey, wake: AgentWake) {
     const plugin = this.ctx.pluginOwner?.id;
     if (!plugin) throw new Error("Only a plugin wakes an agent");
+    this.wakeIn(key, wake, { plugin });
+  }
+  private wakeIn(
+    key: AgentKey,
+    { channel, root, text }: AgentWake,
+    source: Readonly<{ plugin: string } | { from: HandoffSource }>,
+  ) {
     if (!channel || !text.trim())
       throw new Error("A wake needs a channel and text");
     // Harnesses find the thread from a well-formed id; any other would leave
@@ -1719,7 +2049,7 @@ export class AgentsService extends Service implements Agents {
       throw new Error("A wake's root must be the thread's 64-hex event id");
     this.runners.wakeIn(key, {
       type: "plugin",
-      plugin,
+      ...source,
       channel,
       ...(root ? { root: root.toLowerCase() } : {}),
       text,
@@ -3463,6 +3793,8 @@ export class AgentsService extends Service implements Agents {
       attention: record.attention,
       skipped: record.skipped ?? EMPTY,
       timers: record.timers ?? EMPTY,
+      ...(record.sourceRuns ? { sourceRuns: record.sourceRuns } : {}),
+      attentionHistory: record.attentionHistory,
       attentionEnabled: record.attentionEnabled === true,
       config: record.config,
       ...(this.archiveUnchecked(identity.key) && { archiveUnchecked: true }),
@@ -3821,6 +4153,8 @@ export class AgentsService extends Service implements Agents {
           prior.attention === record.attention &&
           prior.skipped === (record.skipped ?? EMPTY) &&
           prior.timers === (record.timers ?? EMPTY) &&
+          prior.sourceRuns === record.sourceRuns &&
+          prior.attentionHistory === record.attentionHistory &&
           prior.attentionEnabled === (record.attentionEnabled === true) &&
           prior.config === record.config &&
           prior.archiveUnchecked === this.archiveUnchecked(identity.key) &&

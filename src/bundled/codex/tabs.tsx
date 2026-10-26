@@ -414,10 +414,9 @@ function CodexSignIn({
           </div>
           {step === "install" && (
             <p className="m-0 text-body-sm text-subtle">
-              Downloads Buzz's own copy of Codex (about 130 MB) from
-              releases.openai.com and keeps it on the latest release. It does
-              not change the <code>codex</code> in your terminal, and uses the
-              same sign-in and settings.
+              Downloads Buzz's own copy of Codex (about 130 MB) and keeps it on
+              the latest release. Your own installation of Codex will be
+              unaffected, and uses the same sign-in and settings.
             </p>
           )}
           {output && (
@@ -896,10 +895,9 @@ export function createTabs(
           ) : null}
           {action?.step === "install" && !installing.running && (
             <p className="m-0 text-body-sm text-subtle">
-              Downloads Buzz's own copy of Codex (about 130 MB) from
-              releases.openai.com and keeps it on the latest release. It does
-              not change the <code>codex</code> in your terminal, and uses the
-              same sign-in and settings.
+              Downloads Buzz's own copy of Codex (about 130 MB) and keeps it on
+              the latest release. Your own installation of Codex will be
+              unaffected, and uses the same sign-in and settings.
             </p>
           )}
           {installing.output && (

@@ -24,8 +24,9 @@ export function options(args, names) {
   return { values, forwarded, rest: args.slice(index) };
 }
 
-// Development launches keep their own app storage, so they never take or block
-// the installed app's (see `src-tauri/src/sign_out/legacy_identifier.rs`).
+// Development launches keep their own app storage, copied once from the
+// installed app's, so they never take or block it (see
+// `src-tauri/src/sign_out/legacy_identifier.rs`).
 const DEV_IDENTIFIER = "xyz.block.buzz.desktop.dev";
 
 export function desktopOverlay(root) {

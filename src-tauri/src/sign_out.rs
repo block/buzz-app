@@ -89,6 +89,8 @@ pub(crate) struct Paths {
     others: Vec<PathBuf>,
     /// Storage the legacy identifier left, each with where it goes.
     moves: Vec<(PathBuf, PathBuf)>,
+    /// Where a first development launch copies the installed app's folders, app data last.
+    seeds: Vec<PathBuf>,
 }
 /// One marker per key store, so a debug launch never acts on a release sign-out.
 fn marker_name(identifier: &str, service: &str) -> String {
@@ -133,6 +135,7 @@ impl Paths {
             backups: crate::nsec_backup_choice::root()?,
             others,
             moves: legacy_identifier::moves(identifier)?,
+            seeds: legacy_identifier::seeds(identifier)?,
         })
     }
     /// Each wiped folder, and the children it keeps (the agent registries) unless agents go too.
@@ -334,7 +337,7 @@ pub(crate) fn boot(
         FAILED.to_owned()
     };
     // Before looking for a marker: a pending sign-out may be the legacy one.
-    legacy_identifier::migrate(&paths.moves, &locks.all, &paths.ownership)?;
+    legacy_identifier::migrate(&paths.moves, &paths.seeds, &locks.all, &paths.ownership)?;
     // Shared first, then look: a sign-out that commits after this sees our locks.
     // Every time they are taken again, look again.
     loop {

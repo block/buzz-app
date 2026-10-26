@@ -2,6 +2,8 @@
 //! `xyz.block.buzz.desktop` renames what Tauri and the WebView keep under the
 //! old identifier, with any sign-out trash and pending sign-out marker, so an
 //! update keeps its data and still finishes a sign-out the old build committed.
+//! Development builds shared that storage until they became `.dev`; the first
+//! development launch copies the installed app's, leaving it in place.
 use super::{agents_stopped, marker_name, trash, wait_for};
 use std::fs::{self, File};
 use std::io::ErrorKind;
@@ -9,18 +11,29 @@ use std::path::{Path, PathBuf};
 
 pub(crate) const LEGACY: &str = "dev.local.buzz.foundation";
 pub(crate) const CURRENT: &str = "xyz.block.buzz.desktop";
+/// What `just desktop` and debug bundles run as (`scripts/desktop-config.mjs`).
+pub(crate) const DEV: &str = "xyz.block.buzz.desktop.dev";
 const BUSY: &str = "Quit every other Buzz window, then open Buzz again to finish moving its storage. Nothing was moved.";
 const AGENT_STOPPING: &str =
     "An agent is still stopping. Open Buzz again in a moment to finish moving its storage.";
 const FAILED: &str = "Buzz couldn't finish moving its storage. Open Buzz again to retry.";
 
-/// Each path the legacy identifier names, with its new name; none unless this
-/// is the release identifier, so development (`.dev`) and test identifiers never take it.
+/// Each path the legacy identifier names, with its new name. The release
+/// identifier takes them all; development (`.dev`) only its own pending sign-out,
+/// copying the rest (`seeds`); test identifiers none.
 pub(super) fn moves(identifier: &str) -> Option<Vec<(PathBuf, PathBuf)>> {
-    if identifier != CURRENT {
+    if identifier != CURRENT && identifier != DEV {
         return Some(Vec::new());
     }
     let data = dirs::data_dir()?;
+    let service = buzz_credential_store::HUMAN_SERVICE;
+    let marker = (
+        data.join(marker_name(LEGACY, service)),
+        data.join(marker_name(identifier, service)),
+    );
+    if identifier == DEV {
+        return Some(vec![marker]);
+    }
     // Where Tauri resolves app data, config, local data (the Windows and Linux
     // WebView) and cache, and macOS keeps WebKit storage.
     let mut bases = vec![
@@ -40,12 +53,27 @@ pub(super) fn moves(identifier: &str) -> Option<Vec<(PathBuf, PathBuf)>> {
             [(trash(&old), trash(&new)), (old, new)]
         })
         .collect();
-    let service = buzz_credential_store::HUMAN_SERVICE;
-    moves.push((
-        data.join(marker_name(LEGACY, service)),
-        data.join(marker_name(CURRENT, service)),
-    ));
+    moves.push(marker);
     Some(moves)
+}
+
+/// Where a first development launch copies the installed app's folders: config,
+/// local data (the Windows and Linux WebView), macOS WebKit storage, and app data
+/// last, since its copy marks the seed finished. Caches are left. None unless
+/// this is the development identifier.
+pub(super) fn seeds(identifier: &str) -> Option<Vec<PathBuf>> {
+    if identifier != DEV {
+        return Some(Vec::new());
+    }
+    let data = dirs::data_dir()?;
+    let mut bases = vec![dirs::config_dir()?, dirs::data_local_dir()?];
+    #[cfg(target_os = "macos")]
+    bases.push(dirs::home_dir()?.join("Library/WebKit"));
+    bases.retain(|base| *base != data);
+    bases.sort();
+    bases.dedup();
+    bases.push(data);
+    Some(bases)
 }
 
 /// Rename each legacy path that is still due, before this launch takes its
@@ -54,6 +82,7 @@ pub(super) fn moves(identifier: &str) -> Option<Vec<(PathBuf, PathBuf)>> {
 #[allow(clippy::incompatible_msrv)] // File locking, like the owning sign_out module.
 pub(super) fn migrate(
     moves: &[(PathBuf, PathBuf)],
+    seeds: &[PathBuf],
     all: &File,
     ownership: &Path,
 ) -> Result<(), String> {
@@ -62,7 +91,8 @@ pub(super) fn migrate(
     // leaves nothing due, but a conflict may be a rename seen half done.
     let mut done = false;
     let ready = wait_for(|| {
-        done = matches!(due(moves), Ok(due) if due.is_empty());
+        done =
+            matches!(due(moves), Ok(due) if due.is_empty()) && matches!(seeding(seeds), Ok(None));
         if done {
             Ok(())
         } else {
@@ -77,7 +107,7 @@ pub(super) fn migrate(
     }
     let moved = (|| {
         // Look again under the lock, so a conflict is reported before any wait.
-        if due(moves)?.is_empty() {
+        if due(moves)?.is_empty() && seeding(seeds)?.is_none() {
             return Ok(());
         }
         // An agent still stopping may write its folders; look once more after.
@@ -86,6 +116,9 @@ pub(super) fn migrate(
         }
         for (old, new) in due(moves)? {
             fs::rename(old, new).map_err(failed)?;
+        }
+        if let Some(source) = seeding(seeds)? {
+            seed(seeds, source).map_err(failed)?;
         }
         Ok(())
     })();
@@ -119,6 +152,61 @@ fn due(moves: &[(PathBuf, PathBuf)]) -> Result<Vec<&(PathBuf, PathBuf)>, String>
         ));
     }
     Ok(due)
+}
+
+/// The installed app's identifier to copy from while this development launch
+/// has no app data of its own: its 1.0 folders once it has moved them.
+fn seeding(bases: &[PathBuf]) -> Result<Option<&'static str>, String> {
+    let Some(data) = bases.last() else {
+        return Ok(None);
+    };
+    if present(&data.join(DEV)).map_err(failed)? {
+        return Ok(None);
+    }
+    for source in [CURRENT, LEGACY] {
+        if present(&data.join(source)).map_err(failed)? {
+            return Ok(Some(source));
+        }
+    }
+    Ok(None)
+}
+
+/// Copy each folder this launch lacks through a sibling renamed into place, so
+/// an interrupted seed leaves only what the next launch discards and redoes.
+fn seed(bases: &[PathBuf], source: &str) -> std::io::Result<()> {
+    for base in bases {
+        let (from, to) = (base.join(source), base.join(DEV));
+        if !present(&from)? || present(&to)? {
+            continue;
+        }
+        let partial = base.join(format!("{DEV}.seeding"));
+        match fs::remove_dir_all(&partial) {
+            Err(error) if error.kind() != ErrorKind::NotFound => return Err(error),
+            _ => {}
+        }
+        copy(&from, &partial)?;
+        fs::rename(&partial, &to)?;
+    }
+    Ok(())
+}
+
+/// Copies a tree, recreating links rather than following them (on Unix; other
+/// platforms skip them, as they skip every other special file).
+fn copy(from: &Path, to: &Path) -> std::io::Result<()> {
+    let kind = fs::symlink_metadata(from)?.file_type();
+    if kind.is_dir() {
+        fs::create_dir(to)?;
+        for entry in fs::read_dir(from)? {
+            let entry = entry?;
+            copy(&entry.path(), &to.join(entry.file_name()))?;
+        }
+    } else if kind.is_file() {
+        fs::copy(from, to)?;
+    } else if kind.is_symlink() {
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(fs::read_link(from)?, to)?;
+    }
+    Ok(())
 }
 
 fn failed(error: std::io::Error) -> String {

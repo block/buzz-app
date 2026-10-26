@@ -13,6 +13,7 @@ fn paths_for(root: &Path, service: &str) -> Paths {
         backups: root.join("nsec-backups").join(service),
         others: vec![root.join("webkit")],
         moves: Vec::new(),
+        seeds: Vec::new(),
     }
 }
 fn fixture() -> (tempfile::TempDir, Paths) {
@@ -1640,4 +1641,88 @@ fn only_the_current_identifier_takes_every_folder_the_legacy_one_used() {
             assert!(moves.contains(&(old, path)));
         }
     }
+}
+
+/// Development seed bases under `root`, app data last, with the installed
+/// app's folders under `source`.
+fn installed(root: &Path, source: &str) -> Vec<PathBuf> {
+    let seeds = vec![root.join("seed-webkit"), root.join("seed-data")];
+    for (base, file) in seeds.iter().zip(["localstorage", "archive.sqlite3"]) {
+        fs::create_dir_all(base.join(source).join("nested")).unwrap();
+        fs::write(base.join(source).join("nested").join(file), source).unwrap();
+    }
+    seeds
+}
+
+#[test]
+fn a_first_development_launch_copies_the_installed_storage_once() {
+    use legacy_identifier::{CURRENT, DEV, LEGACY};
+    let (dir, paths) = fixture();
+    let seeds = installed(dir.path(), CURRENT);
+    installed(dir.path(), LEGACY);
+    let paths = Paths {
+        seeds: seeds.clone(),
+        ..paths
+    };
+    let instance = boot(&paths, no_agents, || panic!("no sign-out")).unwrap();
+    drop(instance);
+    for (base, file) in seeds.iter().zip(["localstorage", "archive.sqlite3"]) {
+        // The 1.0 folders win over the legacy ones, and stay in place.
+        for name in [CURRENT, DEV] {
+            assert_eq!(
+                fs::read(base.join(name).join("nested").join(file)).unwrap(),
+                CURRENT.as_bytes()
+            );
+        }
+        assert!(!base.join(format!("{DEV}.seeding")).exists());
+    }
+    let archive = seeds[1].join(DEV).join("nested/archive.sqlite3");
+    fs::write(&archive, "updated").unwrap();
+    fs::remove_dir_all(seeds[0].join(DEV)).unwrap();
+    let _again = boot(&paths, no_agents, || panic!("no sign-out")).unwrap();
+    assert_eq!(fs::read(&archive).unwrap(), b"updated");
+    assert!(!seeds[0].join(DEV).exists());
+}
+
+#[test]
+fn an_interrupted_development_seed_finishes_at_the_next_launch() {
+    use legacy_identifier::{DEV, LEGACY};
+    let (dir, paths) = fixture();
+    let seeds = installed(dir.path(), LEGACY);
+    // The last launch copied the first folder, then stopped part-way through app data.
+    fs::create_dir_all(seeds[0].join(DEV)).unwrap();
+    fs::create_dir_all(seeds[1].join(format!("{DEV}.seeding"))).unwrap();
+    fs::write(seeds[1].join(format!("{DEV}.seeding/stale")), "").unwrap();
+    let paths = Paths {
+        seeds: seeds.clone(),
+        ..paths
+    };
+    let _instance = boot(&paths, no_agents, || panic!("no sign-out")).unwrap();
+    assert_eq!(fs::read_dir(seeds[0].join(DEV)).unwrap().count(), 0);
+    assert_eq!(
+        fs::read(seeds[1].join(DEV).join("nested/archive.sqlite3")).unwrap(),
+        LEGACY.as_bytes()
+    );
+    assert!(!seeds[1].join(DEV).join("stale").exists());
+    assert!(!seeds[1].join(format!("{DEV}.seeding")).exists());
+}
+
+#[test]
+fn development_launches_copy_the_installed_storage_and_take_only_their_sign_out() {
+    use legacy_identifier::{moves, seeds, CURRENT, DEV, LEGACY};
+    assert!(include_str!("../../../scripts/desktop-config.mjs").contains(&format!("\"{DEV}\"")));
+    let (legacy, dev) = (
+        Paths::resolve(LEGACY).unwrap(),
+        Paths::resolve(DEV).unwrap(),
+    );
+    assert_eq!(moves(DEV), Some(vec![(legacy.marker, dev.marker)]));
+    assert_eq!(dev.seeds.last(), dirs::data_dir().as_ref());
+    // Each folder copied is one the release build moves; caches aren't copied.
+    let release = moves(CURRENT).unwrap();
+    for base in &dev.seeds {
+        assert!(release.contains(&(base.join(LEGACY), base.join(CURRENT))));
+    }
+    assert!(!dev.seeds.contains(&dirs::cache_dir().unwrap()));
+    assert_eq!(seeds(CURRENT), Some(Vec::new()));
+    assert_eq!(seeds(LEGACY), Some(Vec::new()));
 }

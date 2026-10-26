@@ -19,6 +19,7 @@ import {
 } from "../../buzz-mcp/session-tools";
 import { SessionControls } from "../../features/agent-harness/session-control";
 import {
+  coreMemorySection,
   MemoryReads,
   READ_TIMEOUT_MS,
 } from "../../features/agent-harness/core-memory";
@@ -962,7 +963,9 @@ export class PiRuntime {
   }
 
   /** What a turn runs with: the agent's model and thinking level or the
-   * owner's pick, its prompt with fresh `core` memory, and its workspace. */
+   * owner's pick, its prompt, its `core` memory as read now (none when it
+   * could not be read), and its workspace. The memory is apart, as Pi keeps
+   * what a conversation was shown of it until a compaction. */
   private async turnOf(
     entry: Entry,
     pubkey: string,
@@ -985,8 +988,15 @@ export class PiRuntime {
         ...(entry.name ? { agent: { name: entry.name, pubkey } } : {}),
         instructions,
         team: entry.team,
-        ...(memory === undefined ? {} : { memory }),
       }),
+      ...(memory === undefined
+        ? {}
+        : {
+            core: {
+              text: coreMemorySection(memory),
+              placeholder: coreMemorySection(null),
+            },
+          }),
     };
   }
 

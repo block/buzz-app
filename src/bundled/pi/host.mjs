@@ -56,6 +56,8 @@ const TEST_TIMEOUT_MS = 30_000;
 const PAGE = 200;
 /** Buzz tools are `buzz_<name>`, apart from Pi's own `read` and `edit`. */
 const PREFIX = "buzz_";
+/** The prompt section of the agent's `core` memory. */
+const CORE = "core-memory";
 const TOOL_NAMES = `The Buzz tools are named \`${PREFIX}<name>\`: where your instructions name a Buzz tool such as \`send\` or \`read\`, call \`${PREFIX}send\` or \`${PREFIX}read\`. The unprefixed \`read\`, \`write\`, \`edit\` and \`bash\` work on files in the workspace.`;
 
 /** Pi's folder, shared with the `pi` command: its keys and settings. */
@@ -309,6 +311,9 @@ export function serve({
         registry,
         release,
         tools: "",
+        /** The agent's `core` memory as last read, and the note that it has
+         * none: its section and the placeholder's. */
+        core: undefined,
         /** Each conversation's tool context, for runs resumed after a restart. */
         contexts: new Map(),
         /** Each watched conversation, and whether a run is in it. */
@@ -375,7 +380,24 @@ export function serve({
     const text = hint ? `${TOOL_NAMES} ${hint}` : TOOL_NAMES;
     return defineExtension({
       name: "buzz",
-      sections: [section("buzz-tools", () => text)],
+      sections: [
+        section("buzz-tools", () => text),
+        // The agent's `core` memory as its conversation was first shown it,
+        // so a memory edit sends nothing and its prompt stays as providers
+        // cached it, as a Claude session keeps the memory it started with. A
+        // compaction shows the memory as it is then, as does a conversation
+        // shown none yet or only the note that it has none. Always present,
+        // even empty, so it keeps its place before the instructions.
+        section(
+          CORE,
+          ({ shown }) => {
+            const kept = shown[CORE];
+            if (kept && kept !== opened.core?.placeholder) return kept;
+            return opened.core ? opened.core.text : (kept ?? "");
+          },
+          { tag: false },
+        ),
+      ],
       tools: tools.map((tool) =>
         defineTool({
           name: `${PREFIX}${tool.name}`,
@@ -510,8 +532,9 @@ export function serve({
 
   /** Starts a request in a conversation configured for this turn. One that
    * steers a run working in it, `busy`, changes only what its owner picked,
-   * as in Claude. */
-  async function submit(conversation, turn, busy) {
+   * as in Claude. The agent's `core` memory read for it is the latest. */
+  async function submit(opened, conversation, turn, busy) {
+    if (turn.core) opened.core = turn.core;
     const steers = busy && turn.steer;
     const chosen = await choose(turn);
     const change = steers
@@ -705,7 +728,7 @@ export function serve({
         }
         opened.contexts.set(conversation.id, tools);
         const { busy } = await watch(opened, conversation.id);
-        const submitted = await submit(conversation, turn, busy);
+        const submitted = await submit(opened, conversation, turn, busy);
         // Recorded once Pi has the turn: one that could not start leaves the
         // messages it would have been shown for the next.
         await harness.commit(async (tx) => {
@@ -734,7 +757,7 @@ export function serve({
         { ownership: { kind: "ownerless" } },
         context,
       );
-      return submit(conversation, turn, false);
+      return submit(opened, conversation, turn, false);
     },
     /** The requests of runs Pi has not finished, with where each one's tools
      * default to when the agent has a place for its conversation; a one-off

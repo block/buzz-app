@@ -204,6 +204,7 @@ function setup(
     session,
     solo,
     connection,
+    core,
   };
 }
 
@@ -259,6 +260,24 @@ it("hands a conversation its own community repositories without changing its wor
   expect(repositories).toHaveBeenCalledWith(`https://agent.example:${alice}`);
   expect(String(delivered?.params.instructions)).toContain("/code/own");
   expect(delivered?.params.cwd).toBe("~/.buzz");
+});
+
+it("hands Pi the core memory apart from the instructions, and none it could not read", async () => {
+  const turn = async (memory: string | undefined) => {
+    const { host, deliver, core } = setup();
+    core.mockResolvedValue(memory);
+    await deliver({ type: "mention", event: reply("2", "@Pi look") }).run;
+    return host.requests("deliver")[0]?.params ?? {};
+  };
+  const read = await turn("Remember the build");
+  // Pi keeps a conversation's memory as it was shown, and refreshes only the
+  // note that there is none.
+  expect(read.core).toEqual({
+    text: "<core-memory>\nRemember the build\n</core-memory>",
+    placeholder: expect.stringContaining("No core memory found"),
+  });
+  expect(String(read.instructions)).not.toContain("core-memory");
+  expect(await turn(undefined)).not.toHaveProperty("core");
 });
 
 it("shows a conversation only the messages it was not shown, nor its own replies", async () => {

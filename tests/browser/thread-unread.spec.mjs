@@ -743,6 +743,8 @@ for (const { paneOpen, width } of [
     await expect(
       panel.getByText("Unread reply 1", { exact: true }),
     ).toBeInViewport();
+    // Setup must stay unread even when opening and switching channels is slow.
+    await page.clock.runFor(1000);
     if (!paneOpen)
       await page
         .getByRole("button", { name: "Toggle tab pane", exact: true })

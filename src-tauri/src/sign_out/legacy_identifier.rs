@@ -76,11 +76,14 @@ pub(super) fn migrate(
         return Ok(());
     }
     let moved = (|| {
-        // An agent still stopping may write its folders.
+        // Look again under the lock, so a conflict is reported before any wait.
+        if due(moves)?.is_empty() {
+            return Ok(());
+        }
+        // An agent still stopping may write its folders; look once more after.
         if !wait_for(|| agents_stopped(ownership)) {
             return Err(AGENT_STOPPING.to_owned());
         }
-        // Look again under the lock.
         for (old, new) in due(moves)? {
             fs::rename(old, new).map_err(failed)?;
         }
@@ -92,21 +95,28 @@ pub(super) fn migrate(
 
 /// The pairs still to move. Both paths present, after a rollback to an older
 /// build for instance, refuses every move and any pending sign-out: neither copy
-/// is safely the one to keep, and an erase would miss the legacy one.
+/// is safely the one to keep, and an erase would miss the legacy one. The refusal
+/// names every such pair, so one round of moving them aside is enough.
 fn due(moves: &[(PathBuf, PathBuf)]) -> Result<Vec<&(PathBuf, PathBuf)>, String> {
-    let mut due = Vec::new();
+    let (mut due, mut conflicts) = (Vec::new(), String::new());
     for pair in moves {
-        match (present(&pair.0).map_err(failed)?, present(&pair.1).map_err(failed)?) {
-            (true, true) => {
-                return Err(format!(
-                    "Buzz found storage from before 1.0 at {} beside this version's at {}. Move one of them elsewhere, then open Buzz again. Nothing was moved.",
-                    pair.0.display(),
-                    pair.1.display()
-                ))
-            }
+        match (
+            present(&pair.0).map_err(failed)?,
+            present(&pair.1).map_err(failed)?,
+        ) {
+            (true, true) => conflicts.push_str(&format!(
+                "\n{} beside {}",
+                pair.0.display(),
+                pair.1.display()
+            )),
             (true, false) => due.push(pair),
             _ => {}
         }
+    }
+    if !conflicts.is_empty() {
+        return Err(format!(
+            "Buzz found storage from before 1.0 beside this version's:{conflicts}\nMove one of each pair elsewhere, then open Buzz again. Nothing was moved."
+        ));
     }
     Ok(due)
 }

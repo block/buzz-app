@@ -3,9 +3,9 @@ import { avatarSource } from "../src/shared/avatar-source.ts";
 // input remains supported for compatibility tests/import readers; never discover
 // Classic stores or call loaders that migrate keys or write configuration.
 import { constants } from "node:fs";
-import { open } from "node:fs/promises";
+import { lstat, open } from "node:fs/promises";
 import { homedir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 
 const MAX_BYTES = 8 * 1024 * 1024;
 const MAX_ROWS = 2000;
@@ -138,11 +138,20 @@ export function installedBuzzDataDir(
   }
   return undefined;
 }
+const exists = (path) =>
+  lstat(path).then(
+    () => true,
+    () => false,
+  );
 export async function readAgentLibrary(path) {
   const current = path === undefined;
-  path ??= (() => {
+  path ??= await (async () => {
     const dir = installedBuzzDataDir();
-    return dir ? join(dir, "agents/identities.json") : undefined;
+    if (!dir) return undefined;
+    // Until the updated desktop moves its pre-1.0 folder, read that one.
+    const legacy = join(dirname(dir), "dev.local.buzz.foundation");
+    const base = !(await exists(dir)) && (await exists(legacy)) ? legacy : dir;
+    return join(base, "agents/identities.json");
   })();
   if (!path) throw failure();
   let file;

@@ -1469,15 +1469,60 @@ fn legacy_storage_beside_current_storage_moves_nothing_and_signs_nothing_out() {
     // An older build ran again after the move: its storage and a current
     // plain sign-out sit beside a legacy erase.
     mark(&paths, false, false);
-    let before = data(dir.path());
-    let refused = boot(&paths, no_agents, || panic!("the key must stay"));
-    assert!(refused.err().unwrap().contains("Nothing was moved"));
-    assert_eq!(data(dir.path()), before);
-    fs::remove_file(&paths.moves[4].0).unwrap();
     fs::create_dir(&paths.others[0]).unwrap();
+    // A stopping agent doesn't hide the conflict behind a wait.
+    fs::create_dir_all(&paths.ownership).unwrap();
+    let held = File::create(paths.ownership.join("agent-community.lock")).unwrap();
+    #[allow(clippy::incompatible_msrv)]
+    held.lock().unwrap();
+    let before = data(dir.path());
+    let refused = boot(&paths, no_agents, || panic!("the key must stay"))
+        .err()
+        .unwrap();
+    // Every conflicting pair is named at once.
+    for (old, new) in [&paths.moves[3], &paths.moves[4]] {
+        assert!(refused.contains(&format!("{} beside {}", old.display(), new.display())));
+    }
+    assert!(refused.contains("Nothing was moved"));
+    assert_eq!(data(dir.path()), before);
+    drop(held);
+    fs::remove_file(&paths.moves[4].0).unwrap();
     let before = data(dir.path());
     assert!(boot(&paths, no_agents, || panic!("the key must stay")).is_err());
     assert_eq!(data(dir.path()), before);
+}
+
+#[test]
+fn a_move_interrupted_part_way_finishes_with_the_pending_legacy_sign_out() {
+    let len = legacy(fixture().1).moves.len();
+    // Renames run in order with the marker last, so any stop leaves a prefix
+    // moved and the legacy marker pending.
+    for moved in 1..len {
+        let (dir, paths) = fixture();
+        mark(&paths, true, false);
+        let paths = legacy(paths);
+        for (old, new) in paths.moves[..moved].iter().filter(|(old, _)| old.exists()) {
+            fs::rename(old, new).unwrap();
+        }
+        let removed = Cell::new(false);
+        let _instance = boot(&paths, no_agents, || {
+            removed.set(true);
+            Ok(())
+        })
+        .unwrap();
+        assert!(removed.get(), "{moved} moved");
+        assert_eq!(
+            data(dir.path()),
+            [
+                "app/",
+                "app/agent-controller/",
+                "app/agent-controller/agents.json",
+                "app/agents/",
+                "app/agents/identities.json",
+            ],
+            "{moved} moved"
+        );
+    }
 }
 
 #[test]

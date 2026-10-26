@@ -365,6 +365,19 @@ it.skipIf(!["darwin", "linux"].includes(process.platform))(
         identities: [],
       });
       expect(await readFile(legacy, "utf8")).toBe(JSON.stringify(rows));
+      // Until the updated desktop moves it, the pre-1.0 folder is read.
+      const foundation = join(appData, "dev.local.buzz.foundation/agents");
+      await mkdir(foundation, { recursive: true });
+      await writeFile(
+        join(foundation, "identities.json"),
+        JSON.stringify([{ pubkey: key, name: "Nova" }]),
+      );
+      expect((await readAgentLibrary()).identities).toEqual([]);
+      await rm(join(appData, "xyz.block.buzz.desktop"), { recursive: true });
+      expect(await readAgentLibrary()).toEqual({
+        definitions: [],
+        identities: [{ pubkey: key, name: "Nova" }],
+      });
     } finally {
       vi.unstubAllEnvs();
       await rm(root, { recursive: true, force: true });

@@ -109,7 +109,7 @@ function setup(
     }),
     roster(relay, channel, [viewer.pubkey, other.pubkey]),
   ];
-  const query = async (filters: readonly ReadFilter[]) => {
+  const query = vi.fn(async (filters: readonly ReadFilter[]) => {
     if (filters.some((filter) => filter.kinds?.includes(9)))
       return [
         ...events.filter((event) => event.kind === 9),
@@ -130,7 +130,7 @@ function setup(
             )),
       ),
     );
-  };
+  });
   let rosterTime = 1_700_000_000;
   const openDirectMessage = vi.fn(async (pubkeys: readonly string[]) => {
     events[events.length - 1] = roster(
@@ -208,6 +208,7 @@ function setup(
   };
   return {
     storage,
+    query,
     events,
     openDirectMessage,
     publish,
@@ -788,3 +789,34 @@ it.each([40003, 5])(
     ).not.toBeInTheDocument();
   },
 );
+
+it("retries failed initial DM history without losing the new-message draft", async () => {
+  const t = setup();
+  t.events.unshift(message(other, channel, "Recovered history", 1_700_000_001));
+  const read = t.query.getMockImplementation();
+  assert.exists(read);
+  let broken = true;
+  t.query.mockImplementation(async (filters) => {
+    const result = await read(filters);
+    return broken && filters.some((filter) => filter.kinds?.includes(9))
+      ? result.filter((event) => event.kind === 9)
+      : result;
+  });
+  const owner = t.create();
+  t.mount(owner);
+  await t.user.click(await screen.findByRole("option", { name: "Avery" }));
+  await waitFor(() =>
+    expect(owner.session.channels.window(channel).status).toBe("error"),
+  );
+  await t.user.type(screen.getByRole("textbox"), "Keep this draft");
+  broken = false;
+  await t.user.click(screen.getByRole("button", { name: /Retry.*messages/ }));
+  await waitFor(() =>
+    expect(owner.session.channels.window(channel).status).toBe("ready"),
+  );
+  expect(
+    owner.session.channels.window(channel).rows.map((row) => row.content),
+  ).toContain("Recovered history");
+  expect(screen.getByRole("textbox")).toHaveTextContent("Keep this draft");
+  expect(t.publish).not.toHaveBeenCalled();
+});

@@ -506,6 +506,27 @@ function ExistingDiscussion({
   onOpen(messageId: string, threadRootId: string, intent?: "reply"): void;
 }) {
   const window = useChannelWindow(session.channels, channel.id);
+  if (!window.rows.length && window.status !== "ready")
+    return (
+      <div
+        className={styles.feedback}
+        role={window.status === "error" ? "alert" : "status"}
+      >
+        {window.status === "error" ? (
+          <>
+            <p>{window.error}</p>
+            <Button
+              type="button"
+              onClick={() => session.channels.ensure(channel.id)}
+            >
+              Retry messages
+            </Button>
+          </>
+        ) : (
+          "Loading messages…"
+        )}
+      </div>
+    );
   return (
     <ConversationChannel
       session={session}

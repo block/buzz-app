@@ -258,6 +258,35 @@ it("says unsharing failed when a newer shared head wins over the accepted one", 
   expect(screen.queryByRole("status")).not.toBeInTheDocument();
 });
 
+it("keeps the confirmed state when the relay cannot say which head won", async () => {
+  const user = userEvent.setup();
+  const { session, outbox, accept, read } = community();
+  render(
+    <AgentShareDialog
+      agent={agent}
+      type={echo}
+      session={session}
+      onClose={() => {}}
+    />,
+  );
+  const toggle = screen.getByRole("switch", { name: "Share to catalog" });
+  await vi.waitFor(() => expect(toggle).not.toHaveAttribute("aria-disabled"));
+  await user.click(toggle);
+  await vi.waitFor(() => expect(outbox.send).toHaveBeenCalledTimes(1));
+  accept();
+  await vi.waitFor(() => expect(toggle).toBeChecked());
+
+  await user.click(toggle);
+  await vi.waitFor(() => expect(outbox.send).toHaveBeenCalledTimes(2));
+  read.mockRejectedValueOnce(new Error("offline"));
+  accept();
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Failed to update catalog sharing. Try again.",
+  );
+  expect(toggle).toBeChecked();
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+});
+
 it("reads the catalog again after the first read fails", async () => {
   const user = userEvent.setup();
   const { session, read } = community();

@@ -124,32 +124,25 @@ export function AgentShareDialog({
     setPending(true);
     setNotice("");
     setError("");
-    let published: EventData | undefined;
     let failure = "Try again.";
     try {
       // Unsharing keeps what was shared, so it never depends on the agent
       // still being shareable.
       const content =
         !shared && head ? head.content : catalogContent(shareable(agent, type));
-      published = await publishShare(
-        session,
-        agent.pubkey,
-        content,
-        shared,
-        head,
-        signal,
-      );
+      await publishShare(session, agent.pubkey, content, shared, head, signal);
     } catch (reason) {
       failure = message(reason);
     }
     // An accepted publish can still lose to a newer head, and an unanswered
-    // one may still have landed, so the relay says which head won.
+    // one may still have landed, so the relay says which head won. Until it
+    // answers, the last head it confirmed stands.
     const next = await catalogHead(
       session,
       agent.owner,
       agent.pubkey,
       signal,
-    ).catch(() => published ?? head);
+    ).catch(() => head);
     if (signal.aborted) return;
     setHead(next);
     if (isShared(next) === shared)

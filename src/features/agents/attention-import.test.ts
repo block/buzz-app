@@ -16,10 +16,14 @@ const registration = {
   cwd: "/tmp",
 };
 const relay = () => ({
+  subscribe: () => () => {},
   snapshot: () => ({
     status: "ready",
     session: {
-      channels: { list: () => ({ channels: [{ id: registration.channel }] }) },
+      channels: {
+        list: () => ({ channels: [{ id: registration.channel }] }),
+        subscribeList: () => () => {},
+      },
     },
   }),
 });
@@ -342,4 +346,71 @@ it("reads retry connection status using the membership key", async () => {
   });
   expect(lookup).toHaveBeenCalledWith("agent@other.example");
   stop();
+});
+
+it("retries discovery after a session replacement and cleans up its listeners", async () => {
+  const warnings = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const relayListeners = new Set<() => void>();
+  const oldListeners = new Set<() => void>(),
+    newListeners = new Set<() => void>();
+  let discovered = false;
+  const session = (listeners: Set<() => void>) => ({
+    channels: {
+      list: () => ({
+        channels: discovered ? [{ id: registration.channel }] : [],
+      }),
+      subscribeList: (listener: () => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+    },
+  });
+  let current = session(oldListeners);
+  const connection = {
+    snapshot: () => ({ status: "ready", session: current }),
+    subscribe: (listener: () => void) => {
+      relayListeners.add(listener);
+      return () => relayListeners.delete(listener);
+    },
+  };
+  const save = vi.fn(async () => {});
+  const agents = {
+    snapshot: () => ({
+      running: [
+        { key: "agent", pubkey: "agent", place: "here", attention: {} },
+      ],
+    }),
+    relay: () => connection,
+    subscribe: () => () => {},
+    save,
+  } as unknown as Agents;
+  const spawn = vi.fn(async (_id: string, options?: HostProcessOptions) => {
+    if (!options?.args?.length)
+      options?.onStdout?.(JSON.stringify([registration]));
+    return {
+      write: async () => {},
+      end: async () => {},
+      kill: async () => {},
+      exited: Promise.resolve(0),
+    };
+  });
+  const stop = watchAttentionImport(agents, { spawn });
+  try {
+    await vi.waitFor(() => expect(warnings).toHaveBeenCalled());
+    expect(save).not.toHaveBeenCalled();
+    expect(oldListeners.size).toBe(1);
+    current = session(newListeners);
+    for (const listener of [...relayListeners]) listener();
+    expect(oldListeners.size).toBe(0);
+    expect(newListeners.size).toBe(1);
+    discovered = true;
+    for (const listener of [...newListeners]) listener();
+    await vi.waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(spawn).toHaveBeenCalledTimes(3));
+  } finally {
+    stop();
+    warnings.mockRestore();
+  }
+  expect(newListeners.size).toBe(0);
+  expect(relayListeners.size).toBe(0);
 });

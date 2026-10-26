@@ -1,6 +1,8 @@
 import type { Agents } from "./service";
 import type { Host } from "../host/service";
 import type { AttentionValue } from "./attention";
+import type { RelayData } from "../relay/service";
+import type { RelaySession } from "../relay/session";
 
 type Registration = {
   file: string;
@@ -128,11 +130,45 @@ export function watchAttentionImport(
   host: Pick<Host, "spawn">,
 ) {
   if (!host.spawn) return () => {};
+  const connections = new Map<
+    RelayData,
+    {
+      session: RelaySession;
+      stopRelay(): void;
+      stopChannels(): void;
+    }
+  >();
   let imported = "";
   let importing = false;
   let stopped = false;
   const migrate = () => {
+    if (stopped) return;
     const snapshot = agents.snapshot();
+    const wanted = new Set<RelayData>();
+    for (const agent of snapshot.running) {
+      const relay = agents.relay(agent.key);
+      if (!relay) continue;
+      wanted.add(relay);
+      const session = relay.snapshot().session;
+      const current = connections.get(relay);
+      if (!current)
+        connections.set(relay, {
+          session,
+          stopRelay: relay.subscribe(migrate),
+          stopChannels: session.channels.subscribeList(migrate),
+        });
+      else if (current.session !== session) {
+        current.stopChannels();
+        current.session = session;
+        current.stopChannels = session.channels.subscribeList(migrate);
+      }
+    }
+    for (const [relay, current] of connections)
+      if (!wanted.has(relay)) {
+        current.stopRelay();
+        current.stopChannels();
+        connections.delete(relay);
+      }
     const recipients = JSON.stringify(
       snapshot.running.map((agent) => {
         const relay = agents.relay(agent.key)?.snapshot();
@@ -145,12 +181,7 @@ export function watchAttentionImport(
         ];
       }),
     );
-    if (
-      stopped ||
-      importing ||
-      recipients === imported ||
-      !snapshot.running.length
-    )
+    if (importing || recipients === imported || !snapshot.running.length)
       return;
     imported = recipients;
     importing = true;
@@ -166,5 +197,10 @@ export function watchAttentionImport(
   return () => {
     stopped = true;
     unsubscribe();
+    for (const current of connections.values()) {
+      current.stopRelay();
+      current.stopChannels();
+    }
+    connections.clear();
   };
 }

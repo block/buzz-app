@@ -14,4 +14,4 @@ Users may edit the JSON directly or ask an agent to configure the organizations/
 
 The script's explicit terminal flags can narrow or override author filtering. `--include-non-employees` opts out of author filtering; the Attention GitHub source does not expose that flag. Self comments remain suppressed unless requested. CI transition policy and base conflict detection are independent of comment filtering.
 
-Run the moved monitor fixtures through `bin/pnpm exec vitest run scripts/attention-tests/monitor.test.ts`. The wrapper runs each `test-*.sh` and `test-*.py` file beside it, outside packaged resources.
+Run the monitor fixtures through `bin/pnpm exec vitest run scripts/attention-tests/monitor.test.ts`. The wrapper runs each `test-*.sh` and `test-*.py` file beside it, outside packaged resources.

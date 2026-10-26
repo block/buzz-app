@@ -37,10 +37,10 @@ AUTHOR_ALLOWLIST_ENABLED=0
 INCLUDE_SELF_COMMENTS=0
 QUIET_INITIAL=0
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-TRUSTED_ORGS="" TRUSTED_BOTS="" IGNORE_AUTHORS=""
+TRUSTED_ORGS="" TRUSTED_AUTHORS="" IGNORE_AUTHORS=""
 POLICY=$(python3 "$SCRIPT_DIR/../buzz-attention-policy" read)
 TRUSTED_ORGS=$(jq -r '.policy.trustedOrganizations | join(" ")' <<< "$POLICY")
-TRUSTED_BOTS=$(jq -r '.policy.trustedAuthors[]' <<< "$POLICY")
+TRUSTED_AUTHORS=$(jq -r '.policy.trustedAuthors[]' <<< "$POLICY")
 IGNORE_AUTHORS=$(jq -r '.policy.ignoredAuthors[] | sub("\\[bot\\]$"; "")' <<< "$POLICY")
 POLICY_WARNING=$(jq -r '.warning // empty' <<< "$POLICY")
 [[ -z "$POLICY_WARNING" ]] || echo "WARNING: $POLICY_WARNING" >&2
@@ -80,7 +80,7 @@ OWNER="${REPO%%/*}"
 REPO_NAME="${REPO#*/}"
 # Explicit policy data governs comment/review delivery; state and CI remain active.
 AUTHOR_ALLOWLIST_ENABLED=1
-ALLOWED_AUTHORS="$TRUSTED_BOTS"
+ALLOWED_AUTHORS="$TRUSTED_AUTHORS"
 [[ -z "$EMPLOYEE_ORG" ]] || TRUSTED_ORGS="$EMPLOYEE_ORG"
 if [[ -n "$AUTHOR_ALLOWLIST_FILE" ]]; then
   ALLOWED_AUTHORS=$(awk '{ sub(/#.*/, ""); gsub(/^[[:space:]]+|[[:space:]]+$/, ""); if (length) print }' "$AUTHOR_ALLOWLIST_FILE")

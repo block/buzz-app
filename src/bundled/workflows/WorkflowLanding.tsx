@@ -51,7 +51,6 @@ import {
   MenuIcon,
   MenuCheckboxItem,
   MenuGroup,
-  MenuGroupLabel,
 } from "../../shared/design-system/ui/Menu";
 import { Header } from "../../shared/design-system/ui/Header";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
@@ -1101,7 +1100,6 @@ export function WorkflowLanding({
               All channels
             </MenuCheckboxItem>
             <MenuGroup>
-              <MenuGroupLabel>Channels with workflows</MenuGroupLabel>
               {populated.map((channel) => (
                 <MenuCheckboxItem
                   key={channel.id}

@@ -350,3 +350,9 @@ details[open] > .attention-disclosure .attention-show-less {
 .attention-card[data-paused] .attention-head {
   opacity: 0.65;
 }
+
+.attention-policy {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+}

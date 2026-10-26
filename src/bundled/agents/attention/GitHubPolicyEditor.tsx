@@ -1,24 +1,22 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import {
+  githubPolicy,
+  type GithubPolicy,
+  type GithubPolicyStatus,
+} from "../../../features/agents/github-policy";
+import type { Host } from "../../../features/host/service";
 import { Button } from "../../../shared/design-system/ui/Button";
 import { Field } from "../../../shared/design-system/ui/Field";
 import { InlineHeader } from "../../../shared/design-system/ui/Header";
 import { SettingsGroup } from "../../../shared/design-system/ui/SettingsGroup";
 import { Textarea } from "../../../shared/design-system/ui/Textarea";
 
-// Shared file shape agreed with the GitHub source owner. Persistence stays with that owner.
-export type GitHubAuthorPolicy = {
-  version: 1;
-  trustedOrganizations: string[];
-  trustedAuthors: string[];
-  ignoredAuthors: string[];
-};
-
 export function GitHubPolicyEditor({
   initialValue,
   onSave,
 }: {
-  initialValue: GitHubAuthorPolicy;
-  onSave(policy: GitHubAuthorPolicy): Promise<void>;
+  initialValue: GithubPolicy;
+  onSave(policy: GithubPolicy): Promise<void>;
 }) {
   const [draft, setDraft] = useState(() => ({
     trustedOrganizations: initialValue.trustedOrganizations.join("\n"),
@@ -113,5 +111,111 @@ export function GitHubPolicyEditor({
         </div>
       </SettingsGroup>
     </form>
+  );
+}
+
+export function GitHubPolicyPanel({
+  host,
+}: {
+  host: Pick<Host, "spawn"> | undefined;
+}) {
+  const [status, setStatus] = useState<GithubPolicyStatus>();
+  const [error, setError] = useState("");
+  const [open, setOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [retry, setRetry] = useState(0);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Retry and opening the editor explicitly re-read the shared file.
+  useEffect(() => {
+    if (!host?.spawn) return;
+    let active = true;
+    setStatus(undefined);
+    setError("");
+    githubPolicy(host).then(
+      (value) => {
+        if (active) setStatus(value);
+      },
+      (reason) => {
+        if (active)
+          setError(String(reason instanceof Error ? reason.message : reason));
+      },
+    );
+    return () => {
+      active = false;
+    };
+  }, [host, retry]);
+  if (!host?.spawn)
+    return (
+      <p className="text-body-sm text-subtle">
+        GitHub author allowlist settings require the desktop host.
+      </p>
+    );
+  return (
+    <section className="attention-policy" aria-label="GitHub author settings">
+      {error && (
+        <p role="alert" className="text-body-sm text-danger">
+          {error}
+        </p>
+      )}
+      {!status && !error && (
+        <p role="status" className="text-body-sm text-subtle">
+          Loading GitHub author settings…
+        </p>
+      )}
+      {status?.warning && (
+        <p role="status" className="text-body-sm text-warning">
+          {status.warning}
+        </p>
+      )}
+      {status?.error && (
+        <p role="alert" className="text-body-sm text-danger">
+          {status.error}
+        </p>
+      )}
+      {status && (
+        <p className="text-caption text-subtle">
+          Preferences file: <code>{status.path}</code>
+        </p>
+      )}
+      <div className="attention-actions">
+        {status && (
+          <Button
+            size="sm"
+            variant="ghost"
+            aria-expanded={open}
+            disabled={saving}
+            onClick={() => {
+              setOpen(!open);
+              if (!open) setRetry((value) => value + 1);
+            }}
+          >
+            {open ? "Cancel editing allowlist" : "Edit GitHub author allowlist"}
+          </Button>
+        )}
+        {error && (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => setRetry((value) => value + 1)}
+          >
+            Retry GitHub author settings
+          </Button>
+        )}
+      </div>
+      {open && status && (
+        <GitHubPolicyEditor
+          initialValue={status.policy}
+          onSave={async (policy) => {
+            setSaving(true);
+            try {
+              const value = await githubPolicy(host, policy);
+              if (value.error) throw new Error(value.error);
+              setStatus(value);
+            } finally {
+              setSaving(false);
+            }
+          }}
+        />
+      )}
+    </section>
   );
 }

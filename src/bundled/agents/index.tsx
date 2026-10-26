@@ -16,7 +16,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
     placement: "topbar",
     layout: "workspace",
     primary: true,
-    component: createPage({ agents, relay, navigation: navigator }),
+    component: createPage({
+      agents,
+      relay,
+      navigation: navigator,
+      host: ctx.host,
+    }),
   });
   ctx.pages.register({
     id: "agents",

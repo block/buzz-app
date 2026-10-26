@@ -1,3 +1,4 @@
+import { GitHubPolicyPanel } from "./GitHubPolicyEditor";
 import { avatarMedia } from "../../../shared/avatar-source";
 import { Avatar } from "../../../shared/design-system/ui/Avatar";
 import {
@@ -100,7 +101,8 @@ export function createPage({
   agents,
   relay,
   navigation,
-}: Pick<Context, "agents" | "relay" | "navigation">) {
+  host,
+}: Pick<Context, "agents" | "relay" | "navigation" | "host">) {
   const h = React.createElement;
   const RecipeForm = createRecipeForm({ agents, relay });
   const none = () => () => {};
@@ -794,6 +796,7 @@ export function createPage({
             { className: "text-body-sm text-subtle" },
             "Subscriptions watch for changes and wake your agents.",
           ),
+          <GitHubPolicyPanel host={host} />,
           !visible.length &&
             snapshot.running.some((agent) => !agent.attentionEnabled) && (
               <Button

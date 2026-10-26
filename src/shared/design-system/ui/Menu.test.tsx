@@ -33,7 +33,7 @@ import {
 
 afterEach(cleanup);
 
-// The dependency patch ships both runtime entry points. Exercise real mounted
+// The dependency ships both runtime entry points. Exercise real mounted
 // roots in each; a handle exposes the live root store without mocking React.
 const require = createRequire(import.meta.url);
 const menuRuntimes = [
@@ -354,7 +354,7 @@ test("a context submenu retains ordinary menu motion classification", async () =
   const parent = await screen.findByRole("menu", { name: "Context actions" });
   expect(parent).toHaveAttribute("data-context-menu");
   await user.click(screen.getByRole("menuitem", { name: "Sort" }));
-  const submenu = await screen.findByRole("menu", { name: "Sort" });
+  const submenu = await screen.findByRole("menu", { name: "Sort choices" });
   expect(submenu).not.toHaveAttribute("data-context-menu");
   expect(parent).toHaveAttribute("data-context-menu");
 });

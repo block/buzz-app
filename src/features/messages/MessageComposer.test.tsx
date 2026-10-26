@@ -2468,6 +2468,198 @@ it("opens the model picker while discovery is pending, then fills its controls",
   ).not.toBeInTheDocument();
 });
 
+/** Agents with none here yet, where an earlier Buzz saved `first` and `second`. */
+const oldBuzzAgents = () => {
+  const port = vi.fn<Agents["port"]>(async () => ({
+    agent: {} as never,
+    notes: [],
+  }));
+  const snapshot = { status: "ready", agents: [] };
+  const types = [{ key: "test/agent", title: "Test agent" }];
+  const agents = {
+    sessionState: () => "unavailable" as const,
+    subscribe: () => () => {},
+    snapshot: () => snapshot,
+    types: () => types,
+    find: () => undefined,
+    portable: async () => ({
+      agents: [first, second].map((agent) => ({
+        ...agent,
+        source: "installed",
+        relay: "wss://relay.example.test",
+      })),
+      teams: [],
+      warnings: [],
+      here: [],
+    }),
+    port,
+  } as unknown as Agents;
+  return { agents, port };
+};
+
+it("imports a mentioned agent an earlier Buzz runs before sending to it", async () => {
+  const { agents, port } = oldBuzzAgents();
+  const h = mount({}, undefined, undefined, agents);
+  fireEvent.click(screen.getByRole("button", { name: "First Honey" }));
+  h.submit();
+  const dialog = await screen.findByRole("dialog", { name: "Import Honey?" });
+  expect(dialog).toHaveTextContent(
+    "Honey is set up in the preview version of Buzz. Are you ready to import it to Buzz 1.0?",
+  );
+  expect(h.messages.send).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Import and send" }));
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  expect(port).toHaveBeenCalledExactlyOnceWith({
+    source: "installed",
+    pubkey: first.pubkey,
+    type: "test/agent",
+  });
+  expect(h.messages.send.mock.calls[0]?.slice(0, 3)).toEqual([
+    "channel",
+    "@Honey ",
+    [first.pubkey],
+  ]);
+});
+
+it("sends without importing, and asks about that agent no more", async () => {
+  const { agents, port } = oldBuzzAgents();
+  const h = mount({}, undefined, undefined, agents);
+  fireEvent.click(screen.getByRole("button", { name: "Second Honey" }));
+  h.submit();
+  await screen.findByRole("dialog", { name: "Import Honey?" });
+  fireEvent.click(screen.getByRole("button", { name: "Just send" }));
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  fireEvent.click(screen.getByRole("button", { name: "Second Honey" }));
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledTimes(2));
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(port).not.toHaveBeenCalled();
+});
+
+it("shows what an import still needs before sending", async () => {
+  const { agents, port } = oldBuzzAgents();
+  port.mockResolvedValueOnce({
+    agent: {} as never,
+    notes: ["Honey's picture didn't come over."],
+  });
+  const h = mount({}, undefined, undefined, agents);
+  fireEvent.click(screen.getByRole("button", { name: "First Honey" }));
+  h.submit();
+  await screen.findByRole("dialog", { name: "Import Honey?" });
+  fireEvent.click(screen.getByRole("button", { name: "Import and send" }));
+  const done = await screen.findByRole("dialog", {
+    name: "Honey was imported",
+  });
+  expect(done).toHaveTextContent("Honey's picture didn't come over.");
+  expect(h.messages.send).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  expect(port).toHaveBeenCalledOnce();
+});
+
+it.each([
+  ["without notes", []],
+  ["with notes", ["Honey's picture didn't come over."]],
+])(
+  "drops an import that finishes %s after its send stopped",
+  async (_, notes) => {
+    const { agents, port } = oldBuzzAgents();
+    const late = deferred<Awaited<ReturnType<Agents["port"]>>>();
+    port.mockReturnValueOnce(late.promise);
+    const h = mount({}, undefined, undefined, agents);
+    fireEvent.click(screen.getByRole("button", { name: "First Honey" }));
+    h.submit();
+    await screen.findByRole("dialog", { name: "Import Honey?" });
+    fireEvent.click(screen.getByRole("button", { name: "Import and send" }));
+    h.retarget({ disabled: true });
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    h.retarget({ disabled: false });
+    h.submit();
+    await screen.findByRole("dialog", { name: "Import Honey?" });
+    await act(async () => late.resolve({ agent: {} as never, notes }));
+    expect(
+      screen.getByRole("dialog", { name: "Import Honey?" }),
+    ).toBeInTheDocument();
+    expect(h.messages.send).not.toHaveBeenCalled();
+  },
+);
+
+it("keeps focus on the import action while it runs, fails and finishes", async () => {
+  const { agents, port } = oldBuzzAgents();
+  const failed = deferred<Awaited<ReturnType<Agents["port"]>>>();
+  const done = deferred<Awaited<ReturnType<Agents["port"]>>>();
+  port.mockReturnValueOnce(failed.promise).mockReturnValueOnce(done.promise);
+  const h = mount({}, undefined, undefined, agents);
+  fireEvent.click(screen.getByRole("button", { name: "First Honey" }));
+  h.submit();
+  await screen.findByRole("dialog", { name: "Import Honey?" });
+  const action = screen.getByRole("button", { name: "Import and send" });
+  await waitFor(() => expect(action).toHaveFocus());
+  fireEvent.click(action);
+  expect(action).toHaveAttribute("aria-busy", "true");
+  expect(action).toHaveFocus();
+  await act(async () => failed.reject(new Error("No disk space.")));
+  expect(await screen.findByRole("alert")).toHaveTextContent("No disk space.");
+  expect(action).toHaveFocus();
+  fireEvent.click(action);
+  await act(async () =>
+    done.resolve({ agent: {} as never, notes: ["Honey stays archived."] }),
+  );
+  await screen.findByRole("dialog", { name: "Honey was imported" });
+  expect(action).toHaveTextContent("Send");
+  expect(action).toHaveFocus();
+  expect(h.messages.send).not.toHaveBeenCalled();
+});
+
+it("asks again when a send without importing stops at a later prompt", async () => {
+  const { agents, port } = oldBuzzAgents();
+  const h = mount({}, undefined, undefined, agents);
+  const list = {
+    status: "ready",
+    channels: [
+      { id: "channel", channelType: "stream", members: ["d".repeat(64)] },
+    ],
+  };
+  Object.assign(h.session, {
+    viewer: "d".repeat(64),
+    channels: { list: () => list, subscribeList: () => () => {} },
+    memberAdditions: { add: vi.fn() },
+  });
+  act(() => h.commands().insertMention(first));
+  h.submit();
+  await screen.findByRole("dialog", { name: "Import Honey?" });
+  fireEvent.click(screen.getByRole("button", { name: "Just send" }));
+  await screen.findByRole("button", { name: "Invite" });
+  await userEvent.setup().keyboard("{Escape}");
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+  );
+  h.submit();
+  expect(
+    await screen.findByRole("dialog", { name: "Import Honey?" }),
+  ).toBeInTheDocument();
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(port).not.toHaveBeenCalled();
+});
+
+it("keeps the draft when the import dialog is closed", async () => {
+  const { agents, port } = oldBuzzAgents();
+  const h = mount({}, undefined, undefined, agents);
+  fireEvent.click(screen.getByRole("button", { name: "First Honey" }));
+  const draft = h.input().value;
+  h.submit();
+  await screen.findByRole("dialog", { name: "Import Honey?" });
+  await userEvent.setup().keyboard("{Escape}");
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+  );
+  expect(h.input()).toHaveValue(draft);
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(port).not.toHaveBeenCalled();
+});
+
 /** Agents of one type whose sessions have `scope`, with one model and no
  * efforts unless `models` are given. */
 const sessionAgents = (
@@ -8065,6 +8257,123 @@ it("edits the last message from an untouched automatic tag and restores that tag
   h.fill("my own draft");
   fireEvent.keyDown(h.input(), { key: "ArrowUp" });
   expect(h.input()).not.toHaveAccessibleName("Edit message");
+});
+
+it("tags the agent last tagged in a Solo chat whenever an empty composer is shown", () => {
+  const viewer = "e".repeat(64);
+  const h = mount({}, undefined, viewer);
+  h.setLibrary([first, second]);
+  h.setProfiles(
+    new Map([
+      [first.pubkey, { name: "Ada", isAgent: true }],
+      [second.pubkey, { name: "Bea", isAgent: true }],
+    ]),
+  );
+  h.retarget({
+    ownSoloConversation: true,
+    requireMention: true,
+    session: {
+      ...h.session,
+      channels: { ...h.session.channels, list: () => soloList },
+    } as unknown as RelaySession,
+  });
+  expect(h.input()).toHaveValue("");
+  h.setRows([
+    editableMessage({
+      id: "1".repeat(64),
+      authorId: viewer,
+      mentions: [first.pubkey],
+    }),
+    editableMessage({
+      id: "2".repeat(64),
+      authorId: viewer,
+      mentions: [second.pubkey],
+    }),
+    // Neither an agent's message nor a thread reply chooses the agent.
+    editableMessage({
+      id: "3".repeat(64),
+      authorId: second.pubkey,
+      mentions: [first.pubkey],
+    }),
+    editableMessage({
+      id: "4".repeat(64),
+      authorId: viewer,
+      mentions: [first.pubkey],
+      threadRootId: "1".repeat(64),
+    }),
+  ]);
+  expect(h.input()).toHaveValue("@Bea ");
+  expect(h.commands().recipients).toEqual([
+    { pubkey: second.pubkey, name: "Bea" },
+  ]);
+  // A removed tag stays removed while the chat is shown.
+  act(() => h.input().removeRecipient(second.pubkey));
+  h.fill("");
+  expect(h.input()).toHaveValue("");
+  // Coming back to the chat tags the agent again, whether the conversation or
+  // its retained tab is shown again.
+  h.present(false);
+  h.present(true);
+  expect(h.input()).toHaveValue("@Bea ");
+  act(() => h.input().removeRecipient(second.pubkey));
+  h.fill("");
+  h.retarget({ shown: false });
+  expect(h.input()).toHaveValue("");
+  h.retarget({ shown: true });
+  expect(h.input()).toHaveValue("@Bea ");
+  // Text without a tag is left as written.
+  act(() => h.input().removeRecipient(second.pubkey));
+  h.fill("for people");
+  h.present(false);
+  h.present(true);
+  expect(h.input()).toHaveValue("for people");
+  // Off with remembered agents.
+  h.fill("");
+  setRememberAgentsPreference(false);
+  h.present(false);
+  h.present(true);
+  expect(h.input()).toHaveValue("");
+  setRememberAgentsPreference(true);
+});
+
+it("waits for complete agent choices before tagging the agent last tagged in a Solo chat", () => {
+  const viewer = "e".repeat(64);
+  // The local agent is usable before the library holding the latest agent loads.
+  const control = localAgentsFixture([
+    { ...localAgent, pubkey: first.pubkey, name: "Ada" },
+  ]);
+  const h = mount(
+    { scope: `https://relay.example.test:${"d".repeat(64)}` },
+    control,
+    viewer,
+  );
+  h.setLibrary([], "loading");
+  h.retarget({
+    ownSoloConversation: true,
+    requireMention: true,
+    session: {
+      ...h.session,
+      channels: { ...h.session.channels, list: () => soloList },
+    } as unknown as RelaySession,
+  });
+  h.setRows([
+    editableMessage({
+      id: "1".repeat(64),
+      authorId: viewer,
+      mentions: [first.pubkey],
+    }),
+    editableMessage({
+      id: "2".repeat(64),
+      authorId: viewer,
+      mentions: [second.pubkey],
+    }),
+  ]);
+  expect(h.input()).toHaveValue("");
+  h.setLibrary([{ pubkey: second.pubkey, name: "Bea" }]);
+  expect(h.input()).toHaveValue("@Bea ");
+  expect(h.commands().recipients).toEqual([
+    { pubkey: second.pubkey, name: "Bea" },
+  ]);
 });
 
 it("keeps remembered agents while typing during upload without taking focus when publication finishes", async () => {

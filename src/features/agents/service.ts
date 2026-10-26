@@ -376,24 +376,24 @@ export type CaughtUp = Readonly<{
   event: RelayEvent;
   classifier?: ClassifierOutcome;
 }>;
+/** A local wake delivered in a conversation, never a signed message. */
+export type ConversationWake = Readonly<
+  {
+    channel: string;
+    root?: string;
+    /** Explicit channel-level delivery when no thread is saved. */
+    topLevel?: true;
+    text: string;
+    id: string;
+    at: number;
+  } & ({ type: "plugin"; plugin: string } | { type: "attention" })
+>;
 export type Trigger =
   /** Directly addressed: a chat message that mentions the agent. `resumed`
    * when its turn was working as the app closed or reloaded, which stopped it
    * partway, and the owner chose to resume it (see `AgentType.resumes`). */
   | Readonly<{ type: "mention"; event: RelayEvent; resumed?: true }>
-  /** A plugin woke the agent in a conversation (`Agents.wake`): no relay
-   * event, and not the owner's words. It runs like a mention, in the
-   * conversation's session; `id` and `at` (milliseconds) are this wake's own. */
-  | Readonly<{
-      type: "plugin";
-      plugin: string;
-      channel: string;
-      /** The thread, absent for a channel-level conversation (a Solo chat). */
-      root?: string;
-      text: string;
-      id: string;
-      at: number;
-    }>
+  | ConversationWake
   /** One matching watch; an event that matches several runs once for each. */
   | Readonly<{
       type: "watch";
@@ -491,6 +491,8 @@ export type Delivery<Config = unknown> = Readonly<{
   /** The harness's own title for this mention's conversation. The host may
    * name a Solo chat with it once; the type need not know whether it did. */
   named?(title: string): void;
+  /** Rebuilds an addressed subscription prompt after harness readiness or a queue wait. */
+  wakeText?(): Promise<string | undefined>;
   /** Whether the trigger should still run, asked again now. False once the
    * agent is removed or its type replaced; for a watch or timer, also once
    * attention was turned off or its object disabled or removed; and for a
@@ -658,7 +660,12 @@ export type AgentType<Config = unknown> = {
 export type RemoteAgentType = Readonly<{
   /** Makes the agent and resolves with its pubkey. Not yet its owner's. */
   provision(
-    input: Readonly<{ name: string; community: string; signal: AbortSignal }>,
+    input: Readonly<{
+      name: string;
+      community: string;
+      config?: unknown;
+      signal: AbortSignal;
+    }>,
   ): Promise<Readonly<{ pubkey: string }>>;
   /** Hands over the owner's attestation (NIP-OA), which the agent attaches to
    * what it signs. The provider publishes its profile and starts it. */
@@ -668,6 +675,7 @@ export type RemoteAgentType = Readonly<{
       name: string;
       community: string;
       auth: NipOaAuthorization;
+      config?: unknown;
       signal: AbortSignal;
     }>,
   ): Promise<void>;
@@ -815,7 +823,7 @@ export type NewAgent = Readonly<{
   /** An HTTPS image URL. */
   picture?: string;
   /** Its starting config, from the type's `Create`; else the type's defaults.
-   * A hosted type's settings are its provider's, so it has none here. */
+   * Hosted setup retains it until the provider has applied it. */
   config?: unknown;
 }>;
 export type Agents = {
@@ -1733,7 +1741,30 @@ export class AgentsService extends Service implements Agents {
       const listed = recordPicture(picture);
       if (picture && !listed)
         console.warn(`Agent ${name.trim()} picture is not an HTTPS image URL`);
-      return this.provision(type, remote, name.trim(), listed);
+      const binding = this.selectedBinding();
+      const pending = this.unfinished.find(
+        (setup) =>
+          setup.type === type &&
+          setup.name === name.trim() &&
+          setup.relay === wssOf(binding.origin) &&
+          setup.owner === binding.viewer,
+      );
+      if (pending) {
+        if (config !== undefined || listed)
+          await this.writeUnfinished(
+            this.unfinished.map((setup) =>
+              setup === pending
+                ? {
+                    ...setup,
+                    ...(config !== undefined ? { config } : {}),
+                    ...(listed ? { picture: listed } : {}),
+                  }
+                : setup,
+            ),
+          );
+        return this.finish(pending.pubkey);
+      }
+      return this.provision(type, remote, name.trim(), listed, config);
     }
     return this.add(
       type,
@@ -1950,12 +1981,14 @@ export class AgentsService extends Service implements Agents {
     remote: RemoteAgentType,
     name: string,
     picture: string | undefined,
+    config?: unknown,
   ) {
     const binding = this.selectedBinding();
     const community = wssOf(binding.origin);
     const { pubkey } = await remote.provision({
       name,
       community,
+      ...(config !== undefined ? { config } : {}),
       signal: binding.controller.signal,
     });
     if (typeof pubkey !== "string" || !/^[0-9a-f]{64}$/.test(pubkey))
@@ -1975,6 +2008,7 @@ export class AgentsService extends Service implements Agents {
         relay: community,
         owner: binding.viewer,
         ...(picture ? { picture } : {}),
+        ...(config !== undefined ? { config } : {}),
       },
     ]);
     return this.finish(pubkey);
@@ -2002,6 +2036,7 @@ export class AgentsService extends Service implements Agents {
       name: setup.name,
       community: setup.relay,
       auth,
+      ...(setup.config !== undefined ? { config: setup.config } : {}),
       signal,
     });
     const { picture } = setup;
@@ -3546,7 +3581,7 @@ export class AgentsService extends Service implements Agents {
     for (const listener of this.listeners) listener();
   }
   /** The event's channel as the agent's community knows it, if at all. */
-  private channelOf(agent: Agent, event: RelayEvent) {
+  private channelOf(agent: Agent, event: Pick<RelayEvent, "tags">) {
     const channel = event.tags.find((tag) => tag[0] === "h")?.[1];
     const channels = this.bindingOf(agent)?.session.channels;
     if (!channel || !channels) return undefined;
@@ -3561,7 +3596,10 @@ export class AgentsService extends Service implements Agents {
    * unknown, wakes no watch. A roster only loaded from disk decides nothing
    * (undefined): the agent may have been removed or added since it was saved,
    * so the event waits until the relay confirms it. */
-  private member(agent: Agent, event: RelayEvent): boolean | undefined {
+  private member(
+    agent: Agent,
+    event: Pick<RelayEvent, "tags">,
+  ): boolean | undefined {
     const summary = this.channelOf(agent, event);
     if (summary?.cached) return undefined;
     return !!summary?.members?.includes(agent.pubkey);

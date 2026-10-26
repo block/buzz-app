@@ -97,7 +97,12 @@ export function FileAttachment({
               <NavigationItem
                 aria-label={`Preview ${displayName}`}
                 icon={
-                  <FileTypeIcon name={attachment.name} mime={attachment.mime} />
+                  <span className={fileIconStyles.slot}>
+                    <FileTypeIcon
+                      name={attachment.name}
+                      mime={attachment.mime}
+                    />
+                  </span>
                 }
                 label={label}
                 onClick={onPreview}

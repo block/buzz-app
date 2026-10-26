@@ -52,14 +52,17 @@ export function Tooltip({
 }) {
   const id = useId();
   const [trigger, setTrigger] = useState<HTMLElement | null>(null);
-  const promote = useCallback((positioner: HTMLDivElement) => {
-    const update = () => {
-      if (trigger && behindActiveOverlay(trigger)) positioner.hidePopover?.();
-      else positioner.showPopover?.();
-    };
-    update();
-    return observeOverlays(update);
-  }, [trigger]);
+  const promote = useCallback(
+    (positioner: HTMLDivElement) => {
+      const update = () => {
+        if (trigger && behindActiveOverlay(trigger)) positioner.hidePopover?.();
+        else positioner.showPopover?.();
+      };
+      update();
+      return observeOverlays(update);
+    },
+    [trigger],
+  );
   const [localOpen, setLocalOpen] = useState(false);
   const pressed = useRef(false);
   // Focus returning to a pressed trigger, such as when its menu closes, is not

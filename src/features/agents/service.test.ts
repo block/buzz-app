@@ -7618,6 +7618,93 @@ describe("Attention plugin sources", () => {
         });
     },
   );
+  it("reserves a classified source's queue slot until delivery", async () => {
+    const jev = fakeJev();
+    let answer!: (value: DecisionResult) => void;
+    jev.decide.mockImplementationOnce(
+      () => new Promise((resolve) => (answer = resolve)),
+    );
+    const { service, run, plugin, native, emit } = await sourceFixture({ jev });
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => (release = resolve));
+    run.mockImplementationOnce(async () => {
+      await blocked;
+    });
+    plugin.agents.addAttentionSource({
+      id: "command",
+      run: async ({ emit }) => {
+        emit("reserved source output");
+      },
+    });
+    await service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
+    await service.save(bot, {
+      attentionEnabled: true,
+      attention: {
+        ...watches,
+        "watch/pr": {
+          ...watches["watch/pr"],
+          classifier: { questions: { relevant: { question: "Relevant?" } } },
+        },
+        "watch/fill": {
+          type: "event",
+          interest_id: "pr",
+          enabled: true,
+          since: 1,
+          channels: [channel],
+          kinds: [7],
+        },
+      },
+    });
+    try {
+      await vi.waitFor(() => expect(jev.decide).toHaveBeenCalledOnce());
+      emit({ events: [event("fill0", { kind: 7 })] });
+      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+      emit({
+        events: Array.from({ length: 9 }, (_, i) =>
+          event(`fill${i + 1}`, { kind: 7 }),
+        ),
+      });
+      await settle();
+      answer(answered(0.9));
+      await settle();
+      expect(service.find(bot)?.attention["watch/pr"]).toBeDefined();
+    } finally {
+      release();
+    }
+    await vi.waitFor(() =>
+      expect(service.find(bot)?.attention["watch/pr"]).toBeUndefined(),
+    );
+    expect(
+      run.mock.calls.some(
+        ([input]) =>
+          input.trigger.type === "attention" &&
+          input.trigger.text.includes("reserved source output"),
+      ),
+    ).toBe(true);
+  });
+  it("separates source history emits that do not end in a newline", async () => {
+    const { service, plugin, native } = await sourceFixture();
+    plugin.agents.addAttentionSource({
+      id: "command",
+      run: async ({ emit, signal }) => {
+        emit("first");
+        emit("second");
+        await new Promise<void>((resolve) =>
+          signal.addEventListener("abort", () => resolve(), { once: true }),
+        );
+      },
+    });
+    await service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
+    await service.save(bot, { attentionEnabled: true, attention: watches });
+    await vi.waitFor(() =>
+      expect(service.find(bot)?.attentionHistory?.["watch/pr"]?.output).toBe(
+        "first\nsecond",
+      ),
+    );
+    await service.save(bot, { attentionEnabled: false });
+  });
   it("starts sources only for active plugin revisions and cancels them on deactivation", async () => {
     let active = false;
     const listeners = new Set<() => void>();

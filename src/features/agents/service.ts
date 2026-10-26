@@ -1754,7 +1754,9 @@ export class AgentsService extends Service implements Agents {
         ...(lastWokeAt !== undefined ? { lastWokeAt } : {}),
         ...(output !== undefined
           ? {
-              output: ((prior?.output ?? "") + output)
+              output: [prior?.output, output]
+                .filter((part) => part !== undefined && part !== "")
+                .join(prior?.output?.endsWith("\n") ? "" : "\n")
                 .slice(-16384)
                 .split("\n")
                 .slice(-40)

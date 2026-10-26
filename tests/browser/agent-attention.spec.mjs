@@ -53,3 +53,54 @@ test("Agent Attention fits both themes and sizes and creates a subscription by k
   await page.keyboard.press("Space");
   await expect(toggle).toHaveAttribute("aria-checked", "false");
 });
+
+test("the allowlist warning opens editable shared settings with usable narrow-layout controls", async ({
+  page,
+}) => {
+  await page.goto("/tests/fixtures/agent-attention.html");
+  await expect(
+    page.getByText(/No GitHub author allowlist configured/),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Edit GitHub author allowlist" })
+    .click();
+  const form = page.getByRole("form", { name: "GitHub author allowlist" });
+  await expect(form).toBeVisible();
+  for (const theme of ["light", "dark"]) {
+    for (const width of [390, 1280]) {
+      await page.setViewportSize({ width, height: 900 });
+      await page.evaluate((theme) => {
+        document.documentElement.dataset.colorMode = theme;
+        document.documentElement.style.fontSize = "20px";
+      }, theme);
+      const save = form.getByRole("button", { name: "Save allowlist" });
+      await save.scrollIntoViewIfNeeded();
+      await expect(save).toBeInViewport();
+      expect(
+        await page
+          .locator(".attention-page")
+          .evaluate((el) => el.scrollWidth <= el.clientWidth),
+      ).toBe(true);
+    }
+  }
+  await form
+    .getByRole("textbox", { name: "Trusted organizations" })
+    .fill("example-org");
+  await form
+    .getByRole("textbox", { name: "Trusted commenters" })
+    .fill("review-bot[bot]");
+  await form.getByRole("button", { name: "Save allowlist" }).click();
+  await expect(form.getByRole("status")).toHaveText(
+    "GitHub author allowlist saved.",
+  );
+  await expect(
+    page.getByText(/No GitHub author allowlist configured/),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "Cancel editing allowlist" }).click();
+  await page
+    .getByRole("button", { name: "Edit GitHub author allowlist" })
+    .click();
+  await expect(
+    form.getByRole("textbox", { name: "Trusted commenters" }),
+  ).toHaveValue("review-bot[bot]");
+});

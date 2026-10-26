@@ -26,7 +26,7 @@ async function fixture() {
   const home = await mkdtemp(join(tmpdir(), "attention-policy-ui-"));
   homes.push(home);
   const path = join(home, ".buzz/preferences/github-pr.json");
-  const host: Pick<Host, "spawn"> = {
+  const host: { spawn: NonNullable<Host["spawn"]> } = {
     spawn: async (id, options: HostProcessOptions = {}) => {
       expect(id).toBe("attention-policy");
       const child = spawn(

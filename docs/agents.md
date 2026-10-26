@@ -53,6 +53,12 @@ requests share the creation requests' local bound and lifetime.
 Keys stay in native custody. Hosted-provider provisioning and standalone tool
 servers do not support these operations.
 
+## Agent Attention
+
+The Agent Attention tab groups each local agent's subscriptions by Interest. It shows instructions, listening and delivery destinations, enabled state and available wake history. Create subscriptions with the PR, schedule, command or event recipes; pausing or removing one preserves the other saved objects.
+
+On desktop, GitHub comment author settings edit the shared `~/.buzz/preferences/github-pr.json` policy. Configure trusted organizations and/or individual commenter logins, including bots, and ignored commenters. Saving updates the same file used by PR monitoring. Without trusted authors or organizations, the page shows the shared warning: CI and PR-state monitoring continue, while comments and reviews are withheld. File errors remain visible and rejected saves preserve the draft.
+
 ## Agent types and providers
 
 Harness plugins register agent types with the Agents service. An agent type owns

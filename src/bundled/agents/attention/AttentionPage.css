@@ -352,6 +352,7 @@ details[open] > .attention-disclosure .attention-show-less {
 }
 
 .attention-policy {
+  overflow-wrap: anywhere;
   display: grid;
   gap: var(--space-3);
   min-width: 0;

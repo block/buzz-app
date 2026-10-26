@@ -969,19 +969,23 @@ it("opens a selected card in the side pane and drops a stale channel filter", as
   expect(
     screen.getByRole("region", { name: "Workflow details" }),
   ).toBeVisible();
+  await openChannels();
   await user.click(
-    screen.getByRole("button", {
-      name: "Remove Fixture channel channel filter",
-    }),
+    screen.getByRole("menuitemcheckbox", { name: "Fixture channel" }),
   );
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
   expect(screen.queryByRole("region", { name: "Workflow details" })).toBeNull();
   expect(screen.getByRole("button", { name: "Channels" })).toHaveFocus();
   expect(
     screen.queryByRole("button", { name: /^Open Message helper:/ }),
   ).toBeNull();
+  await openChannels();
   await user.click(
-    screen.getByRole("button", { name: "Remove Other channel channel filter" }),
+    screen.getByRole("menuitemcheckbox", { name: "Other channel" }),
   );
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
   expect(screen.getByRole("button", { name: "Channels" })).toHaveTextContent(
     "All channels",
   );

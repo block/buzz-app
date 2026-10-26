@@ -26,7 +26,6 @@ import type {
 } from "../../features/workflows/types";
 import {
   CaretDownIcon,
-  XIcon,
   ArrowRightIcon,
   DotsThreeIcon,
   CalendarIcon,
@@ -1120,24 +1119,6 @@ export function WorkflowLanding({
             </MenuGroup>
           </MenuPopup>
         </MenuRoot>
-        <AnimatePresence key={presenceKey} initial={false} mode="popLayout">
-          {shown.map((channel) => (
-            <WorkflowListTransition key={channel.id}>
-              <Button
-                size="sm"
-                variant="subtle"
-                aria-label={`Remove ${channel.name} channel filter`}
-                onClick={() => {
-                  removeFilter(channel.id);
-                  filterTrigger.current?.focus();
-                }}
-              >
-                <span className="workflow-filter-label">{channel.name}</span>
-                <XIcon size={16} aria-hidden="true" />
-              </Button>
-            </WorkflowListTransition>
-          ))}
-        </AnimatePresence>
         {shown.length > 0 && (
           <Button
             variant="ghost"

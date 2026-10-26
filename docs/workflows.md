@@ -11,8 +11,8 @@ See the [capability contract](../src/features/workflows/types.ts).
 - Channel-scoped saved configurations; new drafts start disabled.
 - The landing groups compact workflow rows under prominent channel headings,
   sorted by channel name and filtered in place by channel. The filter lists only
-  channels with loaded workflows and supports multiple selections. Removable
-  channel chips and Clear all update the list without reopening the menu; an empty
+  channels with loaded workflows and supports multiple selections. Clear all
+  resets the selection without reopening the menu; an empty
   selection shows all channels. Selection is not persisted across sessions.
   Discovery still reads all eligible channels.
   Creating a workflow can still target any eligible channel. Each row runs the

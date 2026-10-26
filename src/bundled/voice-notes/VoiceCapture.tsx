@@ -39,15 +39,12 @@ export function VoiceCapture({ accept, cancel }: ComposerCaptureProps) {
   async function finish() {
     if (finishing.current) return;
     finishing.current = true;
-    const recording = await recorder.stop();
-    if (!recording || !current.current.accept(recording)) setFailed(true);
+    const note = await recorder.stop();
+    if (!note || !current.current.accept(note)) setFailed(true);
     finishing.current = false;
   }
   useEffect(() => {
-    if (
-      recorder.status === "recording" &&
-      recorder.elapsedSeconds >= VOICE_NOTE_MAX_DURATION_SECONDS
-    )
+    if (recording && recorder.elapsedSeconds >= VOICE_NOTE_MAX_DURATION_SECONDS)
       void finish();
   });
   if (recorder.error || failed)

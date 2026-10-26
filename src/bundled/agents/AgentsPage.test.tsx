@@ -1729,6 +1729,55 @@ it("keeps a failed Remove from this community open to retry here alone", async (
   expect(agents.remove).not.toHaveBeenCalled();
 });
 
+it.each([
+  ["a Delete", true, true],
+  ["a Remove from there", false, false],
+])(
+  "forgets an agent where %s can't reach, and asks to Delete again only after a Delete",
+  async (_, deleting, again) => {
+    const user = userEvent.setup();
+    const ada = agent("Ada", 1);
+    const away = `${ada.pubkey}@other.example`;
+    const { agents } = setup([deleting ? { ...ada, deleting } : ada]);
+    let forgot = false;
+    agents.memberships.mockImplementation(() => [
+      {
+        key: ada.key,
+        origin: "https://relay.example",
+        connected: true,
+        ...(deleting && { deleting: true as const }),
+      },
+      ...(forgot
+        ? []
+        : [
+            {
+              key: away,
+              origin: "https://other.example",
+              connected: false,
+              deleting: true as const,
+            },
+          ]),
+    ]);
+    agents.forget.mockImplementationOnce(async () => {
+      forgot = true;
+    });
+    await user.click(screen.getByRole("gridcell", { name: "Ada" }));
+    await user.click(screen.getByRole("tab", { name: "Settings" }));
+    await user.click(screen.getByRole("button", { name: "Delete agent" }));
+    const dialog = await screen.findByRole("dialog", { name: "Delete Ada?" });
+    await user.click(
+      within(dialog).getByRole("button", {
+        name: "Forget it in other.example",
+      }),
+    );
+    expect(agents.forget).toHaveBeenCalledWith(away);
+    expect(agents.remove).not.toHaveBeenCalled();
+    expect(!!within(dialog).queryByText("Delete again to finish here.")).toBe(
+      again,
+    );
+  },
+);
+
 it("opens deletion from the card menu without selecting it and requires confirmation", async () => {
   const user = userEvent.setup();
   const { agents } = setup([agent("Ada", 1)]);

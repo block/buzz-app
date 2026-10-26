@@ -169,11 +169,14 @@ export function AgentDelete({
                 community, so it may stay in its channels there.
               </p>
             )}
-            {forgot && !unreachable.length && (
-              <p className="m-0 text-body-sm text-secondary">
-                Delete again to finish here.
-              </p>
-            )}
+            {forgot &&
+              !unreachable.length &&
+              // A Delete marks every membership; a Remove only its own.
+              memberships.every((membership) => membership.deleting) && (
+                <p className="m-0 text-body-sm text-secondary">
+                  Delete again to finish here.
+                </p>
+              )}
             {!several && unreachable[0] && (
               <div>
                 <Button

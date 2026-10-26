@@ -857,10 +857,10 @@ function WorkflowListTransition({
       layout={instant ? false : "position"}
       inert={!present}
       aria-hidden={!present || undefined}
-      initial={{ opacity: instant ? 1 : 0 }}
-      animate={{ opacity: 1 }}
+      initial={{ opacity: instant ? 1 : 0, scale: instant ? 1 : 0.98 }}
+      animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0 }}
-      transition={{ duration: instant ? 0 : 0.15, ease: [0.2, 0.8, 0.2, 1] }}
+      transition={{ duration: instant ? 0 : 0.18, ease: [0.2, 0.8, 0.2, 1] }}
     >
       {children}
     </motion.div>

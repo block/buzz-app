@@ -996,8 +996,6 @@ fn bundled_plugins_have_independent_flags_and_all_ids_are_reserved() {
         "buzz.terminal",
         "buzz.inbox",
         "buzz.repos",
-        "buzz.emoji",
-        "buzz.mentions",
         "buzz.voice-notes",
         "buzz.links",
     ] {
@@ -1172,4 +1170,30 @@ fn bundled_defaults_preserve_saved_choices_and_only_channels_is_required() {
             .unwrap()
             .enabled
     );
+}
+
+#[test]
+fn built_in_conversation_features_are_absent_even_with_old_disabled_flags() {
+    let (root, manager, _source) = fixture();
+    fs::create_dir_all(manager.storage_root()).unwrap();
+    fs::write(
+        manager.storage_root().join("registry.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "version": 2,
+            "bundledEnabled": true,
+            "bundledOverrides": { "buzz.emoji": false, "buzz.mentions": false },
+            "installed": {}
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let reopened = Manager::open(Some(root.path().to_path_buf()), "test", false).unwrap();
+    let catalog = reopened.catalog().unwrap();
+    for id in ["buzz.emoji", "buzz.mentions"] {
+        assert!(!catalog
+            .plugins
+            .iter()
+            .any(|plugin| plugin.manifest.id == id));
+        assert!(reopened.change("disable", id).is_err());
+    }
 }

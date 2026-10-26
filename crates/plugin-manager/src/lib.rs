@@ -275,10 +275,6 @@ pub fn bundled_manifests() -> Vec<Manifest> {
             "../../../src/bundled/voice-notes/manifest.json"
         ))
         .expect("voice notes manifest"),
-        serde_json::from_str(include_str!("../../../src/bundled/mentions/manifest.json"))
-            .expect("mentions manifest"),
-        serde_json::from_str(include_str!("../../../src/bundled/emoji/manifest.json"))
-            .expect("emoji manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/channels/manifest.json"))
             .expect("channels manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/github/manifest.json"))
@@ -340,10 +336,8 @@ fn enabled_by_default(id: &str) -> bool {
             | "buzz.terminal"
             | "buzz.profiles"
             | "buzz.links"
-            | "buzz.mentions"
             | "buzz.voice-notes"
             | "buzz.huddles"
-            | "buzz.emoji"
             | "buzz.github"
             | "buzz.pairing"
             | "buzz.inbox"

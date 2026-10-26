@@ -10616,15 +10616,18 @@ it("submits unsaved team drafts and saves only what the owner reviewed", async (
       members: [{ pubkey: sibling, name: "Child" }],
     },
   ]);
-  // A change keeps what it does not propose, and saves over the same team.
+  // A change keeps what it does not propose, names the team as it is, and
+  // saves over the same team.
   const change = await handle.proposeTeam({
     team: "Crew 2",
+    name: "Crew 3",
     instructions: "Be brief.",
   });
   expect(service.teamRequests()).toEqual([
     expect.objectContaining({
       team: team?.id,
-      name: "Crew 2",
+      teamName: "Crew 2",
+      name: "Crew 3",
       instructions: "Be brief.",
       members: [sibling],
     }),

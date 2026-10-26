@@ -83,16 +83,23 @@ it("shows the proposed team and saves what the owner reviewed", async () => {
   );
 });
 
-it("reviews a change to a saved team", async () => {
+it("reviews a change to a saved team under its current name", async () => {
   const user = userEvent.setup();
-  const agents = fixture({ team: "t1", instructions: "Be brief." });
-  await screen.findByDisplayValue("Crew");
-  expect(screen.getByText("Edit Crew")).toBeVisible();
+  const agents = fixture({
+    team: "t1",
+    teamName: "Old crew",
+    instructions: "Be brief.",
+  });
+  const name = await screen.findByDisplayValue("Crew");
+  expect(screen.getByText("Edit Old crew")).toBeVisible();
   expect(screen.getByText(/Parent proposed these changes\./)).toBeVisible();
+  await user.clear(name);
+  await user.type(name, "Crew mates");
+  expect(screen.getByText("Edit Old crew")).toBeVisible();
   await user.click(screen.getByRole("button", { name: /^Save team$/ }));
   await waitFor(() =>
     expect(agents.approveTeam).toHaveBeenCalledWith("draft", {
-      name: "Crew",
+      name: "Crew mates",
       instructions: "Be brief.",
       members: [kid],
       // The base a synced Save revises.

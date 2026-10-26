@@ -941,8 +941,10 @@ export type TeamRequest = Readonly<{
   requesterName: string;
   owner: string;
   community: string;
-  /** The team it changes; absent for a new team. */
+  /** The team it changes and that team's name when requested; absent for a
+   * new team. */
   team?: string;
+  teamName?: string;
   name: string;
   instructions: string;
   members: readonly string[];
@@ -1950,7 +1952,7 @@ export class AgentsService extends Service implements Agents {
             requesterName: agent.name,
             owner: agent.owner,
             community: binding.origin,
-            ...(team && { team: team.id }),
+            ...(team && { team: team.id, teamName: team.name }),
             name,
             instructions: proposal.instructions ?? team?.instructions ?? "",
             // Members in the owner's other communities stay on the team.

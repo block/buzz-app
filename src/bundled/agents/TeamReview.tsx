@@ -63,7 +63,7 @@ function Review({ agents, request }: { agents: Agents; request: TeamRequest }) {
       onOpenChangeComplete={(next) => {
         if (!next) agents.dismissTeam(request.id);
       }}
-      title={request.team ? `Edit ${draft.name || "team"}` : "New team"}
+      title={request.teamName ? `Edit ${request.teamName}` : "New team"}
       description={`${request.requesterName} ${request.team ? "proposed these changes" : "requested this team"}. Nothing is saved until you save.`}
       size="default"
       height="content"
@@ -84,7 +84,7 @@ function Review({ agents, request }: { agents: Agents; request: TeamRequest }) {
       <form
         id={form}
         className="grid gap-4"
-        aria-label={request.team ? `Edit ${request.name}` : "New team"}
+        aria-label={request.teamName ? `Edit ${request.teamName}` : "New team"}
         onSubmit={(event) => {
           event.preventDefault();
           void save();

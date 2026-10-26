@@ -537,7 +537,7 @@ it.each([
   expect(second.seek).toHaveBeenCalledWith(0.1);
 });
 
-it("keeps the opening frame when a later seek's encode would finish first", async () => {
+it("keeps the opening frame when a later seek follows before its encode finishes", async () => {
   const { toBlob } = stubCanvas(true);
   const pending: Array<() => void> = [];
   toBlob.mockImplementation((callback) => {
@@ -550,7 +550,8 @@ it("keeps the opening frame when a later seek's encode would finish first", asyn
   fireEvent.seeked(first.video);
   first.video.currentTime = 12;
   fireEvent.seeked(first.video);
-  for (const complete of pending.reverse()) complete();
+  expect(toBlob).toHaveBeenCalledTimes(1);
+  for (const complete of pending) complete();
   await waitFor(() => expect(first.video).toHaveAttribute("poster", FRAME));
   first.unmount();
 

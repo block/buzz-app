@@ -696,14 +696,20 @@
     height: 2rem;
     flex: 0 0 auto;
     place-items: center;
-    /* A fallback initial keeps the component's body line box, which can be
-       taller than small artwork; centre the overflowing track rather than
-       letting it start at the top. */
-    place-content: center;
     overflow: hidden;
     border-radius: var(--radius-pill);
     background: var(--affordance-subtle);
     color: var(--text-subtle);
+  }
+
+  /* A fallback initial (the only span child) keeps the component's body line
+     box, which can be taller than small artwork; centre the overflowing track
+     rather than letting it start at the top. Only there: centring also stops
+     the track stretching, and a percentage-sized artwork child (the packed
+     video wrapper) would shrink to the video's intrinsic height until its
+     poster or metadata arrives. */
+  .buzz-avatar:has(> span) {
+    place-content: center;
   }
 
   /* Matches reply-stack artwork inside its 24px slot and 1.5px ring. */

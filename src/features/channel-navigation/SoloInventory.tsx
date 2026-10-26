@@ -18,6 +18,7 @@ import { SoloWorkspaces } from "../../bundled/channels/SoloWorkspaces";
 import {
   soloSharedMarkId,
   useSharedWithPeople,
+  useSoloOwner,
 } from "../../bundled/channels/ChatSharedMark";
 import { useChannelList } from "../relay/react";
 import type { RelaySession } from "../relay/session";
@@ -194,7 +195,7 @@ export function SoloInventory({
                       if (current()) setCreatingProject(true);
                     }}
                   >
-                    New workspace…
+                    New workspace
                   </MenuItem>
                 </MenuPopup>
               </MenuRoot>
@@ -348,7 +349,8 @@ function SoloConversationRow({
     working,
   );
   // Describe only by a mark that renders, using the same Shared evidence.
-  const shared = useSharedWithPeople(session, channel);
+  const owner = useSoloOwner(session, channel);
+  const shared = useSharedWithPeople(session, channel) || !!owner;
   return (
     <ChannelActivityPopover
       session={session}

@@ -44,11 +44,7 @@ import {
 } from "../../shared/design-system/icons";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import type { Navigation } from "../../features/navigation/controller";
-import {
-  NewWorkspaceDialog,
-  SoloChatMenuItems,
-  useChatCopy,
-} from "./SoloChatMenu";
+import { NewWorkspaceDialog, SoloChatMenuItems } from "./SoloChatMenu";
 import styles from "./SoloWorkspaces.module.css";
 import channelStyles from "./Channels.module.css";
 
@@ -93,7 +89,6 @@ export function SoloWorkspaces({
 }) {
   useChatConversions(session);
   const handoff = useChannelNavigation();
-  const [copy, copyNotice] = useChatCopy();
   const preferences = session.soloPreferences;
   const collapsedKey = "solo:collapsed-projects";
   const expandedKey = "solo:expanded-projects";
@@ -140,6 +135,8 @@ export function SoloWorkspaces({
   const [sharing, setSharing] = useState<{
     id: string;
     visit: AbortSignal | undefined;
+    /** The shared mark that opened it; menu launches return to the row. */
+    trigger?: HTMLElement;
   }>();
   const sharingChannel = channels.channels.find(
     (channel) => channel.id === sharing?.id,
@@ -426,7 +423,7 @@ export function SoloWorkspaces({
               content={
                 <>
                   <MenuItem onClick={() => setSettingsFor(project)}>
-                    Workspace settings…
+                    Workspace settings
                   </MenuItem>
                   <MenuItem
                     tone="danger"
@@ -514,7 +511,13 @@ export function SoloWorkspaces({
                     id={item.id}
                     title={item.title}
                     indicator={
-                      <ChatSharedMark session={session} channel={channel} />
+                      <ChatSharedMark
+                        session={session}
+                        channel={channel}
+                        onOpen={(trigger) =>
+                          setSharing({ id: item.id, visit, trigger })
+                        }
+                      />
                     }
                     className={styles.organizedRow}
                     content={
@@ -530,7 +533,6 @@ export function SoloWorkspaces({
                             }
                             onMove={(projectId) => move(item.id, projectId)}
                             onNewWorkspace={() => setCreatingFor(item)}
-                            onCopy={copy}
                             onSettings={() => setChatSettings({ item, visit })}
                             onLifecycle={
                               handoff &&
@@ -658,9 +660,14 @@ export function SoloWorkspaces({
           navigator={navigationController}
           signal={sharing.visit}
           trigger={{
-            current: document.querySelector<HTMLElement>(
-              `[data-solo-menu-id="${sharing.id}"] button`,
-            ),
+            // Read on close: the mark is gone once the chat stops being shared.
+            get current() {
+              return sharing.trigger?.isConnected
+                ? sharing.trigger
+                : document.querySelector<HTMLElement>(
+                    `[data-solo-menu-id="${sharing.id}"] button`,
+                  );
+            },
           }}
           close={() => setSharing(undefined)}
         />
@@ -709,7 +716,6 @@ export function SoloWorkspaces({
             </Button>
           </div>
         ))}
-      {copyNotice}
       {settingsFor && (
         <WorkspaceSettings
           key={settingsFor.id}

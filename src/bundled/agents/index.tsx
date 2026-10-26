@@ -13,6 +13,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   ctx.pages.register({
     id: "attention",
     title: "Agent Attention",
+    placement: "topbar",
     layout: "workspace",
     primary: true,
     component: createPage({ agents, relay, navigation: navigator }),

@@ -1124,9 +1124,9 @@ export function WorkflowLanding({
           />
           <MenuPopup size="wide" style={{ width: "28rem" }}>
             <MenuCheckboxItem
-              checked={shown.length === 0}
+              checked={!filtered}
               closeOnClick={false}
-              onCheckedChange={() => onFilterChange([])}
+              onCheckedChange={resetFilters}
             >
               All channels
             </MenuCheckboxItem>

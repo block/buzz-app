@@ -823,9 +823,11 @@ it("does not add a channel-loading banner above retained workflow cards", async 
       <WorkflowCommunity session={session} viewer={fixtureViewer} />
     </ToastProvider>,
   );
-  expect(
-    await screen.findByRole("button", { name: /^Open Message helper:/ }),
-  ).toBeVisible();
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: /^Open Message helper:/ }),
+    ).toBeVisible(),
+  );
   expect(screen.queryByText("Reading channels…")).toBeNull();
 });
 

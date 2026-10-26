@@ -17,7 +17,8 @@ See the [capability contract](../src/features/workflows/types.ts).
   My workflows matches the current viewer's saved workflow ownership. Enabled only
   matches the saved enabled setting (omitted means enabled), not confirmed runtime
   activity; unreadable configurations are excluded from this filter. These filters
-  combine with channel selection and Clear all resets them together. The popup
+  combine with channel selection. All channels is checked only for the unfiltered
+  view; selecting it or Clear all resets every filter. The popup
   places these choices above a smaller, scrollable two-column channel list.
   Discovery still reads all eligible channels.
   Creating a workflow can still target any eligible channel. Each row runs the

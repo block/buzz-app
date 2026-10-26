@@ -19,8 +19,8 @@ export async function spawnAgentCommand(
     ...options
   }: Omit<HostProcessOptions, "mcp"> & {
     signal: AbortSignal;
-    channel?: string;
-    root?: string;
+    channel?: string | undefined;
+    root?: string | undefined;
   },
 ): Promise<HostProcess> {
   signal.throwIfAborted();

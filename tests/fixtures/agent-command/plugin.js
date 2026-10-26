@@ -6,7 +6,7 @@ export function apply({ agents }) {
     id: "command",
     description: "Run a command using the scheduling agent's Buzz identity",
     configExample: { command: ["bash", "-c", "buzz tools"] },
-    async run({ agent, watch, signal, emit }) {
+    async run({ watch, signal, emit, spawn }) {
       const command = watch.config.command;
       if (
         !Array.isArray(command) ||
@@ -16,10 +16,7 @@ export function apply({ agents }) {
       )
         throw new Error("A nonempty command argument list is required");
       let output = "";
-      const process = await agents.spawn(agent, "command", {
-        signal,
-        channel: watch.channel,
-        root: watch.root,
+      const process = await spawn("command", {
         cwd: watch.config.cwd,
         args: command,
         onStdout: (text) => {

@@ -7,6 +7,7 @@ import type {
   HostProcessOptions,
 } from "../host/service";
 import { spawnAgentCommand } from "./command";
+import { bundledAttention } from "./attention-command";
 import { sourceCompleted } from "./attention";
 import { createLocalAgentActivity } from "./local-activity";
 import {
@@ -1792,7 +1793,11 @@ export class AgentsService extends Service implements Agents {
   }
   addAttentionSource(source: import("./attention-sources").AttentionSource) {
     const plugin = this.ctx.pluginOwner?.id;
-    if (plugin === "attention" && ["command", "github-pr"].includes(source.id))
+    if (
+      bundledAttention.providers.some(
+        ({ provider }) => provider === `${plugin}/${source.id}`,
+      )
+    )
       throw new Error(
         "Attention command sources are built into Buzz. Update the Attention UI plugin.",
       );
@@ -1957,17 +1962,21 @@ export class AgentsService extends Service implements Agents {
     });
   }
   private attentionProvider(source: Contribution<AttentionProducer>) {
-    return source.pluginId === "buzz.agents" &&
-      ["command", "github-pr"].includes(source.id)
-      ? `attention/${source.id}`
-      : source.key;
+    return (
+      bundledAttention.providers.find(
+        ({ id }) =>
+          source.pluginId === bundledAttention.plugin && source.id === id,
+      )?.provider ?? source.key
+    );
   }
   attentionProviders = () =>
     this.attentionSources.snapshot().map((source) => {
       const { description, configExample } = source;
       return {
         provider: this.attentionProvider(source),
-        ...(source.pluginId === "buzz.agents" ? { builtIn: true } : {}),
+        ...(this.attentionProvider(source) !== source.key
+          ? { builtIn: true }
+          : {}),
         ...(description === undefined ? {} : { description }),
         ...(configExample === undefined
           ? {}

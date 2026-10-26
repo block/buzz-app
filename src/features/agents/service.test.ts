@@ -10181,6 +10181,14 @@ it("registers Buzz-owned command sources with saved provider keys", async () => 
     expect.objectContaining({ provider: "attention/command", builtIn: true }),
     expect.objectContaining({ provider: "attention/github-pr", builtIn: true }),
   ]);
+  core.agents.addAttentionSource({ id: "other", run: async () => {} });
+  expect(service.attentionProviders()).toContainEqual({
+    provider: "buzz.agents/other",
+  });
+  plugin.agents.addAttentionSource({ id: "command", run: async () => {} });
+  expect(service.attentionProviders()).toContainEqual({
+    provider: "example/command",
+  });
   const external = plugin.extend({
     pluginOwner: { id: "attention", revision: "old" },
   });

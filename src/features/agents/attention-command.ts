@@ -2,6 +2,15 @@ import { githubPolicy } from "./github-policy";
 import type { Host } from "../host/service";
 import type { AttentionSource } from "./attention-sources";
 
+/** Saved identities belong to this bundled owner, including legacy aliases. */
+export const bundledAttention = {
+  plugin: "buzz.agents",
+  providers: [
+    { id: "command", provider: "attention/command" },
+    { id: "github-pr", provider: "attention/github-pr" },
+  ],
+} as const;
+
 type Sources = {
   addAttentionSource(source: AttentionSource): void;
 };
@@ -12,7 +21,7 @@ export function registerAttention(ctx: {
   agents: Sources;
   host?: Pick<Host, "spawn">;
 }) {
-  for (const id of ["command", "github-pr"])
+  for (const { id } of bundledAttention.providers)
     ctx.agents.addAttentionSource({
       id,
       description:

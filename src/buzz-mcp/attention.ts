@@ -179,7 +179,7 @@ Classifier, for noisy event watches or source subscriptions: Jev tests relevance
 
 All subscription types share delivery: channel and optional root continue that conversation; omit both for an independent turn with the Interest instructions. A root requires a channel. Source providers are supplied by plugins and own their configuration. Empty output starts no agent turn. Attention off or watch_disable cancels execution and queued output; watch_enable restarts a completed source. The address selects the execution conversation and default posting destination; explicit reporting instructions in the Interest take precedence. It grants no additional permission.
 
-Timer: its interval is at least 60 seconds, and it runs once by default. max_occurrences (a count, or "unbounded") and expires_at (Unix seconds, or "unbounded") control the budget; remaining budget schedules the next interval automatically. The final allowed wake says it is the last.
+Timer: its interval is at least 60 seconds, and it runs once by default. max_occurrences (a count, or "unbounded") and expires_at (Unix seconds, or "unbounded") control the budget; remaining budget schedules the next interval automatically. The final allowed wake says it is the last. A spent timer or completed source is removed after its final turn succeeds unless you edit or rearm it first.
 
 ${WRITES}`,
     {

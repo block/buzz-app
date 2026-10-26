@@ -1447,6 +1447,30 @@ mod tests {
             })
             .collect();
         assert_eq!(native, expected);
+
+        let features =
+            fs::read_to_string(format!("{root}/../app/conversation-features.ts")).unwrap();
+        let manifests: BTreeMap<_, _> = features
+            .lines()
+            .filter_map(|line| {
+                let (name, path) = line
+                    .strip_prefix("import ")?
+                    .split_once(" from \"../bundled/")?;
+                let dir = path.strip_suffix("/manifest.json\";")?;
+                let manifest = fs::read_to_string(format!("{root}/{dir}/manifest.json")).unwrap();
+                let manifest: Manifest = serde_json::from_str(&manifest).unwrap();
+                Some((name, manifest.id))
+            })
+            .collect();
+        let mut host_ids: Vec<_> = features
+            .split("manifest: { ...")
+            .skip(1)
+            .map(|entry| manifests[entry.split(',').next().unwrap()].as_str())
+            .collect();
+        host_ids.sort_unstable();
+        let mut reserved_ids = super::BUILT_IN.to_vec();
+        reserved_ids.sort_unstable();
+        assert_eq!(reserved_ids, host_ids);
     }
 
     #[test]

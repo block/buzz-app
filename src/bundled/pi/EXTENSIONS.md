@@ -81,8 +81,15 @@ Things to know:
   - Import types with `import type`.
   - Write relative imports with their `.ts` extension.
   - Don't use `enum` or `namespace`.
-- **Names are unique.** An extension can't be named `buzz`, `coding-tools`,
-  `tool-search` or the name of another package's extension.
+- **Names.** An extension can't be named `buzz`, `coding-tools`,
+  `tool-search` or the name of another package's extension. Tools and
+  sections aren't checked: packages load after Pi's own tools, in the order
+  they're listed, and one with the same name as a tool or section loaded
+  before it replaces that one for every agent. A tool named `bash`, `read`,
+  `write` or `edit` replaces Pi's, so to change one of Pi's tools, use
+  `wrapTool` instead. Buzz's own tools (named `buzz_…`) and section
+  (`buzz-tools`) load last, so a package's tool or section with one of those
+  names never runs.
 - **`pi` ignores `pi.durable`.** It reads only the `extensions`, `skills`,
   `prompts` and `themes` lists under `pi`, so a package with only `pi.durable`
   gives `pi` nothing. One package can serve both: keep a `pi.extensions` entry
@@ -211,3 +218,6 @@ against the list above.
   another provider.
 - Package code runs with your permissions, in the one process that runs every
   Pi agent. Install only packages you trust.
+- Buzz runs a package's setup once for all Pi agents, so anything it keeps in
+  memory is shared by every agent. Keep a conversation's state in a Pi durable
+  [document](https://github.com/earendil-works/pi/blob/main/packages/durable/README.md#your-own-state).

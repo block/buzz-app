@@ -726,17 +726,30 @@ impl AppAgents {
                 });
             }
         })?;
-        // The verified key stays: settling can fail after the plain list saved
-        // the row, and a row still joining settles when it is added again.
-        self.update(|agents| {
+        // The verified key stays: a row still joining settles when it is added
+        // again. When only the other file failed to save, the plain list holds
+        // the row settled, though another app may have renamed it since.
+        let mut settling = false;
+        let joined = self.update(|agents| {
             let joined = agents
                 .iter_mut()
                 .find(|saved| saved.pubkey == pubkey && saved.relay == relay)
                 .filter(|saved| !saved.deleted && saved.joining)
                 .ok_or("The agent was removed while it was being added")?;
             joined.joining = false;
+            settling = true;
             Ok(joined.clone())
-        })
+        });
+        if joined.is_err() && settling {
+            if let Some(settled) = self
+                .list()?
+                .into_iter()
+                .find(|saved| saved.live(pubkey, &relay))
+            {
+                return Ok(settled);
+            }
+        }
+        joined
     }
     /// Renames it in every community it is in.
     pub fn rename(&self, pubkey: &str, name: &str) -> Result<()> {

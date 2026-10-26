@@ -1135,8 +1135,8 @@ fn a_join_holds_off_other_apps_until_it_settles() {
 #[test]
 fn a_save_cut_short_leaves_a_new_membership_with_its_key() {
     const OTHER: &str = "wss://other.example";
-    // Create fails saving the second file; a Join back to the home fails
-    // saving the second file as it settles, after the plain list saved it.
+    // Create, and a Join back to the home as it settles, fail saving the
+    // second file after the plain list saved the row.
     for joining_home in [false, true] {
         let dir = tempfile::tempdir().unwrap();
         let credentials = Memory::default();
@@ -1153,9 +1153,11 @@ fn a_save_cut_short_leaves_a_new_membership_with_its_key() {
             remove(&agents, &source.pubkey, RELAY, &credentials).unwrap();
             agents.forget(&source.pubkey, RELAY).unwrap();
             FAIL_RENAME.set(4);
-            let joined = agents.join(&source.pubkey, OTHER, RELAY, None, &credentials);
-            assert_eq!(joined.unwrap_err(), "Injected identity rename failure");
-            source.pubkey.clone()
+            let joined = agents
+                .join(&source.pubkey, OTHER, RELAY, None, &credentials)
+                .unwrap();
+            assert!(!joined.joining);
+            joined.pubkey
         } else {
             FAIL_RENAME.set(2);
             agents

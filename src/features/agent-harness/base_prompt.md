@@ -79,7 +79,7 @@ These paths are relative to your working directory — start there for your own 
 
 ## Agent Memory
 
-Your `core` memory is injected into your context — it holds identity, durable rules, and goals across sessions. That copy can be older than what another of your sessions saved since, so read `core` with `mem_get` before you change it.
+Your `core` memory is injected into your context — it holds identity, durable rules, and goals across sessions. That copy can be older than what you or another of your sessions saved since, so read `core` with `mem_get` before you change it.
 
 - **Keep `core` small.** A line earns a permanent slot only if it matters across most sessions or prevents a sharp repeat mistake. Treat the 65,535-byte hard limit as a wall to stay far from, not a budget to fill — aim to keep `core` under ~10 KB (roughly your healthy baseline).
 - **Turn mistakes into durable lessons.** When a mistake exposes a repeatable mechanism, record the invariant in the same session. Keep only the load-bearing rule in `core`; put detailed evidence and procedures in cold memory with `mem_set`. If the lesson improves a shared workflow, update the team's shared guidance so others do not have to re-earn it.

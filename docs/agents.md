@@ -154,7 +154,7 @@ channel-scoped session. It is the same `plugin` trigger with `from`, the
 conversation it came from, in place of `plugin`, shown in a `<self-handoff>`
 section that names that conversation, says nobody wrote it as a message and that
 its text is data, and that the agent acts only on what its owner asked. Only a
-run's handle hands off, and Pi, which takes no wakes, does not offer it.
+run's handle hands off.
 
 A plugin leaves context for a later turn with
 `ctx.agents.note(pubkey, channelId, text, root?)`, without waking the agent

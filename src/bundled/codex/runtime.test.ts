@@ -726,7 +726,7 @@ it("keeps an agent's two communities' threads apart, each under its membership's
   await f.complete(0, "HERE");
   await vi.waitFor(() => expect(f.runtime.sessions(elsewhere)).toHaveLength(1));
   const saved = (key: string) =>
-    f.storage.get(`buzz.codex.sessions.v12:${scope}:${key}`);
+    f.storage.get(`buzz.codex.sessions.v13:${scope}:${key}`);
   expect(saved(pubkey)).toBeTruthy();
   expect(saved(elsewhere)).toBeTruthy();
   expect(f.runtime.conversations(pubkey)).toHaveLength(1);
@@ -2739,7 +2739,14 @@ it("uses the launched workspace for shared file tools and the owner view for enc
     (await f.tool("mem_set", { slug: "mem/test", text: "remembered" }))?.result,
   ).toMatchObject({ success: true });
   expect((await f.tool("mem_get", { slug: "mem/test" }))?.result).toMatchObject(
-    { success: true, contentItems: [{ text: "remembered" }] },
+    {
+      success: true,
+      contentItems: [
+        {
+          text: expect.stringMatching(/^version: [0-9a-f]{16}\n\nremembered$/),
+        },
+      ],
+    },
   );
   expect(
     (await f.tool("media_get", { url: "shot.png" }))?.result,
@@ -3203,7 +3210,7 @@ it("lists saved conversations newest first from storage, and moves a started one
   const channel = JSON.stringify(["channel", "channel"]);
   const elsewhere = JSON.stringify(["unlisted", root]);
   f.storage.set(
-    `buzz.codex.sessions.v12:${scope}:${pubkey}`,
+    `buzz.codex.sessions.v13:${scope}:${pubkey}`,
     JSON.stringify({
       [channel]: { threadId: "before-timestamps", workspace: "/w" },
       [thread]: { threadId: "older", workspace: "/w", at: 1 },
@@ -3240,7 +3247,7 @@ it("lists saved conversations newest first from storage, and moves a started one
   expect(latest?.at).toBeGreaterThan(2);
   const stored = Object.keys(
     JSON.parse(
-      f.storage.get(`buzz.codex.sessions.v12:${scope}:${pubkey}`) ?? "{}",
+      f.storage.get(`buzz.codex.sessions.v13:${scope}:${pubkey}`) ?? "{}",
     ),
   );
   expect(stored.at(-1)).toBe(latest?.key);
@@ -3361,7 +3368,7 @@ it("offers the tools plugins add, runs them as the agent here, and starts a new 
     1,
   );
   const saved = JSON.parse(
-    f.storage.get(`buzz.codex.sessions.v12:${scope}:${pubkey}`) ?? "{}",
+    f.storage.get(`buzz.codex.sessions.v13:${scope}:${pubkey}`) ?? "{}",
   );
   expect(Object.values(saved)).toEqual([
     expect.objectContaining({ tools: expect.any(String) }),
@@ -4282,20 +4289,23 @@ it("delivers a rootless subscription to its channel without publishing its ancho
   expect(JSON.stringify(f.publish.mock.calls)).not.toContain(WAKE_ID);
 });
 
-it("does not reuse persisted bindings with pre-delivery built-in tool schemas", () => {
-  const f = fixture();
-  f.storage.set(
-    `buzz.codex.sessions.v7:${scope}:${pubkey}`,
-    JSON.stringify({
-      [JSON.stringify(["channel", root])]: {
-        threadId: "old-schema",
-        workspace: "/w",
-      },
-    }),
-  );
-  expect(f.runtime.conversations(pubkey)).toEqual([]);
-  f.runtime.dispose();
-});
+it.each(["v7", "v12"])(
+  "does not reuse %s persisted bindings with older built-in tool schemas",
+  (version) => {
+    const f = fixture();
+    f.storage.set(
+      `buzz.codex.sessions.${version}:${scope}:${pubkey}`,
+      JSON.stringify({
+        [JSON.stringify(["channel", root])]: {
+          threadId: "old-schema",
+          workspace: "/w",
+        },
+      }),
+    );
+    expect(f.runtime.conversations(pubkey)).toEqual([]);
+    f.runtime.dispose();
+  },
+);
 
 it("drops standalone output invalidated while core memory loads", async () => {
   const f = fixture();

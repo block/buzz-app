@@ -108,6 +108,27 @@ export function ChannelLifecycleDialog({
       operation.current?.abort();
     };
   }, []);
+  // Archiving a chat is undoable from its result toast, so it skips
+  // confirmation; channels archive for everyone and still confirm.
+  // Deferring the start lets a development StrictMode remount cancel it.
+  const immediate = action === "archive" && noun === "chat";
+  // biome-ignore lint/correctness/useExhaustiveDependencies: start once per mounted archive request.
+  useEffect(() => {
+    if (!immediate) return;
+    const timer = setTimeout(() => void submit());
+    return () => clearTimeout(timer);
+  }, []);
+  const undo = () => {
+    const restored = copyFor("unarchive", noun);
+    lifecycle.run("unarchive", channelId).then(
+      () => notify(`${restored.done}: ${channelName}`, "success"),
+      (error) =>
+        notify(
+          `${restored.title} failed: ${error instanceof Error ? error.message : String(error)}`,
+          "error",
+        ),
+    );
+  };
   const submit = async () => {
     if (operation.current || error) return;
     const controller = new AbortController();
@@ -118,7 +139,13 @@ export function ChannelLifecycleDialog({
     try {
       await lifecycle.run(action, channelId, controller.signal);
       if (!controller.signal.aborted) {
-        notify(`${copy.done}: ${channelName}`, "success");
+        notify(
+          `${copy.done}: ${channelName}`,
+          "success",
+          immediate
+            ? { label: "Undo", onClick: undo, timeout: 3000 }
+            : undefined,
+        );
         callbacks.current.completed();
       }
     } catch (error) {
@@ -147,7 +174,7 @@ export function ChannelLifecycleDialog({
       )}
       <Dialog
         size="compact"
-        open={!busy && !error}
+        open={!immediate && !busy && !error}
         dismissOnOutsideClick
         initialFocus={confirms ? confirm : cancel}
         // Cancellation remains sidebar-owned; submission returns to the trigger.

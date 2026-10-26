@@ -617,8 +617,7 @@ it.each([
   },
 );
 
-it("names Solo chats as chats in the menu, dialog and result", async () => {
-  const user = userEvent.setup();
+it("names Solo chats as chats in the menu and result", async () => {
   const lifecycle = capability();
   const choose = vi.fn();
   render(
@@ -653,11 +652,62 @@ it("names Solo chats as chats in the menu, dialog and result", async () => {
       />
     </ToastProvider>,
   );
-  expect(
-    screen.getByRole("dialog", { name: "Archive chat: Planning" }),
-  ).toHaveTextContent(
-    "Archive this chat for everyone in it and remove it from the sidebar.",
-  );
-  await user.click(screen.getByRole("button", { name: "Archive chat" }));
+  // Archiving a chat skips confirmation; its result toast offers Undo.
+  expect(screen.queryByRole("dialog", { name: /^Archive chat/ })).toBeNull();
   expect(await screen.findByText("Chat archived: Planning")).toBeDefined();
+  fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+  expect(await screen.findByText("Chat unarchived: Planning")).toBeDefined();
+});
+
+it("chat archive runs without confirmation, then Undo unarchives from its result toast", async () => {
+  const lifecycle = capability();
+  const gate = deferred<void>();
+  lifecycle.run.mockImplementationOnce(() => gate.promise);
+  const completed = vi.fn();
+  function Host() {
+    const [open, setOpen] = useState(true);
+    return (
+      <ToastProvider>
+        {open && (
+          <ChannelLifecycleDialog
+            channelId="id"
+            channelName="Fixture"
+            noun="chat"
+            action="archive"
+            lifecycle={lifecycle}
+            close={() => setOpen(false)}
+            completed={() => {
+              completed();
+              setOpen(false);
+            }}
+          />
+        )}
+      </ToastProvider>
+    );
+  }
+  render(<Host />);
+  expect(screen.queryByRole("button", { name: "Archive chat" })).toBeNull();
+  try {
+    await screen.findByRole("dialog", { name: "Archiving chat…" });
+    expect(lifecycle.run).toHaveBeenCalledWith(
+      "archive",
+      "id",
+      expect.any(AbortSignal),
+    );
+  } finally {
+    await act(async () => gate.resolve());
+  }
+  await screen.findByRole("dialog", { name: "Chat archived: Fixture" });
+  expect(completed).toHaveBeenCalledOnce();
+  lifecycle.run.mockRejectedValueOnce(new Error("Relay rejected the request."));
+  fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+  expect(lifecycle.run).toHaveBeenLastCalledWith("unarchive", "id");
+  expect(
+    await screen.findByText(
+      "Unarchive chat failed: Relay rejected the request.",
+    ),
+  ).toBeDefined();
+  await waitFor(() =>
+    expect(screen.queryByRole("button", { name: "Undo" })).toBeNull(),
+  );
 });

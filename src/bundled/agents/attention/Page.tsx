@@ -28,7 +28,7 @@ import { Select } from "../../../shared/design-system/ui/Select";
 import type { Context } from "../../../plugins/author";
 import type { Agent, Watch } from "./model";
 import { createRecipeForm } from "./recipes";
-import { markdown } from "./markdown";
+import { InstructionsMarkdown } from "./InstructionsMarkdown";
 
 import "./AttentionPage.css";
 
@@ -687,7 +687,7 @@ export function createPage({
               h("span", { className: "attention-show-more" }, "Show more"),
               h("span", { className: "attention-show-less" }, "Show less"),
             ),
-            markdown(React, instructions),
+            <InstructionsMarkdown text={instructions} />,
           ),
           h(
             "p",

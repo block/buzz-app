@@ -1769,9 +1769,12 @@ html[data-keyboard-navigation] .membership .membershipName:focus-visible {
 }
 .membershipAvatars,
 .mentionRecipients {
+  /* How far each avatar tucks under the next; the stack's trailing padding
+     and the overflow count's margin balance it from the same value. */
+  --avatar-overlap: var(--space-1h);
   display: flex;
   flex-shrink: 0;
-  padding-right: var(--space-1h);
+  padding-right: var(--avatar-overlap);
 }
 .membershipAvatar,
 .mentionRecipients > [data-mention-recipient] {
@@ -1781,7 +1784,7 @@ html[data-keyboard-navigation] .membership .membershipName:focus-visible {
   width: 1.75rem;
   height: 1.75rem;
   min-height: 1.75rem;
-  margin-right: calc(-1 * var(--space-1h));
+  margin-right: calc(-1 * var(--avatar-overlap));
   border: 2px solid var(--surface-panel);
   overflow: hidden;
   background: var(--surface-panel);
@@ -1799,18 +1802,16 @@ html[data-keyboard-navigation] .membership .membershipName:focus-visible {
 
 /* Overflow counts are group metadata, not profile artwork: a pill that grows
    with its digits and sits clear of the stack instead of tucking under the
-   last avatar's overlap. Positioned so it paints over the avatars like them. */
+   last avatar's overlap. */
 .membershipAvatarCount {
-  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  min-width: var(--space-5);
   height: var(--space-5);
   /* Undo the previous avatar's overlap, then leave a visible gap. */
-  margin-left: calc(var(--space-1h) + var(--space-1));
-  margin-right: calc(-1 * var(--space-1h));
+  margin-left: calc(var(--avatar-overlap) + var(--space-1));
+  margin-right: calc(-1 * var(--avatar-overlap));
   padding: 0 var(--space-1h);
   border: 2px solid var(--surface-panel);
   border-radius: var(--radius-pill);

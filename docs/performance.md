@@ -14,20 +14,9 @@ bin/pnpm perf --scenario channel-open --repeat 5 --cpu 4 --out results.json
 (1 means unthrottled); it does not throttle network or the fixture server.
 `--repeat` defaults to 5. Every sample gets fresh browser storage, signed
 histories and server state; a production frontend build is shared by the worker.
-One worker runs serially with no retries. The cases use a dedicated Chromium
-runner, separate from the normal browser correctness projects.
-
-PR and main CI run every case once in the required **Browser measurements** job:
-
-```sh
-bin/pnpm perf --scenario all --repeat 1 --cpu 4
-```
-
-This smoke check blocks on broken setup, incomplete workloads, assertions and
-measurement/reporting failures. It does not compare timings or enforce performance
-thresholds. The `browser-measurements` artifact includes `test-results/perf`
-evidence even when a step fails. Local `pnpm test` / `just scan` do not invoke this
-runner; use `pnpm perf` explicitly and retain repeated samples for comparisons.
+One worker runs serially with no retries. Required CI runs every case once in
+**Browser measurements** without timing thresholds. Locally, use `pnpm perf`;
+`pnpm test` / `just scan` do not run these cases.
 
 The existing browser fixture owns the production React/services/IndexedDB/Virtua
 app and modeled local HTTP broker. The runner owns settings and measurement

@@ -319,7 +319,9 @@ test.describe("scoped Members history", () => {
       )
       .toEqual(target);
     await expect(dialog).toHaveCount(0);
-    await page.getByRole("button", { name: "Access", exact: true }).click();
+    await page
+      .getByRole("button", { name: "Manage members", exact: true })
+      .click();
     await expect(dialog.getByRole("searchbox")).toBeFocused();
     expect(
       await page.evaluate((target) => window.fixtureNavigation.open(target), {

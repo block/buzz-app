@@ -237,6 +237,8 @@ function ChannelWorkspace({
   const canvasTrigger = useRef<HTMLButtonElement>(null);
   const [membersChannel, setMembersChannel] = useState<string>();
   const membersTrigger = useRef<HTMLButtonElement>(null);
+  // Set while Members closes because it opened a destination, such as a profile.
+  const membersHandoff = useRef(false);
   const membersHeaderTrigger = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     void queries.emoji.ensure();
@@ -522,6 +524,8 @@ function ChannelWorkspace({
     setMembersChannel((id) => (id === currentId ? id : undefined));
   }, [currentId]);
   const setMembersOpen = (open: boolean) => {
+    const handoff = membersHandoff.current;
+    membersHandoff.current = false;
     if (!navigator) {
       setMembersChannel(open ? currentId : undefined);
       return;
@@ -535,11 +539,12 @@ function ChannelWorkspace({
     )
       return;
     // A profile keeps this conversation; a DM already owns a different visit.
-    // Modal cleanup must not overwrite that destination or its exact address.
+    // Modal cleanup must not overwrite that destination or its exact address,
+    // so a handoff replaces the Members visit instead of traversing back.
     const { panel: _panel, ...target } = navigation.target;
     void navigator.open(
       open ? { ...target, panel: "members" } : target,
-      open ? undefined : { dismiss: true },
+      open ? undefined : handoff ? { replace: true } : { dismiss: true },
     );
   };
   const openMembers = (trigger: HTMLButtonElement) => {
@@ -1518,7 +1523,9 @@ function ChannelWorkspace({
           }
           canOpenLink={canOpenLink}
           {...(agents ? { agents } : {})}
-          onOpenLink={(url, returnFocus) => openLink(url, { returnFocus })}
+          onOpenLink={(url, returnFocus) =>
+            (membersHandoff.current = openLink(url, { returnFocus }))
+          }
           onOpenConversation={
             navigator && viewer
               ? (id) => openLink(`buzz://channel/${encodeURIComponent(id)}`)

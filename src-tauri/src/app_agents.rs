@@ -3,8 +3,8 @@
 //! event, read, upload or memory write at a time, and native signs and sends it
 //! to the agent's community.
 use buzz_agent_controller::{
-    inline_picture, AppAgent, AppAgents, Carry, Credentials, OldStores, PlatformCredentials,
-    PortSource, Portables, Published, Secret, CREDENTIALS_BUSY,
+    inline_picture, AppAgent, AppAgents, Carry, Credentials, OldRuntime, OldStores,
+    PlatformCredentials, PortSource, Portables, Published, Secret, CREDENTIALS_BUSY,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -268,6 +268,8 @@ impl From<AppAgent> for AppAgentSummary {
 pub(crate) struct Ported {
     agent: AppAgentSummary,
     carry: Carry,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    runtime: Option<OldRuntime>,
     /// What did not come over, said to the person importing.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     notes: Vec<String>,
@@ -405,6 +407,7 @@ pub(crate) async fn app_agent_port(
     Ok(Ported {
         agent: agent.into(),
         carry: found.carry,
+        runtime: found.runtime,
         notes,
     })
 }

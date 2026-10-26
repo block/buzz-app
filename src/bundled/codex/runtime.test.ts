@@ -2678,7 +2678,14 @@ it("uses the launched workspace for shared file tools and the owner view for enc
     (await f.tool("mem_set", { slug: "mem/test", text: "remembered" }))?.result,
   ).toMatchObject({ success: true });
   expect((await f.tool("mem_get", { slug: "mem/test" }))?.result).toMatchObject(
-    { success: true, contentItems: [{ text: "remembered" }] },
+    {
+      success: true,
+      contentItems: [
+        {
+          text: expect.stringMatching(/^version: [0-9a-f]{16}\n\nremembered$/),
+        },
+      ],
+    },
   );
   expect(
     (await f.tool("media_get", { url: "shot.png" }))?.result,

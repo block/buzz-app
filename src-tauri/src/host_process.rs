@@ -7,7 +7,7 @@
 use crate::host_command::{effective_path, resolve_program};
 use crate::{with_manager, PluginManager};
 use buzzodz_plugins::HostProcess;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::ffi::OsStr;
 #[cfg(unix)]
@@ -21,6 +21,19 @@ use tauri::Manager as _;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::process::{ChildStdin, Command};
 use tokio::sync::oneshot;
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ProcessMcpConnection {
+    url: String,
+    headers: Vec<ProcessMcpHeader>,
+}
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ProcessMcpHeader {
+    name: String,
+    value: String,
+}
 
 /// Processes alive at once across all plugins.
 const MAX_PROCESSES: usize = 64;
@@ -288,7 +301,7 @@ pub(crate) async fn plugin_host_process_spawn<R: tauri::Runtime>(
     cwd: Option<String>,
     env: Option<HashMap<String, Option<String>>>,
     on_event: Channel<ProcessEvent>,
-    mcp: Option<serde_json::Value>,
+    mcp: Option<ProcessMcpConnection>,
 ) -> Result<u64, String> {
     let page = processes.page();
     let plugin = id.clone();
@@ -344,7 +357,10 @@ pub(crate) async fn plugin_host_process_spawn<R: tauri::Runtime>(
         };
     }
     if let Some(mcp) = mcp {
-        command.env("BUZZ_AGENT_CONNECTION", mcp.to_string());
+        command.env(
+            "BUZZ_AGENT_CONNECTION",
+            serde_json::to_string(&mcp).map_err(|error| error.to_string())?,
+        );
     }
     if let Some(cwd) = cwd {
         let directory = expand_home(&cwd)?;

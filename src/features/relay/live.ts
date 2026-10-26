@@ -326,8 +326,9 @@ export function subscribeRelayTraffic(
     if (closed || !authenticated) return;
     // An open socket can stop delivering without an error or close, and its
     // routes then only time out. A minute of silence asks for an empty answer;
-    // no answer at all means the socket is dead, so replace it.
-    if (!heard) {
+    // no answer at all means the socket is dead, so replace it. A probe is a
+    // request too: during a relay cooldown it waits for a later silent minute.
+    if (!heard && !admission.delay()) {
       if (probe) send(["CLOSE", probe]);
       probe = `probe-${++serial}`;
       send(["REQ", probe, { kinds: [44100], "#p": [viewer], limit: 0 }]);
@@ -722,6 +723,13 @@ export function subscribeRelayTraffic(
         (data[0] === "EOSE" || data[0] === "CLOSED")
       ) {
         if (data[0] === "EOSE") send(["CLOSE", probe]);
+        else if (
+          typeof data[2] === "string" &&
+          data[2].startsWith("rate-limited:")
+        ) {
+          const hint = /retry in (\d+)s$/.exec(data[2]);
+          admission.pause(hint ? Math.min(Number(hint[1]), 86400) : 5);
+        }
         probe = undefined;
         return;
       }

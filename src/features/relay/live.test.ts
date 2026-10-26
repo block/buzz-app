@@ -854,6 +854,59 @@ it("keeps a quiet socket that answers its probes", async () => {
   expect(vi.getTimerCount()).toBe(0);
 });
 
+it("keeps a relay cooldown that a probe was refused with", async () => {
+  vi.useFakeTimers();
+  const h = setup(["a"]);
+  try {
+    await h.first.auth();
+    for (const [, id] of h.first.requests())
+      await h.first.receive(["EOSE", id]);
+    h.first.silent = true;
+    await vi.advanceTimersByTimeAsync(120000);
+    const probe = h.first.probes().at(-1);
+    assert.exists(probe);
+    await h.first.receive([
+      "CLOSED",
+      probe[1],
+      "rate-limited: quota exceeded; retry in 30s",
+    ]);
+    // The refusal is an answer, so the socket stays.
+    await vi.advanceTimersByTimeAsync(SETUP_TIMEOUT_MS);
+    expect(h.sockets).toHaveLength(1);
+    const count = h.first.requests().length;
+    h.owner.update(["a", "b"]);
+    await vi.advanceTimersByTimeAsync(20000 - SETUP_TIMEOUT_MS);
+    expect(h.first.requests()).toHaveLength(count);
+    await vi.advanceTimersByTimeAsync(12000);
+    expect(
+      h.first.requests().filter((r) => scopeOf(r).includes("b")),
+    ).not.toHaveLength(0);
+  } finally {
+    h.owner.dispose();
+  }
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it("sends no probe while the relay asked it to wait", async () => {
+  vi.useFakeTimers();
+  const admission = createLiveAdmission();
+  const h = setup(["a"], admission);
+  try {
+    await h.first.auth();
+    for (const [, id] of h.first.requests())
+      await h.first.receive(["EOSE", id]);
+    admission.pause(300);
+    await vi.advanceTimersByTimeAsync(5 * 60000);
+    expect(h.first.probes()).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(h.first.probes()).toHaveLength(1);
+    expect(h.sockets).toHaveLength(1);
+  } finally {
+    h.owner.dispose();
+  }
+  expect(vi.getTimerCount()).toBe(0);
+});
+
 it.each([
   "previous closed",
   "restricted: not a channel member",

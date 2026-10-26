@@ -21,6 +21,7 @@ test("shared navigation preserves drafts and history across Solo and header page
   await expect(topbar.getByRole("tab")).toHaveText([
     "Messages",
     "Reminders",
+    "Agent Attention",
     "Agents",
     "Workflows",
   ]);
@@ -565,6 +566,7 @@ test("header pages remain reachable without overlap through scale and resize", a
         "Messages",
         "Reminders",
         "A deliberately long topbar destination",
+        "Agent Attention",
         "Agents",
         "Toolbar destination",
         "Workflows",

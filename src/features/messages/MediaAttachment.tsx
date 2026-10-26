@@ -283,7 +283,8 @@ export function MediaAttachment({
                       { poster, width, height },
                       shared.capture,
                     );
-                  setCapturedPreview(poster);
+                  // A later seek's encode must not replace the first frame.
+                  setCapturedPreview((current) => current ?? poster);
                 };
                 reader.readAsDataURL(blob);
               },

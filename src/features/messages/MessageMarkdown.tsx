@@ -400,7 +400,25 @@ const markdownComponents: Components = {
   img: (props) => useMessageComponents().img(props),
   span: (props) => useMessageComponents().span(props),
   pre: (props) => useMessageComponents().pre(props),
+  table: ({ node: _node, ...props }) => (
+    <table ref={observeTableOverflow} {...props} />
+  ),
 };
+
+/** WebKit adds an `overflow-x: auto` scrollbar after flex and grid ancestors
+ * have taken their heights, then lays out only the table again. A scrollbar
+ * that takes space then overlaps the next row, or leaves a gap when removed.
+ * A table's box resizes whenever its overflow changes; CSS chooses the
+ * scrollbar from this state, so it is laid out with the ancestors. */
+function observeTableOverflow(table: HTMLTableElement | null) {
+  if (!table || typeof ResizeObserver === "undefined") return;
+  const observer = new ResizeObserver(() => {
+    const overflow = String(table.scrollWidth > table.clientWidth);
+    if (table.dataset.overflow !== overflow) table.dataset.overflow = overflow;
+  });
+  observer.observe(table);
+  return () => observer.disconnect();
+}
 
 export function MessageMarkdown({
   row,

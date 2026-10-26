@@ -834,3 +834,89 @@ test("exact reply media keeps its selected attachment and canonical thread", asy
     await server.close();
   }
 });
+
+// Browser-only: WebKit adds an `overflow-x: auto` scrollbar after flex and grid
+// ancestors take their heights, so a virtual row keeps its old height: the next
+// row overlaps an added scrollbar, and a removed one leaves a gap. Playwright
+// WebKit uses overlay scrollbars on macOS, so these rules emulate scrollbars
+// that take space; WebKit ignores ::-webkit-scrollbar while the standard
+// scrollbar properties are set.
+const spaceTakingScrollbars = `* { scrollbar-width: auto !important; scrollbar-color: auto !important; }
+::-webkit-scrollbar { width: 12px; height: 12px; }
+::-webkit-scrollbar-thumb { background: gray; }`;
+
+test("message tables keep their scrollbar inside the row across resizes", async ({
+  page,
+  browserName,
+}) => {
+  test.skip(
+    browserName === "chromium",
+    "Headless Chromium hides every scrollbar, and lays out an added one with its ancestors",
+  );
+  await page.addInitScript((css) => {
+    document.addEventListener("DOMContentLoaded", () => {
+      const style = document.createElement("style");
+      style.textContent = css;
+      document.head.append(style);
+    });
+  }, spaceTakingScrollbars);
+  await withMessagesFixture(page, async () => {
+    const feed = page.getByRole("region", { name: "Channel message history" });
+    await expect(feed.getByRole("table")).toHaveCount(2);
+    // Row ids from the fixture: a wide table, a narrower one, then a follow-up.
+    const layout = (id, nextId) =>
+      feed.evaluate(
+        (root, [id, nextId]) => {
+          const table = root.querySelector(`[data-message-id="${id}"] table`);
+          const next = root.querySelector(
+            `[data-message-id="${nextId}"] [data-message-action-anchor]`,
+          );
+          const box = table.getBoundingClientRect();
+          const style = getComputedStyle(table);
+          const borders =
+            Number.parseFloat(style.borderTopWidth) +
+            Number.parseFloat(style.borderBottomWidth);
+          return {
+            scrolls: table.scrollWidth > table.clientWidth,
+            scrollbar: table.offsetHeight - table.clientHeight > borders,
+            // The table is its message's only content, so its box is the row's.
+            contained:
+              Math.abs(
+                table.parentElement.getBoundingClientRect().bottom - box.bottom,
+              ) < 0.5,
+            clear: next.getBoundingClientRect().top >= box.bottom,
+          };
+        },
+        [id.repeat(64), nextId.repeat(64)],
+      );
+    const wide = () => layout("c", "d");
+    const narrower = () => layout("d", "e");
+    const scrolling = {
+      scrolls: true,
+      scrollbar: true,
+      contained: true,
+      clear: true,
+    };
+    const fitting = { ...scrolling, scrolls: false, scrollbar: false };
+    const resize = (width) =>
+      // The fixture's fixed-width flex host stands in for a resized pane.
+      feed.evaluate((element, width) => {
+        element.parentElement.style.width = `${width}px`;
+      }, width);
+
+    await expect.poll(wide).toEqual(scrolling);
+    await expect.poll(narrower).toEqual(fitting);
+    await resize(400);
+    await expect.poll(narrower).toEqual(scrolling);
+    await resize(900);
+    await expect.poll(narrower).toEqual(fitting);
+    await expect.poll(wide).toEqual(scrolling);
+    expect(
+      await feed.evaluate((root, id) => {
+        const table = root.querySelector(`[data-message-id="${id}"] table`);
+        table.scrollLeft = table.scrollWidth;
+        return table.scrollLeft;
+      }, "c".repeat(64)),
+    ).toBeGreaterThan(0);
+  });
+});

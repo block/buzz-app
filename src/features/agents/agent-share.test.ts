@@ -83,14 +83,81 @@ it("refuses a type that cannot share and instructions that look like a credentia
   ).toThrow(
     "Agent 'Ada' uses a runtime that cannot be shared with the community catalog.",
   );
-  expect(() =>
+  for (const instructions of [
+    "Use api_key=abcdef0123456789.",
+    '{"api_key": "abcdef0123456789"}',
+    `Sign with nsec1${"q".repeat(58)}.`,
+    `Push with ghp_${"A".repeat(36)}.`,
+  ])
+    expect(() => shareable(agent({ ...saved, instructions }), echo)).toThrow(
+      "Portable configuration appears to contain a credential. Remove it before export.",
+    );
+});
+
+it("shares and reads back only the text block/buzz accepts", async () => {
+  const read = (name: string, systemPrompt: string) =>
+    readSnapshot(
+      new Blob([
+        JSON.stringify({
+          format: "buzz-agent-snapshot",
+          version: 1,
+          definition: { name, systemPrompt },
+        }),
+      ]),
+    );
+  const refused: [string, string, string][] = [
+    [
+      "x".repeat(129),
+      "Review.",
+      "Display name is too long (129 characters, max 128)",
+    ],
+    [
+      "Ada",
+      "x".repeat(64 * 1024 + 1),
+      "Agent instructions are too long (65537 bytes, max 65536)",
+    ],
+    [
+      "Ada",
+      "Review.\r",
+      "Agent instructions contains prohibited invisible or formatting character U+000D",
+    ],
+    [
+      "Ada",
+      "Review \u202Eit.",
+      "Agent instructions contains prohibited invisible or formatting character U+202E",
+    ],
+    [
+      "Ad\u200Ba",
+      "Review.",
+      "Display name contains prohibited invisible or formatting character U+200B",
+    ],
+    [
+      "Ada",
+      "Review\u200D.",
+      "Agent instructions contains prohibited invisible or formatting character U+200D",
+    ],
+  ];
+  for (const [name, instructions, error] of refused) {
+    expect(() =>
+      shareable({ ...agent({ ...saved, instructions }), name }, echo),
+    ).toThrow(error);
+    await expect(read(name, instructions)).rejects.toThrow(error);
+  }
+  // Emoji keep their joiners, selectors and modifiers.
+  const emoji = "Ada 👩\u200D💻 ❤\uFE0F 🧑🏽\u200D💻 1\uFE0F⃣";
+  expect(
     shareable(
-      agent({ ...saved, instructions: "Use api_key=abcdef0123456789." }),
+      {
+        ...agent({ ...saved, instructions: `Review.\n\t${emoji}` }),
+        name: emoji,
+      },
       echo,
     ),
-  ).toThrow(
-    "Portable configuration appears to contain a credential. Remove it before export.",
-  );
+  ).toMatchObject({ name: emoji, instructions: `Review.\n\t${emoji}` });
+  expect(await read(emoji, emoji)).toMatchObject({
+    name: emoji,
+    instructions: emoji,
+  });
 });
 
 it("leaves out a picture that is not an HTTPS URL", () => {

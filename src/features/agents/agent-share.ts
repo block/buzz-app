@@ -22,9 +22,78 @@ const decoder = new TextDecoder("utf-8", { fatal: true });
 
 /** Heuristic only; free text can still hold what it misses. */
 const credentialLike = (value: string) =>
-  /-----BEGIN (?:[A-Z ]* )?PRIVATE KEY-----|\b(?:sk-[A-Za-z0-9_-]{16,}|(?:api[_-]?key|access[_-]?token|secret|password)\s*[:=]\s*[^\s,;]{8,})/i.test(
+  /-----BEGIN (?:[A-Z ]* )?PRIVATE KEY-----|\b(?:sk-[A-Za-z0-9_-]{16,}|nsec1[02-9ac-hj-np-z]{58}|gh[pousr]_[A-Za-z0-9]{36,}|(?:api[_-]?key|access[_-]?token|secret|password)["']?\s*[:=]\s*["']?[^\s,;"']{8,})/i.test(
     value,
   );
+
+// What block/buzz `validate_agent_definition_text` admits: what a person
+// reviews is what the agent receives, so text without a visible glyph is
+// refused, apart from the joiners and selectors that compose an emoji. These
+// are the Unicode Default_Ignorable_Code_Point ranges.
+const IGNORABLE: [number, number][] = [
+  [0x00ad, 0x00ad],
+  [0x034f, 0x034f],
+  [0x061c, 0x061c],
+  [0x115f, 0x1160],
+  [0x17b4, 0x17b5],
+  [0x180b, 0x180f],
+  [0x200b, 0x200f],
+  [0x202a, 0x202e],
+  [0x2060, 0x206f],
+  [0x3164, 0x3164],
+  [0xfe00, 0xfe0f],
+  [0xfeff, 0xfeff],
+  [0xffa0, 0xffa0],
+  [0xfff0, 0xfff8],
+  [0x1bca0, 0x1bca3],
+  [0x1d173, 0x1d17a],
+  [0xe0000, 0xe0fff],
+];
+const ignorable = (char: string) => {
+  const code = char.codePointAt(0) ?? 0;
+  return IGNORABLE.some(([from, to]) => code >= from && code <= to);
+};
+const pictographic = (char = "") => /^\p{Extended_Pictographic}$/u.test(char);
+const modifier = (char = "") => /^[\u{1F3FB}-\u{1F3FF}]$/u.test(char);
+
+function visible(value: string, label: string, layout: boolean) {
+  const chars = Array.from(value);
+  chars.forEach((char, index) => {
+    // A joiner follows an emoji, past its selectors and skin tones.
+    let base = index - 1;
+    if (char === "\u200D")
+      while (chars[base] === "\uFE0F" || modifier(chars[base])) base--;
+    const emoji =
+      char === "\uFE0F"
+        ? /^[#*0-9]$/.test(chars[index - 1] ?? "") ||
+          pictographic(chars[index - 1])
+        : char === "\u200D" &&
+          pictographic(chars[base]) &&
+          pictographic(chars[index + 1]);
+    if (
+      (/\p{Cc}/u.test(char) && !(layout && (char === "\n" || char === "\t"))) ||
+      (ignorable(char) && !emoji)
+    )
+      throw new Error(
+        `${label} contains prohibited invisible or formatting character U+${char.codePointAt(0)?.toString(16).toUpperCase().padStart(4, "0")}`,
+      );
+  });
+}
+
+/** Refuses a name or instructions block/buzz would refuse. */
+function checkText(name: string, instructions: string) {
+  const chars = Array.from(name).length;
+  if (chars > 128)
+    throw new Error(`Display name is too long (${chars} characters, max 128)`);
+  const bytes = new TextEncoder().encode(instructions).length;
+  if (bytes > 64 * 1024)
+    throw new Error(
+      `Agent instructions are too long (${bytes} bytes, max ${64 * 1024})`,
+    );
+  visible(name, "Display name", false);
+  visible(instructions, "Agent instructions", true);
+}
+
 const https = (value: unknown) => {
   const picture = avatarSource(value);
   return picture?.startsWith("https:") ? picture : undefined;
@@ -47,6 +116,7 @@ export function shareable(
       `Agent '${agent.name}' uses a runtime that cannot be shared with the community catalog.`,
     );
   const instructions = type.carry?.(agent.config).instructions ?? "";
+  checkText(agent.name, instructions);
   // A query or fragment can carry a token, so such a picture stays behind
   // whole, as in earlier Buzz, rather than cut into a broken URL.
   const source = https(agent.picture);
@@ -258,15 +328,15 @@ export async function readSnapshot(file: Blob): Promise<SharedDefinition> {
   const picture = https(profile.avatarUrl);
   const runtime = text(definition.runtime);
   const provider = text(definition.provider);
+  const instructions =
+    typeof definition.systemPrompt === "string" ? definition.systemPrompt : "";
+  checkText(name, instructions);
   return {
     name,
     ...(picture && { picture }),
     model: text(definition.model),
     ...(runtime && { runtime }),
     ...(provider && { provider }),
-    instructions:
-      typeof definition.systemPrompt === "string"
-        ? definition.systemPrompt
-        : "",
+    instructions,
   };
 }

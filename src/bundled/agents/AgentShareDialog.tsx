@@ -28,19 +28,28 @@ const FORMATS = [
   { value: "json", label: "JSON" },
 ];
 
-/** The picture redrawn as a 512×512 PNG, as earlier Buzz exported it. Missing
- * or unreadable artwork leaves the snapshot without it. */
+/** How long export waits for the picture, which keeps the dialog open. */
+const ARTWORK_MS = 5000;
+
+/** The picture redrawn as a 512×512 PNG, as earlier Buzz exported it. Missing,
+ * unreadable or slow artwork leaves the snapshot without it. */
 async function artwork(picture: string | undefined, session: RelaySession) {
   const source = avatarSource(picture);
   const src = source?.startsWith("data:")
     ? source
     : source && session.media(source);
   if (!src) return undefined;
+  const image = new Image();
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const image = new Image();
     image.crossOrigin = "anonymous";
     image.src = src;
-    await image.decode();
+    await Promise.race([
+      image.decode(),
+      new Promise((_, reject) => {
+        timer = setTimeout(reject, ARTWORK_MS);
+      }),
+    ]);
     const canvas = document.createElement("canvas");
     canvas.width = canvas.height = 512;
     canvas.getContext("2d")?.drawImage(image, 0, 0, 512, 512);
@@ -49,7 +58,11 @@ async function artwork(picture: string | undefined, session: RelaySession) {
     );
     return blob ? new Uint8Array(await blob.arrayBuffer()) : undefined;
   } catch {
+    // Stops a load still in flight.
+    image.src = "";
     return undefined;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -111,13 +124,14 @@ export function AgentShareDialog({
     setPending(true);
     setNotice("");
     setError("");
-    let next = head;
+    let published: EventData | undefined;
+    let failure = "Try again.";
     try {
       // Unsharing keeps what was shared, so it never depends on the agent
       // still being shareable.
       const content =
         !shared && head ? head.content : catalogContent(shareable(agent, type));
-      next = await publishShare(
+      published = await publishShare(
         session,
         agent.pubkey,
         content,
@@ -126,16 +140,16 @@ export function AgentShareDialog({
         signal,
       );
     } catch (reason) {
-      // A publish the relay never answered may still have landed; ask it.
-      next = await catalogHead(
-        session,
-        agent.owner,
-        agent.pubkey,
-        signal,
-      ).catch(() => head);
-      if (!signal.aborted && isShared(next) !== shared)
-        setError(`Failed to update catalog sharing. ${message(reason)}`);
+      failure = message(reason);
     }
+    // An accepted publish can still lose to a newer head, and an unanswered
+    // one may still have landed, so the relay says which head won.
+    const next = await catalogHead(
+      session,
+      agent.owner,
+      agent.pubkey,
+      signal,
+    ).catch(() => published ?? head);
     if (signal.aborted) return;
     setHead(next);
     if (isShared(next) === shared)
@@ -144,6 +158,7 @@ export function AgentShareDialog({
           ? `Published ${agent.name} to the community catalog.`
           : `${agent.name} is no longer discoverable in the community catalog.`,
       );
+    else setError(`Failed to update catalog sharing. ${failure}`);
     setPending(false);
   };
   const exportAgent = async () => {

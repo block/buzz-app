@@ -853,23 +853,29 @@ inverse of `importShared`: the catalog `runtime` (`claude`, `codex`, `goose`,
 for both paths: name, instructions, runtime, provider, model and an HTTPS
 picture without a query or fragment. Workspace, keys, environment, memory and
 every other setting stay behind, and text that looks like a credential refuses
-the share or export.
+the share or export. Names and instructions must pass block/buzz's
+`validate_agent_definition_text` rules (128-character names, 64 KiB
+instructions, no control or invisible characters but those in emoji) on export
+and on import.
 
 **Share to catalog** publishes the owner's kind 30175 head with `d` set to the
 agent's pubkey and `["shared","true"]`, replacing the head a strong read found
 (`supersedes`). Turning it off republishes that head's content without the tag;
 the relay then shows it only to its author, and Marketplace lists only shared
-heads. A publish the relay never answers is settled by reading the head again
-before the dialog reports success or failure. The native signer and the development broker admit only this owner
+heads. An accepted publish can still lose to a newer head, and an unanswered one
+may still land, so the dialog reads the head again before it reports success or
+failure. The native signer and the development broker admit only this owner
 envelope (`src-tauri/src/relay/catalog.rs`, `catalog-envelope.ts`).
 
 **Export agent** saves `{name}.agent.png` or, by **File format**,
 `{name}.agent.json` in the `buzz-agent-snapshot` version 1 format that block/buzz
 and earlier Buzz write, without memory. The PNG is the picture redrawn at
-512×512, or a transparent pixel, with the manifest in a `buzz_agent_snapshot`
-tEXt chunk. Desktop saves it to Downloads through `file_download`
-(`src-tauri/src/relay.rs`), as media is saved, since WKWebView cannot save a
-`blob:` link cleanly.
+512×512, or a transparent pixel when it is missing or takes over 5 seconds to
+load, with the manifest in a `buzz_agent_snapshot` tEXt chunk. Desktop saves it
+to Downloads through `file_download` (`src-tauri/src/relay.rs`), as media is
+saved, since WKWebView cannot save a `blob:` link cleanly. It takes only
+`.agent.png` and `.agent.json` names, and a repeat export is saved as
+`{name} (1).agent.png`.
 **Import an agent** → **Choose file** reads `.agent.json` and `.agent.png`
 (base64 manifest in a `buzz_agent_snapshot` tEXt chunk) from any of them,
 refusing files over 5 MiB (JSON) or 10 MiB (PNG) before reading them, and opens

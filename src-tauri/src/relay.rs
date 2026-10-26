@@ -1438,10 +1438,13 @@ fn save_download(
     body: &[u8],
 ) -> Result<std::path::PathBuf> {
     use std::io::Write as _;
+    // `Ada.agent.png` counts as `Ada (1).agent.png`, which still reads as a
+    // snapshot by its suffix.
     let (stem, ext) = filename
-        .rsplit_once('.')
-        .filter(|(stem, _)| !stem.is_empty())
-        .map_or((filename, ""), |(stem, ext)| (stem, ext));
+        .find(".agent.")
+        .or_else(|| filename.rfind('.'))
+        .filter(|&at| at > 0)
+        .map_or((filename, ""), |at| (&filename[..at], &filename[at + 1..]));
     for index in 0..1000 {
         let candidate = if index == 0 {
             filename.to_owned()
@@ -1701,8 +1704,8 @@ pub(crate) async fn media_download<R: tauri::Runtime>(
     Ok(())
 }
 
-/// Saves a file the app built, such as an agent snapshot, to Downloads as media
-/// is saved. WKWebView cannot save a `blob:` link without a sandbox failure.
+/// Saves an agent snapshot the app built to Downloads as media is saved.
+/// WKWebView cannot save a `blob:` link without a sandbox failure.
 #[tauri::command]
 pub(crate) async fn file_download<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
@@ -1718,7 +1721,10 @@ pub(crate) async fn file_download<R: tauri::Runtime>(
                 .decode_utf8()
                 .ok()
         })
-        .filter(|name| safe_download_name(name))
+        .filter(|name| {
+            safe_download_name(name)
+                && (name.ends_with(".agent.png") || name.ends_with(".agent.json"))
+        })
         .ok_or("Invalid file name")?
         .into_owned();
     let tauri::ipc::InvokeBody::Raw(body) = request.body() else {

@@ -2000,6 +2000,7 @@ fn file_downloads_need_a_safe_name_and_bounded_raw_bytes() {
         "CON",
         "Ada.agent.png%20",
         "%FF",
+        "report.pdf",
     ] {
         assert_eq!(
             save(name, InvokeBody::Raw(vec![1])),
@@ -2064,6 +2065,10 @@ fn download_names_are_safe_and_collisions_do_not_overwrite() {
     assert_eq!(second.file_name().unwrap(), "report (1).pdf");
     assert_eq!(std::fs::read(&first).unwrap(), b"first");
     assert_eq!(std::fs::read(&second).unwrap(), b"second");
+    let snapshot = save_download(&dir, "Ada.agent.png", b"first").unwrap();
+    assert_eq!(snapshot.file_name().unwrap(), "Ada.agent.png");
+    let again = save_download(&dir, "Ada.agent.png", b"second").unwrap();
+    assert_eq!(again.file_name().unwrap(), "Ada (1).agent.png");
     #[cfg(target_os = "macos")]
     {
         use std::os::fd::AsRawFd;

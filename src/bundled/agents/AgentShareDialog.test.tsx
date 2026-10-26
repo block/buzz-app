@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { readSnapshot } from "../../features/agents/agent-share";
@@ -87,7 +93,12 @@ function community() {
   };
   const read = vi.fn(async () => [...heads]);
   return {
-    session: { read, outbox } as unknown as RelaySession,
+    session: {
+      read,
+      outbox,
+      media: (url: string) => url,
+    } as unknown as RelaySession,
+    heads,
     outbox,
     accept,
     lose,
@@ -216,6 +227,37 @@ it("asks the relay what an unanswered publish did before saying it failed", asyn
   expect(toggle).toBeChecked();
 });
 
+it("says unsharing failed when a newer shared head wins over the accepted one", async () => {
+  const user = userEvent.setup();
+  const { session, outbox, accept, heads } = community();
+  render(
+    <AgentShareDialog
+      agent={agent}
+      type={echo}
+      session={session}
+      onClose={() => {}}
+    />,
+  );
+  const toggle = screen.getByRole("switch", { name: "Share to catalog" });
+  await vi.waitFor(() => expect(toggle).not.toHaveAttribute("aria-disabled"));
+  await user.click(toggle);
+  await vi.waitFor(() => expect(outbox.send).toHaveBeenCalledTimes(1));
+  accept();
+  await vi.waitFor(() => expect(toggle).toBeChecked());
+
+  await user.click(toggle);
+  await vi.waitFor(() => expect(outbox.send).toHaveBeenCalledTimes(2));
+  // Another device shared it again, later, before this unshare landed.
+  const shared = heads[0];
+  if (shared) heads.push({ ...shared, id: "9".repeat(64), created_at: 99 });
+  accept();
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Failed to update catalog sharing. Try again.",
+  );
+  expect(toggle).toBeChecked();
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+});
+
 it("reads the catalog again after the first read fails", async () => {
   const user = userEvent.setup();
   const { session, read } = community();
@@ -292,7 +334,7 @@ it("names a desktop export so every platform accepts it", async () => {
       ["Con", "Con-agent.agent.png"],
       ["lpt1", "lpt1-agent.agent.png"],
       ["Console", "Console.agent.png"],
-      ["x".repeat(300), `${"x".repeat(64)}.agent.png`],
+      ["x".repeat(128), `${"x".repeat(64)}.agent.png`],
     ];
     for (const [name, file] of names) {
       render(
@@ -312,6 +354,43 @@ it("names a desktop export so every platform accepts it", async () => {
     }
   } finally {
     desktop.tauri = false;
+  }
+});
+
+it("exports without the picture when it does not load in time", async () => {
+  desktop.tauri = true;
+  desktop.invoke.mockClear();
+  vi.stubGlobal(
+    "Image",
+    class {
+      decode = () => new Promise(() => {});
+    },
+  );
+  try {
+    render(
+      <AgentShareDialog
+        agent={{ ...agent, picture: "https://media.example/ada.png" }}
+        type={echo}
+        session={community().session}
+        onClose={() => {}}
+      />,
+    );
+    // Only the wait for the picture runs on a controlled clock.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    fireEvent.click(screen.getByRole("button", { name: "Export agent" }));
+    await vi.advanceTimersByTimeAsync(4999);
+    expect(desktop.invoke).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    vi.useRealTimers();
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Exported Ada.",
+    );
+    expect(
+      await readSnapshot(new Blob([desktop.invoke.mock.calls[0]?.[1]])),
+    ).toMatchObject({ name: "Ada", picture: "https://media.example/ada.png" });
+  } finally {
+    desktop.tauri = false;
+    vi.useRealTimers();
   }
 });
 

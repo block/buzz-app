@@ -600,9 +600,10 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
       }
     const dir = join(packages, "pi");
     await mkdir(dir);
+    // With a BOM, as an editor may save it, which Pi accepts.
     await writeFile(
       join(dir, "settings.json"),
-      JSON.stringify({
+      `\uFEFF${JSON.stringify({
         packages: [
           "npm:pi-example",
           "../broken",
@@ -614,7 +615,7 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
           "../pi-only",
           { source: "~/good" },
         ],
-      }),
+      })}`,
     );
     const slow = join(packages, "slow");
     await mkdir(slow);

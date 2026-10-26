@@ -198,7 +198,13 @@ export async function loadPackages(dir, limit = PACKAGE_MS) {
   const loaded = { extensions: [], providers: [], errors: [] };
   let settings;
   try {
-    settings = JSON.parse(await readFile(join(dir, "settings.json"), "utf8"));
+    // As Pi does, with the BOM an editor may save.
+    settings = JSON.parse(
+      (await readFile(join(dir, "settings.json"), "utf8")).replace(
+        /^\uFEFF/,
+        "",
+      ),
+    );
   } catch {
     return loaded;
   }

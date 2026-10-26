@@ -14,6 +14,11 @@ See the [capability contract](../src/features/workflows/types.ts).
   channels with loaded workflows and supports multiple selections. Clear all
   resets the selection without reopening the menu; an empty
   selection shows all channels. Selection is not persisted across sessions.
+  My workflows matches the current viewer's saved workflow ownership. Enabled only
+  matches the saved enabled setting (omitted means enabled), not confirmed runtime
+  activity; unreadable configurations are excluded from this filter. These filters
+  combine with channel selection and Clear all resets them together. The popup
+  places these choices above a smaller, scrollable two-column channel list.
   Discovery still reads all eligible channels.
   Creating a workflow can still target any eligible channel. Each row runs the
   saved configuration in one click and toggles its configured state. Selecting

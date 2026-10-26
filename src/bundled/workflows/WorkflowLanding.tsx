@@ -51,6 +51,7 @@ import {
   MenuIcon,
   MenuCheckboxItem,
   MenuGroup,
+  MenuSeparator,
 } from "../../shared/design-system/ui/Menu";
 import { Header } from "../../shared/design-system/ui/Header";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
@@ -975,6 +976,8 @@ export function WorkflowLanding({
     capability.operations.snapshot,
     capability.operations.snapshot,
   );
+  const [mineOnly, setMineOnly] = useState(false);
+  const [enabledOnly, setEnabledOnly] = useState(false);
   const filterTrigger = useRef<HTMLButtonElement>(null);
   const [retryRequest, setRetryRequest] = useState(0);
   // Feedback outlives the card, which a filter may unmount.
@@ -1019,6 +1022,32 @@ export function WorkflowLanding({
     operationRefreshKey,
     saveReadback,
   );
+  const filteredSnapshots = useMemo(() => {
+    if (!mineOnly && !enabledOnly) return snapshots;
+    return Object.fromEntries(
+      Object.entries(snapshots).map(([id, snapshot]) => [
+        id,
+        {
+          ...snapshot,
+          data: {
+            ...snapshot.data,
+            items: snapshot.data.items.filter((definition) => {
+              if (mineOnly && definition.owner !== viewer) return false;
+              if (!enabledOnly) return true;
+              const fields = readWorkflowDocumentFields(definition.yaml);
+              return fields.editable && fields.enabled !== false;
+            }),
+          },
+        },
+      ]),
+    );
+  }, [snapshots, mineOnly, enabledOnly, viewer]);
+  const filtered = mineOnly || enabledOnly || filter.length > 0;
+  const resetFilters = () => {
+    onFilterChange([]);
+    setMineOnly(false);
+    setEnabledOnly(false);
+  };
   const ordered = [...channels].sort(
     (a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id),
   );
@@ -1038,7 +1067,7 @@ export function WorkflowLanding({
       !snapshots[channel.id] || snapshots[channel.id]?.status === "loading",
   );
   const items = visible.flatMap(
-    (channel) => snapshots[channel.id]?.data.items ?? [],
+    (channel) => filteredSnapshots[channel.id]?.data.items ?? [],
   );
   const selectedItem = items.find(
     (definition) => workflowKey(definition) === selected,
@@ -1068,7 +1097,7 @@ export function WorkflowLanding({
     visible.every(
       (channel) =>
         snapshots[channel.id]?.status === "ready" &&
-        !snapshots[channel.id]?.data.items.length &&
+        !filteredSnapshots[channel.id]?.data.items.length &&
         !snapshots[channel.id]?.data.partial,
     );
   return (
@@ -1086,12 +1115,31 @@ export function WorkflowLanding({
                     : shown.length === 1
                       ? shown[0]?.name
                       : `${shown.length} channels`}
+                  {mineOnly ? " · Mine" : ""}
+                  {enabledOnly ? " · Enabled" : ""}
                 </span>
                 <CaretDownIcon size={16} aria-hidden="true" />
               </Button>
             }
           />
-          <MenuPopup>
+          <MenuPopup size="wide" style={{ width: "28rem" }}>
+            <MenuGroup className="workflow-filter-presets">
+              <MenuCheckboxItem
+                checked={mineOnly}
+                onCheckedChange={setMineOnly}
+                closeOnClick={false}
+              >
+                My workflows
+              </MenuCheckboxItem>
+              <MenuCheckboxItem
+                checked={enabledOnly}
+                onCheckedChange={setEnabledOnly}
+                closeOnClick={false}
+              >
+                Enabled only
+              </MenuCheckboxItem>
+            </MenuGroup>
+            <MenuSeparator />
             <MenuCheckboxItem
               checked={shown.length === 0}
               closeOnClick={false}
@@ -1099,7 +1147,7 @@ export function WorkflowLanding({
             >
               All channels
             </MenuCheckboxItem>
-            <MenuGroup>
+            <MenuGroup className="workflow-filter-channels">
               {populated.map((channel) => (
                 <MenuCheckboxItem
                   key={channel.id}
@@ -1111,18 +1159,20 @@ export function WorkflowLanding({
                       : removeFilter(channel.id)
                   }
                 >
-                  {channel.name}
+                  <span className="text-body-sm workflow-filter-label">
+                    {channel.name}
+                  </span>
                 </MenuCheckboxItem>
               ))}
             </MenuGroup>
           </MenuPopup>
         </MenuRoot>
-        {shown.length > 0 && (
+        {filtered && (
           <Button
             variant="ghost"
             size="sm"
             onClick={() => {
-              onFilterChange([]);
+              resetFilters();
               filterTrigger.current?.focus();
             }}
           >
@@ -1141,8 +1191,12 @@ export function WorkflowLanding({
       {settledEmpty ? (
         <EmptyState
           icon={<LightningIcon size="1.5rem" aria-hidden="true" />}
-          title="Workflows"
-          description="Automations that keep your community moving."
+          title={filtered ? "No matching workflows" : "Workflows"}
+          description={
+            filtered
+              ? "Try changing or clearing your filters."
+              : "Automations that keep your community moving."
+          }
           action={
             capability.availability.save && (
               <Button onClick={onCreate}>
@@ -1174,7 +1228,7 @@ export function WorkflowLanding({
           <AnimatePresence key={presenceKey} initial={false} mode="popLayout">
             {visible
               .filter((channel) => {
-                const data = snapshots[channel.id]?.data;
+                const data = filteredSnapshots[channel.id]?.data;
                 return data && (data.items.length > 0 || data.partial);
               })
               .map((channel) => (
@@ -1190,7 +1244,7 @@ export function WorkflowLanding({
                     onError={setError}
                     operations={operations}
                     selected={selected}
-                    snapshot={snapshots[channel.id]}
+                    snapshot={filteredSnapshots[channel.id]}
                     viewer={viewer}
                   />
                 </WorkflowListTransition>

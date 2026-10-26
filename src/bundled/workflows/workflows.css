@@ -649,3 +649,15 @@ html[data-keyboard-navigation]
     border-inline-start: 0;
   }
 }
+
+.workflow-filter-presets,
+.workflow-filter-channels {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-1);
+}
+.workflow-filter-channels {
+  max-height: min(18rem, 40dvh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}

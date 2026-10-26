@@ -1073,3 +1073,124 @@ it("rereads history only once a later run is created", async () => {
     target.remove();
   }
 });
+
+it("combines ownership, saved enabled state and channels, and clears every filter", async () => {
+  const fixture = createWorkflowFixture();
+  const channels = [
+    { id: fixtureChannel, name: "General", channelType: "stream" as const },
+    { id: "other-channel", name: "Other", channelType: "stream" as const },
+  ];
+  const definition = (
+    name: string,
+    owner: string,
+    channelId: string,
+    enabled: boolean,
+  ) => ({
+    ...fixtureDefinition,
+    owner,
+    channelId,
+    id: name,
+    yaml: fixtureYaml
+      .replace("Message helper", name)
+      .replace("enabled: false", `enabled: ${enabled}`),
+  });
+  fixture.definitions.update({
+    status: "ready",
+    data: {
+      partial: false,
+      items: [
+        definition("Mine disabled", fixtureViewer, fixtureChannel, false),
+        definition("Other enabled", "b".repeat(64), fixtureChannel, true),
+        definition("Mine enabled", fixtureViewer, "other-channel", true),
+      ],
+    },
+  });
+  function Harness() {
+    const [filter, setFilter] = useState<readonly string[]>([]);
+    return (
+      <ToastProvider>
+        <WorkflowLanding
+          capability={fixture.capability}
+          channels={channels}
+          filter={filter}
+          onFilterChange={setFilter}
+          refreshRequest={0}
+          viewer={fixtureViewer}
+          detailTarget={null}
+          selected={undefined}
+          onSelect={() => {}}
+          onCreate={() => {}}
+          onDelete={() => {}}
+          onOpen={() => {}}
+        />
+      </ToastProvider>
+    );
+  }
+  render(<Harness />);
+  const user = userEvent.setup();
+  const open = async () => {
+    screen.getByRole("button", { name: "Channels" }).focus();
+    await user.keyboard("{ArrowDown}");
+    await screen.findByRole("menu");
+  };
+  const close = async () => {
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  };
+  await screen.findByRole("button", { name: /^Open Mine disabled:/ });
+  await open();
+  await user.click(
+    screen.getByRole("menuitemcheckbox", { name: "My workflows" }),
+  );
+  await close();
+  expect(
+    screen.queryByRole("button", { name: /^Open Other enabled:/ }),
+  ).toBeNull();
+  expect(
+    screen.getByRole("button", { name: /^Open Mine disabled:/ }),
+  ).toBeVisible();
+  await open();
+  await user.click(
+    screen.getByRole("menuitemcheckbox", { name: "Enabled only" }),
+  );
+  await close();
+  expect(
+    screen.queryByRole("button", { name: /^Open Mine disabled:/ }),
+  ).toBeNull();
+  expect(
+    screen.getByRole("button", { name: /^Open Mine enabled:/ }),
+  ).toBeVisible();
+  await open();
+  await user.click(screen.getByRole("menuitemcheckbox", { name: "General" }));
+  await close();
+  expect(screen.getByText("No matching workflows")).toBeVisible();
+  await open();
+  await user.click(
+    screen.getByRole("menuitemcheckbox", { name: "My workflows" }),
+  );
+  await close();
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: /^Open Other enabled:/ }),
+    ).toBeVisible(),
+  );
+  expect(
+    screen.queryByRole("button", { name: /^Open Mine enabled:/ }),
+  ).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Clear all" }));
+  await waitFor(() =>
+    expect(
+      screen.getAllByRole("button", { name: /^Open (Mine|Other)/ }),
+    ).toHaveLength(3),
+  );
+  await open();
+  expect(
+    screen.getByRole("menuitemcheckbox", { name: "My workflows" }),
+  ).not.toBeChecked();
+  expect(
+    screen.getByRole("menuitemcheckbox", { name: "Enabled only" }),
+  ).not.toBeChecked();
+  expect(
+    screen.getByRole("menuitemcheckbox", { name: "All channels" }),
+  ).toBeChecked();
+});

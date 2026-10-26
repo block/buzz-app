@@ -37,18 +37,20 @@ function harness({
     members,
   };
   const channels = { status: "ready", channels: [channel] };
-  const choices = {
+  let choices = {
     selectable: members.map((pubkey, i) => ({
       pubkey,
       name: `Agent ${i + 1}`,
     })),
     complete,
     pending: false,
+    error: undefined as string | undefined,
     archives: { status: "ready" },
   };
   const send = vi.fn(() => "receipt");
   const reply = vi.fn(() => "receipt");
   const refreshMembership = vi.fn(async () => channel);
+  const listeners = new Set<() => void>();
   const session = {
     viewer: "viewer",
     channels: {
@@ -58,7 +60,12 @@ function harness({
     },
     agentChoices: {
       snapshot: () => choices,
-      subscribe: () => () => {},
+      subscribe: (listener: () => void) => {
+        listeners.add(listener);
+        return () => {
+          listeners.delete(listener);
+        };
+      },
       retain: () => () => {},
       ensure: vi.fn(),
       refresh: vi.fn(async () => {}),
@@ -96,7 +103,19 @@ function harness({
       action={action}
     />,
   );
-  return { ...view, send, reply, refreshMembership, channel, choices };
+  return {
+    ...view,
+    send,
+    reply,
+    refreshMembership,
+    channel,
+    choices,
+    refreshAgents: session.agentChoices.refresh,
+    updateChoices(patch: Partial<typeof choices>) {
+      choices = { ...choices, ...patch };
+      for (const listener of listeners) listener();
+    },
+  };
 }
 it.each(["failures", "conflicts"] as const)(
   "sends a short linked %s request directly to the sole chat agent",
@@ -241,9 +260,77 @@ it("ignores repeated clicks while membership refresh is pending", async () => {
   const button = screen.getByRole("button", { name: "Resolve failures" });
   await userEvent.dblClick(button);
   expect(h.refreshMembership).toHaveBeenCalledOnce();
-  expect(button).toBeDisabled();
+  expect(button).toHaveAttribute("aria-disabled", "true");
   await act(async () => {
     finish(h.channel);
   });
   expect(h.send).toHaveBeenCalledOnce();
+});
+
+it("recovers Team agent discovery after refresh loses the only candidate", async () => {
+  const h = harness({ type: "stream" });
+  h.refreshAgents.mockImplementationOnce(async () => {
+    h.updateChoices({
+      selectable: [],
+      complete: false,
+      error: "Inventory unavailable",
+    });
+  });
+  await userEvent.click(
+    screen.getByRole("button", { name: "Resolve failures" }),
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Inventory unavailable",
+  );
+  expect(h.send).not.toHaveBeenCalled();
+  h.refreshAgents.mockImplementationOnce(async () => {
+    h.updateChoices({
+      selectable: h.choices.selectable,
+      complete: true,
+      error: undefined,
+    });
+  });
+  await userEvent.click(screen.getByRole("button", { name: "Retry agents" }));
+  await waitFor(() =>
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
+  );
+  await userEvent.click(
+    screen.getByRole("button", { name: "Resolve failures" }),
+  );
+  await waitFor(() => expect(h.send).toHaveBeenCalledOnce());
+});
+it("retains usable partial agent choices alongside inventory recovery", async () => {
+  const h = harness({ complete: false, type: "stream" });
+  act(() => h.updateChoices({ error: "Some agents unavailable" }));
+  expect(screen.getByRole("button", { name: "Retry agents" })).toBeEnabled();
+  await userEvent.click(screen.getByRole("combobox", { name: "Agent" }));
+  await userEvent.click(await screen.findByRole("option", { name: "Agent 1" }));
+  expect(
+    screen.getByRole("button", { name: "Resolve failures" }),
+  ).toBeEnabled();
+});
+it("keeps keyboard focus through a rejected preparation and retry", async () => {
+  const h = harness();
+  let reject!: (error: Error) => void;
+  h.refreshMembership.mockReturnValueOnce(
+    new Promise((_resolve, fail) => {
+      reject = fail;
+    }),
+  );
+  const button = screen.getByRole("button", { name: "Resolve failures" });
+  button.focus();
+  try {
+    await userEvent.keyboard("{Enter}");
+    expect(h.refreshMembership).toHaveBeenCalledOnce();
+    expect(button).toHaveFocus();
+    expect(button).toHaveAttribute("aria-disabled", "true");
+  } finally {
+    await act(async () => {
+      reject(new Error("Membership unavailable"));
+    });
+  }
+  expect(button).toHaveFocus();
+  expect(button).toBeEnabled();
+  await userEvent.keyboard("{Enter}");
+  await waitFor(() => expect(h.send).toHaveBeenCalledOnce());
 });

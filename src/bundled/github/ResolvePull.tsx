@@ -134,6 +134,29 @@ function SessionResolve({
   }
   return (
     <span className={styles.resolutionAction}>
+      {choices.error && (
+        <span role="alert">
+          {choices.error}{" "}
+          <Button
+            size="sm"
+            loading={choices.pending}
+            onClick={() =>
+              void session.agentChoices
+                .refresh()
+                .catch((error: unknown) =>
+                  notify(
+                    error instanceof Error
+                      ? error.message
+                      : "Couldn’t load agents. Try again.",
+                    "error",
+                  ),
+                )
+            }
+          >
+            Retry agents
+          </Button>
+        </span>
+      )}
       {(agents.length > 1 || (!choices.complete && agents.length > 0)) && (
         <Select
           label="Agent"
@@ -157,7 +180,7 @@ function SessionResolve({
       <Button
         size="sm"
         loading={busy}
-        disabled={!recipient || busy || sent}
+        disabled={!recipient || sent}
         title={
           !recipient
             ? choices.pending

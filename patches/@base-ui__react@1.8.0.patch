@@ -410,3 +410,205 @@ index 243ee5ac67bbb0297a3ede21f3963372c43c0150..341beb1f7a2093e68d1bd65fae62c771
      triggerElementRef,
      externalTree: floatingTreeRoot,
      isClosing: () => store.select('transitionStatus') === 'ending',
+diff --git a/menu/store/MenuStore.mjs b/menu/store/MenuStore.mjs
+index 8139927..3d2bc3f 100644
+--- a/menu/store/MenuStore.mjs
++++ b/menu/store/MenuStore.mjs
+@@ -59,32 +59,41 @@ export class MenuStore extends ReactStore {
+     const state = createInitialState(triggerElements, floatingId, nested, initialState);
+     super(state, createInitialContext(triggerElements), selectors);
+
+-    // Set up propagation of state from parent menu if applicable.
+-    this.unsubscribeParentListener = this.observe('parent', parent => {
+-      this.unsubscribeParentListener?.();
++    // Share the mouse-up trigger ref of the parent menu, if any. This observes the store's own
++    // state, so the subscription lives exactly as long as the store and needs no cleanup.
++    void this.observe('parent', parent => {
+       if (parent.type === 'menu') {
+-        let rootId = parent.store.select('rootId');
+-        let floatingTreeRoot = parent.store.select('floatingTreeRoot');
+-        let keyboardEventRelay = parent.store.select('keyboardEventRelay');
+-        this.unsubscribeParentListener = parent.store.subscribe(() => {
+-          const nextRootId = parent.store.select('rootId');
+-          const nextFloatingTreeRoot = parent.store.select('floatingTreeRoot');
+-          const nextKeyboardEventRelay = parent.store.select('keyboardEventRelay');
+-          if (rootId === nextRootId && floatingTreeRoot === nextFloatingTreeRoot && keyboardEventRelay === nextKeyboardEventRelay) {
+-            return;
+-          }
+-          rootId = nextRootId;
+-          floatingTreeRoot = nextFloatingTreeRoot;
+-          keyboardEventRelay = nextKeyboardEventRelay;
+-          this.notifyAll();
+-        });
+         this.context.allowMouseUpTriggerRef = parent.store.context.allowMouseUpTriggerRef;
+-        return;
+-      }
+-      if (parent.type !== undefined) {
++      } else if (parent.type !== undefined) {
+         this.context.allowMouseUpTriggerRef = parent.context.allowMouseUpTriggerRef;
+       }
+-      this.unsubscribeParentListener = null;
++    });
++  }
++  /**
++   * Propagates changes of the parent menu's shared tree state to this store's subscribers.
++   * The owning Menu.Root calls it from an effect so the parent store subscription is released
++   * when the submenu unmounts.
++   * @returns A function that removes the parent store subscription.
++   */
++  subscribeToParentMenu() {
++    const parent = this.state.parent;
++    if (parent.type !== 'menu') {
++      return undefined;
++    }
++    let rootId = parent.store.select('rootId');
++    let floatingTreeRoot = parent.store.select('floatingTreeRoot');
++    let keyboardEventRelay = parent.store.select('keyboardEventRelay');
++    return parent.store.subscribe(() => {
++      const nextRootId = parent.store.select('rootId');
++      const nextFloatingTreeRoot = parent.store.select('floatingTreeRoot');
++      const nextKeyboardEventRelay = parent.store.select('keyboardEventRelay');
++      if (rootId === nextRootId && floatingTreeRoot === nextFloatingTreeRoot && keyboardEventRelay === nextKeyboardEventRelay) {
++        return;
++      }
++      rootId = nextRootId;
++      floatingTreeRoot = nextFloatingTreeRoot;
++      keyboardEventRelay = nextKeyboardEventRelay;
++      this.notifyAll();
+     });
+   }
+   setOpen(open, eventDetails) {
+@@ -93,7 +102,6 @@ export class MenuStore extends ReactStore {
+       eventDetails
+     });
+   }
+-  unsubscribeParentListener = null;
+ }
+
+ /**
+diff --git a/menu/store/MenuStore.js b/menu/store/MenuStore.js
+index 1d6eb8b..0a542fb 100644
+--- a/menu/store/MenuStore.js
++++ b/menu/store/MenuStore.js
+@@ -67,32 +67,41 @@ class MenuStore extends _store.ReactStore {
+     const state = createInitialState(triggerElements, floatingId, nested, initialState);
+     super(state, createInitialContext(triggerElements), selectors);
+
+-    // Set up propagation of state from parent menu if applicable.
+-    this.unsubscribeParentListener = this.observe('parent', parent => {
+-      this.unsubscribeParentListener?.();
++    // Share the mouse-up trigger ref of the parent menu, if any. This observes the store's own
++    // state, so the subscription lives exactly as long as the store and needs no cleanup.
++    void this.observe('parent', parent => {
+       if (parent.type === 'menu') {
+-        let rootId = parent.store.select('rootId');
+-        let floatingTreeRoot = parent.store.select('floatingTreeRoot');
+-        let keyboardEventRelay = parent.store.select('keyboardEventRelay');
+-        this.unsubscribeParentListener = parent.store.subscribe(() => {
+-          const nextRootId = parent.store.select('rootId');
+-          const nextFloatingTreeRoot = parent.store.select('floatingTreeRoot');
+-          const nextKeyboardEventRelay = parent.store.select('keyboardEventRelay');
+-          if (rootId === nextRootId && floatingTreeRoot === nextFloatingTreeRoot && keyboardEventRelay === nextKeyboardEventRelay) {
+-            return;
+-          }
+-          rootId = nextRootId;
+-          floatingTreeRoot = nextFloatingTreeRoot;
+-          keyboardEventRelay = nextKeyboardEventRelay;
+-          this.notifyAll();
+-        });
+         this.context.allowMouseUpTriggerRef = parent.store.context.allowMouseUpTriggerRef;
+-        return;
+-      }
+-      if (parent.type !== undefined) {
++      } else if (parent.type !== undefined) {
+         this.context.allowMouseUpTriggerRef = parent.context.allowMouseUpTriggerRef;
+       }
+-      this.unsubscribeParentListener = null;
++    });
++  }
++  /**
++   * Propagates changes of the parent menu's shared tree state to this store's subscribers.
++   * The owning Menu.Root calls it from an effect so the parent store subscription is released
++   * when the submenu unmounts.
++   * @returns A function that removes the parent store subscription.
++   */
++  subscribeToParentMenu() {
++    const parent = this.state.parent;
++    if (parent.type !== 'menu') {
++      return undefined;
++    }
++    let rootId = parent.store.select('rootId');
++    let floatingTreeRoot = parent.store.select('floatingTreeRoot');
++    let keyboardEventRelay = parent.store.select('keyboardEventRelay');
++    return parent.store.subscribe(() => {
++      const nextRootId = parent.store.select('rootId');
++      const nextFloatingTreeRoot = parent.store.select('floatingTreeRoot');
++      const nextKeyboardEventRelay = parent.store.select('keyboardEventRelay');
++      if (rootId === nextRootId && floatingTreeRoot === nextFloatingTreeRoot && keyboardEventRelay === nextKeyboardEventRelay) {
++        return;
++      }
++      rootId = nextRootId;
++      floatingTreeRoot = nextFloatingTreeRoot;
++      keyboardEventRelay = nextKeyboardEventRelay;
++      this.notifyAll();
+     });
+   }
+   setOpen(open, eventDetails) {
+@@ -101,7 +110,6 @@ class MenuStore extends _store.ReactStore {
+       eventDetails
+     });
+   }
+-  unsubscribeParentListener = null;
+ }
+
+ /**
+diff --git a/menu/store/MenuStore.d.mts b/menu/store/MenuStore.d.mts
+index a2c05c0..1c2b874 100644
+--- a/menu/store/MenuStore.d.mts
++++ b/menu/store/MenuStore.d.mts
+@@ -411,7 +411,7 @@ export type MenuHandleStore<Payload> = Pick<MenuStore<Payload>, PopupTriggerStor
+ export declare class MenuStore<Payload> extends ReactStore<Readonly<State<Payload>>, Context, Selectors> {
+   constructor(initialState?: Partial<State<Payload>>, floatingId?: string | undefined, nested?: boolean);
+   setOpen(open: boolean, eventDetails: Omit<MenuRoot.ChangeEventDetails, 'preventUnmountOnClose'>): void;
+-  private unsubscribeParentListener;
++  subscribeToParentMenu(): (() => void) | undefined;
+ }
+ /**
+  * Creates the inert fallback store used by detached handle-backed triggers while no `Menu.Root` is
+diff --git a/menu/store/MenuStore.d.ts b/menu/store/MenuStore.d.ts
+index 3f1db6b..7f23e07 100644
+--- a/menu/store/MenuStore.d.ts
++++ b/menu/store/MenuStore.d.ts
+@@ -411,7 +411,7 @@ export type MenuHandleStore<Payload> = Pick<MenuStore<Payload>, PopupTriggerStor
+ export declare class MenuStore<Payload> extends ReactStore<Readonly<State<Payload>>, Context, Selectors> {
+   constructor(initialState?: Partial<State<Payload>>, floatingId?: string | undefined, nested?: boolean);
+   setOpen(open: boolean, eventDetails: Omit<MenuRoot.ChangeEventDetails, 'preventUnmountOnClose'>): void;
+-  private unsubscribeParentListener;
++  subscribeToParentMenu(): (() => void) | undefined;
+ }
+ /**
+  * Creates the inert fallback store used by detached handle-backed triggers while no `Menu.Root` is
+diff --git a/menu/root/MenuRoot.mjs b/menu/root/MenuRoot.mjs
+index dc2a000..be28a25 100644
+--- a/menu/root/MenuRoot.mjs
++++ b/menu/root/MenuRoot.mjs
+@@ -325,6 +325,7 @@ export const MenuRoot = fastComponent(function MenuRoot(props) {
+       floatingEvents?.off('setOpen', handleSetOpenEvent);
+     };
+   }, [floatingEvents, setOpen]);
++  useIsoLayoutEffect(() => store.subscribeToParentMenu(), [store]);
+   const handleImperativeClose = React.useCallback(() => {
+     store.setOpen(false, createChangeEventDetails(REASONS.imperativeAction));
+   }, [store]);
+diff --git a/menu/root/MenuRoot.js b/menu/root/MenuRoot.js
+index 4db022d..08b78c1 100644
+--- a/menu/root/MenuRoot.js
++++ b/menu/root/MenuRoot.js
+@@ -330,6 +330,7 @@ const MenuRoot = exports.MenuRoot = (0, _fastHooks.fastComponent)(function MenuR
+       floatingEvents?.off('setOpen', handleSetOpenEvent);
+     };
+   }, [floatingEvents, setOpen]);
++  (0, _useIsoLayoutEffect.useIsoLayoutEffect)(() => store.subscribeToParentMenu(), [store]);
+   const handleImperativeClose = React.useCallback(() => {
+     store.setOpen(false, (0, _createBaseUIEventDetails.createChangeEventDetails)(_reasons.REASONS.imperativeAction));
+   }, [store]);

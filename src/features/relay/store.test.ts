@@ -641,6 +641,54 @@ it("keeps a cached denial and never reads for a channel it does not authorize", 
     owner.dispose();
   }
 });
+it("saves the startup snapshot once for a burst of profile changes", async () => {
+  const scripted = scriptedTransport(viewer.pubkey, relay.pubkey);
+  const writeStartup = vi.fn(async () => {});
+  const owner = createRelaySession(scripted.transport, {
+    persistence: {
+      read: async () => [],
+      readStartup: async () => undefined,
+      writeStartup,
+      write: async () => {},
+      remove: async () => {},
+      retain: async () => {},
+      clear: async () => {},
+      close: () => {},
+    },
+    prepared: true,
+  });
+  const queries = owner.session.channels;
+  try {
+    await owner.restore();
+    queries.ensureList();
+    await vi.waitFor(() => expect(scripted.pending).toHaveLength(1));
+    scripted
+      .next()
+      .respond([
+        roster(relay, "alpha", [viewer.pubkey, alice.pubkey]),
+        metadata(relay, "alpha", "Alpha"),
+      ]);
+    await vi.waitFor(() => expect(queries.list().status).toBe("ready"));
+    await vi.waitFor(() => expect(writeStartup).toHaveBeenCalled());
+    writeStartup.mockClear();
+    for (const person of [keypair(), keypair()]) {
+      const ensuring = owner.session.profiles.ensure(
+        [person.pubkey],
+        "foreground",
+      );
+      await vi.waitFor(() => expect(scripted.pending).not.toHaveLength(0));
+      scripted.next().respond([profile(person, { name: "Person" })]);
+      await ensuring;
+      expect(owner.session.profiles.snapshot().get(person.pubkey)?.name).toBe(
+        "Person",
+      );
+    }
+    expect(writeStartup).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(writeStartup).toHaveBeenCalledTimes(1));
+  } finally {
+    owner.dispose();
+  }
+});
 it.each(["idle", "loading", "error"] as const)(
   "rejects a roster refresh without reading while the list is %s",
   async (status) => {

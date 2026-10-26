@@ -124,7 +124,7 @@ bundled defaults, preserving artifacts for reinstallation.
 `--home ABSOLUTE_PATH` and `--profile NAME` precede `plugin`. The desktop and CLI
 also read `BUZZODZ_HOME` and `BUZZODZ_PROFILE` (default: `default`). Match these to
 target the same instance. Otherwise, profiles live under the OS application-data
-directory in `dev.local.buzz.foundation/profiles`.
+directory in `xyz.block.buzz.desktop/profiles`.
 
 ```sh
 BUZZODZ_PROFILE=experiment just desktop

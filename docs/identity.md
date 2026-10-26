@@ -147,7 +147,19 @@ before it looks for a pending sign-out:
   by every copy using that key whatever its identifier; and
 - the **all-Buzz lock** (`.dev.local.buzz.foundation.instance.lock`), named for
   the storage all builds share (the default plugin folder and the agent key
-  service), not for the app identifier.
+  service), not for the app identifier. It keeps the identifier Buzz used before
+  1.0, so those builds and later ones exclude each other.
+
+Before 1.0, Buzz's identifier was `dev.local.buzz.foundation`. Before taking these
+locks, a launch as `xyz.block.buzz.desktop` renames what the old identifier names:
+app data (with plugin storage), config, local data, caches, macOS WebKit storage,
+their sign-out trash and a pending sign-out marker, so the update keeps
+everything and finishes a sign-out the old build committed. It takes the all-Buzz
+lock alone and waits for every agent ownership lock, so it never moves storage
+another copy or a stopping agent still uses. A path that already exists under
+the new identifier is kept, never replaced. A failure exits with a native alert,
+and the next launch moves what is left. Credential service names don't change;
+on macOS, Keychain may ask once to allow the renamed app to use each saved item.
 
 A sign-out needs its key lock alone, so every other copy using that key must be
 closed. A wipe also needs the all-Buzz lock alone, so every other Buzz must be

@@ -30,21 +30,21 @@ it.each(identityCases)(
 
 it("locates the installed Buzz data directory per platform and refuses to guess elsewhere", () => {
   expect(installedBuzzDataDir("darwin", {}, "/Users/t")).toBe(
-    "/Users/t/Library/Application Support/dev.local.buzz.foundation",
+    "/Users/t/Library/Application Support/xyz.block.buzz.desktop",
   );
   expect(installedBuzzDataDir("linux", {}, "/home/t")).toBe(
-    "/home/t/.local/share/dev.local.buzz.foundation",
+    "/home/t/.local/share/xyz.block.buzz.desktop",
   );
   expect(
     installedBuzzDataDir("linux", { XDG_DATA_HOME: "/data" }, "/home/t"),
-  ).toBe("/data/dev.local.buzz.foundation");
+  ).toBe("/data/xyz.block.buzz.desktop");
   // Tauri's dirs crate ignores a relative XDG_DATA_HOME; so must this reader,
   // or it would look where the installed app never writes.
   for (const XDG_DATA_HOME of ["relative", "./data", ""])
     expect(
       installedBuzzDataDir("linux", { XDG_DATA_HOME }, "/home/t"),
       JSON.stringify(XDG_DATA_HOME),
-    ).toBe("/home/t/.local/share/dev.local.buzz.foundation");
+    ).toBe("/home/t/.local/share/xyz.block.buzz.desktop");
   expect(installedBuzzDataDir("win32", {}, "/home/t")).toBeUndefined();
   expect(installedBuzzDataDir("freebsd", {}, "/home/t")).toBeUndefined();
 });
@@ -328,14 +328,14 @@ it.skipIf(!["darwin", "linux"].includes(process.platform))(
         : root;
     const current = join(
       appData,
-      "dev.local.buzz.foundation/agents/identities.json",
+      "xyz.block.buzz.desktop/agents/identities.json",
     );
     const legacy = join(
       appData,
       "xyz.block.buzz.app/agents/managed-agents.json",
     );
     try {
-      await mkdir(join(appData, "dev.local.buzz.foundation/agents"), {
+      await mkdir(join(appData, "xyz.block.buzz.desktop/agents"), {
         recursive: true,
       });
       await mkdir(join(appData, "xyz.block.buzz.app/agents"), {

@@ -613,7 +613,7 @@ impl Manager {
         valid_id(profile)?;
         let home = home
             .or_else(|| std::env::var_os("BUZZODZ_HOME").map(PathBuf::from))
-            .or_else(|| dirs::data_dir().map(|p| p.join("dev.local.buzz.foundation")))
+            .or_else(|| dirs::data_dir().map(|p| p.join("xyz.block.buzz.desktop")))
             .ok_or("Cannot determine application data directory; set BUZZODZ_HOME")?;
         if !home.is_absolute() {
             return Err("Plugin home must be an absolute path".into());

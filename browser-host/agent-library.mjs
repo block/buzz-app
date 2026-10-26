@@ -130,11 +130,11 @@ export function installedBuzzDataDir(
   home = homedir(),
 ) {
   if (platform === "darwin")
-    return join(home, "Library/Application Support/dev.local.buzz.foundation");
+    return join(home, "Library/Application Support/xyz.block.buzz.desktop");
   if (platform === "linux") {
     const xdg = env.XDG_DATA_HOME;
     const base = xdg && isAbsolute(xdg) ? xdg : join(home, ".local/share");
-    return join(base, "dev.local.buzz.foundation");
+    return join(base, "xyz.block.buzz.desktop");
   }
   return undefined;
 }

@@ -688,12 +688,24 @@ it("chat archive runs without confirmation, then Undo unarchives from its result
   render(<Host />);
   expect(screen.queryByRole("button", { name: "Archive chat" })).toBeNull();
   try {
-    await screen.findByRole("dialog", { name: "Archiving chat…" });
-    expect(lifecycle.run).toHaveBeenCalledWith(
-      "archive",
-      "id",
-      expect.any(AbortSignal),
+    await waitFor(() =>
+      expect(lifecycle.run).toHaveBeenCalledWith(
+        "archive",
+        "id",
+        expect.any(AbortSignal),
+      ),
     );
+    // A fast archive shows no progress; only a slow one is announced.
+    expect(
+      screen.queryByRole("dialog", { name: "Archiving chat…" }),
+    ).toBeNull();
+    expect(
+      await screen.findByRole(
+        "dialog",
+        { name: "Archiving chat…" },
+        { timeout: 2000 },
+      ),
+    ).toBeDefined();
   } finally {
     await act(async () => gate.resolve());
   }

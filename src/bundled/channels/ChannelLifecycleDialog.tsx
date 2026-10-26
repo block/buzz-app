@@ -118,6 +118,14 @@ export function ChannelLifecycleDialog({
     const timer = setTimeout(() => void submit());
     return () => clearTimeout(timer);
   }, []);
+  // Without a confirmation to dismiss, a fast archive needs no progress
+  // feedback: the result toast follows. Announce only a slow write.
+  const [slow, setSlow] = useState(!immediate);
+  useEffect(() => {
+    if (!immediate || !busy) return;
+    const timer = setTimeout(() => setSlow(true), 1000);
+    return () => clearTimeout(timer);
+  }, [immediate, busy]);
   const undo = () => {
     const restored = copyFor("unarchive", noun);
     lifecycle.run("unarchive", channelId).then(
@@ -164,7 +172,7 @@ export function ChannelLifecycleDialog({
   // runs and the caller's duplicate gate remains held until the result settles.
   return (
     <>
-      {(busy || error) && (
+      {((busy && slow) || error) && (
         <ToastNotice
           title={busy ? copy.pending : `${copy.title} failed`}
           description={busy ? channelName : error}

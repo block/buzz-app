@@ -190,7 +190,8 @@ html[data-keyboard-navigation] .panelViewport {
   accent-color: var(--affordance-prominent);
 }
 
-.emojiPreview {
+.emojiPreview,
+.emojiPreviewArtwork {
   width: 100%;
   height: 100%;
 }

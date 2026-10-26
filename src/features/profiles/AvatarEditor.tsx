@@ -192,17 +192,18 @@ export function AvatarEditor(props: Props) {
             data-shape={props.shape ?? "circle"}
             data-size={props.size}
           >
-            <div
-              className={styles.avatarArtwork}
-              data-shape={props.shape ?? "circle"}
-            >
-              {draftPreview?.emoji ? (
-                <EmojiPreview
-                  preview={draftPreview}
-                  emoji={draftPreview.emoji}
-                  shape={props.shape ?? "circle"}
-                />
-              ) : (
+            {draftPreview?.emoji ? (
+              <EmojiPreview
+                preview={draftPreview}
+                emoji={draftPreview.emoji}
+                shape={props.shape ?? "circle"}
+                cutout
+              />
+            ) : (
+              <div
+                className={styles.avatarArtwork}
+                data-shape={props.shape ?? "circle"}
+              >
                 <Avatar
                   src={preview}
                   alt={open ? "Avatar preview" : "Avatar"}
@@ -211,8 +212,8 @@ export function AvatarEditor(props: Props) {
                   loading="eager"
                   shape={props.shape ?? "circle"}
                 />
-              )}
-            </div>
+              </div>
+            )}
             <div className={styles.editBadge}>
               <Popover.Trigger
                 render={
@@ -279,16 +280,35 @@ export function AvatarEditor(props: Props) {
 }
 
 /** Drag or use the arrow keys to move the emoji up or down; it stays
- * horizontally centered. */
+ * horizontally centered. Masks apply only to the artwork inside, so the
+ * focus ring stays visible. */
 function EmojiPreview({
   preview: { color, scale, offset = 0, pulse, move },
   emoji,
   shape,
+  cutout = false,
 }: {
   preview: DraftPreview;
   emoji: string;
   shape: string;
+  /** Leave room for the edit badge, as the profile avatar does. */
+  cutout?: boolean;
 }) {
+  const artwork = (
+    <div
+      data-avatar-shape={shape}
+      className={styles.emojiPreviewArtwork}
+      style={{ backgroundColor: color }}
+    >
+      <EmojiArtwork
+        key={`${emoji}-${pulse}`}
+        emoji={emoji}
+        scale={scale}
+        offset={offset}
+        animate={!!pulse}
+      />
+    </div>
+  );
   const drag = useRef<{ y: number; offset: number } | null>(null);
   // Update from the latest offset: key repeats can outpace the preview.
   const nudge = (to: (current: number) => number) =>
@@ -313,9 +333,7 @@ function EmojiPreview({
           : "Centered"
       }
       data-emoji-position=""
-      data-avatar-shape={shape}
       className={styles.emojiPreview}
-      style={{ backgroundColor: color }}
       onPointerDown={(event) => {
         if (!move) return;
         event.currentTarget.setPointerCapture(event.pointerId);
@@ -346,13 +364,13 @@ function EmojiPreview({
         nudge((current) => (step ? current + step : 0));
       }}
     >
-      <EmojiArtwork
-        key={`${emoji}-${pulse}`}
-        emoji={emoji}
-        scale={scale}
-        offset={offset}
-        animate={!!pulse}
-      />
+      {cutout ? (
+        <div className={styles.avatarArtwork} data-shape={shape}>
+          {artwork}
+        </div>
+      ) : (
+        artwork
+      )}
     </div>
   );
 }

@@ -2,6 +2,14 @@ import { test, expect } from "./source-fixture.mjs";
 import { readFile } from "node:fs/promises";
 import { watchPageErrors } from "./page-errors.mjs";
 
+const maskedAncestors = (element) => {
+  const masked = [];
+  for (let node = element; node; node = node.parentElement)
+    if (getComputedStyle(node).maskImage !== "none")
+      masked.push(node.className || node.tagName);
+  return masked;
+};
+
 test("avatar image controls retain their hover fill and accessible URL label", async ({
   page,
 }) => {
@@ -205,7 +213,11 @@ test("avatar custom spectrum supports dragging, keyboard hue and return focus", 
   const color = await spectrum
     .locator("span")
     .evaluate((el) => getComputedStyle(el).backgroundColor);
-  await expect(page.getByRole("slider", { name: "Emoji position" })).toHaveCSS(
+  await expect(
+    page
+      .getByRole("slider", { name: "Emoji position" })
+      .locator("[data-avatar-shape]"),
+  ).toHaveCSS(
     "background-color",
     color,
   );
@@ -226,7 +238,11 @@ test("avatar custom spectrum supports dragging, keyboard hue and return focus", 
     page.getByRole("button", { name: "Custom background color", exact: true }),
   ).toBeFocused();
   await page.getByRole("tab", { name: "Emoji", exact: true }).click();
-  await expect(page.getByRole("slider", { name: "Emoji position" })).toHaveCSS(
+  await expect(
+    page
+      .getByRole("slider", { name: "Emoji position" })
+      .locator("[data-avatar-shape]"),
+  ).toHaveCSS(
     "background-color",
     color,
   );
@@ -471,7 +487,11 @@ test("avatar picker previews pointer selections and respects reduced motion", as
   await page
     .getByRole("button", { name: "Use #63C6F2 background", exact: true })
     .click();
-  await expect(page.getByRole("slider", { name: "Emoji position" })).toHaveCSS(
+  await expect(
+    page
+      .getByRole("slider", { name: "Emoji position" })
+      .locator("[data-avatar-shape]"),
+  ).toHaveCSS(
     "background-color",
     "rgb(99, 198, 242)",
   );
@@ -485,6 +505,10 @@ test("avatar picker previews pointer selections and respects reduced motion", as
   await page.mouse.up();
   // Dragging the preview moves the emoji down without closing the editor.
   await expect(position).toHaveAttribute("aria-valuetext", "20% down");
+  // The focus ring sits outside the avatar masks, which clip only the artwork.
+  await position.press("ArrowUp");
+  await expect(position).toHaveCSS("outline-style", "solid");
+  expect(await position.evaluate(maskedAncestors)).toEqual([]);
   await expect(
     page.getByRole("tab", { name: "Emoji", exact: true }),
   ).toBeVisible();

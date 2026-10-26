@@ -222,12 +222,20 @@ it("previews emoji colors without selecting a draft, and restores the image when
   fireEvent.click(
     screen.getByRole("button", { name: "Use #476CFF background" }),
   );
-  expect(screen.getByRole("slider", { name: "Emoji position" })).toHaveStyle({
+  expect(
+    screen
+      .getByRole("slider", { name: "Emoji position" })
+      .querySelector("[data-avatar-shape]"),
+  ).toHaveStyle({
     backgroundColor: "#476CFF",
   });
   expect(screen.getByLabelText("Draft picture")).toHaveTextContent(original);
   fireEvent.click(screen.getByRole("tab", { name: "Emoji" }));
-  expect(screen.getByRole("slider", { name: "Emoji position" })).toHaveStyle({
+  expect(
+    screen
+      .getByRole("slider", { name: "Emoji position" })
+      .querySelector("[data-avatar-shape]"),
+  ).toHaveStyle({
     backgroundColor: "#476CFF",
   });
   fireEvent.click(screen.getByRole("tab", { name: "Image" }));
@@ -310,12 +318,23 @@ it("previews an inline agent emoji and its background with Done in the form foot
     />,
   );
   fireEvent.click(screen.getByRole("tab", { name: "Emoji" }));
-  expect(screen.getByRole("slider", { name: "Emoji position" })).toBeVisible();
+  const position = screen.getByRole("slider", { name: "Emoji position" });
+  expect(position).toBeVisible();
+  // Only the artwork inside takes the avatar mask, which would clip focus.
+  expect(position).not.toHaveAttribute("data-avatar-shape");
+  expect(position.querySelector("[data-avatar-shape]")).toHaveAttribute(
+    "data-avatar-shape",
+    "squircle",
+  );
   fireEvent.click(screen.getByRole("tab", { name: "Background" }));
   fireEvent.click(
     screen.getByRole("button", { name: "Use #476CFF background" }),
   );
-  expect(screen.getByRole("slider", { name: "Emoji position" })).toHaveStyle({
+  expect(
+    screen
+      .getByRole("slider", { name: "Emoji position" })
+      .querySelector("[data-avatar-shape]"),
+  ).toHaveStyle({
     backgroundColor: "#476CFF",
   });
   expect(footer).toContainElement(screen.getByRole("button", { name: "Done" }));

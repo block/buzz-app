@@ -36,6 +36,7 @@ export function registerAttention(ctx: {
         : {}),
       async run({ watch, signal, emit, spawn }) {
         let buffer = "",
+          stderr = "",
           timer: ReturnType<typeof setTimeout> | undefined,
           ended = false;
         let resolveDrain: (() => void) | undefined;
@@ -99,16 +100,23 @@ export function registerAttention(ctx: {
           throw new Error(
             "This host cannot run commands as the agent. Update Buzz first.",
           );
+        let failure: Error | undefined;
         const process = await spawn(
           id === "github-pr" ? "attention-pr" : "attention-command",
           {
             args: command,
             ...(typeof cwd === "string" ? { cwd } : {}),
             onStdout: append,
-            onStderr: (data) => console.warn("Attention command:", data),
+            onStderr: (data) => {
+              stderr = (stderr + data).slice(-16384);
+              console.warn("Attention command:", data);
+            },
           },
         ).catch((error) => {
-          append(`Attention command could not start: ${String(error)}\n`);
+          failure = new Error(
+            `Attention command could not start: ${String(error)}`,
+          );
+          append(`${failure.message}\n`);
           ended = true;
           flush();
           return undefined;
@@ -118,6 +126,7 @@ export function registerAttention(ctx: {
           if (signal.aborted) flush();
           await drained;
           signal.removeEventListener("abort", flush);
+          if (!signal.aborted) throw failure;
           return;
         }
         const abort = () => {
@@ -129,13 +138,18 @@ export function registerAttention(ctx: {
         if (signal.aborted) abort();
         try {
           const code = await process.exited;
-          if (!signal.aborted && code !== 0)
-            append(`\nAttention command exited with status ${code}\n`);
+          if (!signal.aborted && code !== 0) {
+            failure = new Error(
+              `Attention command exited with status ${code}${stderr.trim() ? `: ${stderr.trim()}` : ""}`,
+            );
+            append(`\n${failure.message}\n`);
+          }
           ended = true;
           clearTimeout(timer);
           timer = undefined;
           flush();
           await drained;
+          if (!signal.aborted && failure) throw failure;
         } finally {
           clearTimeout(timer);
           signal.removeEventListener("abort", abort);

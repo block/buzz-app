@@ -10237,3 +10237,67 @@ it.each(["command", "github-pr"])(
     await service.save(bot, { attentionEnabled: false });
   },
 );
+
+it.each(["spawn", "exit"])(
+  "retains a saved PR watch after %s failure and retries when re-enabled",
+  async (failure) => {
+    const { service, plugin, ctx, run } = await setup();
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const spawn = vi.fn(async (_id, options) => {
+      if (failure === "spawn") throw new Error("program unavailable");
+      options.onStderr?.("gh: network unavailable\n");
+      return { ...(await heldCommand()), exited: Promise.resolve(1) };
+    });
+    ctx.provide("host", {
+      spawn,
+      serveMcp: async () => ({
+        url: "http://127.0.0.1/mcp",
+        headers: [],
+        closed: new Promise<void>(() => {}),
+        close: async () => {},
+      }),
+    });
+    const core = plugin.extend({
+      pluginOwner: { id: "buzz.agents", revision: "bundled" },
+    });
+    registerAttention({ agents: core.agents });
+    try {
+      await service.create({ type: "example/echo", name: "Echo" });
+      await service.save(bot, {
+        attentionEnabled: true,
+        attention: {
+          "watch/saved": {
+            type: "source",
+            provider: "attention/github-pr",
+            interest_id: "default",
+            enabled: true,
+            channel,
+            config: { pr: "https://github.com/example/repo/pull/1" },
+          },
+        },
+      });
+      await vi.waitFor(() =>
+        expect(warning).toHaveBeenCalledWith(
+          "Attention source attention/github-pr failed",
+          expect.any(Error),
+        ),
+      );
+      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+      expect(run.mock.calls[0]?.[0].trigger).toMatchObject({
+        text: expect.stringContaining(
+          failure === "spawn"
+            ? "program unavailable"
+            : "gh: network unavailable",
+        ),
+      });
+      expect(service.find(bot)?.attention["watch/saved"]).toBeDefined();
+      expect(service.find(bot)?.sourceRuns?.["watch/saved"]).toBeUndefined();
+      await service.save(bot, { attentionEnabled: false });
+      await service.save(bot, { attentionEnabled: true });
+      await vi.waitFor(() => expect(spawn).toHaveBeenCalledTimes(2));
+    } finally {
+      await service.save(bot, { attentionEnabled: false });
+      warning.mockRestore();
+    }
+  },
+);

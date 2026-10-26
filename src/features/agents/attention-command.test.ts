@@ -126,22 +126,24 @@ it("reports a process startup failure to the owning conversation", async () => {
     },
   });
   const emit = vi.fn();
-  await run({
-    spawn: async () => {
-      throw new Error("program unavailable");
-    },
-    agent: "a",
-    watch: {
-      type: "source",
-      interest_id: "test",
-      enabled: true,
-      provider: "attention/command",
-      channel: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-      config: { command: ["check"] },
-    },
-    signal: new AbortController().signal,
-    emit,
-  });
+  await expect(
+    run({
+      spawn: async () => {
+        throw new Error("program unavailable");
+      },
+      agent: "a",
+      watch: {
+        type: "source",
+        interest_id: "test",
+        enabled: true,
+        provider: "attention/command",
+        channel: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        config: { command: ["check"] },
+      },
+      signal: new AbortController().signal,
+      emit,
+    }),
+  ).rejects.toThrow("program unavailable");
   expect(emit).toHaveBeenCalledWith(
     expect.stringContaining("program unavailable"),
   );

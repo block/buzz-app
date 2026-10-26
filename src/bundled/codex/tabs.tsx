@@ -70,7 +70,7 @@ type ProviderState = AgentProviderSnapshot &
   }>;
 const STORAGE_KEY = "buzz.codex.provider-defaults.v1";
 const SIGN_IN_ERROR = "Codex needs you to sign in.";
-const NOT_INSTALLED = "Codex is not installed.";
+const NOT_INSTALLED = "The Codex integration isn't installed yet.";
 const CONVERSATION_LIMIT = 30;
 /** Read-only setup/catalog discovery uses the same declared native transport. */
 async function catalog(spawn: Spawn, signal: AbortSignal) {
@@ -174,7 +174,7 @@ export class CodexProvider {
           readiness: "attention",
           attentionLabel:
             reason === NOT_INSTALLED
-              ? "Install Codex"
+              ? "Install Codex integration"
               : reason === SIGN_IN_ERROR
                 ? "Log in to Codex"
                 : "Codex needs attention",
@@ -356,7 +356,7 @@ function CodexSignIn({
     login.subscribe,
     login.snapshot,
   );
-  const action = step === "install" ? "Install Codex" : "Sign in";
+  const action = step === "install" ? "Install integration" : "Sign in";
   // A step's process ends before the check that follows it, which may still
   // find the step needed; until it answers, neither button starts another.
   return (
@@ -376,7 +376,7 @@ function CodexSignIn({
       </Button>
       <Dialog
         open={open}
-        title={step === "install" ? "Set up Codex" : "Sign in to Codex"}
+        title={step === "install" ? "Codex integration" : "Sign in to Codex"}
         description={step === "login" ? "Continue in your browser." : undefined}
         onOpenChange={(next) => {
           setOpen(next);
@@ -386,9 +386,7 @@ function CodexSignIn({
         <section className="grid gap-2">
           {step === "install" && (
             <p role="status" className="m-0">
-              {checking && !running
-                ? "Checking Codex…"
-                : "Codex is not installed."}
+              {checking && !running ? "Checking Codex…" : NOT_INSTALLED}
             </p>
           )}
           {/* One button per slot, so focus stays put as Install becomes
@@ -569,7 +567,7 @@ export function createTabs(
       check,
     } = useProvider(agent);
     // The setup's status holds through the provider's next check, so the
-    // button, and its focus, stays put as Install Codex becomes Sign in.
+    // button, and its focus, stays put as Install integration becomes Sign in.
     const { status } = useSyncExternalStore(
       login.subscribe,
       login.snapshot,
@@ -788,7 +786,7 @@ export function createTabs(
     const [signingIn, setSigningIn] = useState(false);
     const action =
       error === NOT_INSTALLED
-        ? ({ step: "install", label: "Install Codex" } as const)
+        ? ({ step: "install", label: "Install integration" } as const)
         : error === SIGN_IN_ERROR
           ? ({ step: "login", label: "Sign in" } as const)
           : undefined;

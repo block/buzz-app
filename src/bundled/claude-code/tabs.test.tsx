@@ -1078,14 +1078,12 @@ it("replaces generic installation copy with the latest installer state", async (
   const installedType = installed({ available: false }).type;
   const Setup = providerSetup(installedType);
   render(<Setup onClose={vi.fn()} />);
-  await waitFor(() =>
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "Claude is not installed.",
-    ),
+  expect(await screen.findByRole("status")).toHaveTextContent(
+    "The Claude integration isn't installed yet.",
   );
   await userEvent
     .setup()
-    .click(screen.getByRole("button", { name: "Install Claude" }));
+    .click(screen.getByRole("button", { name: "Install integration" }));
   await waitFor(() =>
     expect(screen.getByRole("status")).toHaveTextContent(
       "Setting up Claude Code...",
@@ -1104,6 +1102,24 @@ it("opens its dialog for a missing key rather than running a step", async () => 
     }),
   );
   expect(type.provider?.attentionAction).toBeUndefined();
+});
+
+it("leaves Settings recovery to the provider dialog, like Codex", async () => {
+  // Without an attention action, Settings' Harness defaults row opens
+  // DialogBody, so the status line and download note precede the download.
+  for (const options of [{ available: false }, { keySaved: false }]) {
+    const { type } = installed(options);
+    const Setup = providerSetup(type);
+    const view = render(<Setup onClose={vi.fn()} />);
+    await waitFor(() =>
+      expect(type.provider?.snapshot()).toHaveProperty(
+        "readiness",
+        "attention",
+      ),
+    );
+    expect(type.provider).not.toHaveProperty("attentionAction");
+    view.unmount();
+  }
 });
 
 it("saves settings as one config", async () => {
@@ -2096,7 +2112,11 @@ it("separates identity fields from runtime settings without changing the stored 
 });
 
 it.each([
-  { available: false, action: "Install Claude", title: "Set up Claude" },
+  {
+    available: false,
+    action: "Install integration",
+    title: "Claude integration",
+  },
 ])(
   "keeps failed Claude $action output in its open dialog",
   async ({ available, action, title }) => {

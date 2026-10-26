@@ -212,16 +212,6 @@ export const apply: PluginModule["apply"] = (ctx) => {
       snapshot: setup.providerSnapshot,
       subscribe: setup.subscribe,
       check: () => setup.check(),
-      get attentionAction() {
-        const state = setup.snapshot();
-        if (state.running) return undefined;
-        return state.status?.state === "missing" ||
-          state.status?.state === "outdated"
-          ? () => void setup.run("install")
-          : state.status?.state === "signed-out" && setup.auth.signIn
-            ? () => void setup.run("sign-in")
-            : undefined;
-      },
       DialogBody: ProviderDialogBody,
       DefaultControl,
     },

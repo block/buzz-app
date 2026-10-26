@@ -102,7 +102,7 @@ published checksum and tests the release before switching. A failed update
 leaves the previous copy in use.
 
 Buzz checks for updates when agents load and every six hours. The first download
-(about 130 MB) waits until a Codex agent is running or **Install Codex** is clicked.
+(about 130 MB) waits until a Codex agent is running or **Install integration** is clicked.
 Mentions wait for installation; a failed first download is retried on the next mention.
 
 ## Checks

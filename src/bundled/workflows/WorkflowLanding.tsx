@@ -1123,6 +1123,13 @@ export function WorkflowLanding({
             }
           />
           <MenuPopup size="wide" style={{ width: "28rem" }}>
+            <MenuCheckboxItem
+              checked={shown.length === 0}
+              closeOnClick={false}
+              onCheckedChange={() => onFilterChange([])}
+            >
+              All channels
+            </MenuCheckboxItem>
             <MenuGroup className="workflow-filter-presets">
               <MenuCheckboxItem
                 checked={mineOnly}
@@ -1140,13 +1147,6 @@ export function WorkflowLanding({
               </MenuCheckboxItem>
             </MenuGroup>
             <MenuSeparator />
-            <MenuCheckboxItem
-              checked={shown.length === 0}
-              closeOnClick={false}
-              onCheckedChange={() => onFilterChange([])}
-            >
-              All channels
-            </MenuCheckboxItem>
             <MenuGroup className="workflow-filter-channels">
               {populated.map((channel) => (
                 <MenuCheckboxItem

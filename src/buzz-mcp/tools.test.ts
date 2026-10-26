@@ -579,6 +579,16 @@ it("replaces memory only at the version it was shown, newer than the entry it re
       expected: "0".repeat(16),
     }),
   ).rejects.toThrow(/^mem\/notes changed since version 0{16}\. Read it again/);
+  // Writing back the whole mem_get reply would save its header.
+  await expect(
+    callTool(client, {}, "mem_set", {
+      slug: "notes",
+      text: `${shown}\nnew`,
+      expected: version,
+    }),
+  ).rejects.toThrow(
+    "Leave out the version line from mem_get; pass the version as expected.",
+  );
   expect(client.remember).not.toHaveBeenCalled();
   await expect(
     callTool(client, {}, "mem_set", {

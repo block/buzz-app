@@ -821,6 +821,11 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     const key = memorySlug(required(args, "slug"));
     const body = (await tools.body(args, true)) as string;
     const expected = text(args.expected);
+    // A copied mem_get reply would save its header into the entry.
+    if (/^version: [0-9a-f]{16}\n/.test(body))
+      throw new Error(
+        "Leave out the version line from mem_get; pass the version as expected.",
+      );
     // A write must be dated after the entry it replaces, so it waits for a
     // read that finds the entry or confirms there is none.
     const { entries, partial } = await tools.client.memories(key);

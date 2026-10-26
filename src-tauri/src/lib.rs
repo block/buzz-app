@@ -874,6 +874,7 @@ pub fn run() {
                 webview.state::<Huddles>().stop_all();
                 webview.state::<HostProcesses>().stop_all();
                 webview.state::<HostMcpServers>().stop_all();
+                webview.state::<app_agents::AppAgentHost>().page_load();
             }
             browser::page_load(webview, payload);
         })

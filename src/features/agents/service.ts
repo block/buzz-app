@@ -2699,12 +2699,8 @@ export class AgentsService extends Service implements Agents {
     const binding = this.bindingOf(member);
     if (!native || !binding) return "offline";
     const { pubkey } = member;
-    try {
-      await native.holdRemoval(member);
-    } catch (error) {
-      console.warn(`Agent ${member.name} did not leave ${member.relay}`, error);
-      return "failed";
-    }
+    // Refused while another copy of the app removes it, which says so.
+    await native.holdRemoval(member);
     try {
       try {
         const signal = AbortSignal.any([

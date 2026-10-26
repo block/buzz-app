@@ -783,7 +783,7 @@ impl AppAgents {
             Ok(()) => {}
             Err(std::fs::TryLockError::WouldBlock) => {
                 return Err(format!(
-                    "{} is being removed in another copy of the app",
+                    "{} is being removed in another copy of the app. Try again once it's done.",
                     agent.name
                 ))
             }

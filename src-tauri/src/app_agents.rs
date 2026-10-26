@@ -83,6 +83,10 @@ impl AppAgentHost {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
+    /// Lets go of the removals the page held, as a new page starts none.
+    pub(crate) fn page_load(&self) {
+        self.removals().clear();
+    }
     fn keys(&self) -> std::sync::MutexGuard<'_, HashMap<String, Arc<Secret>>> {
         self.keys
             .lock()
@@ -1107,6 +1111,7 @@ mod tests {
             credentials: Arc::new(Busy(key.hex().to_string(), AtomicU32::new(3))),
             keys: Arc::default(),
             profiles: Arc::default(),
+            removals: Arc::default(),
             hosting: Arc::new(hosting(Err("unused".into()), true)),
         };
         let agent = AppAgent {
@@ -1166,7 +1171,8 @@ mod tests {
         let waited = std::time::Duration::from_millis(300);
         assert!(tokio::time::timeout(waited, &mut deleting).await.is_err());
         drop(publishing);
-        deleting.await.unwrap().unwrap();
+        // Then refused, as no removal is held for it.
+        assert!(deleting.await.unwrap().is_err());
     }
 
     /// Answers one HTTP request with `status` and `body`, and returns the

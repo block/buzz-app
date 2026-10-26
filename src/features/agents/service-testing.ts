@@ -429,7 +429,7 @@ export function fakeNative(identities: AgentIdentity[] = []) {
         throw new Error(`${row.name} isn't being removed from that community`);
       if (removals.has(member.pubkey))
         throw new Error(
-          `${row.name} is being removed in another copy of the app`,
+          `${row.name} is being removed in another copy of the app. Try again once it's done.`,
         );
       removals.add(member.pubkey);
     }),

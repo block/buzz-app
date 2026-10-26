@@ -2148,11 +2148,9 @@ describe("an agent in several communities", () => {
     const leaving = service.leave(away);
     await vi.waitFor(() => expect(leaveChannels).toHaveBeenCalledOnce());
     // Its Remove there meanwhile sends nothing to the community.
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     await expect(other.service.leave(away)).rejects.toThrow(
-      "Echo hasn't left other.example.test yet",
+      "Echo is being removed in another copy of the app. Try again once it's done.",
     );
-    warn.mockRestore();
     expect(leaveChannels).toHaveBeenCalledOnce();
     expect(other.native.remove).not.toHaveBeenCalled();
     release();

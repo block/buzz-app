@@ -43,9 +43,9 @@ elif [[ "$args" == *"issues/1/comments"* ]]; then
 elif [[ "$args" == *"pulls/1/comments"* || "$args" == *"pulls/1/reviews"* ]]; then
   :
 elif [[ "$args" == "pr checks "* ]]; then
-  if [[ "$tick" == 2 ]]; then exit 1; fi
+  if [[ "$tick" == 2 || ( "${INITIAL_CHECK_FAILURE:-0}" == 1 && "$tick" == 1 ) ]]; then exit 1; fi
   bucket="$CHECK_BASELINE"
-  [[ "$tick" -ge 4 ]] && bucket=pass
+  [[ "$tick" -ge 4 && "${INITIAL_CHECK_FAILURE:-0}" != 1 ]] && bucket=pass
   printf '[{"name":"build","bucket":"%s","state":"%s","link":"https://example/check"}]\n' "$bucket" "$bucket"
   [[ "$bucket" != fail ]] || exit 1
 else
@@ -72,3 +72,11 @@ PR_MONITOR_COMMENT_HEALTH_FAILURE_THRESHOLD=2 \
 grep -q 'PR #1 closed' "$temp_dir/out"
 done
 echo "pr-monitor check error tests passed"
+
+# Initial checks transport failure must not hide a stable failing first snapshot.
+rm -f "$temp_dir/tick"
+INITIAL_CHECK_FAILURE=1 CHECK_BASELINE=fail PATH="$temp_dir/bin:$PATH" FAKE_TICK="$temp_dir/tick" TMPDIR="$temp_dir/state" PR_MONITOR_COMMENT_FETCH_ATTEMPTS=1 PR_MONITOR_COMMENT_FETCH_RETRY_DELAY=0 \
+  "$monitor" --repo owner/repo --include-non-employees --quiet-initial --interval 0.01 1 >"$temp_dir/initial-check-failure.out"
+[[ "$(grep -c 'CI:' "$temp_dir/initial-check-failure.out")" == 1 ]]
+grep -q 'build' "$temp_dir/initial-check-failure.out"
+grep -q 'PR #1 closed' "$temp_dir/initial-check-failure.out"

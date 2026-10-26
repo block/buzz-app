@@ -71,13 +71,6 @@ for mode in default include-self explicit; do
   ! grep -q 'test-user feedback\|builderbot-code-review\|github-actions\|outsider' "$temp_dir/personal-$mode.out"
   grep -q 'PR #1 \(merged\|closed\)' "$temp_dir/personal-$mode.out"
 done
-# An injected author policy replaces the bundled one.
-printf 'comment_author_is_ignored() { [[ "$1" != outsider ]]; }\n' > "$temp_dir/only-outsider.sh"
-mkdir -p "$temp_dir/override"
-PATH="$temp_dir/bin:$PATH" FAKE_TICK="$temp_dir/override/tick" TMPDIR="$temp_dir/override" MONITOR_PR_AUTHOR_POLICY="$temp_dir/only-outsider.sh" \
-  "$script_dir/pr-monitor.sh" --repo squareup/repo --interval 0.01 --include-non-employees 1 > "$temp_dir/override.out"
-grep -q '\*\*outsider\*\* commented ·' "$temp_dir/override.out"
-! grep -q '\*\*reviewer\*\*' "$temp_dir/override.out" || exit 1
 # Shared JSON preferences change who is trusted and suppressed.
 printf '%s' '{"version":1,"trustedOrganizations":["squareup"],"trustedAuthors":[],"ignoredAuthors":["reviewer"]}' > "$HOME/.buzz/preferences/github-pr.json"
 mkdir -p "$temp_dir/defaults"

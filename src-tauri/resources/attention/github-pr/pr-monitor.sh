@@ -103,8 +103,8 @@ fi
 # Polling snapshots belong to this producer and end with its lifetime.
 STATE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/pr-monitor-${REPO//\//-}-${PR}.XXXXXX")
 trap 'rm -rf "$STATE_DIR"' EXIT
-CI_EVENT_POLICY="${MONITOR_PR_CI_POLICY:-$SCRIPT_DIR/policies/ci-event-policy.py}"
-COMMENT_AUTHOR_POLICY="${MONITOR_PR_AUTHOR_POLICY:-$SCRIPT_DIR/policies/comment-author-policy.sh}"
+CI_EVENT_POLICY="$SCRIPT_DIR/policies/ci-event-policy.py"
+COMMENT_AUTHOR_POLICY="$SCRIPT_DIR/policies/comment-author-policy.sh"
 PYTHON3="${MONITOR_PR_PYTHON_BIN:-$(command -v python3 2>/dev/null || true)}"
 [[ -x "$PYTHON3" ]] || { echo "ERROR: python3 is required" >&2; exit 1; }
 [[ -x "$CI_EVENT_POLICY" ]] || { echo "ERROR: CI event policy helper not executable: $CI_EVENT_POLICY" >&2; exit 1; }
@@ -606,6 +606,9 @@ while true; do
           emit "🔀 PR is now $(format_pr_state "$pr_tmp")"
         fi
       fi
+    fi
+    if [[ "$checks_available" == "1" && ! -f "$checks_state" ]]; then
+      printf '[]\n' > "$checks_state"
     fi
     if [[ "$checks_available" == "1" && -f "$checks_state" ]] && ! cmp -s "$checks_state" "$checks_tmp"; then
       review_decision=$(cut -f3 "$pr_tmp")

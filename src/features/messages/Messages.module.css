@@ -1801,12 +1801,16 @@ html[data-keyboard-navigation] .membership .membershipName:focus-visible {
 }
 
 /* Overflow counts are group metadata, not profile artwork: a pill that grows
-   with its digits but still ends the stack as its last member, tucked under
-   the previous avatar's overlap like every avatar before it. */
+   with its digits but still ends the stack as its last member, overlapping
+   the previous avatar by --avatar-overlap like every avatar before it. */
 .membershipAvatarCount {
   /* Positioned so it paints over the avatar it overlaps, in DOM order like
-     .membershipAvatar. The "+" stays fully visible: the 2px border plus the
-     --space-1h left padding exceed the --avatar-overlap it sits under. */
+     .membershipAvatar; with the opaque fill that alone keeps the "+" from
+     ever being covered. The 2px border plus --space-1h left padding exceed
+     --avatar-overlap, so the "+" starts just past the overlapped avatar's
+     right edge rather than over its silhouette. That clearance relies on the
+     padding matching --avatar-overlap (both --space-1h); revisit the padding
+     if the overlap token is retuned. */
   position: relative;
   display: inline-flex;
   align-items: center;

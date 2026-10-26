@@ -1797,26 +1797,29 @@ html[data-keyboard-navigation] .membership .membershipName:focus-visible {
   min-height: var(--space-5);
 }
 
-/* Overflow counts are group metadata, not profile artwork. */
+/* Overflow counts are group metadata, not profile artwork: a pill that grows
+   with its digits and sits clear of the stack instead of tucking under the
+   last avatar's overlap. Positioned so it paints over the avatars like them. */
 .membershipAvatarCount {
-  display: inline-grid;
-  place-items: center;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
-  width: 1.5rem;
-  height: 1.5rem;
+  min-width: var(--space-5);
+  height: var(--space-5);
+  /* Undo the previous avatar's overlap, then leave a visible gap. */
+  margin-left: calc(var(--space-1h) + var(--space-1));
+  margin-right: calc(-1 * var(--space-1h));
+  padding: 0 var(--space-1h);
   border: 2px solid var(--surface-panel);
-  border-radius: 50%;
+  border-radius: var(--radius-pill);
   background: var(--affordance-selected);
   color: var(--text-subtle);
   font-size: var(--text-caption);
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
-}
-
-.membershipAvatarCount {
-  width: var(--space-5);
-  height: var(--space-5);
-  margin-right: calc(-1 * var(--space-1h));
+  white-space: nowrap;
 }
 
 .typing {

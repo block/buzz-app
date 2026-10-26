@@ -4537,13 +4537,30 @@ it("preserves a full held replay before admitting a mixed-destination event", as
     }),
   );
   const mixed = deploy("mixed-at-capacity", { created_at: now + 2 });
+  const checkpoints = new Map<number, () => void>();
+  const batches = [60, 120, 180, 240].map(
+    (count) => new Promise<void>((resolve) => checkpoints.set(count, resolve)),
+  );
+  let finished = () => {};
+  const last = new Promise<void>((resolve) => {
+    finished = resolve;
+  });
+  run.mockImplementation(({ trigger }) => {
+    checkpoints.get(run.mock.calls.length)?.();
+    if (trigger.type === "attention" && trigger.text.includes(mixed.id))
+      finished();
+  });
   const replay = () => emit({ replay: true, events: [...held, mixed] });
   replay();
   await vi.advanceTimersByTimeAsync(1_000);
   cached = false;
   confirm("saved", [viewer, bot]);
-  for (let tick = 0; tick < 660 && run.mock.calls.length < 258; tick++)
-    await vi.advanceTimersByTimeAsync(1_000);
+  for (const batch of batches) {
+    await vi.advanceTimersByTimeAsync(60_000);
+    await batch;
+  }
+  await vi.advanceTimersByTimeAsync(60_000);
+  await last;
   replay();
   await vi.advanceTimersByTimeAsync(60_000);
   const reports = run.mock.calls.filter(

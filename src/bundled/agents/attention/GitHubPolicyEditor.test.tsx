@@ -61,7 +61,6 @@ it("allows an empty policy for CI and PR-state monitoring", async () => {
     screen.getByRole("textbox", { name: "Trusted commenters" }),
     { target: { value: "" } },
   );
-  expect(screen.getByText(/CI and PR state always do/)).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Save" }));
   await waitFor(() => expect(onSave).toHaveBeenCalledWith(empty));
 });

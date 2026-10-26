@@ -374,7 +374,7 @@ export function createPage({
           h(
             "span",
             {
-              className: "attention-title text-caption text-subtle",
+              className: "attention-title text-caption text-primary",
               title:
                 watch.type === "timer" && watch.max_occurrences === 1
                   ? new Date(
@@ -669,6 +669,11 @@ export function createPage({
               "summary",
               { className: "attention-disclosure text-caption text-subtle" },
               h(CaretRightIcon, { size: 16, "aria-hidden": true }),
+              h(
+                "span",
+                { className: "text-caption text-primary whitespace-nowrap" },
+                "Instructions:",
+              ),
               h(
                 "span",
                 { className: "attention-instructions-preview" },

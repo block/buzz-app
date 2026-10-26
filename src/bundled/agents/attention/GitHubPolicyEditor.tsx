@@ -8,7 +8,6 @@ import type { Host } from "../../../features/host/service";
 import { Button } from "../../../shared/design-system/ui/Button";
 import { Field } from "../../../shared/design-system/ui/Field";
 import { Dialog } from "../../../shared/design-system/ui/Dialog";
-import { SettingsGroup } from "../../../shared/design-system/ui/SettingsGroup";
 import { Textarea } from "../../../shared/design-system/ui/Textarea";
 
 export function GitHubPolicyEditor({
@@ -77,7 +76,7 @@ export function GitHubPolicyEditor({
     <Dialog
       open
       title="GitHub comment authors"
-      description="Comments and reviews from these authors wake your agents. CI and PR state always do."
+      description="Comments and reviews from these authors wake your agents."
       preventClose={pending}
       onOpenChange={(next) => {
         if (!next && !pending) onClose();
@@ -102,38 +101,37 @@ export function GitHubPolicyEditor({
       <form
         id={form}
         aria-label="GitHub author allowlist"
+        className="grid gap-4"
         onSubmit={(event) => {
           event.preventDefault();
           void submit();
         }}
       >
-        <SettingsGroup layout="form">
-          {field(
-            "trustedOrganizations",
-            "Trusted organizations",
-            "One GitHub organization login per line.",
-          )}
-          {field(
-            "trustedAuthors",
-            "Trusted commenters",
-            "One exact GitHub login per line, including bot logins.",
-          )}
-          {field(
-            "ignoredAuthors",
-            "Ignored commenters",
-            "One exact GitHub login per line.",
-          )}
-          {error && (
-            <p role="alert" className="text-body-sm text-danger">
-              {error}
-            </p>
-          )}
-          {path && (
-            <p className="m-0 text-caption text-subtle">
-              Preferences file: <code>{path}</code>
-            </p>
-          )}
-        </SettingsGroup>
+        {field(
+          "trustedOrganizations",
+          "Trusted organizations",
+          "One GitHub organization login per line.",
+        )}
+        {field(
+          "trustedAuthors",
+          "Trusted commenters",
+          "One exact GitHub login per line, including bot logins.",
+        )}
+        {field(
+          "ignoredAuthors",
+          "Ignored commenters",
+          "One exact GitHub login per line. These never wake agents, even in a trusted organization.",
+        )}
+        {error && (
+          <p role="alert" className="text-body-sm text-danger">
+            {error}
+          </p>
+        )}
+        {path && (
+          <p className="m-0 text-caption text-subtle">
+            Preferences file: <code>{path}</code>
+          </p>
+        )}
       </form>
     </Dialog>
   );

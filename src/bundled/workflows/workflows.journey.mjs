@@ -526,8 +526,10 @@ test("real session page under StrictMode fences community changes, warns before 
   const editor = editorControls(page);
   const { button } = editor;
   const choose = async (name) => {
-    await page.getByRole("combobox", { name: "Channel", exact: true }).click();
-    await page.getByRole("option", { name, exact: true }).click();
+    await page.getByRole("button", { name: "Channels", exact: true }).click();
+    await page.getByRole("menuitemcheckbox", { name, exact: true }).click();
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("menu")).toHaveCount(0);
   };
   // The modal hides the fixture toolbar; call its closures directly.
   const fixture = (name) =>
@@ -565,14 +567,15 @@ test("real session page under StrictMode fences community changes, warns before 
   await button("Close editor").click();
   await leave.getByRole("button", { name: "Leave draft", exact: true }).click();
   await expect(editor.region).toHaveCount(0);
-  await page.getByRole("combobox", { name: "Channel", exact: true }).click();
+  await page.getByRole("button", { name: "Channels", exact: true }).click();
   await expect(
-    page.getByRole("option", { name: "First channel", exact: true }),
+    page.getByRole("menuitemcheckbox", { name: "First channel", exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByRole("option", { name: "Second channel", exact: true }),
+    page.getByRole("menuitemcheckbox", { name: "Second channel", exact: true }),
   ).toHaveCount(0);
   await page.keyboard.press("Escape");
+  await expect(page.getByRole("menu")).toHaveCount(0);
   await choose("First channel");
   await editor.open("Fixture A helper");
   await fixture("switchCommunity");
@@ -1781,10 +1784,12 @@ test("real session reconnect retains unsaved YAML and an in-flight run request",
   const { yaml } = editor;
   // Scope notices to the modal: the page behind it is inert.
   const dialog = editorDialog(page);
-  await page.getByRole("combobox", { name: "Channel", exact: true }).click();
+  await page.getByRole("button", { name: "Channels", exact: true }).click();
   await page
-    .getByRole("option", { name: "First channel", exact: true })
+    .getByRole("menuitemcheckbox", { name: "First channel", exact: true })
     .click();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("menu")).toHaveCount(0);
   await editor.open("Fixture A helper");
   await editor.tab("YAML").click();
   const original = await yaml.inputValue();
@@ -1836,10 +1841,12 @@ test("generic Outbox offers message retry but no workflow replay", async ({
 }) => {
   await page.goto(url.replace("/fixture.html", "/session-fixture.html?writes"));
   const button = (name) => page.getByRole("button", { name, exact: true });
-  await page.getByRole("combobox", { name: "Channel", exact: true }).click();
+  await page.getByRole("button", { name: "Channels", exact: true }).click();
   await page
-    .getByRole("option", { name: "First channel", exact: true })
+    .getByRole("menuitemcheckbox", { name: "First channel", exact: true })
     .click();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("menu")).toHaveCount(0);
   await editorControls(page).open("Fixture A helper");
   await editorControls(page).run.click();
   await expect

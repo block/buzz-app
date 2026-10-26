@@ -29,9 +29,19 @@
 }
 .workflow-page-filter {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-3);
   margin-bottom: var(--space-4);
+}
+.workflow-page-filter > .buzz-button {
+  max-width: 100%;
+}
+.workflow-filter-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .workflow-page-status {
   display: flex;

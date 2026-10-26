@@ -92,7 +92,7 @@ function mount(
   const element = () => (
     <StrictMode>
       <WorkflowLanding
-        filter=""
+        filter={[]}
         onFilterChange={() => {}}
         key={mountKey}
         capability={owner.capability}
@@ -732,7 +732,7 @@ function landing() {
     }, []);
     return (
       <WorkflowLanding
-        filter=""
+        filter={[]}
         onFilterChange={() => {}}
         capability={fixture.capability}
         channels={[
@@ -937,7 +937,7 @@ it("keeps run feedback after the card leaves the filtered view", async () => {
       ],
     },
   });
-  const element = (filter: string) => (
+  const element = (filter: readonly string[]) => (
     <ToastProvider>
       <WorkflowLanding
         onFilterChange={() => {}}
@@ -955,12 +955,12 @@ it("keeps run feedback after the card leaves the filtered view", async () => {
       />
     </ToastProvider>
   );
-  const { rerender } = render(element(""));
+  const { rerender } = render(element([]));
   fireEvent.click(
     await screen.findByRole("button", { name: "Run now: Message helper" }),
   );
   expect(fixture.calls.trigger).toBe(1);
-  rerender(element("other-channel"));
+  rerender(element(["other-channel"]));
   expect(
     screen.queryByRole("button", { name: "Run now: Message helper" }),
   ).toBeNull();

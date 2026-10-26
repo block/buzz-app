@@ -17,6 +17,8 @@ import type {
   WorkflowView,
 } from "../../features/workflows/types";
 import {
+  CaretDownIcon,
+  XIcon,
   ArrowRightIcon,
   DotsThreeIcon,
   CalendarIcon,
@@ -40,10 +42,12 @@ import {
   MenuPopup,
   MenuItem,
   MenuIcon,
+  MenuCheckboxItem,
+  MenuGroup,
+  MenuGroupLabel,
 } from "../../shared/design-system/ui/Menu";
 import { Header } from "../../shared/design-system/ui/Header";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
-import { Select } from "../../shared/design-system/ui/Select";
 import { Switch } from "../../shared/design-system/ui/Switch";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { SwitchPreferenceRow } from "../../shared/design-system/ui/SwitchPreferenceRow";
@@ -915,9 +919,9 @@ export function WorkflowLanding({
   selected: string | undefined;
   /** Reports the selected workflow and its name, or clears the selection. */
   onSelect: (key: string | undefined, name?: string) => void;
-  /** Channel ID to show; every channel is still read. Empty shows all. */
-  filter: string;
-  onFilterChange: (channelId: string) => void;
+  /** Channel IDs to show; every channel is still read. Empty shows all. */
+  filter: readonly string[];
+  onFilterChange: (channelIds: readonly string[]) => void;
   refreshRequest: number;
   saveReadback?: Pick<WorkflowDefinition, "channelId" | "revision"> | undefined;
   viewer: string;
@@ -930,6 +934,7 @@ export function WorkflowLanding({
     capability.operations.snapshot,
     capability.operations.snapshot,
   );
+  const filterTrigger = useRef<HTMLButtonElement>(null);
   const [retryRequest, setRetryRequest] = useState(0);
   // Feedback outlives the card, which a filter may unmount.
   const [runRequests, setRunRequests] = useState<readonly string[]>([]);
@@ -979,15 +984,14 @@ export function WorkflowLanding({
   const populated = ordered.filter(
     (channel) => snapshots[channel.id]?.data.items.length,
   );
-  const shown = !populated.some((channel) => channel.id === filter)
-    ? ""
-    : filter;
+  const shown = populated.filter((channel) => filter.includes(channel.id));
   useEffect(() => {
-    if (filter !== shown) onFilterChange(shown);
+    if (filter.length !== shown.length)
+      onFilterChange(shown.map((channel) => channel.id));
   }, [filter, shown, onFilterChange]);
-  const visible = shown
-    ? ordered.filter((channel) => channel.id === shown)
-    : ordered;
+  const visible = shown.length ? shown : ordered;
+  const removeFilter = (channelId: string) =>
+    onFilterChange(filter.filter((id) => id !== channelId));
   const reading = visible.some(
     (channel) =>
       !snapshots[channel.id] || snapshots[channel.id]?.status === "loading",
@@ -1024,23 +1028,77 @@ export function WorkflowLanding({
   return (
     <>
       <div className="workflow-page-filter">
-        <Select
-          label="Channel"
-          value={shown}
-          groups={[
-            {
-              label: "Channels with workflows",
-              options: [
-                { value: "", label: "All workflows" },
-                ...populated.map((channel) => ({
-                  value: channel.id,
-                  label: channel.name,
-                })),
-              ],
-            },
-          ]}
-          onValueChange={onFilterChange}
-        />
+        <MenuRoot>
+          <MenuTrigger
+            ref={filterTrigger}
+            aria-label="Channels"
+            render={
+              <Button variant="ghost" size="sm">
+                <span className="workflow-filter-label">
+                  {shown.length === 0
+                    ? "All channels"
+                    : shown.length === 1
+                      ? shown[0]?.name
+                      : `${shown.length} channels`}
+                </span>
+                <CaretDownIcon size={16} aria-hidden="true" />
+              </Button>
+            }
+          />
+          <MenuPopup>
+            <MenuCheckboxItem
+              checked={shown.length === 0}
+              closeOnClick={false}
+              onCheckedChange={() => onFilterChange([])}
+            >
+              All channels
+            </MenuCheckboxItem>
+            <MenuGroup>
+              <MenuGroupLabel>Channels with workflows</MenuGroupLabel>
+              {populated.map((channel) => (
+                <MenuCheckboxItem
+                  key={channel.id}
+                  checked={filter.includes(channel.id)}
+                  closeOnClick={false}
+                  onCheckedChange={(checked) =>
+                    checked
+                      ? onFilterChange([...filter, channel.id])
+                      : removeFilter(channel.id)
+                  }
+                >
+                  {channel.name}
+                </MenuCheckboxItem>
+              ))}
+            </MenuGroup>
+          </MenuPopup>
+        </MenuRoot>
+        {shown.map((channel) => (
+          <Button
+            key={channel.id}
+            size="sm"
+            variant="subtle"
+            aria-label={`Remove ${channel.name} channel filter`}
+            onClick={() => {
+              removeFilter(channel.id);
+              filterTrigger.current?.focus();
+            }}
+          >
+            <span className="workflow-filter-label">{channel.name}</span>
+            <XIcon size={16} aria-hidden="true" />
+          </Button>
+        ))}
+        {shown.length > 0 && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              onFilterChange([]);
+              filterTrigger.current?.focus();
+            }}
+          >
+            Clear all
+          </Button>
+        )}
       </div>
       <WorkflowDeletionNotices
         operations={operations}

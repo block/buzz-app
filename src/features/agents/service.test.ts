@@ -10575,6 +10575,105 @@ it("keeps a failed review for retry and rejects concurrent approvals", async () 
   expect(service.creationRequests()).toEqual([]);
 });
 
+it("submits unsaved team drafts and saves only what the owner reviewed", async () => {
+  const { service, plugin } = await setup();
+  await service.create({ type: "example/echo", name: "Parent" });
+  await service.create({ type: "example/echo", name: "Child" });
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+  const handle = plugin.agents.handle(bot);
+  if (!handle?.proposeTeam || !handle.teams)
+    throw new Error("Missing team handle");
+  expect(handle.teams()).toEqual([]);
+  const created = await handle.proposeTeam({
+    name: " Crew ",
+    instructions: "Be kind.",
+    members: ["Child", bot],
+  });
+  expect(created).toEqual({ requestId: expect.any(String), saved: false });
+  expect(service.snapshot().teams).toEqual([]);
+  expect(service.teamRequests()).toEqual([
+    expect.objectContaining({
+      id: created.requestId,
+      requester: bot,
+      name: "Crew",
+      instructions: "Be kind.",
+      members: [sibling, bot],
+    }),
+  ]);
+  await service.approveTeam(created.requestId, {
+    name: "Crew 2",
+    instructions: "Be kind.",
+    members: [sibling],
+  });
+  expect(service.teamRequests()).toEqual([]);
+  const [team] = service.snapshot().teams;
+  expect(team).toMatchObject({ name: "Crew 2", members: [sibling] });
+  expect(handle.teams()).toEqual([
+    {
+      id: team?.id,
+      name: "Crew 2",
+      instructions: "Be kind.",
+      members: [{ pubkey: sibling, name: "Child" }],
+    },
+  ]);
+  // A change keeps what it does not propose, and saves over the same team.
+  const change = await handle.proposeTeam({
+    team: "Crew 2",
+    instructions: "Be brief.",
+  });
+  expect(service.teamRequests()).toEqual([
+    expect.objectContaining({
+      team: team?.id,
+      name: "Crew 2",
+      instructions: "Be brief.",
+      members: [sibling],
+    }),
+  ]);
+  await service.approveTeam(change.requestId, {
+    name: "Crew 2",
+    instructions: "Be brief.",
+    members: [sibling, bot],
+  });
+  expect(service.snapshot().teams).toEqual([
+    {
+      id: team?.id,
+      name: "Crew 2",
+      instructions: "Be brief.",
+      members: [sibling, bot],
+    },
+  ]);
+  await expect(
+    service.approveTeam(change.requestId, {
+      name: "Again",
+      instructions: "",
+      members: [],
+    }),
+  ).rejects.toThrow("No such pending team request");
+});
+
+it("refuses team drafts that name no such team or agent, or change nothing", async () => {
+  const { service, plugin } = await setup();
+  await service.create({ type: "example/echo", name: "Parent" });
+  await service.saveTeam({ name: "Crew", instructions: "", members: [bot] });
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+  const handle = plugin.agents.handle(bot);
+  if (!handle?.proposeTeam) throw new Error("Missing team handle");
+  await expect(
+    handle.proposeTeam({ team: "Missing", name: "X" }),
+  ).rejects.toThrow("no team");
+  await expect(
+    handle.proposeTeam({ name: "X", members: ["Ghost"] }),
+  ).rejects.toThrow("no agent");
+  await expect(handle.proposeTeam({ name: " " })).rejects.toThrow("Name");
+  await expect(handle.proposeTeam({ team: "Crew" })).rejects.toThrow(
+    "at least one change",
+  );
+  expect(service.teamRequests()).toEqual([]);
+  const first = await handle.proposeTeam({ name: "Fresh" });
+  service.dismissTeam(first.requestId);
+  expect(service.teamRequests()).toEqual([]);
+});
+
 it("refuses approval after leaving the requesting community", async () => {
   const { service, native, plugin, leave } = await setup();
   await service.create({ type: "example/echo", name: "Parent" });

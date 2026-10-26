@@ -11,6 +11,8 @@ import type {
   AgentHandle,
   AgentUpdateInput,
   AgentHandoff,
+  TeamInfo,
+  TeamProposal,
   RegisteredAgentType,
   Trigger,
 } from "./service";
@@ -449,6 +451,11 @@ export type RunnerHost = {
   ): Promise<Readonly<{ requestId: string; saved: false }>>;
   /** Wakes the agent in another of its conversations, as its own handoff. */
   handoff(agent: Agent, handoff: AgentHandoff): void;
+  teams(agent: Agent): readonly TeamInfo[];
+  proposeTeam(
+    agent: Agent,
+    input: TeamProposal,
+  ): Promise<Readonly<{ requestId: string; saved: false }>>;
   /** The owner's channel templates as the agent's handle offers them. */
   templates(agent: Agent): ReturnType<AgentHandle["templates"]>;
   /** The owner's thread tabs as the agent's handle offers them. */
@@ -2528,6 +2535,11 @@ export class AgentRunners {
             this.host.handoff(agent, handoff);
           },
         }),
+        teams: () => this.host.teams(agent),
+        proposeTeam: async (input: TeamProposal) => {
+          lifetime.throwIfAborted();
+          return this.host.proposeTeam(agent, input);
+        },
         templates: () => this.host.templates(agent),
         tabs: () => this.host.tabs(agent),
         notes: (channelId: string, root?: string) => {

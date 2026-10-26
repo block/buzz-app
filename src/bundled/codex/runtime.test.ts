@@ -2533,6 +2533,9 @@ it.each(["v2", "v3", "v5", "v6", "v7", "v15", "v16"])(
         "agent_types",
         "agent_create",
         "agent_update",
+        "teams",
+        "team_create",
+        "team_update",
       ]),
     );
     f.complete();

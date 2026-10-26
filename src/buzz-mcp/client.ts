@@ -105,6 +105,22 @@ export interface BuzzClient {
       from: Readonly<{ channel?: string; root?: string }>;
     }>,
   ): void;
+  teams?(): Promise<
+    readonly Readonly<{
+      id: string;
+      name: string;
+      instructions: string;
+      members: readonly Readonly<{ pubkey: string; name: string }>[];
+    }>[]
+  >;
+  proposeTeam?(
+    input: Readonly<{
+      team?: string;
+      name?: string;
+      instructions?: string;
+      members?: readonly string[];
+    }>,
+  ): Promise<Readonly<{ requestId: string; saved: false }>>;
   /** The agent's owner, as its host records it. */
   readonly owner?: string | undefined;
   /** Trusted connection authorities, never inferred from query results. */

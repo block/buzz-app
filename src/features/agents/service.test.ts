@@ -8,6 +8,7 @@ import { npubEncode } from "nostr-tools/nip19";
 import { bytesToHex } from "nostr-tools/utils";
 import { finalizeEvent, generateSecretKey } from "nostr-tools";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { forgetDefaultAgent } from "../solo/default-agent";
 import { AgentConfigStore, type Subject } from "./agent-config";
 import type { Mode } from "./agent-start";
 import { channelTemplates } from "../channel-templates/local";
@@ -71,6 +72,10 @@ const records = vi.hoisted(() => ({
   publish: vi.fn(),
   remove: vi.fn(),
   removeAgent: vi.fn(),
+}));
+vi.mock("../solo/default-agent", async (original) => ({
+  ...(await original<typeof import("../solo/default-agent")>()),
+  forgetDefaultAgent: vi.fn(),
 }));
 vi.mock("./relay-removal", () => ({
   removeAgentFromChannels: leaveChannels,
@@ -1023,6 +1028,34 @@ it("keeps handed-off activity local, and pulses typing in the thread until the t
     finish();
   }
 });
+
+it.each([
+  [{ ok: true, stopped: true }, "stopped"],
+  [{ ok: false, error: "Broke", stopped: true }, "error"],
+])(
+  "records the outcome a handed-off turn reports: %o",
+  async (outcome, state) => {
+    const { service, run, emit, activity } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    run.mockImplementationOnce(async ({ workingUntil }) =>
+      workingUntil(Promise.resolve(outcome)),
+    );
+    emit({
+      events: [
+        event("m", {
+          tags: [
+            ["h", channel],
+            ["p", bot],
+          ],
+        }),
+      ],
+      channelId: channel,
+    });
+    await vi.waitFor(() =>
+      expect(activity.reader.work()[0]?.state).toBe(state),
+    );
+  },
+);
 
 describe("a plugin's wake", () => {
   const root = "e".repeat(64);
@@ -2522,13 +2555,16 @@ it("stops refreshing core memory for a community once it is left", async () => {
 });
 
 it("keeps a Delete that fails partway listed and stopped, deletes nothing, and retries nothing", async () => {
-  const { service, native, archives, recover } = await setup();
+  const { service, native, archives, recover, session } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
   const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
   leaveChannels.mockRejectedValueOnce(new Error("offline"));
   await expect(service.remove(bot)).rejects.toThrow(UNFINISHED);
   warn.mockRestore();
   expect(service.find(bot)?.deleting).toBe(true);
+  // Only a finished Delete hands the main agent role on.
+  expect(forgetDefaultAgent).not.toHaveBeenCalled();
+  expect(session.agentChoices.refresh).not.toHaveBeenCalled();
   expect(native.remove).not.toHaveBeenCalled();
   // Reconnecting retries nothing.
   recover();
@@ -2550,6 +2586,17 @@ it("keeps a Delete that fails partway listed and stopped, deletes nothing, and r
     "forget",
   ]);
   expect(service.find(bot)).toBeUndefined();
+  // Cached choices are reread first, so the deleted agent can't be saved
+  // again as its own replacement.
+  expect(session.agentChoices.refresh).toHaveBeenCalledWith(true, {
+    fresh: true,
+  });
+  expect(forgetDefaultAgent).toHaveBeenCalledWith(bot);
+  expect(
+    vi.mocked(session.agentChoices.refresh).mock.invocationCallOrder[0],
+  ).toBeLessThan(
+    vi.mocked(forgetDefaultAgent).mock.invocationCallOrder[0] ?? 0,
+  );
 });
 
 it("shows an agent whose settings could not be saved with its type's defaults", async () => {
@@ -6073,6 +6120,60 @@ it("keeps a hosted agent whose setup failed, and finishes it without making anot
   expect(agent.unfinished).toBeUndefined();
   expect(records.publish).toHaveBeenCalledTimes(1);
   expect(storage.getItem("buzz.agents.unfinished.v1")).not.toContain(hostedKey);
+});
+
+it("retains hosted creation settings across restart and retries without provisioning another agent", async () => {
+  const storage = memoryStorage();
+  const first = await setup({ storage });
+  const { type, remote } = cloud();
+  first.plugin.agents.register(type);
+  const config = {
+    modelId: "chosen",
+    reasoningEffort: "high",
+    instructions: "Keep me.",
+  };
+  remote.activate.mockRejectedValueOnce(new Error("configuration save failed"));
+  await expect(
+    first.service.create({ type: "example/cloud", name: "Sky", config }),
+  ).rejects.toThrow("configuration save failed");
+  expect(remote.provision).toHaveBeenCalledWith(
+    expect.objectContaining({ config }),
+  );
+  expect(records.publish).not.toHaveBeenCalled();
+  const again = await setup({ storage });
+  const restarted = cloud();
+  again.plugin.agents.register(restarted.type);
+  await vi.waitFor(() =>
+    expect(again.service.find(hostedKey)?.unfinished).toBe(true),
+  );
+  restarted.remote.activate.mockRejectedValueOnce(new Error("still offline"));
+  await expect(again.service.finish(hostedKey)).rejects.toThrow(
+    "still offline",
+  );
+  expect(restarted.remote.activate).toHaveBeenCalledWith(
+    expect.objectContaining({ config }),
+  );
+  const revised = { ...config, instructions: "Revised." };
+  const picture = "https://example.test/revised.png";
+  const agent = await again.service.create({
+    type: "example/cloud",
+    name: "Sky",
+    config: revised,
+    picture,
+  });
+  expect(agent.unfinished).toBeUndefined();
+  expect(agent.picture).toBe(picture);
+  expect(records.publish).toHaveBeenLastCalledWith(
+    again.session,
+    { pubkey: hostedKey, name: "Sky", picture, runtime: "example/cloud" },
+    expect.any(AbortSignal),
+  );
+  expect(restarted.remote.activate).toHaveBeenLastCalledWith(
+    expect.objectContaining({ config: revised }),
+  );
+  expect(restarted.remote.provision).not.toHaveBeenCalled();
+  expect(storage.get("buzz.agents.unfinished.v1")).not.toContain("Keep me.");
+  expect(storage.get("buzz.agents.unfinished.v1")).not.toContain("Revised.");
 });
 
 it("lists a hosted agent with the picture it was made with when its provider cannot publish it", async () => {

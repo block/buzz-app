@@ -77,14 +77,14 @@ behavior on the label, so a rename touches copy only.
   chat's actions menu and opens the explicit visibility confirmation.
   Name and lifetime are not sharing controls.
 - **Chat access** adds a person immediately, without a DM or link delivery;
-  the owner can also add agents there (below). Choosing one existing channel and Share grants its
-  current roster and posts a link without notifications. Current access is grouped
-  into **People** and **Agents** like a channel, with Owner and Admin tags. Recorded channel shares show **#channel** and
-  **N members** in default-closed disclosures. Display history is account/community-scoped on this device,
-  survives reload, and does not sync across devices or control access. Future joins/departures are not synchronized. Copy
-  link grants no access; Done with no audience closes without writes. Shared uses
-  verified membership and cached human evidence, not privacy inference or a required
-  role refresh. See [sharing](sharing.md) for retries and evidence limits.
+  the owner can also add agents there (below). Choosing one existing channel and Share gives its
+  current members access and posts a link without notifications, the same share as
+  sending a chat link in that channel. Current access is grouped
+  into **People** and **Agents** like a channel, with Owner and Admin tags. Future
+  joins/departures are not synchronized. Copy link grants no access; Done with no
+  channel closes without writes. Shared uses verified membership and cached human
+  evidence, not privacy inference or a required role refresh. See
+  [sharing](sharing.md).
 - Naming and lifetime belong to [Chat settings](#chat-lifetime),
   not Share. Backend read-only roles,
   dynamic inheritance/revocation and synced grant provenance remain deferred or
@@ -116,12 +116,16 @@ behavior on the label, so a rename touches copy only.
   recipient tags for both owners and guests. Saved chats offer the chat's people
   and your available agents; an untagged message never infers an agent recipient.
   Only available agents can be enrolled through tagging—outside humans must
-  already have been shared into the chat. Empty new-chat drafts start tagged with the device's default
-  agent for this account/community. **Agents → right-click → Make default agent**
-  changes that choice; its card shows **Default agent**. An unavailable choice
-  falls back to the first managed agent, then the first selectable agent, only
-  after agent evidence is complete and the requested archive read has settled.
-  An available explicitly chosen default does not wait for fallback evidence.
+  already have been shared into the chat. Empty new-chat drafts start tagged with the device's main
+  agent for this account/community. **Agents → right-click or "..." → Make main
+  agent** changes that choice; its card shows **Main agent**. The choice stays
+  until it is changed or the agent is deleted, and it is still tagged when its
+  runtime is signed out or broken. Without a choice, or after the chosen agent
+  is deleted, the first managed agent, then the first selectable agent, becomes
+  the main agent and is saved, only after agent evidence is complete and the
+  requested archive read has settled. A chosen agent missing for another reason
+  is stood in for without replacing the choice; the stand-in can be made main.
+  An available explicit choice does not wait for fallback evidence.
   Follow-ups keep all exact agents notified by the previous send, just like
   Team threads, including the shared Remember mentioned agents preference.
   The account default never replaces recipients in an existing chat.
@@ -307,7 +311,7 @@ Solo treatment (`SoloHeading`, the shared `ChannelMembersDialog`) and drafts; `S
 in `src/features/solo`; Solo workspaces use
 `src/features/relay/solo-preferences.ts` and the existing recipe capability.
 `src/features/solo/labels.ts` owns the Solo label (`SOLO_LABEL`,
-`soloLabels`, `ownSolo`); `src/features/sessions` keeps shared agent sessions. Existing channel,
+`soloLabels`, `ownSolo`). Existing channel,
 membership, signing and Outbox owners retain their authority.
 
 Colocated tests cover admission, frozen defaults, navigation lifetime and recovery;

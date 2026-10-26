@@ -163,7 +163,9 @@ fn arguments(args: &[String], catalog: &Value) -> Result<(String, Value)> {
     let tool = catalog["tools"]
         .as_array()
         .and_then(|tools| tools.iter().find(|tool| tool["name"] == name.as_str()))
-        .ok_or("Unknown agent tool. This is the agent MCP helper; run buzz tools to list commands")?;
+        .ok_or(
+            "Unknown agent tool. This is the agent MCP helper; run buzz tools to list commands",
+        )?;
     let arguments = if explicit {
         if rest.len() != 1 {
             return Err("Expected one JSON object".into());

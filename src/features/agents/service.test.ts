@@ -10502,6 +10502,25 @@ it("submits an unsaved creation draft and creates only after owner review", asyn
   expect(service.find(sibling)?.config).toEqual({ reply: "reviewed" });
 });
 
+it("carries requested instructions into the creation draft", async () => {
+  const { service, plugin } = await setup();
+  await service.create({ type: "example/echo", name: "Parent" });
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+  const handle = plugin.agents.handle(bot);
+  if (!handle?.createAgent) throw new Error("Missing creation handle");
+  const result = await handle.createAgent({
+    type: "example/echo",
+    name: "Child",
+    instructions: "Review PRs.",
+  });
+  expect(service.creationRequests()).toEqual([
+    expect.objectContaining({
+      id: result.requestId,
+      instructions: "Review PRs.",
+    }),
+  ]);
+});
+
 it("dismisses a creation draft without creating an identity", async () => {
   const { service, native, plugin } = await setup();
   await service.create({ type: "example/echo", name: "Parent" });

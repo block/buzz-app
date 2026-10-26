@@ -19,6 +19,7 @@ import { agentConfigs, type ConfigAgent, fields } from "./community-config";
 import { type ConfigFeed, createConfigSync } from "./config-sync";
 import { createConfigWriter } from "./config-writes";
 import { memoryStorage } from "./test-fakes";
+import { SyncedTeams } from "./team-config";
 
 const key = generateSecretKey();
 const channel = "9b353519-f4fe-4757-aef4-bec6cc0ae54c";
@@ -132,6 +133,7 @@ function setup(
       find: async () => room,
       archive,
       addMember: async () => ({ status: "confirmed" }),
+      teams: async () => [],
     } as never,
     sync: options.realSync
       ? createConfigSync(store, feed, "o", "c")
@@ -155,6 +157,8 @@ function setup(
         },
       },
     }),
+    teams: new SyncedTeams(memoryStorage()),
+    online: () => true,
     read,
     store,
     owner: "o",

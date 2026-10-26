@@ -10,11 +10,13 @@ The **Desktop previews** workflow builds all supported desktop platforms from
 - **Linux x64:** Ubuntu 24.04 `.deb` and AppImage, each with its updater `.sig`.
 - **Provenance:** `SOURCE_COMMIT` and one `SHA256SUMS` covering all nine asset files.
 
-`<app-version>` is the `version` in `src-tauri/tauri.conf.json`. It is `1.0.0`
-so every preview sorts above the legacy `block/buzz` 0.x desktop releases, which
-install at the same `/Applications/Buzz.app`. Tools that compare
-`CFBundleShortVersionString` would otherwise replace a preview with legacy Buzz.
-Never lower it.
+`<app-version>` is the `version` in `src-tauri/tauri.conf.json`. Previews install
+at the same `/Applications/Buzz.app` as internal desktop releases, and tools that
+compare `CFBundleShortVersionString` replace a preview that sorts below the newest
+release. `X.Y.Z-preview.<run>.<attempt>` sorts above `X.Y.Z` and below any later
+version, so keep `<app-version>` at or above the newest released version: raise it
+to at least `X.Y.Z` before or with publishing `desktop-vX.Y.Z`. It is `1.0.0`,
+above the legacy `block/buzz` 0.x releases. Never lower it.
 
 Publication waits for all three platform jobs, their existing payload checks and
 the Windows/Linux updater signatures. A failed platform blocks publication and
@@ -157,7 +159,8 @@ in `main` history. It publishes an annotated tag through the release GitHub App
 and fails before writing unless an active tag ruleset includes
 `refs/tags/desktop-v*`, has no exclusions, restricts creation, update, deletion
 and non-fast-forward, and lets the App bypass it. A published tag is never
-moved or reused; cut a new version instead.
+moved or reused; cut a new version instead. Raise the preview version first;
+see `<app-version>` under [Desktop test releases](#desktop-test-releases).
 
 Setup, by a repository admin:
 

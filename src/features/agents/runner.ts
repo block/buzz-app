@@ -2127,21 +2127,12 @@ export class AgentRunners {
       if (anchor) {
         if (!delivery.current()) return;
         if (anchor.root) {
-          const roots = await handle.query([
-            {
-              ids: [anchor.root],
-              kinds: [9, 40002],
-              "#h": [anchor.channel],
-              limit: 1,
-            },
-          ]);
           if (
-            !roots.some(
-              (event) =>
-                event.id === anchor.root &&
-                [9, 40002].includes(event.kind) &&
-                channelOf(event) === anchor.channel,
-            )
+            !(await this.rootInChannel(
+              agent.pubkey,
+              anchor.channel,
+              anchor.root,
+            ))
           )
             throw new Error("The delivery root is not in its channel");
           if (!delivery.current()) return;
@@ -2446,6 +2437,18 @@ export class AgentRunners {
       );
   }
 
+  private async rootInChannel(pubkey: string, channel: string, root: string) {
+    const roots = await this.require().query(pubkey, [
+      { ids: [root], kinds: [9, 40002], "#h": [channel], limit: 1 },
+    ]);
+    return roots.some(
+      (event) =>
+        event.id === root &&
+        [9, 40002].includes(event.kind) &&
+        channelOf(event) === channel,
+    );
+  }
+
   /** The agent's attention as its handle offers it. Reads the saved record
    * each call, so it is current however long the run lasts. */
   private attention(pubkey: string): AgentAttention {
@@ -2462,6 +2465,19 @@ export class AgentRunners {
         const member = this.host.member(agent, {
           tags: [["h", object.channel]],
         });
+        if (
+          member === true &&
+          object.root &&
+          !(await this.rootInChannel(pubkey, object.channel, object.root))
+        )
+          return {
+            ...result,
+            delivery: {
+              status: "blocked" as const,
+              reason:
+                "Delivery root was not found in its channel. Set root to an accessible message in that channel or remove root for channel-level delivery. Rearm a spent timer to retry it.",
+            },
+          };
         return member === true
           ? result
           : {

@@ -7947,7 +7947,7 @@ it.each([true, false])(
 it.each(["other-channel", "missing"])(
   "does not deliver Attention to a root outside its channel (%s)",
   async (where) => {
-    const { service, run, emit, native } = await setup();
+    const { service, run, emit, native, plugin } = await setup();
     await service.create({ type: "example/echo", name: "Echo" });
     const root = "e".repeat(64);
     native.query.mockResolvedValue(
@@ -7973,8 +7973,76 @@ it.each(["other-channel", "missing"])(
     expect(native.query).toHaveBeenCalledWith(bot, [
       { ids: [root], kinds: [9, 40002], "#h": [channel], limit: 1 },
     ]);
+    const attention = plugin.agents.handle(bot)?.attention;
+    if (!attention) throw new Error("Missing handle");
+    const shown = await attention.show("watch/channel");
+    expect(shown).toMatchObject({
+      delivery: {
+        status: "blocked",
+        reason: expect.stringMatching(/root.*channel/i),
+      },
+    });
+    await attention.write(
+      "watch/channel",
+      { ...watch, channel },
+      {
+        expected: shown.expected_state,
+      },
+    );
+    expect(await attention.show("watch/channel")).not.toHaveProperty(
+      "delivery",
+    );
+    emit({ channelId: channel, events: [deploy("corrected-root")] });
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
   },
 );
+
+it("exposes an invalid root on a spent timer and lets its caller correct and rearm it", async () => {
+  vi.useFakeTimers({ now: 1_000_000 });
+  const { service, run, native, plugin } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  const timer = {
+    type: "timer" as const,
+    interest_id: "default",
+    prompt: "Check",
+    enabled: true,
+    interval_secs: 60,
+    armed_at: 1_000,
+    max_occurrences: 1,
+    expires_at: null,
+    channel,
+    root: "e".repeat(64),
+  };
+  native.query.mockResolvedValue([]);
+  await service.save(bot, {
+    attentionEnabled: true,
+    attention: { "watch/root": timer },
+  });
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(run).not.toHaveBeenCalled();
+  const attention = plugin.agents.handle(bot)?.attention;
+  if (!attention) throw new Error("Missing handle");
+  const shown = await attention.show("watch/root");
+  expect(shown).toMatchObject({
+    object: { status: "spent" },
+    delivery: {
+      status: "blocked",
+      reason: expect.stringMatching(/root.*channel/i),
+    },
+  });
+  const { root: _, ...corrected } = timer;
+  await attention.write(
+    "watch/root",
+    { ...corrected, armed_at: 1_060, max_occurrences: 2 },
+    {
+      expected: shown.expected_state,
+      rearm: true,
+    },
+  );
+  expect(await attention.show("watch/root")).not.toHaveProperty("delivery");
+  await vi.advanceTimersByTimeAsync(60_000);
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+});
 
 it.each([false, true])(
   "delivers confirmed watch matches while another destination waits without replaying them (replay: %s)",

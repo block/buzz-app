@@ -1,3 +1,12 @@
+import {
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { AgentTabs } from "../agents/AgentTabs";
 import type {
   Agents,
@@ -25,6 +34,7 @@ import {
 } from "../../features/agents/state";
 import type { HostProcessOptions } from "../../features/host/service";
 import { ClaudeLogoIcon } from "../../shared/design-system/icons";
+import { manifestProcesses } from "./claude-testing";
 import { apply, inject } from "./index";
 import { type Config, DEFAULT_CONFIG } from "./runtime";
 import { ClaudeSetup } from "./setup";
@@ -46,7 +56,10 @@ beforeEach(() => {
     },
   );
 });
+const homes: string[] = [];
 afterEach(() => {
+  for (const home of homes.splice(0))
+    rmSync(home, { recursive: true, force: true });
   cleanup();
   vi.unstubAllGlobals();
   localStorage.clear();
@@ -127,34 +140,25 @@ function applied({
   catalog?: { listed: boolean; ready?: Promise<void> };
 } = {}) {
   let type: AgentType<Config> | undefined;
+  const home = mkdtempSync(join(tmpdir(), "claude-tabs-"));
+  homes.push(home);
+  for (const [path, content] of Object.entries(files)) {
+    const copy = join(home, ".claude/projects", path);
+    mkdirSync(dirname(copy), { recursive: true });
+    writeFileSync(copy, content);
+    // Written an hour ago, so a later listing finds it unchanged.
+    const hourAgo = new Date(Date.now() - 3_600_000);
+    utimesSync(copy, hourAgo, hourAgo);
+  }
+  const listed = manifestProcesses(home);
   const spawn = vi.fn(async (id: string, options: HostProcessOptions = {}) => {
     // Claude and its install steps run as steps of claude.sh: its script, $0
     // and step come first.
     const step = id === "claude-sh" ? options.args?.[2] : undefined;
     const name = step === "run" ? "claude" : (step ?? id);
     const args = (options.args ?? []).slice(step ? 3 : 0).join(" ");
-    if (name === "find") {
-      // Session files in the project folder that mention the pattern.
-      const project = options.cwd?.split("/").pop();
-      const [pattern = ""] = options.args ?? [];
-      const found = Object.keys(files).filter(
-        (path) =>
-          path.startsWith(`./${project}/`) && files[path]?.includes(pattern),
-      );
-      queueMicrotask(() =>
-        options.onStdout?.(
-          found.map((path) => `./${path.split("/").pop()}\n`).join(""),
-        ),
-      );
-      return {
-        write: async () => undefined,
-        end: async () => undefined,
-        kill: async () => undefined,
-        exited: new Promise<number>((resolve) =>
-          setTimeout(() => resolve(found.length ? 0 : 1), 0),
-        ),
-      };
-    }
+    // The manifest's listing and search run for real on a copy of `files`.
+    if (name === "list" || name === "starts") return listed(name, options);
     if (name === "workspace" || name === "read") {
       const file = files[args];
       queueMicrotask(() =>
@@ -386,22 +390,33 @@ it("finds the thread's Claude session another build started", async () => {
       content: `<context>\nScope: thread\nSession scope: thread\nChannel: dev (#channel)\nThread root: ${root}\nAgent: ${agent().key}\n</context>\n\n<buzz-event>\nEvent ID: e\nContent: what changed?\nTags: []\n</buzz-event>`,
     },
   });
-  const Activity = tab(
-    installed({ files: { "./-Users-me--buzz/elsewhere.jsonl": started } }).type,
-    1,
-  );
-  render(
-    <Activity
-      agent={agent()}
-      save={vi.fn()}
-      conversation={{ channelId: "channel", rootId: root }}
-    />,
-  );
-  const opened = screen.getByRole("region", { name: "This thread" });
-  fireEvent.click(
-    await within(opened).findByRole("button", { name: /^View transcript/ }),
-  );
-  expect(await screen.findByText("what changed?")).toBeVisible();
+  const { type, spawn } = installed({
+    files: { "./-Users-me--buzz/elsewhere.jsonl": started },
+  });
+  const Activity = tab(type, 1);
+  const open = async () => {
+    const view = render(
+      <Activity
+        agent={agent()}
+        save={vi.fn()}
+        conversation={{ channelId: "channel", rootId: root }}
+      />,
+    );
+    const opened = screen.getByRole("region", { name: "This thread" });
+    fireEvent.click(
+      await within(opened).findByRole("button", { name: /^View transcript/ }),
+    );
+    expect(await screen.findByText("what changed?")).toBeVisible();
+    view.unmount();
+  };
+  const searches = () =>
+    spawn.mock.calls.filter(([id]) => id === "starts").length;
+  await open();
+  const searched = searches();
+  // Opened again, it searches no file it already searched.
+  await open();
+  expect(searched).toBeGreaterThan(0);
+  expect(searches()).toBe(searched);
 });
 
 it("is an agent type on the desktop app", () => {

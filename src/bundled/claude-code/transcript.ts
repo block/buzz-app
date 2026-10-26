@@ -11,6 +11,7 @@ import {
   type TranscriptTurn,
 } from "../../features/agents/activity-transcript";
 import type { Spawn } from "./claude";
+import { readProject, type Start } from "./history";
 
 /** The latest turns shown; the file keeps the rest. */
 export const TURN_LIMIT = 50;
@@ -252,32 +253,15 @@ export function startedFor(file: string, conversation: Conversation) {
   return false;
 }
 
-/** Other session files mentioning the conversation. The agent starts a new
- * session when it cannot resume one, e.g. in another build of the app, which
- * keeps its own saved sessions. */
-async function otherSessions(spawn: Spawn, project: string, pattern: string) {
-  return (await searchProject(spawn, project, pattern)).filter((name) =>
-    /^[^/]+\.jsonl$/.test(name),
-  );
-}
-
-/** Paths of the project's `.jsonl` files, subagents' included, containing
- * `pattern`. A failed search finds what it found before failing. */
-async function searchProject(spawn: Spawn, project: string, pattern: string) {
-  let output = "";
-  const process = await spawn("find", {
-    args: [pattern, "."],
-    cwd: `~/.claude/projects/${project}`,
-    onStdout: (data) => {
-      output += data;
-    },
-  });
-  await process.exited;
-  return output
-    .split("\n")
-    .map((line) => line.trim().replace(/^\.\//, ""))
-    .filter(Boolean);
-}
+/** Whether the index says a session was started for `conversation`. Its
+ * fields come from the first line naming any, which `startedFor` checks is
+ * the first prompt once the file is read. */
+const indexedFor = (start: Start, conversation: Conversation) =>
+  (start.agent === undefined || start.agent === conversation.agent) &&
+  start.channelId === conversation.channelId &&
+  (conversation.root
+    ? start.scope === "thread" && start.root === conversation.root
+    : start.scope !== "thread");
 
 /** The Claude Code project directory name for the agent's workspace, or
  * undefined when it is too long to be one. */
@@ -353,13 +337,18 @@ export async function readTranscript(
   const project = await workspaceProject(spawn, workspace, signal);
   if (!project) return undefined;
   const saved = conversation.sessionId && `${conversation.sessionId}.jsonl`;
+  // The agent starts a new session when it cannot resume one, e.g. in
+  // another build of the app, which keeps its own saved sessions. A failed
+  // listing still finds the saved one.
+  const starts = await readProject(spawn, project).then(
+    (state) => state.starts,
+    () => new Map<string, Start>(),
+  );
   const names = new Set([
     ...(saved ? [saved] : []),
-    ...(await otherSessions(
-      spawn,
-      project,
-      conversation.root ?? conversation.channelId,
-    )),
+    ...[...starts]
+      .filter(([, start]) => indexedFor(start, conversation))
+      .map(([name]) => name),
   ]);
   signal.throwIfAborted();
   const turns: TranscriptTurn[] = [];

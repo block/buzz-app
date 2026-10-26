@@ -1,13 +1,19 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { expect, it, vi } from "vitest";
+import { dirname, join } from "node:path";
+import { afterEach, expect, it, vi } from "vitest";
 import type { HostProcessOptions } from "../../features/host/service";
+import { manifestProcesses } from "./claude-testing";
 import manifest from "./manifest.json";
 import { claudeTurns, projectName, readTranscript } from "./transcript";
 
 const root = "c".repeat(64);
+const homes: string[] = [];
+afterEach(() => {
+  for (const home of homes.splice(0))
+    rmSync(home, { recursive: true, force: true });
+});
 const agent = "a".repeat(64);
 const conversation = {
   agent,
@@ -179,24 +185,22 @@ it("names projects as Claude Code does", () => {
   expect(projectName("/Users/me/my_repo")).toBe("-Users-me-my-repo");
 });
 
-/** `workspace` prints the resolved folder; `read` serves `files` as base64,
- * and `find` lists those in the project folder that contain its pattern. */
+/** `workspace` prints the resolved folder and `read` serves `files` as
+ * base64; the manifest's `list` and `starts` run for real on a copy of them. */
 function host(files: Record<string, string>) {
+  const home = mkdtempSync(join(tmpdir(), "claude-transcript-"));
+  homes.push(home);
+  for (const [path, content] of Object.entries(files)) {
+    const copy = join(home, ".claude/projects", path);
+    mkdirSync(dirname(copy), { recursive: true });
+    writeFileSync(copy, content);
+  }
+  const listed = manifestProcesses(home);
   const reads: HostProcessOptions[] = [];
   const spawn = vi.fn(async (id: string, options: HostProcessOptions = {}) => {
+    if (id === "list" || id === "starts") return listed(id, options);
     let code = 0;
     if (id === "workspace") options.onStdout?.("/Users/me/.buzz\n");
-    if (id === "find") {
-      const project = options.cwd?.split("/").pop();
-      const matches = Object.entries(files).flatMap(([path, content]) =>
-        path.startsWith(`./${project}/`) &&
-        content.includes(options.args?.[0] ?? "")
-          ? [`./${path.split("/").pop()}`]
-          : [],
-      );
-      if (matches.length) options.onStdout?.(`${matches.join("\n")}\n`);
-      else code = 1;
-    }
     if (id === "read") {
       reads.push(options);
       const path = options.args?.[0] ?? "";
@@ -283,6 +287,11 @@ it("merges the agent's other sessions for the thread, oldest turn first", async 
       `Session scope: channel\nChannel: dev (#channel)\nThread root: ${root}`,
       "shared",
     ),
+    // Run by hand, then shown a Buzz prompt.
+    "./-Users-me--buzz/by-hand.jsonl": [
+      line("user", "hello"),
+      session(14, `${thread}\nAgent: ${agent}`, "quoted"),
+    ].join("\n"),
   });
   const signal = new AbortController().signal;
   const read = await readTranscript(
@@ -298,11 +307,8 @@ it("merges the agent's other sessions for the thread, oldest turn first", async 
     ["session-1", expect.objectContaining({ text: "latest" })],
   ]);
   expect(spawn).toHaveBeenCalledWith(
-    "find",
-    expect.objectContaining({
-      args: [root, "."],
-      cwd: "~/.claude/projects/-Users-me--buzz",
-    }),
+    "starts",
+    expect.objectContaining({ cwd: "~/.claude/projects/-Users-me--buzz" }),
   );
   // Without a saved session, the found ones are the conversation's.
   const found = await readTranscript(

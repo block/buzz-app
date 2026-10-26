@@ -2182,10 +2182,20 @@ describe("an agent in several communities", () => {
   });
 
   it("stops it in a community it is still leaving, lists a rename there, then finishes leaving it", async () => {
-    const { service, run, second } = await joined();
+    const { service, native, run, second } = await joined();
     second.emit({ events: [mention("there")] });
     await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
     const turn = run.mock.calls[0]?.[0].agent;
+    // A reply waits on a chat its owner is still starting there.
+    let land = () => {};
+    vi.spyOn(second.session.channelWrites, "starting").mockImplementation(
+      () => new Promise<void>((resolve) => (land = resolve)),
+    );
+    const waiting = turn?.publish({
+      kind: 9,
+      content: "Waiting",
+      tags: [["h", channel]],
+    });
     leaveChannels.mockRejectedValueOnce(new Error("offline"));
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     await expect(service.leave(away)).rejects.toThrow(
@@ -2199,6 +2209,13 @@ describe("an agent in several communities", () => {
     await expect(
       turn?.publish({ kind: 9, content: "Late", tags: [["h", channel]] }),
     ).rejects.toThrow();
+    await expect(turn?.attention.show("interest/here")).rejects.toThrow();
+    land();
+    await expect(waiting).rejects.toThrow();
+    expect(native.publish).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ content: "Waiting" }),
+    );
     records.publish.mockClear();
     await service.save(bot, { name: "Echo Two" });
     await vi.waitFor(() => expect(records.publish).toHaveBeenCalledOnce());

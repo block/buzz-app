@@ -2242,7 +2242,7 @@ export class AgentRunners {
       // is deleted, removed from this community or retyped can't.
       publish: async (event: AgentEventTemplate) => {
         lifetime.throwIfAborted();
-        return this.publish(runner, event);
+        return this.publish(runner, event, lifetime);
       },
       query: async (filters: readonly object[]) => {
         lifetime.throwIfAborted();
@@ -2304,7 +2304,7 @@ export class AgentRunners {
             ...(runner.notes.get(channelId) ?? []),
           ]);
       },
-      attention: this.attention(agent.key),
+      attention: this.attention(agent.key, lifetime),
     });
   }
 
@@ -2513,82 +2513,93 @@ export class AgentRunners {
     );
   }
 
-  /** The agent's attention as its handle offers it. Reads the saved record
-   * each call, so it is current however long the run lasts. */
-  private attention(key: AgentKey): AgentAttention {
+  /** The agent's attention as its handle offers it, until `lifetime` ends.
+   * Reads the saved record each call, so it is current however long the run
+   * lasts. */
+  private attention(key: AgentKey, lifetime: AbortSignal): AgentAttention {
     const record = () => this.host.record(key);
-    return Object.freeze({
-      enabled: () => record().attentionEnabled === true,
-      classifier: () => this.host.classifier(),
-      show: async (slug: string, interest?: string) => {
-        const result = await show(record(), slug, seconds(), interest);
-        const object = result.object;
-        const agent = this.host.agent(key);
-        if (!agent || !object || object.type === "interest" || !object.channel)
-          return result;
-        const member = this.host.member(agent, {
-          tags: [["h", object.channel]],
-        });
-        if (member === true && object.root) {
-          let valid: boolean;
-          try {
-            valid = await this.rootInChannel(
-              agent,
-              object.channel,
-              object.root,
-            );
-          } catch {
-            return {
-              ...result,
-              delivery: {
-                status: "held" as const,
-                reason:
-                  "Could not verify the delivery root. Retry when relay reads are available; you can still edit or disable this watch.",
-              },
-            };
+    return guarded(
+      {
+        enabled: () => record().attentionEnabled === true,
+        classifier: () => this.host.classifier(),
+        show: async (slug: string, interest?: string) => {
+          const result = await show(record(), slug, seconds(), interest);
+          const object = result.object;
+          const agent = this.host.agent(key);
+          if (
+            !agent ||
+            !object ||
+            object.type === "interest" ||
+            !object.channel
+          )
+            return result;
+          const member = this.host.member(agent, {
+            tags: [["h", object.channel]],
+          });
+          if (member === true && object.root) {
+            let valid: boolean;
+            try {
+              valid = await this.rootInChannel(
+                agent,
+                object.channel,
+                object.root,
+              );
+            } catch {
+              return {
+                ...result,
+                delivery: {
+                  status: "held" as const,
+                  reason:
+                    "Could not verify the delivery root. Retry when relay reads are available; you can still edit or disable this watch.",
+                },
+              };
+            }
+            if (!valid)
+              return {
+                ...result,
+                delivery: {
+                  status: "blocked" as const,
+                  reason:
+                    "Delivery root was not found in its channel. Set root to an accessible message in that channel or remove root for channel-level delivery. Rearm a spent timer to retry it.",
+                },
+              };
           }
-          if (!valid)
-            return {
-              ...result,
-              delivery: {
-                status: "blocked" as const,
-                reason:
-                  "Delivery root was not found in its channel. Set root to an accessible message in that channel or remove root for channel-level delivery. Rearm a spent timer to retry it.",
-              },
-            };
-        }
-        return member === true
-          ? result
-          : {
-              ...result,
-              delivery:
-                member === undefined
-                  ? {
-                      status: "held" as const,
-                      reason: "Waiting for confirmed destination membership.",
-                    }
-                  : {
-                      status: "blocked" as const,
-                      reason: "Agent is not a member of the delivery channel.",
-                    },
-            };
+          return member === true
+            ? result
+            : {
+                ...result,
+                delivery:
+                  member === undefined
+                    ? {
+                        status: "held" as const,
+                        reason: "Waiting for confirmed destination membership.",
+                      }
+                    : {
+                        status: "blocked" as const,
+                        reason:
+                          "Agent is not a member of the delivery channel.",
+                      },
+              };
+        },
+        interests: (search?: string) => interestIds(record(), search),
+        watches: (filter: WatchFilter = {}) =>
+          watchSummaries(record(), filter, seconds()),
+        write: async (
+          slug: string,
+          value: AttentionValue | null,
+          options: WriteOptions,
+        ) => {
+          // The token is checked against the newest saved record, in turn
+          // with the other changes to it, so no change lands between.
+          const after = await this.host.change(key, (before) => {
+            lifetime.throwIfAborted();
+            return checkedWrite(before, slug, value, options, seconds());
+          });
+          return show(after, slug, seconds());
+        },
       },
-      interests: (search?: string) => interestIds(record(), search),
-      watches: (filter: WatchFilter = {}) =>
-        watchSummaries(record(), filter, seconds()),
-      write: async (
-        slug: string,
-        value: AttentionValue | null,
-        options: WriteOptions,
-      ) => {
-        // The token is checked against the newest saved record, in turn
-        // with the other changes to it, so no change lands between.
-        const after = await this.host.change(key, (before) =>
-          checkedWrite(before, slug, value, options, seconds()),
-        );
-        return show(after, slug, seconds());
-      },
-    });
+      () => lifetime.throwIfAborted(),
+    );
   }
 
   private require() {
@@ -2596,13 +2607,19 @@ export class AgentRunners {
       throw new Error("Agents run only in the desktop app");
     return this.host.custody;
   }
-  private async publish(runner: Runner, event: AgentEventTemplate) {
+  private async publish(
+    runner: Runner,
+    event: AgentEventTemplate,
+    lifetime: AbortSignal,
+  ) {
     const channel = event.tags?.find((tag) => tag[0] === "h")?.[1];
     const agent = this.host.agent(runner.key);
     // The relay takes a reply in a starting chat only once it confirms it;
     // a failed start leaves the relay to refuse it.
-    if (channel && agent)
+    if (channel && agent) {
       await this.host.starting?.(agent, channel)?.catch(() => {});
+      lifetime.throwIfAborted();
+    }
     const signed = await this.require().publish(runner.member, event);
     bounded(runner.wrote, signed.id);
     return signed;

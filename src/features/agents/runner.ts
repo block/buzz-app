@@ -916,9 +916,7 @@ export class AgentRunners {
         .backlog[0] as Runner["backlog"][0];
       const heard = this.heard(runner, agent, event, done);
       if (
-        (heard.held &&
-          !heard.triggers.length &&
-          runner.held.size >= HELD_LIMIT) ||
+        (heard.held && runner.held.size >= HELD_LIMIT) ||
         !this.takes(runner, heard.triggers)
       )
         return;

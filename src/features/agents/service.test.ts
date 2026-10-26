@@ -4497,6 +4497,71 @@ it("delivers a held replay of more events than the agent takes at once when its 
   }
 });
 
+it("preserves a full held replay before admitting a mixed-destination event", async () => {
+  vi.useFakeTimers({ now: 1_000_000_000 });
+  const { service, run, emit, confirm, session } = await setup();
+  const destination = "11111111-1111-1111-1111-111111111111";
+  const list = session.channels.list();
+  let cached = true;
+  vi.spyOn(session.channels, "list").mockImplementation(() => ({
+    ...list,
+    channels: [
+      ...list.channels,
+      {
+        id: destination,
+        name: "Destination",
+        members: [viewer, bot],
+        ...(cached ? { cached: true as const } : {}),
+      },
+    ],
+  }));
+  await service.create({ type: "example/echo", name: "Echo" });
+  const watch = service.find(bot)?.attention["watch/channel"]?.value;
+  if (watch?.type !== "event") throw new Error("fixture");
+  await service.save(bot, {
+    attentionEnabled: true,
+    attention: {
+      "watch/channel": watch,
+      "watch/report": {
+        ...watch,
+        channels: [channel, destination],
+        channel: destination,
+      },
+    },
+  });
+  const now = Math.floor(Date.now() / 1000);
+  const held = Array.from({ length: 256 }, (_, index) =>
+    event(`held${index}x`, {
+      created_at: now + 1,
+      tags: [["h", destination], DEPLOY],
+    }),
+  );
+  const mixed = deploy("mixed-at-capacity", { created_at: now + 2 });
+  const replay = () => emit({ replay: true, events: [...held, mixed] });
+  replay();
+  await vi.advanceTimersByTimeAsync(1_000);
+  cached = false;
+  confirm("saved", [viewer, bot]);
+  for (let tick = 0; tick < 660 && run.mock.calls.length < 258; tick++)
+    await vi.advanceTimersByTimeAsync(1_000);
+  replay();
+  await vi.advanceTimersByTimeAsync(60_000);
+  const reports = run.mock.calls.filter(
+    ([delivery]) =>
+      delivery.trigger.type === "attention" &&
+      delivery.trigger.channel === destination,
+  );
+  expect(
+    reports.some(
+      ([delivery]) =>
+        delivery.trigger.type === "attention" &&
+        delivery.trigger.text.includes("hello held0x"),
+    ),
+  ).toBe(true);
+  expect(reports).toHaveLength(257);
+  expect(run).toHaveBeenCalledTimes(258);
+});
+
 it("drops a held event when the confirmed roster no longer has the agent", async () => {
   const { service, run, emit, confirm } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });

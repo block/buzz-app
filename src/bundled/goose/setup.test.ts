@@ -100,6 +100,38 @@ describe("GooseSetup", () => {
     expect(fake.geese).toHaveLength(1);
   });
 
+  it.each([
+    ["providers", "_goose/unstable/providers/list"],
+    ["defaults", "_goose/unstable/defaults/read"],
+    ["models", "_goose/unstable/providers/supported-models/list"],
+  ])(
+    "gives up on a %s lookup goose never answers, and reads again next time",
+    async (_, method) => {
+      vi.useFakeTimers();
+      try {
+        const silent = [method];
+        const { fake, setup: goose } = setup({ silent, supported: ["qwen3"] });
+        const read = () =>
+          method.includes("supported")
+            ? goose.models("ollama")
+            : goose.providers();
+        const stuck = read();
+        const failed = expect(stuck).rejects.toThrow(
+          `goose did not answer ${method}`,
+        );
+        await vi.advanceTimersByTimeAsync(60_000);
+        await failed;
+        expect(fake.geese[0]?.killed).toBe(true);
+        silent.length = 0;
+        const again = read();
+        await vi.advanceTimersByTimeAsync(0);
+        await expect(again).resolves.toBeDefined();
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
   it("leaves a provider that signs in to goose", async () => {
     const { setup: goose } = setup();
     const databricks = (await goose.providers()).providers.find(

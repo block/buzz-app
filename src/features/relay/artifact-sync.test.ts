@@ -228,6 +228,55 @@ describe("live socket sync wire", () => {
     owner.dispose();
     expect(sink.closed).toHaveBeenCalledOnce();
   });
+
+  it("pauses shared dispatch for a rate-limited sync, so its restart waits for the cooldown", async () => {
+    vi.useFakeTimers();
+    const viewer = keypair();
+    const socket = new Socket();
+    const admission = createLiveAdmission();
+    const owner = subscribeRelayTraffic(
+      "wss://relay.test",
+      async (event) => signed(viewer, event),
+      viewer.pubkey,
+      {
+        receive: vi.fn(),
+        state: vi.fn(),
+        established: vi.fn(),
+        denied: vi.fn(),
+      },
+      () => socket as unknown as WebSocket,
+      admission,
+    );
+    const sync = owner.syncArtifacts;
+    if (!sync) throw new Error("live traffic has no sync");
+    const view = createArtifactSyncView(filter, sync, () => 0);
+    await vi.advanceTimersByTimeAsync(0);
+    await socket.receive(["AUTH", "challenge"]);
+    const auth = socket.sent.find((frame) => frame[0] === "AUTH")?.[1] as {
+      id: string;
+    };
+    await socket.receive(["OK", auth.id, true]);
+    const syncReqs = () =>
+      socket.sent.filter(
+        (frame) => frame[0] === "REQ" && String(frame[1]).startsWith("sync-"),
+      );
+    expect(syncReqs()).toHaveLength(1);
+    await socket.receive([
+      "CLOSED",
+      nth(syncReqs(), 0)[1],
+      "rate-limited: quota exceeded; retry in 60s",
+    ]);
+    expect(view.snapshot().status).toBe("loading");
+    // Other queued requests and publications see the same shared pause.
+    expect(admission.delay()).toBeGreaterThan(60_000);
+    // The view restarts after its own jittered backoff, but its REQ waits.
+    await vi.advanceTimersByTimeAsync(60_999);
+    expect(syncReqs()).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(syncReqs()).toHaveLength(2);
+    view.dispose();
+    owner.dispose();
+  });
 });
 
 function nth<T>(items: readonly T[], index: number): T {

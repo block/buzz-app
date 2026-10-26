@@ -813,13 +813,19 @@ export function subscribeRelayTraffic(
           }
           sync.sink.event(incoming);
         } else if (data[0] === "EOSE") sync.sink.eose();
-        else if (data[0] === "CLOSED")
-          endSync(
-            sync,
+        else if (data[0] === "CLOSED") {
+          const reason =
             typeof data[2] === "string"
               ? data[2].slice(0, 512)
-              : "error: relay closed the sync",
-          );
+              : "error: relay closed the sync";
+          // The quota is shared: the view's restart and every other queued
+          // dispatch wait for the server cooldown.
+          if (reason.startsWith("rate-limited:")) {
+            const hint = /retry in (\d+)s$/.exec(reason);
+            admission.pause(hint ? Math.min(Number(hint[1]), 86400) : 5);
+          }
+          endSync(sync, reason);
+        }
         return;
       }
       const route =

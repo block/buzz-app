@@ -8,13 +8,16 @@ import { createLiveAdmission, subscribeRelayTraffic } from "./live";
 import { keypair, signed } from "./testing";
 
 const key = keypair();
+const C1 = "11111111-1111-4111-8111-111111111111";
+const channel = (i: number) =>
+  `${String(i).padStart(8, "0")}-0000-4000-8000-000000000000`;
 const head = (d: string, type = "work", extra: string[][] = []) =>
   signed(key, {
     kind: 45010,
     content: d,
-    tags: [["d", d], ["h", "c1"], ["type", type], ...extra],
+    tags: [["d", d], ["h", C1], ["type", type], ...extra],
   });
-const filter = { artifact: "current", "#h": ["c1"], "#type": ["work"] };
+const filter = { artifact: "current", "#h": [C1], "#type": ["work"] };
 const ids = (view: { snapshot(): { events: readonly { id: string }[] } }) =>
   view.snapshot().events.map((event) => event.id);
 
@@ -42,13 +45,58 @@ describe("artifactSyncFilter", () => {
     expect(() =>
       artifactSyncFilter({
         ...filter,
-        "#h": Array.from({ length: 257 }, (_, i) => `c${i}`),
+        "#h": Array.from({ length: 257 }, (_, i) => channel(i + 1)),
       }),
     ).toThrow("256");
     expect(artifactSyncFilter({ ...filter, kinds: [45010] })).toEqual({
       ...filter,
       kinds: [45010],
     });
+  });
+
+  it("refuses what the relay's predicate parser refuses", () => {
+    for (const bad of [
+      "NOT-A-UUID",
+      "ABCDEF01-2345-4678-9ABC-DEF012345678",
+      "00000000-0000-0000-0000-000000000000",
+      `{${C1}}`,
+    ])
+      expect(() => artifactSyncFilter({ ...filter, "#h": [bad] })).toThrow(
+        "#h",
+      );
+    const channels = Array.from({ length: 256 }, (_, i) => channel(i + 1));
+    // The relay caps values across every predicate, #h included.
+    expect(() => artifactSyncFilter({ ...filter, "#h": channels })).toThrow(
+      "256 values",
+    );
+    expect(
+      artifactSyncFilter({ artifact: "current", "#h": channels })["#h"],
+    ).toHaveLength(256);
+    const predicates = (n: number) =>
+      Object.fromEntries(
+        Array.from({ length: n }, (_, i) => [`#p${i}`, ["x"]]),
+      );
+    expect(
+      Object.keys(
+        artifactSyncFilter({
+          "#h": [C1],
+          ...predicates(31),
+          artifact: "current",
+        }),
+      ),
+    ).toHaveLength(33);
+    expect(() => artifactSyncFilter({ ...filter, ...predicates(31) })).toThrow(
+      "32 predicates",
+    );
+    const wide = Array.from({ length: 64 }, (_, i) =>
+      String(i).padStart(1024, "x"),
+    );
+    expect(() => artifactSyncFilter({ ...filter, "#x": wide })).toThrow(
+      "65536 bytes",
+    );
+    expect(() =>
+      artifactSyncFilter({ ...filter, "#x": wide.slice(0, 63) }),
+    ).not.toThrow();
   });
 });
 
@@ -82,7 +130,7 @@ describe("createArtifactSyncView", () => {
         content: "",
         tags: [
           ["d", "c"],
-          ["h", "c1"],
+          ["h", C1],
         ],
       }),
     );
@@ -145,6 +193,43 @@ describe("createArtifactSyncView", () => {
     expect(view.snapshot()).toMatchObject({ status: "restricted", events: [] });
     vi.advanceTimersByTime(120_000);
     expect(open).toHaveBeenCalledOnce();
+  });
+
+  it("ends on the relay's max_events cap and keeps the last set", () => {
+    vi.useFakeTimers();
+    const { open, opened } = fakeOpen();
+    const view = createArtifactSyncView(filter, open);
+    const a = head("a");
+    nth(opened, 0).sink.event(a);
+    nth(opened, 0).sink.eose();
+    nth(opened, 0).sink.closed("error: sync set exceeds max_events");
+    expect(view.snapshot()).toEqual({
+      status: "error",
+      events: [a],
+      error: "error: sync set exceeds max_events",
+    });
+    vi.advanceTimersByTime(120_000);
+    expect(open).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    "restricted: authorization denied",
+    "auth-required: not authenticated",
+  ])("retries %s, which ends with the session, and keeps the set", (reason) => {
+    vi.useFakeTimers();
+    const { open, opened } = fakeOpen();
+    const view = createArtifactSyncView(filter, open, () => 1);
+    const a = head("a");
+    nth(opened, 0).sink.event(a);
+    nth(opened, 0).sink.eose();
+    nth(opened, 0).sink.closed(reason);
+    expect(view.snapshot()).toEqual({
+      status: "stale",
+      events: [a],
+      error: reason,
+    });
+    vi.advanceTimersByTime(1000);
+    expect(open).toHaveBeenCalledTimes(2);
   });
 
   it("reports unsupported without a transport sync", () => {
@@ -212,7 +297,7 @@ describe("live socket sync wire", () => {
       0,
     );
     expect(req.slice(2)).toEqual([
-      { artifact: "current", "#h": ["c1"], "#type": ["work"] },
+      { artifact: "current", "#h": [C1], "#type": ["work"] },
     ]);
     const a = head("a");
     await socket.receive(["EVENT", req[1], a]);

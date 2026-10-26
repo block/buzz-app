@@ -14,7 +14,16 @@ export const ARTIFACT_REVISION_KIND = 45010;
 export const ARTIFACT_REMOVAL_KIND = 45011;
 /** The relay's own `#h` bound for one sync. */
 export const ARTIFACT_SYNC_MAX_CHANNELS = 256;
-const MAX_TAG_VALUES = 256;
+/** Open syncs per relay session. The session and the browser broker share it. */
+export const ARTIFACT_SYNC_MAX_VIEWS = 32;
+// The relay's predicate limits (block/buzz buzz-core artifact.rs).
+const MAX_PREDICATES = 32;
+const MAX_QUERY_VALUES = 256;
+const MAX_PREDICATE_BYTES = 65536;
+const CHANNEL_ID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const NIL_ID = "00000000-0000-0000-0000-000000000000";
+const utf8 = new TextEncoder();
 
 /** Low-level sink for one REQ on one socket. No retry: the caller owns restart. */
 export type ArtifactSyncSink = {
@@ -30,6 +39,9 @@ export function artifactSyncFilter(input: unknown): ArtifactSyncFilter {
   if (!input || typeof input !== "object" || Array.isArray(input))
     throw new Error("Artifact sync filter must be an object");
   const out: Record<string, unknown> = {};
+  let predicates = 0;
+  let values = 0;
+  let bytes = 0;
   for (const [name, value] of Object.entries(input)) {
     if (name === "artifact") {
       if (value !== "current")
@@ -47,11 +59,17 @@ export function artifactSyncFilter(input: unknown): ArtifactSyncFilter {
       if (
         !Array.isArray(value) ||
         !value.length ||
-        (name !== "#h" && value.length > MAX_TAG_VALUES) ||
-        value.some((item) => typeof item !== "string" || item.length > 1024)
+        value.some((item) => typeof item !== "string" || item.length > 1024) ||
+        (name === "#h" &&
+          value.some((item) => !CHANNEL_ID.test(item) || item === NIL_ID))
       )
         throw new Error(`Invalid artifact sync tag values for ${name}`);
-      out[name] = [...new Set(value as string[])].sort();
+      const unique = [...new Set(value as string[])].sort();
+      const nameBytes = utf8.encode(name).length - 1;
+      predicates++;
+      values += unique.length;
+      for (const item of unique) bytes += nameBytes + utf8.encode(item).length;
+      out[name] = unique;
     } else throw new Error(`Artifact sync does not accept "${name}"`);
   }
   if (out.artifact !== "current")
@@ -62,6 +80,15 @@ export function artifactSyncFilter(input: unknown): ArtifactSyncFilter {
   if (channels.length > ARTIFACT_SYNC_MAX_CHANNELS)
     throw new Error(
       `Artifact sync accepts at most ${ARTIFACT_SYNC_MAX_CHANNELS} channels`,
+    );
+  // The relay counts these across every predicate, #h included.
+  if (
+    predicates > MAX_PREDICATES ||
+    values > MAX_QUERY_VALUES ||
+    bytes > MAX_PREDICATE_BYTES
+  )
+    throw new Error(
+      `Artifact sync accepts at most ${MAX_PREDICATES} predicates, ${MAX_QUERY_VALUES} values and ${MAX_PREDICATE_BYTES} bytes in all`,
     );
   return Object.freeze(out) as ArtifactSyncFilter;
 }

@@ -9,8 +9,10 @@ const viewer = keypair(),
 const owners: ReturnType<typeof createRelaySession>[] = [];
 afterEach(() => {
   for (const owner of owners.splice(0)) owner.dispose();
+  vi.useRealTimers();
 });
-const filter = { artifact: "current", "#h": ["c1"] };
+const C1 = "11111111-1111-4111-8111-111111111111";
+const filter = { artifact: "current", "#h": [C1] };
 
 function harness(artifactSync: boolean) {
   const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
@@ -49,7 +51,7 @@ const head = (d: string) =>
     content: d,
     tags: [
       ["d", d],
-      ["h", "c1"],
+      ["h", C1],
     ],
   });
 
@@ -82,7 +84,7 @@ it.each(["access loss", "cache clear"])(
   "drops a live set on %s and fences the old sync's late frames",
   async (cause) => {
     const h = harness(true);
-    h.emit([roster(relay, "c1", [viewer.pubkey], 10)]);
+    h.emit([roster(relay, C1, [viewer.pubkey], 10)]);
     const view = h.owner.session.artifacts.sync(filter);
     const secret = head("a");
     nth(h.sinks, 0).event(secret);
@@ -91,7 +93,7 @@ it.each(["access loss", "cache clear"])(
     const seen: number[] = [];
     view.subscribe(() => seen.push(view.snapshot().events.length));
 
-    if (cause === "access loss") h.emit([roster(relay, "c1", [], 11)]);
+    if (cause === "access loss") h.emit([roster(relay, C1, [], 11)]);
     else await h.owner.clearCache();
     // No relay message is needed: the held set is gone at once.
     expect(view.snapshot()).toEqual({ status: "loading", events: [] });
@@ -109,6 +111,25 @@ it.each(["access loss", "cache clear"])(
     expect(view.snapshot()).toEqual({ status: "live", events: [fresh] });
   },
 );
+
+it("cancels the pending retry when a listener restarts the view", async () => {
+  vi.useFakeTimers();
+  const h = harness(true);
+  const view = h.owner.session.artifacts.sync(filter);
+  nth(h.sinks, 0).eose();
+  let cleared: Promise<void> | undefined;
+  view.subscribe(() => {
+    if (view.snapshot().status === "stale") cleared ??= h.owner.clearCache();
+  });
+  nth(h.sinks, 0).closed("resync: lag");
+  await cleared;
+  expect(h.sinks).toHaveLength(2);
+  // The retry armed by the first close must not open a second live sync.
+  vi.advanceTimersByTime(120_000);
+  expect(h.sinks).toHaveLength(2);
+  view.dispose();
+  expect(h.closes).toHaveBeenCalledOnce();
+});
 
 function nth<T>(items: readonly T[], index: number): T {
   const item = items[index];

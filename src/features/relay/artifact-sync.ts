@@ -12,6 +12,7 @@ export {
   ARTIFACT_REMOVAL_KIND,
   ARTIFACT_REVISION_KIND,
   ARTIFACT_SYNC_MAX_CHANNELS,
+  ARTIFACT_SYNC_MAX_VIEWS,
   type ArtifactSyncFilter,
   type ArtifactSyncSink,
   artifactSyncFilter,
@@ -52,8 +53,15 @@ const tag = (event: VerifiedEvent, name: string) =>
 
 const BASE_RETRY_MS = 1000;
 const MAX_RETRY_MS = 60_000;
-/** Reasons that a new sync cannot fix. Unknown reasons retry with backoff. */
-const TERMINAL = /^(restricted|invalid|unsupported|blocked|auth-required):/;
+/** The relay's cap on one sync set: a limit, not a transient failure. */
+const OVER_MAX_EVENTS = "error: sync set exceeds max_events";
+/** Reasons that a new sync cannot fix. Unknown reasons retry with backoff,
+ * and so do refusals that end with the session: `auth-required:` before
+ * AUTH, and `authorization denied` when the session expires. */
+const terminal = (reason: string) =>
+  reason === OVER_MAX_EVENTS ||
+  (/^(restricted|invalid|unsupported|blocked):/.test(reason) &&
+    reason !== "restricted: authorization denied");
 
 /** One kept-current artifact set. Replaces its set only at EOSE (rule 7),
  * applies heads and removals after it, and restarts with jittered backoff on
@@ -125,7 +133,7 @@ export function createArtifactSyncView(
         if (!owned()) return;
         done = true;
         close = undefined;
-        if (TERMINAL.test(reason)) {
+        if (terminal(reason)) {
           if (reason.startsWith("restricted:")) current = new Map();
           publish({
             status: reason.startsWith("restricted:") ? "restricted" : "error",
@@ -134,12 +142,14 @@ export function createArtifactSyncView(
           return;
         }
         const delay = Math.min(MAX_RETRY_MS, BASE_RETRY_MS * 2 ** failures++);
+        // Arm before publishing: a listener can restart or dispose this view,
+        // and either must be able to cancel the retry.
+        // Equal jitter: never retry sooner than half the backoff.
+        timer = setTimeout(start, delay * (0.5 + random() / 2));
         publish({
           status: snapshot.status === "loading" ? "loading" : "stale",
           error: reason,
         });
-        // Equal jitter: never retry sooner than half the backoff.
-        timer = setTimeout(start, delay * (0.5 + random() / 2));
       },
     });
   }

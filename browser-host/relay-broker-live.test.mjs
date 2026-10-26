@@ -15,6 +15,7 @@ import {
 } from "nostr-tools";
 import { createRelaySession } from "../src/features/relay/session.ts";
 import { relayBrokerPlugin } from "./relay-broker.mjs";
+import { ARTIFACT_SYNC_MAX_VIEWS } from "../src/features/relay/artifact-sync-filter.ts";
 import { connectBrokerTransport } from "../src/features/relay/transport.ts";
 import { createOutbox, PublishRejected } from "../src/features/relay/outbox.ts";
 
@@ -2052,6 +2053,34 @@ test("a sync close that overtakes its open keeps the late open from taking a hos
     });
     expect(next.status).toBe(200);
     await next.text();
+    stream.abort();
+  } finally {
+    await h.close();
+  }
+});
+
+test("a stream admits as many syncs as the session does", async () => {
+  const h = await harness();
+  const filter = {
+    artifact: "current",
+    "#h": ["11111111-1111-4111-8111-111111111111"],
+  };
+  const open = async (streamId, id) => {
+    const response = await fetch(`${h.base}/api/relay/stream-artifact-sync`, {
+      method: "POST",
+      headers: { Origin: h.base, "Content-Type": "application/json" },
+      body: JSON.stringify({ streamId, id, filter }),
+    });
+    await response.text();
+    return response.status;
+  };
+  try {
+    const stream = await h.post(["a"]);
+    const streamId = stream.response.headers.get("x-buzz-live-id");
+    await until(() => h.requests.length === 3);
+    for (let i = 0; i < ARTIFACT_SYNC_MAX_VIEWS; i++)
+      expect(await open(streamId, `s${i}`)).toBe(200);
+    expect(await open(streamId, "over")).toBe(429);
     stream.abort();
   } finally {
     await h.close();

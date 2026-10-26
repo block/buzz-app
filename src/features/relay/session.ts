@@ -112,6 +112,7 @@ import {
 } from "./recovery";
 import { createReminders } from "./reminders";
 import {
+  ARTIFACT_SYNC_MAX_VIEWS,
   type ArtifactSyncOwner,
   type ArtifactSyncView,
   createArtifactSyncView,
@@ -2263,7 +2264,7 @@ export function createRelaySession(
      * Dispose with the plugin's scope. */
     artifacts: {
       sync(filter: unknown): ArtifactSyncView {
-        if (closed || artifactSyncs.size >= 32)
+        if (closed || artifactSyncs.size >= ARTIFACT_SYNC_MAX_VIEWS)
           throw new Error("Artifact sync capacity unavailable");
         const view = createArtifactSyncView(
           filter,

@@ -52,7 +52,10 @@ import {
   directMessageReceipt,
 } from "./direct-messages.mjs";
 import { SocketRequestError } from "../src/features/relay/socket-requests.ts";
-import { artifactSyncFilter } from "../src/features/relay/artifact-sync-filter.ts";
+import {
+  ARTIFACT_SYNC_MAX_VIEWS,
+  artifactSyncFilter,
+} from "../src/features/relay/artifact-sync-filter.ts";
 import {
   assertSidebarStarIntent,
   mutateSidebarStar,
@@ -1521,7 +1524,7 @@ export function relayBrokerPlugin({
             }
             if (stream.closedSyncs.delete(id))
               return json(res, 409, { error: "Artifact sync already closed" });
-            if (existing || stream.syncs.size >= 16)
+            if (existing || stream.syncs.size >= ARTIFACT_SYNC_MAX_VIEWS)
               return json(res, 429, {
                 error: "Artifact sync capacity reached",
               });

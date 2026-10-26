@@ -94,6 +94,8 @@ vi.mock("../solo/default-agent", async (original) => ({
 // Each community's config channels, when a test brings them up: the service's
 // own wiring, with the relay's channel work stubbed.
 const coordinators = vi.hoisted(() => ({
+  /** Stands in for `CONFIG_SYNC_ENABLED`, which ships `false`. */
+  sync: false,
   make: undefined as
     | undefined
     | ((community: string, store: AgentConfigStore) => unknown),
@@ -102,6 +104,9 @@ vi.mock("./community-config", async (original) => {
   const actual = await original<typeof import("./community-config")>();
   return {
     ...actual,
+    get CONFIG_SYNC_ENABLED() {
+      return coordinators.sync;
+    },
     communityConfig: (
       ...args: Parameters<typeof actual.communityConfig>
     ): ReturnType<typeof actual.communityConfig> =>
@@ -11424,3 +11429,112 @@ it.each(["spawn", "exit"])(
     }
   },
 );
+
+describe("synced teams", () => {
+  const home = "https://relay.example.test";
+  /** Each community's config channels; `saveTeam` answers as `answer`. */
+  function teamChannels(answer: () => Promise<unknown> = async () => {}) {
+    const saveTeam = vi.fn((_edit: unknown) => answer());
+    const made = new Set<string>();
+    coordinators.make = (community) => {
+      made.add(community);
+      return {
+        attach: vi.fn(async () => {}),
+        binding: () => undefined,
+        check: vi.fn(async () => {}),
+        remove: vi.fn(async () => {}),
+        history: () => [],
+        dispose: vi.fn(),
+        saveTeam: (edit: unknown) =>
+          saveTeam(edit).then(
+            (result) =>
+              result ?? { ok: true, added: [], removed: [], skipped: [] },
+          ),
+      };
+    };
+    return { saveTeam, made };
+  }
+  async function ready(identities: AgentIdentity[]) {
+    coordinators.sync = true;
+    const channels = teamChannels();
+    const f = await setup({ identities });
+    await vi.waitFor(() => expect(channels.made.has(home)).toBe(true));
+    return { ...f, ...channels };
+  }
+  afterEach(() => {
+    coordinators.sync = false;
+    coordinators.make = undefined;
+  });
+  const draft = "6f1c2b9e-3d4a-4f5b-8c7d-1e2f3a4b5c6d";
+  const crew = (members: string[]) => ({
+    draft,
+    name: "Crew",
+    instructions: "Ship it",
+    members,
+  });
+
+  it("creates a new team in its home community with the agents there", async () => {
+    const f = await ready([here(alder)]);
+    await f.service.saveTeam(crew([alder]));
+    expect(f.saveTeam).toHaveBeenCalledWith({
+      id: draft,
+      name: "Crew",
+      instructions: "Ship it",
+      members: [alder],
+    });
+    // Not written as a local team.
+    expect(f.storage.get("buzz.agents.teams.v1")).toBeFalsy();
+  });
+
+  it("refuses a member with no membership in the team's home community", async () => {
+    const f = await ready([
+      here(alder),
+      here(birch, "wss://other.example.test"),
+    ]);
+    await expect(f.service.saveTeam(crew([alder, birch]))).rejects.toThrow(
+      "Add Birch to relay.example.test first",
+    );
+    expect(f.saveTeam).not.toHaveBeenCalled();
+  });
+
+  it("retries a stopped Create as the same team in the same home", async () => {
+    const f = await ready([here(alder)]);
+    f.saveTeam.mockResolvedValueOnce({
+      ok: false,
+      added: [],
+      removed: [],
+      skipped: [],
+      error: "No answer",
+      uncertain: true,
+    });
+    await expect(f.service.saveTeam(crew([alder]))).rejects.toThrow(
+      "may still take effect",
+    );
+    // Even with another community selected, the retry stays home.
+    f.select(f.second.origin);
+    await f.service.saveTeam(crew([alder]));
+    expect(f.saveTeam).toHaveBeenCalledTimes(2);
+    for (const [edit] of f.saveTeam.mock.calls)
+      expect(edit).toMatchObject({ id: draft });
+    expect(f.saveTeam.mock.calls[1]?.[0]).not.toHaveProperty("base");
+  });
+
+  it("imports an old Buzz team synced, reporting members it couldn't add", async () => {
+    const f = await ready([
+      here(alder),
+      here(birch, "wss://other.example.test"),
+    ]);
+    listsTeam(f.native, nightShift([alder, birch]));
+    const result = await importTeam(f.service);
+    expect(f.saveTeam).toHaveBeenCalledOnce();
+    expect(f.saveTeam.mock.calls[0]?.[0]).toMatchObject({
+      name: "Night Shift",
+      instructions: "Ship small.",
+      members: [alder],
+      adopt: true,
+    });
+    expect(result.notes).toContain("Add Birch to relay.example.test first.");
+    expect(result.teamError).toBeUndefined();
+    expect(f.storage.get("buzz.agents.teams.v1")).toBeFalsy();
+  });
+});

@@ -1738,6 +1738,14 @@ export class AgentsService extends Service implements Agents {
         return source;
       };
       const source = reads();
+      const topLevel =
+        options.channel !== undefined &&
+        (await soloChat(
+          () => this.relay(pubkey),
+          handle.owner,
+          options.channel,
+          options.signal,
+        ));
       return connectMcp(
         host.serveMcp.bind(host),
         (signal) => {
@@ -1768,7 +1776,9 @@ export class AgentsService extends Service implements Agents {
                   ? {}
                   : { channel: options.channel }),
                 ...(options.root === undefined
-                  ? { topLevel: true }
+                  ? topLevel
+                    ? { topLevel: true }
+                    : {}
                   : { root: options.root }),
               },
               message,

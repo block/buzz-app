@@ -207,12 +207,21 @@ fn seed(bases: &[PathBuf]) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Copies a tree with its folder permissions, leaving out `skip` at its top and
-/// any link or special file inside, so the copy shares nothing with the source.
+/// Copies a tree with who else may read its folders (on Unix), leaving out
+/// `skip` at its top and any link or special file inside, so the copy shares
+/// nothing with the source.
 fn copy(from: &Path, to: &Path, skip: Option<&str>) -> std::io::Result<()> {
     let metadata = fs::symlink_metadata(from)?;
     if metadata.is_dir() {
         fs::create_dir(to)?;
+        // Never a folder its owner can't fill or clear, so an interrupted copy
+        // is removed on retry.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = metadata.permissions().mode() | 0o700;
+            fs::set_permissions(to, fs::Permissions::from_mode(mode))?;
+        }
         for entry in fs::read_dir(from)? {
             let entry = entry?;
             if skip.is_some_and(|skip| entry.file_name() == skip) {
@@ -220,7 +229,6 @@ fn copy(from: &Path, to: &Path, skip: Option<&str>) -> std::io::Result<()> {
             }
             copy(&entry.path(), &to.join(entry.file_name()), None)?;
         }
-        fs::set_permissions(to, metadata.permissions())?;
     } else if metadata.is_file() {
         fs::copy(from, to)?;
     } else {

@@ -1795,3 +1795,30 @@ fn a_development_seed_never_links_into_the_installed_storage() {
     assert!(copy.join("nested/archive.sqlite3").exists());
     assert!(fs::symlink_metadata(copy.join("link")).is_err());
 }
+
+#[cfg(unix)]
+#[test]
+fn a_development_seed_keeps_folder_access_and_retries_past_read_only_ones() {
+    use legacy_identifier::{DEV, LEGACY};
+    use std::os::unix::fs::PermissionsExt;
+    let mode = |path: &Path| fs::metadata(path).unwrap().permissions().mode() & 0o777;
+    let (dir, paths) = fixture();
+    let seeds = installed(dir.path(), LEGACY);
+    let (private, sealed) = (seeds[1].join(LEGACY), seeds[1].join(LEGACY).join("nested"));
+    fs::set_permissions(&private, fs::Permissions::from_mode(0o700)).unwrap();
+    fs::set_permissions(&sealed, fs::Permissions::from_mode(0o555)).unwrap();
+    let paths = Paths {
+        seeds: seeds.clone(),
+        ..paths
+    };
+    drop(boot(&paths, no_agents, || panic!("no sign-out")).unwrap());
+    let copy = seeds[1].join(DEV);
+    assert_eq!((mode(&copy), mode(&copy.join("nested"))), (0o700, 0o755));
+    // A copy cut short leaves the same tree staged; the retry clears and redoes it.
+    fs::rename(&copy, seeds[1].join(format!("{DEV}.seeding"))).unwrap();
+    let _instance = boot(&paths, no_agents, || panic!("no sign-out")).unwrap();
+    assert!(copy.join("nested/archive.sqlite3").exists());
+    assert!(!seeds[1].join(format!("{DEV}.seeding")).exists());
+    assert_eq!((mode(&private), mode(&sealed)), (0o700, 0o555));
+    fs::set_permissions(&sealed, fs::Permissions::from_mode(0o755)).unwrap();
+}

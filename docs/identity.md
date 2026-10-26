@@ -170,7 +170,8 @@ so the installed app must be closed once, and takes a pending development
 sign-out marker. It refuses while the installed app has a sign-out pending, so it
 never copies storage being erased. A linked folder copies what it links to; links
 inside are left out, so the copy shares nothing with the installed app's storage,
-which stays in place. An interrupted copy finishes at the next launch. Credential service
+which stays in place. Copied folders keep who else may read them, but stay
+writable by their owner. An interrupted copy finishes at the next launch. Credential service
 names don't change; on macOS, Keychain may ask once to allow the renamed app to use each saved item.
 
 A sign-out needs its key lock alone, so every other copy using that key must be

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import {
   githubPolicy,
   type GithubPolicy,
@@ -7,16 +7,20 @@ import {
 import type { Host } from "../../../features/host/service";
 import { Button } from "../../../shared/design-system/ui/Button";
 import { Field } from "../../../shared/design-system/ui/Field";
-import { InlineHeader } from "../../../shared/design-system/ui/Header";
+import { Dialog } from "../../../shared/design-system/ui/Dialog";
 import { SettingsGroup } from "../../../shared/design-system/ui/SettingsGroup";
 import { Textarea } from "../../../shared/design-system/ui/Textarea";
 
 export function GitHubPolicyEditor({
   initialValue,
   onSave,
+  onClose,
+  path,
 }: {
   initialValue: GithubPolicy;
   onSave(policy: GithubPolicy): Promise<void>;
+  onClose(): void;
+  path?: string;
 }) {
   const [draft, setDraft] = useState(() => ({
     trustedOrganizations: initialValue.trustedOrganizations.join("\n"),
@@ -25,7 +29,11 @@ export function GitHubPolicyEditor({
   }));
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
-  const [saved, setSaved] = useState(false);
+  const form = useId();
+  const dirty = Object.entries(draft).some(
+    ([key, value]) =>
+      value !== initialValue[key as keyof typeof draft].join("\n"),
+  );
   const field = (
     key: keyof typeof draft,
     label: string,
@@ -33,20 +41,19 @@ export function GitHubPolicyEditor({
   ) => (
     <Field label={label} description={description}>
       <Textarea
+        rows={3}
         value={draft[key]}
         disabled={pending}
         onChange={(event) => {
           setDraft({ ...draft, [key]: event.target.value });
-          setSaved(false);
         }}
       />
     </Field>
   );
   const submit = async () => {
-    if (pending) return;
+    if (pending || !dirty) return;
     setPending(true);
     setError("");
-    setSaved(false);
     const entries = (value: string) =>
       value
         .split(/\r?\n/)
@@ -59,7 +66,7 @@ export function GitHubPolicyEditor({
         trustedAuthors: entries(draft.trustedAuthors),
         ignoredAuthors: entries(draft.ignoredAuthors),
       });
-      setSaved(true);
+      onClose();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
@@ -67,50 +74,68 @@ export function GitHubPolicyEditor({
     }
   };
   return (
-    <form
-      aria-label="GitHub author allowlist"
-      onSubmit={(event) => {
-        event.preventDefault();
-        void submit();
+    <Dialog
+      open
+      title="GitHub comment authors"
+      description="Comments and reviews from these authors wake your agents. CI and PR state always do."
+      preventClose={pending}
+      onOpenChange={(next) => {
+        if (!next && !pending) onClose();
       }}
-    >
-      <InlineHeader
-        title="GitHub comment authors"
-        subtitle="Choose trusted organizations and/or individual commenters to receive comments and reviews. CI and PR-state monitoring continue with empty trusted lists."
-      />
-      <SettingsGroup layout="form">
-        {field(
-          "trustedOrganizations",
-          "Trusted organizations",
-          "One GitHub organization login per line.",
-        )}
-        {field(
-          "trustedAuthors",
-          "Trusted commenters",
-          "One exact GitHub login per line, including bot logins.",
-        )}
-        {field(
-          "ignoredAuthors",
-          "Ignored commenters",
-          "One exact GitHub login per line.",
-        )}
-        {error && (
-          <p role="alert" className="text-body-sm text-danger">
-            {error}
-          </p>
-        )}
-        {saved && (
-          <p role="status" className="text-body-sm text-secondary">
-            GitHub author allowlist saved.
-          </p>
-        )}
-        <div className="attention-actions">
-          <Button type="submit" size="sm" variant="primary" disabled={pending}>
-            Save allowlist
+      actions={
+        <>
+          <Button variant="subtle" disabled={pending} onClick={onClose}>
+            Cancel
           </Button>
-        </div>
-      </SettingsGroup>
-    </form>
+          <Button
+            type="submit"
+            form={form}
+            variant="primary"
+            loading={pending}
+            disabled={!dirty || pending}
+          >
+            Save
+          </Button>
+        </>
+      }
+    >
+      <form
+        id={form}
+        aria-label="GitHub author allowlist"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void submit();
+        }}
+      >
+        <SettingsGroup layout="form">
+          {field(
+            "trustedOrganizations",
+            "Trusted organizations",
+            "One GitHub organization login per line.",
+          )}
+          {field(
+            "trustedAuthors",
+            "Trusted commenters",
+            "One exact GitHub login per line, including bot logins.",
+          )}
+          {field(
+            "ignoredAuthors",
+            "Ignored commenters",
+            "One exact GitHub login per line.",
+          )}
+          {error && (
+            <p role="alert" className="text-body-sm text-danger">
+              {error}
+            </p>
+          )}
+          {path && (
+            <p className="m-0 text-caption text-subtle">
+              Preferences file: <code>{path}</code>
+            </p>
+          )}
+        </SettingsGroup>
+      </form>
+    </Dialog>
   );
 }
 
@@ -122,7 +147,6 @@ export function GitHubPolicyPanel({
   const [status, setStatus] = useState<GithubPolicyStatus>();
   const [error, setError] = useState("");
   const [open, setOpen] = useState(false);
-  const [saving, setSaving] = useState(false);
   const [retry, setRetry] = useState(0);
   // biome-ignore lint/correctness/useExhaustiveDependencies: Retry and opening the editor explicitly re-read the shared file.
   useEffect(() => {
@@ -167,8 +191,8 @@ export function GitHubPolicyPanel({
             GitHub comments and reviews are off
           </h3>
           <p className="text-body-sm text-secondary">
-            Configure trusted organizations and/or individual commenters to
-            receive them. CI and PR-state monitoring continue.
+            Add trusted organizations or commenters to receive them. CI and
+            PR-state monitoring continue.
           </p>
         </div>
       )}
@@ -177,24 +201,18 @@ export function GitHubPolicyPanel({
           {status.error}
         </p>
       )}
-      {open && status && (
-        <p className="text-caption text-subtle">
-          Preferences file: <code>{status.path}</code>
-        </p>
-      )}
       <div className="attention-actions">
         {status && (
           <Button
             size="sm"
             variant="subtle"
-            aria-expanded={open}
-            disabled={saving}
+            aria-haspopup="dialog"
             onClick={() => {
-              setOpen(!open);
-              if (!open) setRetry((value) => value + 1);
+              setOpen(true);
+              setRetry((value) => value + 1);
             }}
           >
-            {open ? "Cancel editing allowlist" : "Edit allowlist"}
+            {status.warning ? "Edit allowlist" : "GitHub allowlist"}
           </Button>
         )}
         {error && (
@@ -210,15 +228,12 @@ export function GitHubPolicyPanel({
       {open && status && (
         <GitHubPolicyEditor
           initialValue={status.policy}
+          path={status.path}
+          onClose={() => setOpen(false)}
           onSave={async (policy) => {
-            setSaving(true);
-            try {
-              const value = await githubPolicy(host, policy);
-              if (value.error) throw new Error(value.error);
-              setStatus(value);
-            } finally {
-              setSaving(false);
-            }
+            const value = await githubPolicy(host, policy);
+            if (value.error) throw new Error(value.error);
+            setStatus(value);
           }}
         />
       )}

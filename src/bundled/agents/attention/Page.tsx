@@ -170,7 +170,11 @@ export function createPage({
       { className: "attention-destination-label" },
       "→",
       h(channelIcon(summary), { size: 16, "aria-hidden": true }),
-      `${name}${root ? " thread" : ""}`,
+      h(
+        "span",
+        { className: "attention-channel-name" },
+        `${name}${root ? " thread" : ""}`,
+      ),
     );
     const at = scope?.lastIndexOf(":") ?? -1;
     if (!scope || at < 0)
@@ -370,7 +374,7 @@ export function createPage({
           h(
             "span",
             {
-              className: "attention-title text-body-sm",
+              className: "attention-title text-caption text-subtle",
               title:
                 watch.type === "timer" && watch.max_occurrences === 1
                   ? new Date(
@@ -385,7 +389,11 @@ export function createPage({
                     { key: id, className: "attention-destination-label" },
                     index > 0 ? ", " : null,
                     h(channelIcon(find(id)), { size: 16, "aria-hidden": true }),
-                    name(id),
+                    h(
+                      "span",
+                      { className: "attention-channel-name" },
+                      name(id),
+                    ),
                   ),
                 )
               : target,

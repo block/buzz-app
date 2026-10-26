@@ -56,7 +56,9 @@ async function fixture() {
 }
 async function edit() {
   fireEvent.click(
-    await screen.findByRole("button", { name: "Edit allowlist" }),
+    await screen.findByRole("button", {
+      name: /^(Edit allowlist|GitHub allowlist)$/,
+    }),
   );
   return screen.findByRole("textbox", { name: "Trusted organizations" });
 }
@@ -71,8 +73,8 @@ it("shows the shared warning and saves through the adapter to the same file, pre
   fireEvent.change(organizations, { target: { value: "example-org" } });
   const authors = screen.getByRole("textbox", { name: "Trusted commenters" });
   fireEvent.change(authors, { target: { value: "review-bot[bot]" } });
-  fireEvent.click(screen.getByRole("button", { name: "Save allowlist" }));
-  await screen.findByText("GitHub author allowlist saved.");
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   const policy = JSON.parse(await readFile(path, "utf8"));
   expect(policy).toEqual({
     version: 1,
@@ -81,14 +83,16 @@ it("shows the shared warning and saves through the adapter to the same file, pre
     ignoredAuthors: [],
   });
   expect(screen.queryByText(/GitHub comments and reviews are off/)).toBeNull();
-  fireEvent.change(authors, { target: { value: "bad/login" } });
-  fireEvent.click(screen.getByRole("button", { name: "Save allowlist" }));
+  await edit();
+  const editedAuthors = screen.getByRole("textbox", {
+    name: "Trusted commenters",
+  });
+  fireEvent.change(editedAuthors, { target: { value: "bad/login" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
   await screen.findByText("trustedAuthors must contain GitHub logins");
-  expect(authors).toHaveValue("bad/login");
+  expect(editedAuthors).toHaveValue("bad/login");
   expect(JSON.parse(await readFile(path, "utf8"))).toEqual(policy);
-  fireEvent.click(
-    screen.getByRole("button", { name: "Cancel editing allowlist" }),
-  );
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
   await edit();
   expect(
     screen.getByRole("textbox", { name: "Trusted commenters" }),
@@ -101,7 +105,7 @@ it("shows the shared warning and saves through the adapter to the same file, pre
     screen.getByRole("textbox", { name: "Trusted organizations" }),
     { target: { value: "" } },
   );
-  fireEvent.click(screen.getByRole("button", { name: "Save allowlist" }));
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
   await screen.findByText(/GitHub comments and reviews are off/);
   expect(JSON.parse(await readFile(path, "utf8")).trustedAuthors).toEqual([]);
 });
@@ -116,7 +120,7 @@ it("reports invalid file contents and recovers from a failed initial read withou
     .mockImplementation(native);
   render(<GitHubPolicyPanel host={host} />);
   await screen.findByText("Host unavailable");
-  expect(screen.queryByRole("button", { name: "Save allowlist" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
   fireEvent.click(
     screen.getByRole("button", { name: "Retry GitHub author settings" }),
   );
@@ -126,7 +130,7 @@ it("reports invalid file contents and recovers from a failed initial read withou
   );
   const organizations = await edit();
   fireEvent.change(organizations, { target: { value: "trusted-org" } });
-  fireEvent.click(screen.getByRole("button", { name: "Save allowlist" }));
-  await screen.findByText("GitHub author allowlist saved.");
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(screen.queryByRole("alert")).toBeNull();
 });

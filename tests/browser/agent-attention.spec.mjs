@@ -71,7 +71,7 @@ test("the allowlist warning opens editable shared settings with usable narrow-la
         document.documentElement.dataset.colorMode = theme;
         document.documentElement.style.fontSize = "20px";
       }, theme);
-      const save = form.getByRole("button", { name: "Save allowlist" });
+      const save = page.getByRole("button", { name: "Save", exact: true });
       await save.scrollIntoViewIfNeeded();
       await expect(save).toBeInViewport();
       expect(
@@ -87,16 +87,33 @@ test("the allowlist warning opens editable shared settings with usable narrow-la
   await form
     .getByRole("textbox", { name: "Trusted commenters" })
     .fill("review-bot[bot]");
-  await form.getByRole("button", { name: "Save allowlist" }).click();
-  await expect(form.getByRole("status")).toHaveText(
-    "GitHub author allowlist saved.",
-  );
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(
     page.getByText(/GitHub comments and reviews are off/),
   ).toHaveCount(0);
-  await page.getByRole("button", { name: "Cancel editing allowlist" }).click();
-  await page.getByRole("button", { name: "Edit allowlist" }).click();
+  await page
+    .getByRole("button", { name: "GitHub allowlist", exact: true })
+    .click();
   await expect(
     form.getByRole("textbox", { name: "Trusted commenters" }),
   ).toHaveValue("review-bot[bot]");
+});
+
+test("allowlist dialog discards drafts on Escape and outside click", async ({
+  page,
+}) => {
+  await page.goto("/tests/fixtures/agent-attention.html");
+  await page.getByRole("button", { name: "Edit allowlist" }).click();
+  await page
+    .getByRole("textbox", { name: "Trusted commenters" })
+    .fill("discard-me");
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await page.getByRole("button", { name: "Edit allowlist" }).click();
+  await expect(
+    page.getByRole("textbox", { name: "Trusted commenters" }),
+  ).toHaveValue("");
+  await page.mouse.click(5, 5);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
 });

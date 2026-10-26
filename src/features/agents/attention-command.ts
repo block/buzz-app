@@ -1,3 +1,5 @@
+import { githubPolicy } from "./github-policy";
+import type { Host } from "../host/service";
 import type { AttentionSource } from "./attention-sources";
 
 type Sources = {
@@ -6,7 +8,10 @@ type Sources = {
 
 /** Attention owns when the producer runs and where output goes. The process
  * host kills descendants on cancellation; no owner credentials are passed as arguments. */
-export function registerAttention(ctx: { agents: Sources }) {
+export function registerAttention(ctx: {
+  agents: Sources;
+  host?: Pick<Host, "spawn">;
+}) {
   for (const id of ["command", "github-pr"])
     ctx.agents.addAttentionSource({
       id,
@@ -21,6 +26,14 @@ export function registerAttention(ctx: { agents: Sources }) {
               cwd: "/absolute/optional/directory",
             }
           : { pr: "https://github.com/OWNER/REPO/pull/NUMBER" },
+      ...(id === "github-pr"
+        ? {
+            warnings: async () => {
+              const status = await githubPolicy(ctx.host ?? {});
+              return status.warning ? [status.warning] : [];
+            },
+          }
+        : {}),
       async run({ watch, signal, emit, spawn }) {
         let buffer = "",
           timer: ReturnType<typeof setTimeout> | undefined,

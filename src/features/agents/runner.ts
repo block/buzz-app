@@ -446,6 +446,7 @@ export type RunnerHost = {
   /** The owner's thread tabs as the agent's handle offers them. */
   tabs(agent: Agent): ReturnType<AgentHandle["tabs"]>;
   /** Whether watch classifiers can run here. */
+  sourceWarnings?(provider: string): Promise<readonly string[]>;
   classifier(): ClassifierAvailability;
   /** The decisions service that runs classifiers, where there is one. */
   decisions(): Decisions | undefined;
@@ -2677,6 +2678,8 @@ export class AgentRunners {
     return guarded(
       {
         enabled: () => record().attentionEnabled === true,
+        sourceWarnings: (provider: string) =>
+          this.host.sourceWarnings?.(provider) ?? Promise.resolve([]),
         classifier: () => this.host.classifier(),
         show: async (slug: string, interest?: string) => {
           const result = await show(record(), slug, seconds(), interest);

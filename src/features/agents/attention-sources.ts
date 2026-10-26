@@ -9,6 +9,7 @@ export type AttentionSource = Readonly<{
   /** Discovery metadata for tools that configure this provider. */
   description?: string;
   configExample?: Readonly<Record<string, unknown>>;
+  warnings?(): Promise<readonly string[]>;
   run(
     input: Readonly<{
       /** The agent's membership key, as `Agents.wake` takes. */

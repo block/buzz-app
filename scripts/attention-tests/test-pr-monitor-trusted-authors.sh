@@ -31,6 +31,11 @@ elif args.startswith('pr checks '): print('[]')
 else: sys.exit('unexpected gh invocation: '+args)
 PY
 chmod +x "$temp_dir/bin/gh"
+export HOME="$temp_dir/home"
+mkdir -p "$HOME/.buzz/preferences"
+cat > "$HOME/.buzz/preferences/github-pr.json" <<'JSON'
+{"version":1,"trustedOrganizations":["squareup"],"trustedAuthors":["builderbot-code-review[bot]","square-task-list-completed[bot]","github-actions[bot]"],"ignoredAuthors":[]}
+JSON
 for owner in squareup block; do
   mkdir -p "$temp_dir/$owner"
   PATH="$temp_dir/bin:$PATH" FAKE_TICK="$temp_dir/$owner/tick" TMPDIR="$temp_dir/$owner" \
@@ -44,7 +49,8 @@ for owner in squareup block; do
   ! grep -q 'test-user\|outsider\|imposter' "$temp_dir/$owner.out"
   # Suppressed authors still enter snapshots, so their edits cannot replay.
 done
-# Personal and other owners have no implicitly trusted authors, even bots.
+# Missing preferences deliver state without comment bodies.
+rm "$HOME/.buzz/preferences/github-pr.json"
 for mode in default include-self explicit; do
   mkdir -p "$temp_dir/personal-$mode"
   args=()
@@ -72,8 +78,8 @@ PATH="$temp_dir/bin:$PATH" FAKE_TICK="$temp_dir/override/tick" TMPDIR="$temp_dir
   "$script_dir/pr-monitor.sh" --repo squareup/repo --interval 0.01 --include-non-employees 1 > "$temp_dir/override.out"
 grep -q '\*\*outsider\*\* commented ·' "$temp_dir/override.out"
 ! grep -q '\*\*reviewer\*\*' "$temp_dir/override.out" || exit 1
-# Replaced defaults change who is trusted and suppressed.
-printf 'TRUSTED_ORGS=squareup\nTRUSTED_BOTS=""\nIGNORE_AUTHORS=reviewer\n' > "$temp_dir/defaults.sh"
+# Shared JSON preferences change who is trusted and suppressed.
+printf '%s' '{"version":1,"trustedOrganizations":["squareup"],"trustedAuthors":[],"ignoredAuthors":["reviewer"]}' > "$HOME/.buzz/preferences/github-pr.json"
 mkdir -p "$temp_dir/defaults"
 PATH="$temp_dir/bin:$PATH" FAKE_TICK="$temp_dir/defaults/tick" TMPDIR="$temp_dir/defaults" MONITOR_PR_AUTHOR_DEFAULTS="$temp_dir/defaults.sh" \
   "$script_dir/pr-monitor.sh" --repo squareup/repo --interval 0.01 1 > "$temp_dir/defaults.out"

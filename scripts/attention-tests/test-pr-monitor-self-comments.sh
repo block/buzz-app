@@ -123,19 +123,14 @@ PATH="$temp_dir/bin:$PATH" FAKE_TICK="$temp_dir/tick" TMPDIR="$temp_dir/state" \
 grep -q 'external feedback' "$temp_dir/employees.out"
 grep -q '\*\*reviewer\*\* \(reviewed\|approved\|requested changes\) ·' "$temp_dir/employees.out"
 
-if PATH="$temp_dir/bin:$PATH" FAKE_TICK="$temp_dir/tick" FAKE_ROSTER_FAILURE=1 \
-  "$monitor" --repo owner/repo --employee-org employees 1 >"$temp_dir/failed.out" 2>"$temp_dir/failed.err"; then
-  echo 'expected organization lookup failure to stop startup' >&2
-  exit 1
-fi
-grep -q 'cannot load employee whitelist' "$temp_dir/failed.err"
-[[ ! -s "$temp_dir/failed.out" ]]
-# Squareup repositories enable the organization roster without flags.
+# A failed organization lookup withholds comments but keeps state monitoring.
 rm -rf "$temp_dir/state" "$temp_dir/tick"
 mkdir -p "$temp_dir/state"
-PATH="$temp_dir/bin:$PATH" FAKE_TICK="$temp_dir/tick" TMPDIR="$temp_dir/state" \
-  "$monitor" --repo squareup/repo --interval 0.01 1 >"$temp_dir/squareup.out"
-grep -q 'external feedback' "$temp_dir/squareup.out"
+PATH="$temp_dir/bin:$PATH" FAKE_TICK="$temp_dir/tick" TMPDIR="$temp_dir/state" FAKE_ROSTER_FAILURE=1 \
+  "$monitor" --repo owner/repo --interval 0.01 --employee-org employees 1 >"$temp_dir/failed.out" 2>"$temp_dir/failed.err"
+grep -q 'cannot load GitHub members' "$temp_dir/failed.err"
+! grep -q 'external feedback' "$temp_dir/failed.out"
+grep -q 'PR #1 \(merged\|closed\)' "$temp_dir/failed.out"
 
 # The explicit opt-out bypasses a failing roster lookup.
 rm -rf "$temp_dir/state" "$temp_dir/tick"

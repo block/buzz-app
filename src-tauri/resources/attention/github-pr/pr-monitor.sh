@@ -12,13 +12,11 @@ Comments from the authenticated GitHub user and routine bots (policies/author-de
 are suppressed by default. Add more with --ignore-author
 (repeatable; "[bot]" suffix optional), use --no-ignore-bots for routine bots, or use
 --include-self-comments for your own activity. Comment and review events are filtered.
-PRs owned by a TRUSTED_ORGS organization (squareup and block by default) allow its
-members and TRUSTED_BOTS by default. Use
---employee-org org for another organization, or --allowlist file for a roster
-(one login per line, optional # comments). --include-non-employees disables
-this whitelist. Other repository owners default to an empty whitelist.
-Existing self/bot exclusions still apply. A roster is loaded
-once at startup; restart the monitor to refresh it. Loading failures stop startup.
+Comment and review authors come from ~/.buzz/preferences/github-pr.json.
+Configure trustedOrganizations, trustedAuthors and ignoredAuthors as GitHub logins.
+Without a valid policy, CI and PR-state monitoring continue and comments are withheld.
+Organization lookup failures withhold that organization's members and report a warning.
+The policy is read at startup; restart the subscription after editing it.
 Use --quiet-initial for detached delivery: the startup summary is written to
 stderr for health logs, while only actionable existing feedback or failures are
 emitted on stdout.
@@ -39,11 +37,13 @@ AUTHOR_ALLOWLIST_ENABLED=0
 INCLUDE_SELF_COMMENTS=0
 QUIET_INITIAL=0
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-AUTHOR_DEFAULTS="${MONITOR_PR_AUTHOR_DEFAULTS:-$SCRIPT_DIR/policies/author-defaults.sh}"
-[[ -f "$AUTHOR_DEFAULTS" ]] || { echo "ERROR: author defaults not found: $AUTHOR_DEFAULTS" >&2; exit 1; }
 TRUSTED_ORGS="" TRUSTED_BOTS="" IGNORE_AUTHORS=""
-# shellcheck disable=SC1090
-source "$AUTHOR_DEFAULTS"
+POLICY=$(python3 "$SCRIPT_DIR/../buzz-attention-policy" read)
+TRUSTED_ORGS=$(jq -r '.policy.trustedOrganizations | join(" ")' <<< "$POLICY")
+TRUSTED_BOTS=$(jq -r '.policy.trustedAuthors[]' <<< "$POLICY")
+IGNORE_AUTHORS=$(jq -r '.policy.ignoredAuthors[] | sub("\\[bot\\]$"; "")' <<< "$POLICY")
+POLICY_WARNING=$(jq -r '.warning // empty' <<< "$POLICY")
+[[ -z "$POLICY_WARNING" ]] || echo "WARNING: $POLICY_WARNING" >&2
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -78,31 +78,22 @@ if [[ -z "$REPO" ]]; then REPO=$(gh repo view --json nameWithOwner -q .nameWithO
 if ! [[ "$PR" =~ ^[0-9]+$ ]]; then echo "ERROR: PR must be a number or URL" >&2; exit 1; fi
 OWNER="${REPO%%/*}"
 REPO_NAME="${REPO#*/}"
-# Deny comment delivery unless the owner has a policy or an explicit roster.
-if [[ "$INCLUDE_NON_EMPLOYEES" != "1" ]]; then
-  AUTHOR_ALLOWLIST_ENABLED=1
-  if [[ -n "$AUTHOR_ALLOWLIST_FILE" ]]; then
-    [[ -r "$AUTHOR_ALLOWLIST_FILE" ]] || { echo "ERROR: cannot read author whitelist: $AUTHOR_ALLOWLIST_FILE" >&2; exit 1; }
-    ALLOWED_AUTHORS=$(awk '{ sub(/#.*/, ""); gsub(/^[[:space:]]+|[[:space:]]+$/, ""); if (length) print }' "$AUTHOR_ALLOWLIST_FILE")
-    AUTHOR_ALLOWLIST_ENABLED=1
-  else
-    if [[ -z "$EMPLOYEE_ORG" && " $TRUSTED_ORGS " == *" $OWNER "* ]]; then
-      EMPLOYEE_ORG="$OWNER"
-    fi
-    if [[ -n "$EMPLOYEE_ORG" ]]; then
-      if ! ALLOWED_AUTHORS=$(gh api "orgs/$EMPLOYEE_ORG/members" --paginate --jq '.[].login'); then
-        echo "ERROR: cannot load employee whitelist for $EMPLOYEE_ORG; no monitor started" >&2
-        exit 1
-      fi
-      [[ -n "$ALLOWED_AUTHORS" ]] || { echo "ERROR: employee whitelist for $EMPLOYEE_ORG is empty; no monitor started" >&2; exit 1; }
-      if [[ " $TRUSTED_ORGS " == *" $OWNER "* && -n "$TRUSTED_BOTS" ]]; then
-        # Exact GitHub App logins, not a blanket exemption for bots.
-        ALLOWED_AUTHORS+=$'\n'"$TRUSTED_BOTS"
-      fi
-      AUTHOR_ALLOWLIST_ENABLED=1
-    fi
-  fi
+# Explicit policy data governs comment/review delivery; state and CI remain active.
+AUTHOR_ALLOWLIST_ENABLED=1
+ALLOWED_AUTHORS="$TRUSTED_BOTS"
+[[ -z "$EMPLOYEE_ORG" ]] || TRUSTED_ORGS="$EMPLOYEE_ORG"
+if [[ -n "$AUTHOR_ALLOWLIST_FILE" ]]; then
+  ALLOWED_AUTHORS=$(awk '{ sub(/#.*/, ""); gsub(/^[[:space:]]+|[[:space:]]+$/, ""); if (length) print }' "$AUTHOR_ALLOWLIST_FILE")
+  TRUSTED_ORGS=""
 fi
+[[ "$INCLUDE_NON_EMPLOYEES" != "1" ]] || AUTHOR_ALLOWLIST_ENABLED=0
+for org in $TRUSTED_ORGS; do
+  if members=$(gh api "orgs/$org/members" --paginate --jq '.[].login'); then
+    ALLOWED_AUTHORS+=$'\n'"$members"
+  else
+    echo "WARNING: cannot load GitHub members for $org; comments from that organization are withheld" >&2
+  fi
+done
 CURRENT_GITHUB_USER="$(gh api user --jq .login 2>/dev/null || true)"
 if [[ "$INCLUDE_SELF_COMMENTS" != "1" && -z "$CURRENT_GITHUB_USER" ]]; then
   echo "ERROR: could not identify the authenticated GitHub user; use --include-self-comments to opt out of self filtering" >&2

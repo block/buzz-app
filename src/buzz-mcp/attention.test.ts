@@ -683,3 +683,29 @@ it.each(["event", "timer", "source"])(
     expect(saved.object).toMatchObject(storedFields);
   },
 );
+
+it("returns source configuration warnings without refusing the saved watch", async () => {
+  const { api, call } = agent();
+  Object.assign(api, {
+    sourceWarnings: async () => [
+      "Configure trusted organizations and/or individual commenters",
+    ],
+  });
+  await call("interest_set", {
+    id: "triage",
+    instructions: "Follow PR",
+    expected_state: ABSENT,
+  });
+  const result = await call("watch_add", {
+    id: "pr",
+    interest: "triage",
+    type: "source",
+    provider: "attention/github-pr",
+    config: { pr: "https://github.com/example/repo/pull/1" },
+    expected_state: ABSENT,
+  });
+  expect(result.object.provider).toBe("attention/github-pr");
+  expect(result.warnings).toEqual([
+    "Configure trusted organizations and/or individual commenters",
+  ]);
+});

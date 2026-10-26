@@ -2362,6 +2362,12 @@ export class AgentsService extends Service implements Agents {
         : recordPicture(change.picture ?? undefined);
     if (change.picture && !picture)
       throw new Error("A hosted agent's picture is an HTTPS image URL");
+    // The provider can replace a picture but not clear one yet; listing the
+    // agent without it would hide a picture its profile still shows.
+    if (agent.picture && change.picture !== undefined && !change.picture)
+      throw new Error(
+        "A hosted agent's picture can't be removed yet; choose another picture",
+      );
     if (name === agent.name && picture === agent.picture) return;
     await remote.profile({
       pubkey,

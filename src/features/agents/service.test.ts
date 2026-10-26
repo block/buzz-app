@@ -6289,6 +6289,35 @@ it("renames a hosted agent through its provider and relists it; its settings are
   );
 });
 
+it("refuses to remove a hosted agent's picture, but still renames one that has none", async () => {
+  const { service, plugin } = await setup();
+  const { type, remote } = cloud();
+  plugin.agents.register(type);
+  const picture = "https://example.test/sky.png";
+  await service.create({ type: "example/cloud", name: "Sky", picture });
+  remote.profile.mockClear();
+  records.publish.mockClear();
+  for (const removal of ["", null]) {
+    await expect(service.save(hostedKey, { picture: removal })).rejects.toThrow(
+      /can't be removed yet/,
+    );
+  }
+  expect(remote.profile).not.toHaveBeenCalled();
+  expect(records.publish).not.toHaveBeenCalled();
+  expect(service.find(hostedKey)).toMatchObject({ picture });
+
+  await service.remove(hostedKey);
+  await service.create({ type: "example/cloud", name: "Sky" });
+  await service.save(hostedKey, { name: "Sea", picture: "" });
+  expect(remote.profile).toHaveBeenLastCalledWith({
+    pubkey: hostedKey,
+    community: "wss://relay.example.test",
+    name: "Sea",
+    signal: expect.any(AbortSignal),
+  });
+  expect(service.find(hostedKey)).toMatchObject({ name: "Sea" });
+});
+
 it("deletes a hosted agent from its provider, then from its community", async () => {
   const { service, plugin, session } = await setup();
   const { type, remote } = cloud();

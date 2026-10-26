@@ -503,6 +503,9 @@ export function serve({
       if (opened.closing) return { status: "closed" };
       throw error;
     }
+    // A one-off turn's conversation, with no place, is not used again.
+    if (!opened.contexts.has(record.conversationId))
+      opened.cores.delete(record.conversationId);
     if (record.status !== "done") {
       const failed = opened.failed.get(id) ?? {
         status: "unanswered",

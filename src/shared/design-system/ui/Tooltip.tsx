@@ -7,12 +7,21 @@ import {
   type ReactElement,
   type ReactNode,
 } from "react";
+import { FAMILIAR_HINT_REST_MS, HELPFUL_HINT_REST_MS } from "./hoverIntent";
+
+/** DESIGN.md "Hover timing": how long a hint waits for a resting pointer. */
+export type HintTiming = "helpful" | "familiar";
+
+/** Hints in one provider open instantly while a neighbor is showing. */
+export function TooltipProvider({ children }: { children: ReactNode }) {
+  return <BaseTooltip.Provider>{children}</BaseTooltip.Provider>;
+}
 
 /** A short supplementary hint. The trigger still owns its accessible name. */
 export function Tooltip({
   children,
   content,
-  delay = 0,
+  hint = "helpful",
   closeOnClick = true,
   disableHoverablePopup = false,
   side = "top",
@@ -27,7 +36,7 @@ export function Tooltip({
     }
   >;
   content: ReactNode;
-  delay?: number;
+  hint?: HintTiming | undefined;
   closeOnClick?: boolean;
   disableHoverablePopup?: boolean;
   side?: "top" | "right";
@@ -61,7 +70,9 @@ export function Tooltip({
     >
       <BaseTooltip.Trigger
         ref={setTrigger}
-        delay={delay}
+        delay={
+          hint === "familiar" ? FAMILIAR_HINT_REST_MS : HELPFUL_HINT_REST_MS
+        }
         closeOnClick={closeOnClick}
         // Base UI merges render-element props last. Put the combined link on
         // that element so its original description cannot replace the hint.

@@ -537,7 +537,10 @@ function ChannelWorkspace({
     // A profile keeps this conversation; a DM already owns a different visit.
     // Modal cleanup must not overwrite that destination or its exact address.
     const { panel: _panel, ...target } = navigation.target;
-    void navigator.open(open ? { ...target, panel: "members" } : target);
+    void navigator.open(
+      open ? { ...target, panel: "members" } : target,
+      open ? undefined : { dismiss: true },
+    );
   };
   const openMembers = (trigger: HTMLButtonElement) => {
     membersTrigger.current = trigger;
@@ -1645,6 +1648,7 @@ function ChannelWorkspace({
                     !showingChannelPanel && (
                       <span className={panelStyles.paneToggle}>
                         <IconButton
+                          hint="familiar"
                           ref={splitTrigger}
                           data-tab-pane-toggle=""
                           size="toolbar"
@@ -1783,6 +1787,7 @@ function ChannelWorkspace({
                         {current && hasChannelPanel && !showingChannelPanel && (
                           <span className={panelStyles.paneToggle}>
                             <IconButton
+                              hint="familiar"
                               ref={splitTrigger}
                               data-tab-pane-toggle=""
                               size="toolbar"
@@ -1880,6 +1885,7 @@ function ChannelWorkspace({
                   key={currentId}
                   actions={
                     <IconButton
+                      hint="familiar"
                       data-tab-pane-toggle=""
                       data-highlight-expanded="false"
                       variant="subtle"

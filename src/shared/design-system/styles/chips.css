@@ -17,7 +17,7 @@
     border: 0;
     border-radius: var(--radius-chip);
     padding-inline: var(--space-chip-inset);
-    background: var(--affordance-inline-chip);
+    background: var(--affordance-subtle);
     color: var(--text-standard);
     font: inherit;
     /* Hugs the text it sits in rather than stretching the line. */

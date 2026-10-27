@@ -1076,7 +1076,6 @@
      of you joins the strong group, because it asks for your attention. Own
      bubbles may override the -own trio to stay distinct from their fill. */
   --affordance-mention: var(--neutral-4);
-  --affordance-inline-chip: var(--affordance-subtle);
   --affordance-mention-hover: var(--neutral-5);
   --text-mention: var(--text-standard);
   --affordance-mention-self: var(--affordance-accent-prominent);
@@ -1198,7 +1197,6 @@
      as selected rows and links do. Neutral 7 drops warm accent inks below
      AA, so hover settles one step back. */
   --affordance-mention: var(--neutral-6);
-  --affordance-inline-chip: var(--affordance-mention);
   --affordance-mention-hover: var(--neutral-5);
   --text-mention: var(--text-standard);
   --affordance-mention-self: var(--neutral-6);
@@ -1851,6 +1849,15 @@
   --text-message-link-own: var(--accent-ink);
 }
 
+/* Raised dark composers need a distinct nested fill and progressively lighter
+   interaction states. Both composer hosts opt into this shared surface context. */
+.dark [data-composer-surface],
+:root[data-color-mode="dark"] [data-composer-surface] {
+  --affordance-subtle: var(--neutral-5);
+  --affordance-subtle-hover: var(--neutral-6);
+  --affordance-subtle-pressed: var(--neutral-7);
+}
+
 /* ============================================================
    LAYER 3 — TAILWIND REGISTRATION
    `--color-*: initial` deletes Tailwind's default palette, so
@@ -1954,7 +1961,6 @@
   --color-affordance-accent: var(--affordance-accent);
   --color-affordance-accent-hover: var(--affordance-accent-hover);
   --color-affordance-mention: var(--affordance-mention);
-  --color-affordance-inline-chip: var(--affordance-inline-chip);
   --color-affordance-mention-hover: var(--affordance-mention-hover);
   --color-affordance-mention-own: var(--affordance-mention-own);
   --color-affordance-mention-own-hover: var(--affordance-mention-own-hover);

@@ -900,14 +900,16 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "bg-affordance-subtle",
         variable: "--affordance-subtle",
-        pointsAt: "neutral-2 light / neutral-4 dark",
+        pointsAt:
+          "neutral-2 light / neutral-4 dark; neutral-5 in dark composers",
         use: "A secondary action fill.",
         status: "core",
       },
       {
         token: "bg-affordance-subtle-hover",
         variable: "--affordance-subtle-hover",
-        pointsAt: "neutral-quiet-hover in both modes",
+        pointsAt:
+          "neutral-quiet-hover in both modes; neutral-6 in dark composers",
         use: "A secondary action under a pointer.",
         status: "core",
       },
@@ -928,7 +930,8 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "bg-affordance-subtle-pressed",
         variable: "--affordance-subtle-pressed",
-        pointsAt: "neutral-4 light / neutral-5 dark",
+        pointsAt:
+          "neutral-4 light / neutral-5 dark; neutral-7 in dark composers",
         use: "A secondary action while pressed.",
         status: "core",
       },
@@ -1145,13 +1148,6 @@ export const ROLE_GROUPS: RoleGroup[] = [
         variable: "--affordance-accent",
         pointsAt: "affordance-subtle (neutral compatibility role)",
         use: "A quiet compatibility fill; text selection uses surface-text-selection.",
-        status: "core",
-      },
-      {
-        token: "bg-affordance-inline-chip",
-        variable: "--affordance-inline-chip",
-        pointsAt: "affordance-subtle light / affordance-mention dark",
-        use: "Inline reference fill, distinct from the composer surface in both themes.",
         status: "core",
       },
       {

@@ -724,7 +724,13 @@ perimeter border switches to `--border-focus` and a matching 1px ring doubles
 it, so the composite reads as one focused surface instead of a ring around the
 text area inside a bordered box. The resting shell uses `surface-composer`:
 panel fill in light mode and neutral-4 in dark mode, preserving the former
-dark stroke color as its fill.
+dark stroke color as its fill. Both composer hosts use `data-composer-surface`
+to opt into the shared surface context: in dark mode, `affordance-subtle`, its
+hover and pressed roles use neutral-5, neutral-6 and neutral-7. Inline code,
+reference chips and recipient pills retain distinct nested fills without local
+control overrides. Light mode and controls outside the composer are unchanged.
+The context reapplies `interaction-panel` on the composer so shared controls
+resolve their fill, hover and pressed aliases against these local roles.
 Dark standard borders use neutral-5 so separators remain distinct from panels.
 Focus retains the existing `border-focus` stroke and ring.
 Unlike the text-field exception this is not modality-gated, because the shell
@@ -1679,9 +1685,6 @@ Mention chips retain their resting fill instead of an underline. Bubble links us
 readable `text-message-link` at both vibe levels. Own messages use `text-message-link-own`, which pairs with that
 level's bubble fill. Components consume the matching link role;
 never pick a link color per component.
-
-InlineChip uses `affordance-inline-chip`: the existing subtle fill in light mode
-and the mention fill in dark mode, keeping references distinct from the composer.
 
 Mentions are people, not destinations, so they are chips rather than links.
 Spend the accent on mentions of you, not on mentions in general: ordinary

@@ -160,6 +160,7 @@ async function refresh(spawn: Spawn, project: string, state: Project) {
   const fresh = !state.listedAt || startedAt < state.listedAt;
   if (fresh) {
     state.digests.clear();
+    state.starts.clear();
     state.unstarted.clear();
   }
   const [all, changed] = await Promise.all([

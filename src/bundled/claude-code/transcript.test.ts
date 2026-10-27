@@ -420,6 +420,62 @@ it("fails, not reports no transcript, when it found none and could not search ev
   ).rejects.toThrow(/unreadable\.jsonl/);
 });
 
+/** A thread session whose first prompt `host` finds cut off before its
+ * thread root, as while Claude Code is still writing it. */
+function partlyWritten() {
+  clock = 0;
+  const whole = [
+    line(
+      "user",
+      prompt("first").replace(
+        "Scope: thread",
+        `Session scope: thread\nChannel: dev (#channel)\nThread root: ${root}\nAgent: ${agent}`,
+      ),
+    ),
+    line("assistant", [{ type: "text", text: "re: first" }]),
+  ].join("\n");
+  const path = "./-Users-me--buzz/writing.jsonl";
+  const files = { [path]: whole.slice(0, whole.indexOf("Thread root")) };
+  const { spawn, home } = host(files);
+  const complete = (at: Date) => {
+    files[path] = whole;
+    const copy = join(home, ".claude/projects", path);
+    writeFileSync(copy, whole);
+    utimesSync(copy, at, at);
+  };
+  return { spawn, complete };
+}
+const thread = { agent, channelId: "channel", root };
+
+it("searches a session again once its cut-off first prompt is written", async () => {
+  const { spawn, complete } = partlyWritten();
+  const signal = new AbortController().signal;
+  await expect(
+    readTranscript(spawn, "~/.buzz", thread, false, signal),
+  ).resolves.toBeUndefined();
+  complete(new Date());
+  const read = await readTranscript(spawn, "~/.buzz", thread, false, signal);
+  expect(read?.turns.map((turn) => turn.sessionId)).toEqual(["writing"]);
+});
+
+it("searches every session again after the clock is set back", async () => {
+  const { spawn, complete } = partlyWritten();
+  const signal = new AbortController().signal;
+  await expect(
+    readTranscript(spawn, "~/.buzz", thread, false, signal),
+  ).resolves.toBeUndefined();
+  // Written before the clock's new time, so no listing of changes finds it.
+  const earlier = Date.now() - 3_600_000;
+  complete(new Date(earlier - 60_000));
+  const now = vi.spyOn(Date, "now").mockReturnValue(earlier);
+  try {
+    const read = await readTranscript(spawn, "~/.buzz", thread, false, signal);
+    expect(read?.turns.map((turn) => turn.sessionId)).toEqual(["writing"]);
+  } finally {
+    now.mockRestore();
+  }
+});
+
 it("passes this platform's base64 a session path it reads as a file", async () => {
   const { spawn, reads } = host({});
   await readTranscript(

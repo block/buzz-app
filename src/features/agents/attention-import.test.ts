@@ -1,4 +1,5 @@
 import { expect, it, vi } from "vitest";
+import { wakeLands } from "../agent-harness/plugin-wake";
 import { importAttention, watchAttentionImport } from "./attention-import";
 import type { Agents } from "./service";
 import type { Agent } from "./service";
@@ -277,6 +278,7 @@ it.each([
                   wake: {
                     agent: "agent",
                     channel: registration.channel,
+                    thread: "e".repeat(64),
                     text: "Review complete",
                   },
                 },
@@ -489,3 +491,67 @@ it("retries discovery after a session replacement and cleans up its listeners", 
   expect(newListeners.size).toBe(0);
   expect(relayListeners.size).toBe(0);
 });
+
+it.each(["stream", "solo"])(
+  "retains a rootless %s wake unless the harness accepts its destination",
+  async (channelType) => {
+    const agent = {
+      key: "agent",
+      pubkey: "agent",
+      owner: "owner",
+      place: "here",
+      attentionEnabled: true,
+    };
+    const wake = vi.fn((_key, delivery) => {
+      expect(
+        wakeLands(
+          { ...delivery, type: "plugin", plugin: "legacy", id: "wake", at: 0 },
+          channelType === "solo",
+        ),
+      ).toBe(true);
+    });
+    const agents = {
+      snapshot: () => ({ running: [agent] }),
+      wake,
+      relay: () => ({
+        snapshot: () => ({
+          status: "ready",
+          viewer: "owner",
+          session: {
+            channels: {
+              list: () => ({
+                status: "ready",
+                channels: [{ id: registration.channel, channelType }],
+              }),
+            },
+          },
+        }),
+      }),
+    } as unknown as Agents;
+    const spawn = vi.fn(async (_id: string, options?: HostProcessOptions) => {
+      if (!options?.args?.length)
+        options?.onStdout?.(
+          JSON.stringify([
+            {
+              file: "wake.json",
+              signature: "abc",
+              wake: {
+                agent: "agent",
+                channel: registration.channel,
+                text: "result",
+              },
+            },
+          ]),
+        );
+      return {
+        write: async () => {},
+        end: async () => {},
+        kill: async () => {},
+        exited: Promise.resolve(0),
+      };
+    });
+    await importAttention(agents, { spawn });
+    expect(wake).toHaveBeenCalledTimes(channelType === "solo" ? 1 : 0);
+    expect(spawn).toHaveBeenCalledTimes(channelType === "solo" ? 2 : 1);
+  },
+);

@@ -1,3 +1,4 @@
+import { soloChat } from "./solo-chat";
 import type { Agents } from "./service";
 import type { Host } from "../host/service";
 import type { AttentionValue } from "./attention";
@@ -75,6 +76,16 @@ export async function importAttention(
         const agent = recipient(wake.agent, wake.channel);
         if (!agent.attentionEnabled)
           throw new Error("Recipient Attention is not enabled");
+        if (
+          !wake.thread &&
+          !(await soloChat(
+            () => agents.relay(agent.key),
+            agent.owner,
+            wake.channel,
+            new AbortController().signal,
+          ))
+        )
+          throw new Error("Rootless legacy wake needs a known Solo chat");
         agents.wake(agent.key, {
           channel: wake.channel,
           ...(wake.thread ? { root: wake.thread } : {}),

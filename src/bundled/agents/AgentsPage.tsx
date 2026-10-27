@@ -1473,6 +1473,15 @@ function ImportAgents({
           {warning}
         </p>
       ))}
+      {old.length > 0 && (
+        <p className="m-0 text-body-sm text-secondary">
+          <strong>Buzz (Legacy):</strong> Stop the old runtime before importing,
+          or both may answer. Imports keep each agent’s key, name and picture.
+          Instructions and workspace come over only if the chosen type supports
+          them; choose provider, model and other settings afterward. An archived
+          agent is unarchived here when possible.
+        </p>
+      )}
       {empty && !old.length ? (
         <p className="m-0 text-body-sm text-secondary">
           {found.warnings.length

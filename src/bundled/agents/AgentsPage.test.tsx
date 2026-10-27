@@ -1723,6 +1723,41 @@ it("explains shared team members before importing and shares the account reminde
   expect(agents.join).toHaveBeenCalledTimes(3);
 });
 
+it.each(["agents", "teams"])(
+  "warns about duplicate runtimes before Legacy %s imports",
+  async (kind) => {
+    const user = userEvent.setup();
+    const { agents } = setup([agent("Ada", 1)]);
+    agents.portable.mockResolvedValue({
+      agents: portable,
+      teams: [nightShift],
+      warnings: [],
+      here: [],
+    });
+    if (kind === "teams")
+      await user.click(screen.getByRole("tab", { name: "Your teams" }));
+    await user.click(
+      screen.getByRole("button", {
+        name: kind === "teams" ? "New team" : "New agent",
+      }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", {
+        name: kind === "teams" ? "Import a team" : "Import an agent",
+      }),
+    );
+    const warning = await screen.findByText(
+      /Stop the old runtime before importing, or both may answer/,
+    );
+    expect(warning).toHaveTextContent(
+      "Instructions and workspace come over only if the chosen type supports them",
+    );
+    expect(warning).toHaveTextContent("provider, model and other settings");
+    expect(agents.port).not.toHaveBeenCalled();
+    expect(agents.portTeam).not.toHaveBeenCalled();
+  },
+);
+
 it("offers New team on Your teams with create and import, but no marketplace", async () => {
   const user = userEvent.setup();
   const { agents } = setup([agent("Ada", 1)]);

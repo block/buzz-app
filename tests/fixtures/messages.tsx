@@ -498,6 +498,9 @@ function Fixture() {
   useKeyboardFocusVisibility();
   const [selected, select] = useState(0),
     [scope, setScope] = useState("fixture"),
+    [tableMarkdown, setTableMarkdown] = useState(
+      "| Path | Purpose |\n| --- | --- |\n| `~/.local/share/xyz.block.buzz` | App data and plugin storage |",
+    ),
     [review, setReview] = useState<Attachment>();
   const reviewTrigger = useRef<HTMLButtonElement>(null);
   const root = roots[selected];
@@ -521,10 +524,7 @@ function Fixture() {
                   "| What | Before | After |\n| --- | --- | --- |\n| App data, local data and plugin storage | `~/.local/share/xyz.block.buzz/old` | `~/.local/share/xyz.block.buzz/new` |\n| Config | `~/.config/old` | `~/.config/new` |",
                 ],
                 // Fits this feed, but not a narrow one.
-                [
-                  "d",
-                  "| Path | Purpose |\n| --- | --- |\n| `~/.local/share/xyz.block.buzz` | App data and plugin storage |",
-                ],
+                ["d", tableMarkdown],
                 ["e", "Table follow-up"],
                 [
                   "f",
@@ -551,6 +551,11 @@ function Fixture() {
         />
       </div>
       <nav>
+        <textarea
+          aria-label="Table markdown"
+          value={tableMarkdown}
+          onChange={(event) => setTableMarkdown(event.target.value)}
+        />
         {roots.map((root, i) => (
           <button key={root.id} type="button" onClick={() => select(i)}>
             {root.content}

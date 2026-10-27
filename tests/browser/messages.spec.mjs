@@ -845,7 +845,7 @@ const spaceTakingScrollbars = `* { scrollbar-width: auto !important; scrollbar-c
 ::-webkit-scrollbar { width: 12px; height: 12px; }
 ::-webkit-scrollbar-thumb { background: gray; }`;
 
-test("message tables keep their scrollbar inside the row across resizes", async ({
+test("message tables keep their scrollbar inside the row across resizes and edits", async ({
   page,
   browserName,
 }) => {
@@ -939,5 +939,37 @@ test("message tables keep their scrollbar inside the row across resizes", async 
         return table.scrollLeft;
       }, "c".repeat(64)),
     ).toBeGreaterThan(0);
+
+    const editor = page.getByRole("textbox", { name: "Table markdown" });
+    const short = "| A |\n| --- |\n| B |";
+    await editor.fill(short);
+    await expect.poll(narrower).toEqual(fitting);
+    const table = feed.getByRole("table").nth(1);
+    // Cap the content box at the fitting table's width. Wider text must change
+    // scrollWidth without growing the table or replacing its React DOM node.
+    const width = await table.evaluate((element) => {
+      window.editedTable = element;
+      const width = element.getBoundingClientRect().width;
+      element.parentElement.style.width = `${width}px`;
+      return width;
+    });
+    const expectSameTable = async () => {
+      expect(
+        await table.evaluate((element) => element === window.editedTable),
+      ).toBe(true);
+      expect((await table.boundingBox()).width).toBeCloseTo(width, 1);
+    };
+    await editor.fill(`| A |\n| --- |\n| ${"wide".repeat(100)} |`);
+    await expect.poll(narrower).toEqual(scrolling);
+    await expectSameTable();
+    expect(
+      await table.evaluate((element) => {
+        element.scrollLeft = element.scrollWidth;
+        return element.scrollLeft;
+      }),
+    ).toBeGreaterThan(0);
+    await editor.fill(short);
+    await expect.poll(narrower).toEqual(fitting);
+    await expectSameTable();
   });
 });

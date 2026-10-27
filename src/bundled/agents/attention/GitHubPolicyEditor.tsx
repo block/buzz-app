@@ -237,6 +237,10 @@ export function GitHubPolicyPanel({
               : "GitHub allowlist"}
         </Button>
       </div>
+      <p className="text-body-sm text-secondary">
+        Pause and resume active PR watches after saving to apply allowlist
+        changes.
+      </p>
       {open && !loading && !error && status && (
         <GitHubPolicyEditor
           initialValue={status.policy}

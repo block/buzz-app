@@ -84,6 +84,7 @@ it("shows the shared warning and saves through the adapter to the same file, pre
     ignoredAuthors: [],
   });
   expect(screen.queryByText(/GitHub comments and reviews are off/)).toBeNull();
+  expect(screen.getByText(/Pause and resume active PR watches/)).toBeVisible();
   await edit();
   const editedAuthors = screen.getByRole("textbox", {
     name: "Trusted commenters",

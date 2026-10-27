@@ -5966,7 +5966,14 @@ it("catches up no faster than its Interest's lane takes turns, so none is droppe
     await settle();
     vi.setSystemTime((now + 1_000) * 1000);
     // Ten turns of 64: one runs, and its lane keeps eight waiting.
-    for (let i = 0; i < 640; i++) history.push(posted(`m${i}`, now + 1 + i));
+    // Queue capacity uses relay-verified DTOs; signing 640 events is unrelated.
+    for (let i = 0; i < 640; i++)
+      history.push(
+        event(i.toString(16).padStart(64, "0"), {
+          content: `m${i}`,
+          created_at: now + 1 + i,
+        }),
+      );
     recover();
     // Nine turns are handed on, the last at the end of its 576th event.
     const progress = () =>

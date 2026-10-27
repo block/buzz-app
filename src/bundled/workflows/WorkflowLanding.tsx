@@ -1382,7 +1382,7 @@ export function WorkflowLanding({
     ];
   });
   const displayedGroups =
-    sort === "recent"
+    sort === "recent" && groups.length
       ? [
           {
             key: "recent",

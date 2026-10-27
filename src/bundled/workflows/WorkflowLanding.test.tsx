@@ -857,6 +857,48 @@ for (const filter of ["Owner", "Status"] as const) {
   });
 }
 
+for (const status of ["loading", "error"] as const) {
+  it(`omits an empty recent group when filtered results are ${status}`, async () => {
+    const { fixture, target } = landing();
+    const user = userEvent.setup();
+    try {
+      await screen.findByRole("button", { name: /^Open Message helper:/ });
+      act(() =>
+        fixture.definitions.update({
+          status,
+          data: { partial: false, items: [] },
+        }),
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Status" }));
+      fireEvent.click(screen.getByRole("radio", { name: "Enabled" }));
+      await waitFor(() =>
+        expect(screen.queryByRole("dialog", { name: "Status" })).toBeNull(),
+      );
+      screen.getByRole("button", { name: "Sort workflows" }).focus();
+      await user.keyboard("{Enter}");
+      await user.click(
+        await screen.findByRole("menuitemradio", { name: "Recently updated" }),
+      );
+      expect(
+        screen.getByRole("button", { name: "Sort workflows" }),
+      ).toHaveAccessibleDescription("Recently updated");
+      expect(
+        screen.queryByRole("region", {
+          name: "Recent workflows",
+          hidden: true,
+        }),
+      ).toBeNull();
+      expect(screen.getByRole("status")).toHaveTextContent(
+        status === "loading"
+          ? "Reading workflows"
+          : "Workflow discovery paused.",
+      );
+    } finally {
+      target.remove();
+    }
+  });
+}
+
 it.each(["rejected", "unknown"] as const)(
   "durably dismisses a %s run and retains recovery after a persistence failure",
   async (outcome) => {

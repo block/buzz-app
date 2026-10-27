@@ -20,7 +20,6 @@ export const apply: PluginModule["apply"] = (ctx) => {
       agents,
       relay,
       navigation: navigator,
-      host: ctx.host,
     }),
   });
   ctx.pages.register({

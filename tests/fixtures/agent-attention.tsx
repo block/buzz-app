@@ -1,4 +1,3 @@
-import type { GithubPolicy } from "../../src/features/agents/github-policy";
 // The production page and shared controls, with only the host data boundary replaced.
 import { createRoot } from "react-dom/client";
 import type { Context } from "../../src/plugins/author";
@@ -64,35 +63,6 @@ const connection = {
     },
   },
 };
-let policy: GithubPolicy = {
-  version: 1,
-  trustedOrganizations: [],
-  trustedAuthors: [],
-  ignoredAuthors: [],
-};
-const policyHost = {
-  spawn: async (
-    _id: string,
-    options: { args: string[]; onStdout(data: string): void },
-  ) => {
-    if (options.args[0] === "write") policy = JSON.parse(options.args[1] ?? "");
-    const configured = Boolean(
-      policy.trustedOrganizations.length || policy.trustedAuthors.length,
-    );
-    options.onStdout(
-      JSON.stringify({
-        path: "/home/example-user-with-a-long-name/.buzz/preferences/github-pr.json",
-        policy,
-        configured,
-        error: null,
-        warning: configured
-          ? null
-          : "No GitHub author allowlist configured. CI and PR-state monitoring will continue, but comments and reviews won't be delivered. Configure trusted organizations and/or individual commenters to enable them.",
-      }),
-    );
-    return { exited: Promise.resolve(0) };
-  },
-};
 let saveGate: Promise<void> | undefined;
 const controls = {
   saveStarted: false,
@@ -111,7 +81,6 @@ declare global {
 }
 window.attentionFixture = controls;
 const Page = createPage({
-  host: policyHost,
   agents: {
     snapshot: () => snapshot,
     subscribe: (listener: () => void) => {

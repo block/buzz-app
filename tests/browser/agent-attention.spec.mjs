@@ -91,86 +91,6 @@ test("Agent Attention fits both themes and sizes and creates a subscription by k
   ).toHaveAttribute("href", "https://github.com/example/project/pull/42");
 });
 
-test("the allowlist warning opens editable shared settings with usable narrow-layout controls", async ({
-  page,
-}) => {
-  await page.goto("/tests/fixtures/agent-attention.html");
-  await expect(
-    page.getByText(/GitHub comments and reviews are off/),
-  ).toBeVisible();
-  await page.getByRole("button", { name: "Edit allowlist" }).click();
-  const form = page.getByRole("form", { name: "GitHub author allowlist" });
-  await expect(form).toBeVisible();
-  for (const theme of ["light", "dark"]) {
-    for (const width of [390, 1280]) {
-      await page.setViewportSize({ width, height: 900 });
-      await page.evaluate((theme) => {
-        document.documentElement.dataset.colorMode = theme;
-        document.documentElement.style.fontSize = "20px";
-      }, theme);
-      const save = page.getByRole("button", { name: "Save", exact: true });
-      await save.scrollIntoViewIfNeeded();
-      await expect(save).toBeInViewport();
-      await expect
-        .poll(() =>
-          form.evaluate((el) => {
-            const footer = el
-              .closest('[role="dialog"]')
-              .querySelector(".buzz-dialog-actions");
-            return (
-              el.getBoundingClientRect().bottom <=
-              footer.getBoundingClientRect().top
-            );
-          }),
-        )
-        .toBe(true);
-      expect(
-        await page
-          .locator(".attention-page")
-          .evaluate((el) => el.scrollWidth <= el.clientWidth),
-      ).toBe(true);
-    }
-  }
-  await form
-    .getByRole("textbox", { name: "Trusted organizations" })
-    .fill("example-org");
-  await form
-    .getByRole("textbox", { name: "Trusted commenters" })
-    .fill("review-bot[bot]");
-  await page.getByRole("button", { name: "Save", exact: true }).click();
-  await expect(page.getByRole("dialog")).toHaveCount(0);
-  await expect(
-    page.getByRole("button", { name: "GitHub allowlist", exact: true }),
-  ).toBeFocused();
-  await expect(
-    page.getByText(/GitHub comments and reviews are off/),
-  ).toHaveCount(0);
-  await page
-    .getByRole("button", { name: "GitHub allowlist", exact: true })
-    .click();
-  await expect(
-    form.getByRole("textbox", { name: "Trusted commenters" }),
-  ).toHaveValue("review-bot[bot]");
-});
-
-test("allowlist dialog discards drafts on Escape and outside click", async ({
-  page,
-}) => {
-  await page.goto("/tests/fixtures/agent-attention.html");
-  await page.getByRole("button", { name: "Edit allowlist" }).click();
-  await page
-    .getByRole("textbox", { name: "Trusted commenters" })
-    .fill("discard-me");
-  await page.keyboard.press("Escape");
-  await expect(page.getByRole("dialog")).toHaveCount(0);
-  await page.getByRole("button", { name: "Edit allowlist" }).click();
-  await expect(
-    page.getByRole("textbox", { name: "Trusted commenters" }),
-  ).toHaveValue("");
-  await page.mouse.click(5, 5);
-  await expect(page.getByRole("dialog")).toHaveCount(0);
-});
-
 // Browser focus after removal, including async writes, cannot be proved by jsdom.
 test("watch cancellation and deletion restore focus without taking it from another control", async ({
   page,
@@ -229,13 +149,15 @@ test("watch cancellation and deletion restore focus without taking it from anoth
     await expect
       .poll(() => page.evaluate(() => window.attentionFixture.saveStarted))
       .toBe(true);
-    await page.getByRole("button", { name: "Edit allowlist" }).focus();
+    await page
+      .getByRole("switch", { name: "Attention for Ada on this device" })
+      .focus();
   } finally {
     await page.evaluate(() => window.attentionFixture.releaseSave());
   }
   await expect(remove).toHaveCount(0);
   await expect(
-    page.getByRole("button", { name: "Edit allowlist" }),
+    page.getByRole("switch", { name: "Attention for Ada on this device" }),
   ).toBeFocused();
 
   await create.click();
@@ -254,7 +176,9 @@ test("watch cancellation and deletion restore focus without taking it from anoth
     await expect
       .poll(() => page.evaluate(() => window.attentionFixture.saveStarted))
       .toBe(true);
-    await page.getByRole("button", { name: "Edit allowlist" }).focus();
+    await page
+      .getByRole("switch", { name: "Attention for Ada on this device" })
+      .focus();
   } finally {
     await page.evaluate(() => window.attentionFixture.releaseSave());
   }
@@ -263,6 +187,6 @@ test("watch cancellation and deletion restore focus without taking it from anoth
     page.getByRole("link", { name: "Open project#42" }),
   ).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Edit allowlist" }),
+    page.getByRole("switch", { name: "Attention for Ada on this device" }),
   ).toBeFocused();
 });

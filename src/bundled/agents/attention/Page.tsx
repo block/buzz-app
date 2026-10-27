@@ -1,7 +1,6 @@
 import { attentionOf } from "../../../features/agents/attention";
 import { relayOrigin } from "../../../features/communities/destination";
 import { relayPartition } from "../../../features/relay/partition";
-import { GitHubPolicyPanel } from "./GitHubPolicyEditor";
 import { avatarMedia } from "../../../shared/avatar-source";
 import { Avatar } from "../../../shared/design-system/ui/Avatar";
 import {
@@ -93,8 +92,7 @@ export function createPage({
   agents,
   relay,
   navigation,
-  host,
-}: Pick<Context, "agents" | "relay" | "navigation" | "host">) {
+}: Pick<Context, "agents" | "relay" | "navigation">) {
   const h = React.createElement;
   const RecipeForm = createRecipeForm({ agents, relay });
   const none = () => () => {};
@@ -913,7 +911,6 @@ export function createPage({
             { className: "text-body-sm text-subtle" },
             "Interests and watches in this community wake your agents.",
           ),
-          <GitHubPolicyPanel host={host} />,
           snapshot.classifier !== "available" &&
             running.some((agent) =>
               Object.values(agent.attention).some(

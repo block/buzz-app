@@ -50,6 +50,9 @@ No user key belongs in release configuration.
 
 macOS builds with Rust debug assertions accept `BUZZ_DEV_CREDENTIAL_HELPER` as an
 absolute executable path. When set, only `read_human()` uses this helper.
+The helper replaces both the normal read and the copy from the previous service.
+Its setup must select the intended saved identity, including its service name.
+Exit 10 declares that identity absent; it does not start a Keychain migration.
 Release builds ignore it. With no setting, the normal Keychain read is unchanged.
 Import, creation, deletion, agent keys, and session records keep their own owners.
 

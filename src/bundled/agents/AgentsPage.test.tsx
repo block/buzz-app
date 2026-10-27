@@ -1716,7 +1716,13 @@ it("imports an old Buzz agent as the type chosen on its button", async () => {
     }),
   );
   await user.click(await screen.findByRole("menuitemradio", { name: "Other" }));
-  // Choosing changes the button; only pressing it imports.
+  // Choosing changes the visible label; only pressing it imports.
+  expect(
+    within(dialog).getByRole("button", { name: "Import as Other, Ada" }),
+  ).toHaveTextContent("Other");
+  expect(
+    within(dialog).getByRole("button", { name: "Import as Echo, Bea" }),
+  ).toHaveTextContent("Echo");
   expect(agents.port).not.toHaveBeenCalled();
   expect(
     within(dialog).getByRole("button", { name: "Import as Echo, Bea" }),

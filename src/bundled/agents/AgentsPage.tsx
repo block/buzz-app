@@ -1497,7 +1497,7 @@ function ImportAgents({
                     disabled={!!pending && pending !== team.id}
                     onClick={() => void portTeam(team)}
                   >
-                    Import as <TypeIcon type={typeFor(team.id)} />
+                    <ImportType type={typeFor(team.id)} />
                   </SplitButton>
                 </ImportRow>
               );
@@ -1569,7 +1569,7 @@ function ImportAgents({
                   loading={ports.get(agent.pubkey) === "queued"}
                   onClick={() => port(agent)}
                 >
-                  Import as <TypeIcon type={typeFor(agent.pubkey)} />
+                  <ImportType type={typeFor(agent.pubkey)} />
                 </SplitButton>
               )}
             </AgentCard>
@@ -1597,6 +1597,20 @@ function ImportAgents({
         />
       )}
     </div>
+  );
+}
+
+/** Registered artwork can stand for a known type; the robot fallback cannot. */
+function ImportType({ type }: { type: RegisteredAgentType | undefined }) {
+  return (
+    <>
+      Import as{" "}
+      {type?.icon && type.icon !== RobotIcon ? (
+        <TypeIcon type={type} />
+      ) : (
+        type?.title
+      )}
+    </>
   );
 }
 

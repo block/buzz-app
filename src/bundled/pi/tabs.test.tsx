@@ -137,7 +137,6 @@ function fakeRuntime() {
         place,
         true,
       ),
-      unknownThread: 0,
       more: false,
     })),
   };

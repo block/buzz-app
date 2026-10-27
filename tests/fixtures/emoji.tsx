@@ -215,16 +215,18 @@ const sessions = ["a", "b"].map((community) => {
     created_at: 15,
     tags: [["e", root.id]],
   });
+  const groupSize = Number(new URLSearchParams(location.search).get("grouped"));
   const groupedReactions = grouped
     ? Array.from(
         {
-          length:
-            new URLSearchParams(location.search).get("grouped") === "8" ? 8 : 9,
+          length: [8, 40, 150].includes(groupSize) ? groupSize : 9,
         },
         (_, index) => {
           const person = keypair();
           participantProfiles.set(person.pubkey, {
-            name: `Teammate ${index + 1}`,
+            name: new URLSearchParams(location.search).has("long-names")
+              ? `Teammate ${index + 1} ${"Long display name ".repeat(10)}`
+              : `Teammate ${index + 1}`,
           });
           return signed(person, {
             kind: 7,

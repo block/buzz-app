@@ -57,6 +57,54 @@ test("grouped reaction counts fit and preview in both themes and text sizes", as
   await expect(preview).toHaveCount(0);
 });
 
+// Browser-only: available popup height and real line clamping at enlarged text.
+test("large reaction previews keep the remainder count visible without scrolling", async ({
+  page,
+}) => {
+  for (const { count, width, scale } of [
+    { count: 150, width: 1440, scale: 1 },
+    { count: 40, width: 520, scale: 2 },
+  ]) {
+    await page.setViewportSize({ width, height: 950 });
+    await page.goto(
+      `/tests/fixtures/emoji.html?reactions&grouped=${count}&long-names`,
+    );
+    await page.evaluate(
+      (scale) =>
+        document.documentElement.style.setProperty(
+          "--buzz-text-scale",
+          String(scale),
+        ),
+      scale,
+    );
+    const group = page.getByRole("button", { name: `👍: ${count} people` });
+    await group.focus();
+    const preview = page.locator('.buzz-preview-card[role="tooltip"]');
+    const remainder = preview.getByText(`and ${count - 3} others`, {
+      exact: true,
+    });
+    await expect(remainder).toBeVisible();
+    await expect(preview).toContainText("Teammate 3");
+    await expect(preview).not.toContainText("Teammate 4 ");
+    for (const theme of ["light", "dark"]) {
+      await page.evaluate(
+        (theme) => (document.documentElement.dataset.colorMode = theme),
+        theme,
+      );
+      await expect
+        .poll(() =>
+          preview.evaluate((card) => card.scrollHeight <= card.clientHeight),
+        )
+        .toBe(true);
+      const card = await preview.boundingBox();
+      const summary = await remainder.boundingBox();
+      expect(summary.y + summary.height).toBeLessThanOrEqual(
+        card.y + card.height,
+      );
+    }
+  }
+});
+
 // Browser-only: actual rem geometry and the line-height clipping boundary need
 // the production stylesheet and layout engine, not a DOM emulator.
 test("reaction emojis and hit areas grow together without clipping", async ({

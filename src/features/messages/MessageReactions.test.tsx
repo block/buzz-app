@@ -207,8 +207,11 @@ it("groups at 9 unique people and expands again after my removal", async () => {
   act(() => group.focus());
   const preview = await screen.findByRole("tooltip");
   expect(preview.textContent).toContain("You");
-  for (const person of others)
+  for (const person of others.slice(0, 2))
     expect(preview.textContent).toContain(person.pubkey.slice(0, 10));
+  expect(preview.textContent).toContain("and 6 others");
+  for (const person of others.slice(2))
+    expect(preview.textContent).not.toContain(person.pubkey.slice(0, 10));
   fireEvent.click(group);
   expect(pills()).toHaveLength(8);
   expect(onFocusedRemoval).toHaveBeenCalledTimes(1);

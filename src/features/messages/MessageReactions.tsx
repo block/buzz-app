@@ -255,9 +255,19 @@ function ReactionEmoji({
   const [name, setName] = useState(reaction.content);
   const [previewTilt, setPreviewTilt] = useState("0deg");
   const emojiAnchor = useRef<HTMLSpanElement>(null);
+  const previewAuthors = useMemo(() => {
+    const first = authorIds.slice(0, 3);
+    return session.viewer && authorIds.includes(session.viewer)
+      ? [session.viewer, ...first.filter((id) => id !== session.viewer)].slice(
+          0,
+          3,
+        )
+      : first;
+  }, [authorIds, session.viewer]);
+  const remaining = authorIds.length - previewAuthors.length;
   const reactorProfiles = useMemo(
-    () => selectProfiles(session.profiles, authorIds),
-    [session.profiles, authorIds],
+    () => selectProfiles(session.profiles, previewAuthors),
+    [session.profiles, previewAuthors],
   );
   const loadedReactors = useSyncExternalStore(
     reactorProfiles.subscribe,
@@ -266,7 +276,7 @@ function ReactionEmoji({
   );
   const grouped = authorIds.length >= 9;
   const own = !!session.viewer && authorIds.includes(session.viewer);
-  const user = authorIds
+  const user = previewAuthors
     .map((authorId) =>
       authorId === session.viewer
         ? "You"
@@ -276,7 +286,7 @@ function ReactionEmoji({
     )
     .join(", ");
   const revealName = () => {
-    void session.profiles.ensure(authorIds, "background").catch(() => {});
+    void session.profiles.ensure(previewAuthors, "background").catch(() => {});
     if (reaction.emoji) return;
     void import("./reaction-name").then(({ reactionName }) =>
       setName(reactionName(reaction.content)),
@@ -349,6 +359,11 @@ function ReactionEmoji({
             <ReactionGlyph reaction={reaction} session={session} />
           </span>
           <span className={styles.reactionPreviewNames}>{user}</span>
+          {remaining > 0 && (
+            <span className={styles.reactionPreviewNames}>
+              and {remaining} others
+            </span>
+          )}
           <span className={styles.reactionPreviewName}>{name}</span>
         </div>
       </PreviewCard>

@@ -246,7 +246,8 @@
   .shell-toolbar-pages {
     width: max-content;
   }
-  .shell-toolbar-page {
+  .shell-toolbar-page,
+  .shell-toolbar-launcher {
     position: relative;
     flex: none;
   }

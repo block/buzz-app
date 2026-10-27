@@ -694,6 +694,13 @@ image (generic icon on failure) and uses the panel title as the button label.
 Launcher-only panels use `matches: () => false`. Clicking selects that exact active
 contribution, bypassing target matching so another plugin cannot intercept it.
 
+A launcher may also supply `badge`, a component the shell renders as the same
+compact corner mark as a toolbar page badge, such as an unread count. The plugin
+owns its data and re-rendering; the button keeps the panel title as its label. A
+badge that throws renders nothing and leaves the launcher usable. Hosts before
+this field accept and ignore it, since launcher validation checks only `icon` and
+`target`.
+
 App owns one launched-panel selection, separate from a page’s local target. The
 selection starts closed, repeated clicks toggle it closed, and navigation preserves
 open intent. Disable/replacement invalidates the installation object; re-enable

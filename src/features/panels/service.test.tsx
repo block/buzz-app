@@ -207,6 +207,7 @@ it("keeps the specific panel ahead of a catch-all after it is disabled and re-en
 });
 
 it("validates and freezes launcher metadata without changing target resolution", async () => {
+  const Badge = () => null;
   const root = new Context();
   root.provide("pluginStatus", {
     isActive: () => true,
@@ -228,6 +229,8 @@ it("validates and freezes launcher metadata without changing target resolution",
       {},
       { icon: "", target: "" },
       { icon: "/icon.png", target: 1 },
+      { icon: "/icon.png", target: "", badge: "3" },
+      { icon: "/icon.png", target: "", badge: null },
     ]) {
       expect(() => ctx.panels.register({ ...base, launcher } as never)).toThrow(
         "launcher",
@@ -256,6 +259,11 @@ it("validates and freezes launcher metadata without changing target resolution",
     const launcher = { icon: "/icon.png", target: "" };
     const channelMenu = { label: "Usage", eligible: () => true };
     ctx.panels.register({ ...base, launcher, channelMenu });
+    ctx.panels.register({
+      ...base,
+      id: "notes-badged",
+      launcher: { icon: "/icon.png", target: "", badge: Badge },
+    });
     launcher.icon = "/mutated.png";
     channelMenu.label = "mutated";
   });
@@ -264,6 +272,8 @@ it("validates and freezes launcher metadata without changing target resolution",
     icon: "/icon.png",
     target: "",
   });
+  expect(panels.snapshot()[1]?.launcher?.badge).toBe(Badge);
+  expect(Object.isFrozen(panels.snapshot()[1]?.launcher)).toBe(true);
   expect(Object.isFrozen(panels.snapshot()[0]?.launcher)).toBe(true);
   expect(panels.snapshot()[0]?.channelMenu?.label).toBe("Usage");
   expect(Object.isFrozen(panels.snapshot()[0]?.channelMenu)).toBe(true);

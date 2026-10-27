@@ -279,21 +279,32 @@ it("appends background pages without reshuffling and ranks new search results", 
     { pubkey: "b".repeat(64), name: "Adam Avery" },
     { pubkey: "c".repeat(64), name: "Avery" },
   ];
-  t.directMessages.people.mockImplementation(async (query, page) => ({
-    people: query
-      ? directory
-      : page === 1
-        ? directory.slice(0, 2)
-        : directory.slice(2),
-    hasMore: !query && page === 1,
-  }));
+  let release = () => {};
+  const background = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  t.directMessages.people.mockImplementation(async (query, page) => {
+    if (!query && page !== 1) await background;
+    return {
+      people: query
+        ? directory
+        : page === 1
+          ? directory.slice(0, 2)
+          : directory.slice(2),
+      hasMore: !query && page === 1,
+    };
+  });
   t.mount();
-  await screen.findByRole("option", { name: "Zoe" });
   const names = () =>
     screen
       .getAllByRole("option")
       .map((item) => item.getAttribute("aria-label"));
-  expect(names()).toEqual(["Adam Avery", "Zoe"]);
+  try {
+    await screen.findByRole("option", { name: "Zoe" });
+    expect(names()).toEqual(["Adam Avery", "Zoe"]);
+  } finally {
+    release();
+  }
   await screen.findByRole("option", { name: "Avery" });
   expect(names()).toEqual(["Adam Avery", "Zoe", "Avery"]);
   await t.user.type(recipient(), "avery");

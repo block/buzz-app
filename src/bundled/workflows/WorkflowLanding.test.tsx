@@ -247,18 +247,21 @@ it("purges globally without automatic reads and recovers remaining channels on m
     await fixture.finish(0, [event(a.id), event(b.id)]);
     fixture.refresh();
     await waitFor(() => expect(fixture.reads).toHaveLength(2));
-    fixture.change([a, c], true);
+    fireEvent.click(screen.getByRole("button", { name: "Status" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Enabled" }));
+    // The filter exit is still mounted, even though role queries hide it.
+    expect(screen.getAllByText("Message helper")).toHaveLength(2);
     expect(
       screen.queryByRole("button", { name: /^Open Message helper:/ }),
     ).toBeNull();
+    fixture.change([a, c], true);
+    expect(screen.queryByText("Message helper")).toBeNull();
     expect(fixture.reads[1]?.signal?.aborted).toBe(true);
     await fixture.finish(1, [event(b.id)]);
     await fixture.finish(2, [event(a.id)]);
     expect(fixture.reads[2]?.ids).toEqual([a.id, c.id]);
     act(() => fixture.owner.clear());
-    expect(
-      screen.queryByRole("button", { name: /^Open Message helper:/ }),
-    ).toBeNull();
+    expect(screen.queryByText("Message helper")).toBeNull();
     expect(screen.getByRole("status")).toHaveTextContent(
       "cleared or unavailable",
     );
@@ -267,6 +270,45 @@ it("purges globally without automatic reads and recovers remaining channels on m
     fixture.refresh();
     await fixture.finish(3);
     expect(screen.getByRole("status")).toBeEmptyDOMElement();
+  } finally {
+    fixture.close();
+  }
+});
+
+it("purges a pending filter exit immediately when session access clears", async () => {
+  const fixture = mount([channel(1)]);
+  try {
+    await fixture.finish(0, [event(channel(1).id)]);
+    fixture.refresh();
+    await waitFor(() => expect(fixture.reads).toHaveLength(2));
+    fireEvent.click(screen.getByRole("button", { name: "Status" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Enabled" }));
+    expect(screen.getByText("Message helper")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /^Open Message helper:/ }),
+    ).toBeNull();
+    act(() => fixture.owner.clear());
+    expect(screen.queryByText("Message helper")).toBeNull();
+  } finally {
+    fixture.close();
+  }
+});
+
+it("purges pending filter exits immediately when channel membership changes", async () => {
+  const [a, b] = [channel(1), channel(2)];
+  const fixture = mount([a, b]);
+  try {
+    await fixture.finish(0, [event(a.id), event(b.id)]);
+    fixture.refresh();
+    await waitFor(() => expect(fixture.reads).toHaveLength(2));
+    fireEvent.click(screen.getByRole("button", { name: "Status" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Enabled" }));
+    expect(screen.getAllByText("Message helper")).toHaveLength(2);
+    expect(
+      screen.queryByRole("button", { name: /^Open Message helper:/ }),
+    ).toBeNull();
+    fixture.change([a]);
+    expect(screen.queryByText("Message helper")).toBeNull();
   } finally {
     fixture.close();
   }

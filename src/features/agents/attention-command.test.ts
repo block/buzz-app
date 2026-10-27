@@ -273,3 +273,23 @@ it("marks omitted output when a refused queue exceeds the memory bound", async (
   expect(delivered).toContain("14464 characters omitted");
   expect(delivered).toContain("a".repeat(65536));
 });
+
+it("drains a command that exits before stdin is closed", async () => {
+  const h = harness();
+  const done = h.run({
+    ...input(h),
+    spawn: async (_id, options) => {
+      options?.onStdout?.("finished");
+      return {
+        write: async () => {},
+        end: async () => {
+          throw new Error("No such process");
+        },
+        kill: async () => {},
+        exited: Promise.resolve(0),
+      };
+    },
+  });
+  await done;
+  expect(h.emit).toHaveBeenCalledWith("finished");
+});

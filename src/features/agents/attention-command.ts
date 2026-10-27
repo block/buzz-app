@@ -160,7 +160,14 @@ export function registerAttention(ctx: {
         signal.addEventListener("abort", abort, { once: true });
         if (signal.aborted) abort();
         try {
-          await process.end();
+          await process.end().catch((error: unknown) => {
+            // A fast command may exit before the close reaches the native host.
+            if (
+              (error instanceof Error ? error.message : String(error)) !==
+              "No such process"
+            )
+              throw error;
+          });
           const code = await process.exited;
           if (!signal.aborted && code !== 0) {
             failure = new Error(

@@ -1652,6 +1652,15 @@ it("matches saved trigger types with OR and excludes unreadable status values", 
   );
   expect(screen.queryByRole("button", { name: /^Open Unnamed/ })).toBeNull();
   expect(screen.queryByRole("button", { name: /^Open Message:/ })).toBeNull();
+  await choose("Status", "Enabled");
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: /^Open Message:/ }),
+    ).toBeVisible(),
+  );
+  expect(screen.queryByRole("button", { name: /^Open Unnamed/ })).toBeNull();
+  expect(screen.queryByRole("button", { name: /^Open Unknown:/ })).toBeNull();
+  expect(screen.getAllByRole("button", { name: /^Open / })).toHaveLength(5);
   await choose("Status", "Any status");
   for (const [index, [label]] of triggers.entries()) {
     await chooseTrigger(label);

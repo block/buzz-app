@@ -157,116 +157,153 @@ test("Canvas history previews and restores without losing the editor draft", asy
   const bounds = await dialog.boundingBox();
   expect(bounds.x).toBeGreaterThanOrEqual(0);
   expect(bounds.x + bounds.width).toBeLessThanOrEqual(390);
+  // Save keeps its native focus handoff in each mode after history recovery.
+  await dialog.getByRole("tab", { name: "Edit", exact: true }).click();
+  await dialog.getByRole("button", { name: "Reload saved Canvas" }).click();
+  await page.getByRole("button", { name: "Discard and reload" }).click();
+  await expect(editor).toHaveValue(old.content);
+  const save = dialog.getByRole("button", { name: "Save Canvas", exact: true });
+  await editor.fill("Saved from edit");
+  await page.clock.setFixedTime(new Date((head.created_at + 1) * 1000));
+  await save.focus();
+  await page.keyboard.press("Enter");
+  await expect(save).toBeDisabled();
+  await expect(editor).toBeFocused();
+  await editor.fill("Saved from preview");
+  await dialog.getByRole("button", { name: "Preview", exact: true }).click();
+  await page.clock.setFixedTime(new Date((head.created_at + 1) * 1000));
+  await save.focus();
+  await page.keyboard.press("Enter");
+  await expect(save).toBeDisabled();
+  await expect(
+    dialog.getByRole("button", { name: "Edit", exact: true }),
+  ).toBeFocused();
+  await expect(
+    dialog.getByRole("region", { name: "Canvas preview" }),
+  ).toHaveText("Saved from preview");
 });
 
 // Disabling a focused native textarea drops focus in browsers, unlike jsdom.
 // Exercise the real late-save retirement and held reconciliation read.
-for (const outcome of ["saved", "failed after moving focus"]) {
-  test(`Canvas reconciliation preserves focus: ${outcome}`, async ({
-    page,
-    app,
-  }) => {
-    let head = app.sign({
-      kind: 40100,
-      content: "Saved",
-      tags: [["h", "alpha"]],
-      created_at: 1700000000,
-    });
-    const publishing = Promise.withResolvers();
-    const publish = Promise.withResolvers();
-    const reading = Promise.withResolvers();
-    const read = Promise.withResolvers();
-    let reconcile = false;
-    let readsAfterPublish = 0;
-    await page.route("**/api/relay/primary/query", async (route) => {
-      const filters = route.request().postDataJSON();
-      if (filters.every((filter) => filter.ids))
-        return route.fulfill({
-          json: filters.flatMap((filter) =>
-            filter.ids.includes(head.id) ? [head] : [],
-          ),
-        });
-      if (!filters.every((filter) => filter.kinds?.includes(40100)))
-        return route.continue();
-      if (reconcile && ++readsAfterPublish > 1) {
-        reading.resolve();
-        await read.promise;
-        if (outcome !== "saved") {
+for (const mode of ["editor", "preview"]) {
+  for (const outcome of ["saved", "failed after moving focus"]) {
+    test(`Canvas reconciliation preserves focus in ${mode}: ${outcome}`, async ({
+      page,
+      app,
+    }) => {
+      let head = app.sign({
+        kind: 40100,
+        content: "Saved",
+        tags: [["h", "alpha"]],
+        created_at: 1700000000,
+      });
+      const publishing = Promise.withResolvers();
+      const publish = Promise.withResolvers();
+      const reading = Promise.withResolvers();
+      const read = Promise.withResolvers();
+      let reconcile = false;
+      let readsAfterPublish = 0;
+      await page.route("**/api/relay/primary/query", async (route) => {
+        const filters = route.request().postDataJSON();
+        if (filters.every((filter) => filter.ids))
           return route.fulfill({
-            // A malformed read response fails without revoking the session.
-            json: { error: "Reconciliation unavailable" },
+            json: filters.flatMap((filter) =>
+              filter.ids.includes(head.id) ? [head] : [],
+            ),
           });
+        if (!filters.every((filter) => filter.kinds?.includes(40100)))
+          return route.continue();
+        if (reconcile && ++readsAfterPublish > 1) {
+          reading.resolve();
+          await read.promise;
+          if (outcome !== "saved") {
+            return route.fulfill({
+              // A malformed read response fails without revoking the session.
+              json: { error: "Reconciliation unavailable" },
+            });
+          }
         }
+        return route.fulfill({ json: [head] });
+      });
+      await page.route("**/api/relay/primary/sign", (route) =>
+        route.fulfill({ json: app.sign(route.request().postDataJSON()) }),
+      );
+      await page.route("**/api/relay/primary/publish", async (route) => {
+        const event = route.request().postDataJSON();
+        expect(verifyEvent(event)).toBe(true);
+        expect(event.tags).toContainEqual(["expected-revision", head.id]);
+        publishing.resolve();
+        await publish.promise;
+        head = event;
+        await route.fulfill({ json: { accepted: true, event_id: event.id } });
+      });
+      try {
+        await page.goto(app.origin);
+        await openPage(page, "Messages");
+        const openCanvas = async () => {
+          await page
+            .getByRole("button", { name: "Channel actions", exact: true })
+            .click();
+          await page
+            .getByRole("menuitem", { name: "View canvas", exact: true })
+            .click();
+        };
+        await openCanvas();
+        const canvas = page.getByRole("region", {
+          name: "Channel Canvas",
+          exact: true,
+        });
+        const editor = canvas.getByRole("textbox", {
+          name: "Canvas Markdown",
+          exact: true,
+          includeHidden: true,
+        });
+        await expect(editor).toHaveValue("Saved");
+        await editor.fill("Draft sent before closing");
+        await canvas
+          .getByRole("button", { name: "Save Canvas", exact: true })
+          .click();
+        await publishing.promise;
+        await page
+          .getByRole("button", { name: "Close Canvas tab", exact: true })
+          .click();
+        await expect(canvas).toHaveCount(0);
+        await openCanvas();
+        await expect(editor).toBeEditable();
+        await editor.focus();
+        if (mode === "preview")
+          await canvas
+            .getByRole("button", { name: "Preview", exact: true })
+            .click();
+        const focused =
+          mode === "preview"
+            ? canvas.getByRole("button", { name: "Edit", exact: true })
+            : editor;
+        await expect(focused).toBeFocused();
+        reconcile = true;
+        publish.resolve();
+        await reading.promise;
+        await expect(focused).toBeFocused();
+        await expect(editor).not.toBeEditable();
+        await page.keyboard.type("must not change");
+        await expect(editor).toHaveValue("Draft sent before closing");
+        const composer = page.getByRole("textbox", {
+          name: "Message #Alpha",
+          exact: true,
+        });
+        if (outcome !== "saved") await composer.focus();
+        read.resolve();
+        await expect(canvas).toHaveAttribute("aria-busy", "false");
+        await expect(editor).toBeEditable();
+        await expect(outcome === "saved" ? focused : composer).toBeFocused();
+        if (outcome !== "saved")
+          await expect(canvas.getByRole("alert")).toBeVisible();
+        else await expect(canvas.getByRole("alert")).toHaveCount(0);
+        await expect(editor).toHaveValue("Draft sent before closing");
+      } finally {
+        publish.resolve();
+        read.resolve();
       }
-      return route.fulfill({ json: [head] });
     });
-    await page.route("**/api/relay/primary/sign", (route) =>
-      route.fulfill({ json: app.sign(route.request().postDataJSON()) }),
-    );
-    await page.route("**/api/relay/primary/publish", async (route) => {
-      const event = route.request().postDataJSON();
-      expect(verifyEvent(event)).toBe(true);
-      expect(event.tags).toContainEqual(["expected-revision", head.id]);
-      publishing.resolve();
-      await publish.promise;
-      head = event;
-      await route.fulfill({ json: { accepted: true, event_id: event.id } });
-    });
-    try {
-      await page.goto(app.origin);
-      await openPage(page, "Messages");
-      const openCanvas = async () => {
-        await page
-          .getByRole("button", { name: "Channel actions", exact: true })
-          .click();
-        await page
-          .getByRole("menuitem", { name: "View canvas", exact: true })
-          .click();
-      };
-      await openCanvas();
-      const canvas = page.getByRole("region", {
-        name: "Channel Canvas",
-        exact: true,
-      });
-      const editor = canvas.getByRole("textbox", {
-        name: "Canvas Markdown",
-        exact: true,
-      });
-      await expect(editor).toHaveValue("Saved");
-      await editor.fill("Draft sent before closing");
-      await canvas
-        .getByRole("button", { name: "Save Canvas", exact: true })
-        .click();
-      await publishing.promise;
-      await page
-        .getByRole("button", { name: "Close Canvas tab", exact: true })
-        .click();
-      await expect(canvas).toHaveCount(0);
-      await openCanvas();
-      await expect(editor).toBeEditable();
-      await editor.focus();
-      reconcile = true;
-      publish.resolve();
-      await reading.promise;
-      await expect(editor).toBeFocused();
-      await expect(editor).not.toBeEditable();
-      await page.keyboard.type("must not change");
-      await expect(editor).toHaveValue("Draft sent before closing");
-      const composer = page.getByRole("textbox", {
-        name: "Message #Alpha",
-        exact: true,
-      });
-      if (outcome !== "saved") await composer.focus();
-      read.resolve();
-      await expect(editor).toBeEditable();
-      await expect(outcome === "saved" ? editor : composer).toBeFocused();
-      if (outcome !== "saved")
-        await expect(canvas.getByRole("alert")).toBeVisible();
-      else await expect(canvas.getByRole("alert")).toHaveCount(0);
-      await expect(editor).toHaveValue("Draft sent before closing");
-    } finally {
-      publish.resolve();
-      read.resolve();
-    }
-  });
+  }
 }

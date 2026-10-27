@@ -38,6 +38,7 @@ import {
   AgentDelete,
   AgentRemoveHere,
   inSeveral,
+  sharedAgentSettings,
 } from "../../features/agents/AgentManage";
 import { AttentionSummary } from "../../features/agents/AttentionPanel";
 import { useAgents, useChannelChoices } from "../../features/agents/react";
@@ -1751,7 +1752,7 @@ function CommunityImportDialog({
           <div className="min-w-0">
             <dt className="text-label-sm">One setup, everywhere</dt>
             <dd className="m-0 mt-1 text-body-sm text-secondary">
-              Name, type, instructions, model, and workspace are shared.
+              {sharedAgentSettings}
             </dd>
           </div>
         </div>
@@ -1764,8 +1765,8 @@ function CommunityImportDialog({
           <div className="min-w-0">
             <dt className="text-label-sm">Memories stay in each community</dt>
             <dd className="m-0 mt-1 text-body-sm text-secondary">
-              Saved memories and conversations aren't copied between
-              communities.
+              Pictures, attention, saved memories and conversations stay
+              separate in each community.
             </dd>
           </div>
         </div>

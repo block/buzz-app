@@ -27,6 +27,7 @@ import {
   AgentDelete,
   AgentRemoveHere,
   inSeveral,
+  sharedAgentSettings,
 } from "../../features/agents/AgentManage";
 import {
   CopyIcon,
@@ -549,8 +550,8 @@ function SharedSettingsNotice({
           aria-label={`${agent.name}’s shared settings`}
         >
           <p className="m-0 text-body-sm text-subtle">
-            {agent.name}’s profile, instructions, and model settings are shared
-            across communities:
+            {sharedAgentSettings} Pictures and attention are specific to each
+            community. Changes apply in:
           </p>
           <ul
             aria-label="Communities"

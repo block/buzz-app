@@ -79,7 +79,7 @@ test("shared settings help and tab discards keep Memory scope clear", async ({
     name: "Ada’s shared settings",
   });
   await expect(popover).toContainText(
-    "Ada’s profile, instructions, and model settings are shared across communities:",
+    "Name, type and settings, including instructions, model and workspace, are shared across communities.",
   );
   await expect(
     popover.getByRole("list", { name: "Communities" }),

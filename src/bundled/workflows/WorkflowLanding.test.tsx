@@ -146,6 +146,34 @@ function mount(
   };
 }
 
+it("shows a joined channel's workflows after its read completes in Recently updated", async () => {
+  const [a, b] = [channel(1), channel(2)];
+  const fixture = mount([a]);
+  const user = userEvent.setup();
+  try {
+    await fixture.finish(0, [event(a.id)]);
+    screen.getByRole("button", { name: "Sort workflows" }).focus();
+    await user.keyboard("{Enter}");
+    await user.click(
+      await screen.findByRole("menuitemradio", { name: "Recently updated" }),
+    );
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    const recentSurvivor = screen.getByRole("button", {
+      name: /^Open Message helper:/,
+    });
+    fixture.change([a, b]);
+    await fixture.finish(1, [event(b.id)]);
+    expect(fixture.reads[1]?.ids).toEqual([b.id]);
+    expect(
+      screen.getAllByRole("button", { name: /^Open Message helper:/ }),
+    ).toHaveLength(2);
+    expect(recentSurvivor).toBeInTheDocument();
+    expect(screen.getByRole("status")).toBeEmptyDOMElement();
+  } finally {
+    fixture.close();
+  }
+});
+
 it("groups repeated workflows by channel identity in channel-name order", async () => {
   const first = { ...channel(1), name: "Zulu" };
   const second = { ...channel(2), name: "Alpha" };
@@ -879,11 +907,34 @@ for (const sort of ["By channel", "Recently updated"]) {
       const run = within(detail).getByRole("button", { name: "Run now" });
       run.focus();
       const historyReads = fixture.calls.runs;
+      act(() =>
+        fixture.definitions.update({
+          status: "ready",
+          data: {
+            items: [
+              fixtureDefinition,
+              {
+                ...fixtureDefinition,
+                channelId: added.id,
+                yaml: fixtureYaml.replace("Message helper", "Joined helper"),
+              },
+            ],
+            partial: true,
+            partialChannelIds: [added.id],
+          },
+        }),
+      );
       for (const channels of [
         [own, unrelated, added],
         [own, added],
       ]) {
         changeChannels(channels);
+        expect(
+          await screen.findByRole("button", { name: /^Open Joined helper:/ }),
+        ).toBeInTheDocument();
+        expect(
+          screen.getByText(`#${added.name} returned a partial workflow list.`),
+        ).toBeInTheDocument();
         expect(
           within(target).getByRole("region", { name: "Message helper" }),
         ).toBe(detail);

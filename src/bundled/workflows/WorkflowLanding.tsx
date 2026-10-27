@@ -925,15 +925,16 @@ function WorkflowCards({
   onDelete: (definition: WorkflowDefinition) => void;
   onOpen: (definition: WorkflowDefinition, channel: ChannelSummary) => void;
 }) {
-  // Presence data stays current even while a filtered group is exiting.
+  // Present groups receive current props; presence data updates retained exits.
+  const present = useIsPresent();
   const channelIds: ReadonlySet<string> = usePresenceData();
   const headingId = useId();
-  const currentEntries = entries.filter((entry) =>
-    channelIds.has(entry.channel.id),
-  );
-  const currentPartialChannels = partialChannels.filter((item) =>
-    channelIds.has(item.id),
-  );
+  const currentEntries = present
+    ? entries
+    : entries.filter((entry) => channelIds.has(entry.channel.id));
+  const currentPartialChannels = present
+    ? partialChannels
+    : partialChannels.filter((item) => channelIds.has(item.id));
   if (!currentEntries.length && !currentPartialChannels.length) return null;
   return (
     <section

@@ -14,8 +14,10 @@ See the [capability contract](../src/features/workflows/types.ts).
   channels with loaded workflows and supports multiple selections. An empty
   channel selection shows all channels. Selection is not persisted across sessions.
   Separate Owner, Status, Trigger, and Channels dropdowns sit above the collection,
-  with Clear all alongside the controls. Active dropdown triggers show the
-  selected value and its icon, with a separate clear icon beside each trigger.
+  with Clear all alongside the controls. A filtered empty result offers Clear
+  filters and returns focus to Owner; an unfiltered setup state offers New workflow
+  only when creation is available. Active dropdown triggers show the selected
+  value and its icon, with a separate clear icon beside each trigger.
   Owner and Status use inline radios;
   Trigger and Channels use inline checkboxes. Popups have no Clear action.
   My workflows matches the current viewer's saved workflow ownership.
@@ -26,13 +28,16 @@ See the [capability contract](../src/features/workflows/types.ts).
   remain visible when no trigger types are selected. Selected trigger types match
   any of those types; this result intersects with Owner, Status, and Channels.
   Selected channels include workflows from any of those channels.
-  Trigger and channel choices use compact, scrollable two-column lists. Channel
-  choices remain available regardless of the other filters.
+  Trigger and channel choices use wide popups with scrollable two-column lists.
+  Channel choices remain available regardless of the other filters.
   An icon-only sort menu stays at the far right of the filter row. By channel
   keeps the channel groups; Recently updated shows a flat list ordered by saved
-  configuration timestamp, newest first, with channel names on each row.
-  Saving an edit, including toggling a row's configured state, moves it to the top.
-  Sorting is local to the page and Clear all only resets filters.
+  configuration timestamp, newest first, with channel names on each row. Equal
+  timestamps use the workflow coordinate (channel, owner, UUID) as a stable tiebreak.
+  Saving an edit, including toggling configured state, updates the saved timestamp;
+  edits within the same second still follow that tiebreak.
+  Sorting is local to the page and Clear all only resets filters. Switching sort
+  recreates the row/detail views, resetting run-history paging and card-local state.
   Discovery still reads all eligible channels.
   Creating a workflow can still target any eligible channel. Each row runs the
   saved configuration in one click and toggles its configured state. Selecting

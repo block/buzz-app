@@ -21,7 +21,12 @@ const emptyChannels: readonly ReferenceChannel[] = [];
 const emptyAgents: AgentLibrary["identities"] = [];
 export const emptyReferenceDirectory = {
   profiles: emptyProfiles,
+  /** The joined list. Raw `buzz://channel/<id>` links resolve through it
+   * alone, so an unjoined channel takes its exact reference's name. */
   channels: emptyChannels,
+  /** Channels `#name` prose may link: the joined list, then the open channels
+   * a completed public directory read named. */
+  named: emptyChannels,
   agents: emptyAgents,
 };
 const noop = () => () => {};
@@ -35,6 +40,7 @@ const referenced = new WeakMap<
     list: ChannelList;
     open: readonly ReferenceChannel[];
     channels: readonly ReferenceChannel[];
+    named: readonly ReferenceChannel[];
   }
 >();
 const sameReference = (a: ReferenceChannel, b: ReferenceChannel | undefined) =>
@@ -43,42 +49,50 @@ const sameReference = (a: ReferenceChannel, b: ReferenceChannel | undefined) =>
   a.channelType === b.channelType &&
   a.private === b.private &&
   a.archived === b.archived;
+const retained = (
+  next: readonly ReferenceChannel[],
+  prior: readonly ReferenceChannel[] | undefined,
+) =>
+  prior?.length === next.length &&
+  next.every((channel, index) => sameReference(channel, prior[index]))
+    ? prior
+    : next;
 /** Previews and activity replace the list and its summaries on every message.
  * Retain the prior channels while every field a reference reads is unchanged,
  * so mounted rows render only when a label could change.
  *
- * Open channels a completed directory read named follow the joined list, so
- * `#name` prose links a channel the viewer has not joined once the directory
- * is warm, without reading it to render. The joined list owns a name both
- * carry: the roster's channel links, the directory's duplicate does not. */
+ * Open channels a completed directory read named follow the joined list in
+ * `named`, so `#name` prose links a channel the viewer has not joined once
+ * the directory is warm, without reading it to render. The joined list owns a
+ * name both carry: the roster's channel links, the directory's duplicate does
+ * not. Id links never see the directory (`channels`): its name can be older
+ * than the exact reference a mounted link resolves. */
 function referenceChannels(queries: ChannelLists) {
   const list = queries.list();
   const open = queries.openDirectory?.() ?? emptyChannels;
   const prior = referenced.get(queries);
-  if (prior?.list === list && prior.open === open) return prior.channels;
-  const joined = new Set(list.channels.map((channel) => channel.id));
-  const named = new Set(
-    list.channels
+  if (prior?.list === list && prior.open === open) return prior;
+  const channels = retained(list.channels, prior?.channels);
+  const joined = new Set(channels.map((channel) => channel.id));
+  const taken = new Set(
+    channels
       .filter((channel) => !channel.archived)
       .map((channel) => channel.name),
   );
-  const next = open.length
-    ? [
-        ...list.channels,
-        ...open.filter(
-          (channel) => !joined.has(channel.id) && !named.has(channel.name),
-        ),
-      ]
-    : list.channels;
-  const channels =
-    prior?.channels.length === next.length &&
-    next.every((channel, index) =>
-      sameReference(channel, prior.channels[index]),
-    )
-      ? prior.channels
-      : next;
-  referenced.set(queries, { list, open, channels });
-  return channels;
+  const named = open.length
+    ? retained(
+        [
+          ...channels,
+          ...open.filter(
+            (channel) => !joined.has(channel.id) && !taken.has(channel.name),
+          ),
+        ],
+        prior?.named,
+      )
+    : channels;
+  const entry = { list, open, channels, named };
+  referenced.set(queries, entry);
+  return entry;
 }
 
 export function useReferenceDirectory(
@@ -93,9 +107,18 @@ export function useReferenceDirectory(
     profilesSnapshot,
   );
   const queries = session?.channels;
+  // Two snapshots: each list stays identical while its labels are unchanged,
+  // so a message that only replaces the joined list re-renders no row.
   const channels = useSyncExternalStore(
     queries?.subscribeList ?? noop,
-    queries?.list ? () => referenceChannels(queries) : channelsSnapshot,
+    queries?.list
+      ? () => referenceChannels(queries).channels
+      : channelsSnapshot,
+    channelsSnapshot,
+  );
+  const named = useSyncExternalStore(
+    queries?.subscribeList ?? noop,
+    queries?.list ? () => referenceChannels(queries).named : channelsSnapshot,
     channelsSnapshot,
   );
   const agents = useSyncExternalStore(
@@ -106,6 +129,7 @@ export function useReferenceDirectory(
   return {
     profiles,
     channels,
+    named,
     agents: agents?.identities ?? emptyAgents,
   };
 }
@@ -160,7 +184,7 @@ export function ReferenceText({
     text,
     mentions,
     directory.profiles,
-    directory.channels,
+    directory.named,
     directory.agents,
   );
   if (!references.length) return renderText(text);

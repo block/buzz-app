@@ -315,7 +315,10 @@ it("sends the picture when provisioning and publishes profile changes through Be
   h.request
     .mockResolvedValueOnce(response(registration))
     .mockResolvedValueOnce(response({}));
-  await h.remote.provision({ ...provision, picture });
+  await expect(h.remote.provision({ ...provision, picture })).resolves.toEqual({
+    pubkey,
+    picture,
+  });
   expect(h.bodies()[0]).toMatchObject({ agent_picture_url: picture });
   await h.remote.profile({
     pubkey,

@@ -115,12 +115,16 @@ export function builderlabType(
     remote: {
       async provision({ name, picture, config, signal }) {
         await validateCreation(config, signal);
-        return client.register(
+        const agent = await client.register(
           name,
           signal,
           ({ pubkey, id }, intent) => remember(pubkey, id, intent),
           picture,
         );
+        return {
+          pubkey: agent.pubkey,
+          ...(agent.picture ? { picture: agent.picture } : {}),
+        };
       },
       async activate({ pubkey, auth, community, config, signal }) {
         const saved = identity(pubkey);

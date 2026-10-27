@@ -453,12 +453,14 @@ it("registers with a picture and replays it unchanged", async () => {
   await expect(
     h.client.register("Helper", h.signal, h.retain, "https://a.example/1.png"),
   ).rejects.toThrow("Retry the same name");
-  await h.client.register(
+  const agent = await h.client.register(
     "Helper",
     h.signal,
     h.retain,
     "https://a.example/2.png",
   );
+  // The caller lists the picture Beekeeper actually registered.
+  expect(agent.picture).toBe("https://a.example/1.png");
   const bodies = vi
     .mocked(h.host.request)
     .mock.calls.map(([input]) => JSON.parse(input.body ?? "{}"));

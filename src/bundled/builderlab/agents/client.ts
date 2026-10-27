@@ -511,7 +511,7 @@ export function createAgentClient(
         intent: RegistrationIntent,
       ) => void,
       picture?: string,
-    ): Promise<RemoteAgent> {
+    ): Promise<RemoteAgent & Readonly<{ picture?: string }>> {
       signal.throwIfAborted();
       const agentName = name.trim();
       if (!AGENT_NAME.test(agentName)) throw new Error(INVALID_NAME);
@@ -588,7 +588,11 @@ export function createAgentClient(
       // Hosted provisioning keeps replay until Agents has durably saved setup.
       check(credential, signal);
       retainRegistration(agent, intent);
-      return agent;
+      // A replay registers the first picture, not the one passed this time.
+      return {
+        ...agent,
+        ...(intent.picture ? { picture: intent.picture } : {}),
+      };
     },
     async list(signal: AbortSignal): Promise<readonly RemoteAgent[]> {
       const result = await request(

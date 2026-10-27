@@ -656,7 +656,8 @@ export type AgentType<Config = unknown> = {
  * the owner's agent list; every step is asked again after a failure, so each
  * must be safe to repeat. `community` is the agent's `wss://` community. */
 export type RemoteAgentType = Readonly<{
-  /** Makes the agent and resolves with its pubkey. Not yet its owner's. */
+  /** Makes the agent and resolves with its pubkey and the picture it was
+   * made with, which a retried creation keeps. Not yet its owner's. */
   provision(
     input: Readonly<{
       name: string;
@@ -666,7 +667,7 @@ export type RemoteAgentType = Readonly<{
       config?: unknown;
       signal: AbortSignal;
     }>,
-  ): Promise<Readonly<{ pubkey: string }>>;
+  ): Promise<Readonly<{ pubkey: string; picture?: string }>>;
   /** Hands over the owner's attestation (NIP-OA), which the agent attaches to
    * what it signs. The provider publishes its profile with the name and
    * picture it was made with, and starts it. */
@@ -1986,7 +1987,7 @@ export class AgentsService extends Service implements Agents {
   ) {
     const binding = this.selectedBinding();
     const community = wssOf(binding.origin);
-    const { pubkey } = await remote.provision({
+    const { pubkey, picture: made } = await remote.provision({
       name,
       ...(picture ? { picture } : {}),
       community,
@@ -2001,6 +2002,11 @@ export class AgentsService extends Service implements Agents {
       [...this.bound.keys()].some((origin) => this.rowOf(origin, pubkey))
     )
       throw new Error("The provider returned a key that is already in use");
+    if (
+      made !== undefined &&
+      (typeof made !== "string" || !recordPicture(made))
+    )
+      throw new Error("The provider returned an invalid picture");
     await this.writeUnfinished([
       ...this.unfinished.filter((setup) => setup.pubkey !== pubkey),
       {
@@ -2009,7 +2015,7 @@ export class AgentsService extends Service implements Agents {
         name,
         relay: community,
         owner: binding.viewer,
-        ...(picture ? { picture } : {}),
+        ...(made ? { picture: made } : {}),
         ...(config !== undefined ? { config } : {}),
       },
     ]);

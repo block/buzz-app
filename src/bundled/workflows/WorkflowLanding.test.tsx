@@ -873,6 +873,7 @@ function landing(
   ],
 ) {
   let channels = initialChannels;
+  let filter: readonly string[] = [];
   const fixture = createWorkflowFixture();
   const target = document.body.appendChild(document.createElement("div"));
   const selections: [string | undefined, string | undefined][] = [];
@@ -884,7 +885,7 @@ function landing(
     }, []);
     return (
       <WorkflowLanding
-        filter={[]}
+        filter={filter}
         onFilterChange={() => {}}
         capability={fixture.capability}
         channels={channels}
@@ -911,6 +912,10 @@ function landing(
     fixture,
     target,
     selections,
+    filterTo(next: readonly string[]) {
+      filter = next;
+      act(() => rendered.rerender(element()));
+    },
     changeChannels(next: readonly ChannelSummary[]) {
       channels = next;
       act(() => rendered.rerender(element()));
@@ -1905,3 +1910,66 @@ it("orders same-timestamp workflows by coordinate regardless of read order", asy
     target.remove();
   }
 });
+
+it.each(["delete", "enable"] as const)(
+  "closes the %s confirmation when its row starts a filter exit",
+  async (action) => {
+    const own: ChannelSummary = {
+      id: fixtureChannel,
+      name: "General",
+      channelType: "stream",
+    };
+    const other = channel(2);
+    const { fixture, target, filterTo } = landing([own, other]);
+    const user = userEvent.setup();
+    try {
+      act(() =>
+        fixture.definitions.update({
+          status: "ready",
+          data: {
+            partial: false,
+            items: [
+              fixtureDefinition,
+              {
+                ...fixtureDefinition,
+                channelId: other.id,
+                yaml: fixtureYaml.replace("Message helper", "Other helper"),
+              },
+            ],
+          },
+        }),
+      );
+      const row = await screen.findByRole("button", {
+        name: /^Open Message helper:/,
+      });
+      if (action === "delete") {
+        await user.click(
+          screen.getByRole("button", { name: "Actions for Message helper" }),
+        );
+        await user.click(
+          await screen.findByRole("menuitem", { name: "Delete workflow" }),
+        );
+      } else {
+        fireEvent.click(
+          screen.getByRole("switch", {
+            name: "Enabled in configuration: Message helper",
+          }),
+        );
+      }
+      const dialog = await screen.findByRole("alertdialog", {
+        name:
+          action === "delete"
+            ? "Delete this workflow?"
+            : "This workflow may run often",
+      });
+      // The host's filter prop changes while the confirmation is open.
+      filterTo([other.id]);
+      expect(row).toBeInTheDocument();
+      expect(row.closest('[aria-hidden="true"]')).not.toBeNull();
+      expect(dialog).not.toBeInTheDocument();
+      expect(screen.queryByRole("alertdialog", { hidden: true })).toBeNull();
+    } finally {
+      target.remove();
+    }
+  },
+);

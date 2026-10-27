@@ -121,7 +121,7 @@ describe("GooseSetup", () => {
         );
         await vi.advanceTimersByTimeAsync(60_000);
         await failed;
-        expect(fake.geese[0]?.killed).toBe(true);
+        expect(fake.geese.every((goose) => goose.killed)).toBe(true);
         silent.length = 0;
         const again = read();
         await vi.advanceTimersByTimeAsync(0);

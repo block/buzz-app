@@ -22,10 +22,13 @@ type Registration = {
 export async function importAttention(
   agents: Agents,
   host: Pick<Host, "spawn">,
+  signal = new AbortController().signal,
 ) {
   const spawn = host.spawn?.bind(host);
   if (!spawn) return;
+  const check = () => signal.throwIfAborted();
   const run = async (args: string[]) => {
+    check();
     let output = "";
     const process = await spawn("attention-import", {
       args,
@@ -34,9 +37,19 @@ export async function importAttention(
       },
       onStderr: (data) => console.warn("Attention migration:", data),
     });
-    if ((await process.exited) !== 0)
-      throw new Error("Attention migration failed");
-    return output;
+    const stop = () => {
+      void process.kill().catch(() => {});
+    };
+    signal.addEventListener("abort", stop, { once: true });
+    if (signal.aborted) stop();
+    try {
+      const code = await process.exited;
+      check();
+      if (code !== 0) throw new Error("Attention migration failed");
+      return output;
+    } finally {
+      signal.removeEventListener("abort", stop);
+    }
   };
   const recipient = (pubkey: string, channel: string) => {
     const memberships = agents
@@ -70,6 +83,7 @@ export async function importAttention(
       }
   )[] = JSON.parse(await run([]));
   for (const item of registrations) {
+    check();
     try {
       if ("wake" in item) {
         const wake = item.wake;
@@ -82,10 +96,11 @@ export async function importAttention(
             () => agents.relay(agent.key),
             agent.owner,
             wake.channel,
-            new AbortController().signal,
+            signal,
           ))
         )
           throw new Error("Rootless legacy wake needs a known Solo chat");
+        check();
         agents.wake(agent.key, {
           channel: wake.channel,
           ...(wake.thread ? { root: wake.thread } : {}),
@@ -128,11 +143,13 @@ export async function importAttention(
             instructions: item.instructions,
           };
         if (!agent.attention[watch]) attention[watch] = value;
+        check();
         if (Object.keys(attention).length)
           await agents.save(agent.key, { attention });
       }
       await run(["archive", item.file, item.signature]);
     } catch (error) {
+      check();
       console.warn(
         `Attention kept legacy registration ${item.file} for recovery`,
         error,
@@ -158,6 +175,7 @@ export function watchAttentionImport(
   let imported = "";
   let importing = false;
   let stopped = false;
+  const controller = new AbortController();
   const migrate = () => {
     if (stopped) return;
     const snapshot = agents.snapshot();
@@ -202,8 +220,11 @@ export function watchAttentionImport(
       return;
     imported = recipients;
     importing = true;
-    void importAttention(agents, host)
-      .catch((error) => console.warn("Attention migration failed", error))
+    void importAttention(agents, host, controller.signal)
+      .catch((error) => {
+        if (!controller.signal.aborted)
+          console.warn("Attention migration failed", error);
+      })
       .finally(() => {
         importing = false;
         migrate();
@@ -213,6 +234,7 @@ export function watchAttentionImport(
   migrate();
   return () => {
     stopped = true;
+    controller.abort();
     unsubscribe();
     for (const current of connections.values()) {
       current.stopRelay();

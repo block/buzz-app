@@ -555,3 +555,124 @@ it.each(["stream", "solo"])(
     expect(spawn).toHaveBeenCalledTimes(channelType === "solo" ? 2 : 1);
   },
 );
+
+it("does not save or archive discovery returned after cancellation", async () => {
+  const controller = new AbortController();
+  let finish!: (code: number) => void;
+  let started!: () => void;
+  const ready = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const exited = new Promise<number>((resolve) => {
+    finish = resolve;
+  });
+  const save = vi.fn(async () => {});
+  const spawn = vi.fn(async (_id: string, options?: HostProcessOptions) => {
+    options?.onStdout?.(JSON.stringify([registration]));
+    started();
+    return {
+      write: async () => {},
+      end: async () => {},
+      kill: async () => {},
+      exited,
+    };
+  });
+  const done = importAttention(
+    {
+      relay,
+      snapshot: () => ({
+        running: [
+          { pubkey: "agent", key: "agent", place: "here", attention: {} },
+        ],
+      }),
+      save,
+    } as unknown as Agents,
+    { spawn },
+    controller.signal,
+  );
+  await ready;
+  controller.abort();
+  finish(0);
+  await done.catch(() => {});
+  expect(save).not.toHaveBeenCalled();
+  expect(spawn).toHaveBeenCalledTimes(1);
+});
+
+it("does not archive after cancellation during a save", async () => {
+  const controller = new AbortController();
+  let finish!: () => void;
+  let started!: () => void;
+  const ready = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const pending = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  const spawn = vi.fn(async (_id: string, options?: HostProcessOptions) => {
+    options?.onStdout?.(JSON.stringify([registration]));
+    return {
+      write: async () => {},
+      end: async () => {},
+      kill: async () => {},
+      exited: Promise.resolve(0),
+    };
+  });
+  const done = importAttention(
+    {
+      relay,
+      snapshot: () => ({
+        running: [
+          { pubkey: "agent", key: "agent", place: "here", attention: {} },
+        ],
+      }),
+      save: async () => {
+        started();
+        await pending;
+      },
+    } as unknown as Agents,
+    { spawn },
+    controller.signal,
+  );
+  await ready;
+  controller.abort();
+  finish();
+  await done.catch(() => {});
+  expect(spawn).toHaveBeenCalledTimes(1);
+});
+
+it("kills import discovery when its plugin scope stops", async () => {
+  let finish!: (code: number) => void;
+  let started!: () => void;
+  const ready = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const exited = new Promise<number>((resolve) => {
+    finish = resolve;
+  });
+  const kill = vi.fn(async () => {
+    finish(1);
+  });
+  const save = vi.fn();
+  const stop = watchAttentionImport(
+    {
+      relay,
+      subscribe: () => () => {},
+      snapshot: () => ({
+        running: [
+          { pubkey: "agent", key: "agent", place: "here", attention: {} },
+        ],
+      }),
+      save,
+    } as unknown as Agents,
+    {
+      spawn: async () => {
+        started();
+        return { write: async () => {}, end: async () => {}, kill, exited };
+      },
+    },
+  );
+  await ready;
+  stop();
+  await vi.waitFor(() => expect(kill).toHaveBeenCalledOnce());
+  expect(save).not.toHaveBeenCalled();
+});

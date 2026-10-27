@@ -276,15 +276,14 @@ function ReactionEmoji({
   );
   const grouped = authorIds.length >= 9;
   const own = !!session.viewer && authorIds.includes(session.viewer);
-  const user = previewAuthors
-    .map((authorId) =>
-      authorId === session.viewer
-        ? "You"
-        : (loadedReactors.get(authorId)?.name ??
-          profiles?.get(authorId)?.name ??
-          authorId.slice(0, 10)),
-    )
-    .join(", ");
+  const users = previewAuthors.map((authorId) =>
+    authorId === session.viewer
+      ? "You"
+      : (loadedReactors.get(authorId)?.name ??
+        profiles?.get(authorId)?.name ??
+        authorId.slice(0, 10)),
+  );
+  const user = users.join(", ");
   const revealName = () => {
     void session.profiles.ensure(previewAuthors, "background").catch(() => {});
     if (reaction.emoji) return;
@@ -358,7 +357,16 @@ function ReactionEmoji({
           >
             <ReactionGlyph reaction={reaction} session={session} />
           </span>
-          <span className={styles.reactionPreviewNames}>{user}</span>
+          <span className={styles.reactionPreviewNames}>
+            {users.map((user, index) => (
+              <span
+                key={previewAuthors[index]}
+                className={styles.reactionPreviewPerson}
+              >
+                {user}
+              </span>
+            ))}
+          </span>
           {remaining > 0 && (
             <span className={styles.reactionPreviewNames}>
               and {remaining} others

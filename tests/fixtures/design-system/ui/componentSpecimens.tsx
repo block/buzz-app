@@ -1892,6 +1892,24 @@ function RadioGroupSpecimen() {
   return (
     <>
       <SpecimenGroup
+        label="Compact choices"
+        code={`<Field label="Status">
+  <RadioGroup size="sm" defaultValue="any">
+    <Radio size="sm" value="any" label="Any status" />
+    <Radio size="sm" value="enabled" label="Enabled" />
+    <Radio size="sm" value="disabled" label="Disabled" disabled />
+  </RadioGroup>
+</Field>`}
+      >
+        <Field label="Status">
+          <RadioGroup size="sm" defaultValue="any">
+            <Radio size="sm" value="any" label="Any status" />
+            <Radio size="sm" value="enabled" label="Enabled" />
+            <Radio size="sm" value="disabled" label="Disabled" disabled />
+          </RadioGroup>
+        </Field>
+      </SpecimenGroup>
+      <SpecimenGroup
         label="Text-only tiles"
         code={`<Field label="Delivery" nativeLabel={false}>
   <RadioGroup defaultValue="all">
@@ -2105,11 +2123,17 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
     <SpecimenFrame
       code={`<Checkbox label="Include a summary" />
 <Checkbox label="Some selected" indeterminate />
-<Checkbox label="Unavailable" disabled />`}
+<Checkbox label="Unavailable" disabled />
+<Checkbox size="sm" label="Compact choice" />
+<Checkbox size="sm" label="Compact mixed" indeterminate />
+<Checkbox size="sm" label="Compact unavailable" disabled />`}
     >
       <Checkbox label="Include a summary" />
       <Checkbox label="Some selected" indeterminate />
       <Checkbox label="Unavailable" disabled />
+      <Checkbox size="sm" label="Compact choice" />
+      <Checkbox size="sm" label="Compact mixed" indeterminate />
+      <Checkbox size="sm" label="Compact unavailable" disabled />
     </SpecimenFrame>
   ),
   "swap-workspace": PanelSwapPlaygrounds,

@@ -364,6 +364,45 @@ for (const sort of ["By channel", "Recently updated"]) {
   });
 }
 
+it("purges again during partial recovery while cleared channels remain", async () => {
+  // Three batches keep idle channels after the first recovery batch completes.
+  const channels = Array.from({ length: 257 }, (_, i) => channel(i + 1));
+  const fixture = mount(channels);
+  try {
+    await fixture.finish(0, [event(channel(1).id)]);
+    await waitFor(() => expect(fixture.reads).toHaveLength(2));
+    act(() => fixture.owner.clear());
+    expect(screen.queryByText("Message helper")).toBeNull();
+    expect(fixture.reads[1]?.signal?.aborted).toBe(true);
+
+    fixture.refresh();
+    await fixture.finish(2, [event(channel(1).id)]);
+    await waitFor(() => expect(fixture.reads).toHaveLength(4));
+    expect(fixture.reads[3]?.ids).toHaveLength(128);
+    expect(screen.getByText("Message helper")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Reading workflows");
+
+    act(() => fixture.owner.clear());
+    // Hidden exit DOM also contains revoked content and must disappear now.
+    expect(screen.queryByText("Message helper")).toBeNull();
+    expect(fixture.reads[3]?.signal?.aborted).toBe(true);
+    await fixture.finish(3, [event(channel(129).id)]);
+    expect(screen.queryByText("Message helper")).toBeNull();
+    expect(fixture.reads).toHaveLength(4);
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "cleared or unavailable",
+    );
+
+    fixture.refresh();
+    for (let index = 4; index < 7; index++)
+      await fixture.finish(index, index === 4 ? [event(channel(1).id)] : []);
+    expect(screen.getByText("Message helper")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toBeEmptyDOMElement();
+  } finally {
+    fixture.close();
+  }
+});
+
 it("finishes paging before the next batch, resets its cursor, and retains loaded cards on retry", async () => {
   const channels = Array.from({ length: 129 }, (_, i) => channel(i + 1));
   const fixture = mount(channels);

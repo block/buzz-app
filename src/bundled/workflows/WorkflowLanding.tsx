@@ -160,7 +160,8 @@ function useLandingDefinitions(
   const store = useMemo(() => {
     let snapshots: Readonly<Record<string, DefinitionsSnapshot>> = {};
     let paused = false;
-    let state = { snapshots, paused };
+    let purgeGeneration = 0;
+    let state = { snapshots, paused, purgeGeneration };
     let channelIds: readonly string[] = [];
     const queued = new Map<string, boolean>();
     const listeners = new Set<() => void>();
@@ -176,7 +177,7 @@ function useLandingDefinitions(
     // discovery finishes. All other views are disposed; at most two are live.
     let retained: Read | undefined;
     const emit = () => {
-      state = { snapshots, paused };
+      state = { snapshots, paused, purgeGeneration };
       for (const listener of listeners) listener();
     };
     const release = (read: Read | undefined) => {
@@ -184,6 +185,8 @@ function useLandingDefinitions(
       read?.view.dispose();
     };
     const purge = (snapshot: DefinitionsSnapshot) => {
+      // Clears can repeat before every recovery batch has left the idle state.
+      purgeGeneration++;
       invalidated = true;
       paused = false;
       queued.clear();
@@ -376,7 +379,7 @@ function useLandingDefinitions(
         retained = undefined;
         snapshots = {};
         paused = false;
-        state = { snapshots, paused };
+        state = { snapshots, paused, purgeGeneration };
       },
     };
   }, [capability]);
@@ -1265,7 +1268,7 @@ export function WorkflowLanding({
         `${operation.workflow.channelId}/${operation.eventId}/${operation.outcome}${operation.action === "delete" ? `/${operation.delivery}/${!!operation.error}` : ""}`,
     )
     .join(":");
-  const { snapshots, paused, refresh } = useLandingDefinitions(
+  const { snapshots, paused, purgeGeneration, refresh } = useLandingDefinitions(
     capability,
     channels,
     refreshRequest,
@@ -1583,7 +1586,7 @@ export function WorkflowLanding({
           }}
         >
           <AnimatePresence
-            key={`${cleared}/${sort}`}
+            key={`${purgeGeneration}/${sort}`}
             custom={channelIds}
             initial={false}
             mode="popLayout"

@@ -10,7 +10,15 @@ import { schnorr } from "@noble/curves/secp256k1.js";
 import { npubEncode } from "nostr-tools/nip19";
 import { bytesToHex } from "nostr-tools/utils";
 import { finalizeEvent, generateSecretKey } from "nostr-tools";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import { forgetDefaultAgent } from "../solo/default-agent";
 import { AgentConfigStore, type Subject } from "./agent-config";
 import type { Mode } from "./agent-start";
@@ -5940,58 +5948,62 @@ it("wakes a kind 9 watch added since for nothing older, though an overlapping wa
   }
 });
 
-it("catches up no faster than its Interest's lane takes turns, so none is dropped", async () => {
-  vi.useFakeTimers({ toFake: ["Date"] });
-  try {
-    let release!: () => void;
-    const blocked = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const caught: number[] = [];
-    const { service, history, recover, storage } = await setup({
-      identities: [echo],
-      runOnce: async ({ delivery }) => {
-        const { trigger } = delivery;
-        if (trigger.type === "catch-up") caught.push(trigger.events.length);
-        if (caught.length === 1) await blocked;
-        return { ok: true };
-      },
-    });
-    const now = nowSeconds();
-    vi.setSystemTime(now * 1000);
-    await service.save(bot, {
-      attentionEnabled: true,
-      attention: { ...chat, "watch/channel": null },
-    });
-    await settle();
-    vi.setSystemTime((now + 1_000) * 1000);
-    // Ten turns of 64: one runs, and its lane keeps eight waiting.
-    // Queue capacity uses relay-verified DTOs; signing 640 events is unrelated.
-    for (let i = 0; i < 640; i++)
-      history.push(
-        event(i.toString(16).padStart(64, "0"), {
-          content: `m${i}`,
-          created_at: now + 1 + i,
-        }),
-      );
-    recover();
-    // Nine turns are handed on, the last at the end of its 576th event.
-    const progress = () =>
-      Object.values(readCheckpoints(storage)).map(
-        ({ through, after }) => after?.created_at ?? through,
-      )[0] ?? 0;
-    await vi.waitFor(() =>
-      expect(progress()).toBeGreaterThanOrEqual(now + 576),
+describe("catch-up lane capacity", () => {
+  let now: number;
+  let events: RelayEvent[];
+  beforeAll(() => {
+    now = nowSeconds();
+    // Signed relay fixtures are setup, not part of the queue's time budget.
+    events = Array.from({ length: 640 }, (_, i) =>
+      posted(`m${i}`, now + 1 + i),
     );
-    expect(caught).toHaveLength(1);
-    release();
-    await vi.waitFor(() => expect(caught).toHaveLength(10), {
-      timeout: 5_000,
-    });
-    expect(caught).toEqual(Array<number>(10).fill(64));
-  } finally {
-    vi.useRealTimers();
-  }
+  });
+  it("catches up no faster than its Interest's lane takes turns, so none is dropped", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(now * 1000);
+    try {
+      let release!: () => void;
+      const blocked = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const caught: number[] = [];
+      const { service, history, recover, storage } = await setup({
+        identities: [echo],
+        runOnce: async ({ delivery }) => {
+          const { trigger } = delivery;
+          if (trigger.type === "catch-up") caught.push(trigger.events.length);
+          if (caught.length === 1) await blocked;
+          return { ok: true };
+        },
+      });
+      vi.setSystemTime(now * 1000);
+      await service.save(bot, {
+        attentionEnabled: true,
+        attention: { ...chat, "watch/channel": null },
+      });
+      await settle();
+      vi.setSystemTime((now + 1_000) * 1000);
+      // Ten turns of 64: one runs, and its lane keeps eight waiting.
+      history.push(...events);
+      recover();
+      // Nine turns are handed on, the last at the end of its 576th event.
+      const progress = () =>
+        Object.values(readCheckpoints(storage)).map(
+          ({ through, after }) => after?.created_at ?? through,
+        )[0] ?? 0;
+      await vi.waitFor(() =>
+        expect(progress()).toBeGreaterThanOrEqual(now + 576),
+      );
+      expect(caught).toHaveLength(1);
+      release();
+      await vi.waitFor(() => expect(caught).toHaveLength(10), {
+        timeout: 5_000,
+      });
+      expect(caught).toEqual(Array<number>(10).fill(64));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 it("gives a missed event to more of one Interest's watches than its lane holds, as room comes", async () => {

@@ -303,6 +303,8 @@ it("purges pending filter exits immediately when channel membership changes", as
   const fixture = mount([a, b]);
   try {
     await fixture.finish(0, [event(a.id), event(b.id)]);
+    const survivor = screen.getByRole("region", { name: "#Channel 1" });
+    const removed = screen.getByRole("region", { name: "#Channel 2" });
     fixture.refresh();
     await waitFor(() => expect(fixture.reads).toHaveLength(2));
     fireEvent.click(screen.getByRole("button", { name: "Status" }));
@@ -312,7 +314,9 @@ it("purges pending filter exits immediately when channel membership changes", as
       screen.queryByRole("button", { name: /^Open Message helper:/ }),
     ).toBeNull();
     fixture.change([a]);
-    expect(screen.queryByText("Message helper")).toBeNull();
+    expect(removed).not.toBeInTheDocument();
+    expect(survivor).toBeInTheDocument();
+    expect(screen.getAllByText("Message helper")).toHaveLength(1);
   } finally {
     fixture.close();
   }
@@ -780,7 +784,12 @@ it("locks configuration only for in-flight writes, deletions and unconfirmed new
   ).toBe(false);
 });
 
-function landing() {
+function landing(
+  initialChannels: readonly ChannelSummary[] = [
+    { id: fixtureChannel, name: "General", channelType: "stream" },
+  ],
+) {
+  let channels = initialChannels;
   const fixture = createWorkflowFixture();
   const target = document.body.appendChild(document.createElement("div"));
   const selections: [string | undefined, string | undefined][] = [];
@@ -795,9 +804,7 @@ function landing() {
         filter={[]}
         onFilterChange={() => {}}
         capability={fixture.capability}
-        channels={[
-          { id: fixtureChannel, name: "General", channelType: "stream" },
-        ]}
+        channels={channels}
         refreshRequest={0}
         viewer={fixtureViewer}
         detailTarget={target}
@@ -809,16 +816,74 @@ function landing() {
       />
     );
   }
-  render(
+  const element = () => (
     <StrictMode>
       <ToastProvider>
         <Harness />
       </ToastProvider>
-    </StrictMode>,
+    </StrictMode>
   );
-  return { fixture, target, selections };
+  const rendered = render(element());
+  return {
+    fixture,
+    target,
+    selections,
+    changeChannels(next: readonly ChannelSummary[]) {
+      channels = next;
+      act(() => rendered.rerender(element()));
+    },
+  };
 }
 const fixtureKey = `${fixtureChannel}:${fixtureViewer}:${fixtureDefinition.id}`;
+
+for (const sort of ["By channel", "Recently updated"]) {
+  it(`preserves a focused detail across unrelated membership changes in ${sort}`, async () => {
+    const own: ChannelSummary = {
+      id: fixtureChannel,
+      name: "General",
+      channelType: "stream",
+    };
+    const unrelated = channel(2);
+    const added = channel(3);
+    const { fixture, target, changeChannels } = landing([own, unrelated]);
+    const user = userEvent.setup();
+    try {
+      if (sort === "Recently updated") {
+        screen.getByRole("button", { name: "Sort workflows" }).focus();
+        await user.keyboard("{Enter}");
+        await user.click(
+          await screen.findByRole("menuitemradio", { name: sort }),
+        );
+        await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+      }
+      await user.click(
+        await screen.findByRole("button", { name: /^Open Message helper:/ }),
+      );
+      const detail = within(target).getByRole("region", {
+        name: "Message helper",
+      });
+      const run = within(detail).getByRole("button", { name: "Run now" });
+      run.focus();
+      const historyReads = fixture.calls.runs;
+      for (const channels of [
+        [own, unrelated, added],
+        [own, added],
+      ]) {
+        changeChannels(channels);
+        expect(
+          within(target).getByRole("region", { name: "Message helper" }),
+        ).toBe(detail);
+        expect(run).toHaveFocus();
+        expect(fixture.calls.runs).toBe(historyReads);
+      }
+      changeChannels([added]);
+      expect(target).toBeEmptyDOMElement();
+      expect(screen.queryByText("Message helper")).toBeNull();
+    } finally {
+      target.remove();
+    }
+  });
+}
 
 for (const filter of ["Owner", "Status"] as const) {
   it(`closes a ${filter.toLowerCase()}-filtered selection while a read is still pending`, async () => {

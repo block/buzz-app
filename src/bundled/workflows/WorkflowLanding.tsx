@@ -2,6 +2,7 @@ import {
   AnimatePresence,
   motion,
   useIsPresent,
+  usePresenceData,
   useReducedMotion,
 } from "motion/react";
 import { WORKFLOW_CHANNEL_BATCH } from "../../features/workflows/queries";
@@ -924,7 +925,16 @@ function WorkflowCards({
   onDelete: (definition: WorkflowDefinition) => void;
   onOpen: (definition: WorkflowDefinition, channel: ChannelSummary) => void;
 }) {
+  // Presence data stays current even while a filtered group is exiting.
+  const channelIds: ReadonlySet<string> = usePresenceData();
   const headingId = useId();
+  const currentEntries = entries.filter((entry) =>
+    channelIds.has(entry.channel.id),
+  );
+  const currentPartialChannels = partialChannels.filter((item) =>
+    channelIds.has(item.id),
+  );
+  if (!currentEntries.length && !currentPartialChannels.length) return null;
   return (
     <section
       className="workflow-channel-group"
@@ -935,7 +945,7 @@ function WorkflowCards({
         <Header id={headingId} level={2} title={`#${channel.name}`} />
       )}
       <SettingsGroup>
-        {entries.map(({ definition, channel: itemChannel }) => {
+        {currentEntries.map(({ definition, channel: itemChannel }) => {
           const key = workflowKey(definition);
           return (
             <WorkflowCard
@@ -957,7 +967,7 @@ function WorkflowCards({
             />
           );
         })}
-        {partialChannels.map((partialChannel) => (
+        {currentPartialChannels.map((partialChannel) => (
           <div
             key={partialChannel.id}
             className="workflow-state-card text-body-sm text-secondary"
@@ -1345,11 +1355,8 @@ export function WorkflowLanding({
       snapshots[channel.id]?.status === "idle" ||
       snapshots[channel.id]?.status === "unavailable",
   );
-  // Filter exits may animate; membership changes/access clears must purge at once.
-  const presenceKey = `${channels
-    .map((channel) => channel.id)
-    .sort()
-    .join(":")}/${cleared}`;
+  // Global clears reset presence; membership changes retire only removed content.
+  const channelIds = new Set(channels.map((channel) => channel.id));
   const settledEmpty =
     !paused &&
     !reading &&
@@ -1575,7 +1582,8 @@ export function WorkflowLanding({
           }}
         >
           <AnimatePresence
-            key={`${presenceKey}/${sort}`}
+            key={`${cleared}/${sort}`}
+            custom={channelIds}
             initial={false}
             mode="popLayout"
           >

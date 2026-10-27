@@ -627,6 +627,43 @@ test("landing batches 129 channels into two workflow reads", async ({
   expect(errors.unexplained()).toEqual([]);
 });
 
+// Real keyboard focus and portal identity need the browser, beyond the DOM test.
+test("unrelated channel membership preserves the focused workflow detail", async ({
+  page,
+}) => {
+  await page.goto(url.replace("/fixture.html", "/session-fixture.html?writes"));
+  await expect(landingStatus(page)).toHaveText("");
+  await page.getByRole("button", { name: /^Open Fixture A helper:/ }).click();
+  const detail = page.getByRole("region", {
+    name: "Fixture A helper",
+    exact: true,
+  });
+  const original = await detail.elementHandle();
+  const run = detail.getByRole("button", { name: "Run now", exact: true });
+  await run.focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(run).toBeFocused();
+  await page.evaluate(() =>
+    window.workflowSessionFixture.joinUnrelatedChannel(),
+  );
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        window.workflowSessionFixture.definitionChannelCount(),
+      ),
+    )
+    .toBe(3);
+  await expect(landingStatus(page)).toHaveText("");
+  expect(await original.evaluate((element) => element.isConnected)).toBe(true);
+  expect(
+    await detail.evaluate(
+      (element, previous) => element === previous,
+      original,
+    ),
+  ).toBe(true);
+  await expect(run).toBeFocused();
+});
+
 test("landing scan survives channel presentation churn without restarting", async ({
   page,
 }) => {

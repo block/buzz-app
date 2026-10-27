@@ -1723,6 +1723,61 @@ it("explains shared team members before importing and shares the account reminde
   expect(agents.join).toHaveBeenCalledTimes(3);
 });
 
+it("stops queued team joins when the destination changes", async () => {
+  const user = userEvent.setup();
+  const { agents, relay, rerender } = setup([agent("Ada", 1)], { found: [] });
+  const bea = { ...agent("Bea", 2), relay: "wss://other.example" };
+  const cy = { ...agent("Cy", 3), relay: "wss://other.example" };
+  agents.joinable = () => [bea, cy];
+  let finish!: (result: { agent: Agent; notes: readonly string[] }) => void;
+  const pending = new Promise<{ agent: Agent; notes: readonly string[] }>(
+    (resolve) => {
+      finish = resolve;
+    },
+  );
+  agents.join.mockImplementation(() => pending);
+  let connection = {
+    ...relay.snapshot(),
+    scope: "first:owner",
+    viewer: "owner",
+  };
+  relay.snapshot = () => connection;
+  await act(async () => {
+    await agents.saveTeam({
+      name: "Night Shift",
+      instructions: "Help.",
+      members: [bea.pubkey, cy.pubkey],
+    });
+  });
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  await user.click(screen.getByRole("button", { name: "New team" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Import a team" }),
+  );
+  await user.click(
+    await screen.findByRole("button", { name: "Import team Night Shift" }),
+  );
+  await user.click(
+    within(
+      await screen.findByRole("dialog", { name: "Import Night Shift" }),
+    ).getByRole("button", { name: "Import", exact: true }),
+  );
+  expect(agents.join).toHaveBeenCalledTimes(1);
+  const originalList = screen.getByRole("region", { name: "Teams to import" });
+  try {
+    connection = { ...connection, scope: "second:owner" };
+    rerender(<AgentsPage agents={agents} relay={relay} />);
+    expect(originalList).not.toBeInTheDocument();
+  } finally {
+    await act(async () => {
+      finish({ agent: bea, notes: [] });
+      await pending;
+    });
+  }
+  expect(agents.join).toHaveBeenCalledTimes(1);
+  expect(agents.join).toHaveBeenCalledWith(bea.key);
+});
+
 it.each(["agents", "teams"])(
   "warns about duplicate runtimes before Legacy %s imports",
   async (kind) => {

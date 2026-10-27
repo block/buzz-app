@@ -1348,7 +1348,8 @@ function ImportAgents({
     setNotice("");
     const notes: string[] = [];
     const failures: string[] = [];
-    for (const member of members)
+    for (const member of members) {
+      if (!open.current) return;
       try {
         notes.push(...(await agents.join(member.key)).notes);
       } catch (reason) {
@@ -1356,6 +1357,8 @@ function ImportAgents({
           `${member.name} wasn't imported. ${sentence(message(reason))}`,
         );
       }
+    }
+    if (!open.current) return;
     setPending(undefined);
     onPendingChange(false);
     // Leaving would hide the one place that names what still needs a hand.

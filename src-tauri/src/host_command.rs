@@ -226,12 +226,11 @@ pub(crate) async fn load_login_shell_path() {
             if std::io::stdin().is_terminal() {
                 return None;
             }
-            let user = nix::unistd::User::from_uid(nix::unistd::getuid()).ok()??;
-            let path = login_shell_path(&user.shell, LOGIN_SHELL_DEADLINE).await;
+            let shell = crate::terminal::resolve_shell(std::env::var("SHELL").ok().as_deref());
+            let path = login_shell_path(Path::new(&shell), LOGIN_SHELL_DEADLINE).await;
             if path.is_none() {
                 eprintln!(
-                    "Could not read PATH from login shell {}; agents use the app's PATH",
-                    user.shell.display()
+                    "Could not read PATH from login shell {shell}; agents use the app's PATH"
                 );
             }
             path

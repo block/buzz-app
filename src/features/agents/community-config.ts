@@ -118,6 +118,29 @@ export type CommunityConfigInput = Readonly<{
   changed(): void;
 }>;
 
+/** Config sync's view of a relay session. */
+export function sessionFeed(
+  session: RelaySession,
+  read: ConfigFeed["read"],
+  relayAuthor: string,
+): ConfigFeed {
+  return {
+    read,
+    relayAuthor,
+    sync: (filter) => session.artifacts.sync(filter),
+    follow: (channels, listener, revoked) =>
+      session.artifacts.follow(channels, listener, revoked),
+    connected(listener) {
+      let was = session.live.snapshot().status === "connected";
+      return session.live.subscribe(() => {
+        const now = session.live.snapshot().status === "connected";
+        if (now && !was) listener();
+        was = now;
+      });
+    },
+  };
+}
+
 /** Null when this session can't hold config sync or the relay lacks
  * support: then config stays local and no channel is created. */
 export async function communityConfig(
@@ -131,21 +154,7 @@ export async function communityConfig(
   if (!writer || !read || !relayAuthor) return null;
   const support = configSupport(await input.info(signal).catch(() => null));
   if (!support.supported || signal.aborted) return null;
-  const feed: ConfigFeed = {
-    read,
-    relayAuthor,
-    sync: (filter) => session.artifacts.sync(filter),
-    follow: (channels, listener) =>
-      session.artifacts.follow(channels, listener),
-    connected(listener) {
-      let was = session.live.snapshot().status === "connected";
-      return session.live.subscribe(() => {
-        const now = session.live.snapshot().status === "connected";
-        if (now && !was) listener();
-        was = now;
-      });
-    },
-  };
+  const feed = sessionFeed(session, read, relayAuthor);
   let configs: CommunityConfig | undefined;
   const sync = createConfigSync(store, feed, owner, community, {
     discovery: (metadata) => configs?.discovered(metadata),

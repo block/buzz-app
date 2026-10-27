@@ -130,6 +130,35 @@ it("keeps a followed system channel live and hands on only its revisions, replay
   expect(followed(h.update.mock.lastCall?.[1])).toBe(false);
 });
 
+it.each(["live", "replay"] as const)(
+  "tells a follow which channels a %s removal took away, never a superseded one",
+  async (phase) => {
+    const h = harness(false);
+    const members = (pubkeys: string[], at: number) =>
+      signed(relay, {
+        kind: 39002,
+        content: "",
+        created_at: at,
+        tags: [["d", C1], ["t", "system"], ...pubkeys.map((p) => ["p", p])],
+      });
+    h.emit([members([viewer.pubkey], 10)]);
+    const listener = vi.fn();
+    const revoked = vi.fn();
+    const stop = h.owner.session.artifacts.follow([C1], listener, revoked);
+    // A delayed roster the session already superseded takes nothing away.
+    h.emit([members([], 9)], { phase, sourceChannels: [C1] });
+    await Promise.resolve();
+    expect(revoked).not.toHaveBeenCalled();
+    // The removal is fenced from the follow's events, yet still heard.
+    h.emit([members([], 11)], { phase, sourceChannels: [C1] });
+    await vi.waitFor(() => expect(revoked).toHaveBeenCalledWith([C1]));
+    expect(listener).not.toHaveBeenCalledWith(
+      expect.arrayContaining([expect.objectContaining({ created_at: 11 })]),
+    );
+    stop();
+  },
+);
+
 it("opens on live traffic and ends every view at session teardown", () => {
   const { owner, sinks, closes } = harness(true);
   const view = owner.session.artifacts.sync(filter);

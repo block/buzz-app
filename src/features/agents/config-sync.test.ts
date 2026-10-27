@@ -81,6 +81,7 @@ function controlled(
   const follows = new Set<{
     channels: readonly string[];
     listener: (events: readonly RelayEvent[]) => void;
+    revoked: (channels: readonly string[]) => void;
   }>();
   const state = {
     channel: (): RelayEvent[] | Promise<RelayEvent[]> => [
@@ -128,8 +129,8 @@ function controlled(
       views.push(view);
       return view;
     },
-    follow(channels, listener) {
-      const follow = { channels, listener };
+    follow(channels, listener, revoked) {
+      const follow = { channels, listener, revoked };
       follows.add(follow);
       return () => follows.delete(follow);
     },
@@ -678,21 +679,79 @@ describe("config sync without a sync", () => {
   });
 
   it.each([
-    ["an archive", () => metadata([["archived", "true"]])],
-    ["the owner's removal", () => members([])],
-  ])("%s heard while following retires the binding", async (_, lost) => {
+    ["an archive", () => metadata([["archived", "true"]]), () => archived()],
+    ["the owner's removal", () => members([]), () => [metadata(), members([])]],
+  ])(
+    "%s heard while following retires the binding once a confirm agrees",
+    async (_, lost, now) => {
+      const a = await revision("A");
+      const relayFeed = controlled(() => [a]);
+      relayFeed.state.capacity = false;
+      const store = new AgentConfigStore(memoryStorage());
+      const sync = createConfigSync(store, relayFeed.feed, owner.pubkey, "c");
+      await sync.bind([binding]);
+      expect(store.instructions(instructions)).toEqual({ ok: true, text: "A" });
+      // Superseded: the channel's current pair still names the owner.
+      for (const follow of relayFeed.follows) follow.listener([lost()]);
+      await flush();
+      expect(store.instructions(instructions)).toEqual({ ok: true, text: "A" });
+      relayFeed.state.channel = now;
+      for (const follow of relayFeed.follows) follow.listener([lost()]);
+      await vi.waitFor(() =>
+        expect(store.instructions(instructions)).toMatchObject({
+          ok: false,
+          state: "unavailable",
+        }),
+      );
+    },
+  );
+
+  it.each([
+    [
+      "a relay that refuses its state",
+      (): RelayEvent[] => {
+        throw new Error("Relay read failed (403)");
+      },
+    ],
+    ["a relay that no longer shows its state", (): RelayEvent[] => []],
+  ])(
+    "a followed channel the session no longer grants retires as denied, given %s",
+    async (_, channelState) => {
+      const a = await revision("A");
+      const relayFeed = controlled(() => [a]);
+      relayFeed.state.capacity = false;
+      const store = new AgentConfigStore(memoryStorage());
+      const spies = hooks();
+      const sync = createConfigSync(
+        store,
+        relayFeed.feed,
+        owner.pubkey,
+        "c",
+        spies,
+      );
+      await sync.bind([binding]);
+      relayFeed.state.channel = channelState;
+      for (const follow of relayFeed.follows) follow.revoked([channel]);
+      await vi.waitFor(() =>
+        expect(spies.problem).toHaveBeenCalledWith({ channel, kind: "denied" }),
+      );
+      expect(store.instructions(instructions)).toMatchObject({
+        ok: false,
+        state: "unavailable",
+      });
+    },
+  );
+
+  it("keeps a followed channel the relay still shows the owner in", async () => {
     const a = await revision("A");
     const relayFeed = controlled(() => [a]);
     relayFeed.state.capacity = false;
     const store = new AgentConfigStore(memoryStorage());
     const sync = createConfigSync(store, relayFeed.feed, owner.pubkey, "c");
     await sync.bind([binding]);
+    for (const follow of relayFeed.follows) follow.revoked([channel]);
+    await flush();
     expect(store.instructions(instructions)).toEqual({ ok: true, text: "A" });
-    for (const follow of relayFeed.follows) follow.listener([lost()]);
-    expect(store.instructions(instructions)).toMatchObject({
-      ok: false,
-      state: "unavailable",
-    });
   });
 
   it("follows no channel while a sync is open", async () => {

@@ -351,6 +351,7 @@ export function createRelaySession(
         const pending = [...notifications];
         notifications.clear();
         for (const listener of pending) notify(listener);
+        for (const revoked of [...followRevocations]) revoked();
       }
     }
   }
@@ -962,6 +963,8 @@ export function createRelaySession(
   const artifactSyncs = new Set<ArtifactSyncOwner>();
   /** Channels `artifacts.follow` keeps live, each follow's own list. */
   const followed = new Set<readonly string[]>();
+  /** Each follow's check, after an access change, for channels it lost. */
+  const followRevocations = new Set<() => void>();
   const liveListeners = new Set<() => void>();
   let liveSnapshot: LiveSnapshot = Object.freeze({
     status: transport?.subscribe ? "connecting" : "unavailable",
@@ -2303,10 +2306,13 @@ export function createRelaySession(
        * their relay-signed metadata and roster, which stay in the live routes
        * while followed, system channels too.
        * Replay included, so one saved while a route comes up still arrives.
-       * Never a complete set; finite reads own catch-up. */
+       * Never a complete set; finite reads own catch-up. `revoked` hears the
+       * followed channels an accepted access change took away, whose own
+       * metadata and roster are no longer delivered. */
       follow(
         channelIds: readonly string[],
         listener: (events: readonly RelayEvent[]) => void,
+        revoked?: (channelIds: readonly string[]) => void,
       ): () => void {
         if (closed) return () => {};
         const ids = [...new Set(channelIds)];
@@ -2327,12 +2333,23 @@ export function createRelaySession(
           );
           if (matching.length) listener(matching);
         };
+        const lost = () => {
+          const gone = ids.filter((id) => !canAccess(id));
+          if (!gone.length) return;
+          try {
+            revoked?.(gone);
+          } catch (error) {
+            console.error("Follow revocation listener failed", error);
+          }
+        };
         followed.add(ids);
         replayListeners.add(live);
+        followRevocations.add(lost);
         updateInterests();
         return () => {
           followed.delete(ids);
           replayListeners.delete(live);
+          followRevocations.delete(lost);
           updateInterests();
         };
       },

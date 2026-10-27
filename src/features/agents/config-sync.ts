@@ -40,10 +40,12 @@ export type ConfigFeed = Readonly<{
   /** The session's NIP-AR sync. Throws when the session has no capacity. */
   sync(filter: ArtifactSyncFilter): ArtifactSyncView;
   /** Live revisions in `channels`, with their relay-signed metadata and
-   * roster, for a relay or session without sync. */
+   * roster, for a relay or session without sync. `revoked` hears the ones an
+   * accepted access change took away. */
   follow?(
     channels: readonly string[],
     listener: (events: readonly RelayEvent[]) => void,
+    revoked: (channels: readonly string[]) => void,
   ): () => void;
   /** Called each time the connection comes up. */
   connected(listener: () => void): () => void;
@@ -334,7 +336,7 @@ export function createConfigSync(
       // The new set is followed before the old one stops, so a channel in
       // both stays live.
       const previous = unfollow;
-      unfollow = feed.follow([...bound.keys()], followedLive);
+      unfollow = feed.follow([...bound.keys()], followedLive, followedRevoked);
       previous?.();
     }
     const started = round;
@@ -428,9 +430,12 @@ export function createConfigSync(
    * head does: only over the head it names, else by a read. */
   function followedLive(events: readonly RelayEvent[]) {
     for (const event of events) {
-      // An archive or the owner's removal retires the binding.
+      // Metadata or roster heard live may be superseded: only a confirm of
+      // the current pair retires the binding.
       if (event.kind === 39000 || event.kind === 39002) {
-        roster(event);
+        const entry = bound.get(tag(event, "d") ?? "");
+        if (entry && event.pubkey === feed.relayAuthor)
+          void confirm(entry).catch((error) => failure(entry, error));
         continue;
       }
       const entry = bound.get(tag(event, "h") ?? "");
@@ -452,9 +457,20 @@ export function createConfigSync(
     }
   }
 
+  /** Followed channels the session no longer grants: a confirm decides, and
+   * one whose state the relay no longer shows is denied. */
+  function followedRevoked(channels: readonly string[]) {
+    for (const channel of channels) {
+      const entry = bound.get(channel);
+      if (entry)
+        void confirm(entry, true).catch((error) => failure(entry, error));
+    }
+  }
+
   /** Strong relay-signed metadata and roster for a bound channel. False when
-   * it is archived or the owner left: the binding retires. */
-  async function confirm(entry: Bound) {
+   * it is archived or the owner left: the binding retires. `revoked`: the
+   * session took access away, so a missing pair is a denial. */
+  async function confirm(entry: Bound, revoked = false) {
     const id = entry.binding.channel;
     const events = await snapshot(entry, [
       // Addressable by (kind, relay key, d): one current event each, so a
@@ -471,7 +487,8 @@ export function createConfigSync(
     const signed = events.filter((e) => e.pubkey === feed.relayAuthor);
     const metadata = signed.find((e) => e.kind === 39000);
     const members = signed.find((e) => e.kind === 39002);
-    if (!metadata || !members) throw new Error("Config channel unconfirmed");
+    if (!metadata || !members)
+      throw revoked ? new Denied() : new Error("Config channel unconfirmed");
     for (const event of [metadata, members]) {
       roster(event);
       if (!alive(entry)) return false;

@@ -1855,3 +1855,53 @@ it("sorts across channels by saved recency while retaining filters, details and 
     target.remove();
   }
 });
+
+it("orders same-timestamp workflows by coordinate regardless of read order", async () => {
+  const { fixture, target } = landing();
+  const first = {
+    ...fixtureDefinition,
+    id: "55555555-5555-4555-8555-555555555501",
+    yaml: fixtureYaml.replace("Message helper", "Coordinate first"),
+  };
+  const second = {
+    ...fixtureDefinition,
+    id: "55555555-5555-4555-8555-555555555502",
+    yaml: fixtureYaml.replace("Message helper", "Coordinate second"),
+  };
+  const user = userEvent.setup();
+  const rowNames = () =>
+    screen
+      .getAllByRole("button", { name: /^Open Coordinate / })
+      .map((row) => row.getAttribute("aria-label")?.split(":")[0]);
+  try {
+    act(() =>
+      fixture.definitions.update({
+        status: "ready",
+        data: { items: [second, first], partial: false },
+      }),
+    );
+    await screen.findByRole("button", { name: /^Open Coordinate first:/ });
+    screen.getByRole("button", { name: "Sort workflows" }).focus();
+    await user.keyboard("{Enter}");
+    await user.click(
+      await screen.findByRole("menuitemradio", { name: "Recently updated" }),
+    );
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    expect(rowNames()).toEqual([
+      "Open Coordinate first",
+      "Open Coordinate second",
+    ]);
+    act(() =>
+      fixture.definitions.update({
+        status: "ready",
+        data: { items: [first, second], partial: false },
+      }),
+    );
+    expect(rowNames()).toEqual([
+      "Open Coordinate first",
+      "Open Coordinate second",
+    ]);
+  } finally {
+    target.remove();
+  }
+});

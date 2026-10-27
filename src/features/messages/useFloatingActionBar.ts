@@ -12,8 +12,11 @@ import {
   observeOverlays,
 } from "../../shared/design-system/overlayLayer";
 
-const contentSelector =
-  "[data-message-action-anchor], [data-message-attachments] > *";
+// Captioned messages leave attachment controls outside the text hover area.
+const contentSelector = (row: Element) =>
+  row.querySelector("[data-message-action-anchor]")
+    ? "[data-message-action-anchor]"
+    : "[data-message-attachments] > *";
 
 const floatingQuery = "(hover: hover) and (pointer: fine)";
 // One MediaQueryList for every row: `matchMedia` allocates and evaluates the
@@ -111,7 +114,7 @@ export function useFloatingActionBar(
     if (!floating || !row || !bar) return;
     const contentAt = (target: EventTarget | null) =>
       target instanceof Element && row.contains(target)
-        ? target.closest(contentSelector)
+        ? target.closest(contentSelector(row))
         : null;
     const hoverTarget = (target: EventTarget | null, event: PointerEvent) => {
       if (
@@ -120,6 +123,8 @@ export function useFloatingActionBar(
       )
         return false;
       if (bar.contains(target) || contentAt(target)) return true;
+      // Caption edits can leave attachment bounds cached until the next frame.
+      if (target.closest("[data-message-attachments]")) return false;
       // Retain only an active hover: content gaps and the tapered route to the
       // toolbar are pass-through geometry, never activation or hit surfaces.
       const bounds = contentBounds.current;
@@ -158,13 +163,14 @@ export function useFloatingActionBar(
     };
     // The row includes empty space, bylines and accessories. Only painted
     // message content and the top-layer toolbar reveal pointer actions.
-    const initialContent = row.querySelector(`:is(${contentSelector}):hover`);
-    let hovered =
-      (!!initialContent &&
+    let selector = contentSelector(row);
+    const pointerOverContent = () =>
+      (!!row.querySelector(`:is(${selector}):hover`) &&
         !row.querySelector(
           ":is([data-media-timecode], [data-message-reactions]):hover",
         )) ||
       bar.matches(":hover");
+    let hovered = pointerOverContent();
     // Read modality with focus on every update: pointer focus must not pin the
     // bar when hover leaves, including after keyboard-to-pointer transitions.
     const keyboardFocus = () =>
@@ -209,6 +215,11 @@ export function useFloatingActionBar(
     row.addEventListener("focusin", focusIn);
     row.addEventListener("focusout", focusOut);
     const observer = new MutationObserver(() => {
+      const nextSelector = contentSelector(row);
+      if (selector !== nextSelector) {
+        selector = nextSelector;
+        hovered = pointerOverContent();
+      }
       // Recheck focus if a control is removed without dispatching focusout.
       update();
     });
@@ -300,7 +311,7 @@ export function useFloatingActionBar(
       // excluding bylines, reactions, activity and the row's empty side space.
       let whole = anchor;
       let first = visual;
-      for (const element of row.querySelectorAll(contentSelector)) {
+      for (const element of row.querySelectorAll(contentSelector(row))) {
         const rect =
           element === visual ? anchor : element.getBoundingClientRect();
         if (!rect.width || !rect.height) continue;

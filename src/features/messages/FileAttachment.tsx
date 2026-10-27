@@ -1,4 +1,9 @@
 import {
+  IconButton,
+  type IconButtonProps,
+} from "../../shared/design-system/ui/IconButton";
+import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
+import {
   ArrowUpRightIcon,
   ArrowsClockwiseIcon,
   CheckIcon,
@@ -38,10 +43,16 @@ export function FileAttachment({
   attachment,
   source,
   onOpenLink,
+  onPreview,
+  typeLabel,
+  variant = "card",
 }: {
   attachment: Attachment;
   source: string | undefined;
   onOpenLink(url: string): boolean;
+  onPreview?: (() => void) | undefined;
+  typeLabel?: string;
+  variant?: "card" | "summary";
 }) {
   const displayName = attachment.name ?? mimeLabel(attachment.mime) ?? "File";
   const nativeSource = source ? isNativeMediaSource(source) : false;
@@ -54,6 +65,106 @@ export function FileAttachment({
         attachment={attachment}
       />
     );
+
+  if (source && proxySource && (onPreview || variant === "summary")) {
+    const renderPreview = (
+      state: DownloadState = "idle",
+      download?: () => Promise<void>,
+    ) => {
+      const label = (
+        <span className={styles.fileAttachmentBody}>
+          <span className={styles.fileAttachmentName} title={displayName}>
+            {displayName}
+          </span>
+          <span className={styles.fileAttachmentMeta}>
+            {state === "pending" ? (
+              "Downloading…"
+            ) : state === "saved" ? (
+              "Saved to Downloads"
+            ) : state === "failed" ? (
+              "Couldn’t download · Retry"
+            ) : (
+              <>
+                {typeLabel ?? mimeLabel(attachment.mime) ?? "File"}
+                {attachment.size !== undefined &&
+                  ` · ${formatFileSize(attachment.size)}`}
+              </>
+            )}
+          </span>
+        </span>
+      );
+      const action = {
+        "aria-label": `${state === "failed" ? "Retry download" : "Download"} ${displayName}`,
+        title: `Download ${displayName}`,
+        icon:
+          state === "failed" ? (
+            <ArrowsClockwiseIcon aria-hidden="true" />
+          ) : state === "saved" ? (
+            <CheckIcon aria-hidden="true" />
+          ) : (
+            <DownloadIcon aria-hidden="true" />
+          ),
+        shape: variant === "summary" ? "control" : "row-end",
+      } satisfies IconButtonProps;
+      return (
+        <div
+          className={
+            variant === "summary"
+              ? styles.fileSummary
+              : styles.filePreviewAttachment
+          }
+        >
+          <div className={styles.filePreviewMain}>
+            {onPreview ? (
+              <NavigationItem
+                aria-label={`Preview ${displayName}`}
+                icon={
+                  <span className={fileIconStyles.slot}>
+                    <FileTypeIcon
+                      name={attachment.name}
+                      mime={attachment.mime}
+                    />
+                  </span>
+                }
+                label={label}
+                onClick={onPreview}
+              />
+            ) : (
+              label
+            )}
+          </div>
+          <span className={styles.fileDownloadAction}>
+            {nativeSource ? (
+              <IconButton
+                {...action}
+                loading={state === "pending"}
+                onClick={() => void download?.()}
+              />
+            ) : (
+              <IconButton
+                {...action}
+                nativeButton={false}
+                role="link"
+                render={<a href={source} download={attachment.name ?? ""} />}
+              />
+            )}
+          </span>
+        </div>
+      );
+    };
+    return nativeSource ? (
+      <NativeFileDownload
+        key={JSON.stringify([source, attachment.name])}
+        source={source}
+        name={attachment.name ?? ""}
+        displayName={displayName}
+      >
+        {renderPreview}
+      </NativeFileDownload>
+    ) : (
+      renderPreview()
+    );
+  }
 
   const content = (state: DownloadState = "idle") => (
     <>
@@ -127,7 +238,19 @@ export function FileAttachment({
         name={attachment.name ?? ""}
         displayName={displayName}
       >
-        {content}
+        {(state, download) => (
+          <button
+            type="button"
+            className={styles.fileAttachment}
+            aria-label={`${state === "failed" ? "Retry download" : "Download"} ${displayName}`}
+            aria-disabled={state === "pending"}
+            aria-busy={state === "pending"}
+            title={displayName}
+            onClick={() => void download()}
+          >
+            {content(state)}
+          </button>
+        )}
       </NativeFileDownload>
     );
   return (
@@ -153,7 +276,7 @@ function NativeFileDownload({
   source: string;
   name: string;
   displayName: string;
-  children(state: DownloadState): ReactNode;
+  children(state: DownloadState, download: () => Promise<void>): ReactNode;
 }) {
   const { state, download } = useNativeDownload(source, name);
   const announcement =
@@ -166,17 +289,7 @@ function NativeFileDownload({
           : "";
   return (
     <>
-      <button
-        type="button"
-        className={styles.fileAttachment}
-        aria-label={`${state === "failed" ? "Retry download" : "Download"} ${displayName}`}
-        aria-disabled={state === "pending"}
-        aria-busy={state === "pending"}
-        title={displayName}
-        onClick={() => void download()}
-      >
-        {children(state)}
-      </button>
+      {children(state, download)}
       <span className="sr-only" role={state === "failed" ? "alert" : "status"}>
         {announcement}
       </span>

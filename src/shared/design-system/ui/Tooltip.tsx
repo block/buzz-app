@@ -2,6 +2,7 @@ import { Tooltip as BaseTooltip } from "@base-ui/react/tooltip";
 import {
   cloneElement,
   useId,
+  useCallback,
   useEffect,
   useRef,
   useState,
@@ -9,6 +10,7 @@ import {
   type ReactElement,
   type ReactNode,
 } from "react";
+import { behindActiveOverlay, observeOverlays } from "../overlayLayer";
 import { FAMILIAR_HINT_REST_MS, HELPFUL_HINT_REST_MS } from "./hoverIntent";
 
 /** DESIGN.md "Hover timing": how long a hint waits for a resting pointer. */
@@ -50,6 +52,17 @@ export function Tooltip({
 }) {
   const id = useId();
   const [trigger, setTrigger] = useState<HTMLElement | null>(null);
+  const promote = useCallback(
+    (positioner: HTMLDivElement) => {
+      const update = () => {
+        if (trigger && behindActiveOverlay(trigger)) positioner.hidePopover?.();
+        else positioner.showPopover?.();
+      };
+      update();
+      return observeOverlays(update);
+    },
+    [trigger],
+  );
   const [localOpen, setLocalOpen] = useState(false);
   const pressed = useRef(false);
   // Focus returning to a pressed trigger, such as when its menu closes, is not
@@ -122,6 +135,8 @@ export function Tooltip({
           // Fixed hints never add page scroll width, even while WebKit keeps
           // one open across a resize.
           positionMethod="fixed"
+          popover="manual"
+          ref={promote}
           className="buzz-tooltip-positioner"
         >
           <BaseTooltip.Popup

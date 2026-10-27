@@ -432,7 +432,7 @@ contracts with their own layout and local navigation.
 
 **Channels is the only required bundled plugin.** Bestie,
 Todos and Usage are off by default. Feedback, Diff viewer, Identity
-Naming, Agent Activity, Terminal, Links, GitHub, Inbox,
+Naming, Agent Activity, Terminal, Links, File Preview, GitHub, Inbox,
 Repositories, Agents, Claude, Codex, Workflows, Builderlab, Hosted communities,
 Membership, and Moderation are on by default, but optional. Both browser and
 native catalogs declare that policy.
@@ -473,6 +473,20 @@ signed-in `gh` account. That allows any query or mutation the account may make;
 the token stays inside `gh`. Without `gh` it reads public data only. Unsupported
 URLs retain ordinary link behavior. A host-owned GitHub connection with narrower scopes, and agent
 execution, remain future shared capabilities.
+
+The optional, default-on **File Preview** plugin makes the file area open a preview for sent
+Markdown, common text/data formats, and source-code attachments served through
+Buzz's authenticated media source. JSON, CSV/TSV, logs, YAML/TOML/configuration,
+XML/HTML/CSS, source code, and diff/patch files display as literal text.
+It opens a conversation panel with a compact file summary. A separate trailing
+Download action saves the file directly. Disable
+it in Settings → Plugins to restore ordinary file cards. Previews accept UTF-8
+text up to 100 KB; PDFs, Office documents, archives, and larger files retain download. Markdown
+uses GFM with raw HTML and embedded images omitted. Relative links remain inert.
+Files on external hosts retain their ordinary Open action.
+Attachment renderers receive optional `placement: "message" | "composer"`
+context. File Preview offers its panel action only in message placement, keeping
+the composer's existing attachment modal in place. Older hosts may omit placement.
 
 ### Optional channel menu panels
 

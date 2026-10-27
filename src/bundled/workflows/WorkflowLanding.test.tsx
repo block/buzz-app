@@ -1323,3 +1323,142 @@ it("combines ownership, saved enabled state and channels, and clears every filte
   );
   expect(screen.getByRole("button", { name: "Owner" })).toHaveFocus();
 });
+
+it("sorts across channels by saved recency while retaining filters, details and partial notices", async () => {
+  const fixture = createWorkflowFixture();
+  const channels = [
+    { id: fixtureChannel, name: "General", channelType: "stream" as const },
+    { id: "other-channel", name: "Other", channelType: "stream" as const },
+  ];
+  const definitions = [
+    { name: "Oldest", channelId: fixtureChannel, createdAt: 1 },
+    { name: "Newest", channelId: "other-channel", createdAt: 3 },
+    { name: "Middle", channelId: fixtureChannel, createdAt: 2 },
+  ].map(({ name, ...fields }) => ({
+    ...fixtureDefinition,
+    ...fields,
+    id: name,
+    yaml: fixtureYaml.replace("Message helper", name),
+  }));
+  fixture.definitions.update({
+    status: "ready",
+    data: { partial: true, items: definitions },
+  });
+  const target = document.createElement("div");
+  document.body.append(target);
+  function Harness() {
+    const [filter, setFilter] = useState<readonly string[]>([]);
+    const [selected, setSelected] = useState<string>();
+    return (
+      <ToastProvider>
+        <WorkflowLanding
+          capability={fixture.capability}
+          channels={channels}
+          filter={filter}
+          onFilterChange={setFilter}
+          refreshRequest={0}
+          viewer={fixtureViewer}
+          detailTarget={target}
+          selected={selected}
+          onSelect={setSelected}
+          onCreate={() => {}}
+          onDelete={() => {}}
+          onOpen={() => {}}
+        />
+      </ToastProvider>
+    );
+  }
+  const rendered = render(<Harness />);
+  const user = userEvent.setup();
+  const chooseSort = async (option: string) => {
+    screen.getByRole("button", { name: "Sort workflows" }).focus();
+    await user.keyboard("{Enter}");
+    await user.click(
+      await screen.findByRole("menuitemradio", { name: option }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("menu", { name: "Sort workflows" })).toBeNull(),
+    );
+  };
+  const rowNames = () =>
+    screen
+      .getAllByRole("button", { name: /^Open / })
+      .map((row) => row.getAttribute("aria-label")?.split(":")[0]);
+  try {
+    await screen.findByRole("heading", { name: "#General" });
+    expect(screen.getByRole("heading", { name: "#Other" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: /^Open Middle:/ }));
+    expect(screen.getByRole("region", { name: "Middle" })).toBeVisible();
+
+    await chooseSort("Recently updated");
+    expect(
+      screen.getByRole("button", { name: "Sort workflows" }),
+    ).toHaveFocus();
+    expect(
+      screen.getByRole("button", { name: "Sort workflows" }),
+    ).toHaveAccessibleDescription("Recently updated");
+    expect(screen.queryByRole("heading", { name: "#General" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "#Other" })).toBeNull();
+    expect(rowNames()).toEqual(["Open Newest", "Open Middle", "Open Oldest"]);
+    expect(
+      screen.getByRole("button", { name: /^Open Newest:/ }),
+    ).toHaveTextContent("#Other");
+    expect(screen.getByRole("region", { name: "Middle" })).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: /^Open Middle:/ }),
+    ).toHaveAttribute("aria-pressed", "true");
+    expect(
+      screen.getByText("#General returned a partial workflow list."),
+    ).toBeVisible();
+    expect(
+      screen.getByText("#Other returned a partial workflow list."),
+    ).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "Channels" }));
+    await user.click(await screen.findByRole("checkbox", { name: "General" }));
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Channels" })).toBeNull(),
+    );
+    expect(rowNames()).toEqual(["Open Middle", "Open Oldest"]);
+    await user.click(screen.getByRole("button", { name: "Clear all" }));
+    expect(rowNames()).toEqual(["Open Newest", "Open Middle", "Open Oldest"]);
+    expect(
+      screen.getByRole("button", { name: "Sort workflows" }),
+    ).toHaveAccessibleDescription("Recently updated");
+
+    act(() =>
+      fixture.definitions.update({
+        status: "ready",
+        data: {
+          partial: false,
+          items: definitions.map((definition) =>
+            definition.id === "Oldest"
+              ? { ...definition, createdAt: 4 }
+              : definition,
+          ),
+        },
+      }),
+    );
+    expect(rowNames()).toEqual(["Open Oldest", "Open Newest", "Open Middle"]);
+    expect(screen.queryByText(/returned a partial workflow list/)).toBeNull();
+
+    await chooseSort("By channel");
+    expect(screen.getByRole("heading", { name: "#General" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "#Other" })).toBeVisible();
+    expect(screen.getByRole("region", { name: "Middle" })).toBeVisible();
+
+    await chooseSort("Recently updated");
+    act(() =>
+      fixture.definitions.update({
+        status: "idle",
+        data: { partial: false, items: [] },
+      }),
+    );
+    expect(screen.queryByRole("button", { name: /^Open / })).toBeNull();
+    expect(screen.queryByRole("region", { name: "Middle" })).toBeNull();
+  } finally {
+    rendered.unmount();
+    target.remove();
+  }
+});

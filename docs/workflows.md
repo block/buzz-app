@@ -28,6 +28,10 @@ See the [capability contract](../src/features/workflows/types.ts).
   Selected channels include workflows from any of those channels.
   Trigger and channel choices use compact, scrollable two-column lists. Channel
   choices remain available regardless of the other filters.
+  An icon-only sort menu stays at the far right of the filter row. By channel
+  keeps the channel groups; Recently updated shows a flat list ordered by saved
+  configuration timestamp, newest first, with channel names on each row.
+  Sorting is local to the page and Clear all only resets filters.
   Discovery still reads all eligible channels.
   Creating a workflow can still target any eligible channel. Each row runs the
   saved configuration in one click and toggles its configured state. Selecting

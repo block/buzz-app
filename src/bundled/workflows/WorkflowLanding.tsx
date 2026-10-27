@@ -1480,7 +1480,7 @@ export function WorkflowLanding({
           <MenuRoot>
             <MenuTrigger
               render={
-                <IconButton
+                <Button
                   size="sm"
                   variant="ghost"
                   aria-label="Sort workflows"
@@ -1492,14 +1492,14 @@ export function WorkflowLanding({
                       ? "Sort: Recently updated"
                       : "Sort: By channel"
                   }
-                  icon={
-                    sort === "recent" ? (
-                      <ClockIcon size={16} aria-hidden="true" />
-                    ) : (
-                      <ArrowsDownUpIcon size={16} aria-hidden="true" />
-                    )
-                  }
-                />
+                >
+                  {sort === "recent" ? (
+                    <ClockIcon size={16} aria-hidden="true" />
+                  ) : (
+                    <ArrowsDownUpIcon size={16} aria-hidden="true" />
+                  )}
+                  <CaretDownIcon size={16} aria-hidden="true" />
+                </Button>
               }
             />
             <MenuPopup size="compact" align="end" aria-label="Sort workflows">

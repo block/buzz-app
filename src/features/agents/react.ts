@@ -116,8 +116,6 @@ export type MentionModelChoice = Models &
   Readonly<{
     pubkey: string;
     name: string;
-    /** The agent's type when listed, so a pick never outlives a retype. */
-    type?: string;
     loading?: boolean;
     /** Its type offers immediate controls for sessions of this scope. */
     session?: "thread" | "channel";
@@ -180,7 +178,6 @@ export function useMentionModels(
                       {
                         pubkey,
                         name: agent.name,
-                        type: agent.type,
                         ...found,
                         ...(session ? { session } : {}),
                       },
@@ -210,7 +207,6 @@ export function useMentionModels(
               {
                 pubkey,
                 name: agent.name,
-                type: agent.type,
                 current: "",
                 models: [],
                 loading: true,

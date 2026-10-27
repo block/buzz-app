@@ -96,7 +96,7 @@ import { ComposerTools } from "../conversation/ComposerTools";
 import { ComposerLinkDialog } from "./ComposerLinkDialog";
 import { ComposerFormattingTools } from "./ComposerFormattingTools";
 import { AgentsContext, useSessionState } from "../agents/react";
-import { ComposerModels } from "./ComposerModels";
+import { ComposerModels, type DraftPicks } from "./ComposerModels";
 import type { MentionPicks } from "../relay/messages";
 import type {
   ConversationExtensions,
@@ -494,7 +494,7 @@ function Composer({
   );
   const valueRef = useRef(value);
   // Model and effort picked for mentioned agents' next run; cleared by each send.
-  const [picks, setPicks] = useState<MentionPicks>({});
+  const [picks, setPicks] = useState<DraftPicks>({});
   const resolvedPicks = useRef<MentionPicks>({});
   const agents = useContext(AgentsContext);
   /** Who a draft may address here now, the owner's agents from their other

@@ -49,14 +49,7 @@ it("loads models and their effort levels asynchronously before an agent runs", a
     wrapper,
   });
   expect(result.current).toEqual([
-    {
-      pubkey: "agent",
-      name: "Codex",
-      type: "codex",
-      current: "",
-      models: [],
-      loading: true,
-    },
+    { pubkey: "agent", name: "Codex", current: "", models: [], loading: true },
   ]);
   await act(async () => {
     pending.resolve({ ...models("GPT test"), sendDefaults: true });
@@ -65,7 +58,6 @@ it("loads models and their effort levels asynchronously before an agent runs", a
     {
       pubkey: "agent",
       name: "Codex",
-      type: "codex",
       ...models("GPT test"),
       sendDefaults: true,
     },

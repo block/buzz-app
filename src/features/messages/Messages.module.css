@@ -2008,17 +2008,26 @@ html[data-keyboard-input] .quickReactionGlyph {
   content: "";
   position: absolute;
   inset-inline-start: calc(var(--reply-spine-offset) - var(--reply-indent));
-  inset-block-start: 0;
+  /* Branches are one level deep, so each reply row is a single message whose
+     avatar sits at the bottom of its bubble: the hook ends at that avatar. */
+  inset-block: 0 calc(var(--space-half) + var(--size-control-sm) / 2);
   inline-size: calc(
     var(--reply-indent) -
     var(--reply-spine-offset) -
     var(--space-1)
   );
-  block-size: calc(var(--space-1) + var(--size-control-sm) / 2);
   border-inline-start: 1px solid var(--border-message-thread);
   border-block-end: 1px solid var(--border-message-thread);
   border-end-start-radius: var(--radius-control);
   pointer-events: none;
+}
+/* Stacked bubbles share the last one's avatar, so only that row hooks in. */
+.replyBranchPanel
+  > ol
+  > .replyItem:has(
+    > .replyBranch > .replyBranchMessage [data-stack-next]
+  )::before {
+  content: none;
 }
 .replyBranchPanel > ol > .replyItem:not(:last-child)::after {
   content: "";
@@ -2129,6 +2138,61 @@ html[data-keyboard-input] .quickReactionGlyph {
   inset-block: var(--reply-spine-start) calc(-1 * var(--space-2));
   border-inline-start: 1px solid var(--border-message-thread);
   pointer-events: none;
+}
+/* A branch started by the viewer sits on the right, so its spine, hooks,
+   indent and summary mirror to stay beside the avatar that started it. */
+.replyBranch:has(> .replyBranchMessage [data-viewer-message])
+> .replyBranchPanel {
+  padding-inline: 0 var(--reply-indent);
+}
+.replyBranch:has(> .replyBranchMessage [data-viewer-message])
+  > .replyBranchSummary {
+  display: flex;
+  justify-content: flex-end;
+  margin-inline: 0 calc(var(--size-control-sm) + var(--space-2));
+}
+.replyBranch[data-open="true"]:has(> .replyBranchMessage [data-viewer-message])
+  > .replyBranchMessage::after {
+  inset-inline: auto var(--reply-spine-offset);
+  border-inline-start: 0;
+  border-inline-end: 1px solid var(--border-message-thread);
+}
+.replyBranch:has(> .replyBranchMessage [data-viewer-message])
+  > .replyBranchPanel
+  > ol
+  > .replyItem::before {
+  inset-inline: auto calc(var(--reply-spine-offset) - var(--reply-indent));
+  border-inline-start: 0;
+  border-inline-end: 1px solid var(--border-message-thread);
+  border-end-start-radius: 0;
+  border-end-end-radius: var(--radius-control);
+}
+.replyBranch:has(> .replyBranchMessage [data-viewer-message])
+  > .replyBranchPanel
+  > ol
+  > .replyItem:not(:last-child)::after {
+  inset-inline: auto calc(var(--reply-spine-offset) - var(--reply-indent));
+  border-inline-start: 0;
+  border-inline-end: 1px solid var(--border-message-thread);
+}
+
+/* A reply on the other side of the branch has its avatar out of reach, so the
+   line passes it straight instead of hooking toward an empty edge. */
+.replyBranch:not(:has(> .replyBranchMessage [data-viewer-message]))
+  > .replyBranchPanel
+  > ol
+  > .replyItem:has(
+    > .replyBranch > .replyBranchMessage [data-viewer-message]
+  )::before,
+.replyBranch:has(> .replyBranchMessage [data-viewer-message])
+  > .replyBranchPanel
+  > ol
+  > .replyItem:not(
+    :has(> .replyBranch > .replyBranchMessage [data-viewer-message])
+  )::before {
+  border-block-end: 0;
+  border-end-start-radius: 0;
+  border-end-end-radius: 0;
 }
 
 /* Bound visual indentation without limiting reply ancestry. */

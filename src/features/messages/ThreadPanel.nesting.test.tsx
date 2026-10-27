@@ -166,7 +166,7 @@ function setup(messageId = "root") {
     },
   };
 }
-it("expands one level by keyboard, focuses the first child, and never offers re-collapse", async () => {
+it("expands a one-level branch by keyboard, focuses the first child, and never offers re-collapse", async () => {
   setup();
   const user = userEvent.setup();
   const expand = screen.getByRole("button", { name: "View 2 replies" });
@@ -174,10 +174,11 @@ it("expands one level by keyboard, focuses the first child, and never offers re-
   await user.keyboard("{Enter}");
   expect(screen.getByText("child").closest("article")).toHaveFocus();
   expect(expand).not.toBeInTheDocument();
-  expect(screen.queryByText("grandchild")).not.toBeInTheDocument();
-  screen.getByRole("button", { name: "View 1 reply" }).focus();
-  await user.keyboard("{Enter}");
-  expect(screen.getByText("grandchild").closest("article")).toHaveFocus();
+  // A reply to a nested reply continues the branch instead of nesting again.
+  expect(screen.getByText("grandchild")).toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: /^View \d+ repl/ }),
+  ).not.toBeInTheDocument();
   expect(
     screen.queryByRole("button", { name: /Hide replies|Collapse/ }),
   ).not.toBeInTheDocument();

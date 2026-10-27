@@ -44,6 +44,7 @@ export function registerAttention(ctx: {
           }
         : {}),
       async run({ watch, signal, emit, spawn }) {
+        let omitted = 0;
         let buffer = "",
           stderr = "",
           timer: ReturnType<typeof setTimeout> | undefined,
@@ -62,8 +63,11 @@ export function registerAttention(ctx: {
           }
           if (buffer.trim()) {
             try {
-              emit(buffer);
+              emit(
+                `${omitted ? `[${omitted} characters omitted while delivery was unavailable]\n` : ""}${buffer}`,
+              );
               buffer = "";
+              omitted = 0;
             } catch {
               timer = setTimeout(flush, 5000);
               return;
@@ -72,8 +76,18 @@ export function registerAttention(ctx: {
           if (ended) resolveDrain?.();
         };
         const append = (data: string) => {
-          // Bound output held while the conversation queue is unavailable.
-          buffer = (buffer + data).slice(-65536);
+          // Deliver full chunks before applying the bound to refused output.
+          for (let offset = 0; offset < data.length; ) {
+            if (buffer.length === 65536) flush();
+            const chunk = data.slice(
+              offset,
+              offset + (65536 - buffer.length || 65536),
+            );
+            const combined = buffer + chunk;
+            omitted += Math.max(0, combined.length - 65536);
+            buffer = combined.slice(-65536);
+            offset += chunk.length;
+          }
           if (!timer)
             timer = setTimeout(() => {
               timer = undefined;
@@ -146,6 +160,7 @@ export function registerAttention(ctx: {
         signal.addEventListener("abort", abort, { once: true });
         if (signal.aborted) abort();
         try {
+          await process.end();
           const code = await process.exited;
           if (!signal.aborted && code !== 0) {
             failure = new Error(

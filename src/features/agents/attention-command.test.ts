@@ -4,7 +4,7 @@ import type { AttentionSource } from "./attention-sources";
 
 afterEach(() => vi.useRealTimers());
 type Input = Parameters<AttentionSource["run"]>[0];
-function harness(connected = true) {
+function harness(connected = true, eof = false) {
   let ready!: () => void;
   const spawned = new Promise<void>((resolve) => {
     ready = resolve;
@@ -12,6 +12,9 @@ function harness(connected = true) {
   let run!: (input: Input) => Promise<void>;
   let output!: (text: string) => void;
   let exit!: (code: number) => void;
+  const end = vi.fn(async () => {
+    if (eof) exit(0);
+  });
   const kill = vi.fn(async () => {
     exit(0);
   });
@@ -31,7 +34,7 @@ function harness(connected = true) {
           ready();
           return {
             write: async () => {},
-            end: async () => {},
+            end,
             kill,
             exited: new Promise<number>((resolve) => {
               exit = resolve;
@@ -54,6 +57,7 @@ function harness(connected = true) {
     controller,
     emit,
     kill,
+    end,
     output: (text: string) => output(text),
     exit: (code: number) => exit(code),
   };
@@ -215,4 +219,57 @@ it("refuses commands when the host has no agent launcher", async () => {
     }),
   ).rejects.toThrow("cannot run commands as the agent");
   expect(h.emit).not.toHaveBeenCalled();
+});
+
+function input(h: ReturnType<typeof harness>): Input {
+  return {
+    spawn: h.spawn,
+    agent: "a",
+    watch: {
+      type: "source",
+      interest_id: "test",
+      enabled: true,
+      provider: "attention/command",
+      channel: "channel",
+      config: { command: ["check"] },
+    },
+    signal: h.controller.signal,
+    emit: h.emit,
+  };
+}
+it("closes stdin so EOF-driven commands complete", async () => {
+  const h = harness(true, true);
+  const done = h.run(input(h));
+  await h.spawned;
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(h.end).toHaveBeenCalledOnce();
+  await done;
+});
+it("delivers an oversized burst without loss when the queue accepts it", async () => {
+  const h = harness();
+  const done = h.run(input(h));
+  await h.spawned;
+  const output = "a".repeat(40000) + "b".repeat(40000);
+  h.output(output);
+  h.exit(0);
+  await done;
+  expect(h.emit.mock.calls.map(([text]) => text).join("")).toBe(output);
+});
+it("marks omitted output when a refused queue exceeds the memory bound", async () => {
+  vi.useFakeTimers();
+  const h = harness();
+  h.emit.mockImplementation(() => {
+    throw new Error("busy");
+  });
+  const done = h.run(input(h));
+  await h.spawned;
+  h.output("a".repeat(80000));
+  await vi.advanceTimersByTimeAsync(1000);
+  h.emit.mockImplementation(() => {});
+  h.exit(0);
+  await done;
+  const delivered = h.emit.mock.calls.at(-1)?.[0];
+  expect(delivered).toContain("14464 characters omitted");
+  expect(delivered).toContain("a".repeat(65536));
 });

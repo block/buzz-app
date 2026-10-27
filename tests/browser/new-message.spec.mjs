@@ -462,6 +462,9 @@ test("empty compose, keyboard selection, pagination, removal effects, retry, the
         rows.map((row) => [row.getAttribute("aria-posinset"), row.textContent]),
       ),
     );
+  expect(
+    Object.keys(reopenedPeople).some((position) => position in loadedPeople),
+  ).toBe(true);
   for (const [position, person] of Object.entries(loadedPeople)) {
     if (position in reopenedPeople)
       expect(reopenedPeople[position]).toBe(person);

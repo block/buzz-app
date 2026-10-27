@@ -544,7 +544,13 @@ export function createRecipeForm({
           </p>
         )}
         <div className="attention-actions">
-          <Button type="submit" size="sm" variant="primary" disabled={pending}>
+          <Button
+            type="submit"
+            size="sm"
+            variant="primary"
+            disabled={pending}
+            focusableWhenDisabled
+          >
             Create watch
           </Button>
           <Button

@@ -276,11 +276,15 @@ it.each(["source", "event", "timer"] as const)(
       expect(save).toHaveBeenLastCalledWith("membership-a", {
         attention: { "watch/check": { ...value, enabled: false } },
       });
-      expect(remove.hasAttribute("disabled")).toBe(true);
+      expect(remove.getAttribute("aria-disabled")).toBe("true");
+      fireEvent.click(remove);
+      expect(save).toHaveBeenCalledTimes(1);
     } finally {
       await act(async () => finishSave());
     }
-    await waitFor(() => expect(remove.hasAttribute("disabled")).toBe(false));
+    await waitFor(() =>
+      expect(remove.getAttribute("aria-disabled")).not.toBe("true"),
+    );
     fireEvent.click(screen.getByRole("button", { name: "Delete release" }));
     await waitFor(() =>
       expect(
@@ -348,13 +352,15 @@ it("keeps subscription controls disabled while saving and preserves the row on f
   await waitFor(() =>
     expect(toggle.getAttribute("aria-disabled")).toBe("true"),
   );
-  expect(remove.disabled).toBe(true);
+  expect(remove.getAttribute("aria-disabled")).toBe("true");
+  fireEvent.click(remove);
+  expect(save).toHaveBeenCalledTimes(1);
   await act(async () => reject(new Error("Could not save")));
   await waitFor(() =>
     expect(screen.getByRole("alert").textContent).toBe("Could not save"),
   );
   expect(toggle.getAttribute("aria-disabled")).not.toBe("true");
-  expect(remove.disabled).toBe(false);
+  expect(remove.getAttribute("aria-disabled")).not.toBe("true");
   expect(toggle.getAttribute("aria-checked")).toBe("true");
   expect(save).toHaveBeenCalledTimes(1);
 });

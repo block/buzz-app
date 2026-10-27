@@ -41,7 +41,18 @@ test("Agent Attention fits both themes and sizes and creates a subscription by k
   await form
     .getByRole("textbox", { name: "Pull request URL" })
     .fill("https://github.com/example/project/pull/42");
-  await form.getByRole("button", { name: "Create watch" }).click();
+  await page.evaluate(() => window.attentionFixture.holdSave());
+  const submit = form.getByRole("button", { name: "Create watch" });
+  await submit.focus();
+  await page.keyboard.press("Enter");
+  try {
+    await expect
+      .poll(() => page.evaluate(() => window.attentionFixture.saveStarted))
+      .toBe(true);
+    await expect(submit).toBeFocused();
+  } finally {
+    await page.evaluate(() => window.attentionFixture.releaseSave());
+  }
   await expect(form).toHaveCount(0);
   await expect(create).toBeFocused();
   await expect(
@@ -150,8 +161,17 @@ test("watch cancellation and deletion restore focus without taking it from anoth
   const remove = page.getByRole("button", {
     name: "Delete Release discussion",
   });
+  await page.evaluate(() => window.attentionFixture.holdSave());
   await remove.focus();
   await page.keyboard.press("Enter");
+  try {
+    await expect
+      .poll(() => page.evaluate(() => window.attentionFixture.saveStarted))
+      .toBe(true);
+    await expect(remove).toBeFocused();
+  } finally {
+    await page.evaluate(() => window.attentionFixture.releaseSave());
+  }
   await expect(remove).toHaveCount(0);
   await expect(create).toBeFocused();
   await expect(

@@ -450,6 +450,7 @@ export function createPage({
               "aria-label": `Delete ${label.text}`,
               title: "Delete watch",
               disabled: action.pending,
+              focusableWhenDisabled: true,
               onClick: () => void change(null),
             }}
           >

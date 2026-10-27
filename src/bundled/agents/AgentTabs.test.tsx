@@ -301,6 +301,7 @@ it("discards a staged harness change together with the section draft", async () 
       ),
     },
   ];
+  next.tabs = type.tabs;
   render(<Host />);
   await user.click(
     screen.getByRole("button", { name: "Change harness from Original" }),

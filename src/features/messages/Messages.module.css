@@ -624,6 +624,11 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
 .emptyConversation {
   padding-block: var(--space-panel-inset);
 }
+/* A details sheet lives in the composer's pane, between its history and its
+   composer, which rises above it so a reply can be written while reading. */
+:has(> .detailsSheetLayer) > .composer {
+  z-index: 2;
+}
 .composer[data-chat-presentation] {
   margin-bottom: var(--space-3);
 }
@@ -3332,4 +3337,82 @@ html[data-keyboard-navigation]
 .composerSoloCardContent {
   min-width: 0;
   max-width: calc(100% - var(--size-control));
+}
+
+/* The details reader's sections sit below its dialog title in hierarchy. */
+.detailsReader .text :is(h1, h2) {
+  font-size: var(--text-label);
+  line-height: var(--text-label--line-height);
+  letter-spacing: var(--text-label--letter-spacing);
+}
+.detailsReader .text :is(h3, h4, h5, h6) {
+  font-size: var(--text-label-sm);
+  line-height: var(--text-label-sm--line-height);
+  letter-spacing: var(--text-label-sm--letter-spacing);
+}
+
+/* A details message reads in the chat as its opening brief, at full contrast,
+   then the first line of what follows fading out. The rest waits for the
+   reader; a long brief ends in an ellipsis. */
+.detailsPreview {
+  --details-lines: 4;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+}
+.detailsClip {
+  align-self: stretch;
+  min-width: 0;
+}
+.detailsPreview[data-clipped] .detailsClip {
+  cursor: pointer;
+}
+.detailsClip .text > * {
+  margin-bottom: 0;
+  max-height: calc(
+    var(--details-lines) *
+    var(--text-message) *
+    var(--text-message--line-height)
+  );
+  overflow: hidden;
+}
+.detailsClip .text > p {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: var(--details-lines);
+}
+.detailsPreview .detailsClip .text > :is(h1, h2, h3, h4, h5, h6) {
+  margin-bottom: 0;
+  font-size: var(--text-message);
+  line-height: var(--text-message--line-height);
+  letter-spacing: var(--text-message--letter-spacing);
+}
+.detailsPreview
+  .detailsClip
+  .text
+  > :is(h1, h2, h3, h4, h5, h6):first-child
+  + * {
+  margin-top: 0;
+}
+.detailsClip
+  .text
+  > :is(
+    :first-child:not(:is(h1, h2, h3, h4, h5, h6)) + *,
+    :is(h1, h2, h3, h4, h5, h6):first-child + * + *
+  ) {
+  max-height: calc(var(--text-message) * var(--text-message--line-height));
+  margin-block: var(--space-2) 0;
+  mask-image: linear-gradient(to bottom, black, transparent);
+}
+.detailsClip
+  .text
+  > :not(:first-child):not(:first-child + *):not(
+    :is(h1, h2, h3, h4, h5, h6):first-child + * + *
+  ) {
+  display: none;
+}
+.detailsMore {
+  display: flex;
+  margin-top: var(--space-1);
 }

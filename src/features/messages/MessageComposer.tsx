@@ -121,6 +121,7 @@ import { avatarMedia } from "../../shared/avatar-source";
 import { followUpBehaviorPreference } from "./follow-up-preference";
 import { followUpQueue } from "./follow-up-queue";
 import { QueuedFollowUps } from "./QueuedFollowUps";
+import { COMPOSER_SENT } from "./DetailsSheet";
 
 const noChannels: ReturnType<ComposerSession["channels"]["list"]> = {
   status: "idle",
@@ -1851,6 +1852,7 @@ function Composer({
       const pending = { next, revision: savedRevision };
       recoveryFor(session).set(recoveryKey, pending);
       setAccepted(pending);
+      form.current?.dispatchEvent(new Event(COMPOSER_SENT));
       attachments.store.clear();
       completion.invalidate();
       clearMediaTime?.();
@@ -1992,6 +1994,8 @@ function Composer({
       <form
         ref={form}
         className={styles.composer}
+        // Details readers grow out of the composer beneath their message.
+        data-message-composer=""
         data-chat-presentation={chatPresentation || undefined}
         data-file-drag={dragging || undefined}
         data-editing={!!editing.target || undefined}

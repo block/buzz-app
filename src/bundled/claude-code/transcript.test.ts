@@ -1,5 +1,12 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
@@ -194,6 +201,9 @@ function host(files: Record<string, string>) {
     const copy = join(home, ".claude/projects", path);
     mkdirSync(dirname(copy), { recursive: true });
     writeFileSync(copy, content);
+    // Written an hour ago, so a later listing finds it unchanged.
+    const hourAgo = new Date(Date.now() - 3_600_000);
+    utimesSync(copy, hourAgo, hourAgo);
   }
   const listed = manifestProcesses(home);
   const reads: HostProcessOptions[] = [];
@@ -217,7 +227,7 @@ function host(files: Record<string, string>) {
       exited: Promise.resolve(code),
     };
   });
-  return { spawn, reads };
+  return { spawn, reads, home };
 }
 
 it("reads the session file from the project of the agent's workspace", async () => {
@@ -323,6 +333,91 @@ it("merges the agent's other sessions for the thread, oldest turn first", async 
     "unnamed",
     "session-1",
   ]);
+});
+
+it("keeps the sessions it could search when another file cannot be read", async () => {
+  const session = (start: number, content: string) => {
+    clock = start;
+    return [
+      line(
+        "user",
+        prompt(content).replace(
+          "Scope: thread",
+          `Session scope: thread\nChannel: dev (#channel)\nThread root: ${root}\nAgent: ${agent}`,
+        ),
+      ),
+      line("assistant", [{ type: "text", text: `re: ${content}` }]),
+    ].join("\n");
+  };
+  const { spawn, home } = host({
+    "./-Users-me--buzz/target.jsonl": session(20, "latest"),
+    "./-Users-me--buzz/older.jsonl": session(10, "first"),
+    "./-Users-me--buzz/unreadable.jsonl": session(5, "hidden"),
+    // Enough run by hand that one search names several files.
+    ...Object.fromEntries(
+      Array.from({ length: 16 }, (_, index) => [
+        `./-Users-me--buzz/by-hand-${index}.jsonl`,
+        line("user", "hello"),
+      ]),
+    ),
+  });
+  const unreadable = join(
+    home,
+    ".claude/projects/-Users-me--buzz/unreadable.jsonl",
+  );
+  chmodSync(unreadable, 0);
+  const signal = new AbortController().signal;
+  const place = { agent, channelId: "channel", root };
+  const saved = await readTranscript(
+    spawn,
+    "~/.buzz",
+    { ...place, sessionId: "target" },
+    false,
+    signal,
+  );
+  expect(saved?.turns.map((turn) => turn.sessionId)).toEqual([
+    "older",
+    "target",
+  ]);
+  expect(saved?.incomplete).toMatch(/unreadable\.jsonl/);
+  const searched = () =>
+    spawn.mock.calls
+      .filter(([id]) => id === "starts")
+      .flatMap(([, options]) => options?.args ?? []);
+  const first = searched().length;
+  // Without a saved session, the ones it searched are still found.
+  const found = await readTranscript(spawn, "~/.buzz", place, false, signal);
+  expect(found?.turns.map((turn) => turn.sessionId)).toEqual([
+    "older",
+    "target",
+  ]);
+  expect(found?.incomplete).toMatch(/unreadable\.jsonl/);
+  // The next read searched again the file it could not read, and only that.
+  expect(searched().slice(first)).toEqual(["unreadable.jsonl"]);
+  chmodSync(unreadable, 0o644);
+  const retried = await readTranscript(spawn, "~/.buzz", place, false, signal);
+  expect(retried?.turns.map((turn) => turn.sessionId)).toEqual([
+    "unreadable",
+    "older",
+    "target",
+  ]);
+  expect(retried?.incomplete).toBeUndefined();
+});
+
+it("fails, not reports no transcript, when it found none and could not search everything", async () => {
+  const { spawn, home } = host({
+    "./-Users-me--buzz/unreadable.jsonl": file(),
+  });
+  chmodSync(join(home, ".claude/projects/-Users-me--buzz/unreadable.jsonl"), 0);
+  await expect(
+    readTranscript(
+      spawn,
+      "~/.buzz",
+      { agent, channelId: "channel", root },
+      false,
+      new AbortController().signal,
+    ),
+  ).rejects.toThrow(/unreadable\.jsonl/);
 });
 
 it("passes this platform's base64 a session path it reads as a file", async () => {

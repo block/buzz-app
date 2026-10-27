@@ -15,6 +15,12 @@ import { readProject, type Start } from "./history";
 
 /** The latest turns shown; the file keeps the rest. */
 export const TURN_LIMIT = 50;
+/** A conversation's transcript, and why some of its sessions may be missing
+ * when the history could not all be searched. */
+export type ClaudeTranscript = Transcript & {
+  more: boolean;
+  incomplete?: string;
+};
 const STEER = "new-message-arrived-while-you-were-working";
 
 type Json = Record<string, unknown>;
@@ -333,16 +339,24 @@ export async function readTranscript(
   conversation: Conversation,
   working: boolean,
   signal: AbortSignal,
-): Promise<(Transcript & { more: boolean }) | undefined> {
+): Promise<ClaudeTranscript | undefined> {
   const project = await workspaceProject(spawn, workspace, signal);
   if (!project) return undefined;
   const saved = conversation.sessionId && `${conversation.sessionId}.jsonl`;
   // The agent starts a new session when it cannot resume one, e.g. in
   // another build of the app, which keeps its own saved sessions. A failed
-  // listing still finds the saved one.
+  // listing still finds the saved one, and a partly failed search the
+  // sessions it did search; the transcript says it may be missing some.
+  let failure: unknown;
   const starts = await readProject(spawn, project).then(
-    (state) => state.starts,
-    () => new Map<string, Start>(),
+    (state) => {
+      failure = state.incomplete;
+      return state.starts;
+    },
+    (error: unknown) => {
+      failure = error;
+      return new Map<string, Start>();
+    },
   );
   const names = new Set([
     ...(saved ? [saved] : []),
@@ -386,11 +400,21 @@ export async function readTranscript(
       ),
     );
   }
-  if (!found) return undefined;
+  // Nothing found is no transcript only when every file was searched.
+  if (!found) {
+    if (failure) throw failure;
+    return undefined;
+  }
   turns.sort((a, b) => a.startedAt - b.startedAt);
   return {
     turns: turns.slice(-TURN_LIMIT),
     unknownThread: 0,
     more: turns.length > TURN_LIMIT,
+    ...(failure
+      ? {
+          incomplete:
+            failure instanceof Error ? failure.message : String(failure),
+        }
+      : {}),
   };
 }

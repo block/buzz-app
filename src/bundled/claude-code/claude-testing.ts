@@ -1,6 +1,7 @@
 // A stand-in for the `claude` binary's stream-json protocol, and the
 // manifest's other processes run for real, for tests.
 import { execFile } from "node:child_process";
+import { mkdirSync } from "node:fs";
 import type {
   HostProcess,
   HostProcessOptions,
@@ -249,6 +250,9 @@ export function manifestProcesses(home: string) {
     );
     if (!declared) throw new Error(`undeclared process ${id}`);
     if (id === "workspace") options.onStdout?.("/Users/me/.buzz\n");
+    // As the app's host does, a missing directory is created.
+    const cwd = options.cwd?.replace(/^~/, home);
+    if (cwd && id !== "workspace") mkdirSync(cwd, { recursive: true });
     const exited =
       id === "workspace"
         ? Promise.resolve(0)
@@ -256,7 +260,7 @@ export function manifestProcesses(home: string) {
             const child = execFile(
               declared.program,
               [...(declared.args ?? []), ...(options.args ?? [])],
-              { cwd: options.cwd?.replace(/^~/, home), maxBuffer: 1 << 26 },
+              { cwd, maxBuffer: 1 << 26 },
               (error) => resolve(error ? Number(error.code) || 1 : 0),
             );
             child.stdout?.on("data", (data) =>

@@ -256,6 +256,8 @@ export async function readUsage(
   if (!project) return [];
   const current = await readProject(spawn, project);
   signal.throwIfAborted();
+  // A session it could not search may be the agent's: fail, not undercount.
+  if (current.incomplete) throw current.incomplete;
   const named = [...current.starts]
     .filter(([, start]) => start.agent === agent)
     .map(([name]) => name);

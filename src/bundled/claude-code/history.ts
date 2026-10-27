@@ -41,6 +41,9 @@ export type Project = {
   /** Session files searched that Buzz did not start, searched again once
    * changed. */
   unstarted: Set<string>;
+  /** Why the latest listing could not search some session files, which are
+   * in neither `starts` nor `unstarted` and are searched again next time. */
+  incomplete?: Error | undefined;
   /** Each file's usage digest by path, undefined when it is gone; dropped
    * here when a listing finds the file changed or gone. */
   digests: Map<string, Promise<Digest | undefined>>;
@@ -48,7 +51,8 @@ export type Project = {
 /** Per host, so a plugin that reloads starts over. */
 const cache = new WeakMap<Spawn, Map<string, Project>>();
 
-/** The lines a process prints, failing on any exit but those in `ok`. */
+/** The lines a process prints and its exit, failing on any exit but those in
+ * `ok`. */
 async function output(
   spawn: Spawn,
   id: string,
@@ -69,14 +73,15 @@ async function output(
     },
   });
   const code = await process.exited;
-  if (code === null || !ok.includes(code))
-    throw new Error(
-      `Couldn’t read the Claude Code history: ${errors.trim() || `exit ${code}`}`,
-    );
-  return text
+  const error = new Error(
+    `Couldn’t read the Claude Code history: ${errors.trim() || `exit ${code}`}`,
+  );
+  if (code === null || !ok.includes(code)) throw error;
+  const lines = text
     .split("\n")
     .map((line) => line.trim().replace(/^\.\//, ""))
     .filter(Boolean);
+  return { lines, code, error, errors };
 }
 
 /** The project's `.jsonl` files, subagents' included, changed in the last
@@ -88,21 +93,31 @@ const list = (spawn: Spawn, project: string, minutes?: number) =>
     project,
     minutes === undefined ? [] : ["-mmin", `-${minutes}`],
     [0],
-  );
+  ).then(({ lines }) => lines);
 
 const FIELD =
   /^([^/]+\.jsonl):(Session scope|Channel|Thread root|Agent): (.*)$/;
 
 /** Records where each of the session files at `paths` was started, one
- * search for every file: the search stops at a file's first prompt. */
+ * search for every file: the search stops at a file's first prompt. Returns
+ * why the search failed for some files, which it leaves unrecorded. */
 async function search(
   spawn: Spawn,
   project: string,
   state: Project,
   paths: readonly string[],
 ) {
-  // No match exits 1.
-  const found = await output(spawn, "starts", project, paths, [0, 1]);
+  // No match exits 1. A file it cannot read exits 2 after searching the rest;
+  // grep names that file, or, when it names none, any not found started may
+  // be it.
+  const {
+    lines: found,
+    code,
+    error,
+    errors,
+  } = await output(spawn, "starts", project, paths, [0, 1, 2]);
+  const blamed = paths.filter((name) => errors.includes(`${name}:`));
+  const unread = new Set(code === 2 ? (blamed.length ? blamed : paths) : []);
   const fields = new Map<string, Map<string, string>>();
   for (const line of found) {
     const [, name, field, value] = FIELD.exec(line) ?? [];
@@ -117,7 +132,8 @@ async function search(
     const channel = named?.get("Channel");
     if (!named || !channel) {
       state.starts.delete(name);
-      state.unstarted.add(name);
+      if (unread.has(name)) state.unstarted.delete(name);
+      else state.unstarted.add(name);
       continue;
     }
     const agent = named.get("Agent");
@@ -131,6 +147,7 @@ async function search(
     });
     state.unstarted.delete(name);
   }
+  return code === 2 ? error : undefined;
 }
 
 /** Brings `state` up to date with the project's files: the digests of files
@@ -189,18 +206,21 @@ async function refresh(spawn: Spawn, project: string, state: Project) {
     { length: Math.ceil(unsearched.length / size) },
     (_, index) => unsearched.slice(index * size, (index + 1) * size),
   );
-  await Promise.all(
+  const failures = await Promise.all(
     batches.map((batch) =>
       searching(() => search(spawn, project, state, batch)),
     ),
   );
+  state.incomplete = failures.find(Boolean);
   state.paths = paths;
   state.subagents = subagents;
   state.listedAt = startedAt;
 }
 
 /** The project directory's files as listed now. Reads made together share
- * one listing; files changed while it ran are listed next time. */
+ * one listing; files changed while it ran are listed next time. A session file
+ * it could not search leaves `incomplete` set; each reader decides whether
+ * what it did find will do. */
 export async function readProject(spawn: Spawn, project: string) {
   const projects = cache.get(spawn) ?? new Map<string, Project>();
   cache.set(spawn, projects);

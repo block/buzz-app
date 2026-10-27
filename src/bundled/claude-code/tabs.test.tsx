@@ -1,4 +1,5 @@
 import {
+  chmodSync,
   mkdirSync,
   mkdtempSync,
   rmSync,
@@ -260,12 +261,12 @@ function applied({
     effect: vi.fn(),
   };
   apply(ctx as never);
-  return { type, spawn };
+  return { type, spawn, home };
 }
 function installed(options?: Parameters<typeof applied>[0]) {
-  const { type, spawn } = applied(options);
+  const { type, spawn, home } = applied(options);
   if (!type) throw new Error("no type registered");
-  return { type, spawn };
+  return { type, spawn, home };
 }
 function tab(type: AgentType<Config>, index: number) {
   const component = type.tabs?.[index]?.component;
@@ -349,6 +350,48 @@ it("lists saved conversations and shows one's transcript, or that it is gone", a
   ).toBeVisible();
   expect(screen.queryByRole("alert")).toBeNull();
   expect(save).not.toHaveBeenCalled();
+});
+
+it("shows the transcript and that sessions may be missing when some history cannot be read", async () => {
+  localStorage.setItem(
+    "buzz.claude-code.sessions.v1",
+    JSON.stringify({
+      [agent().key]: {
+        [`channel/${"e".repeat(64)}`]: { id: "kept", seen: 0, at: 2 },
+      },
+    }),
+  );
+  const transcript = [
+    JSON.stringify({
+      type: "user",
+      uuid: "u1",
+      timestamp: "2026-10-09T10:00:00Z",
+      message: {
+        content:
+          "<buzz-event>\nEvent ID: e\nContent: what changed?\nTags: []\n</buzz-event>",
+      },
+    }),
+  ].join("\n");
+  const { type, home } = installed({
+    files: {
+      "./-Users-me--buzz/kept.jsonl": transcript,
+      "./-Users-me--buzz/unreadable.jsonl": transcript,
+    },
+  });
+  chmodSync(join(home, ".claude/projects/-Users-me--buzz/unreadable.jsonl"), 0);
+  const Activity = tab(type, 1);
+  render(<Activity agent={agent()} save={vi.fn()} />);
+  const user = userEvent.setup();
+  await user.click(
+    screen.getAllByRole("button", {
+      name: /^View transcript/,
+    })[0] as HTMLElement,
+  );
+  expect(await screen.findByText("what changed?")).toBeVisible();
+  expect(
+    screen.getByText(/sessions may be missing\. Refresh to try again\./),
+  ).toHaveTextContent(/unreadable\.jsonl/);
+  expect(screen.queryByRole("alert")).toBeNull();
 });
 
 it("sets the conversation the profile was opened from apart from recent conversations", () => {

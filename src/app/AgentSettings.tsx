@@ -17,7 +17,9 @@ import { PreferenceRow } from "../shared/design-system/ui/PreferenceRow";
 import { Select } from "../shared/design-system/ui/Select";
 import {
   keepAwakeDelays,
+  retryKeepAwake,
   setKeepAwakePreference,
+  useKeepAwakeApplyError,
   useKeepAwakePreference,
   type KeepAwake,
 } from "../features/agents/keep-awake";
@@ -44,6 +46,7 @@ export function AgentSettings({
 }) {
   const rememberAgents = useRememberAgentsPreference();
   const keepAwake = useKeepAwakePreference();
+  const keepAwakeApplyError = useKeepAwakeApplyError();
   const [mentionError, setMentionError] = useState<string | null>(null);
   const [keepAwakeError, setKeepAwakeError] = useState<string | null>(null);
   const changeRememberAgents = (enabled: boolean) =>
@@ -132,6 +135,16 @@ export function AgentSettings({
             onClick={() => changeKeepAwake(keepAwake)}
           >
             Retry saving keep-awake choice
+          </Button>
+        </ToastNotice>
+      )}
+      {active && keepAwakeAvailable && keepAwakeApplyError && (
+        <ToastNotice
+          title="Keep-awake choice wasn’t applied"
+          description={keepAwakeApplyError}
+        >
+          <Button type="button" size="sm" onClick={retryKeepAwake}>
+            Retry keep-awake choice
           </Button>
         </ToastNotice>
       )}

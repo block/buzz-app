@@ -10,6 +10,7 @@ import {
   setRememberAgentsPreference,
 } from "../features/messages/mention-preferences";
 import {
+  bindKeepAwake,
   keepAwakePreference,
   setKeepAwakePreference,
 } from "../features/agents/keep-awake";
@@ -56,6 +57,42 @@ it("offers keeping the Mac awake only where the app can, with a wait for Automat
   expect(localStorage.getItem("buzz-keep-awake.v1")).toBe(
     JSON.stringify({ mode: "auto", after: 480 }),
   );
+});
+
+it("says when the Mac can't be kept awake and retries the same choice", async () => {
+  const user = userEvent.setup();
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  const hold = vi.fn(async (_: boolean) => {});
+  const stop = bindKeepAwake(
+    { isWorking: () => false, subscribeWorking: () => () => {} },
+    hold,
+  );
+  try {
+    render(<AgentSettings keepAwakeAvailable />, { wrapper: ToastProvider });
+    hold.mockRejectedValueOnce(new Error("refused"));
+    await user.click(
+      screen.getByRole("combobox", { name: "Keep this Mac awake" }),
+    );
+    await user.click(await screen.findByRole("option", { name: "On" }));
+    expect(
+      await screen.findByText("Keep-awake choice wasn’t applied"),
+    ).toBeVisible();
+    expect(
+      screen.getByText("This Mac can still go to sleep. Try again."),
+    ).toBeVisible();
+    await user.click(
+      screen.getByRole("button", { name: "Retry keep-awake choice" }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByText("Keep-awake choice wasn’t applied"),
+      ).not.toBeInTheDocument(),
+    );
+    expect(hold.mock.calls).toEqual([[false], [true], [true]]);
+    expect(keepAwakePreference().mode).toBe("on");
+  } finally {
+    stop();
+  }
 });
 
 it("defaults on, persists opt-out, and follows another window's preference", async () => {

@@ -1,7 +1,18 @@
+// @vitest-environment jsdom
 import { afterEach, expect, it, vi } from "vitest";
-import { bindKeepAwake, type KeepAwake } from "./keep-awake";
+import { act, renderHook } from "@testing-library/react";
+import {
+  bindKeepAwake,
+  retryKeepAwake,
+  useKeepAwakeApplyError,
+  type KeepAwake,
+} from "./keep-awake";
 
-afterEach(() => vi.useRealTimers());
+const stops: (() => void)[] = [];
+afterEach(() => {
+  for (const stop of stops.splice(0)) stop();
+  vi.useRealTimers();
+});
 
 function fixture(initial: KeepAwake, working = false) {
   vi.useFakeTimers();
@@ -26,6 +37,7 @@ function fixture(initial: KeepAwake, working = false) {
       },
     },
   );
+  stops.push(stop);
   return {
     hold,
     stop,
@@ -100,4 +112,42 @@ it("asks again on the next change when the host refuses", async () => {
   await vi.advanceTimersByTimeAsync(0);
   keep.choose({ mode: "auto", after: 30 });
   expect(keep.hold.mock.calls).toEqual([[false], [true], [true]]);
+});
+
+it("reports a refusal until a retry of the same choice succeeds", async () => {
+  const keep = fixture({ mode: "off", after: 30 });
+  const error = renderHook(() => useKeepAwakeApplyError());
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  keep.hold.mockRejectedValueOnce(new Error("refused"));
+  keep.choose({ mode: "on", after: 30 });
+  await act(() => vi.advanceTimersByTimeAsync(0));
+  expect(error.result.current).toBe(
+    "This Mac can still go to sleep. Try again.",
+  );
+  // Nothing else changes, so only the retry asks again.
+  await act(() => vi.advanceTimersByTimeAsync(24 * 60 * 60_000));
+  expect(keep.hold.mock.calls).toEqual([[false], [true]]);
+  await act(async () => retryKeepAwake());
+  expect(keep.hold.mock.calls).toEqual([[false], [true], [true]]);
+  expect(error.result.current).toBeNull();
+  keep.stop();
+});
+
+it("ignores a late answer to a choice the owner already replaced", async () => {
+  const keep = fixture({ mode: "off", after: 30 });
+  const error = renderHook(() => useKeepAwakeApplyError());
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  let refuse!: (error: Error) => void;
+  keep.hold.mockImplementationOnce(
+    () => new Promise((_, reject) => (refuse = reject)),
+  );
+  keep.choose({ mode: "on", after: 30 });
+  keep.choose({ mode: "off", after: 30 });
+  await act(async () => refuse(new Error("refused")));
+  expect(error.result.current).toBeNull();
+  expect(keep.hold.mock.calls).toEqual([[false], [true], [false]]);
+  // Settled on Off: no retry reasserts the stale On.
+  await act(async () => retryKeepAwake());
+  expect(keep.held()).toBe(false);
+  keep.stop();
 });

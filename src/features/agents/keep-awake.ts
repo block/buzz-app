@@ -69,6 +69,28 @@ export function setKeepAwakePreference(value: KeepAwake): string | null {
   return error;
 }
 
+// What the host last failed to apply, so Settings can say so and retry.
+let applyError: string | null = null;
+let reapply: (() => void) | undefined;
+const applyListeners = new Set<() => void>();
+function setApplyError(next: string | null) {
+  if (next === applyError) return;
+  applyError = next;
+  for (const listener of applyListeners) listener();
+}
+function subscribeApplyError(listener: () => void) {
+  applyListeners.add(listener);
+  return () => void applyListeners.delete(listener);
+}
+/** Why this Mac is not kept awake as chosen, or null when it is. */
+export function useKeepAwakeApplyError() {
+  return useSyncExternalStore(subscribeApplyError, () => applyError);
+}
+/** Asks the host again to apply the current choice. */
+export function retryKeepAwake() {
+  reapply?.();
+}
+
 /** Holds the native keep-awake assertion as the preference and agent work
  * ask. Choosing the setting or starting the app starts an Automatic wait as a
  * finished turn does. */
@@ -88,6 +110,7 @@ export function bindKeepAwake(
   let working = agents.isWorking();
   // Unknown at first: a reloaded page may find the host still holding.
   let held: boolean | undefined;
+  let request = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const update = () => {
     clearTimeout(timer);
@@ -102,12 +125,29 @@ export function bindKeepAwake(
       );
     if (wanted === held) return;
     held = wanted;
-    hold(wanted).catch((error) => {
-      // The next change asks again.
-      if (held === wanted) held = undefined;
-      console.warn("Couldn't change keeping this Mac awake", error);
-    });
+    const id = ++request;
+    hold(wanted).then(
+      () => {
+        if (id === request) setApplyError(null);
+      },
+      (error) => {
+        console.warn("Couldn't change keeping this Mac awake", error);
+        if (id !== request) return;
+        // Unknown again, so the next change or a retry asks again.
+        held = undefined;
+        setApplyError(
+          wanted
+            ? "This Mac can still go to sleep. Try again."
+            : "This Mac may still be kept awake. Try again.",
+        );
+      },
+    );
   };
+  const retry = () => {
+    held = undefined;
+    update();
+  };
+  reapply = retry;
   const stopPreference = preference.subscribe(() => {
     const next = preference.read();
     if (next.mode === current.mode && next.after === current.after) return;
@@ -127,7 +167,12 @@ export function bindKeepAwake(
     stopPreference();
     stopWorking();
     clearTimeout(timer);
-    if (held) void hold(false).catch(() => {});
+    request++;
+    if (reapply === retry) {
+      reapply = undefined;
+      setApplyError(null);
+    }
+    if (held !== false) void hold(false).catch(() => {});
     held = false;
   };
 }

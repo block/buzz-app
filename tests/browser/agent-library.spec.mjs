@@ -128,6 +128,8 @@ test("settings footer opens and closes gradually without moving editing focus", 
   page,
 }) => {
   await page.emulateMedia({ reducedMotion: "no-preference" });
+  // Dispatch every animation frame even when a loaded runner cannot render in real time.
+  await page.clock.install();
   await page.goto("/tests/fixtures/agent-library.html?saveFooter");
   await page.getByRole("gridcell", { name: "Ada", exact: true }).click();
   const field = page.getByRole("textbox", {
@@ -175,8 +177,10 @@ test("settings footer opens and closes gradually without moving editing focus", 
     }
     await expect(field).toBeFocused();
   };
+  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
   await sample();
   await field.pressSequentially("x");
+  await page.clock.runFor(400);
   const save = page.getByRole("button", {
     name: "Save",
     exact: true,
@@ -199,9 +203,12 @@ test("settings footer opens and closes gradually without moving editing focus", 
       );
     }),
   ).toBeGreaterThan(0);
+  await page.clock.resume();
   await save.click({ trial: true });
+  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
   await sample();
   await field.fill("");
+  await page.clock.runFor(400);
   await expect
     .poll(() => frame.evaluate((element) => element.style.height))
     .toBe("0px");

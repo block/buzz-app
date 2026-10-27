@@ -93,7 +93,11 @@ function editingFixture(split: boolean, save = vi.fn(async () => {})) {
     ],
   } as unknown as RegisteredAgentType;
   const props = {
-    agents: { save } as unknown as Agents,
+    agents: {
+      save,
+      subscribe: () => () => {},
+      classifier: () => "unavailable",
+    } as unknown as Agents,
     agent,
     type,
     channels: [],
@@ -197,6 +201,65 @@ it("keeps a saving section mounted, then permits discarding after a failed save"
   await user.click(screen.getByRole("tab", { name: "Memory" }));
   expect(await screen.findByRole("alertdialog")).toBeInTheDocument();
 });
+
+it.each(["switch", "remove"])(
+  "keeps Attention mounted when a %s save rejects",
+  async (action) => {
+    const user = userEvent.setup();
+    let reject!: (error: Error) => void;
+    const pending = new Promise<void>((_resolve, fail) => {
+      reject = fail;
+    });
+    const { props, save } = editingFixture(
+      false,
+      vi.fn(() => pending),
+    );
+    render(
+      <AgentTabs
+        {...props}
+        agent={{
+          ...props.agent,
+          skipped: {
+            "watch/bad": {
+              slug: "watch/bad",
+              value: {},
+              modifiedAt: 1,
+              problem: "Unreadable object",
+            },
+          },
+        }}
+      />,
+    );
+    await user.click(screen.getByRole("tab", { name: "Attention" }));
+    await user.click(
+      action === "switch"
+        ? screen.getByRole("switch", { name: "Attention on" })
+        : screen.getByRole("button", { name: "Remove watch/bad" }),
+    );
+    expect(save).toHaveBeenCalledOnce();
+    try {
+      expect(screen.getByRole("tab", { name: "Memory" })).toHaveAttribute(
+        "aria-disabled",
+        "true",
+      );
+      await user.click(screen.getByRole("tab", { name: "Memory" }));
+      expect(screen.getByRole("tab", { name: "Attention" })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+    } finally {
+      await act(async () => reject(new Error("Attention save failed")));
+    }
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Attention save failed",
+    );
+    await user.click(screen.getByRole("tab", { name: "Memory" }));
+    expect(screen.getByRole("tab", { name: "Memory" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+  },
+);
 
 it("discards a staged harness change together with the section draft", async () => {
   const user = userEvent.setup();

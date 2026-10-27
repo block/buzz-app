@@ -14,7 +14,7 @@ import type {
   Agents,
   RegisteredAgentType,
 } from "./service";
-import { AgentSaveButton } from "./AgentSaveButton";
+import { AgentSaveButton, useAgentSaveState } from "./AgentSaveButton";
 
 export type AgentSection = Readonly<{
   /** `agent:<type tab id>`, `agent:settings`, `agent:activity`, `agent:attention`
@@ -155,6 +155,9 @@ function AttentionSection({
   agent: Agent;
   channels: readonly ChannelChoice[];
 }) {
+  // Every Attention write must settle before its section can unmount.
+  const [pending, setPending] = useState(0);
+  useAgentSaveState(false, pending > 0);
   const classifier = useSyncExternalStore(
     agents.subscribe,
     () => agents.classifier(),
@@ -163,7 +166,14 @@ function AttentionSection({
   return (
     <AttentionPanel
       agent={agent}
-      save={(change) => agents.save(agent.key, change)}
+      save={async (change) => {
+        setPending((count) => count + 1);
+        try {
+          await agents.save(agent.key, change);
+        } finally {
+          setPending((count) => count - 1);
+        }
+      }}
       channels={channels}
       classifier={classifier}
     />

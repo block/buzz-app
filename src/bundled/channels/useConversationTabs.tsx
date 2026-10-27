@@ -717,27 +717,42 @@ export function useConversationTabs({
       .slice(0, 80);
     return text || (name ? `Thread · ${name}` : "Thread");
   }
+  // The current conversation's own threads are already in its channel.
+  function openInChannel(tab: Tab, target: ChannelSummary | undefined) {
+    return target && navigation && viewer && tab.channelId !== currentId
+      ? () =>
+          void navigation.open({
+            version: 1,
+            kind: "conversation",
+            scope: {
+              viewer,
+              communityOrigin: scope.slice(0, -(viewer.length + 1)),
+            },
+            channelId: tab.channelId,
+            ...(tab.messageId && { messageId: tab.messageId }),
+            ...(tab.kind === "thread" && {
+              threadRootId: rootOfTab(tab),
+            }),
+          })
+      : undefined;
+  }
+  // A thread names its conversation as Inbox rows do; the name opens it there.
+  function parentOf(tab: Tab, target: ChannelSummary) {
+    const open = openInChannel(tab, target);
+    return (
+      open && {
+        label:
+          target.channelType === "dm"
+            ? `DM · ${target.name}`
+            : `#${target.name}`,
+        open,
+      }
+    );
+  }
   function tabItem(tab: Tab) {
     const target = tabChannel(tab);
     const usable = !!target;
-    // The current conversation's own threads are already in its channel.
-    const openInChannel =
-      target && navigation && viewer && tab.channelId !== currentId
-        ? () =>
-            void navigation.open({
-              version: 1,
-              kind: "conversation",
-              scope: {
-                viewer,
-                communityOrigin: scope.slice(0, -(viewer.length + 1)),
-              },
-              channelId: tab.channelId,
-              ...(tab.messageId && { messageId: tab.messageId }),
-              ...(tab.kind === "thread" && {
-                threadRootId: rootOfTab(tab),
-              }),
-            })
-        : undefined;
+    const openChannel = openInChannel(tab, target);
     return {
       id: tab.id,
       label:
@@ -754,14 +769,14 @@ export function useConversationTabs({
         ),
       close: () => closeConversationTab(tab.id),
       ...(tab.kind === "conversation" &&
-        target && { toolbar: conversationToolbar?.(target, openInChannel) }),
+        target && { toolbar: conversationToolbar?.(target, openChannel) }),
       ...(tab.kind === "thread" && {
         attentionRequest: tab.attentionRequest,
         move: (delta: -1 | 1) => moveBy(tab, delta),
         rename: (name: string) => tabState.renameTab(tab.id, name),
       }),
-      ...(openInChannel && {
-        actions: [{ label: "Open in channel", run: openInChannel }],
+      ...(openChannel && {
+        actions: [{ label: "Open in channel", run: openChannel }],
       }),
       content:
         !usable || !target ? (
@@ -788,6 +803,7 @@ export function useConversationTabs({
               openConversationThread(target.id, id, root, intent)
             }
             close={() => closeConversationTab(tab.id)}
+            parent={parentOf(tab, target)}
           />
         ),
     };
@@ -958,6 +974,7 @@ export function useConversationTabs({
                 openConversationThread(target.id, id, root, intent)
               }
               close={() => closeConversationTab(tab.id)}
+              parent={parentOf(tab, target)}
             />
           </div>,
           node,

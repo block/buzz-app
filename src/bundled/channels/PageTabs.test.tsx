@@ -24,11 +24,13 @@ vi.mock("./ConversationTab", () => ({
     channel,
     visit,
     onResolvedRoot,
+    parent,
   }: {
     tab: Tab;
     channel: { name: string };
     visit: boolean;
     onResolvedRoot?: (rootId: string) => void;
+    parent?: { label: string; open(): void };
   }) => (
     <p
       data-tab={tab.id}
@@ -43,6 +45,11 @@ vi.mock("./ConversationTab", () => ({
       {onResolvedRoot && (
         <button type="button" onClick={() => onResolvedRoot("older")}>
           Resolve root
+        </button>
+      )}
+      {parent && (
+        <button type="button" onClick={parent.open}>
+          {parent.label}
         </button>
       )}
     </p>
@@ -69,6 +76,7 @@ function fixture(visits?: boolean) {
     { id: "alpha", name: "alpha" },
     { id: "beta", name: "beta" },
     { id: "pending", name: "pending", cached: true },
+    { id: "dm", name: "Alice", channelType: "dm" },
   ];
   const list = { channels };
   const rows = { rows: [{ id: "root", content: "Root text" }] };
@@ -292,6 +300,23 @@ it("focuses the composer of each tab it opens, except at a message", () => {
   expect(thread()).toHaveAttribute("data-focus", "2");
   // Focus is not a Reply, which would retarget the reply box at the root.
   expect(thread()).not.toHaveAttribute("data-reply");
+});
+
+it("names a thread's conversation inside it, linking where the menu's Open in channel goes", async () => {
+  const user = userEvent.setup();
+  const page = fixture();
+  page.open({ channelId: "alpha", threadId: "root", messageId: "reply" });
+  await user.click(screen.getByRole("button", { name: "#alpha" }));
+  expect(page.navigation.open).toHaveBeenLastCalledWith({
+    version: 1,
+    kind: "conversation",
+    scope: { viewer: "viewer", communityOrigin: "origin" },
+    channelId: "alpha",
+    messageId: "reply",
+    threadRootId: "root",
+  });
+  page.open({ channelId: "dm", threadId: "root" });
+  expect(screen.getByRole("button", { name: "DM · Alice" })).toBeVisible();
 });
 
 it("opens a tab's conversation in its channel from the tab's menu", async () => {

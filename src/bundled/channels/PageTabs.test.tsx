@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
+import { formatPublicKey } from "../../shared/identity/public-key";
 import {
   act,
   cleanup,
@@ -77,10 +78,20 @@ function fixture(visits?: boolean) {
     { id: "beta", name: "beta" },
     { id: "pending", name: "pending", cached: true },
     { id: "dm", name: "Alice", channelType: "dm" },
+    {
+      id: "group",
+      name: "Everyone",
+      channelType: "dm",
+      participants: ["a", "b", "e", "z"].map((c) => c.repeat(64)),
+    },
   ];
   const list = { channels };
   const rows = { rows: [{ id: "root", content: "Root text" }] };
-  const profiles = new Map();
+  const profiles = new Map([
+    ["a".repeat(64), { name: "Ann" }],
+    ["b".repeat(64), { name: "Bob" }],
+    ["z".repeat(64), { name: "Zed" }],
+  ]);
   const available: never[] = [];
   const session = {
     viewer: "viewer",
@@ -90,7 +101,11 @@ function fixture(visits?: boolean) {
       list: () => list,
       window: () => rows,
     },
-    profiles: { snapshot: () => profiles, subscribe: () => () => {} },
+    profiles: {
+      snapshot: () => profiles,
+      subscribe: () => () => {},
+      ensure: () => Promise.resolve(),
+    },
   } as unknown as RelaySession;
   const connection = { status: "ready", session };
   const host = {
@@ -317,6 +332,14 @@ it("names a thread's conversation inside it, linking where the menu's Open in ch
   });
   page.open({ channelId: "dm", threadId: "root" });
   expect(screen.getByRole("button", { name: "DM · Alice" })).toBeVisible();
+  // A group DM's caption bounds its names as Inbox rows do; its tab lists all.
+  page.open({ channelId: "group", threadId: "root" });
+  expect(
+    screen.getByRole("button", {
+      name: `DM · Ann, Bob, ${formatPublicKey("e".repeat(64))} +1`,
+    }),
+  ).toBeVisible();
+  expect(screen.getByRole("tab", { name: "Root text" })).toBeVisible();
 });
 
 it("opens a tab's conversation in its channel from the tab's menu", async () => {

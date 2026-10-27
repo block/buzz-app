@@ -11,7 +11,7 @@ import {
 } from "react";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
-import type { ChannelSummary } from "../../features/relay/contracts";
+import type { ChannelSummary, Profile } from "../../features/relay/contracts";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
 import {
   panelOpening,
@@ -27,6 +27,8 @@ import {
   InfoIcon,
 } from "../../shared/design-system/icons";
 import { parseBuzzLink } from "../../features/navigation/buzz-links";
+import { useIdentityNames } from "../../features/identity-names/react";
+import { dmLabel } from "../inbox/dm-label";
 import { ConversationTab } from "./ConversationTab";
 import { TabSlot, useTabNodes } from "./TabHosts";
 import { createPortal, flushSync } from "react-dom";
@@ -55,6 +57,7 @@ export function useConversationTabs({
   current,
   scope,
   channels,
+  profiles,
   conversationIcon,
   extensions,
   leadingIds,
@@ -84,6 +87,8 @@ export function useConversationTabs({
   current: ChannelSummary | undefined;
   scope: string;
   channels: readonly ChannelSummary[];
+  /** The channels' labelled participants, for DM captions. */
+  profiles: ReadonlyMap<string, Profile>;
   conversationIcon(channel: ChannelSummary): ReactNode;
   /** Header actions for a conversation tab, owned by the page; `open` shows
    * the conversation in its channel. */
@@ -736,14 +741,16 @@ export function useConversationTabs({
           })
       : undefined;
   }
-  // A thread names its conversation as Inbox rows do; the name opens it there.
+  // A thread names its conversation as Inbox rows do, bounding a group DM's
+  // names where its tab lists them all; the name opens it there.
+  const resolveName = useIdentityNames(queries.names);
   function parentOf(tab: Tab, target: ChannelSummary) {
     const open = openInChannel(tab, target);
     return (
       open && {
         label:
           target.channelType === "dm"
-            ? `DM · ${target.name}`
+            ? `DM · ${dmLabel(target.participants, profiles, resolveName, target.name)}`
             : `#${target.name}`,
         open,
       }

@@ -35,8 +35,6 @@ export type PluginManifest = Readonly<{
       args?: readonly string[];
       /** Run the copy the app ships, never one on PATH. */
       bundled?: boolean;
-      /** Interpreter on PATH for a bundled script. */
-      interpreter?: string;
     }>[];
     /** The plugin may serve MCP with `host.serveMcp`, including tools for
      * commands bound to an Attention source run. */

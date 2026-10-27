@@ -319,11 +319,6 @@ pub(crate) async fn plugin_host_process_spawn<R: tauri::Runtime>(
     }
     let path = effective_path();
     let program = program_path(&declared, || app.path().resource_dir().ok(), &path)?;
-    let interpreter = declared
-        .interpreter
-        .as_ref()
-        .map(|name| resolve_program(name, &path));
-    let executable = interpreter.as_ref().unwrap_or(&program);
     let mut command = if mcp.is_some() {
         let resources = app.path().resource_dir().map_err(|_| "No app resources")?;
         let helper = if cfg!(windows) {
@@ -332,13 +327,14 @@ pub(crate) async fn plugin_host_process_spawn<R: tauri::Runtime>(
             "buzz-agent-command"
         };
         let mut command = Command::new(resources.join("bin").join(helper));
-        command.arg("--launch").arg(executable);
+        command.arg("--launch").arg(&program);
         command
     } else {
-        Command::new(executable)
+        Command::new(program)
     };
     command
-        .args(process_arguments(&declared, &program, &args))
+        .args(&declared.args)
+        .args(&args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -469,27 +465,6 @@ fn program_path(
     }
     let resources = resources().ok_or_else(|| format!("Could not start {}", declared.program))?;
     Ok(resources.join("bin").join(&declared.program))
-}
-
-/// Keep the bundled script path one argument, before declared and caller arguments.
-fn process_arguments(
-    declared: &HostProcess,
-    program: &std::path::Path,
-    args: &[String],
-) -> Vec<std::ffi::OsString> {
-    declared
-        .interpreter
-        .as_ref()
-        .map(|_| program.as_os_str().to_owned())
-        .into_iter()
-        .chain(
-            declared
-                .args
-                .iter()
-                .chain(args)
-                .map(std::ffi::OsString::from),
-        )
-        .collect()
 }
 
 /// The rest of a path written `~/…`, or on Windows also `~\…`.

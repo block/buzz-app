@@ -99,9 +99,6 @@ pub struct HostProcess {
     /// Run the copy the app ships in its `bin` resources, never one on PATH.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub bundled: bool,
-    /// Interpreter on PATH for a bundled script; never applied to PATH programs.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub interpreter: Option<String>,
 }
 fn valid_program(program: &str, args: &[String]) -> bool {
     !program.is_empty()
@@ -182,9 +179,6 @@ impl Manifest {
                 valid_id(&process.id)?;
                 if !process_ids.insert(&process.id)
                     || !valid_program(&process.program, &process.args)
-                    || process.interpreter.as_ref().is_some_and(|interpreter| {
-                        !process.bundled || !valid_program(interpreter, &[])
-                    })
                 {
                     return Err("Invalid host process declaration".into());
                 }
@@ -1927,31 +1921,6 @@ mod tests {
         let mut duplicate = processes.clone();
         duplicate["host"]["processes"][1]["id"] = serde_json::json!("agent");
         assert!(artifact_from_text(&duplicate.to_string(), "export const x = 1".into()).is_err());
-    }
-
-    #[test]
-    fn bundled_script_requires_a_valid_declared_interpreter() {
-        let manifest = |bundled: bool, interpreter: &str| {
-            serde_json::json!({
-                "id": "example.scripts", "name": "Scripts", "apiVersion": 1,
-                "host": { "processes": [{ "id": "script", "program": "script.py", "bundled": bundled, "interpreter": interpreter }] }
-            })
-        };
-        assert!(artifact_from_text(
-            &manifest(true, "python3").to_string(),
-            "export const x = 1".into()
-        )
-        .is_ok());
-        assert!(artifact_from_text(
-            &manifest(false, "python3").to_string(),
-            "export const x = 1".into()
-        )
-        .is_err());
-        assert!(artifact_from_text(
-            &manifest(true, "../python3").to_string(),
-            "export const x = 1".into()
-        )
-        .is_err());
     }
 
     #[test]

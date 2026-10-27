@@ -260,6 +260,10 @@ it("purges globally without automatic reads and recovers remaining channels on m
     await fixture.finish(1, [event(b.id)]);
     await fixture.finish(2, [event(a.id)]);
     expect(fixture.reads[2]?.ids).toEqual([a.id, c.id]);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Clear status filter" }),
+    );
+    expect(screen.getByText("Message helper")).toBeInTheDocument();
     act(() => fixture.owner.clear());
     expect(screen.queryByText("Message helper")).toBeNull();
     expect(screen.getByRole("status")).toHaveTextContent(

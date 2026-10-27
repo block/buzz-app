@@ -79,6 +79,8 @@ export function ChannelLifecycleDialog({
   onSubmit,
   failed,
   finalFocus,
+  confirmed = false,
+  undo,
 }: {
   channelId: string;
   channelName: string;
@@ -90,6 +92,10 @@ export function ChannelLifecycleDialog({
   onSubmit?(): void;
   finalFocus?: DialogProps["finalFocus"];
   failed?(title: string, message: string): void;
+  /** Already chosen without a dialog, as Undo is: run it on mount. */
+  confirmed?: boolean;
+  /** Offered from an immediate archive's result toast. */
+  undo?(): void;
 }) {
   const callbacks = useRef({ completed, failed });
   useLayoutEffect(() => {
@@ -109,9 +115,10 @@ export function ChannelLifecycleDialog({
     };
   }, []);
   // Archiving a chat is undoable from its result toast, so it skips
-  // confirmation; channels archive for everyone and still confirm.
+  // confirmation; channels archive for everyone and still confirm. Undo was
+  // chosen from that toast, so it runs at once too.
   // Deferring the start lets a development StrictMode remount cancel it.
-  const immediate = action === "archive" && noun === "chat";
+  const immediate = confirmed || (action === "archive" && noun === "chat");
   // biome-ignore lint/correctness/useExhaustiveDependencies: start once per mounted archive request.
   useEffect(() => {
     if (!immediate) return;
@@ -126,17 +133,6 @@ export function ChannelLifecycleDialog({
     const timer = setTimeout(() => setSlow(true), 1000);
     return () => clearTimeout(timer);
   }, [immediate, busy]);
-  const undo = () => {
-    const restored = copyFor("unarchive", noun);
-    lifecycle.run("unarchive", channelId).then(
-      () => notify(`${restored.done}: ${channelName}`, "success"),
-      (error) =>
-        notify(
-          `${restored.title} failed: ${error instanceof Error ? error.message : String(error)}`,
-          "error",
-        ),
-    );
-  };
   const submit = async () => {
     if (operation.current || error) return;
     const controller = new AbortController();
@@ -150,7 +146,7 @@ export function ChannelLifecycleDialog({
         notify(
           `${copy.done}: ${channelName}`,
           "success",
-          immediate
+          immediate && action === "archive" && undo
             ? { label: "Undo", onClick: undo, timeout: 3000 }
             : undefined,
         );

@@ -729,9 +729,9 @@ it.each([
 );
 
 it.each([
-  ["Chat actions", "archive", "Archive chat", "Archive chat: Planning"],
+  ["Chat actions", "archive", "Archive chat", undefined],
   ["Chat actions", "delete", "Delete chat", "Delete Planning?"],
-  ["Actions for Planning", "archive", "Archive chat", "Archive chat: Planning"],
+  ["Actions for Planning", "archive", "Archive chat", undefined],
 ] as const)(
   "from %s, %s leaves the open chat for its sidebar neighbor",
   async (trigger, action, label, title) => {
@@ -741,8 +741,12 @@ it.each([
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: trigger }));
     await user.click(await screen.findByRole("menuitem", { name: label }));
-    const dialog = await screen.findByRole("dialog", { name: title });
-    await user.click(within(dialog).getByRole("button", { name: label }));
+    // Archive is undoable from its result toast, so only Delete confirms.
+    if (title) {
+      const dialog = await screen.findByRole("dialog", { name: title });
+      await user.click(within(dialog).getByRole("button", { name: label }));
+    }
+    await waitFor(() => expect(f.open).toHaveBeenCalled());
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(f.run).toHaveBeenCalledExactlyOnceWith(
       action,

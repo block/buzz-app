@@ -1948,12 +1948,12 @@ it("keeps Import open and names each part of a team import that did not come", a
   await user.click(importTeam);
   onImport();
   expect(screen.getByRole("alert")).toHaveTextContent(
-    "Couldn't save team Late Shift. Imported Bea; add them in Teams. Not added: Cy, in your other communities. Import the team again to add them.",
+    "Couldn't save team Late Shift. Imported Bea; add them in Teams. Not added: Cy, in your other communities. Use Import an agent to add them here, then import the team again.",
   );
   await user.click(importTeam);
   onImport();
   expect(screen.getByRole("alert")).toHaveTextContent(
-    "Imported team Late Shift. Not added: Cy, in your other communities. Import the team again to add them.",
+    "Imported team Late Shift. Not added: Cy, in your other communities. Use Import an agent to add them here, then import the team again.",
   );
 });
 

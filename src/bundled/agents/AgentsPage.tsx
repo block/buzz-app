@@ -1191,7 +1191,7 @@ function teamPortNote({
       sentence(`Couldn't import ${member.name}: ${member.error}`),
     ),
     elsewhere.length &&
-      `Not added: ${elsewhere.join(", ")}, in your other communities. Import the team again to add them.`,
+      `Not added: ${elsewhere.join(", ")}, in your other communities. Use Import an agent to add them here, then import the team again.`,
     foreign.length &&
       `Kept out: ${foreign.join(", ")}, which another account on this device has.`,
     ...notes,

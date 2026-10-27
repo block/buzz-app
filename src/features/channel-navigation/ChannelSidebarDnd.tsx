@@ -228,12 +228,14 @@ export function DroppableSidebarSection({
   reorderable,
   groupIndex,
   groupDomain = "channels",
+  createSectionTarget,
   ...section
 }: ComponentProps<typeof SidebarSection> & {
   disabled: boolean;
   reorderable: boolean;
   groupIndex: number;
   groupDomain?: string;
+  createSectionTarget?: boolean;
 }) {
   const { setNodeRef, isOver, active } = useDroppable({
     id: section.sectionKey,
@@ -282,9 +284,7 @@ export function DroppableSidebarSection({
   const from = active?.data.current?.groupIndex;
   return (
     <>
-      {section.sectionKey === "channels" && section.createSection && (
-        <CreateSectionDropTarget />
-      )}
+      {createSectionTarget && <CreateSectionDropTarget />}
       <SidebarSection
         {...section}
         dropRef={setNodeRef}

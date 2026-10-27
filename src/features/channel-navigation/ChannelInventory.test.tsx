@@ -1643,6 +1643,11 @@ it("moves a saved group from its menu, rolls back a failed save, and retries it"
     await waitFor(() =>
       expect(groups()).toEqual(["group:work", "group:later"]),
     );
+    expect(
+      document.querySelector(
+        "[data-create-section-slot] + [data-sidebar-section]",
+      ),
+    ).toHaveAttribute("data-sidebar-section", "group:work");
     await user.click(
       screen.getByRole("button", { name: "More actions for Work" }),
     );
@@ -1673,6 +1678,11 @@ it("moves a saved group from its menu, rolls back a failed save, and retries it"
     await waitFor(() =>
       expect(groups()).toEqual(["group:later", "group:work"]),
     );
+    expect(
+      document.querySelector(
+        "[data-create-section-slot] + [data-sidebar-section]",
+      ),
+    ).toHaveAttribute("data-sidebar-section", "group:later");
     expect(order).toHaveBeenLastCalledWith(
       ["later", "work"],
       expect.any(AbortSignal),

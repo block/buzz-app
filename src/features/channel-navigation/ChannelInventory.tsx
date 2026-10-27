@@ -269,6 +269,7 @@ export function ChannelInventory({
   const [creatingFor, setCreatingFor] = useState<{
     channel: ChannelSummary;
     surface?: ChannelMenuSurface;
+    position?: "first";
   }>();
 
   const createOrigin = creatingFor?.surface?.signal;
@@ -493,6 +494,9 @@ export function ChannelInventory({
     ),
     list.activityStatus === "ready",
   );
+  const firstChannelSection = filteredSections.find(({ key }) =>
+    isChannelSectionKey(key),
+  )?.key;
   // Menu dismissal may run before a moved row mounts at its new placement.
   // Only an actual filter exclusion should return focus to a section summary.
   const hiddenRowSections = useRef(new Map<string, string>());
@@ -1132,7 +1136,7 @@ export function ChannelInventory({
                 channel &&
                 queries.sidebarPreferences.writable
               )
-                setCreatingFor({ channel });
+                setCreatingFor({ channel, position: "first" });
             });
           }}
           onMove={(channelId, sectionKey) =>
@@ -1195,6 +1199,7 @@ export function ChannelInventory({
           {filteredSections.map((section) => (
             <DroppableSidebarSection
               key={section.key}
+              createSectionTarget={section.key === firstChannelSection}
               groupIndex={groupIds.indexOf(section.key.slice("group:".length))}
               disabled={
                 !placementWritable || !isChannelDropSectionKey(section.key)
@@ -1685,7 +1690,12 @@ export function ChannelInventory({
               moveChannel(
                 creatingFor.channel.id,
                 () =>
-                  preferences.createAndAssign(creatingFor.channel.id, section),
+                  preferences.createAndAssign(creatingFor.channel.id, {
+                    ...section,
+                    ...(creatingFor.position
+                      ? { position: creatingFor.position }
+                      : {}),
+                  }),
                 creatingFor.surface,
               );
               setCreatingFor(undefined);

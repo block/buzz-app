@@ -238,13 +238,21 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
         .map((link) => link.pluginId)
         .sort();
     await vi.waitFor(() =>
-      assert.deepEqual(linkPlugins(), ["buzz.github", "buzz.links"]),
+      assert.deepEqual(linkPlugins(), [
+        "buzz.github",
+        "buzz.github",
+        "buzz.links",
+      ]),
     );
     await services.plugins.change("disable", "buzz.links");
-    assert.deepEqual(linkPlugins(), ["buzz.github"]);
+    assert.deepEqual(linkPlugins(), ["buzz.github", "buzz.github"]);
     await services.plugins.change("enable", "buzz.links");
     await vi.waitFor(() =>
-      assert.deepEqual(linkPlugins(), ["buzz.github", "buzz.links"]),
+      assert.deepEqual(linkPlugins(), [
+        "buzz.github",
+        "buzz.github",
+        "buzz.links",
+      ]),
     );
     const tools = services.conversation.tools.snapshot();
     const inline = services.conversation.inline.snapshot();

@@ -82,9 +82,9 @@ MONITOR_PR_PYTHON_BIN="$(command -v python3)" \
 grep -q '1 comments · 1 unresolved' "$temp_dir/default.out"
 grep -q 'external feedback' "$temp_dir/default.out"
 grep -q '\*\*reviewer\*\* \(reviewed\|approved\|requested changes\) ·' "$temp_dir/default.out"
-[[ "$(grep -c 'PR is now' "$temp_dir/default.out" || true)" -eq 0 ]]
-! grep -q 'self initial\|self edited\|self reply\|self review\|self task' "$temp_dir/default.out"
-! grep -q 'stable external review comment' "$temp_dir/default.out"
+[[ "$(grep -c 'PR is now' "$temp_dir/default.out" || true)" -eq 0 ]] || exit 1
+! grep -q 'self initial\|self edited\|self reply\|self review\|self task' "$temp_dir/default.out" || exit 1
+! grep -q 'stable external review comment' "$temp_dir/default.out" || exit 1
 # The self edit was consumed into state before the external event arrived.
 
 rm -rf "$temp_dir/state" "$temp_dir/tick"
@@ -101,8 +101,8 @@ grep -q 'self reply' "$temp_dir/include.out"
 grep -q 'self review' "$temp_dir/include.out"
 grep -q 'external feedback' "$temp_dir/include.out"
 grep -q '\*\*reviewer\*\* \(reviewed\|approved\|requested changes\) ·' "$temp_dir/include.out"
-! grep -q 'stable external review comment' "$temp_dir/include.out"
-[[ "$(grep -c 'PR is now' "$temp_dir/include.out" || true)" -eq 0 ]]
+! grep -q 'stable external review comment' "$temp_dir/include.out" || exit 1
+[[ "$(grep -c 'PR is now' "$temp_dir/include.out" || true)" -eq 0 ]] || exit 1
 
 echo "pr-monitor self-comment tests passed"
 
@@ -113,7 +113,7 @@ mkdir -p "$temp_dir/state"
 PATH="$temp_dir/bin:$PATH" FAKE_TICK="$temp_dir/tick" TMPDIR="$temp_dir/state" \
   "$monitor" --repo owner/repo --interval 0.01 --allowlist "$temp_dir/allowlist" 1 >"$temp_dir/denied.out"
 grep -q '0 comments · 0 unresolved' "$temp_dir/denied.out"
-! grep -q '· \[view\]\|external feedback' "$temp_dir/denied.out"
+! grep -q '· \[view\]\|external feedback' "$temp_dir/denied.out" || exit 1
 grep -q 'PR #1 \(merged\|closed\)' "$temp_dir/denied.out"
 
 rm -rf "$temp_dir/state" "$temp_dir/tick"
@@ -129,7 +129,7 @@ mkdir -p "$temp_dir/state"
 PATH="$temp_dir/bin:$PATH" FAKE_TICK="$temp_dir/tick" TMPDIR="$temp_dir/state" FAKE_ROSTER_FAILURE=1 \
   "$monitor" --repo owner/repo --interval 0.01 --employee-org employees 1 >"$temp_dir/failed.out" 2>"$temp_dir/failed.err"
 grep -q 'cannot load GitHub members' "$temp_dir/failed.err"
-! grep -q 'external feedback' "$temp_dir/failed.out"
+! grep -q 'external feedback' "$temp_dir/failed.out" || exit 1
 grep -q 'PR #1 \(merged\|closed\)' "$temp_dir/failed.out"
 
 # The explicit opt-out bypasses a failing roster lookup.

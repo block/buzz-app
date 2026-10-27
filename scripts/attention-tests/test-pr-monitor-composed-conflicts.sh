@@ -46,5 +46,5 @@ SH
 chmod +x "$temp_dir/bin/gh"
 
 PATH="$temp_dir/bin:$PATH" FAKE_TICK="$temp_dir/tick" TMPDIR="$temp_dir/state" MONITOR_PR_PYTHON_BIN="$(command -v python3)" "$script_dir/monitor-pr-with-base.sh" --repo owner/repo --include-non-employees --interval 0.01 --base-interval 0.01 1 >"$temp_dir/stdout" 2>"$temp_dir/stderr"
-[[ "$(grep -c 'conflicts with' "$temp_dir/stdout")" == 1 ]]
-! grep -q 'PR is now.*conflicting' "$temp_dir/stdout"
+[[ "$(grep -c 'conflicts with' "$temp_dir/stdout")" == 1 ]] || exit 1
+! grep -q 'PR is now.*conflicting' "$temp_dir/stdout" || exit 1

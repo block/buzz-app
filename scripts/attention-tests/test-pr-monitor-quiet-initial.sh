@@ -49,12 +49,12 @@ MONITOR_PR_PYTHON_BIN="$(command -v python3)" \
 
 grep -q 'PR #1 in owner/repo: open · ready · approved · mergeable · 0 comments · 0 unresolved · checks: 1 pending$' "$temp_dir/stderr"
 grep -q '^🔴 CI: .* (1 failed, 1 pending)$' "$temp_dir/stdout"
-! grep -q 'PR #1 in owner/repo' "$temp_dir/stdout"
-! grep -q '`build` pending' "$temp_dir/stdout"
+! grep -q '^PR #1 in owner/repo:' "$temp_dir/stdout" || exit 1
+! grep -q '`build` pending' "$temp_dir/stdout" || exit 1
 grep -q '❌ `build` failed' "$temp_dir/stdout"
-! grep -q '`slow`' "$temp_dir/stdout"
+! grep -q '`slow`' "$temp_dir/stdout" || exit 1
 grep -q '⛔ PR #1 closed' "$temp_dir/stdout"
-! grep -q 'PR is now closed' "$temp_dir/stdout"
+! grep -q 'PR is now closed' "$temp_dir/stdout" || exit 1
 
-[[ "$(grep -c "Couldn.t fetch PR" "$temp_dir/stdout")" == 1 ]]
+[[ "$(grep -c "Couldn.t fetch PR" "$temp_dir/stdout")" == 1 ]] || exit 1
 echo "pr-monitor quiet-initial tests passed"

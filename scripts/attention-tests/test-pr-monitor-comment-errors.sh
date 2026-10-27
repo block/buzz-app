@@ -65,7 +65,7 @@ PR_MONITOR_COMMENT_FETCH_RETRY_DELAY=0 \
 PR_MONITOR_COMMENT_HEALTH_FAILURE_THRESHOLD=2 \
   "$monitor" --repo owner/repo --include-non-employees --interval 0.01 1 >"$temp_dir/out"
 
-! grep -q 'No server is currently available\|by unknown' "$temp_dir/out"
+! grep -q 'No server is currently available\|by unknown' "$temp_dir/out" || exit 1
 grep -q 'Comment polling degraded after 2 consecutive failures' "$temp_dir/out"
 grep -q 'Comment polling recovered' "$temp_dir/out"
 if [[ "$fail_initial" == 0 ]]; then

@@ -68,7 +68,7 @@ PR_MONITOR_COMMENT_HEALTH_FAILURE_THRESHOLD=2 \
   "$monitor" --repo owner/repo --include-non-employees --interval 0.01 1 >"$temp_dir/out"
 
 # Exactly one real recovery at tick four; tick two is a transport failure.
-[[ "$(grep -c 'CI:' "$temp_dir/out")" == 1 ]]
+[[ "$(grep -c 'CI:' "$temp_dir/out")" == 1 ]] || exit 1
 grep -q 'PR #1 closed' "$temp_dir/out"
 done
 echo "pr-monitor check error tests passed"
@@ -77,6 +77,6 @@ echo "pr-monitor check error tests passed"
 rm -f "$temp_dir/tick"
 INITIAL_CHECK_FAILURE=1 CHECK_BASELINE=fail PATH="$temp_dir/bin:$PATH" FAKE_TICK="$temp_dir/tick" TMPDIR="$temp_dir/state" PR_MONITOR_COMMENT_FETCH_ATTEMPTS=1 PR_MONITOR_COMMENT_FETCH_RETRY_DELAY=0 \
   "$monitor" --repo owner/repo --include-non-employees --quiet-initial --interval 0.01 1 >"$temp_dir/initial-check-failure.out"
-[[ "$(grep -c 'CI:' "$temp_dir/initial-check-failure.out")" == 1 ]]
+[[ "$(grep -c 'CI:' "$temp_dir/initial-check-failure.out")" == 1 ]] || exit 1
 grep -q 'build' "$temp_dir/initial-check-failure.out"
 grep -q 'PR #1 closed' "$temp_dir/initial-check-failure.out"

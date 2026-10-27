@@ -54,10 +54,10 @@ MONITOR_PR_PYTHON_BIN="$(command -v python3)" \
   "$monitor" --repo owner/repo --include-non-employees --interval 0.01 --quiet-initial 1 \
   >"$temp_dir/stdout" 2>"$temp_dir/stderr"
 
-! grep -q 'head one' "$temp_dir/stdout"
-[[ "$(grep -c 'head two' "$temp_dir/stdout")" -eq 1 ]]
-[[ "$(grep -Fc '💬 **github-actions[bot]** commented ·' "$temp_dir/stdout")" -eq 1 ]]
-[[ "$(grep -c 'PR is now' "$temp_dir/stdout" || true)" -eq 0 ]]
+! grep -q 'head one' "$temp_dir/stdout" || exit 1
+[[ "$(grep -c 'head two' "$temp_dir/stdout")" -eq 1 ]] || exit 1
+[[ "$(grep -Fc '💬 **github-actions[bot]** commented ·' "$temp_dir/stdout")" -eq 1 ]] || exit 1
+[[ "$(grep -c 'PR is now' "$temp_dir/stdout" || true)" -eq 0 ]] || exit 1
 grep -q '⛔ PR #1 closed' "$temp_dir/stdout"
 
 echo "pr-monitor security-review deferral tests passed"

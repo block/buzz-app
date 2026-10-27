@@ -7,11 +7,16 @@ import { PanelWorkspace } from "../../src/features/panels/PanelWorkspace";
 import { Panel } from "../../src/shared/design-system/ui/Panel";
 import { useKeyboardFocusVisibility } from "../../src/shared/design-system/useKeyboardFocusVisibility";
 
-// Real panel and menu; only GitHub I/O is replaced. No credentials or writes.
+// Real panel and menu; GitHub reads and draft conversion stay in memory.
 const ready = new URLSearchParams(location.search).has("ready");
+let draft = false;
 const gh: GitHubCli = async (query) => {
+  if (query.startsWith("mutation($input:ConvertPullRequestToDraftInput!")) {
+    draft = true;
+    return JSON.parse("{}");
+  }
   if (!query.startsWith("query("))
-    throw new Error("This fixture does not write to GitHub");
+    throw new Error("Unsupported fixture action");
   return JSON.parse(
     JSON.stringify({
       repository: {
@@ -22,7 +27,7 @@ const gh: GitHubCli = async (query) => {
           id: "PR_fixture",
           title: "Keep the release notes easy to scan",
           state: "OPEN",
-          isDraft: false,
+          isDraft: draft,
           body: "This sample change groups release notes by feature.\n\nReview the checklist above, then open the action menu to see the available options. All names and pull request data on this page are fictional.",
           author: { login: "alex-example" },
           baseRefName: "main",

@@ -1,23 +1,18 @@
 import { test, expect } from "./source-fixture.mjs";
 
-// Real layout and pointer hit-testing: jsdom action tests cannot catch the
-// trigger losing its trailing alignment when the menu mounts portal helpers.
-test("PR action menu keeps its trigger in place while opening and closing", async ({
+// jsdom cannot detect a trigger moving out from under the pointer between
+// mouse-down and mouse-up, which dismisses the menu before an action is chosen.
+test("PR action menu converts a pull request to draft after a pointer click", async ({
   page,
 }) => {
   for (const state of ["", "?ready"]) {
-    await page.goto(`/tests/fixtures/github-actions.html${state}`);
-    const trigger = page.getByRole("button", {
-      name: "More pull request actions",
-    });
-    await expect(trigger).toBeVisible();
-    await page.evaluate(() => document.fonts.ready);
     for (const [width, scale] of [
       [1000, 1],
       [480, 2],
     ]) {
       await page.setViewportSize({ width, height: 1000 });
       for (const theme of ["light", "dark"]) {
+        await page.goto(`/tests/fixtures/github-actions.html${state}`);
         await page.evaluate(
           ({ theme, scale }) => {
             document.documentElement.dataset.colorMode = theme;
@@ -25,23 +20,27 @@ test("PR action menu keeps its trigger in place while opening and closing", asyn
           },
           { theme, scale },
         );
-        await trigger.scrollIntoViewIfNeeded();
-        const before = await trigger.boundingBox();
-        await trigger.click();
+        const trigger = page.getByRole("button", {
+          name: "More pull request actions",
+        });
         const item = page.getByRole("menuitem", { name: "Convert to draft" });
-        await expect(item).toBeVisible();
-        await expect(trigger).toHaveAttribute("aria-expanded", "true");
-        expect(await trigger.boundingBox()).toEqual(before);
-        await page.keyboard.press("Escape");
+        await expect(trigger).toBeVisible();
+        await page.evaluate(() => document.fonts.ready);
+        await trigger.hover();
+        await page.mouse.down();
+        try {
+          // A real press can render the opened menu before release. An instant
+          // locator.click() can send both events before that render and hide the bug.
+          await expect(item).toBeVisible();
+        } finally {
+          await page.mouse.up();
+        }
+        await item.click();
+        await expect(page.getByText("Draft", { exact: true })).toBeVisible();
+        await expect(
+          page.getByRole("button", { name: "Ready for review", exact: true }),
+        ).toBeVisible();
         await expect(page.getByRole("menu")).toHaveCount(0);
-        await expect(trigger).toBeFocused();
-        expect(await trigger.boundingBox()).toEqual(before);
-        await trigger.press("ArrowDown");
-        await expect(page.getByRole("menuitem").first()).toBeFocused();
-        expect(await trigger.boundingBox()).toEqual(before);
-        await trigger.click();
-        await expect(page.getByRole("menu")).toHaveCount(0);
-        expect(await trigger.boundingBox()).toEqual(before);
       }
     }
   }

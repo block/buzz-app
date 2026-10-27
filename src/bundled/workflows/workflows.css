@@ -698,6 +698,7 @@ html[data-keyboard-navigation]
 .workflow-filter-options,
 .workflow-filter-channels {
   padding: var(--space-1);
+  row-gap: 0;
   max-height: min(18rem, 40dvh);
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -705,5 +706,5 @@ html[data-keyboard-navigation]
 
 .workflow-filter-options {
   display: grid;
-  gap: var(--space-1);
+  gap: 0;
 }

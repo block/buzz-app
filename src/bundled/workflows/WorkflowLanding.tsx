@@ -1006,19 +1006,22 @@ function WorkflowFilterMenu<Value extends string>({
             </Button>
           }
         />
-        <PopoverPopup size="compact" aria-label={label}>
-          <Field label={label} labelVisibility="hidden">
-            <RadioGroup value={value} onValueChange={onChange}>
-              {options.map((option) => (
-                <Radio
-                  key={option.value}
-                  value={option.value}
-                  label={<span className="text-body-sm">{option.label}</span>}
-                  onClick={() => setOpen(false)}
-                />
-              ))}
-            </RadioGroup>
-          </Field>
+        <PopoverPopup size="compact" padding="list" aria-label={label}>
+          <div className="workflow-filter-options">
+            <Field label={label} labelVisibility="hidden">
+              <RadioGroup size="sm" value={value} onValueChange={onChange}>
+                {options.map((option) => (
+                  <Radio
+                    size="sm"
+                    key={option.value}
+                    value={option.value}
+                    label={<span className="text-body-sm">{option.label}</span>}
+                    onClick={() => setOpen(false)}
+                  />
+                ))}
+              </RadioGroup>
+            </Field>
+          </div>
         </PopoverPopup>
       </PopoverRoot>
       {active && (
@@ -1087,6 +1090,7 @@ function WorkflowMultiFilterMenu<Value extends string>({
         />
         <PopoverPopup
           size={wide ? "wide" : "compact"}
+          padding="list"
           aria-label={label}
           style={wide ? { width: "28rem" } : undefined}
         >
@@ -1102,6 +1106,7 @@ function WorkflowMultiFilterMenu<Value extends string>({
           >
             {options.map((option) => (
               <Checkbox
+                size="sm"
                 key={option.value}
                 checked={value.includes(option.value)}
                 onCheckedChange={(checked) =>

@@ -9,7 +9,12 @@ trap 'rm -rf "$temp_dir"' EXIT
 cat >"$temp_dir/producer" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$@" > "${FAKE_PRODUCER_ARGS:-/dev/null}"
-sleep 0.1
+if [[ -n "${FAKE_GH_REVIEW_COUNT:-}" ]]; then
+  expected=$(wc -l <"$FAKE_GH_REVIEW_SEQUENCE")
+  while [[ ! -f "$FAKE_GH_REVIEW_COUNT" ]] || [[ "$(cat "$FAKE_GH_REVIEW_COUNT")" -le "$expected" ]]; do sleep 0.01; done
+else
+  sleep 0.1
+fi
 SH
 chmod +x "$temp_dir/producer"
 
@@ -17,7 +22,10 @@ cat >"$temp_dir/gh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 if [[ "$1 $2" == "pr view" && "$*" == *"baseRefName"* ]]; then
-  if [[ "${FAIL_BASE_REF:-0}" == 1 ]]; then echo "base lookup offline" >&2; exit 1; fi
+  if [[ "${FAIL_BASE_REF:-0}" == 1 && ! -f "$FAKE_GH_BASE_COUNT.ref" ]]; then
+    touch "$FAKE_GH_BASE_COUNT.ref"
+    echo "base lookup offline" >&2; exit 1
+  fi
   echo main
 elif [[ "$1" == "api" ]]; then
   count=0
@@ -26,6 +34,7 @@ elif [[ "$1" == "api" ]]; then
   echo "$count" >"$FAKE_GH_BASE_COUNT"
   value=$(sed -n "${count}p" "$FAKE_GH_BASE_SEQUENCE")
   [[ -n "$value" ]] || value=$(tail -n 1 "$FAKE_GH_BASE_SEQUENCE")
+  [[ "$value" != FAIL ]] || { echo "branch lookup offline" >&2; exit 1; }
   printf '%s\n' "$value"
 elif [[ "$1 $2" == "pr view" && "$*" == *"mergeable"* ]]; then
   count=0
@@ -62,33 +71,31 @@ run_case() {
 
 run_case draft $'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n' $'CONFLICTING\n'
 grep -q 'PR #1 conflicts with `main` at aaaaaaaa. Rebase it onto `main`.' "$temp_dir/draft.out"
-[[ "$(grep -c 'conflicts with' "$temp_dir/draft.out")" == 1 ]]
+[[ "$(grep -c 'conflicts with' "$temp_dir/draft.out")" == 1 ]] || exit 1
 
 run_case mergeable $'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n' $'MERGEABLE\nMERGEABLE\n'
-! grep -q 'conflicts with' "$temp_dir/mergeable.out"
+! grep -q 'conflicts with' "$temp_dir/mergeable.out" || exit 1
 
 run_case base-conflict $'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n' $'MERGEABLE\nCONFLICTING\n'
 grep -q 'base moved aaaaaaaa → bbbbbbbb' "$temp_dir/base-conflict.out"
-[[ "$(grep -c 'conflicts with' "$temp_dir/base-conflict.out")" == 1 ]]
+[[ "$(grep -c 'conflicts with' "$temp_dir/base-conflict.out")" == 1 ]] || exit 1
 
 run_case unknown-keeps-conflict $'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n' $'CONFLICTING\nUNKNOWN\nCONFLICTING\n'
-[[ "$(grep -c 'conflicts with' "$temp_dir/unknown-keeps-conflict.out")" == 1 ]]
+[[ "$(grep -c 'conflicts with' "$temp_dir/unknown-keeps-conflict.out")" == 1 ]] || exit 1
 
 run_case resolved-then-conflicting $'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n' $'CONFLICTING\nMERGEABLE\nCONFLICTING\n'
-[[ "$(grep -c 'conflicts with' "$temp_dir/resolved-then-conflicting.out")" == 2 ]]
+[[ "$(grep -c 'conflicts with' "$temp_dir/resolved-then-conflicting.out")" == 2 ]] || exit 1
 
 # Author filters reach the PR producer.
 FAKE_GH_BASE_COUNT="$temp_dir/args.base-count" FAKE_GH_BASE_SEQUENCE="$temp_dir/draft.base" \
 FAKE_GH_REVIEW_COUNT="$temp_dir/args.review-count" FAKE_GH_REVIEW_SEQUENCE="$temp_dir/draft.review" \
 GH_BIN="$temp_dir/gh" MONITOR_PR_PRODUCER="$temp_dir/producer" FAKE_PRODUCER_ARGS="$temp_dir/producer.args" \
   "$monitor" --repo owner/repo --interval 1 --base-interval 0.01 --ignore-author noisy --no-ignore-bots --allowlist roster 1 >/dev/null
-[[ "$(tr '\n' ' ' <"$temp_dir/producer.args")" == *"--ignore-author noisy --no-ignore-bots --allowlist roster 1 "* ]]
+[[ "$(tr '\n' ' ' <"$temp_dir/producer.args")" == *"--ignore-author noisy --no-ignore-bots --allowlist roster 1 "* ]] || exit 1
 
 echo "monitor-pr base-conflict tests passed"
 
-# Fail explicitly, retaining the cause, rather than starting a permanently blind poller.
-if FAIL_BASE_REF=1 GH_BIN="$temp_dir/gh" MONITOR_PR_PRODUCER="$temp_dir/producer" "$monitor" --repo owner/repo 1 >"$temp_dir/fail.out" 2>"$temp_dir/fail.err"; then
-  echo "accepted a failed base lookup" >&2
-  exit 1
-fi
-grep -q 'base lookup offline' "$temp_dir/fail.err"
+# Transient startup failures recover and later conflicts still arrive.
+FAIL_BASE_REF=1 run_case recovery $'FAIL\naaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n' $'MERGEABLE\nCONFLICTING\n' 2>"$temp_dir/recovery.err"
+grep -q 'conflicts with' "$temp_dir/recovery.out"
+[[ "$(grep -c 'startup lookup' "$temp_dir/recovery.err")" == 1 ]] || exit 1

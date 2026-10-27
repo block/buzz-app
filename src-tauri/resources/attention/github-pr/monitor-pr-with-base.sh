@@ -53,9 +53,20 @@ PR_MONITOR="${MONITOR_PR_PRODUCER:-$PR_MONITOR}"
 GH_BIN="${GH_BIN:-gh}"
 [[ -x "$PR_MONITOR" ]] || { echo "ERROR: $PR_MONITOR not executable" >&2; exit 1; }
 
-BASE_REF=$("$GH_BIN" pr view "$PR" -R "$REPO" --json baseRefName -q .baseRefName) || exit 1
-[[ -n "$BASE_REF" ]] || { echo "ERROR: GitHub returned an empty base ref" >&2; exit 1; }
-BASE_SHA=$("$GH_BIN" api "repos/$REPO/branches/$BASE_REF" -q .commit.sha) || exit 1
+STARTUP_WARNED=0
+while true; do
+  if BASE_REF=$("$GH_BIN" pr view "$PR" -R "$REPO" --json baseRefName -q .baseRefName 2>/dev/null) &&
+    [[ -n "$BASE_REF" ]] &&
+    BASE_SHA=$("$GH_BIN" api "repos/$REPO/branches/$BASE_REF" -q .commit.sha 2>/dev/null) &&
+    [[ -n "$BASE_SHA" ]]; then
+    break
+  fi
+  if [[ "$STARTUP_WARNED" == 0 ]]; then
+    echo "⚠️ PR #$PR startup lookup failed or returned an empty ref; retrying." >&2
+    STARTUP_WARNED=1
+  fi
+  sleep "$BASE_INTERVAL"
+done
 
 snapshot_mergeable() { "$GH_BIN" pr view "$PR" -R "$REPO" --json mergeable -q .mergeable; }
 

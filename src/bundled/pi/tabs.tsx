@@ -766,8 +766,8 @@ export function createTabs({
         )}
         <section className={activityStyles.section}>
           <InlineHeader title="Recent conversations" />
-          <SettingsGroup layout="form">
-            {recent.length ? (
+          {recent.length ? (
+            <SettingsGroup layout="form">
               <ul className={activityStyles.list}>
                 {recent.map((place) => (
                   <li key={place.key} className={activityStyles.entry}>
@@ -803,12 +803,12 @@ export function createTabs({
                   </li>
                 ))}
               </ul>
-            ) : (
-              <p className="m-0 text-body-sm text-subtle">
-                None. A conversation starts when the agent is mentioned.
-              </p>
-            )}
-          </SettingsGroup>
+            </SettingsGroup>
+          ) : (
+            <p className="m-0 text-body-sm text-subtle">
+              None. A conversation starts when the agent is mentioned.
+            </p>
+          )}
         </section>
         {open && (
           <PanelSubview

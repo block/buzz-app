@@ -894,12 +894,12 @@ export function createTabs({
               </Button>
             }
           />
-          <SettingsGroup layout="form">
-            {recent.status === "error" ? (
-              <p role="alert" className="buzz-field-error m-0">
-                Could not list goose's sessions: {recent.error}
-              </p>
-            ) : rows.length ? (
+          {recent.status === "error" ? (
+            <p role="alert" className="buzz-field-error m-0">
+              Could not list goose's sessions: {recent.error}
+            </p>
+          ) : rows.length ? (
+            <SettingsGroup layout="form">
               <ul className={activityStyles.list}>
                 {rows.map((row) => (
                   <li key={row.sessionId} className={activityStyles.entry}>
@@ -936,17 +936,16 @@ export function createTabs({
                   </li>
                 ))}
               </ul>
-            ) : recent.status === "ready" ? (
-              <p className="m-0 text-body-sm text-subtle">
-                None. A conversation's session starts when the agent is
-                mentioned.
-              </p>
-            ) : (
-              <p role="status" className="m-0 text-body-sm text-subtle">
-                Reading goose's sessions…
-              </p>
-            )}
-          </SettingsGroup>
+            </SettingsGroup>
+          ) : recent.status === "ready" ? (
+            <p className="m-0 text-body-sm text-subtle">
+              None. A conversation's session starts when the agent is mentioned.
+            </p>
+          ) : (
+            <p role="status" className="m-0 text-body-sm text-subtle">
+              Reading goose's sessions…
+            </p>
+          )}
         </section>
         {open && (
           <PanelSubview

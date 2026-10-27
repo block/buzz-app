@@ -2240,6 +2240,13 @@ html[data-keyboard-input] .quickReactionGlyph {
     --reply-spine-offset: calc(0px - var(--space-3));
     --reply-spine-start: 0px;
   }
+  /* The end padding is a step narrower, so a right-side spine keeps the same
+     inset from the edge as a left-side one. */
+  .replyBranch[data-depth="0"]:has(
+    > .replyBranchMessage [data-viewer-message]
+  ) {
+    --reply-spine-offset: calc(0px - var(--space-2));
+  }
 }
 
 .spoiler {

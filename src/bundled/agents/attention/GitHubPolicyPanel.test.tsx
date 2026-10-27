@@ -169,10 +169,12 @@ it("keeps the allowlist trigger through a delayed refresh and retries a failed r
   const retryGate = new Promise<void>((resolve) => {
     release = resolve;
   });
-  host.spawn = vi.fn().mockImplementationOnce(async (...args) => {
-    await retryGate;
-    return native(...args);
-  });
+  host.spawn = vi
+    .fn()
+    .mockImplementationOnce(async (...args: Parameters<typeof native>) => {
+      await retryGate;
+      return native(...args);
+    });
   retry.focus();
   fireEvent.click(retry);
   try {

@@ -46,7 +46,8 @@ export async function importAttention(
     const [agent, ...others] = memberships.filter((agent) => {
       const relay = agents.relay(agent.key)?.snapshot();
       if (relay?.status !== "ready") return false;
-      if (memberships.length === 1) return true;
+      // Legacy state belongs to the bare-key home membership.
+      if (memberships.length === 1 && agent.key === pubkey) return true;
       const channels = relay.session.channels;
       return (
         channels.list().channels.some(({ id }) => id === channel) ||

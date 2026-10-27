@@ -242,7 +242,7 @@ it.each([
       attention: {},
       attentionEnabled: true,
     };
-    const target = { ...home, key: "agent@other.example" };
+    const target = { ...home, key: visible ? "agent@other.example" : home.key };
     const save = vi.fn(async () => {}),
       wake = vi.fn();
     const agents = {
@@ -295,6 +295,62 @@ it.each([
       expect.anything(),
     );
     expect(spawn).toHaveBeenCalledTimes(2);
+  },
+);
+
+it.each(["registration", "wake"])(
+  "retains %s when only a foreign membership remains and the destination is unknown",
+  async (kind) => {
+    const save = vi.fn(),
+      wake = vi.fn();
+    const agents = {
+      snapshot: () => ({
+        running: [
+          {
+            key: "agent@other",
+            pubkey: "agent",
+            place: "here",
+            attention: {},
+            attentionEnabled: true,
+          },
+        ],
+      }),
+      relay: () => ({
+        snapshot: () => ({
+          status: "ready",
+          session: { channels: { list: () => ({ channels: [] }) } },
+        }),
+      }),
+      save,
+      wake,
+    } as unknown as Agents;
+    const spawn = vi.fn(async (_id: string, options?: HostProcessOptions) => {
+      options?.onStdout?.(
+        JSON.stringify([
+          kind === "registration"
+            ? registration
+            : {
+                file: "wake.json",
+                signature: "abc",
+                wake: {
+                  agent: "agent",
+                  channel: registration.channel,
+                  text: "Done",
+                },
+              },
+        ]),
+      );
+      return {
+        write: async () => {},
+        end: async () => {},
+        kill: async () => {},
+        exited: Promise.resolve(0),
+      };
+    });
+    await importAttention(agents, { spawn });
+    expect(save).not.toHaveBeenCalled();
+    expect(wake).not.toHaveBeenCalled();
+    expect(spawn).toHaveBeenCalledTimes(1);
   },
 );
 

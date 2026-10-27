@@ -519,6 +519,21 @@ export function SoloWorkspaces({
                 const channel = channels.channels.find(
                   (channel) => channel.id === item.id,
                 );
+                const rename =
+                  !renaming &&
+                  deleting !== project.id &&
+                  canEditLifetime(session, channel)
+                    ? () => {
+                        if (
+                          renaming ||
+                          deleting === project.id ||
+                          !canEditLifetime(session, channel)
+                        )
+                          return false;
+                        setRenaming(item.id);
+                        return true;
+                      }
+                    : undefined;
                 if (renaming === item.id)
                   return (
                     <SoloChatName
@@ -561,6 +576,7 @@ export function SoloWorkspaces({
                             onMove={(projectId) => move(item.id, projectId)}
                             onNewWorkspace={() => setCreatingFor(item)}
                             onSettings={() => setChatSettings({ item, visit })}
+                            onRename={rename && (() => void rename())}
                             onLifecycle={
                               handoff &&
                               ((action) => chooseLifecycle(channel, action))
@@ -583,23 +599,7 @@ export function SoloWorkspaces({
                       channelId={item.id}
                       sectionKey={DROP + project.id}
                     >
-                      {renderChat(
-                        item,
-                        !renaming &&
-                          deleting !== project.id &&
-                          canEditLifetime(session, channel)
-                          ? () => {
-                              if (
-                                renaming ||
-                                deleting === project.id ||
-                                !canEditLifetime(session, channel)
-                              )
-                                return false;
-                              setRenaming(item.id);
-                              return true;
-                            }
-                          : undefined,
-                      )}
+                      {renderChat(item, rename)}
                     </DraggableChannel>
                   </ChatActionsMenu>
                 );

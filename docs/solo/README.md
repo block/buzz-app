@@ -93,8 +93,8 @@ behavior on the label, so a rename touches copy only.
   implemented behavior.
 - Solo chats and drafts use the full conversation pane. Right-click,
   Shift+F10 and overflow share one sidebar action list: Mark as unread, then
-  Edit…, Move to and Copy, then Share… and Convert to channel (where eligible),
-  then Archive chat and Delete chat. Opening a row
+  Rename (where editable), Chat settings and Move to, then Share access, Copy link
+  and Convert to channel (where eligible), then Archive chat and Delete chat. Opening a row
   menu does not select the row.
   A chat can also be dragged with a pointer onto another workspace or **Chats**;
   the drop is the same Move to intent, with the same gate, optimistic placement,
@@ -215,11 +215,11 @@ there is no create-then-edit. Local settings store name, Canvas and lifetime
 together. Invalid stored durations are visible failures, not implicit Ongoing.
 
 The **Chat settings** gear in the header opens the form directly; Solo chat
-row menus offer the same form as **Edit…**. Both open one
+row menus offer the same form as **Chat settings**. Both open one
 scrollable dialog, with **Chat name** above Workspace/Canvas
 (optional for a new draft),
-**Lifetime** below it, and one **Save changes** action. The separate Rename editor
-and menu action have been removed. There is no separate lifetime menu or tab.
+**Lifetime** below it, and one **Save changes** action. There is no separate
+lifetime menu or tab.
 Changed Canvas confirms first, then changed name/lifetime use one fresh signed
 channel-details operation. The Solo label, privacy, history, membership and
 workspace filing remain unchanged. A no-op closes without writing. If details fail
@@ -252,7 +252,8 @@ The shared fresh-details owner remains edit authority.
 
 ## Optional naming
 
-Double-click an editable Solo chat’s sidebar row to rename it inline. The current
+Double-click an editable Solo chat’s sidebar row, or choose **Rename** from its
+actions menu, to rename it inline. The current
 name is selected; Enter or clicking away saves, and Escape cancels. Empty or
 unchanged names keep the confirmed title. Errors retain the draft below the field;
 uncertain saves offer **Check save status** without republishing. This uses the

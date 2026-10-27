@@ -180,7 +180,7 @@ function CreateSectionDropTarget() {
         inert={!open}
       >
         <div
-          className={`${styles.createSectionDrop} text-body-sm`}
+          className={`${styles.createSectionDrop} text-caption`}
           data-create-section-drop={open ? "" : undefined}
           data-drop-target={isOver || undefined}
         >

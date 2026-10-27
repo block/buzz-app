@@ -153,53 +153,47 @@ it("reports a process startup failure to the owning conversation", async () => {
   );
 });
 
-it.each(["command", "github-pr"])(
-  "uses only the run-bound launcher for %s",
-  async (id) => {
-    let run!: (input: Input) => Promise<void>;
-    const agents = {
-      addAttentionSource: (source: AttentionSource) => {
-        if (source.id === id) run = source.run;
-      },
+it.each(["command"])("uses only the run-bound launcher for %s", async (id) => {
+  let run!: (input: Input) => Promise<void>;
+  const agents = {
+    addAttentionSource: (source: AttentionSource) => {
+      if (source.id === id) run = source.run;
+    },
+  };
+  const spawn = vi.fn(async function (this: unknown) {
+    expect(this).toBeUndefined();
+    return {
+      write: async () => {},
+      end: async () => {},
+      kill: async () => {},
+      exited: Promise.resolve(0),
     };
-    const spawn = vi.fn(async function (this: unknown) {
-      expect(this).toBeUndefined();
-      return {
-        write: async () => {},
-        end: async () => {},
-        kill: async () => {},
-        exited: Promise.resolve(0),
-      };
-    });
-    registerAttention({ agents }, [id as "command" | "github-pr"]);
-    const signal = new AbortController().signal;
-    const pr = "https://github.com/block/buzz-app/pull/1630";
-    await run({
-      spawn,
-      agent: "agent",
-      watch: {
-        type: "source",
-        interest_id: "test",
-        enabled: true,
-        provider: `attention/${id}`,
-        channel: "channel",
-        root: "root",
-        config: { command: ["check"], pr, cwd: "/work" },
-      },
-      signal,
-      emit: vi.fn(),
-    });
-    expect(spawn).toHaveBeenCalledWith(
-      id === "command" ? "attention-command" : "attention-pr",
-      {
-        args: id === "command" ? ["check"] : ["--interval", "60", pr],
-        cwd: "/work",
-        onStdout: expect.any(Function),
-        onStderr: expect.any(Function),
-      },
-    );
-  },
-);
+  });
+  registerAttention({ agents }, ["command"]);
+  const signal = new AbortController().signal;
+  const pr = "https://github.com/block/buzz-app/pull/1630";
+  await run({
+    spawn,
+    agent: "agent",
+    watch: {
+      type: "source",
+      interest_id: "test",
+      enabled: true,
+      provider: `attention/${id}`,
+      channel: "channel",
+      root: "root",
+      config: { command: ["check"], pr, cwd: "/work" },
+    },
+    signal,
+    emit: vi.fn(),
+  });
+  expect(spawn).toHaveBeenCalledWith("attention-command", {
+    args: ["check"],
+    cwd: "/work",
+    onStdout: expect.any(Function),
+    onStderr: expect.any(Function),
+  });
+});
 
 it("refuses commands when the host has no agent launcher", async () => {
   const h = harness(false);

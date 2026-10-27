@@ -1,5 +1,3 @@
-import { githubPolicy } from "./github-policy";
-import type { Host } from "../host/service";
 import type { AttentionSource } from "./attention-sources";
 
 /** Saved identities belong to their bundled owners, including legacy aliases. */
@@ -19,32 +17,17 @@ type Sources = {
 export function registerAttention(
   ctx: {
     agents: Sources;
-    host?: Pick<Host, "spawn">;
   },
-  ids: readonly ("command" | "github-pr")[] = ["command"],
+  ids: readonly "command"[] = ["command"],
 ) {
   for (const id of ids)
     ctx.agents.addAttentionSource({
       id,
-      description:
-        id === "command"
-          ? "Run a command as the subscribed agent"
-          : "Follow GitHub pull request feedback and CI",
-      configExample:
-        id === "command"
-          ? {
-              command: ["program", "argument"],
-              cwd: "/absolute/optional/directory",
-            }
-          : { pr: "https://github.com/OWNER/REPO/pull/NUMBER" },
-      ...(id === "github-pr"
-        ? {
-            warnings: async () => {
-              const status = await githubPolicy(ctx.host ?? {});
-              return status.warning ? [status.warning] : [];
-            },
-          }
-        : {}),
+      description: "Run a command as the subscribed agent",
+      configExample: {
+        command: ["program", "argument"],
+        cwd: "/absolute/optional/directory",
+      },
       async run({ watch, signal, emit, spawn }) {
         let omitted = 0;
         let buffer = "",
@@ -113,15 +96,7 @@ export function registerAttention(
               flush();
             }, 1000);
         };
-        const pr = watch.config.pr;
-        if (
-          id === "github-pr" &&
-          (typeof pr !== "string" ||
-            !/^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/[0-9]+$/.test(pr))
-        )
-          throw new Error("A PR watch needs a GitHub pull request URL");
-        const command =
-          id === "github-pr" ? ["--interval", "60", pr] : watch.config.command;
+        const command = watch.config.command;
         if (
           !Array.isArray(command) ||
           !command.length ||
@@ -143,18 +118,15 @@ export function registerAttention(
             "This host cannot run commands as the agent. Update Buzz first.",
           );
         let failure: Error | undefined;
-        const process = await spawn(
-          id === "github-pr" ? "attention-pr" : "attention-command",
-          {
-            args: command,
-            ...(typeof cwd === "string" ? { cwd } : {}),
-            onStdout: append,
-            onStderr: (data) => {
-              stderr = (stderr + data).slice(-16384);
-              console.warn("Attention command:", data);
-            },
+        const process = await spawn("attention-command", {
+          args: command,
+          ...(typeof cwd === "string" ? { cwd } : {}),
+          onStdout: append,
+          onStderr: (data) => {
+            stderr = (stderr + data).slice(-16384);
+            console.warn("Attention command:", data);
           },
-        ).catch((error) => {
+        }).catch((error) => {
           failure = new Error(
             `Attention command could not start: ${String(error)}`,
           );

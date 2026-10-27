@@ -104,13 +104,13 @@ request without a model checking it. An agent calls it with a pull request URL,
 from a thread or a Solo chat. While the app is open the plugin reads the pull
 request through the signed-in `gh` CLI once a minute. It wakes the agent when CI
 settles on the head commit, once per commit and result, or when new feedback has
-been quiet for 90 seconds. The wake is a plugin wake (`ctx.agents.wake`, below)
+been quiet for 90 seconds. The tool creates an Attention source subscription. Attention delivers the wake
 in the conversation where it called the tool: no message is sent, and the agent
 is told its text is data. It quotes the failed checks' names and the new
 comments, line by line, each clipped, with GitHub's links. Agents comment as the
 `gh` account, as their owner does, so GitHub cannot tell them apart: a comment of
 that account that starts with 🤖, as an agent's do, wakes nobody, and the owner's
-other comments wake the agent. A watch is saved on the device. It ends when the
+other comments wake the agent. A watch is saved in Attention on the device and respects its on/off switch. Existing device-local GitHub watches are imported once with their feedback cursor and destination. It ends when the
 pull request merges or closes, after 20 wakes, after 30 failed polls in a row,
 or when the agent calls it with `stop: true`.
 
@@ -969,7 +969,7 @@ Use `watch_add` with `type: "source"`, a `provider` in `plugin/source` form and 
 
 Source output accepts the same optional classifier questions as event watches. Classification preserves output ordering and completion until the resulting delivery settles. `agents.attentionProviders()` lists active registered provider keys with their optional `description` and `configExample`, including providers from unrelated plugins. Disabled and unloaded registrations disappear from discovery.
 
-The bundled Agents plugin owns the command producer, discovery tool and legacy Monitor import. The GitHub plugin owns the GitHub PR producer. Saved provider IDs remain `attention/command` and `attention/github-pr`, and discovery marks them `builtIn: true`. The external Attention plugin supplies only its overview and editing UI and must be updated alongside this host. The PR monitor is packaged with Buzz; it still requires `gh`, Bash, jq and Python on PATH. Other plugins can register their own source producers through the same lifecycle.
+The bundled Agents plugin owns the command producer, discovery tool and legacy Monitor import. The GitHub plugin owns the GitHub PR producer. Saved provider IDs remain `attention/command` and `attention/github-pr`, and discovery marks them `builtIn: true`. The external Attention plugin supplies only its overview and editing UI and must be updated alongside this host. The GitHub source uses the same PR parser and feedback policy as `github_watch_pr`; it requires the signed-in `gh` CLI. The tool configures Attention subscriptions rather than owning a separate polling loop. Other plugins can register their own source producers through the same lifecycle.
 
 ## Attention delivery destinations
 

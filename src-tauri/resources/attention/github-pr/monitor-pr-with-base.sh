@@ -53,6 +53,21 @@ PR_MONITOR="${MONITOR_PR_PRODUCER:-$PR_MONITOR}"
 GH_BIN="${GH_BIN:-gh}"
 [[ -x "$PR_MONITOR" ]] || { echo "ERROR: $PR_MONITOR not executable" >&2; exit 1; }
 
+
+snapshot_mergeable() { "$GH_BIN" pr view "$PR" -R "$REPO" --json mergeable -q .mergeable; }
+
+emit_base_conflict() {
+  printf '⚠️ PR #%s conflicts with `%s` at %s%s. Rebase it onto `%s`.\n\n' "$PR" "$BASE_REF" "${BASE_SHA:0:8}" "$1" "$BASE_REF"
+}
+
+
+PR_MONITOR_ARGS=(--repo "$REPO" --interval "$INTERVAL" --quiet-initial --no-conflict-events)
+[[ "$INCLUDE_SELF_COMMENTS" == "1" ]] && PR_MONITOR_ARGS+=(--include-self-comments)
+"$PR_MONITOR" "${PR_MONITOR_ARGS[@]}" ${AUTHOR_FILTER_ARGS[@]+"${AUTHOR_FILTER_ARGS[@]}"} "$PR" &
+PR_MONITOR_PID=$!
+
+# GitHub recomputes mergeability lazily; UNKNOWN keeps the last known state.
+(
 STARTUP_WARNED=0
 while true; do
   if BASE_REF=$("$GH_BIN" pr view "$PR" -R "$REPO" --json baseRefName -q .baseRefName 2>/dev/null) &&
@@ -68,22 +83,9 @@ while true; do
   sleep "$BASE_INTERVAL"
 done
 
-snapshot_mergeable() { "$GH_BIN" pr view "$PR" -R "$REPO" --json mergeable -q .mergeable; }
-
-emit_base_conflict() {
-  printf '⚠️ PR #%s conflicts with `%s` at %s%s. Rebase it onto `%s`.\n\n' "$PR" "$BASE_REF" "${BASE_SHA:0:8}" "$1" "$BASE_REF"
-}
-
 CONFLICTING=0
 [[ "$(snapshot_mergeable)" == CONFLICTING ]] && { CONFLICTING=1; emit_base_conflict ""; }
 
-PR_MONITOR_ARGS=(--repo "$REPO" --interval "$INTERVAL" --quiet-initial --no-conflict-events)
-[[ "$INCLUDE_SELF_COMMENTS" == "1" ]] && PR_MONITOR_ARGS+=(--include-self-comments)
-"$PR_MONITOR" "${PR_MONITOR_ARGS[@]}" ${AUTHOR_FILTER_ARGS[@]+"${AUTHOR_FILTER_ARGS[@]}"} "$PR" &
-PR_MONITOR_PID=$!
-
-# GitHub recomputes mergeability lazily; UNKNOWN keeps the last known state.
-(
   while kill -0 "$PR_MONITOR_PID" 2>/dev/null; do
     sleep "$BASE_INTERVAL"
     kill -0 "$PR_MONITOR_PID" 2>/dev/null || break

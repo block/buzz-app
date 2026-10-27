@@ -99,3 +99,19 @@ echo "monitor-pr base-conflict tests passed"
 FAIL_BASE_REF=1 run_case recovery $'FAIL\naaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n' $'MERGEABLE\nCONFLICTING\n' 2>"$temp_dir/recovery.err"
 grep -q 'conflicts with' "$temp_dir/recovery.out"
 [[ "$(grep -c 'startup lookup' "$temp_dir/recovery.err")" == 1 ]] || exit 1
+
+# A missing base branch cannot hold a terminal PR producer open.
+cat >"$temp_dir/terminal-producer" <<'SH'
+#!/usr/bin/env bash
+echo 'PR #1 closed'
+SH
+chmod +x "$temp_dir/terminal-producer"
+printf 'FAIL\n' >"$temp_dir/missing.base"
+FAKE_GH_BASE_COUNT="$temp_dir/missing.count" FAKE_GH_BASE_SEQUENCE="$temp_dir/missing.base" \
+GH_BIN="$temp_dir/gh" MONITOR_PR_PRODUCER="$temp_dir/terminal-producer" \
+python3 - "$monitor" "$temp_dir/terminal.out" <<'PYTEST'
+import subprocess, sys
+with open(sys.argv[2], 'w') as output:
+    subprocess.run([sys.argv[1], '--repo', 'owner/repo', '--base-interval', '0.01', '1'], stdout=output, stderr=subprocess.DEVNULL, timeout=3, check=True)
+PYTEST
+grep -q 'PR #1 closed' "$temp_dir/terminal.out"

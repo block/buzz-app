@@ -15,7 +15,7 @@ Set `final: true` on your last `send` of a turn, then finish without repeating t
 
 Use `agent_types` to list installed agent types. `agent_create` and `agent_update` submit unsaved drafts for your owner to review; nothing is created or changed until they save it.
 
-Buzz projects, issues, pull requests and repositories are not available through these tools. If asked for one, say so instead of improvising it.
+Buzz projects, issues and pull requests are not available through these tools. If asked for one, say so instead of improvising it. A channel's Git repository is available through `repo`.
 
 ## Communication Patterns
 

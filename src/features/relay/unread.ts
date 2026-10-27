@@ -2143,26 +2143,31 @@ export function createUnread({
           // The timeline above the bottom also shows mentions and broadcasts,
           // which `activity:` never reads: it is a timestamp, so it would also
           // read attention that arrives later with an older timestamp. Mark
-          // the retained ones through the bottom row individually instead.
+          // the retained ones through the bottom row individually instead,
+          // at most the newest 128, as one observation reads, so a backlog
+          // cannot crowd older marks out of the synced budget.
           const state = reads.state();
-          const shown = rows.filter(
-            (entry) =>
-              entry.event.created_at <= event.created_at &&
-              (!threadReference(entry.event) || entry.broadcast) &&
-              priority(entry, false) &&
-              !forcedMessages.get(channelId)?.has(entry.event.id) &&
-              !reads.localUnread(`msg:${entry.event.id}`) &&
-              !overrideActive(
-                state.overrides[`msg:${entry.event.id}`],
-                effectiveFrontier(
-                  state,
-                  `msg:${entry.event.id}`,
-                  channelId,
-                  entry.rootId,
-                ),
-              ) &&
-              isUnread(entry, state, false),
-          );
+          const shown = rows
+            .filter(
+              (entry) =>
+                entry.event.created_at <= event.created_at &&
+                (!threadReference(entry.event) || entry.broadcast) &&
+                priority(entry, false) &&
+                !forcedMessages.get(channelId)?.has(entry.event.id) &&
+                !reads.localUnread(`msg:${entry.event.id}`) &&
+                !overrideActive(
+                  state.overrides[`msg:${entry.event.id}`],
+                  effectiveFrontier(
+                    state,
+                    `msg:${entry.event.id}`,
+                    channelId,
+                    entry.rootId,
+                  ),
+                ) &&
+                isUnread(entry, state, false),
+            )
+            .sort((a, b) => order(b.event, a.event))
+            .slice(0, 128);
           if (shown.length)
             await reads.readMessages(
               shown.map((entry) => ({

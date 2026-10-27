@@ -3269,6 +3269,29 @@ it("catch-up leaves a mention marked unread unread", async () => {
   lease.dispose();
 });
 
+it("catch-up marks at most the newest 128 mentions, and marks more once activity covers the cut", async () => {
+  const h = setup();
+  h.grant("room");
+  const mentions = Array.from({ length: 130 }, (_, index) =>
+    message(h.alice, "room", `mention ${index}`, 100 + index, [
+      ["p", h.viewer.pubkey],
+    ]),
+  );
+  const bottom = message(h.alice, "room", "bottom", 300);
+  h.emit([...mentions, bottom]);
+  const first = h.session.unread.reading("room");
+  await first.catchUp(bottom.id);
+  first.dispose();
+  const unread = () =>
+    mentions.filter(({ id }) => h.session.unread.attention("room", id).unread);
+  expect(unread()).toEqual(mentions.slice(0, 2));
+  // `activity:` already covers the cut, but the rest are still marked.
+  const second = h.session.unread.reading("room");
+  await second.catchUp(bottom.id);
+  second.dispose();
+  expect(unread()).toEqual([]);
+});
+
 it("catch-up in a DM reads the whole DM, so its channel mark replaces message marks", async () => {
   const h = setup();
   h.grant("room");

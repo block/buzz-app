@@ -3431,6 +3431,10 @@ const pastedOrdered = copyHtml(
 );
 const pastedQuote = copyHtml("<blockquote><p>quoted</p></blockquote>");
 
+// ProseMirror renders an empty textblock as `<p><br></p>`, which `p:empty`
+// never matches; this is the shape an item-start paste must not leave.
+const emptyParagraph = "p > br:only-child";
+
 // A list item is `paragraph block*`: blocks cannot precede its first paragraph,
 // so at its start a pasted list of the same kind joins the list and other
 // blocks, including a list of the other kind, follow the paragraph, with the
@@ -3512,7 +3516,7 @@ it.each([
     paste(h.input, "pasted", html);
     expect(h.markdown()).toBe(markdown);
     expect(h.input.querySelector(shown)).not.toBeNull();
-    expect(h.input.querySelector("p:empty")).toBeNull();
+    expect(h.input.querySelector(emptyParagraph)).toBeNull();
     expect(h.input.value.slice(h.input.selectionStart ?? 0)).toBe(after);
     act(() => h.input.undo(false));
     expect(h.markdown()).toBe(original);
@@ -3543,7 +3547,7 @@ it.each([
     paste(h.input, "pasted", html);
     expect(h.markdown()).toBe(markdown);
     expect(h.input.querySelector(shown)).not.toBeNull();
-    expect(h.input.querySelector("p:empty")).toBeNull();
+    expect(h.input.querySelector(emptyParagraph)).toBeNull();
     act(() => h.input.undo(false));
     expect(h.markdown()).toBe("- alpha\n- beta");
   },

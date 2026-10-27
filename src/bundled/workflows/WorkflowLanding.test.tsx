@@ -1374,8 +1374,13 @@ it("rereads history only once a later run is created", async () => {
   }
 });
 
-function filterLanding() {
+function filterLanding(save = true) {
   const fixture = createWorkflowFixture();
+  const capability = {
+    ...fixture.capability,
+    availability: { ...fixture.capability.availability, save },
+  };
+  const onCreate = vi.fn();
   const channels = [
     { id: fixtureChannel, name: "General", channelType: "stream" as const },
     { id: "other-channel", name: "Other", channelType: "stream" as const },
@@ -1410,7 +1415,7 @@ function filterLanding() {
     return (
       <ToastProvider>
         <WorkflowLanding
-          capability={fixture.capability}
+          capability={capability}
           channels={channels}
           filter={filter}
           onFilterChange={setFilter}
@@ -1419,7 +1424,7 @@ function filterLanding() {
           detailTarget={null}
           selected={undefined}
           onSelect={() => {}}
-          onCreate={() => {}}
+          onCreate={onCreate}
           onDelete={() => {}}
           onOpen={() => {}}
         />
@@ -1454,8 +1459,53 @@ function filterLanding() {
       expect(screen.queryByRole("dialog", { name: "Channels" })).toBeNull(),
     );
   };
-  return { fixture, user, choose, chooseTrigger, chooseChannel, definition };
+  return {
+    fixture,
+    user,
+    choose,
+    chooseTrigger,
+    chooseChannel,
+    definition,
+    onCreate,
+  };
 }
+
+it.each([true, false])(
+  "clears a filtered empty state with focus handoff when save is %s",
+  async (save) => {
+    const { fixture, user, choose, chooseChannel, onCreate } =
+      filterLanding(save);
+    await choose("Owner", "My workflows");
+    await choose("Status", "Enabled");
+    await chooseChannel();
+    expect(screen.getByText("No matching workflows")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "New workflow" })).toBeNull();
+    screen.getByRole("button", { name: "Clear filters" }).focus();
+    await user.keyboard("{Enter}");
+    expect(screen.getByRole("button", { name: "Owner" })).toHaveFocus();
+    expect(screen.queryByRole("button", { name: "Clear all" })).toBeNull();
+    await waitFor(() =>
+      expect(screen.getAllByRole("button", { name: /^Open / })).toHaveLength(3),
+    );
+    expect(onCreate).not.toHaveBeenCalled();
+
+    act(() =>
+      fixture.definitions.update({
+        status: "ready",
+        data: { items: [], partial: false },
+      }),
+    );
+    expect(
+      screen.getByRole("heading", { name: "Workflows" }),
+    ).toBeInTheDocument();
+    if (save) {
+      await user.click(screen.getByRole("button", { name: "New workflow" }));
+      expect(onCreate).toHaveBeenCalledOnce();
+    } else {
+      expect(screen.queryByRole("button", { name: "New workflow" })).toBeNull();
+    }
+  },
+);
 
 it("combines ownership, saved enabled state and channels, and clears every filter", async () => {
   const { user, choose, chooseTrigger, chooseChannel } = filterLanding();

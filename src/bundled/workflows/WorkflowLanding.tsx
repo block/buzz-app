@@ -1314,6 +1314,7 @@ export function WorkflowLanding({
     setMineOnly(false);
     setStatus("all");
     setTriggers([]);
+    ownerTriggerRef.current?.focus();
   };
   const ordered = [...channels].sort(
     (a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id),
@@ -1484,14 +1485,7 @@ export function WorkflowLanding({
             }))}
           />
           {filtered && (
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => {
-                resetFilters();
-                ownerTriggerRef.current?.focus();
-              }}
-            >
+            <Button size="sm" variant="ghost" onClick={resetFilters}>
               Clear all
             </Button>
           )}
@@ -1558,11 +1552,15 @@ export function WorkflowLanding({
               : "Automations that keep your community moving."
           }
           action={
-            capability.availability.save && (
-              <Button onClick={onCreate}>
-                <PlusIcon size="1rem" aria-hidden="true" />
-                New workflow
-              </Button>
+            filtered ? (
+              <Button onClick={resetFilters}>Clear filters</Button>
+            ) : (
+              capability.availability.save && (
+                <Button onClick={onCreate}>
+                  <PlusIcon size="1rem" aria-hidden="true" />
+                  New workflow
+                </Button>
+              )
             )
           }
         />

@@ -358,6 +358,7 @@ it("deploys to the sign-in's own tenant and opens only its app hosts", () => {
     "https://tiny-counter--bpsites.apps.builderlab.xyz/",
     "https://demo--bpsites.apps.block.builderlab.xyz/",
     "https://demo--bpsites.apps.builderlabstaging.xyz/path?x=1",
+    "https://demo--bpsites.apps.block.builderlabstaging.xyz/",
   ])
     expect(isAppUrl(url), url).toBe(true);
   for (const url of [

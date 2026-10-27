@@ -26,7 +26,7 @@ const APP_DOMAINS = [
   "apps.public.builderlab.xyz",
   "apps.builderlabstaging.xyz",
   "apps.block.builderlab.xyz",
-  "apps.test.blockstaging.build",
+  "apps.block.builderlabstaging.xyz",
 ];
 
 /** An app's name from its host, `<name>--<workspace>.<apps domain>`. */

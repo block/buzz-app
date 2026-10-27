@@ -55,8 +55,12 @@
   background: var(--scrollbar-thumb-quiet);
   background-clip: padding-box;
 }
-/* Keep the final message clear of floating typing/activity indicators.
-   The spacer scrolls away with history instead of shortening its viewport. */
+/* Keep the final message clear of floating typing/activity indicators and
+   the join preview lane. The spacer scrolls away with history instead of
+   shortening its viewport. Threads end with it too, not bottom padding: WebKit
+   drops block-end padding from the scroll range for one layout when a covered
+   workspace tab is shown again (content-visibility), which pulls a thread read
+   at its end up by it. */
 .timelineEnd {
   height: calc(var(--space-8) + var(--channel-preview-inset, 0px));
 }
@@ -792,15 +796,6 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   /* Older-history corrections hide overflow for a task (scroll-correction.ts). */
   scrollbar-gutter: stable;
   scrollbar-width: thin;
-}
-/* Include the join preview lane while keeping the approved message inset.
-   A spacer, not padding: WebKit drops block-end padding from the scroll range
-   for one layout when a covered workspace tab is shown again
-   (content-visibility), which pulls a thread read at its end up by it. */
-.threadHistory::after {
-  content: "";
-  display: block;
-  height: calc(var(--space-8) + var(--channel-preview-inset, 0px));
 }
 /* Measure loaded rows without painting a scroll position we will replace,
    then fade them in once positioned. */

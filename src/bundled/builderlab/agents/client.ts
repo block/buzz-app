@@ -428,7 +428,7 @@ export function createAgentClient(
         signal,
       );
     },
-    /** Republishes the agent's profile; no picture removes the one it had. */
+    /** Republishes the agent's profile; Beekeeper keeps the stored picture when none is sent. */
     async updateProfile(
       profile: Readonly<{
         pubkey: string;

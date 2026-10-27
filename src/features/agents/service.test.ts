@@ -77,6 +77,7 @@ const records = vi.hoisted(() => ({
   publish: vi.fn(),
   remove: vi.fn(),
   removeAgent: vi.fn(),
+  unshare: vi.fn(),
 }));
 vi.mock("../solo/default-agent", async (original) => ({
   ...(await original<typeof import("../solo/default-agent")>()),
@@ -107,6 +108,7 @@ vi.mock("./relay-removal", () => ({
   removeAgentFromChannels: leaveChannels,
   publishAgentRecord: records.publish,
   deleteAgentRecord: records.remove,
+  deleteCatalogShare: records.unshare,
   removeRelayAgent: records.removeAgent,
 }));
 
@@ -308,6 +310,8 @@ beforeEach(() => {
   records.remove.mockImplementation(async () => void steps.push("record"));
   records.removeAgent.mockReset();
   records.removeAgent.mockImplementation(async () => void steps.push("leave"));
+  records.unshare.mockReset();
+  records.unshare.mockImplementation(async () => void steps.push("unshare"));
 });
 afterEach(() => vi.useRealTimers());
 
@@ -3760,6 +3764,7 @@ it("keeps a Delete that fails partway listed and stopped, deletes nothing, and r
     "channels",
     "archive",
     "record",
+    "unshare",
     "key",
     "forget",
   ]);
@@ -4711,6 +4716,7 @@ it("stops it first, and deletes its key only after it left its channels and was 
     "channels",
     "archive",
     "record",
+    "unshare",
     "key",
     "forget",
   ]);
@@ -7750,7 +7756,7 @@ it("deletes a hosted agent from its provider, then from its community", async ()
     hostedKey,
     expect.any(AbortSignal),
   );
-  expect(steps).toEqual(["provider", "leave"]);
+  expect(steps).toEqual(["provider", "leave", "unshare"]);
   expect(remote.remove).toHaveBeenCalledWith({
     pubkey: hostedKey,
     community: "wss://relay.example.test",
@@ -7768,7 +7774,7 @@ it("deletes an unfinished hosted agent from its community too, as its profile ma
     service.create({ type: "example/cloud", name: "Sky" }),
   ).rejects.toThrow();
   await service.remove(hostedKey);
-  expect(steps).toEqual(["provider", "leave"]);
+  expect(steps).toEqual(["provider", "leave", "unshare"]);
   expect(service.find(hostedKey)).toBeUndefined();
 });
 

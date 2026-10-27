@@ -110,6 +110,8 @@ export function shareable(
   agent: Agent,
   type: RegisteredAgentType | undefined,
 ): SharedDefinition {
+  // Its synced settings and instructions are left out of `config` then.
+  if (agent.configProblem) throw new Error(agent.configProblem);
   const shared = type?.exportShared?.(agent.config);
   if (!type || !shared)
     throw new Error(
@@ -146,12 +148,14 @@ export function shareable(
   return definition;
 }
 
-/** A kind 30175 body, in NIP-AP field order. */
+/** A kind 30175 body, in NIP-AP field order. Agents here run on stock
+ * transport, which a shared head names. */
 export function catalogContent(definition: SharedDefinition): string {
   const { name, picture, instructions, runtime, model, provider } = definition;
   return JSON.stringify({
     display_name: name,
     system_prompt: instructions,
+    acp_command: "buzz-acp",
     ...(picture && { avatar_url: picture }),
     runtime,
     ...(model && { model }),

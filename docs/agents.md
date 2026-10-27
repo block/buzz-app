@@ -853,19 +853,24 @@ inverse of `importShared`: the catalog `runtime` (`claude`, `codex`, `goose`,
 for both paths: name, instructions, runtime, provider, model and an HTTPS
 picture without a query or fragment. Workspace, keys, environment, memory and
 every other setting stay behind, and text that looks like a credential refuses
-the share or export. Names and instructions must pass block/buzz's
+the share or export, as does a `configProblem`, which leaves the synced settings
+and instructions out of `config`. Names and instructions must pass block/buzz's
 `validate_agent_definition_text` rules (128-character names, 64 KiB
 instructions, no control or invisible characters but those in emoji) on export
 and on import.
 
 **Share to catalog** publishes the owner's kind 30175 head with `d` set to the
 agent's pubkey and `["shared","true"]`, replacing the head a strong read found
-(`supersedes`). Turning it off republishes that head's content without the tag;
+(`supersedes`). Its body names stock transport, `"acp_command": "buzz-acp"`, as
+NIP-AP requires of shared heads. Turning it off republishes that head's content without the tag;
 the relay then shows it only to its author, and Marketplace lists only shared
 heads. An accepted publish can still lose to a newer head, and an unanswered one
 may still land, so the dialog reads the head again before it reports success or
 failure. The native signer and the development broker admit only this owner
-envelope (`src-tauri/src/relay/catalog.rs`, `catalog-envelope.ts`).
+envelope (`src-tauri/src/relay/catalog.rs`, `catalog-envelope.ts`). Delete
+sends a NIP-09 deletion of that head in each community the agent leaves, so a
+deleted agent can't be adopted; Remove from one community leaves its share
+there.
 
 **Export agent** saves `{name}.agent.png` or, by **File format**,
 `{name}.agent.json` in the `buzz-agent-snapshot` version 1 format that block/buzz

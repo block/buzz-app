@@ -63,6 +63,7 @@ import { channelTemplates, templateAgents } from "../channel-templates/local";
 import type { LocalAgentsSnapshot } from "./local";
 import {
   deleteAgentRecord,
+  deleteCatalogShare,
   publishAgentRecord,
   type AgentRecordBody,
   removeAgentFromChannels,
@@ -3211,8 +3212,7 @@ export class AgentsService extends Service implements Agents {
       ...here,
     ]) {
       if (left.length && here.includes(member)) continue;
-      // Only Delete archives its config channel, which its home keeps.
-      const departed = await this.depart(member, member.key === pubkey);
+      const departed = await this.depart(member, true);
       if (departed === "done") continue;
       left.push(member);
       offline ||= departed === "offline";
@@ -3254,8 +3254,9 @@ export class AgentsService extends Service implements Agents {
    * and row here. Nothing is deleted when its community is offline or the
    * cleanup fails. All of it runs under its removal held for this copy of the
    * app, so a cleanup from another copy can't undo its being added there
-   * again afterwards. */
-  private async depart(member: Member, archiveConfig = false) {
+   * again afterwards. Delete also takes down its catalog share there and
+   * archives its config channel in its home, which keeps it. */
+  private async depart(member: Member, deleting = false) {
     const native = this.native;
     const binding = this.bindingOf(member);
     if (!native || !binding) return "offline";
@@ -3275,7 +3276,14 @@ export class AgentsService extends Service implements Agents {
           pubkey,
           signal,
         );
-        if (archiveConfig) {
+        if (deleting)
+          await deleteCatalogShare(
+            binding.session,
+            binding.viewer,
+            pubkey,
+            signal,
+          );
+        if (deleting && member.key === pubkey) {
           // Home can reconnect while another community's departure awaits,
           // before its new coordinator is up.
           const config = this.communityConfigs.get(binding.origin);
@@ -3486,6 +3494,7 @@ export class AgentsService extends Service implements Agents {
       await remote.remove({ pubkey, community: agent.relay, signal });
       // An unfinished one may have published its profile before setup failed.
       await removeRelayAgent(binding.session, binding.viewer, pubkey, signal);
+      await deleteCatalogShare(binding.session, binding.viewer, pubkey, signal);
       this.unlist(origin, pubkey);
       await this.writeUnfinished(
         this.unfinished.filter((setup) => setup.pubkey !== pubkey),

@@ -94,6 +94,15 @@ it("refuses a type that cannot share and instructions that look like a credentia
     );
 });
 
+it("refuses an agent whose synced config can't be read, which would share it without its instructions", () => {
+  expect(() =>
+    shareable(
+      { ...agent(saved), configProblem: "Its instructions haven't synced." },
+      echo,
+    ),
+  ).toThrow("Its instructions haven't synced.");
+});
+
 it("shares and reads back only the text block/buzz accepts", async () => {
   const read = (name: string, systemPrompt: string) =>
     readSnapshot(
@@ -188,6 +197,7 @@ it("leaves out a picture whose query or fragment could carry a token", () => {
 
 it("publishes a catalog entry the marketplace lists as it was shared", () => {
   const content = catalogContent(shareable(agent(saved), echo));
+  expect(JSON.parse(content)).toMatchObject({ acp_command: "buzz-acp" });
   const event: EventData = {
     id: "1".repeat(64),
     pubkey: owner,

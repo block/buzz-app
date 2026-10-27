@@ -129,6 +129,7 @@ it("shares the agent to its community's catalog and unshares what it shared", as
   const sharedContent = JSON.stringify({
     display_name: "Ada",
     system_prompt: "Review pull requests.",
+    acp_command: "buzz-acp",
     runtime: "echo",
     model: "echo-1",
   });

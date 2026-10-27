@@ -6,6 +6,7 @@ import { PublishRejected } from "../relay/outbox";
 import { createRelaySession } from "../relay/session";
 import { archiveRelay, keypair, signed, type Key } from "../relay/testing";
 import {
+  deleteCatalogShare,
   publishAgentRecord,
   removeAgentFromChannels,
   removeRelayAgent,
@@ -100,6 +101,26 @@ it("archives, deletes the owner record, then removes channel memberships", async
   expect(fixture.deleted).toEqual(new Set([coordinate()]));
   expect(Object.values(fixture.channels).flat()).not.toContain(agent.pubkey);
   expect(fixture.archived.has(agent.pubkey)).toBe(true);
+  expect(instance.session.outbox?.snapshot()).toEqual([]);
+});
+
+it("deletes the owner's catalog share of the agent", async () => {
+  const { fixture, instance } = setup();
+  await deleteCatalogShare(
+    instance.session,
+    viewer.pubkey,
+    agent.pubkey,
+    new AbortController().signal,
+  );
+  const share = `30175:${viewer.pubkey}:${agent.pubkey}`;
+  expect(fixture.published.map((event) => event.tags)).toEqual([
+    [
+      ["a", share],
+      ["k", "30175"],
+      ["client-id", expect.any(String)],
+    ],
+  ]);
+  expect(fixture.deleted).toEqual(new Set([share]));
   expect(instance.session.outbox?.snapshot()).toEqual([]);
 });
 

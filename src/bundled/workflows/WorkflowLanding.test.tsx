@@ -1175,15 +1175,16 @@ it("combines ownership, saved enabled state and channels, and clears every filte
   );
   await chooseChannel();
   expect(screen.getByText("No matching workflows")).toBeVisible();
-  await user.click(
-    screen.getByRole("button", { name: "Remove My workflows filter" }),
-  );
+  expect(
+    screen.queryByRole("group", { name: "Active workflow filters" }),
+  ).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Clear owner filter" }));
   expect(screen.getByRole("button", { name: "Owner" })).toHaveFocus();
   expect(
-    screen.getByRole("button", { name: "Remove Enabled filter" }),
+    screen.getByRole("button", { name: "Clear status filter" }),
   ).toBeInTheDocument();
   expect(
-    screen.getByRole("button", { name: "Remove #General filter" }),
+    screen.getByRole("button", { name: "Clear channels filter" }),
   ).toBeInTheDocument();
   await waitFor(() =>
     expect(
@@ -1194,7 +1195,7 @@ it("combines ownership, saved enabled state and channels, and clears every filte
     screen.queryByRole("button", { name: /^Open Mine enabled:/ }),
   ).toBeNull();
   await user.click(
-    screen.getByRole("button", { name: "Remove #General filter" }),
+    screen.getByRole("button", { name: "Clear channels filter" }),
   );
   expect(screen.getByRole("button", { name: "Channels" })).toHaveFocus();
   await waitFor(() =>
@@ -1202,12 +1203,12 @@ it("combines ownership, saved enabled state and channels, and clears every filte
       screen.getByRole("button", { name: /^Open Mine enabled:/ }),
     ).toBeVisible(),
   );
-  await user.click(
-    screen.getByRole("button", { name: "Remove Enabled filter" }),
-  );
+  await user.click(screen.getByRole("button", { name: "Clear status filter" }));
   expect(screen.getByRole("button", { name: "Status" })).toHaveFocus();
   expect(
-    screen.queryByRole("button", { name: /^Remove .* filter$/ }),
+    screen.queryByRole("button", {
+      name: /^Clear (owner|status|trigger|channels) filter$/,
+    }),
   ).toBeNull();
   await waitFor(() =>
     expect(
@@ -1231,7 +1232,9 @@ it("combines ownership, saved enabled state and channels, and clears every filte
   await user.click(screen.getByRole("button", { name: "Clear all" }));
   expect(screen.getByRole("button", { name: "Owner" })).toHaveFocus();
   expect(
-    screen.queryByRole("button", { name: /^Remove .* filter$/ }),
+    screen.queryByRole("button", {
+      name: /^Clear (owner|status|trigger|channels) filter$/,
+    }),
   ).toBeNull();
   await waitFor(() =>
     expect(
@@ -1295,9 +1298,7 @@ it("combines ownership, saved enabled state and channels, and clears every filte
       ).toBeVisible(),
     );
   }
-  await user.click(
-    screen.getByRole("button", { name: "Remove Webhook trigger filter" }),
-  );
+  await chooseTrigger("Webhook");
   expect(screen.getByRole("button", { name: "Trigger" })).toHaveFocus();
   await waitFor(() =>
     expect(screen.getAllByRole("button", { name: /^Open / })).toHaveLength(4),

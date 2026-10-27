@@ -965,9 +965,9 @@ it("opens a selected card in the side pane and drops a stale channel filter", as
   await waitFor(() =>
     expect(screen.queryByRole("dialog", { name: "Channels" })).toBeNull(),
   );
-  expect(
-    screen.getAllByRole("button", { name: /^Remove #.* filter$/ }),
-  ).toHaveLength(2);
+  expect(screen.getByRole("button", { name: "Channels" })).toHaveTextContent(
+    "2 channels",
+  );
   expect(
     screen.getByRole("button", { name: /^Open Message helper:/ }),
   ).toBeVisible();
@@ -995,7 +995,7 @@ it("opens a selected card in the side pane and drops a stale channel filter", as
     expect(screen.queryByRole("dialog", { name: "Channels" })).toBeNull(),
   );
   expect(
-    screen.queryByRole("button", { name: /^Remove #.* filter$/ }),
+    screen.queryByRole("button", { name: "Clear channels filter" }),
   ).toBeNull();
   expect(
     screen.getByRole("button", { name: /^Open Message helper:/ }),
@@ -1015,7 +1015,7 @@ it("opens a selected card in the side pane and drops a stale channel filter", as
     expect(screen.queryByRole("dialog", { name: "Channels" })).toBeNull(),
   );
   expect(
-    screen.queryByRole("button", { name: /^Remove #.* filter$/ }),
+    screen.queryByRole("button", { name: "Clear channels filter" }),
   ).toBeNull();
   await openChannels();
   await user.click(screen.getByRole("checkbox", { name: "Other channel" }));
@@ -1030,8 +1030,8 @@ it("opens a selected card in the side pane and drops a stale channel filter", as
     }),
   );
   expect(
-    screen.getByRole("button", { name: "Remove #Other channel filter" }),
-  ).toBeInTheDocument();
+    screen.getByRole("button", { name: "Channels" }),
+  ).toHaveAccessibleDescription("Other channel");
   act(() =>
     fixture.definitions.update({
       status: "ready",
@@ -1039,7 +1039,7 @@ it("opens a selected card in the side pane and drops a stale channel filter", as
     }),
   );
   expect(
-    screen.queryByRole("button", { name: /^Remove #.* filter$/ }),
+    screen.queryByRole("button", { name: "Clear channels filter" }),
   ).toBeNull();
   await openChannels();
   await screen.findByRole("checkbox", { name: "Fixture channel" });
@@ -1063,8 +1063,8 @@ it("opens a selected card in the side pane and drops a stale channel filter", as
     expect(screen.queryByRole("dialog", { name: "Channels" })).toBeNull(),
   );
   expect(
-    screen.getByRole("button", { name: "Remove #Other channel filter" }),
-  ).toBeInTheDocument();
+    screen.getByRole("button", { name: "Channels" }),
+  ).toHaveAccessibleDescription("Other channel");
   act(() => {
     list = {
       ...list,
@@ -1073,7 +1073,7 @@ it("opens a selected card in the side pane and drops a stale channel filter", as
     for (const listener of listeners) listener();
   });
   expect(
-    screen.queryByRole("button", { name: /^Remove #.* filter$/ }),
+    screen.queryByRole("button", { name: "Clear channels filter" }),
   ).toBeNull();
   expect(
     await screen.findByRole("button", { name: /^Open Message helper:/ }),

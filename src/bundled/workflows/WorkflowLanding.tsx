@@ -1290,8 +1290,6 @@ export function WorkflowLanding({
       onFilterChange(shown.map((channel) => channel.id));
   }, [filter, shown, onFilterChange]);
   const visible = shown.length ? shown : ordered;
-  const removeFilter = (channelId: string) =>
-    onFilterChange(filter.filter((id) => id !== channelId));
   const reading = visible.some(
     (channel) =>
       !snapshots[channel.id] || snapshots[channel.id]?.status === "loading",
@@ -1330,45 +1328,6 @@ export function WorkflowLanding({
         !filteredSnapshots[channel.id]?.data.items.length &&
         !snapshots[channel.id]?.data.partial,
     );
-  const activeFilters = [
-    ...(mineOnly
-      ? [
-          {
-            key: "mine",
-            label: "My workflows",
-            remove: () => setMineOnly(false),
-            triggerRef: ownerTriggerRef,
-          },
-        ]
-      : []),
-    ...(status !== "all"
-      ? [
-          {
-            key: "status",
-            label: status === "enabled" ? "Enabled" : "Disabled",
-            remove: () => setStatus("all"),
-            triggerRef: statusTriggerRef,
-          },
-        ]
-      : []),
-    ...TRIGGER_OPTIONS.filter((option) => triggers.includes(option.value)).map(
-      (option) => ({
-        key: `trigger:${option.value}`,
-        label: `${option.label} trigger`,
-        remove: () =>
-          setTriggers((current) =>
-            current.filter((value) => value !== option.value),
-          ),
-        triggerRef: triggerTypeRef,
-      }),
-    ),
-    ...shown.map((channel) => ({
-      key: channel.id,
-      label: `#${channel.name}`,
-      remove: () => removeFilter(channel.id),
-      triggerRef: channelsTriggerRef,
-    })),
-  ];
   return (
     <>
       <fieldset
@@ -1403,6 +1362,7 @@ export function WorkflowLanding({
           triggerRef={triggerTypeRef}
           value={triggers}
           onChange={setTriggers}
+          wide
           icon={<LightningIcon size={16} aria-hidden="true" />}
           options={TRIGGER_OPTIONS.map((option) => {
             const Icon = ICONS[option.value];
@@ -1450,29 +1410,6 @@ export function WorkflowLanding({
             Clear all
           </Button>
         )}
-      </fieldset>
-      <fieldset
-        className="workflow-page-filter"
-        aria-label="Active workflow filters"
-      >
-        <AnimatePresence key={presenceKey} initial={false} mode="popLayout">
-          {activeFilters.map((active) => (
-            <WorkflowListTransition key={active.key}>
-              <Button
-                size="sm"
-                variant="subtle"
-                aria-label={`Remove ${active.label} filter`}
-                onClick={() => {
-                  active.remove();
-                  active.triggerRef.current?.focus();
-                }}
-              >
-                <span className="workflow-filter-label">{active.label}</span>
-                <XIcon size={16} aria-hidden="true" />
-              </Button>
-            </WorkflowListTransition>
-          ))}
-        </AnimatePresence>
       </fieldset>
       <WorkflowDeletionNotices
         operations={operations}

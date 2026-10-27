@@ -17,7 +17,6 @@
   margin: var(--space-2) 0 0;
 }
 .workflow-filter-toolbar,
-.workflow-page-filter,
 .workflow-page-status,
 .workflow-page-footnote,
 .workflow-page-state,
@@ -28,25 +27,11 @@
   max-width: 72rem;
   margin-inline: auto;
 }
-.workflow-filter-toolbar,
-.workflow-page-filter {
+.workflow-filter-toolbar {
   min-width: 0;
-  padding: 0;
+  padding: var(--space-2) 0;
   border: 0;
   margin-top: 0;
-}
-.workflow-page-filter {
-  position: relative;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-3);
-  margin-bottom: var(--space-4);
-}
-.workflow-page-filter:empty {
-  display: none;
-}
-.workflow-filter-toolbar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -67,10 +52,6 @@
 }
 .workflow-list-transition {
   min-width: 0;
-}
-.workflow-page-filter > .workflow-list-transition,
-.workflow-page-filter .buzz-button {
-  max-width: 100%;
 }
 .workflow-filter-label {
   min-width: 0;

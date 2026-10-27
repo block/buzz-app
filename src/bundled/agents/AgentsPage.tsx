@@ -308,7 +308,7 @@ export function AgentsPage({
   );
   // With no agents yet, each way to get one is its own tile; bringing the
   // owner's own agents leads when there are any.
-  const canImport = firstAgent && agentImports.length > 0;
+  const canImport = firstAgent && canImportAgent;
   const starts = (
     <div className={cardStyles.starts}>
       {canImport && (
@@ -318,9 +318,15 @@ export function AgentsPage({
           description={
             joinable.length
               ? "You have agents in your other communities."
-              : "You have agents in Buzz (Legacy)."
+              : agentImports.length
+                ? "You have agents in Buzz (Legacy)."
+                : "Check other communities and Buzz (Legacy) for agents."
           }
-          label="Import them now"
+          label={
+            agentImports.length
+              ? "Import them now"
+              : "Check for agents to import"
+          }
           onClick={openImport}
         />
       )}

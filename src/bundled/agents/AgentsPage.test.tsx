@@ -1698,6 +1698,28 @@ it.each([
   },
 );
 
+it("offers import diagnostics to a first-time owner after warning-only discovery", async () => {
+  const user = userEvent.setup();
+  const warning = "Couldn't read Buzz (Legacy) agents.";
+  const { agents } = setup([], { found: [], warnings: [warning] });
+  await act(async () => {
+    await agents.portable.mock.results[0]?.value;
+  });
+  const entry = screen.getByRole("button", {
+    name: /Check for agents to import/,
+  });
+  expect(
+    screen.queryByText("You have agents in Buzz (Legacy)."),
+  ).not.toBeInTheDocument();
+  await user.click(entry);
+  const dialog = screen.getByRole("dialog", { name: "Import an agent" });
+  expect(await within(dialog).findByText(warning)).toBeVisible();
+  expect(
+    within(dialog).getByText("No agents found in the sources we could read."),
+  ).toBeVisible();
+  expect(agents.port).not.toHaveBeenCalled();
+});
+
 it("imports an old Buzz agent as the type chosen on its button", async () => {
   const user = userEvent.setup();
   const { agents, types } = setup([]);

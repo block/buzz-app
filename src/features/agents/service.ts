@@ -1129,8 +1129,11 @@ function changed(record: AgentRecord, change: AgentChange): AgentRecord {
         "This watch changed. Review its current settings and try again.",
       );
     if (current.value.type === "interest") throw new Error("Choose a watch");
-    if (current.value.enabled !== enabled)
+    if (current.value.enabled !== enabled) {
+      const history = next.attentionHistory;
       next = setAttention(next, slug, { ...current.value, enabled });
+      if (history) next = { ...next, attentionHistory: history };
+    }
   }
   // As the spec's writer: an Interest stays while anything still uses it.
   for (const [slug, value] of Object.entries(change.attention ?? {})) {

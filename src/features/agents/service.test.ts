@@ -1024,6 +1024,17 @@ it("delivers mentions and matching watches once, and never the agent's own event
   if (!output) throw new Error("missing history");
   expect(output).toContain(watched.pubkey);
   expect(output.match(/deploy/g)).toHaveLength(1);
+  const history = service.find(bot)?.attentionHistory?.["watch/channel"];
+  for (const enabled of [false, true]) {
+    const expected = service.find(bot)?.attention["watch/channel"];
+    if (!expected) throw new Error("fixture");
+    await service.save(bot, {
+      watchEnabled: { "watch/channel": { enabled, expected } },
+    });
+    expect(service.find(bot)?.attentionHistory?.["watch/channel"]).toEqual(
+      history,
+    );
+  }
   expect(first?.channelId).toBe(channel);
   expect(first?.config).toEqual({ reply: "ok" });
 });

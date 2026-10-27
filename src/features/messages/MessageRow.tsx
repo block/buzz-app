@@ -1295,7 +1295,6 @@ function MessageRowContent({
                                   <AudioAttachment
                                     attachment={{ ...attachment, url }}
                                     source={source}
-                                placement="message"
                                   />
                                 }
                               />

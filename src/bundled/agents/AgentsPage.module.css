@@ -247,6 +247,7 @@
 /* The shared squircle mask separates the overlapping community artwork. */
 .importIdentity {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: center;
   isolation: isolate;

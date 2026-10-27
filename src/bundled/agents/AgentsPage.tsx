@@ -1206,6 +1206,10 @@ function teamPortNote({
     .join(" ");
 }
 
+type SharedImport =
+  | { agent: Agent }
+  | { team: Team; members: readonly Agent[] };
+
 /** One list of what Import can bring here: the owner's agents from their
  * other communities, which come as they are, and old Buzz's, which come as
  * the type chosen on each. */
@@ -1230,7 +1234,7 @@ function ImportAgents({
   onPendingChange(pending: boolean): void;
 }) {
   const [found, setFound] = useState<FoundAgents>();
-  const [confirming, setConfirming] = useState<Agent>();
+  const [confirming, setConfirming] = useState<SharedImport>();
   const importTrigger = useRef<HTMLButtonElement | null>(null);
   // The type each old Buzz agent or team comes in as, by pubkey or team id;
   // unchosen, the first.
@@ -1355,6 +1359,24 @@ function ImportAgents({
     if (notes.length) setNotice(notes.join(" "));
     if (!failures.length && !notes.length) onImported();
   };
+  const importShared = (selection: SharedImport) => {
+    if ("agent" in selection) join(selection.agent);
+    else void joinTeam(selection.team, selection.members);
+  };
+  const requestShared = (
+    trigger: HTMLButtonElement,
+    selection: SharedImport,
+  ) => {
+    if (
+      viewer &&
+      readView<unknown>(viewer, importReminderKey, false) === true
+    ) {
+      importShared(selection);
+      return;
+    }
+    importTrigger.current = trigger;
+    setConfirming(selection);
+  };
   const portTeam = async (team: OldTeam) => {
     const type = typeFor(team.id)?.key;
     if (!type || pending) return;
@@ -1471,7 +1493,12 @@ function ImportAgents({
                   aria-label={`Import team ${team.name}`}
                   loading={pending === team.id}
                   disabled={!!pending && pending !== team.id}
-                  onClick={() => void joinTeam(team, joining)}
+                  onClick={(event) =>
+                    requestShared(event.currentTarget, {
+                      team,
+                      members: joining,
+                    })
+                  }
                 >
                   Import
                 </Button>
@@ -1537,16 +1564,7 @@ function ImportAgents({
                   aria-label={`Import, ${agent.name} from ${host(agent.relay)}`}
                   loading={ports.get(agent.pubkey) === "queued"}
                   onClick={(event) => {
-                    if (
-                      viewer &&
-                      readView<unknown>(viewer, importReminderKey, false) ===
-                        true
-                    ) {
-                      join(agent);
-                      return;
-                    }
-                    importTrigger.current = event.currentTarget;
-                    setConfirming(agent);
+                    requestShared(event.currentTarget, { agent });
                   }}
                 >
                   Import
@@ -1593,7 +1611,7 @@ function ImportAgents({
       )}
       {confirming && (
         <CommunityImportDialog
-          agent={confirming}
+          selection={confirming}
           community={community}
           communities={communities}
           canRemember={!!viewer}
@@ -1602,7 +1620,7 @@ function ImportAgents({
           onImport={(remember) => {
             if (remember && viewer) writeView(viewer, importReminderKey, true);
             setConfirming(undefined);
-            join(confirming);
+            importShared(confirming);
           }}
         />
       )}
@@ -1626,7 +1644,7 @@ function ImportType({ type }: { type: RegisteredAgentType | undefined }) {
 
 /** Explain the shared identity before adding it to another community. */
 function CommunityImportDialog({
-  agent,
+  selection,
   community,
   communities,
   canRemember,
@@ -1634,7 +1652,7 @@ function CommunityImportDialog({
   onClose,
   onImport,
 }: {
-  agent: Agent;
+  selection: SharedImport;
   community: string | undefined;
   communities: CommunityReader | undefined;
   canRemember: boolean;
@@ -1648,28 +1666,51 @@ function CommunityImportDialog({
     communities?.subscribe ?? noSubscribe,
     () => communities?.snapshot(),
   );
+  const members = "agent" in selection ? [selection.agent] : selection.members;
+  const name =
+    "agent" in selection ? selection.agent.name : selection.team.name;
+  const sources = [...new Set(members.map((member) => member.relay))];
+  const first = members[0];
+  const portrait =
+    members.length === 1 && first ? (
+      <div className={styles.importPortrait} aria-hidden="true">
+        <AgentPortrait agent={first} community={first.relay} />
+      </div>
+    ) : (
+      <div className={cardStyles.crew} aria-hidden="true">
+        {members.slice(0, 3).map((member) => (
+          <span className={cardStyles.crewPortrait} key={member.key}>
+            <AgentPortrait agent={member} community={member.relay} />
+          </span>
+        ))}
+      </div>
+    );
   return (
     <Dialog
       open
       size="compact"
       headerGap="compact"
       footerGap="compact"
-      title={`Import ${agent.name}`}
+      title={`Import ${name}`}
       artwork={
-        <div className={styles.importIdentity}>
-          <ImportCommunity
-            origin={agent.relay}
-            memberships={known?.memberships}
-            direction="From"
-          />
-          <div className={styles.importPortrait} aria-hidden="true">
-            <AgentPortrait agent={agent} community={agent.relay} />
+        <div className="grid gap-3">
+          {members.length > 1 && portrait}
+          <div className={styles.importIdentity}>
+            {sources.map((source) => (
+              <ImportCommunity
+                key={source}
+                origin={source}
+                memberships={known?.memberships}
+                direction="From"
+              />
+            ))}
+            {members.length === 1 && portrait}
+            <ImportCommunity
+              origin={community}
+              memberships={known?.memberships}
+              direction="To"
+            />
           </div>
-          <ImportCommunity
-            origin={community}
-            memberships={known?.memberships}
-            direction="To"
-          />
         </div>
       }
       initialFocus={cancel}

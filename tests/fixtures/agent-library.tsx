@@ -25,7 +25,8 @@ import { ModelPicker } from "../../src/features/agents/ModelPicker";
 import "../../src/shared/styles/globals.css";
 
 const importing = new URLSearchParams(location.search).has("import");
-if (importing) createAppearance();
+const teamImport = new URLSearchParams(location.search).has("teamImport");
+if (importing || teamImport) createAppearance();
 const importTargets: { pubkey: string; type: string }[] = [];
 Object.assign(window, { importTargets });
 
@@ -129,7 +130,16 @@ const type: RegisteredAgentType = {
 const snapshot = {
   status: "ready" as const,
   running: [] as Agent[],
-  teams: [],
+  teams: teamImport
+    ? [
+        {
+          id: "team",
+          name: "Research",
+          instructions: "Help.",
+          members: ["4".repeat(64), "5".repeat(64)],
+        },
+      ]
+    : [],
   agents: ["Ada", "Bo", "Cy"].map(
     (name, index) =>
       ({
@@ -149,6 +159,18 @@ const snapshot = {
       }) as Agent,
   ),
 };
+const joining = [4, 5].map(
+  (n) =>
+    ({
+      ...snapshot.agents[0],
+      key: String(n).repeat(64),
+      pubkey: String(n).repeat(64),
+      name: `Member ${n}`,
+      relay: `wss://community-${n}.example`,
+    }) as Agent,
+);
+const joined: string[] = [];
+Object.assign(window, { joined });
 const other: RegisteredAgentType = {
   ...type,
   key: "fixture/other",
@@ -254,7 +276,11 @@ const agents = {
           },
         ]
       : [],
-  joinable: () => [],
+  joinable: () => (teamImport ? joining : []),
+  join: async (key: string) => {
+    joined.push(key);
+    return { agent: joining.find((agent) => agent.key === key), notes: [] };
+  },
   portable: async () => ({
     agents: importing
       ? [1, 2].map((n) => ({
@@ -284,7 +310,17 @@ const agents = {
   },
   classifier: () => "unavailable",
 } as unknown as Agents;
-const disconnected = { status: "disconnected", generation: 0 };
+const disconnected = {
+  status: "disconnected",
+  generation: 0,
+  ...(teamImport
+    ? {
+        viewer: "owner",
+        origin: "https://current.example",
+        scope: "current:owner",
+      }
+    : {}),
+};
 const relay = {
   snapshot: () => disconnected,
   subscribe: () => () => {},

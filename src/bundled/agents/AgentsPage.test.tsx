@@ -1617,6 +1617,113 @@ async function openImport(user: ReturnType<typeof userEvent.setup>) {
   );
 }
 
+it("explains shared team members before importing and shares the account reminder preference", async () => {
+  const user = userEvent.setup();
+  const { agents, relay, rerender } = setup([agent("Ada", 1)], { found: [] });
+  const bea = { ...agent("Bea", 2), relay: "wss://other.example" };
+  const cy = { ...agent("Cy", 3), relay: "wss://third.example" };
+  agents.joinable = () => [bea, cy];
+  agents.join.mockResolvedValue({ agent: bea, notes: [] });
+  let connection = {
+    ...relay.snapshot(),
+    origin: "https://destination.example",
+    viewer: "owner",
+    scope: "destination:owner",
+  };
+  relay.snapshot = () => connection;
+  await act(async () => {
+    await agents.saveTeam({
+      name: "Night Shift",
+      instructions: "Help.",
+      members: [bea.pubkey, cy.pubkey],
+    });
+  });
+  const open = async () => {
+    await user.click(screen.getByRole("tab", { name: "Your teams" }));
+    await user.click(screen.getByRole("button", { name: "New team" }));
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Import a team" }),
+    );
+    await user.click(
+      await screen.findByRole("button", { name: "Import team Night Shift" }),
+    );
+    return screen.findByRole("dialog", { name: "Import Night Shift" });
+  };
+  let confirmation = await open();
+  expect(agents.join).not.toHaveBeenCalled();
+  expect(within(confirmation).getByText("One setup, everywhere")).toBeVisible();
+  expect(
+    within(confirmation).getByRole("figure", { name: "From other.example" }),
+  ).toBeVisible();
+  expect(
+    within(confirmation).getByRole("figure", { name: "From third.example" }),
+  ).toBeVisible();
+  await user.click(
+    within(confirmation).getByRole("checkbox", {
+      name: "Don’t remind me again",
+    }),
+  );
+  await user.click(
+    within(confirmation).getByRole("button", { name: "Cancel" }),
+  );
+  expect(agents.join).not.toHaveBeenCalled();
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "Import team Night Shift" }),
+    ).toHaveFocus(),
+  );
+  await user.click(
+    screen.getByRole("button", { name: "Import team Night Shift" }),
+  );
+  confirmation = await screen.findByRole("dialog", {
+    name: "Import Night Shift",
+  });
+  expect(
+    within(confirmation).getByRole("checkbox", {
+      name: "Don’t remind me again",
+    }),
+  ).not.toBeChecked();
+  await user.click(
+    within(confirmation).getByRole("checkbox", {
+      name: "Don’t remind me again",
+    }),
+  );
+  await user.click(
+    within(confirmation).getByRole("button", { name: "Import" }),
+  );
+  await waitFor(() => expect(agents.join).toHaveBeenCalledTimes(2));
+  expect(agents.join).toHaveBeenNthCalledWith(1, bea.key);
+  expect(agents.join).toHaveBeenNthCalledWith(2, cy.key);
+  await user.click(screen.getByRole("tab", { name: "Your agents" }));
+  await user.click(screen.getByRole("button", { name: "New agent" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Import an agent" }),
+  );
+  await user.click(
+    await screen.findByRole("button", {
+      name: "Import, Bea from other.example",
+    }),
+  );
+  expect(
+    await screen.findByRole("button", { name: "Bea imported" }),
+  ).toBeVisible();
+  expect(agents.join).toHaveBeenCalledTimes(3);
+  expect(
+    screen.queryByRole("dialog", { name: "Import Bea" }),
+  ).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Close" }));
+  writeView("owner", "agent-community-import:dismissed", false);
+  confirmation = await open();
+  connection = {
+    ...connection,
+    scope: "different:owner",
+    origin: "https://different.example",
+  };
+  rerender(<AgentsPage agents={agents} relay={relay} />);
+  await waitFor(() => expect(confirmation).not.toBeInTheDocument());
+  expect(agents.join).toHaveBeenCalledTimes(3);
+});
+
 it("offers New team on Your teams with create and import, but no marketplace", async () => {
   const user = userEvent.setup();
   const { agents } = setup([agent("Ada", 1)]);

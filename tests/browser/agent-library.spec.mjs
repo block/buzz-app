@@ -742,3 +742,56 @@ test("scaled import controls keep pointer actions on their own agent", async ({
     }
   }
 });
+
+// Nested dialog focus, source artwork and responsive footer hit targets need
+// the browser; import/preference state matrices stay in component tests.
+test("team imports explain scope before running and restore the trigger on cancellation", async ({
+  page,
+}) => {
+  await page.addInitScript(() =>
+    localStorage.setItem("buzz-font-scale.v1", "1.25"),
+  );
+  for (const [colorScheme, width] of [
+    ["light", 361],
+    ["dark", 800],
+  ]) {
+    await page.emulateMedia({ colorScheme });
+    await page.setViewportSize({ width, height: 950 });
+    await page.goto("/tests/fixtures/agent-library.html?teamImport");
+    await page.getByRole("tab", { name: "Your teams", exact: true }).click();
+    await page.getByRole("button", { name: "New team", exact: true }).click();
+    await page
+      .getByRole("menuitem", { name: "Import a team", exact: true })
+      .click();
+    const trigger = page.getByRole("button", {
+      name: "Import team Research",
+      exact: true,
+    });
+    await trigger.click();
+    const dialog = page.getByRole("dialog", {
+      name: "Import Research",
+      exact: true,
+    });
+    await expect(
+      dialog.getByRole("button", { name: "Cancel", exact: true }),
+    ).toBeFocused();
+    await expect(
+      dialog.getByRole("figure", { name: /^From community-/ }),
+    ).toHaveCount(2);
+    const bounds = await dialog.boundingBox();
+    expect(bounds.x).toBeGreaterThanOrEqual(0);
+    expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
+    expect(await page.evaluate(() => window.joined)).toEqual([]);
+    await page.keyboard.press("Escape");
+    await expect(dialog).toBeHidden();
+    await expect(trigger).toBeFocused();
+    expect(await page.evaluate(() => window.joined)).toEqual([]);
+    await trigger.press("Enter");
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole("button", { name: "Import", exact: true }).click();
+    await expect
+      .poll(() => page.evaluate(() => window.joined))
+      .toEqual(["4".repeat(64), "5".repeat(64)]);
+    await expect(dialog).toBeHidden();
+  }
+});

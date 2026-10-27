@@ -143,7 +143,7 @@ function fakeRuntime() {
   };
 }
 
-function created(pi = fakePi()) {
+function created(pi = fakePi(), modelAppearance?: "glass-ghost") {
   const { Create, CreateModel } = createTabs({
     setup: new PiSetup(pi),
     runtime: fakeRuntime(),
@@ -158,7 +158,12 @@ function created(pi = fakePi()) {
     // As New agent shows them: the Model row, then the type's own choices.
     return (
       <>
-        <CreateModel config={config} disabled={false} onChange={onChange} />
+        <CreateModel
+          config={config}
+          disabled={false}
+          onChange={onChange}
+          {...(modelAppearance && { modelAppearance })}
+        />
         <Create config={config} disabled={false} onChange={onChange} />
       </>
     );
@@ -182,19 +187,26 @@ async function openChoices() {
   return screen.findByRole("dialog", { name: "Provider and model" });
 }
 
-it("starts New agent's Model field on Pi's default, with the provider kept to its dialog", async () => {
-  created();
-  expect(screen.queryByRole("combobox", { name: "Provider" })).toBeNull();
-  await waitFor(() =>
-    expect(modelButton()).toHaveTextContent(
-      "Pi default (Anthropic · Claude X)",
-    ),
-  );
-  // Pi's mark, then the provider's.
-  expect(modelButton().querySelectorAll("svg")).toHaveLength(2);
-  expect(modelButton()).toHaveAttribute("aria-haspopup", "dialog");
-  expect(screen.getByLabelText("Instructions Optional")).toBeVisible();
-});
+it.each([undefined, "glass-ghost"] as const)(
+  "starts Model on Pi's default with appearance %s, with the provider kept to its dialog",
+  async (appearance) => {
+    created(fakePi(), appearance);
+    expect(screen.queryByRole("combobox", { name: "Provider" })).toBeNull();
+    await waitFor(() =>
+      expect(modelButton()).toHaveTextContent(
+        "Pi default (Anthropic · Claude X)",
+      ),
+    );
+    // Pi's mark, then the provider's.
+    expect(modelButton().querySelectorAll("svg")).toHaveLength(2);
+    expect(modelButton()).toHaveAttribute("aria-haspopup", "dialog");
+    expect(modelButton()).toHaveAttribute(
+      "data-variant",
+      appearance ?? "outline",
+    );
+    expect(screen.getByLabelText("Instructions Optional")).toBeVisible();
+  },
+);
 
 it("saves a provider's key with Pi's login, needs a model for it, and tests it", async () => {
   const { pi, changes } = created();
@@ -311,10 +323,10 @@ it("reads Pi's providers again when the window gets focus, after a change in the
   );
 });
 
-it("says Buzz can't use a default provider that a Pi package adds", async () => {
+it("says when Pi has no provider for the choice", async () => {
   created(fakePi({}, { provider: "databricks", model: "databricks-x" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "databricks isn't built into Pi, so Buzz can't use it",
+    "Pi has no provider databricks",
   );
   // Only Pi's mark: Buzz has none for this provider.
   expect(modelButton().querySelectorAll("svg")).toHaveLength(1);
@@ -324,7 +336,7 @@ it("says Buzz can't use a default provider that a Pi package adds", async () => 
   });
   await waitFor(() => expect(provider).toBeEnabled());
   expect(provider).toHaveAccessibleDescription(
-    /Buzz can use only Pi's built-in providers, and databricks isn't one/,
+    /databricks isn't one of Pi's built-in providers, and no Pi package Buzz loaded adds it/,
   );
   const use = within(dialog).getByRole("button", { name: "Use" });
   expect(use).toHaveAttribute("aria-disabled", "true");
@@ -339,6 +351,7 @@ it("says Buzz can't use a default provider that a Pi package adds", async () => 
 });
 
 const AGENT = {
+  key: "c".repeat(64),
   pubkey: "c".repeat(64),
   name: "pii",
   type: "buzz.pi/pi",
@@ -459,7 +472,7 @@ it("lists Pi's conversations in the Activity tab, and shows a transcript", async
   await user.click(screen.getByRole("button", { name: "Back to profile" }));
   await user.click(
     within(screen.getByRole("listitem")).getByRole("button", {
-      name: "View transcript",
+      name: "View transcript: other · channel",
     }),
   );
   expect(await screen.findByText("Hello from other")).toBeVisible();

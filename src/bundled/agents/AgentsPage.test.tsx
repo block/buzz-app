@@ -33,6 +33,7 @@ import type {
 } from "../../features/agents/service";
 import type { OldTeam, PortableAgent } from "../../features/agents/native";
 import { localStore } from "../../features/agents/state";
+import { setDefaultAgent } from "../../features/solo/default-agent";
 import type { RelayData } from "../../features/relay/service";
 import type { Navigation } from "../../features/navigation/controller";
 import type { PageNavigation } from "../../features/navigation/service";
@@ -52,6 +53,7 @@ afterEach(() => {
 });
 
 const agent = (name: string, n: number): Agent => ({
+  key: String(n).repeat(64),
   pubkey: String(n).repeat(64),
   name,
   type: "test/echo",
@@ -157,7 +159,6 @@ function setup(
   let snapshot: AgentsSnapshot = {
     status,
     classifier: "unavailable",
-    classifierKey: "missing",
     agents: saved,
     running: saved,
     interrupted: [],
@@ -342,8 +343,6 @@ function setup(
     interrupt: vi.fn(async () => false),
     note: () => false,
     classifier: () => "unavailable",
-    setClassifierKey: vi.fn(async () => {}),
-    clearClassifierKey: vi.fn(async () => {}),
     saveTeam: vi.fn(async (change: TeamChange) => {
       const team = { ...change, id: change.id ?? "team-1" };
       snapshot = {
@@ -361,10 +360,25 @@ function setup(
       };
       for (const listener of listeners) listener();
     }),
+    attentionProviders: () => [],
+    addAttentionSource: vi.fn(),
     storage: localStore(),
     resumeInterrupted: vi.fn(),
     dismissInterrupted: vi.fn(),
     wake: vi.fn(),
+    memberships: vi.fn(
+      (_pubkey: string): ReturnType<Agents["memberships"]> => [],
+    ),
+    forget: vi.fn(),
+    joinable: (): readonly Agent[] => [],
+    join: vi.fn(),
+    leave: vi.fn(),
+    creationRequests: () => [],
+    dismissCreation: vi.fn(),
+    approveCreation: vi.fn(),
+    updateRequests: () => [],
+    dismissUpdate: vi.fn(),
+    approveUpdate: vi.fn(),
   } satisfies Agents;
   const disconnected = { status: "disconnected", generation: 0 };
   const relay = {
@@ -1004,6 +1018,39 @@ it("imports an earlier agent as the chosen type and shows it in Your agents", as
   );
 });
 
+it("adds an agent from another community here, keeping its key", async () => {
+  const user = userEvent.setup();
+  const { agents, show } = setup([agent("Ada", 1)]);
+  const bea = { ...agent("Bea", 2), relay: "wss://other.example" };
+  agents.joinable = () => [bea];
+  agents.join.mockImplementation(async () => {
+    const added = { ...bea, relay: "wss://relay.example" };
+    show([agent("Ada", 1), added]);
+    return { agent: added, notes: [] };
+  });
+  await user.click(screen.getByRole("button", { name: "New agent" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Import an agent" }),
+  );
+  const elsewhere = await screen.findByRole("region", {
+    name: "Agents in your other communities",
+  });
+  expect(elsewhere).toHaveTextContent("Memory is kept per community");
+  await user.click(
+    within(elsewhere).getByRole("button", {
+      name: "Add Bea from other.example",
+    }),
+  );
+  expect(agents.join).toHaveBeenCalledWith(bea.key);
+  expect(
+    await within(elsewhere).findByRole("button", { name: "Bea added" }),
+  ).toHaveAttribute("aria-disabled", "true");
+  await user.click(screen.getByRole("button", { name: "Close" }));
+  expect(
+    within(screen.getByRole("grid", { name: "Agents" })).getByText("Bea"),
+  ).toBeInTheDocument();
+});
+
 it("queues several imports in a row and keeps the dialog open until they finish", async () => {
   const user = userEvent.setup();
   const { agents } = setup([]);
@@ -1434,12 +1481,12 @@ it("keeps Import open and names each part of a team import that did not come", a
   await user.click(importTeam);
   onImport();
   expect(screen.getByRole("alert")).toHaveTextContent(
-    "Couldn't save team Late Shift. Imported Bea; add them in Teams. Kept out: Cy, in another community.",
+    "Couldn't save team Late Shift. Imported Bea; add them in Teams. Not added: Cy, in your other communities. Use Add team to bring them here.",
   );
   await user.click(importTeam);
   onImport();
   expect(screen.getByRole("alert")).toHaveTextContent(
-    "Imported team Late Shift. Kept out: Cy, in another community.",
+    "Imported team Late Shift. Not added: Cy, in your other communities. Use Add team to bring them here.",
   );
 });
 
@@ -1630,6 +1677,105 @@ it("keeps a failed Delete's agent and its warning on screen", async () => {
   expect(screen.getByText(/Its Delete didn't finish/)).toBeInTheDocument();
   expect(screen.getByRole("gridcell", { name: "Ada" })).toBeInTheDocument();
 });
+
+it("keeps a failed Remove from this community open to retry here alone", async () => {
+  const user = userEvent.setup();
+  const ada = agent("Ada", 1);
+  const { agents, show } = setup([ada]);
+  let leaving = false;
+  agents.memberships.mockImplementation(() => [
+    {
+      key: ada.key,
+      origin: "https://relay.example",
+      connected: true,
+      ...(leaving && { deleting: true as const }),
+    },
+    {
+      key: `${ada.pubkey}@other.example`,
+      origin: "https://other.example",
+      connected: true,
+    },
+  ]);
+  const failure = "Ada hasn't left relay.example yet.";
+  agents.leave.mockImplementationOnce(async () => {
+    leaving = true;
+    show([{ ...ada, deleting: true }]);
+    throw new Error(failure);
+  });
+  await user.click(screen.getByRole("gridcell", { name: "Ada" }));
+  await user.click(screen.getByRole("tab", { name: "Settings" }));
+  const remove = () =>
+    user.click(
+      screen.getByRole("button", { name: "Remove from this community" }),
+    );
+  await remove();
+  let dialog = await screen.findByRole("dialog", {
+    name: "Remove Ada from relay.example?",
+  });
+  await user.click(within(dialog).getByRole("button", { name: "Remove" }));
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(failure);
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  expect(screen.getByText(/Its Remove didn't finish/)).toBeInTheDocument();
+  expect(screen.queryByText(/Its Delete didn't finish/)).toBeNull();
+  await remove();
+  dialog = await screen.findByRole("dialog", {
+    name: "Remove Ada from relay.example?",
+  });
+  await user.click(within(dialog).getByRole("button", { name: "Remove" }));
+  await waitFor(() => expect(dialog).not.toBeInTheDocument());
+  expect(agents.leave).toHaveBeenCalledTimes(2);
+  expect(agents.leave).toHaveBeenLastCalledWith(ada.key);
+  expect(agents.remove).not.toHaveBeenCalled();
+});
+
+it.each([
+  ["a Delete", true, true],
+  ["a Remove from there", false, false],
+])(
+  "forgets an agent where %s can't reach, and asks to Delete again only after a Delete",
+  async (_, deleting, again) => {
+    const user = userEvent.setup();
+    const ada = agent("Ada", 1);
+    const away = `${ada.pubkey}@other.example`;
+    const { agents } = setup([deleting ? { ...ada, deleting } : ada]);
+    let forgot = false;
+    agents.memberships.mockImplementation(() => [
+      {
+        key: ada.key,
+        origin: "https://relay.example",
+        connected: true,
+        ...(deleting && { deleting: true as const }),
+      },
+      ...(forgot
+        ? []
+        : [
+            {
+              key: away,
+              origin: "https://other.example",
+              connected: false,
+              deleting: true as const,
+            },
+          ]),
+    ]);
+    agents.forget.mockImplementationOnce(async () => {
+      forgot = true;
+    });
+    await user.click(screen.getByRole("gridcell", { name: "Ada" }));
+    await user.click(screen.getByRole("tab", { name: "Settings" }));
+    await user.click(screen.getByRole("button", { name: "Delete agent" }));
+    const dialog = await screen.findByRole("dialog", { name: "Delete Ada?" });
+    await user.click(
+      within(dialog).getByRole("button", {
+        name: "Forget it in other.example",
+      }),
+    );
+    expect(agents.forget).toHaveBeenCalledWith(away);
+    expect(agents.remove).not.toHaveBeenCalled();
+    expect(!!within(dialog).queryByText("Delete again to finish here.")).toBe(
+      again,
+    );
+  },
+);
 
 it("opens deletion from the card menu without selecting it and requires confirmation", async () => {
   const user = userEvent.setup();
@@ -2182,7 +2328,7 @@ it("retains the selected profile draft while viewing teams", async () => {
   expect(agents.save).not.toHaveBeenCalled();
 });
 
-it("announces the default agent and presents its menu status without a fake toggle", async () => {
+it("announces the main agent and presents its menu status without a fake toggle", async () => {
   const ada = agent("Ada", 1);
   const view = setup([ada]);
   const choices = {
@@ -2190,7 +2336,7 @@ it("announces the default agent and presents its menu status without a fake togg
     complete: true,
     pending: false,
     selectable: [{ pubkey: ada.pubkey, name: ada.name, managed: true }],
-    archives: { status: "unavailable" },
+    archives: { status: "unavailable", archived: [] },
   };
   const connection = {
     status: "ready",
@@ -2208,11 +2354,87 @@ it("announces the default agent and presents its menu status without a fake togg
     subscribe: () => () => {},
   } as unknown as RelayData;
   view.rerender(<AgentsPage agents={view.agents} relay={relay} />);
-  const card = screen.getByRole("gridcell", { name: "Ada, Default agent" });
+  const card = screen.getByRole("gridcell", { name: "Ada, Main agent" });
+  expect(within(card).getByRole("img", { name: "Main agent" })).toBeVisible();
   fireEvent.keyDown(card, { key: "F10", shiftKey: true });
   const menu = await screen.findByRole("menu", { name: "Actions for Ada" });
-  expect(within(menu).getByText("Default agent")).toBeVisible();
+  expect(within(menu).getByText("Main agent")).toBeVisible();
+  // Right-click carries the same actions as the card's "..." menu.
+  expect(
+    within(menu).getByRole("menuitem", { name: "Copy public key" }),
+  ).toBeVisible();
   expect(within(menu).queryByRole("menuitemcheckbox")).toBeNull();
+});
+
+it("offers Make main agent from the card's actions button", async () => {
+  const user = userEvent.setup();
+  const ada = agent("Ada", 1);
+  const bea = agent("Bea", 2);
+  const view = setup([ada, bea]);
+  const choices = {
+    status: "ready",
+    complete: true,
+    pending: false,
+    selectable: [
+      { pubkey: ada.pubkey, name: ada.name, managed: true },
+      { pubkey: bea.pubkey, name: bea.name, managed: true },
+    ],
+    archives: { status: "unavailable", archived: [] },
+  };
+  const connection = {
+    status: "ready",
+    scope: "main-card-button",
+    session: {
+      agentChoices: {
+        snapshot: () => choices,
+        subscribe: () => () => {},
+        retain: () => () => {},
+      },
+    },
+  };
+  const relay = {
+    snapshot: () => connection,
+    subscribe: () => () => {},
+  } as unknown as RelayData;
+  view.rerender(<AgentsPage agents={view.agents} relay={relay} />);
+  expect(
+    screen.getByRole("gridcell", { name: "Ada, Main agent" }),
+  ).toBeVisible();
+  const card = screen.getByRole("gridcell", { name: "Bea" });
+  await user.click(
+    within(card).getByRole("button", { name: "Actions for Bea" }),
+  );
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Make main agent" }),
+  );
+  expect(
+    await screen.findByRole("gridcell", { name: "Bea, Main agent" }),
+  ).toBeVisible();
+  expect(screen.getByRole("gridcell", { name: "Ada" })).toBeVisible();
+  // Right-click opens the same actions, including the main agent choice.
+  fireEvent.contextMenu(screen.getByRole("gridcell", { name: "Ada" }));
+  const menu = await screen.findByRole("menu", { name: "Actions for Ada" });
+  await user.click(
+    within(menu).getByRole("menuitem", { name: "Make main agent" }),
+  );
+  expect(
+    await screen.findByRole("gridcell", { name: "Ada, Main agent" }),
+  ).toBeVisible();
+  expect(screen.getByRole("gridcell", { name: "Bea" })).toBeVisible();
+});
+
+it("opens deletion from the card's right-click menu", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([agent("Ada", 1)]);
+  fireEvent.contextMenu(screen.getByRole("gridcell", { name: "Ada" }));
+  const menu = await screen.findByRole("menu", { name: "Actions for Ada" });
+  await user.click(
+    within(menu).getByRole("menuitem", { name: "Delete agent" }),
+  );
+  const dialog = await screen.findByRole("dialog", { name: "Delete Ada?" });
+  expect(agents.remove).not.toHaveBeenCalled();
+  await user.click(within(dialog).getByRole("button", { name: "Delete" }));
+  expect(agents.remove).toHaveBeenCalledWith(agent("Ada", 1).pubkey);
 });
 
 it("opens a Marketplace tile in the profile pane and returns focus on close and import", async () => {
@@ -2288,4 +2510,48 @@ it("opens a Marketplace tile in the profile pane and returns focus on close and 
     view.unmount();
     owner.dispose();
   }
+});
+
+it("offers Make main agent on a stand-in for a missing chosen agent", async () => {
+  const ada = agent("Ada", 1);
+  const view = setup([ada]);
+  const choices = {
+    status: "ready",
+    complete: true,
+    pending: false,
+    selectable: [{ pubkey: ada.pubkey, name: ada.name, managed: true }],
+    archives: { status: "unavailable", archived: [] },
+  };
+  const connection = {
+    status: "ready",
+    scope: "stand-in",
+    session: {
+      agentChoices: {
+        snapshot: () => choices,
+        subscribe: () => () => {},
+        retain: () => () => {},
+      },
+    },
+  };
+  const relay = {
+    snapshot: () => connection,
+    subscribe: () => () => {},
+  } as unknown as RelayData;
+  // The chosen agent isn't among the choices, and wasn't deleted.
+  act(() => {
+    setDefaultAgent("stand-in", "d".repeat(64));
+  });
+  view.rerender(<AgentsPage agents={view.agents} relay={relay} />);
+  const card = screen.getByRole("gridcell", { name: "Ada, Main agent" });
+  fireEvent.contextMenu(card);
+  const menu = await screen.findByRole("menu", { name: "Actions for Ada" });
+  fireEvent.click(
+    within(menu).getByRole("menuitem", { name: "Make main agent" }),
+  );
+  fireEvent.contextMenu(card);
+  expect(
+    within(
+      await screen.findByRole("menu", { name: "Actions for Ada" }),
+    ).queryByRole("menuitem", { name: "Make main agent" }),
+  ).toBeNull();
 });

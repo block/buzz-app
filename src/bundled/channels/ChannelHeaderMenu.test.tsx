@@ -51,6 +51,7 @@ function harness(value: ChannelSummary | undefined = channel) {
       subscribe: () => () => {},
     },
     channelLifecycle: { available: true, load: lifecycleLoad, run },
+    sidebarPreferences: { setMute: vi.fn(async () => []) },
   } as unknown as RelaySession;
   const snapshot = { session, status: "ready", scope: "menu-test" };
   const relay = {
@@ -62,7 +63,6 @@ function harness(value: ChannelSummary | undefined = channel) {
     session,
     trigger: createRef<HTMLButtonElement>(),
     openDetails: vi.fn(),
-    openCanvas: vi.fn(),
   };
   const mount = (
     publish?: (surface: ChannelMenuSurface) => React.ReactNode[],
@@ -90,12 +90,7 @@ it("loads only on demand, uses the non-compact shared menu, and opens details wi
   await screen.findByRole("menuitem", { name: "Delete channel" });
   expect(
     screen.getAllByRole("menuitem").map((item) => item.textContent),
-  ).toEqual([
-    "View channel details",
-    "View canvas",
-    "Archive channel",
-    "Delete channel",
-  ]);
+  ).toEqual(["View channel details", "Archive channel", "Delete channel"]);
   expect(h.load).not.toHaveBeenCalled();
   expect(h.run).not.toHaveBeenCalled();
   expect(h.save).not.toHaveBeenCalled();
@@ -139,12 +134,6 @@ it("supports keyboard dismissal, outside clicks, and Canvas with the stable head
   await waitFor(() =>
     expect(screen.queryByRole("menu")).not.toBeInTheDocument(),
   );
-  trigger.focus();
-  await user.keyboard("{ArrowDown}");
-  await user.click(
-    await screen.findByRole("menuitem", { name: "View canvas" }),
-  );
-  expect(h.props.openCanvas).toHaveBeenCalledWith(trigger);
 });
 it("does not expose details editing or recovery from the header", async () => {
   const h = harness();
@@ -236,22 +225,22 @@ it("keeps shared read pending/errors in the header and retires dismissed complet
       disabled={surface.pending}
       onClick={() => void surface.runRead(write)}
     >
-      Mark as Read
+      Mark as read
     </MenuItem>,
   ]);
   const user = userEvent.setup();
   const trigger = screen.getByRole("button", { name: "Channel actions" });
   await user.click(trigger);
   await user.click(
-    await screen.findByRole("menuitem", { name: "Mark as Read" }),
+    await screen.findByRole("menuitem", { name: "Mark as read" }),
   );
   expect(screen.getByRole("status")).toHaveTextContent("Saving…");
   expect(
-    screen.getByRole("menuitem", { name: "Mark as Read" }),
+    screen.getByRole("menuitem", { name: "Mark as read" }),
   ).toHaveAttribute("aria-disabled", "true");
   await act(async () => reject(new Error("Read failed")));
   expect(await screen.findByRole("alert")).toHaveTextContent("Read failed");
-  await user.click(screen.getByRole("menuitem", { name: "Mark as Read" }));
+  await user.click(screen.getByRole("menuitem", { name: "Mark as read" }));
   expect(write).toHaveBeenCalledTimes(2);
   await user.keyboard("{Escape}");
   await waitFor(() =>

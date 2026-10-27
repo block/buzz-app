@@ -1,5 +1,6 @@
 import type { ProfileQueries } from "./profile-directory";
 import { workflowOwner } from "./workflow-attribution";
+import { agentAudience } from "./audience";
 import type { InboxItem, InboxSnapshot } from "./inbox";
 import type { ChannelQueries } from "./contracts";
 import type { RelayEvent } from "./events";
@@ -73,11 +74,18 @@ export type ThreadActivitySnapshot = Readonly<{
   error?: string | undefined;
 }>;
 export type ReadingHandle = Readonly<{
-  /** Qualified visible rows only. This publishes no read intent and ends with the lease. */
-  view(messageIds: readonly string[], visible: () => boolean): void;
+  /** Qualified visible rows only. This publishes no read intent and ends with the
+   * lease. `visible` decides each of this channel's rows; `measured` says the
+   * row is among `messageIds`. A consumer that is re-measuring may confirm any
+   * of its rows on demand instead. */
+  view(
+    messageIds: readonly string[],
+    visible: (messageId: string, measured: boolean) => boolean,
+  ): void;
   /** Only message IDs actually visible to the active consumer; no caller timestamps. */
   observe(messageIds: readonly string[]): Promise<void>;
-  /** Bottom dwell through verified evidence; channel catch-up excludes attention. */
+  /** Bottom dwell through verified evidence; channel catch-up reads the
+   * timeline's mentions and broadcasts by message, never other replies. */
   catchUp(messageId: string, rootId?: string): Promise<void>;
   dispose(): void;
 }>;
@@ -236,7 +244,11 @@ export function createUnread({
   const handles = new Set<() => void>();
   const views = new Map<
     () => void,
-    { ids: ReadonlySet<string>; visible: () => boolean }
+    {
+      channelId: string;
+      ids: ReadonlySet<string>;
+      visible: (messageId: string, measured: boolean) => boolean;
+    }
   >();
   // Per-visit message overlay; only the sidebar hint is persisted in read state.
   const forcedMessages = new Map<string, Set<string>>();
@@ -302,6 +314,9 @@ export function createUnread({
     threadRootId: string | undefined;
     mentioned: boolean;
     broadcast: boolean;
+    /** Signed `audience=agents`: coordination between agents, which people
+     * see quietly. It never counts or earns attention. */
+    quiet: boolean;
   };
   let indexed = false;
   const byChannel = new Map<string, Evidence[]>();
@@ -443,6 +458,7 @@ export function createUnread({
         broadcast: event.tags.some(
           ([name, value]) => name === "broadcast" && value === "1",
         ),
+        quiet: agentAudience(event),
       };
       rows.push(entry);
       byChannel.set(channel, rows);
@@ -504,15 +520,18 @@ export function createUnread({
     );
   };
   /** Top-level posts always count. A reply counts only in the viewer's own
-   * conversations, or when it is a DM, mentions the viewer, or is broadcast. */
+   * conversations, or when it is a DM, mentions the viewer, or is broadcast.
+   * Quiet agent messages never count; explicit unread intent still can. */
   const relevant = (entry: Evidence, dm: boolean) =>
-    !entry.parentId ||
-    dm ||
-    entry.mentioned ||
-    entry.broadcast ||
-    conversation(entry);
+    !entry.quiet &&
+    (!entry.parentId ||
+      dm ||
+      entry.mentioned ||
+      entry.broadcast ||
+      conversation(entry));
   /** Retained evidence cannot decide this reply's conversation yet. */
   const undecided = (entry: Evidence, dm: boolean) =>
+    !entry.quiet &&
     !!entry.parentId &&
     !relevant(entry, dm) &&
     chosen(entry) === undefined &&
@@ -636,6 +655,8 @@ export function createUnread({
     // DM events p-tag the recipient, so a mention check would classify every
     // direct message as a mention. Direct wins inside DM channels. Thread
     // attention follows the direct parent, even when the root is unknown.
+    // A quiet agent message earns none, even when it mentions the viewer.
+    if (entry.quiet) return undefined;
     return dm
       ? "direct"
       : entry.mentioned
@@ -680,7 +701,9 @@ export function createUnread({
       lookups.get(conversationKey(channelId, entry.parentId ?? ""))?.done ===
         false;
     const viewing = [...views.values()].some(
-      (view) => view.ids.has(messageId) && view.visible(),
+      (view) =>
+        view.channelId === channelId &&
+        view.visible(messageId, view.ids.has(messageId)),
     );
     return Object.freeze({
       status: kind
@@ -1256,6 +1279,7 @@ export function createUnread({
     const confirmed = [...nextTypes.keys()].some((id) =>
       cachedChannels.has(id),
     );
+    const gained = [...nextTypes.keys()].some((id) => !channelTypes.has(id));
     cachedChannels = cachedIds(list);
     channelTypes = nextTypes;
     // Channel archive changes Inbox eligibility, not membership or read intent.
@@ -1269,7 +1293,9 @@ export function createUnread({
       purge();
       // An initial observation made against a display-only roster still owes
       // evidence when membership becomes fresh, including during an active repair.
-      if (requested && confirmed) {
+      // A newly accessible channel has no evidence yet, and the epoch bump
+      // abandons any in-flight observation, so both also observe again.
+      if (requested && (confirmed || gained || refresh)) {
         repairAgain = true;
         if (!refresh) void repair();
       }
@@ -2031,7 +2057,10 @@ export function createUnread({
       };
       return Object.freeze({
         dispose,
-        view(ids: readonly string[], visible: () => boolean) {
+        view(
+          ids: readonly string[],
+          visible: (id: string, measured: boolean) => boolean,
+        ) {
           if (!valid() || ids.length > 128) return;
           const verified = ids.filter((id) => {
             try {
@@ -2042,8 +2071,9 @@ export function createUnread({
             }
           });
           views.set(dispose, {
+            channelId,
             ids: new Set(verified),
-            visible: () => valid() && visible(),
+            visible: (id, measured) => valid() && visible(id, measured),
           });
         },
         async catchUp(id: string, rootId?: string) {
@@ -2089,7 +2119,7 @@ export function createUnread({
             requireMessage(target, id) === event &&
             (!rootId || manual(`thread:${rootId}`, journal) <= manualRevision);
           // Reaching the live bottom of a channel ends a manual unread on the
-          // channel. Unseen mentions, replies and marked messages stay unread.
+          // channel. Unseen replies and marked messages stay unread.
           const endManual = !rootId && !!reads.localUnread(channelId);
           // A broader mark already covering the cut makes this one redundant.
           if (
@@ -2101,15 +2131,60 @@ export function createUnread({
           ) {
             if (endManual)
               await reads.clearLocalUnread(channelId, [channelId], current);
-            return;
-          }
-          await reads.read(
-            key,
-            cut,
-            current,
-            endManual,
-            endManual ? [channelId] : undefined,
-          );
+          } else
+            await reads.read(
+              key,
+              cut,
+              current,
+              endManual,
+              endManual ? [channelId] : undefined,
+            );
+          if (rootId) return;
+          // The timeline above the bottom also shows mentions and broadcasts,
+          // which `activity:` never reads: it is a timestamp, so it would also
+          // read attention that arrives later with an older timestamp. Mark
+          // the retained ones through the bottom row individually instead,
+          // at most the newest 128, as one observation reads, so a backlog
+          // cannot crowd older marks out of the synced budget.
+          const state = reads.state();
+          const shown = rows
+            .filter(
+              (entry) =>
+                entry.event.created_at <= event.created_at &&
+                (!threadReference(entry.event) || entry.broadcast) &&
+                priority(entry, false) &&
+                !forcedMessages.get(channelId)?.has(entry.event.id) &&
+                !reads.localUnread(`msg:${entry.event.id}`) &&
+                !overrideActive(
+                  state.overrides[`msg:${entry.event.id}`],
+                  effectiveFrontier(
+                    state,
+                    `msg:${entry.event.id}`,
+                    channelId,
+                    entry.rootId,
+                  ),
+                ) &&
+                isUnread(entry, state, false),
+            )
+            .sort((a, b) => order(b.event, a.event))
+            .slice(0, 128);
+          if (shown.length)
+            await reads.readMessages(
+              shown.map((entry) => ({
+                key: `msg:${entry.event.id}`,
+                timestamp: entry.event.created_at,
+                channelId,
+                ...(entry.rootId ? { rootId: entry.rootId } : {}),
+              })),
+              undefined,
+              (journal) =>
+                current(journal) &&
+                shown.every(
+                  (entry) =>
+                    events.get(entry.event.id) === entry.event &&
+                    !manual(`msg:${entry.event.id}`, journal),
+                ),
+            );
         },
         async observe(ids: readonly string[]) {
           if (!valid() || ids.length > 128) return;

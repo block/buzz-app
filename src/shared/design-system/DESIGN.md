@@ -153,6 +153,12 @@ optional task content, then actions. Without task content, use the shared inset
 as the gap between the header and actions. Pass introductory copy through `description` and
 omit `children` when there is no task body; do not add an empty wrapper. Keep field
 help, status, warnings, and section-specific explanations with their content.
+Ordinary flow Dialogs use sticky header and footer bars over the scrolling body.
+Their full backgrounds combine a surface-color gradient and progressive blur;
+labels and actions remain sharp. Reduced transparency uses an opaque surface.
+Navigated, stepped, stable-height, and internally scrolling dialogs retain their
+existing layout.
+
 Put the completion action in the `actions` footer, with Cancel/Close before it. Keep other
 task controls in the body; reserve `headerActions` for contextual utilities beside
 the shared Close control. The pane-header icon-only rule does not prohibit text
@@ -180,8 +186,12 @@ viewport-capped scrolling. Below `40rem` viewport height, the top gutter becomes
 Expanded modals support tables, two-column content, or integrated navigation.
 When a short window or enlarged text leaves too little room below navigation
 chrome, the whole modal scrolls while retaining at least one control-height pane
-inside its insets. Navigation headers and each pane use the same inset; list
-rows retain their shared padding and align through the existing wrapper offset.
+inside its insets. Navigation headers use `space-4` vertically and the shared
+dialog inset horizontally; each pane retains that inset. List rows retain their
+shared padding and align through the existing wrapper offset. Host-contained
+sectioned modals center within their host, capped at 72rem wide and 48rem tall,
+with a `space-4` gutter. At viewport widths up to 30rem they fill the host to
+preserve usable space with enlarged text. Their panes scroll within that surface.
 
 Surface and contents enter together with a `0.75rem` upward fade over
 `duration-settle` (`220ms`) and `easing-enter`. Exit moves only `0.25rem` and uses
@@ -269,6 +279,32 @@ without stealing focus from the new dialog. On completion, return focus to the
 appropriate surviving trigger unless the person has moved elsewhere. See
 [`ChannelHeaderMenu`](../../bundled/channels/ChannelHeaderMenu.tsx) and the shared
 [menus and choice-row rules](#menus-popovers-and-choice-rows).
+
+### Hover timing
+
+Hover content opens only once the pointer rests on its trigger, never while it
+crosses on the way to something else; any movement restarts the wait. Keyboard
+focus is deliberate, so it opens hints and previews at once, and anything that
+opens on hover also opens with Enter; Escape dismisses them all. Every hover
+surface belongs to exactly one bucket, and the timings live in
+`ui/hoverIntent.ts`. The components accept a bucket, never a delay: to change a
+timing, change the bucket for everyone. Submenus inside an open menu are the one
+exception and open on hover at once, as menus conventionally do.
+
+| Bucket | Use for | Timing | API |
+| --- | --- | --- | --- |
+| Familiar hint | Naming an icon whose meaning is already obvious: back/forward, close, window controls, sidebar and pane toggles, new (+), more (…), send, attach, copy, download, refresh, delete, mute, reply, add reaction, bold/italic. An obvious icon stays familiar when its hint also shows a shortcut; a disabled one switches to helpful | Rests 1.5s | `Tooltip hint="familiar"`; `Button`/`IconButton` `title` with `hint="familiar"` |
+| Helpful hint | Naming an icon people may not recognize, or adding information the control does not show: an unfamiliar control’s shortcut, why it is disabled, an error, a truncated value | Rests 0.5s | `Tooltip`, or `title` on `Button`/`IconButton` (the default) |
+| Preview | Rich content about an object: a profile, link, channel, activity, typing participants, who reacted | Rests 0.6s | `PreviewCard`; `PopoverTrigger openOnHover="preview"` |
+| Hover control | A control that expands in place under the pointer: video volume, playback speed | Rests 0.1s | `PopoverTrigger` or `MenuTrigger` with `openOnHover="control"` |
+| No hover | A control whose visible text already says what it does | None | Omit `title` |
+
+Hints share the app's `TooltipProvider`: once one is showing, its neighbors open
+at once, so scanning a toolbar stays quick. Previews never open instantly from a
+neighbor, so moving down a column of avatars opens nothing; the reaction row's
+one preview may slide between its own pills once open (`PreviewCard warm`). The
+accessible name is never the hint: an icon button keeps its `aria-label` in
+every bucket.
 
 ### States, feedback, and motion
 
@@ -546,8 +582,10 @@ Use the surface that matches the content and its position in the interface.
 ### Floating surfaces
 
 Menus, Select, Popover, and PreviewCard share `floating-surface`: a 90% opaque
-mode-aware fill, 8px backdrop blur, standard border, 24px `radius-container` corners,
-and shared lift. `popover-surface` composes this same recipe for feature-owned
+mode-aware fill, 8px backdrop blur, 24px `radius-container` corners,
+and shared lift. The elevation recipe supplies a crisp contour, contact shadow,
+and ambient shadow in light mode, and a quiet white contour in dark mode. A
+transparent 1px border preserves inset geometry without doubling the contour. `popover-surface` composes this same recipe for feature-owned
 anchored content. Reduced transparency, forced colors, and browsers without blur
 support use the opaque fill.
 
@@ -608,6 +646,14 @@ Opaque contrast checks do not validate translucent materials over arbitrary
 content. Inspect the actual background, text and interaction states wherever
 glass remains; the flat shell does not establish a general glass contrast guarantee.
 
+Proposed: `Button` / `IconButton variant="glass-ghost"` is quiet at rest over
+artwork and reveals the complete primary glass material on pointer hover or
+while pressed/expanded. Compact Select forwards `appearance="glass-ghost"`.
+Agent-card menus and model choices use it. Blur stays fixed; artwork and control
+geometry do not animate. Reduced transparency, forced colors, and unsupported
+backdrop filtering use an opaque panel fill with a boundary. Keep the ordinary
+shared keyboard focus ring and disabled behavior.
+
 Proposed for profile artwork: `Button variant="glass"` uses the complete
 `glass-secondary` material, with a stronger fill on hover and an opaque pressed
 state. It retains shared focus, loading, and disabled behavior. Reduced
@@ -622,6 +668,8 @@ Layout and overflow remain shell-owned.
 
 Use `Tabs variant="segmented"` for grouped filters on an opaque surface, with
 a capsule track and raised capsule selection (for example, sidebar scope).
+Proposed: `Tabs variant="segmented-icons"` uses the same track for icon-only
+avatar choices, retaining accessible labels and titles. Each item supplies an icon.
 Use `Tabs variant="chrome"` for a flat pill selection on the shell and `variant="panel"`
 for an underline on a plain surface. IconButton also provides a `chrome` variant.
 Chrome tab and route-navigation groups use the shell's `affordance-chrome` capsule
@@ -674,10 +722,17 @@ rather than a control ring. `styles/composer.css` clears the textarea's own
 outline and lets `.buzz-composer:focus-within` carry focus on the shell: the 1px
 perimeter border switches to `--border-focus` and a matching 1px ring doubles
 it, so the composite reads as one focused surface instead of a ring around the
-text area inside a bordered box. Measured in the viewer, the stroke moves from
-`rgb(232, 232, 232)` to `rgb(0, 0, 0)` in light and `rgb(35, 35, 35)` to
-`rgb(255, 255, 255)` in dark — 21:1 and 17.4:1 against the panel surface, and
-17.1:1 and 15.7:1 against the resting border, so the change itself is legible.
+text area inside a bordered box. The resting shell uses `surface-composer`:
+panel fill in light mode and neutral-4 in dark mode, preserving the former
+dark stroke color as its fill. Both composer hosts use `data-composer-surface`
+to opt into the shared surface context: in dark mode, `affordance-subtle`, its
+hover and pressed roles use neutral-5, neutral-6 and neutral-7. Inline code,
+reference chips and recipient pills retain distinct nested fills without local
+control overrides. Light mode and controls outside the composer are unchanged.
+The context reapplies `interaction-panel` on the composer so shared controls
+resolve their fill, hover and pressed aliases against these local roles.
+Dark standard borders use neutral-5 so separators remain distinct from panels.
+Focus retains the existing `border-focus` stroke and ring.
 Unlike the text-field exception this is not modality-gated, because the shell
 also marks where typing will land. Do not copy the container pattern to a
 control that has a component ring recipe.
@@ -885,6 +940,12 @@ carry the shared field appearance. RadioGroup is for one choice, Checkbox for an
 independent choice and Switch for an immediate on/off setting. Use the native
 form semantics exposed by those Base UI primitives rather than duplicating them.
 
+`Checkbox` and `Radio` default to 40px rows with 20px controls. For compact
+inline choices, use `size="sm"`: 32px rows, 16px controls, and an 8px label gap.
+Pair small radios with `RadioGroup size="sm"` to remove the extra group gap.
+Compact filter popovers use `padding="list"`; keep room around a scrolling
+choice list for the shared keyboard focus ring.
+
 For finite choices, use Select: its inline layout fits compact toolbars and
 `variant="field"` fits labelled forms. The proposed `variant="compact"` fits
 trailing row choices: a small outlined trigger with a quiet `border-standard`
@@ -1016,6 +1077,10 @@ show these contracts and their compositions.
 ## Compositions
 
 ### Panel headers
+
+Composer model cards explicitly use `PanelHeader variant="card"`: one line with
+a truncating agent name and fixed trailing icon actions, without a divider.
+This does not change workspace headers or authorize adding chrome to other content cards.
 
 Every workspace pane and full-page destination has one shared `PanelHeader` at
 its top, outside the scrolling body. If the containing workspace already supplies
@@ -1251,7 +1316,7 @@ keeps only the fade.
 ToastProvider mounts one headless [Sonner](https://sonner.emilkowal.ski) Toaster
 in the host, portaled outside the app layout to the bottom right. Features and
 plugins use the shared Toast API, never their own Toaster or direct Sonner calls.
-Toast cards reuse `floating-surface`, including its `--shadow-sm` elevation; the
+Toast cards reuse `floating-surface`, including its `--shadow-panel` elevation; the
 scrollable viewport leaves room for the shadow and keyboard focus.
 Buzz owns the floating surface, semantic colors, type roles, Button and IconButton;
 headless content inherits the host theme and text size without an OS-theme override.
@@ -1317,8 +1382,8 @@ more and Show less: the base navigation item's type and padding with no fill, re
 focus. Use it where a fill would read as another destination.
 
 PreviewCard may expose supplemental actions through `actionRef`, such as copying
-an identity's full npub. Action previews open without a delay so immediate Tab
-navigation reaches the action. They remain non-modal and never take focus on hover. When no side has enough room,
+an identity's full npub. Focus opens every preview at once, so immediate Tab
+navigation reaches the action; hover still waits for the pointer to rest. They remain non-modal and never take focus on hover. When no side has enough room,
 action previews shift within the viewport to keep their controls reachable. Tab
 from the trigger reaches the first focusable item, including a pausable status ticker.
 Tab moves through the supplemental actions in document order. Shift+Tab from the
@@ -1447,58 +1512,38 @@ to remain visible on conversation surfaces in both modes.
 
 ### Accent color
 
-One device-local accent choice colors actions, links, and selection states.
-The picker presents six families in one row: Honey, Magenta, Iris, Cobalt, Lime, and Mono. An inset white ring marks the selected
-swatch. Lime is the default; Mono stays last. Saved Chartreuse and Citron choices fall back to Lime.
-Chromatic ramps blend 90% of the original palette with 10% of the Honey-based
-OKLCH lightness/chroma treatment, with solid fills adjusted for readable ink.
-Honey is a brighter golden yellow (`#f5c518`); Lime combines the former Lime and Pear ramps at their OKLCH midpoint.
-Saved Pear and Jade choices map to Lime; Flame maps to Honey. Their ramps keep a consistent hue in OKLCH and retain the established step roles.
-Mono remains achromatic.
-Honey uses golden yellow fills with black ink; Mono uses charcoal fills in light
-mode and pale gray fills in dark mode. Vibe level offers three device-local choices:
-Snoozin’ keeps your messages neutral, with accent actions, links, and subtle row states.
-Hummin’ (the default) adds soft accent fills to your messages and selected navigation.
-Buzzin’ uses solid accent fills for those same states. Received messages, app
-backgrounds, panels, and popovers stay neutral at every level. Saved Low/High
-contrast choices retain their behavior as Hummin’/Buzzin’. Older vibe values are ignored.
+One device-local accent choice colors message bubbles and their related content,
+the composer Send button, and sidebar row hover/selection. General buttons,
+checked controls, segmented filters, tabs, menus, links outside bubbles, and drag
+indicators keep their neutral appearance. Status colors, focus, categorical
+purple, shadows, and media-specific roles stay independent.
 
-Persistent control selections use `surface-control-selected` with
-`text-control-selected`: neutral at Snoozin’, soft accent at Hummin’, and solid
-accent with paired ink at Buzzin’. Segmented filters use this pair on neutral
-tracks. Selected ghost icon buttons use `surface-navigation-selected` with
-`text-navigation-selected`, keeping a distinct neutral fill against panels at
-Snoozin’ and the same accent treatment at higher levels. Panel tabs retain an
-underline, using the readable accent mark rather than a filled background.
-Snoozin’ keeps transient row/hover states neutral; Hummin’ and Buzzin’ use soft
-accent hover states. Hover never becomes a competing solid selection. Menus,
-choice cards, disabled controls, focus rings, and semantic status colors retain
-their existing treatments. Primary actions and checked controls carry the accent
-at all three levels; increasing the vibe adds persistent selection, not more
-competing primary actions.
+**Chillin’** (the default) uses soft accent fills for your messages; **Buzzin’**
+uses solid accent fills with the family's reading ink. Received bubbles stay
+neutral at both levels. Vibe changes bubble
+contrast only: sidebar rows keep a solid selected fill with paired ink and a
+quieter hover at both levels, and Send keeps a strong accent fill.
+Saved low or retired quiet contrast maps to Chillin’; high remains Buzzin’.
 
-Use `surface-navigation-selected` with `text-navigation-selected` for selected
-navigation. High contrast pairs solid fills with the family’s contrast ink;
-message prose uses the family’s reading ink. Hover stays subtle and distinct from
-selection. Keep status colors independent; never recolor the whole shell.
+Keep appearance decisions with the existing owners. `SidebarNavigation` scopes
+`surface-sidebar-selected`, `text-sidebar-selected`, `affordance-sidebar-hover`,
+and `text-sidebar-hover` to its row states. General navigation and tabs keep the
+neutral `surface-navigation-selected` / `text-navigation-selected` pair.
+The message renderer uses standard text on received bubbles, with
+`text-message-link` for their links and
+`text-message-link-own` for outgoing bubbles. Neutral code/table insets retain
+their own link pairing. The composer uses the existing `accentButtonStyle` on
+Send; other prominent actions use the neutral prominent roles.
 
-Reuse the existing twelve-step ramps in each mode. Prominent controls use steps
-9–10 with their paired ink; links use the family’s link role. Row hover and
-selection use the authored tint steps and paired row text. Keep these foreground
-and background roles together. Send remains an ordinary prominent button.
-Lime’s strong fill takes black ink in both modes.
+Reuse the existing twelve-step ramps in each mode. Keep the fill and its paired
+ink together. Never recolor the whole shell. Nested dark scopes resolve their
+own ramp. Media pixels, the black viewing canvas, and white-on-dark media glass
+never follow the accent.
 
-
-Status colors, focus, categorical purple, shadows, and media-specific roles stay
-independent. Media pixels, the black viewing canvas, and white-on-dark media glass
-never follow the accent. Shared controls inside a nested dark scope use the dark
-ramp even when the app is light; gallery comments follow the app mode.
-
-Do not mix colors or use opacity to invent lighter shades; choose a ramp step.
-Swatches carry `data-accent` and `data-color-mode`; their inset selection rings
-use the family’s paired `text-on-accent` ink. Appearance uses a compact Mode
-Select for System, Light, and Dark, with a live illustrative preview. The
-contrast check audits every family in both modes.
+Swatches and their tooltips preview each family's strong fill and paired
+`text-on-accent` ink. They carry `data-accent` and `data-color-mode`.
+Appearance uses compact Mode and Vibe level Selects with a live illustrative
+preview. Do not mix colors or use opacity to invent lighter shades.
 
 
 ## Density and rhythm
@@ -1634,11 +1679,17 @@ separate WCAG 3:1 non-text ratio; decorative separators and hover fills do not.
   guard checks these role mappings and status dots separately from text and
   decorative dividers.
 
+Text selection uses `surface-text-selection` with `text-on-selection`, including
+composer tokens. Its neutral fill must remain distinct from app, panel, and
+received/own bubble backgrounds at both vibe levels and in both themes. Own
+bubbles use the `-own` pair, reversing the solid bubble’s ink and fill at Buzzin’.
+
 ### Link contrast
 
-Inline links use `text-link`. Each accent family supplies a readable link color
-at every vibe level. Own messages use `text-message-link-own`, which pairs with that
-level's bubble fill. Components consume `text-link` or `text-message-link-own`;
+General inline links use the neutral `text-link` and a persistent underline.
+Mention chips retain their resting fill instead of an underline. Bubble links use the family’s
+readable `text-message-link` at both vibe levels. Own messages use `text-message-link-own`, which pairs with that
+level's bubble fill. Components consume the matching link role;
 never pick a link color per component.
 
 Mentions are people, not destinations, so they are chips rather than links.
@@ -1652,8 +1703,7 @@ where fills stay neutral. Inside your own bubble the `-own` pair wins; on the
 solid accent bubble (at Buzzin’) it is tone-on-tone: a deeper step of the bubble's fill with the bubble's ink, deeper again on hover. System notices
 name people as quiet text, never as chips.
 
-Blue 11 is tuned for the supported surface stack: #0b5fa8 in light mode and
-#83c4ff in dark. These pairs have no link-specific contrast exemptions.
+These pairs have no link-specific contrast exemptions.
 The contrast guard checks APCA and WCAG AA (4.5:1) on opaque text pairs, including
 hover and pressed fills. Metadata uses neutral 9 (#5f5f5f) in light mode so small
 labels remain readable even on the pressed neutral 4 surface.

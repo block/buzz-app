@@ -24,7 +24,12 @@ import { AgentCard, AgentPortrait, TeamCard } from "./AgentCard";
 import { AgentCreateDialog, TypeIcon } from "./AgentCreateDialog";
 import { NewAgentTile } from "./NewAgentTile";
 import type { ChannelChoice } from "../../features/agents/attention";
-import { AgentDelete } from "../../features/agents/AgentManage";
+import {
+  AgentDelete,
+  AgentRemoveHere,
+  inSeveral,
+  sameAgent,
+} from "../../features/agents/AgentManage";
 import { AttentionSummary } from "../../features/agents/AttentionPanel";
 import { useAgents, useChannelChoices } from "../../features/agents/react";
 import type {
@@ -45,6 +50,7 @@ import { useAgentChoices } from "../../features/agents/use-choices";
 import type { RelaySession } from "../../features/relay/session";
 import {
   setDefaultAgent,
+  useChosenAgent,
   useDefaultAgent,
 } from "../../features/solo/default-agent";
 import type { RelayData } from "../../features/relay/service";
@@ -56,6 +62,7 @@ import {
   DownloadIcon,
   PlusIcon,
   RobotIcon,
+  StarFilledIcon,
   XIcon,
 } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -71,6 +78,7 @@ import {
   ContextMenuRoot,
   ContextMenuTrigger,
   MenuNote,
+  MenuSeparator,
   MenuPopup,
   MenuItem,
   MenuRoot,
@@ -211,10 +219,17 @@ export function AgentsPage({
   const build = (pubkey: string) => browse(pubkey);
   // Importing gives an agent a key here, so a hosted type cannot take one.
   const runnable = types.filter((type) => !type.remote);
+  // Teams are shared by every community; this one shows each with a member
+  // here, or with none in any community.
+  const members = new Set(snapshot.agents.map((agent) => agent.pubkey));
+  const teams = snapshot.teams.filter(
+    (team) =>
+      team.members.some((pubkey) => members.has(pubkey)) ||
+      !team.members.some((pubkey) => agents.memberships(pubkey).length),
+  );
   // Only a team still saved, or one being made, keeps its editor open.
   const editing =
-    editingTeam === "new" ||
-    snapshot.teams.some((team) => team.id === editingTeam)
+    editingTeam === "new" || teams.some((team) => team.id === editingTeam)
       ? editingTeam
       : undefined;
   // Leaving Teams drops the editor, whose unsaved draft goes with it.
@@ -230,9 +245,7 @@ export function AgentsPage({
   const returnToAgents = returnTo("yours");
 
   const toolbarAction =
-    (tab === "teams"
-      ? snapshot.teams.length > 0
-      : snapshot.agents.length > 0) ||
+    (tab === "teams" ? teams.length > 0 : snapshot.agents.length > 0) ||
     snapshot.status === "error" ||
     snapshot.status === "unavailable";
   const openImport = () => {
@@ -262,16 +275,22 @@ export function AgentsPage({
       </MenuPopup>
     </MenuRoot>
   );
-  // With no agents yet, each way to get one is its own tile; importing the
+  // With no agents yet, each way to get one is its own tile; bringing the
   // owner's own agents leads when there are any.
-  const canImport = firstAgent && importable.length > 0;
+  const elsewhere = firstAgent ? agents.joinable() : [];
+  const crew = [...elsewhere, ...importable];
+  const canImport = firstAgent && crew.length > 0;
   const starts = (
     <div className={cardStyles.starts}>
       {canImport && (
         <NewAgentTile
           fullWidth
-          crew={importable}
-          description="You have agents in a previous version of Buzz."
+          crew={crew}
+          description={
+            elsewhere.length
+              ? "You have agents in your other communities."
+              : "You have agents in a previous version of Buzz."
+          }
           label="Import them now"
           onClick={openImport}
         />
@@ -437,7 +456,7 @@ export function AgentsPage({
             <Teams
               agents={agents}
               saved={snapshot.agents.filter((agent) => agent.place === "here")}
-              teams={snapshot.teams}
+              teams={teams}
               editing={editing}
               onEdit={setEditingTeam}
               newTeam={!toolbarAction && newTeamMenu}
@@ -601,6 +620,8 @@ type InventoryProps = {
   newAgent: ReactNode;
   /** The agent new Berd messages are tagged for, in this community. */
   defaultAgent?: string | undefined;
+  /** False while another agent stands in for a missing chosen one. */
+  defaultPinned?: boolean;
   onMakeDefault?: ((pubkey: string) => void) | undefined;
   defaultChoices?: ReadonlySet<string>;
 };
@@ -612,6 +633,7 @@ function DefaultAgentInventory({
   ...props
 }: InventoryProps & { session: RelaySession; scope: string }) {
   const current = useDefaultAgent(session, scope);
+  const chosen = useChosenAgent(scope);
   const choices = useAgentChoices(session, true, true);
   const [error, setError] = useState("");
   return (
@@ -619,6 +641,7 @@ function DefaultAgentInventory({
       <Inventory
         {...props}
         defaultAgent={current?.pubkey}
+        defaultPinned={!!current && current.pubkey === chosen}
         defaultChoices={
           new Set(choices.selectable.map((agent) => agent.pubkey))
         }
@@ -626,7 +649,7 @@ function DefaultAgentInventory({
           setError(
             setDefaultAgent(scope, pubkey)
               ? ""
-              : "The default agent couldn't be saved on this device.",
+              : "The main agent couldn't be saved on this device.",
           );
         }}
       />
@@ -635,20 +658,16 @@ function DefaultAgentInventory({
   );
 }
 
-/** An agent card's right-click quick actions; the context-menu key and
- * Shift+F10 open them from the keyboard. */
-function AgentQuickActions({
+/** Right-clicking an agent card opens its actions menu; the context-menu key
+ * and Shift+F10 open it from the keyboard. */
+function CardContextMenu({
   name,
   card,
-  isDefault,
-  available,
-  onMakeDefault,
+  children,
 }: {
-  available: boolean;
   name: string;
   card: ReactElement;
-  isDefault: boolean;
-  onMakeDefault(): void;
+  children: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const [anchor, setAnchor] = useState<HTMLElement>();
@@ -662,7 +681,18 @@ function AgentQuickActions({
     >
       <ContextMenuTrigger
         render={card}
+        // Right-clicks and long-presses in the card's open menus bubble
+        // through their portals; only the card itself opens this menu.
+        onContextMenu={(event) => {
+          if (!event.currentTarget.contains(event.target as Node))
+            event.preventBaseUIHandler();
+        }}
+        onTouchStart={(event) => {
+          if (!event.currentTarget.contains(event.target as Node))
+            event.preventBaseUIHandler();
+        }}
         onKeyDown={(event) => {
+          if (!event.currentTarget.contains(event.target as Node)) return;
           if (
             event.key === "ContextMenu" ||
             (event.shiftKey && event.key === "F10")
@@ -675,13 +705,7 @@ function AgentQuickActions({
         }}
       />
       <MenuPopup aria-label={`Actions for ${name}`} anchor={anchor}>
-        {isDefault ? (
-          <MenuNote>Default agent</MenuNote>
-        ) : (
-          <MenuItem disabled={!available} onClick={onMakeDefault}>
-            Make default agent
-          </MenuItem>
-        )}
+        {children}
       </MenuPopup>
     </ContextMenuRoot>
   );
@@ -698,6 +722,7 @@ function Inventory({
   onBuild,
   newAgent,
   defaultAgent,
+  defaultPinned,
   defaultChoices,
   onMakeDefault,
 }: InventoryProps) {
@@ -759,64 +784,64 @@ function Inventory({
           {agents.map((agent, position) => {
             const type = typeOf(agent);
             const active = agent.pubkey === selected;
-            const card = (
-              <InventoryCard
-                tag={
-                  agent.pubkey === defaultAgent ? "Default agent" : undefined
-                }
-                service={service}
-                type={type}
-                onBuild={() => onBuild(agent.pubkey)}
-                onRemoved={() => onSelect()}
-                role="gridcell"
-                aria-label={
-                  agent.pubkey === defaultAgent
-                    ? `${agent.name}, Default agent`
-                    : agent.name
-                }
-                data-selected={active}
-                aria-selected={active}
-                tabIndex={active || (index < 0 && position === 0) ? 0 : -1}
-                data-unavailable={type ? undefined : ""}
-                onClick={(event) => {
-                  if (
-                    event.currentTarget.contains(event.target as Node) &&
-                    !(event.target as Element).closest(
-                      "[data-card-control], button, input",
-                    )
-                  )
-                    onSelect(active ? undefined : agent.pubkey);
-                }}
-                onDoubleClick={(event) => {
-                  if (
-                    event.currentTarget.contains(event.target as Node) &&
-                    !(event.target as Element).closest(
-                      "[data-card-control], button, input",
-                    )
-                  )
-                    onBuild(agent.pubkey);
-                }}
-                agent={agent}
-                community={agent.relay || undefined}
-                icon={<TypeIcon type={type} />}
-                detail={summaryOf(agent, type)}
-              />
-            );
+            const isMain = agent.pubkey === defaultAgent;
             return (
               // biome-ignore lint/a11y/useSemanticElements: Layout grid rows group cards without table layout.
               // biome-ignore lint/a11y/useFocusableInteractive: Roving focus belongs to the gridcell, not its row wrapper.
               <div role="row" className="contents" key={agent.pubkey}>
-                {onMakeDefault ? (
-                  <AgentQuickActions
-                    name={agent.name}
-                    card={card}
-                    isDefault={agent.pubkey === defaultAgent}
-                    available={!!defaultChoices?.has(agent.pubkey)}
-                    onMakeDefault={() => onMakeDefault(agent.pubkey)}
-                  />
-                ) : (
-                  card
-                )}
+                <InventoryCard
+                  tag={
+                    isMain ? (
+                      <Tooltip content="Main agent">
+                        <span role="img" aria-label="Main agent">
+                          <StarFilledIcon size={16} aria-hidden="true" />
+                        </span>
+                      </Tooltip>
+                    ) : undefined
+                  }
+                  main={
+                    onMakeDefault
+                      ? {
+                          isMain,
+                          pinned: isMain && !!defaultPinned,
+                          available: !!defaultChoices?.has(agent.pubkey),
+                          onMake: () => onMakeDefault(agent.pubkey),
+                        }
+                      : undefined
+                  }
+                  service={service}
+                  type={type}
+                  onBuild={() => onBuild(agent.pubkey)}
+                  onRemoved={() => onSelect()}
+                  role="gridcell"
+                  aria-label={isMain ? `${agent.name}, Main agent` : agent.name}
+                  data-selected={active}
+                  aria-selected={active}
+                  tabIndex={active || (index < 0 && position === 0) ? 0 : -1}
+                  data-unavailable={type ? undefined : ""}
+                  onClick={(event) => {
+                    if (
+                      event.currentTarget.contains(event.target as Node) &&
+                      !(event.target as Element).closest(
+                        "[data-card-control], button, input",
+                      )
+                    )
+                      onSelect(active ? undefined : agent.pubkey);
+                  }}
+                  onDoubleClick={(event) => {
+                    if (
+                      event.currentTarget.contains(event.target as Node) &&
+                      !(event.target as Element).closest(
+                        "[data-card-control], button, input",
+                      )
+                    )
+                      onBuild(agent.pubkey);
+                  }}
+                  agent={agent}
+                  community={agent.relay || undefined}
+                  icon={<TypeIcon type={type} />}
+                  detail={summaryOf(agent, type)}
+                />
               </div>
             );
           })}
@@ -832,6 +857,7 @@ function InventoryCard({
   type,
   onBuild,
   onRemoved,
+  main,
   ...props
 }: Omit<React.ComponentProps<typeof AgentCard>, "agent"> & {
   agent: Agent;
@@ -839,6 +865,10 @@ function InventoryCard({
   type: RegisteredAgentType | undefined;
   onBuild(): void;
   onRemoved(): void;
+  /** Whether it is the community's main agent and can be made it. */
+  main?:
+    | { isMain: boolean; pinned: boolean; available: boolean; onMake(): void }
+    | undefined;
 }) {
   const agent = props.agent;
   const [saving, setSaving] = useState(false);
@@ -849,82 +879,118 @@ function InventoryCard({
     setSaving(true);
     setError("");
     try {
-      await service.save(agent.pubkey, { config });
+      await service.save(agent.key, { config });
     } catch (reason) {
       setError(message(reason));
     } finally {
       setSaving(false);
     }
   };
-  const menu = (remove?: () => void) => (
-    <MenuRoot>
-      <MenuTrigger
-        render={
-          <IconButton
-            aria-label={`Actions for ${agent.name}`}
-            size="sm"
-            icon={<DotsThreeIcon size={16} />}
-          />
-        }
-      />
-      <MenuPopup align="end">
-        {editable && <MenuItem onClick={onBuild}>Open settings</MenuItem>}
-        <MenuItem
-          onClick={() => {
-            void navigator.clipboard
-              .writeText(agent.pubkey)
-              .catch((reason) => setError(message(reason)));
-          }}
-        >
-          Copy public key
-        </MenuItem>
-        {remove && (
-          <MenuItem tone="danger" onClick={remove}>
-            Delete agent
-          </MenuItem>
-        )}
-      </MenuPopup>
-    </MenuRoot>
-  );
-  return (
-    <AgentCard
-      {...props}
-      icon={Model ? undefined : props.icon}
-      detail={Model ? undefined : props.detail}
-      menu={
-        agent.place === "elsewhere" ? (
-          menu()
+  // The "..." button and right-click share one set of actions.
+  const actions = (remove?: () => void, leave?: () => void) => (
+    <>
+      {main &&
+        // A stand-in for a missing chosen agent can be made main for good.
+        (main.pinned ? (
+          <MenuNote>Main agent</MenuNote>
         ) : (
-          <AgentDelete
+          <MenuItem disabled={!main.available} onClick={main.onMake}>
+            Make main agent
+          </MenuItem>
+        ))}
+      {main && <MenuSeparator />}
+      {editable && <MenuItem onClick={onBuild}>Open settings</MenuItem>}
+      <MenuItem
+        onClick={() => {
+          void navigator.clipboard
+            .writeText(agent.pubkey)
+            .catch((reason) => setError(message(reason)));
+        }}
+      >
+        Copy public key
+      </MenuItem>
+      {leave && (
+        <MenuItem tone="danger" onClick={leave}>
+          Remove from this community
+        </MenuItem>
+      )}
+      {remove && (
+        <MenuItem tone="danger" onClick={remove}>
+          Delete agent
+        </MenuItem>
+      )}
+    </>
+  );
+  const card = (remove?: () => void, leave?: () => void) => (
+    <CardContextMenu
+      name={agent.name}
+      card={
+        <AgentCard
+          {...props}
+          icon={Model ? undefined : props.icon}
+          detail={Model ? undefined : props.detail}
+          menu={
+            <MenuRoot>
+              <MenuTrigger
+                render={
+                  <IconButton
+                    aria-label={`Actions for ${agent.name}`}
+                    variant="glass-ghost"
+                    size="sm"
+                    icon={<DotsThreeIcon size={16} />}
+                  />
+                }
+              />
+              <MenuPopup align="end">{actions(remove, leave)}</MenuPopup>
+            </MenuRoot>
+          }
+        >
+          {(Model || error) && (
+            <div
+              data-card-control=""
+              className="flex min-w-0 max-w-full flex-col items-center gap-2"
+            >
+              {Model && (
+                <Model
+                  config={agent.config}
+                  modelAppearance="glass-ghost"
+                  disabled={saving}
+                  onChange={(config) => void save(config)}
+                />
+              )}
+              {error && (
+                <span role="alert" className="text-body-sm text-danger">
+                  {error}
+                </span>
+              )}
+            </div>
+          )}
+        </AgentCard>
+      }
+    >
+      {actions(remove, leave)}
+    </CardContextMenu>
+  );
+  return agent.place === "elsewhere" ? (
+    card()
+  ) : (
+    <AgentDelete
+      agents={service}
+      agent={agent}
+      onRemoved={onRemoved}
+      trigger={(remove) =>
+        inSeveral(service, agent) ? (
+          <AgentRemoveHere
             agents={service}
             agent={agent}
             onRemoved={onRemoved}
-            trigger={menu}
+            trigger={(leave) => card(remove, leave)}
           />
+        ) : (
+          card(remove)
         )
       }
-    >
-      {(Model || error) && (
-        <div
-          data-card-control=""
-          className="flex min-w-0 max-w-full flex-col items-center gap-2"
-        >
-          {Model && (
-            <Model
-              config={agent.config}
-              modelAppearance="subtle"
-              disabled={saving}
-              onChange={(config) => void save(config)}
-            />
-          )}
-          {error && (
-            <span role="alert" className="text-body-sm text-danger">
-              {error}
-            </span>
-          )}
-        </div>
-      )}
-    </AgentCard>
+    />
   );
 }
 
@@ -1080,7 +1146,7 @@ function teamPortNote({
       sentence(`Couldn't import ${member.name}: ${member.error}`),
     ),
     elsewhere.length &&
-      `Kept out: ${elsewhere.join(", ")}, in another community.`,
+      `Not added: ${elsewhere.join(", ")}, in your other communities. Use Add team to bring them here.`,
     foreign.length &&
       `Kept out: ${foreign.join(", ")}, which another account on this device has.`,
     ...notes,
@@ -1159,32 +1225,60 @@ function ImportAgents({
       else next.delete(pubkey);
       return next;
     });
-  const port = (agent: PortableAgent) => {
-    if (!chosen || chosenPorts.current.has(agent.pubkey)) return;
-    chosenPorts.current.add(agent.pubkey);
-    setPort(agent.pubkey, "queued");
-    say(agent.pubkey);
-    const type = chosen.key;
+  /** Runs `bring` for the agent after the ones chosen before it. */
+  const queue = (
+    pubkey: string,
+    failed: string,
+    bring: () => Promise<Readonly<{ notes: readonly string[] }>>,
+  ) => {
+    if (chosenPorts.current.has(pubkey)) return;
+    chosenPorts.current.add(pubkey);
+    setPort(pubkey, "queued");
+    say(pubkey);
     portLine.current = portLine.current.then(async () => {
       if (!open.current) return;
       try {
-        const { notes } = await agents.port({
-          source: agent.source,
-          pubkey: agent.pubkey,
-          type,
-        });
-        setPort(agent.pubkey, "done");
-        if (notes.length) say(agent.pubkey, notes.join(" "));
+        const { notes } = await bring();
+        setPort(pubkey, "done");
+        if (notes.length) say(pubkey, notes.join(" "));
         onImported();
       } catch (reason) {
-        chosenPorts.current.delete(agent.pubkey);
-        setPort(agent.pubkey);
-        say(
-          agent.pubkey,
-          `${agent.name} wasn't imported. ${sentence(message(reason))}`,
-        );
+        chosenPorts.current.delete(pubkey);
+        setPort(pubkey);
+        say(pubkey, `${failed} ${sentence(message(reason))}`);
       }
     });
+  };
+  const port = (agent: PortableAgent) => {
+    if (!chosen) return;
+    const type = chosen.key;
+    queue(agent.pubkey, `${agent.name} wasn't imported.`, () =>
+      agents.port({ source: agent.source, pubkey: agent.pubkey, type }),
+    );
+  };
+  const join = (agent: Agent) =>
+    queue(agent.pubkey, `${agent.name} wasn't added.`, () =>
+      agents.join(agent.key),
+    );
+  /** Adds each of the team's members from the owner's other communities, so
+   * the team, which every community shares, has them here too. */
+  const joinTeam = async (team: Team, members: readonly Agent[]) => {
+    if (pending) return;
+    setPending(team.id);
+    onPendingChange(true);
+    setError("");
+    const notes: string[] = [];
+    for (const member of members)
+      try {
+        notes.push(...(await agents.join(member.key)).notes);
+      } catch (reason) {
+        notes.push(`${member.name} wasn't added. ${sentence(message(reason))}`);
+      }
+    setPending(undefined);
+    onPendingChange(false);
+    // Leaving would hide the one place that names what still needs a hand.
+    if (notes.length) setError(notes.join(" "));
+    else onImported();
   };
   const portTeam = async (team: OldTeam) => {
     if (!chosen || pending) return;
@@ -1214,6 +1308,37 @@ function ImportAgents({
     }
   };
   const yours = new Set(found?.here);
+  // The owner's agents in their other communities, as offered since the
+  // dialog opened, so one added here stays listed as added, and those its
+  // community lists only once it connects still come.
+  const { snapshot } = useAgents(agents);
+  const [offered, setOffered] = useState(() => agents.joinable());
+  // biome-ignore lint/correctness/useExhaustiveDependencies: What it can join changes with the snapshot.
+  useEffect(() => {
+    setOffered((shown) => {
+      const more = agents
+        .joinable()
+        .filter((agent) => !shown.some((item) => item.key === agent.key));
+      return more.length ? [...shown, ...more] : shown;
+    });
+  }, [agents, snapshot]);
+  const joinable = new Map(
+    agents.joinable().map((agent) => [agent.pubkey, agent]),
+  );
+  const elsewhere = only === "agents" ? offered : [];
+  const teamsElsewhere =
+    only === "teams"
+      ? snapshot.teams.flatMap((team) => {
+          const members = team.members.flatMap((pubkey) => {
+            const agent = joinable.get(pubkey);
+            return agent ? [agent] : [];
+          });
+          return members.length ? [{ team, members }] : [];
+        })
+      : [];
+  const others = elsewhere.length + teamsElsewhere.length;
+  // Old Buzz's guidance and type stay out of a list of other communities'.
+  const old = !!found && (found[only].length > 0 || !others);
   if (!types.length)
     return (
       <p className="m-0 text-body-sm text-secondary">
@@ -1222,14 +1347,107 @@ function ImportAgents({
     );
   return (
     <div className="flex flex-col gap-4">
-      <p className="m-0 text-body-sm text-secondary">
-        {chosen?.adopt
-          ? "Keeps each agent's key, name, picture and instructions in this community. Its provider, model and other settings stay behind; choose them after importing."
-          : "Keeps each agent's key, name and picture in this community. Its instructions, provider, model and other settings stay behind; choose them after importing."}{" "}
-        An archived agent is unarchived here. Stop it where it runs now first,
-        or both will answer.
-      </p>
-      {types.length > 1 && (
+      {(error || said.size > 0) && (
+        <p role="alert" className="m-0 text-body-sm text-danger">
+          {[error, ...said.values()].filter(Boolean).join(" ")}
+        </p>
+      )}
+      {elsewhere.length > 0 && (
+        <section
+          aria-label="Agents in your other communities"
+          className="flex flex-col gap-3"
+        >
+          <InlineHeader title="From your other communities" />
+          <p className="m-0 text-body-sm text-secondary">
+            Adds the same agent here. {sameAgent()}
+          </p>
+          <div className={cardStyles.grid}>
+            {elsewhere.map((agent) => (
+              <AgentCard
+                key={agent.pubkey}
+                agent={agent}
+                community={agent.relay}
+                icon={
+                  <TypeIcon
+                    type={types.find((item) => item.key === agent.type)}
+                  />
+                }
+                detail={host(agent.relay)}
+              >
+                {ports.get(agent.pubkey) === "done" ? (
+                  <Button
+                    size="compact"
+                    variant="outline"
+                    aria-label={`${agent.name} added`}
+                    disabled
+                    // Keeps the owner's place for the next one.
+                    focusableWhenDisabled
+                  >
+                    <CheckIcon size={16} aria-hidden="true" /> Added
+                  </Button>
+                ) : (
+                  <Button
+                    size="compact"
+                    variant="outline"
+                    aria-label={`Add ${agent.name} from ${host(agent.relay)}`}
+                    loading={ports.get(agent.pubkey) === "queued"}
+                    onClick={() => join(agent)}
+                  >
+                    Add
+                  </Button>
+                )}
+              </AgentCard>
+            ))}
+          </div>
+        </section>
+      )}
+      {teamsElsewhere.length > 0 && (
+        <section
+          aria-label="Teams in your other communities"
+          className="flex flex-col gap-3"
+        >
+          <InlineHeader title="From your other communities" />
+          <p className="m-0 text-body-sm text-secondary">
+            Adds the team's members from your other communities here, so the
+            team has them here too.
+          </p>
+          <ul className={styles.portList}>
+            {teamsElsewhere.map(({ team, members }) => (
+              <li key={team.id} className={styles.portRow}>
+                <span className="grid min-w-0 flex-1">
+                  <span className="truncate text-body">{team.name}</span>
+                  <span className="truncate text-caption text-secondary">
+                    {members.map((member) => member.name).join(", ")}
+                  </span>
+                </span>
+                <Button
+                  size="compact"
+                  variant="outline"
+                  aria-label={`Add team ${team.name}`}
+                  loading={pending === team.id}
+                  disabled={!!pending && pending !== team.id}
+                  onClick={() => void joinTeam(team, members)}
+                >
+                  Add team
+                </Button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+      {old && others > 0 && (
+        <InlineHeader title="From earlier versions of Buzz" />
+      )}
+      {old && (
+        <p className="m-0 text-body-sm text-secondary">
+          {chosen?.adopt
+            ? "Keeps each agent's key, name, picture and instructions in this community. Its provider, model and other settings stay behind; choose them after importing."
+            : "Keeps each agent's key, name and picture in this community. Its instructions, provider, model and other settings stay behind; choose them after importing."}{" "}
+          An archived agent is unarchived here. Stop it where it runs now first,
+          or both will answer.
+        </p>
+      )}
+      {old && types.length > 1 && (
         <div className="flex">
           <Select
             label="Import as"
@@ -1247,11 +1465,6 @@ function ImportAgents({
             onValueChange={setType}
           />
         </div>
-      )}
-      {(error || said.size > 0) && (
-        <p role="alert" className="m-0 text-body-sm text-danger">
-          {[error, ...said.values()].filter(Boolean).join(" ")}
-        </p>
       )}
       {found?.warnings.map((warning) => (
         <p key={warning} className="m-0 text-body-sm text-secondary">
@@ -1318,7 +1531,6 @@ function ImportAgents({
                       ]
                         .filter(Boolean)
                         .join(" · ")}
-                      delay={300}
                     >
                       <span
                         // biome-ignore lint/a11y/noNoninteractiveTabindex: keyboard users need access to its key and community in the tooltip.
@@ -1365,11 +1577,13 @@ function ImportAgents({
           )}
         </>
       ) : (
-        <p className="m-0 text-body-sm text-secondary">
-          {only === "teams"
-            ? "No old teams found to import."
-            : "No other agents found to import."}
-        </p>
+        old && (
+          <p className="m-0 text-body-sm text-secondary">
+            {only === "teams"
+              ? "No old teams found to import."
+              : "No other agents found to import."}
+          </p>
+        )
       )}
     </div>
   );
@@ -1451,6 +1665,12 @@ function TeamEditor({
   );
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
+  // Members not in this community, which it doesn't list but keeps.
+  const away = members.filter(
+    (pubkey) =>
+      !saved.some((agent) => agent.pubkey === pubkey) &&
+      agents.memberships(pubkey).length > 0,
+  ).length;
   const act = async (work: () => Promise<unknown>) => {
     if (pending) return;
     setPending(true);
@@ -1532,6 +1752,11 @@ function TeamEditor({
           </div>
         ) : (
           <p className="m-0 text-body-sm text-secondary">No agents yet.</p>
+        )}
+        {away > 0 && (
+          <p className="m-0 text-body-sm text-secondary">
+            {`+${away} in your other communities, who stay on the team.`}
+          </p>
         )}
       </Section>
       {error && (

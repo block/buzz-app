@@ -16,6 +16,15 @@ test("settings share a centered, bounded column and keep controls contained acro
 }, info) => {
   await page.goto(app.origin);
   await openSettings(page);
+  // A desktop Settings surface stays bounded instead of filling the workspace.
+  await expect
+    .poll(() =>
+      settingsDialog(page).evaluate((root) => {
+        const { width, height } = root.getBoundingClientRect();
+        return { width, height };
+      }),
+    )
+    .toEqual({ width: 1152, height: 768 });
   await expect(settingsDialog(page).locator(":focus")).toHaveCount(1);
   await selectSettingsSection(page, "Identity");
   // Copy failure must leave the entire value selectable as ordinary text.
@@ -274,6 +283,19 @@ test.describe("settings empty collections", () => {
         await expect(search).toBeFocused();
         await expect(search).toHaveValue("");
         await page.evaluate(() => document.fonts.ready);
+        // Search shares the title/tab content inset rather than the border edge.
+        await expect
+          .poll(() =>
+            community.evaluate((root) => {
+              const section = root.closest("section");
+              const title = section.querySelector(".buzz-content-header-title");
+              const search = root.querySelector(".buzz-input-group");
+              if (!title || !search) return false;
+              const left = title.getBoundingClientRect().left;
+              return Math.abs(search.getBoundingClientRect().left - left) < 1;
+            }),
+          )
+          .toBe(true);
         await expect
           .poll(() =>
             community.evaluate(

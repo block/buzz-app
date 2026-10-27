@@ -1,5 +1,6 @@
 import {
   createContext,
+  useCallback,
   useContext,
   useMemo,
   useRef,
@@ -50,6 +51,7 @@ export type MediaReview = Pick<
   ComponentProps<typeof MediaReviewViewer>,
   | "messageId"
   | "attachment"
+  | "initialAttachments"
   | "initialTime"
   | "hasComments"
   | "restoreFocus"
@@ -61,18 +63,29 @@ export function useMediaReview() {
   const [media, setMedia] =
     useState<Omit<MediaReview, "restoreFocus" | "close">>();
   const trigger = useRef<HTMLElement | null>(null);
-  const open: ConversationInteractions["onOpenMediaReview"] = (
-    messageId,
-    attachment,
-    initialTime,
-    hasComments = false,
-  ) => {
-    trigger.current =
-      document.activeElement instanceof HTMLElement
-        ? document.activeElement
-        : null;
-    setMedia({ messageId, attachment, initialTime, hasComments });
-  };
+  // Stable, so memoized rows reading it do not re-render with the page.
+  const open = useCallback<ConversationInteractions["onOpenMediaReview"]>(
+    (
+      messageId,
+      attachment,
+      initialTime,
+      hasComments = false,
+      initialAttachments,
+    ) => {
+      trigger.current =
+        document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : null;
+      setMedia({
+        messageId,
+        attachment,
+        initialTime,
+        hasComments,
+        initialAttachments,
+      });
+    },
+    [],
+  );
   const review: MediaReview | undefined = media && {
     ...media,
     restoreFocus: trigger,

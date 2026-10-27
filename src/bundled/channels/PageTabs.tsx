@@ -283,6 +283,7 @@ export function PageTabs({
     ref?: typeof secondary.splitTrigger,
   ) => (
     <IconButton
+      hint="familiar"
       ref={ref}
       data-tab-pane-toggle=""
       size="toolbar"
@@ -356,7 +357,9 @@ export function PageTabs({
           </p>
           <PanelDock
             open={showingPanel}
-            keepMounted={hasTabs && !tabState.paneOpen}
+            keepMounted={
+              tabState.entries.length > 0 || (hasTabs && !tabState.paneOpen)
+            }
             className={styles.panelStack}
             resizeHandle={split.handle}
           >

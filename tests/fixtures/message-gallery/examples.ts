@@ -674,7 +674,7 @@ export const groups: Group[] = [
         "video",
         "Video attachment",
         "The clip uses a locally generated sample and the real play/fullscreen controls.",
-        "A quick walkthrough.",
+        "",
         {
           attachments: [
             {
@@ -682,6 +682,38 @@ export const groups: Group[] = [
               kind: "video",
               previewUrl: "https://fixture.test/poster",
               dimensions: { width: 640, height: 360 },
+            },
+          ],
+        },
+      ),
+      single(
+        "video-portrait",
+        "Portrait video geometry",
+        "Portrait metadata keeps a readable preview width without a height clamp.",
+        "",
+        {
+          attachments: [
+            {
+              url: "https://fixture.test/video",
+              kind: "video",
+              previewUrl: "https://fixture.test/poster",
+              dimensions: { width: 360, height: 640 },
+            },
+          ],
+        },
+      ),
+      single(
+        "video-extreme",
+        "Extreme video metadata",
+        "An extreme aspect ratio keeps the preview and controls bounded.",
+        "",
+        {
+          attachments: [
+            {
+              url: "https://fixture.test/video",
+              kind: "video",
+              previewUrl: "https://fixture.test/poster",
+              dimensions: { width: 1, height: 1000000 },
             },
           ],
         },
@@ -825,6 +857,35 @@ export const groups: Group[] = [
             }),
             membershipRows: [reader, teammate, agent].map((id, index) =>
               message(`join-${index}`, "", {
+                membership: { type: "member_joined", actor: id, target: id },
+              }),
+            ),
+          },
+        ],
+      },
+      {
+        id: "grouped-members-overflow",
+        title: "Grouped joins with overflow",
+        description:
+          "Beyond three identities the avatar stack ends in a count that must stay legible at two or three digits.",
+        rows: [
+          {
+            ...message("grouped-overflow", "", {
+              membership: {
+                type: "member_joined",
+                actor: reader,
+                target: reader,
+              },
+            }),
+            membershipRows: [
+              reader,
+              teammate,
+              agent,
+              ...Array.from({ length: 31 }, (_, index) =>
+                index.toString(16).padStart(2, "0").repeat(32),
+              ),
+            ].map((id, index) =>
+              message(`join-overflow-${index}`, "", {
                 membership: { type: "member_joined", actor: id, target: id },
               }),
             ),

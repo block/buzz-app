@@ -38,6 +38,7 @@ mod host_mcp;
 mod host_process;
 mod host_request;
 mod identity;
+mod native_mcp;
 mod nsec_backup;
 mod nsec_backup_choice;
 mod nsec_backup_config;
@@ -99,7 +100,7 @@ use host_mcp::{
 use host_process::{
     plugin_host_process_kill, plugin_host_process_spawn, plugin_host_process_write, HostProcesses,
 };
-use host_request::plugin_host_request;
+use host_request::{plugin_host_request, plugin_host_upload};
 use notifications::{notification_show, Notifications};
 #[cfg(target_os = "macos")]
 use std::collections::HashMap;
@@ -560,6 +561,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         plugin_recover,
         plugin_host_run_command,
         plugin_host_request,
+        plugin_host_upload,
         plugin_host_process_spawn,
         plugin_host_process_write,
         plugin_host_process_kill,
@@ -587,6 +589,10 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         app_agents::app_agent_set_type,
         app_agents::app_agent_delete,
         app_agents::app_agent_begin_delete,
+        app_agents::app_agent_begin_leave,
+        app_agents::app_agent_hold_removal,
+        app_agents::app_agent_release_removal,
+        app_agents::app_agent_join,
         app_agents::app_agent_forget,
         app_agents::app_agent_publish,
         app_agents::app_agent_publish_profile,
@@ -629,6 +635,16 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let context = app_context();
+    // Reject unsafe test launch settings before any identity or pending erase work.
+    let native_mcp = native_mcp::plugin(
+        context.config(),
+        std::env::var_os("BUZZ_NATIVE_MCP_PORT"),
+        std::env::var_os("BUZZ_DEV_VIEWER"),
+    )
+    .unwrap_or_else(|message| {
+        eprintln!("Cannot enable native MCP: {message}");
+        std::process::exit(1);
+    });
     // A pending Sign out finishes before any window, webview storage, service or
     // identity read; if it can't, Buzz explains and exits without opening.
     let instance = sign_out::Paths::resolve(&context.config().identifier).map(|paths| {
@@ -654,9 +670,14 @@ pub fn run() {
             },
             identity::remove_saved_key,
         )
+        .and_then(|instance| {
+            sign_out::forget_signed_out_key(&instance, identity::remove_current_key)
+                .map(|()| instance)
+        })
         .unwrap_or_else(|message| sign_out::exit_with(&message))
     });
     let identity = IdentityHost::default();
+    let identifier = context.config().identifier.clone();
     let builder = tauri::Builder::default();
     let builder = if !tauri::is_dev() {
         // Single instance comes first, as its documentation requires. Its deep-link
@@ -667,6 +688,11 @@ pub fn run() {
         builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             deep_links::focus_main(app);
         }))
+    } else {
+        builder
+    };
+    let builder = if let Some(plugin) = native_mcp {
+        builder.plugin(plugin)
     } else {
         builder
     };
@@ -818,7 +844,11 @@ pub fn run() {
         .manage(NsecBackupHost::default())
         .manage(Notifications::default())
         .manage(DeepLinks::default())
-        .manage(PluginManager(Manager::from_env()))
+        // Plugin storage lives in this identifier's app data, so development
+        // builds keep theirs apart from the installed app.
+        .manage(PluginManager(Manager::from_env(
+            dirs::data_dir().map(|dir| dir.join(&identifier)),
+        )))
         .invoke_handler({
             let application_commands = commands::<tauri::Wry>();
             let browser_commands: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![
@@ -853,6 +883,7 @@ pub fn run() {
                 webview.state::<Huddles>().stop_all();
                 webview.state::<HostProcesses>().stop_all();
                 webview.state::<HostMcpServers>().stop_all();
+                webview.state::<app_agents::AppAgentHost>().page_load();
             }
             browser::page_load(webview, payload);
         })

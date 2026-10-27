@@ -15,7 +15,11 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
-import { ArrowsOutIcon, XIcon } from "../../shared/design-system/icons/index";
+import {
+  ArrowsOutIcon,
+  PlayIcon,
+  XIcon,
+} from "../../shared/design-system/icons/index";
 import { createPortal } from "react-dom";
 import type { Attachment } from "../relay/contracts";
 import {
@@ -42,6 +46,9 @@ type MediaAttachmentProps = {
   seekRequest?: number;
   onPlayback?(playback: MediaPlayback): void;
   onOpenReview?(attachment: Attachment, seconds: number): void;
+  compact?: boolean;
+  overlayCount?: number;
+  label?: string;
 };
 
 function useVideoPosition(
@@ -84,6 +91,9 @@ export function MediaAttachment({
   seekRequest,
   onPlayback,
   onOpenReview,
+  compact = false,
+  overlayCount = 0,
+  label = "Open video fullscreen",
 }: MediaAttachmentProps) {
   const active = useConversationPresentation();
   const corners = useMediaCorners();
@@ -101,6 +111,7 @@ export function MediaAttachment({
   const [failed, setFailed] = useState(false);
   const captured = source ? openingFrame(source) : undefined;
   const openingSeek = useRef<{ time: number; capture: number }>(undefined);
+  const encoding = useRef(false);
   const [capturedPreview, setCapturedPreview] = useState(captured?.poster);
   const [measuredDimensions, setMeasuredDimensions] = useState<
     { width: number; height: number } | undefined
@@ -113,13 +124,13 @@ export function MediaAttachment({
       } as CSSProperties)
     : undefined;
   const visiblePreview = preview ?? capturedPreview;
-  useVideoPosition(video, seekTo, seekRequest, active);
+  useVideoPosition(video, seekTo, seekRequest, active && !compact);
   const element = useMediaElementSource(
     attachment.kind === "video" ? source : undefined,
   );
   const videoSource = element.src;
 
-  if (!source)
+  if (!source && !compact)
     return (
       <span className={styles.attachmentUnavailable} role="status">
         {attachment.kind === "video"
@@ -128,7 +139,7 @@ export function MediaAttachment({
       </span>
     );
 
-  if (failed || element.unavailable)
+  if ((failed || element.unavailable) && !compact)
     return (
       <span className={styles.attachmentUnavailable} role="status">
         {attachment.kind === "video"
@@ -208,7 +219,7 @@ export function MediaAttachment({
       className={styles.mediaVideo}
       src={videoSource}
       poster={visiblePreview}
-      preload={preload}
+      preload={compact ? "metadata" : preload}
       playsInline
       style={previewStyle}
       onLoadedData={(event) => {
@@ -238,7 +249,12 @@ export function MediaAttachment({
         const element = event.currentTarget;
         const opening = openingSeek.current;
         openingSeek.current = undefined;
-        if (!preview && !capturedPreview && element.videoWidth > 0) {
+        if (
+          !preview &&
+          !capturedPreview &&
+          !encoding.current &&
+          element.videoWidth > 0
+        ) {
           try {
             const canvas = document.createElement("canvas");
             const scale = Math.min(1, 640 / element.videoWidth);
@@ -249,26 +265,48 @@ export function MediaAttachment({
             );
             const context = canvas.getContext("2d");
             context?.drawImage(element, 0, 0, canvas.width, canvas.height);
-            const poster = canvas.toDataURL("image/jpeg", 0.8);
+            const { videoWidth: width, videoHeight: height } = element;
             // Only a drawn opening frame is shared; an explicit timecode seek
             // or a blank export stays with this mount.
-            if (
+            const shared =
+              source &&
               context &&
               opening &&
-              Math.abs(element.currentTime - opening.time) < 0.01 &&
-              poster.startsWith("data:image/jpeg;")
-            )
-              rememberOpeningFrame(
-                source,
-                {
-                  poster,
-                  width: element.videoWidth,
-                  height: element.videoHeight,
-                },
-                opening.capture,
-              );
-            setCapturedPreview(poster);
+              Math.abs(element.currentTime - opening.time) < 0.01
+                ? { source, capture: opening.capture }
+                : undefined;
+            // Chromium encodes toBlob off the main thread; WebKit still
+            // encodes inline. The first seek owns the poster until its
+            // encode fails.
+            encoding.current = true;
+            canvas.toBlob(
+              (blob) => {
+                if (!blob) {
+                  encoding.current = false;
+                  return;
+                }
+                const reader = new FileReader();
+                reader.onloadend = () => {
+                  const poster = reader.result;
+                  if (typeof poster !== "string") {
+                    encoding.current = false;
+                    return;
+                  }
+                  if (shared && poster.startsWith("data:image/jpeg;"))
+                    rememberOpeningFrame(
+                      shared.source,
+                      { poster, width, height },
+                      shared.capture,
+                    );
+                  setCapturedPreview(poster);
+                };
+                reader.readAsDataURL(blob);
+              },
+              "image/jpeg",
+              0.8,
+            );
           } catch {
+            encoding.current = false;
             // A decoded frame may still paint in the video when canvas export
             // is unavailable; the poster capture is only a compatibility aid.
           }
@@ -287,6 +325,48 @@ export function MediaAttachment({
       }}
     />
   );
+
+  if (compact)
+    return (
+      <a
+        ref={corners}
+        className={styles.attachmentImage}
+        style={{
+          width: "100%",
+          height: 0,
+          paddingBottom: "100%",
+          aspectRatio: "auto",
+        }}
+        href={source ?? attachment.url}
+        aria-label={label}
+        data-media-preview=""
+        data-video-preview=""
+        onClick={(event) => {
+          event.preventDefault();
+          prepareReviewEntrance(event);
+          onOpenReview?.(attachment, 0);
+        }}
+      >
+        <span className={styles.attachmentImagePixels}>
+          {source && !failed && !element.unavailable ? videoElement : null}
+          <span className={styles.mediaGridBadge} aria-hidden="true">
+            <PlayIcon size={24} />
+          </span>
+          {overlayCount > 0 && (
+            <span className={styles.imageOverflow} aria-hidden="true">
+              +{overlayCount}
+            </span>
+          )}
+        </span>
+        <svg
+          className={styles.imageOutline}
+          data-image-outline=""
+          aria-hidden="true"
+        >
+          <path />
+        </svg>
+      </a>
+    );
 
   return (
     <>
@@ -337,7 +417,8 @@ export function MediaAttachment({
           <path />
         </svg>
       </div>
-      {active &&
+      {source &&
+        active &&
         viewerOpen &&
         createPortal(
           <MediaViewer
@@ -345,6 +426,7 @@ export function MediaAttachment({
             close={() => setViewerOpen(false)}
           >
             <VideoPlayer
+              downloadName={attachment.name ?? ""}
               source={source}
               poster={visiblePreview}
               videoRef={expandedVideo}

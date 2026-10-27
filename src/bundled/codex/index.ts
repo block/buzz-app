@@ -1,5 +1,6 @@
 import { repositoriesContext } from "../../features/communities/repositories";
 import { isTauri } from "@tauri-apps/api/core";
+import { pubkeyOf } from "../../features/agents/membership";
 import { ownerReads } from "../../features/agents/reads";
 import type { PluginModule } from "../../plugins/api";
 import { CodexLogoIcon } from "../../shared/design-system/icons";
@@ -17,6 +18,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   // `bash` and `base64`, which stock Windows lacks; no unusable type elsewhere.
   if (!isTauri() || !/Mac|Linux/i.test(navigator.platform)) return;
   const spawn = ctx.host.spawn && withScript(ctx.host.spawn.bind(ctx.host));
+  const readFile = ctx.host.readFile?.bind(ctx.host);
   const setup = new CodexSetup(spawn, (input) => ctx.host.request(input));
   const start =
     spawn ??
@@ -30,8 +32,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
   );
   const runtime = new CodexRuntime(
     start,
-    (pubkey) => ownerReads(ctx.agents.relay(pubkey), pubkey),
-    (pubkey, signal) => ctx.agents.core(pubkey, signal),
+    (key) => ownerReads(ctx.agents.relay(key), pubkeyOf(key)),
+    (key, signal) => ctx.agents.core(key, signal),
     ctx.agents.storage,
     (raw) => providerController.resolve(raw),
     () => ctx.agents.tools(),
@@ -144,10 +146,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
     },
     migrationWarning: "Any commands Codex left running will stop.",
     summary: (agent) => config(agent.config).model || "Codex",
-    ...(spawn && {
-      usage: (agent, { since, signal }) =>
-        readUsage(spawn, agent, since, signal),
-    }),
+    ...(spawn &&
+      readFile && {
+        usage: (agent, { since, signal }) =>
+          readUsage({ spawn, readFile }, agent, since, signal),
+      }),
     provider: {
       snapshot: providerController.snapshot,
       subscribe: providerController.subscribe,
@@ -156,12 +159,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
       DefaultControl,
     },
     sessions: {
-      list: (pubkey) => {
+      list: (key) => {
         const views = new Map(
-          runtime.sessions(pubkey).map((view) => [view.key, view.status]),
+          runtime.sessions(key).map((view) => [view.key, view.status]),
         );
         return runtime
-          .conversations(pubkey)
+          .conversations(key)
           .map(({ key, channelId, root, at }) => {
             const status = views.get(key);
             return {

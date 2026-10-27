@@ -19,9 +19,47 @@ export type RemoteAgent = Readonly<{
   pubkey: string;
   status: "Active" | "Unattested" | "Revoked" | "Unknown";
   instructions?: string;
+  modelId?: string;
+  reasoningEffort?: string;
+  modelSelectionStatus?:
+    | "valid"
+    | "setup-required"
+    | "model-unavailable"
+    | "effort-unsupported"
+    | "unknown";
 }>;
 
+export type RemoteAgentModel = Readonly<{
+  id: string;
+  displayName: string;
+  supportedReasoningEfforts: readonly string[];
+}>;
+
+function modelSelectionStatus(
+  value: unknown,
+): NonNullable<RemoteAgent["modelSelectionStatus"]> {
+  switch (value) {
+    case 1:
+    case "MODEL_SELECTION_STATUS_VALID":
+      return "valid";
+    case 2:
+    case "MODEL_SELECTION_STATUS_SETUP_REQUIRED":
+      return "setup-required";
+    case 3:
+    case "MODEL_SELECTION_STATUS_MODEL_UNAVAILABLE":
+      return "model-unavailable";
+    case 4:
+    case "MODEL_SELECTION_STATUS_EFFORT_UNSUPPORTED":
+      return "effort-unsupported";
+    default:
+      return "unknown";
+  }
+}
+
 export const MAX_INSTRUCTIONS_LENGTH = 20_000;
+const AGENT_NAME = /^[\w .-]{1,64}$/;
+const INVALID_NAME =
+  "Use 1–64 letters, numbers, spaces, dots, hyphens or underscores for the agent name.";
 
 export function validInstructions(value: unknown): value is string {
   return (
@@ -294,6 +332,83 @@ export function createAgentClient(
   return {
     link,
     activate,
+    async modelCatalog(
+      signal: AbortSignal,
+    ): Promise<readonly RemoteAgentModel[]> {
+      const result = await request("get-model-catalog", {}, signal);
+      const models = result.models ?? [];
+      if (
+        !Array.isArray(models) ||
+        models.some(
+          (model) =>
+            !model ||
+            typeof model.id !== "string" ||
+            !model.id.trim() ||
+            typeof model.display_name !== "string" ||
+            !model.display_name.trim() ||
+            !Array.isArray(model.supported_reasoning_efforts) ||
+            !model.supported_reasoning_efforts.length ||
+            model.supported_reasoning_efforts.some(
+              (effort: unknown) => typeof effort !== "string" || !effort.trim(),
+            ),
+        )
+      )
+        throw new Error("Builderlab returned an invalid model catalog.");
+      return models.map((model) => ({
+        id: model.id,
+        displayName: model.display_name,
+        supportedReasoningEfforts: model.supported_reasoning_efforts,
+      }));
+    },
+    async updateModel(
+      agent: RemoteAgent,
+      modelId: string,
+      reasoningEffort: string,
+      signal: AbortSignal,
+    ): Promise<void> {
+      if (agent.status !== "Active" || !/^[0-9a-f]{64}$/.test(agent.pubkey))
+        throw new Error("Only Active agents can have their model edited.");
+      if (!modelId.trim() || !reasoningEffort.trim())
+        throw new Error("Choose a model and reasoning effort.");
+      await request(
+        "update-agent",
+        {
+          agent_pubkey: agent.pubkey,
+          model_id: modelId,
+          reasoning_effort: reasoningEffort,
+        },
+        signal,
+      );
+    },
+    async configure(
+      pubkey: string,
+      settings: {
+        instructions: string;
+        modelId: string;
+        reasoningEffort: string;
+      },
+      signal: AbortSignal,
+    ): Promise<void> {
+      if (
+        !/^[0-9a-f]{64}$/.test(pubkey) ||
+        !validInstructions(settings.instructions) ||
+        !settings.modelId.trim() ||
+        !settings.reasoningEffort.trim()
+      )
+        throw new Error(
+          "Choose a model and reasoning effort and check the instructions.",
+        );
+      await request(
+        "update-agent",
+        {
+          agent_pubkey: pubkey,
+          agent_instructions: settings.instructions,
+          model_id: settings.modelId,
+          reasoning_effort: settings.reasoningEffort,
+        },
+        signal,
+      );
+    },
     async updateInstructions(
       agent: RemoteAgent,
       instructions: string,
@@ -310,6 +425,29 @@ export function createAgentClient(
       await request(
         "update-agent",
         { agent_pubkey: agent.pubkey, agent_instructions: instructions },
+        signal,
+      );
+    },
+    /** Republishes the agent's profile; Beekeeper keeps the stored picture when none is sent. */
+    async updateProfile(
+      profile: Readonly<{
+        pubkey: string;
+        community: string;
+        name: string;
+        picture?: string;
+      }>,
+      signal: AbortSignal,
+    ): Promise<void> {
+      const agentName = profile.name.trim();
+      if (!AGENT_NAME.test(agentName)) throw new Error(INVALID_NAME);
+      await request(
+        "update-agent-profile",
+        {
+          agent_pubkey: profile.pubkey,
+          community_url: profile.community,
+          agent_name: agentName,
+          agent_picture_url: profile.picture ?? "",
+        },
         signal,
       );
     },
@@ -372,25 +510,28 @@ export function createAgentClient(
         agent: RemoteAgent,
         intent: RegistrationIntent,
       ) => void,
-    ): Promise<RemoteAgent> {
+      picture?: string,
+    ): Promise<RemoteAgent & Readonly<{ picture?: string }>> {
       signal.throwIfAborted();
       const agentName = name.trim();
-      if (!/^[\w .-]{1,64}$/.test(agentName))
-        throw new Error(
-          "Use 1–64 letters, numbers, spaces, dots, hyphens or underscores for the agent name.",
-        );
+      if (!AGENT_NAME.test(agentName)) throw new Error(INVALID_NAME);
       const credential = remoteCredential();
       const { account } = credential;
       const intent = registrationIntent(
         oauthTarget(),
         account.subject,
         agentName,
+        picture,
       );
       let result: Record<string, unknown>;
       try {
         result = await request(
           "register-agent",
-          { agent_name: agentName, idempotency_key: intent.key },
+          {
+            agent_name: agentName,
+            ...(intent.picture ? { agent_picture_url: intent.picture } : {}),
+            idempotency_key: intent.key,
+          },
           signal,
         );
       } catch (error) {
@@ -447,7 +588,11 @@ export function createAgentClient(
       // Hosted provisioning keeps replay until Agents has durably saved setup.
       check(credential, signal);
       retainRegistration(agent, intent);
-      return agent;
+      // A replay registers the first picture, not the one passed this time.
+      return {
+        ...agent,
+        ...(intent.picture ? { picture: intent.picture } : {}),
+      };
     },
     async list(signal: AbortSignal): Promise<readonly RemoteAgent[]> {
       const result = await request(
@@ -480,6 +625,17 @@ export function createAgentClient(
         pubkey: row.agent_pubkey,
         status: agentStatus(row.status),
         instructions: row.agent_instructions ?? "",
+        ...(typeof row.model_id === "string" ? { modelId: row.model_id } : {}),
+        ...(typeof row.reasoning_effort === "string"
+          ? { reasoningEffort: row.reasoning_effort }
+          : {}),
+        ...(row.model_selection_status !== undefined
+          ? {
+              modelSelectionStatus: modelSelectionStatus(
+                row.model_selection_status,
+              ),
+            }
+          : {}),
       }));
     },
   };

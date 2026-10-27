@@ -1,10 +1,9 @@
-import { parseAudienceAuthority } from "../features/sessions/audience-authority";
 // The Buzz tools' client inside the app: the agent's native-held key signs and
 // reads through its Agents handle, files are read as its plugin reads them, and
 // memory is read back through the owner's own session, to whom it is
 // encrypted.
 import type { BuzzClient, Memories } from "./client";
-import type { AgentHandle } from "../features/agents/service";
+import type { AgentHandle, AgentHandoff } from "../features/agents/service";
 import type { HostProcess, HostProcessOptions } from "../features/host/service";
 type Spawn = (id: string, options?: HostProcessOptions) => Promise<HostProcess>;
 
@@ -20,7 +19,6 @@ export function appClient(
     read(path: string): Promise<Uint8Array>;
     relayAuthor?: string | undefined;
     signingAuthority?: string | undefined;
-    audienceAuthorityCommunity?: string | undefined;
     memories(slug?: string): Promise<Memories>;
     /** Forget a read that may have started before a successful memory write. */
     remembered?(): void;
@@ -39,33 +37,43 @@ export function appClient(
     if (!found) throw new Error("Your community is not connected.");
     return found;
   };
-  const authority = agent.audienceAuthority;
-  const authorityCommunity = options.audienceAuthorityCommunity;
+  const handoff = agent.handoff;
   return {
     pubkey: agent.pubkey,
+    key: agent.key,
     owner: agent.owner,
     relayAuthor: options.relayAuthor,
     signingAuthority: options.signingAuthority,
-    attention: agent.attention,
-    ...(authority && authorityCommunity
-      ? {
-          authorizeAudience: async (
-            destination: string,
-            sources: readonly string[],
-          ) => {
-            check();
-            const response = await authority(destination, sources);
-            check();
-            return parseAudienceAuthority(
-              response,
-              agent.pubkey,
-              authorityCommunity,
-              destination,
-              sources,
-            );
-          },
-        }
-      : {}),
+    attention: agent.attention && {
+      enabled: () => {
+        check();
+        return agent.attention.enabled();
+      },
+      classifier: () => {
+        check();
+        return agent.attention.classifier();
+      },
+      interests: (search) => {
+        check();
+        return agent.attention.interests(search);
+      },
+      watches: (filter) => {
+        check();
+        return agent.attention.watches(filter);
+      },
+      show: async (slug, interest) => {
+        check();
+        const result = await agent.attention.show(slug, interest);
+        check();
+        return result;
+      },
+      write: async (slug, value, options) => {
+        check();
+        const result = await agent.attention.write(slug, value, options, check);
+        check();
+        return result;
+      },
+    },
     query: async (filters) => {
       check();
       const events = await agent.query(filters);
@@ -78,7 +86,7 @@ export function appClient(
     },
     publish: (event) => {
       check();
-      return agent.publish(event);
+      return agent.publish(event, check);
     },
     upload: (data, mime) => {
       check();
@@ -96,9 +104,11 @@ export function appClient(
       check();
       return options.read(path);
     },
-    memories: (slug) => {
+    memories: async (slug) => {
       check();
-      return options.memories(slug);
+      const result = await options.memories(slug);
+      check();
+      return result;
     },
     remember: async (slug, body, after) => {
       check();
@@ -106,6 +116,32 @@ export function appClient(
       check();
       options.remembered?.();
     },
+    agentTypes: async () => {
+      check();
+      if (!agent.agentTypes)
+        throw new Error("Agent creation is unavailable on this host");
+      return agent.agentTypes();
+    },
+    createAgent: async (input) => {
+      check();
+      if (!agent.createAgent)
+        throw new Error("Agent creation is unavailable on this host");
+      return agent.createAgent(input);
+    },
+    updateAgent: async (input) => {
+      check();
+      if (!agent.updateAgent)
+        throw new Error("Agent changes are unavailable on this host");
+      return agent.updateAgent(input);
+    },
+    ...(handoff
+      ? {
+          handoff: (wake: AgentHandoff) => {
+            check();
+            handoff(wake);
+          },
+        }
+      : {}),
     templates: async () => {
       check();
       return agent.templates();

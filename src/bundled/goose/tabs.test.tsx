@@ -82,16 +82,25 @@ function created(
   options: Readonly<{
     reply?: string;
     spawn?: (fake: ReturnType<typeof fakeSpawn>) => GooseSetup;
-    modelAppearance?: "subtle";
+    modelAppearance?: "glass-ghost";
     config?: Config;
+    /** Fields goose already holds, beyond Databricks' host. */
+    saved?: Readonly<Record<string, readonly string[]>>;
+    defaults?: Readonly<{ providerId: string; modelId: string }>;
   }> = {},
 ) {
   const saved = new Map<string, Set<string>>([
     ["databricks", new Set(["DATABRICKS_HOST"])],
+    ...Object.entries(options.saved ?? {}).map(
+      ([id, keys]) => [id, new Set(keys)] as const,
+    ),
   ]);
   const fake = fakeSpawn({
     providers: PROVIDERS,
-    defaults: { providerId: "databricks", modelId: "goose-claude" },
+    defaults: options.defaults ?? {
+      providerId: "databricks",
+      modelId: "goose-claude",
+    },
     saved,
     reply: options.reply ?? "OK",
     thinking: {
@@ -150,6 +159,35 @@ async function choose(label: string, option: string) {
 
 /** The model field, labeled with goose's default or the agent's choice. */
 const modelButton = () => screen.getByRole("button", { name: /^Goose model:/ });
+
+/** Settings' Harness defaults, offering Goose on `setup`. */
+function gooseDefaults(setup: GooseSetup) {
+  const { DefaultControl, ProviderDialogBody } = createTabs({
+    setup,
+    ...unused,
+  });
+  const types = [
+    {
+      defaults: () => ({ config: DEFAULT_CONFIG }),
+      key: "buzz.goose/goose",
+      pluginId: "buzz.goose",
+      revision: "test",
+      id: "goose",
+      title: "Goose",
+      provider: {
+        subscribe: setup.subscribe,
+        snapshot: setup.snapshot,
+        check: setup.check,
+        DefaultControl,
+        DialogBody: ProviderDialogBody,
+      },
+    },
+  ] as RegisteredAgentType[];
+  return {
+    types: () => types,
+    subscribe: () => () => {},
+  } as unknown as Agents;
+}
 
 /** Opens the provider dialog from the model field. */
 async function openChoices() {
@@ -236,9 +274,37 @@ it("keeps provider fields visible while saving its key and selecting a model", a
   expect(changes.at(-1)).toMatchObject({ model: "", effort: "" });
 });
 
+it("says a provider is not set up instead of offering its catalog's models", async () => {
+  const { fake, saved } = created({
+    defaults: { providerId: "anthropic", modelId: "claude-sonnet-5-5" },
+  });
+  expect(
+    await screen.findByText(
+      "Anthropic isn't set up in goose. Add API key (ANTHROPIC_API_KEY) in Edit configuration, or run goose configure.",
+    ),
+  ).toHaveAttribute("role", "alert");
+  const user = userEvent.setup();
+  await user.click(modelButton());
+  expect(await screen.findByRole("menu")).toBeVisible();
+  expect(screen.queryByRole("menuitem", { name: "Claude" })).toBeNull();
+  await user.keyboard("{Escape}");
+  // `goose configure` sets it up meanwhile, on another default model.
+  saved.set("anthropic", new Set(["ANTHROPIC_API_KEY"]));
+  await new GooseSetup(fake).saveDefaults({
+    provider: "anthropic",
+    model: "claude-opus-5-5",
+  });
+  await user.click(screen.getByRole("button", { name: "Try again" }));
+  await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+  await waitFor(() =>
+    expect(modelButton()).toHaveTextContent("claude-opus-5-5"),
+  );
+});
+
 it("keeps a card's model chip to the model, while its menu shows the level", async () => {
   created({
-    modelAppearance: "subtle",
+    saved: { anthropic: ["ANTHROPIC_API_KEY"] },
+    modelAppearance: "glass-ghost",
     config: {
       ...DEFAULT_CONFIG,
       provider: "anthropic",
@@ -264,7 +330,7 @@ it("keeps a card's model chip to the model, while its menu shows the level", asy
 });
 
 it("gives a card's inherited model its name's room, naming Default only in its label", async () => {
-  created({ modelAppearance: "subtle" });
+  created({ modelAppearance: "glass-ghost" });
   await waitFor(() => expect(modelButton()).toBeEnabled());
   expect(modelButton()).toHaveTextContent(/^claude$/);
   expect(modelButton()).toHaveAccessibleName("Goose model: claude · Default");
@@ -286,6 +352,7 @@ it("saves a key on Enter in Settings, and only an absolute or ~/ workspace", asy
     <SettingsTab
       agent={
         {
+          key: "c".repeat(64),
           pubkey: "c".repeat(64),
           name: "Gander",
           type: "buzz.goose/goose",
@@ -349,6 +416,7 @@ it("saves a thinking level goose lists for the model, and marks one it does not"
   });
   const agent = (config: Config) =>
     ({
+      key: "c".repeat(64),
       pubkey: "c".repeat(64),
       name: "Gander",
       type: "buzz.goose/goose",
@@ -398,6 +466,7 @@ it("splits Settings as the profile does: choices under Identity, the rest apart"
     ...unused,
   });
   const agent = {
+    key: "c".repeat(64),
     pubkey: "c".repeat(64),
     name: "Gander",
     type: "buzz.goose/goose",
@@ -453,6 +522,7 @@ it("says in Settings when goose cannot list providers, and tries again", async (
     <SettingsTab
       agent={
         {
+          key: "c".repeat(64),
           pubkey: "c".repeat(64),
           name: "Gander",
           type: "buzz.goose/goose",
@@ -523,6 +593,7 @@ it("shows no other provider's models when a provider's models fail to load", asy
     <SettingsTab
       agent={
         {
+          key: "c".repeat(64),
           pubkey: "c".repeat(64),
           name: "Gander",
           type: "buzz.goose/goose",
@@ -669,6 +740,7 @@ it("lists the agent's goose sessions and shows one's transcript", async () => {
     <ActivityTab
       agent={
         {
+          key: agent,
           pubkey: agent,
           name: "Gander",
           type: "buzz.goose/goose",
@@ -687,6 +759,51 @@ it("lists the agent's goose sessions and shows one's transcript", async () => {
   );
   expect(await screen.findByText("Hi from goose")).toBeInTheDocument();
   expect(screen.getAllByText(/@Gander what's up\?/).length).toBeGreaterThan(0);
+});
+
+it("says it is reading goose's sessions until the list arrives", async () => {
+  const fake = fakeSpawn({ home: "/home/test" });
+  const history = new GooseHistory(fake);
+  let release: (rows: never[]) => void = () => {};
+  const recent = vi
+    .spyOn(history, "recent")
+    .mockReturnValue(new Promise((resolve) => (release = resolve)));
+  const none: never[] = [];
+  const runtime = {
+    subscribe: () => () => {},
+    sessions: () => none,
+  } as unknown as GooseRuntime;
+  const { ActivityTab } = createTabs({
+    setup: new GooseSetup(fake),
+    runtime,
+    history,
+  });
+  render(
+    <ActivityTab
+      agent={
+        {
+          key: "c".repeat(64),
+          pubkey: "c".repeat(64),
+          name: "Gander",
+          type: "buzz.goose/goose",
+          owner: "a".repeat(64),
+          config: DEFAULT_CONFIG,
+        } as Agent<Config>
+      }
+    />,
+  );
+  try {
+    await waitFor(() => expect(recent).toHaveBeenCalled());
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Reading goose's sessions…",
+    );
+  } finally {
+    release([]);
+  }
+  expect(
+    await screen.findByText(/^None\. A conversation's session starts/),
+  ).toBeInTheDocument();
+  expect(screen.queryByText("Reading goose's sessions…")).toBeNull();
 });
 
 it("edits Goose device defaults without creating an agent override", async () => {
@@ -915,6 +1032,7 @@ it("refreshes the Settings model and thinking after saving provider credentials"
   const efforts = vi.spyOn(setup, "efforts");
   const { SettingsTab } = createTabs({ setup, ...unused });
   const agent = {
+    key: "c".repeat(64),
     pubkey: "c".repeat(64),
     name: "Gander",
     type: "buzz.goose/goose",
@@ -959,6 +1077,8 @@ for (const host of ["defaults", "create"] as const) {
             fail = reject;
           }),
       );
+    // A recheck that never settles: retry feedback must not wait on it.
+    vi.spyOn(setup, "check").mockReturnValue(new Promise(() => {}));
     const { DefaultControl, CreateModel } = createTabs({ setup, ...unused });
     render(
       host === "defaults" ? (
@@ -993,6 +1113,30 @@ for (const host of ["defaults", "create"] as const) {
   });
 }
 
+it("keeps Goose default recovery focused where a recheck would need attention", async () => {
+  const setup = new GooseSetup(
+    fakeSpawn({
+      providers: PROVIDERS,
+      defaults: { providerId: "databricks", modelId: "goose-claude" },
+    }),
+  );
+  vi.spyOn(setup, "models")
+    .mockRejectedValueOnce(new Error("offline"))
+    .mockResolvedValue([{ id: "goose-claude", label: "Claude" }]);
+  render(<AgentDefaults agents={gooseDefaults(setup)} />);
+  const retry = await screen.findByRole("button", { name: "Try again" });
+  // A recheck would now settle on attention and replace the control.
+  vi.spyOn(setup, "providers").mockRejectedValue(new Error("unreachable"));
+  retry.focus();
+  await userEvent.setup().keyboard("{Enter}");
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: /^Goose default model:/ }),
+    ).toHaveFocus(),
+  );
+  expect(setup.snapshot().readiness).toBe("ready");
+});
+
 it.each([false, true])(
   "preserves return focus through pending discovery (move focus: %s)",
   async (moveFocus) => {
@@ -1003,34 +1147,20 @@ it.each([false, true])(
       supported,
     });
     const setup = new GooseSetup(fake);
-    const { DefaultControl, ProviderDialogBody } = createTabs({
-      setup,
-      ...unused,
+    const saveDefaults = setup.saveDefaults.bind(setup);
+    let releaseSave!: () => void;
+    const saveGate = new Promise<void>((resolve) => {
+      releaseSave = resolve;
     });
-    const types = [
-      {
-        defaults: () => ({ config: DEFAULT_CONFIG }),
-        key: "buzz.goose/goose",
-        pluginId: "buzz.goose",
-        revision: "test",
-        id: "goose",
-        title: "Goose",
-        provider: {
-          subscribe: setup.subscribe,
-          snapshot: setup.snapshot,
-          check: setup.check,
-          DefaultControl,
-          DialogBody: ProviderDialogBody,
-        },
-      },
-    ] as RegisteredAgentType[];
-    const agents = {
-      types: () => types,
-      subscribe: () => () => {},
-    } as unknown as Agents;
+    const pendingSave = vi
+      .spyOn(setup, "saveDefaults")
+      .mockImplementationOnce(async (value) => {
+        await saveGate;
+        return saveDefaults(value);
+      });
     render(
       <>
-        <AgentDefaults agents={agents} />
+        <AgentDefaults agents={gooseDefaults(setup)} />
         <button type="button">Another setting</button>
       </>,
     );
@@ -1042,13 +1172,34 @@ it.each([false, true])(
     await user.click(trigger);
     (await screen.findByRole("menuitem", { name: "Kimi" })).focus();
     await user.keyboard("{ArrowRight}");
-    await user.click(
-      await screen.findByRole("menuitemradio", { name: "kimi-k2" }),
-    );
+    try {
+      await user.click(
+        await screen.findByRole("menuitemradio", { name: "kimi-k2" }),
+      );
+      await waitFor(() => expect(pendingSave).toHaveBeenCalledOnce());
+      await waitFor(() => expect(trigger).toHaveFocus());
+      expect(trigger).toHaveAccessibleName("Goose default model: claude");
+      expect(trigger).not.toHaveAttribute("disabled");
+      expect(trigger).toHaveAttribute("aria-disabled", "true");
+      await user.keyboard("{Enter}");
+      expect(screen.queryByRole("menu")).toBeNull();
+      if (moveFocus)
+        await user.click(
+          screen.getByRole("button", { name: "Another setting" }),
+        );
+    } finally {
+      await act(async () => releaseSave());
+    }
     await waitFor(() => expect(trigger).toHaveTextContent("kimi-k2"));
     expect(trigger).toBeInTheDocument();
-    await waitFor(() => expect(trigger).toHaveFocus());
-    fireEvent.click(trigger);
+    await waitFor(() =>
+      expect(
+        moveFocus
+          ? screen.getByRole("button", { name: "Another setting" })
+          : trigger,
+      ).toHaveFocus(),
+    );
+    await user.click(trigger);
     fireEvent.click(
       await screen.findByRole("menuitem", { name: "Edit configuration" }),
     );

@@ -260,6 +260,10 @@ function opening(messages: readonly Message[]) {
   return undefined;
 }
 
+/** The agent a session's first prompt names, if any. */
+export const ownerOf = (messages: readonly Message[]) =>
+  opening(messages)?.("Agent");
+
 /** Whether a session was started for the agent in `place`: its first prompt's
  * context names the same agent, channel and, for a thread, thread root. */
 export function startedFor(
@@ -356,7 +360,7 @@ const listed = (goose: GooseProcess, sessionId: string) =>
 /** What a session's transcript is read for: one session, or every session the
  * agent ran for a place. */
 export type Lookup = Readonly<{
-  /** The agent's pubkey, as its turn prompts name it. */
+  /** The agent's membership key, as its turn prompts name it. */
   agent: string;
   workspace: string;
   sessionId?: string;
@@ -370,7 +374,7 @@ export class GooseHistory {
   constructor(private readonly host: GooseHost | undefined) {}
 
   /** The agent's latest sessions in `workspace`, newest first: those whose
-   * first prompt names its pubkey, `agent`. */
+   * first prompt names its key, `agent`. */
   recent(agent: string, workspace: string, signal: AbortSignal) {
     return this.with(signal, async (goose, { resolveDirectory }) => {
       const cwd = await absolute(resolveDirectory, workspace);
@@ -385,25 +389,25 @@ export class GooseHistory {
     });
   }
 
-  /** The agent's sessions in `workspace` used since `since`, with their
-   * messages: those whose first prompt names its pubkey, `agent`. */
-  sessions(
-    agent: string,
+  /** Every session in `workspace` used since `since`, newest first, and the
+   * messages of those `wanted` picks, all from one `goose-acp`: every agent
+   * in a workspace reads its sessions from one listing. */
+  workspace(
     workspace: string,
     since: number,
+    wanted: (row: GooseSessionRow) => boolean,
     signal: AbortSignal,
   ) {
     return this.with(signal, async (goose, { resolveDirectory }) => {
       const cwd = await absolute(resolveDirectory, workspace);
-      const found: { sessionId: string; messages: Message[] }[] = [];
-      for (const row of await all(goose, cwd)) {
-        if (row.at < since) continue;
+      const rows = (await all(goose, cwd)).filter((row) => row.at >= since);
+      const messages = new Map<string, Message[]>();
+      for (const row of rows) {
+        if (!wanted(row)) continue;
         signal.throwIfAborted();
-        const read = await listed(goose, row.sessionId);
-        if (opening(read)?.("Agent") === agent)
-          found.push({ sessionId: row.sessionId, messages: read });
+        messages.set(row.sessionId, await listed(goose, row.sessionId));
       }
-      return found;
+      return { rows, messages };
     });
   }
 

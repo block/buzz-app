@@ -9,7 +9,7 @@ export type {
 } from "../features/identity-names/service";
 export type { NamingIdentity } from "../features/identity-names/policy";
 export type { Browser, BrowserViewProps } from "../features/browser/api";
-export type { Page, Pages } from "../features/pages/service";
+export type { Page, PageSidebarProps, Pages } from "../features/pages/service";
 export type {
   Panel,
   Panels,
@@ -43,6 +43,12 @@ export type {
   TargetOpener,
 } from "../features/conversation/contracts";
 export type { RelayData, RelaySnapshot } from "../features/relay/service";
+export type {
+  ArtifactSyncFilter,
+  ArtifactSyncSnapshot,
+  ArtifactSyncStatus,
+  ArtifactSyncView,
+} from "../features/relay/artifact-sync";
 
 export type {
   Shortcuts,
@@ -66,7 +72,9 @@ export type {
 
 export type {
   Decisions,
-  DecisionBackend,
+  DecisionProvider,
+  DecisionProviderStatus,
+  DecisionReply,
   DecisionQuestion,
   DecisionRequest,
   DecisionAnswer,

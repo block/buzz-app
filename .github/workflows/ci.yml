@@ -63,6 +63,10 @@ jobs:
       - uses: ./.github/actions/setup
       - name: Tauri system libraries
         run: |
+          # Azure package downloads can stall until the whole job expires:
+          # https://github.com/actions/runner-images/issues/14594
+          # Keep the image's official HTTPS archive and security fallbacks.
+          sudo sed -i '\|^http://azure\.archive\.ubuntu\.com/ubuntu/|d' /etc/apt/apt-mirrors.txt
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y dbus-daemon libwebkit2gtk-4.1-dev build-essential libssl-dev librsvg2-dev libayatana-appindicator3-dev patchelf
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
@@ -78,6 +82,8 @@ jobs:
       # --workspace includes Tauri, unlike the default Cargo member selection.
       - name: All Rust tests and doctests
         run: ./bin/cargo test --workspace --locked
+      - name: Scheduled agent command identity
+        run: ./bin/node scripts/test-agent-command.mjs
       - name: All Node integration tests
         run: ./bin/node --test tests/integration/*.test.mjs
 
@@ -106,9 +112,9 @@ jobs:
           key: windows-native
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Native lint including Windows backend
-        run: cargo clippy -p buzz-foundation -p buzz-agent-controller -p buzz-credential-store --locked --all-targets -- -D warnings
+        run: cargo clippy -p Buzz -p buzz-agent-controller -p buzz-credential-store --locked --all-targets -- -D warnings
       - name: All native package tests
-        run: cargo test -p buzz-foundation -p buzz-agent-controller -p buzz-credential-store --locked --no-fail-fast
+        run: cargo test -p Buzz -p buzz-agent-controller -p buzz-credential-store --locked --no-fail-fast
 
   measurements:
     if: github.event_name != 'workflow_dispatch'
@@ -148,6 +154,10 @@ jobs:
         env:
           PLAYWRIGHT_JSON_OUTPUT_FILE: test-results/browser-classic-scrollbars/ci-report.json
         run: ./bin/node scripts/ci-test-report.mjs kind=playwright report=test-results/browser-classic-scrollbars/ci-report.json evidence=test-results/browser-classic-scrollbars/ci-timing.json title="Browser classic scrollbars" -- ./bin/pnpm test:browser:ci --project chromium-classic-scrollbars --no-deps --reporter=list,json
+      # Exercise the actual perf harness once per case; timing comparisons stay
+      # separate. Keep its Chromium workload serial with the measurements above.
+      - name: Perf suite smoke check
+        run: ./bin/pnpm perf --scenario all --repeat 1 --cpu 4
       - name: Measurement evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -156,6 +166,7 @@ jobs:
           path: |
             test-results/browser
             test-results/browser-classic-scrollbars
+            test-results/perf
           retention-days: 7
 
   browser_fixture:

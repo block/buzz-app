@@ -41,6 +41,7 @@ const viewer = keypair(),
   relay = keypair(),
   member = keypair();
 const wrap = new URLSearchParams(location.search).has("wrap");
+const grouped = new URLSearchParams(location.search).has("grouped");
 const singleReaction = new URLSearchParams(location.search).has(
   "single-reaction",
 );
@@ -162,9 +163,11 @@ const sessions = ["a", "b"].map((community) => {
   const root = message(
     viewer,
     "c",
-    singleReaction
-      ? "OK"
-      : "Historic :unknown:party: and https://example.test/:party:",
+    grouped
+      ? "Thanks, everyone!"
+      : singleReaction
+        ? "OK"
+        : "Historic :unknown:party: and https://example.test/:party:",
     1,
     [["emoji", "party", `${origin}/media/original.png`]],
   );
@@ -212,7 +215,7 @@ const sessions = ["a", "b"].map((community) => {
     created_at: 15,
     tags: [["e", root.id]],
   });
-  const groupedReactions = new URLSearchParams(location.search).has("grouped")
+  const groupedReactions = grouped
     ? Array.from(
         {
           length:
@@ -277,7 +280,7 @@ const sessions = ["a", "b"].map((community) => {
   owner.session.channels.ensure("c");
   live.receive([root, broken, unloaded, single, table, blocks]);
   live.receive([
-    reaction,
+    ...(grouped ? [] : [reaction]),
     ...(wrap ? [...wrapReactions, ownReaction] : []),
     ...longReactions,
     ...repeatedReactions,
@@ -289,7 +292,7 @@ const sessions = ["a", "b"].map((community) => {
     root,
     rows: foldMessages("c", relay.pubkey, [
       root,
-      reaction,
+      ...(grouped ? [] : [reaction]),
       ...(wrap ? [...wrapReactions, ownReaction] : []),
       ...longReactions,
       ...repeatedReactions,

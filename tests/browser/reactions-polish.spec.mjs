@@ -10,6 +10,9 @@ test("grouped reaction counts fit and preview in both themes and text sizes", as
   await page.keyboard.press("Enter");
   const group = page.getByRole("button", { name: "👍: 9 people" });
   await expect(group).toBeFocused();
+  await expect(
+    page.locator("[data-message-id]").first().getByTestId("reaction-row"),
+  ).toHaveText("👍9");
   for (const theme of ["light", "dark"]) {
     for (const scale of [1, 2]) {
       await page.evaluate(

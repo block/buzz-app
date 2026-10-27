@@ -94,11 +94,17 @@ for org in $TRUSTED_ORGS; do
     echo "WARNING: cannot load GitHub members for $org; comments from that organization are withheld" >&2
   fi
 done
-CURRENT_GITHUB_USER="$(gh api user --jq .login 2>/dev/null || true)"
-if [[ "$INCLUDE_SELF_COMMENTS" != "1" && -z "$CURRENT_GITHUB_USER" ]]; then
-  echo "ERROR: could not identify the authenticated GitHub user; use --include-self-comments to opt out of self filtering" >&2
-  exit 1
-fi
+CURRENT_GITHUB_USER=""
+identity_warned=0
+while [[ "$INCLUDE_SELF_COMMENTS" != "1" && -z "$CURRENT_GITHUB_USER" ]]; do
+  CURRENT_GITHUB_USER="$(gh api user --jq .login 2>/dev/null || true)"
+  [[ -z "$CURRENT_GITHUB_USER" ]] || break
+  if [[ "$identity_warned" == 0 ]]; then
+    echo "WARNING: could not identify the authenticated GitHub user; retrying before polling comments" >&2
+    identity_warned=1
+  fi
+  sleep "$INTERVAL"
+done
 
 # Polling snapshots belong to this producer and end with its lifetime.
 STATE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/pr-monitor-${REPO//\//-}-${PR}.XXXXXX")

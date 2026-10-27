@@ -53,8 +53,9 @@ PR_MONITOR="${MONITOR_PR_PRODUCER:-$PR_MONITOR}"
 GH_BIN="${GH_BIN:-gh}"
 [[ -x "$PR_MONITOR" ]] || { echo "ERROR: $PR_MONITOR not executable" >&2; exit 1; }
 
-BASE_REF=$("$GH_BIN" pr view "$PR" -R "$REPO" --json baseRefName -q .baseRefName)
-BASE_SHA=$("$GH_BIN" api "repos/$REPO/branches/$BASE_REF" -q .commit.sha)
+BASE_REF=$("$GH_BIN" pr view "$PR" -R "$REPO" --json baseRefName -q .baseRefName) || exit 1
+[[ -n "$BASE_REF" ]] || { echo "ERROR: GitHub returned an empty base ref" >&2; exit 1; }
+BASE_SHA=$("$GH_BIN" api "repos/$REPO/branches/$BASE_REF" -q .commit.sha) || exit 1
 
 snapshot_mergeable() { "$GH_BIN" pr view "$PR" -R "$REPO" --json mergeable -q .mergeable; }
 
@@ -65,7 +66,7 @@ emit_base_conflict() {
 CONFLICTING=0
 [[ "$(snapshot_mergeable)" == CONFLICTING ]] && { CONFLICTING=1; emit_base_conflict ""; }
 
-PR_MONITOR_ARGS=(--repo "$REPO" --interval "$INTERVAL" --quiet-initial)
+PR_MONITOR_ARGS=(--repo "$REPO" --interval "$INTERVAL" --quiet-initial --no-conflict-events)
 [[ "$INCLUDE_SELF_COMMENTS" == "1" ]] && PR_MONITOR_ARGS+=(--include-self-comments)
 "$PR_MONITOR" "${PR_MONITOR_ARGS[@]}" ${AUTHOR_FILTER_ARGS[@]+"${AUTHOR_FILTER_ARGS[@]}"} "$PR" &
 PR_MONITOR_PID=$!

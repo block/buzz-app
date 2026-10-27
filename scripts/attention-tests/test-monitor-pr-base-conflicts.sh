@@ -17,6 +17,7 @@ cat >"$temp_dir/gh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 if [[ "$1 $2" == "pr view" && "$*" == *"baseRefName"* ]]; then
+  if [[ "${FAIL_BASE_REF:-0}" == 1 ]]; then echo "base lookup offline" >&2; exit 1; fi
   echo main
 elif [[ "$1" == "api" ]]; then
   count=0
@@ -84,3 +85,10 @@ GH_BIN="$temp_dir/gh" MONITOR_PR_PRODUCER="$temp_dir/producer" FAKE_PRODUCER_ARG
 [[ "$(tr '\n' ' ' <"$temp_dir/producer.args")" == *"--ignore-author noisy --no-ignore-bots --allowlist roster 1 "* ]]
 
 echo "monitor-pr base-conflict tests passed"
+
+# Fail explicitly, retaining the cause, rather than starting a permanently blind poller.
+if FAIL_BASE_REF=1 GH_BIN="$temp_dir/gh" MONITOR_PR_PRODUCER="$temp_dir/producer" "$monitor" --repo owner/repo 1 >"$temp_dir/fail.out" 2>"$temp_dir/fail.err"; then
+  echo "accepted a failed base lookup" >&2
+  exit 1
+fi
+grep -q 'base lookup offline' "$temp_dir/fail.err"

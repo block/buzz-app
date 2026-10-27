@@ -17,6 +17,7 @@ Configure trustedOrganizations, trustedAuthors and ignoredAuthors as GitHub logi
 Without a valid policy, CI and PR-state monitoring continue and comments are withheld.
 Organization lookup failures withhold that organization's members and report a warning.
 The policy is read at startup; restart the subscription after editing it.
+Use --no-conflict-events when a composing monitor owns conflict notifications.
 Use --quiet-initial for detached delivery: the startup summary is written to
 stderr for health logs, while only actionable existing feedback or failures are
 emitted on stdout.
@@ -36,6 +37,7 @@ ALLOWED_AUTHORS=""
 AUTHOR_ALLOWLIST_ENABLED=0
 INCLUDE_SELF_COMMENTS=0
 QUIET_INITIAL=0
+CONFLICT_EVENTS=1
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 TRUSTED_ORGS="" TRUSTED_AUTHORS="" IGNORE_AUTHORS=""
 POLICY=$(python3 "$SCRIPT_DIR/../buzz-attention-policy" read)
@@ -55,6 +57,7 @@ while [[ $# -gt 0 ]]; do
     --ignore-author) IGNORE_AUTHORS+=$'\n'"${2%\[bot\]}"; shift 2;;
     --no-ignore-bots) IGNORE_AUTHORS=""; shift;;
     --include-self-comments) INCLUDE_SELF_COMMENTS=1; shift;;
+    --no-conflict-events) CONFLICT_EVENTS=0; shift;;
     --quiet-initial) QUIET_INITIAL=1; shift;;
     -h|--help) usage; exit 0;;
     *)
@@ -466,7 +469,7 @@ pr_change_is_non_actionable() {
   # conflicting head is independently actionable here, but only once the PR
   # is ready for review. Draft conflicts can wait until the author makes the
   # PR reviewable.
-  [[ "$new_draft" == "ready" && "$old_merge" != "DIRTY" && "$new_merge" == "DIRTY" ]] && return 1
+  [[ "$CONFLICT_EVENTS" == 1 && "$new_draft" == "ready" && "$old_merge" != "DIRTY" && "$new_merge" == "DIRTY" ]] && return 1
   return 0
 }
 
@@ -482,11 +485,12 @@ pr_change_is_explained_by_submitted_review() {
   [[ "$old_url" == "$new_url" ]] || return 1
   [[ "$old_title" == "$new_title" ]] || return 1
   [[ "$old_in_queue" == "$new_in_queue" ]] || return 1
-  [[ "$new_draft" == "ready" && "$old_merge" != "DIRTY" && "$new_merge" == "DIRTY" ]] && return 1
+  [[ "$CONFLICT_EVENTS" == 1 && "$new_draft" == "ready" && "$old_merge" != "DIRTY" && "$new_merge" == "DIRTY" ]] && return 1
   return 0
 }
 
 first=1
+startup_fetch_warned=0
 comment_fetch_failures=0
 comment_health_degraded=0
 deferred_comments_state="$STATE_DIR/deferred-comments.state"
@@ -500,12 +504,14 @@ while true; do
   checks_state="$STATE_DIR/checks.state"
 
   if ! snapshot_pr_state > "$pr_tmp"; then
-    if [[ "$first" == "1" ]]; then
+    if [[ "$first" == "1" && "$startup_fetch_warned" == 0 ]]; then
+      startup_fetch_warned=1
       emit "⚠️ Couldn't fetch PR #$PR in $REPO; retrying"
     fi
     sleep "$INTERVAL"
     continue
   fi
+  startup_fetch_warned=0
   comments_available=1
   if ! snapshot_comments > "$comments_tmp"; then
     comments_available=0

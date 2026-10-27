@@ -9,6 +9,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import { ProviderDialogActions } from "../../features/agents/ProviderDialogActions";
+import activityStyles from "../../features/agents/ActivityLayout.module.css";
 import { ActivityTranscript } from "../../features/agents/ActivityTranscript";
 import { AgentSaveButton } from "../../features/agents/AgentSaveButton";
 import { AgentInstructions } from "../../features/agents/AgentInstructions";
@@ -864,7 +865,7 @@ export function createTabs({
       .slice(0, RECENT_LIMIT)
       .map((row): Row => ({ ...row, key: row.sessionId, channelId: "" }));
     return (
-      <div className="grid gap-4">
+      <div className={activityStyles.activity}>
         {conversation && (
           <OpenedConversation
             conversation={conversation}
@@ -876,7 +877,7 @@ export function createTabs({
             onView={() => here && show(here)}
           />
         )}
-        <section className="grid gap-1">
+        <section className={activityStyles.section}>
           <div className="flex items-center justify-between gap-2">
             <h3 className="m-0 text-body">Recent sessions</h3>
             <Button
@@ -895,12 +896,11 @@ export function createTabs({
           ) : rows.length ? (
             <ul className="m-0 grid list-none gap-2 p-0">
               {rows.map((row) => (
-                <li
-                  key={row.sessionId}
-                  className="flex items-center justify-between gap-2"
-                >
-                  <span className="min-w-0">
-                    <span className="block truncate">{label(row)}</span>
+                <li key={row.sessionId} className={activityStyles.row}>
+                  <span className={activityStyles.copy}>
+                    <span className="block truncate" title={label(row)}>
+                      {label(row)}
+                    </span>
                     <span className="block text-body-sm text-subtle">
                       {[
                         status(row.sessionId),

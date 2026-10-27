@@ -8,6 +8,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import { errorText } from "../../buzz-mcp/rpc";
+import activityStyles from "../../features/agents/ActivityLayout.module.css";
 import { ActivityTranscript } from "../../features/agents/ActivityTranscript";
 import { AgentInstructions } from "../../features/agents/AgentInstructions";
 import { AgentSaveButton } from "../../features/agents/AgentSaveButton";
@@ -751,7 +752,7 @@ export function createTabs({
       .filter((place) => place.key !== here?.key)
       .slice(0, CONVERSATION_LIMIT);
     return (
-      <div className="grid gap-4">
+      <div className={activityStyles.activity}>
         {conversation && (
           <OpenedConversation
             conversation={conversation}
@@ -761,17 +762,16 @@ export function createTabs({
             onView={() => here && show(here)}
           />
         )}
-        <section className="grid gap-1">
+        <section className={activityStyles.section}>
           <h3 className="m-0 text-body">Recent conversations</h3>
           {recent.length ? (
             <ul className="m-0 grid list-none gap-2 p-0">
               {recent.map((place) => (
-                <li
-                  key={place.key}
-                  className="flex items-center justify-between gap-2"
-                >
-                  <span className="min-w-0">
-                    <span className="block truncate">{label(place)}</span>
+                <li key={place.key} className={activityStyles.row}>
+                  <span className={activityStyles.copy}>
+                    <span className="block truncate" title={label(place)}>
+                      {label(place)}
+                    </span>
                     <span className="block text-body-sm text-subtle">
                       {[status(place), new Date(place.at).toLocaleString()]
                         .filter(Boolean)

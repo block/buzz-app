@@ -2009,8 +2009,7 @@ html[data-keyboard-input] .quickReactionGlyph {
   content: "";
   position: absolute;
   inset-inline-start: calc(var(--reply-spine-offset) - var(--reply-indent));
-  /* Branches are one level deep, so each reply row is a single message whose
-     avatar sits at the bottom of its bubble: the hook ends at that avatar. */
+  /* Browsers without anchor positioning assume the avatar ends the row. */
   inset-block: 0 calc(var(--space-half) + var(--size-control-sm) / 2);
   inline-size: calc(
     var(--reply-indent) -
@@ -2021,6 +2020,26 @@ html[data-keyboard-input] .quickReactionGlyph {
   border-block-end: 1px solid var(--border-message-thread);
   border-end-start-radius: var(--radius-control);
   pointer-events: none;
+}
+/* Each reply's own avatar anchors its hook, so the hook lands on the avatar
+   whatever renders around it: reactions, delivery notices, or an open
+   agents disclosure. */
+.replyItem {
+  anchor-scope: --reply-avatar;
+}
+:where(.replyItem) .messageAvatar,
+:where(.replyItem .audienceLine) > .audienceAvatar:first-child {
+  anchor-name: --reply-avatar;
+}
+@supports (anchor-name: --reply-avatar) {
+  .replyBranchPanel > ol > .replyItem::before {
+    inset-block-end: anchor(
+      --reply-avatar center,
+      calc(var(--space-half) + var(--size-control-sm) / 2)
+    );
+    inset-inline-end: calc(anchor(--reply-avatar start, 100%) + var(--space-1));
+    inline-size: auto;
+  }
 }
 /* Stacked bubbles share the last one's avatar, so only that row hooks in.
    Match the row's own marker, not rows nested inside an agents disclosure. */
@@ -2143,19 +2162,24 @@ html[data-keyboard-input] .quickReactionGlyph {
 }
 /* A branch started by the viewer sits on the right, so its spine, hooks
    and summary mirror to stay beside the avatar that started it. */
-.replyBranch:has(> .replyBranchMessage [data-viewer-message])
-> .replyBranchSummary {
+.replyBranch:has(
+  > .replyBranchMessage > [data-message-id] > [data-viewer-message]
+) > .replyBranchSummary {
   display: flex;
   justify-content: flex-end;
   margin-inline: 0 calc(var(--size-control-sm) + var(--space-2));
 }
-.replyBranch[data-open="true"]:has(> .replyBranchMessage [data-viewer-message])
+.replyBranch[data-open="true"]:has(
+    > .replyBranchMessage > [data-message-id] > [data-viewer-message]
+  )
   > .replyBranchMessage::after {
   inset-inline: auto var(--reply-spine-offset);
   border-inline-start: 0;
   border-inline-end: 1px solid var(--border-message-thread);
 }
-.replyBranch:has(> .replyBranchMessage [data-viewer-message])
+.replyBranch:has(
+    > .replyBranchMessage > [data-message-id] > [data-viewer-message]
+  )
   > .replyBranchPanel
   > ol
   > .replyItem::before {
@@ -2165,7 +2189,19 @@ html[data-keyboard-input] .quickReactionGlyph {
   border-end-start-radius: 0;
   border-end-end-radius: var(--radius-control);
 }
-.replyBranch:has(> .replyBranchMessage [data-viewer-message])
+@supports (anchor-name: --reply-avatar) {
+  .replyBranch:has(
+      > .replyBranchMessage > [data-message-id] > [data-viewer-message]
+    )
+    > .replyBranchPanel
+    > ol
+    > .replyItem::before {
+    inset-inline-start: calc(anchor(--reply-avatar end, 100%) + var(--space-1));
+  }
+}
+.replyBranch:has(
+    > .replyBranchMessage > [data-message-id] > [data-viewer-message]
+  )
   > .replyBranchPanel
   > ol
   > .replyItem:not(:last-child)::after {
@@ -2177,17 +2213,29 @@ html[data-keyboard-input] .quickReactionGlyph {
 /* A reply on the other side of the branch has its avatar out of reach, so the
    line runs straight past the whole reply instead of hooking toward an empty
    edge. */
-.replyBranch:not(:has(> .replyBranchMessage [data-viewer-message]))
+.replyBranch:not(
+    :has(> .replyBranchMessage > [data-message-id] > [data-viewer-message])
+  )
   > .replyBranchPanel
   > ol
   > .replyItem:has(
-    > .replyBranch > .replyBranchMessage [data-viewer-message]
+    > .replyBranch
+      > .replyBranchMessage
+      > [data-message-id]
+      > [data-viewer-message]
   )::before,
-.replyBranch:has(> .replyBranchMessage [data-viewer-message])
+.replyBranch:has(
+    > .replyBranchMessage > [data-message-id] > [data-viewer-message]
+  )
   > .replyBranchPanel
   > ol
   > .replyItem:not(
-    :has(> .replyBranch > .replyBranchMessage [data-viewer-message])
+    :has(
+      > .replyBranch
+        > .replyBranchMessage
+        > [data-message-id]
+        > [data-viewer-message]
+    )
   )::before {
   inset-block-end: 0;
   border-block-end: 0;
@@ -2243,7 +2291,7 @@ html[data-keyboard-input] .quickReactionGlyph {
   /* The end padding is a step narrower, so a right-side spine keeps the same
      inset from the edge as a left-side one. */
   .replyBranch[data-depth="0"]:has(
-    > .replyBranchMessage [data-viewer-message]
+    > .replyBranchMessage > [data-message-id] > [data-viewer-message]
   ) {
     --reply-spine-offset: calc(0px - var(--space-2));
   }

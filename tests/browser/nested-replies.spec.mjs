@@ -381,65 +381,172 @@ test("nested replies send, stay open, and reveal through links at readable panel
   ).toBeEnabled();
 });
 
-// The audience body stacks its own inner row, which must not read as a
-// following bubble in the branch.
-for (const own of [false, true])
-  test(`a final agents reply keeps its branch hook while open (${own ? "viewer" : "peer"} branch)`, async ({
-    page,
-    app,
-  }) => {
-    const root = app.histories
-      .get("primary/alpha")
-      .find((event) => event.content === "Thread root 0");
-    const parent = app.append(
-      "primary",
-      "alpha",
-      "Branch start",
-      false,
-      own,
-      root.id,
-    );
-    const agents = app.append(
-      "primary",
-      "alpha",
-      "Agents coordination note",
-      false,
-      own,
-      root.id,
-      parent.id,
-      [["audience", "agents"]],
-    );
-    await open(page, app);
-    await page
-      .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
-      .getByRole("button", { name: /^View thread:/ })
-      .click();
-    const panel = page.getByRole("complementary", {
-      name: "Thread",
-      exact: true,
-    });
-    const summary = panel
-      .locator(`[data-message-id="${parent.id}"]`)
+// Geometry, not presence: each hook must end on its own reply's avatar, on
+// the reply's side, whatever renders around the row.
+async function hookFor(row) {
+  return row.evaluate((node) => {
+    const item = node.closest("li");
+    const line = getComputedStyle(item, "::before");
+    const box = item.getBoundingClientRect();
+    const avatar = node
+      .querySelector('[class*="messageAvatar"], [class*="audienceAvatar"]')
+      .getBoundingClientRect();
+    const left = box.left + parseFloat(line.left);
+    const top = box.top + parseFloat(line.top);
+    return {
+      content: line.content,
+      curved: line.borderBottomWidth !== "0px",
+      left,
+      right: left + parseFloat(line.width),
+      bottom: top + parseFloat(line.height),
+      itemBottom: box.bottom,
+      avatar: {
+        left: avatar.left,
+        right: avatar.right,
+        center: (avatar.top + avatar.bottom) / 2,
+      },
+    };
+  });
+}
+function expectHookOnAvatar(hook, side) {
+  expect(hook.content).toBe('""');
+  expect(hook.curved).toBe(true);
+  expect(Math.abs(hook.bottom - hook.avatar.center)).toBeLessThan(1);
+  // The hook stops one token short of the avatar's near edge.
+  if (side === "left") {
+    expect(hook.right).toBeLessThan(hook.avatar.left);
+    expect(hook.avatar.left - hook.right).toBeLessThan(6);
+  } else {
+    expect(hook.left).toBeGreaterThan(hook.avatar.right);
+    expect(hook.left - hook.avatar.right).toBeLessThan(6);
+  }
+}
+function expectStraightLine(hook) {
+  expect(hook.content).toBe('""');
+  expect(hook.curved).toBe(false);
+  expect(Math.abs(hook.bottom - hook.itemBottom)).toBeLessThan(1);
+}
+
+test("branch hooks land on each reply's avatar across sides and row shapes", async ({
+  page,
+  app,
+}) => {
+  const root = app.histories
+    .get("primary/alpha")
+    .find((event) => event.content === "Thread root 0");
+  const post = (content, own, parent, tags) =>
+    app.append("primary", "alpha", content, false, own, root.id, parent, tags);
+  const agents = [["audience", "agents"]];
+  const note =
+    "Agents coordination note that wraps onto several lines once it opens in the thread";
+  const peer = post("Peer branch", false);
+  const peerReply = post("Peer reply", false, peer.id);
+  const peerOwn = post("Own reply on the other side", true, peer.id);
+  const viewer = post("Viewer branch", true);
+  const viewerPeer = post("Peer reply on the other side", false, viewer.id);
+  const viewerReply = post("Viewer reply", true, viewer.id);
+  const agentPeer = post("Agent branch", false);
+  const agentPeerReply = post(note, false, agentPeer.id, agents);
+  const agentViewer = post("Viewer agents branch", true);
+  const ownAgents = post(`Own ${note}`, true, agentViewer.id, agents);
+  const ownAgentsInPeer = post("Agents host", false);
+  const ownAgentsLeft = post(
+    `Viewer ${note}`,
+    true,
+    ownAgentsInPeer.id,
+    agents,
+  );
+  const ownAgentsStart = post("Own agents start", true, undefined, agents);
+  const startReply = post(
+    "Reply to own agents start",
+    false,
+    ownAgentsStart.id,
+  );
+  const emoji = post("Emoji branch", false);
+  const emojiReply = post("🎉", false, emoji.id);
+  await open(page, app);
+  await page.setViewportSize({ width: 1280, height: 1600 });
+  await page
+    .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
+    .getByRole("button", { name: /^View thread:/ })
+    .click();
+  const panel = page.getByRole("complementary", {
+    name: "Thread",
+    exact: true,
+  });
+  const row = (event) => panel.locator(`[data-message-id="${event.id}"]`);
+  for (const branch of [
+    peer,
+    viewer,
+    agentPeer,
+    agentViewer,
+    ownAgentsInPeer,
+    ownAgentsStart,
+    emoji,
+  ]) {
+    const summary = row(branch)
       .locator("xpath=ancestor::*[@data-depth][1]")
-      .locator("[data-thread-summary]");
+      .locator(":scope > div [data-thread-summary]");
     if (await summary.count()) await summary.click();
-    const row = panel.locator(`[data-message-id="${agents.id}"]`);
-    await expect(row).toBeVisible();
-    const hook = () =>
-      row.evaluate(
-        (node) => getComputedStyle(node.closest("li"), "::before").content,
-      );
-    await expect.poll(hook).toBe('""');
-    const toggle = row.getByRole("button", {
-      name: /Agents coordination note/,
-    });
+  }
+  await expect(row(startReply)).toBeVisible();
+
+  // Peer- and viewer-started branches hook on their own side; a reply on the
+  // other side gets a straight line past it.
+  await row(peerReply).scrollIntoViewIfNeeded();
+  expectHookOnAvatar(await hookFor(row(peerReply)), "left");
+  expectStraightLine(await hookFor(row(peerOwn)));
+  await row(viewerReply).scrollIntoViewIfNeeded();
+  expectStraightLine(await hookFor(row(viewerPeer)));
+  expectHookOnAvatar(await hookFor(row(viewerReply)), "right");
+
+  // A final agents reply keeps its hook on the avatar, open or closed. The
+  // viewer's own agents line renders on the left, so it is not right-side.
+  for (const [event, check] of [
+    [agentPeerReply, (hook) => expectHookOnAvatar(hook, "left")],
+    [ownAgentsLeft, (hook) => expectHookOnAvatar(hook, "left")],
+    [ownAgents, expectStraightLine],
+  ]) {
+    const reply = row(event);
+    await reply.scrollIntoViewIfNeeded();
+    check(await hookFor(reply));
+    const toggle = reply.getByRole("button", { name: /coordination note/ });
     await toggle.click();
     await expect(toggle).toHaveAttribute("aria-expanded", "true");
-    await expect.poll(hook).toBe('""');
+    await reply.evaluate((node) =>
+      Promise.all(
+        node.getAnimations({ subtree: true }).map((motion) => motion.finished),
+      ),
+    );
+    check(await hookFor(reply));
     await toggle.click();
     await expect(toggle).toHaveAttribute("aria-expanded", "false");
-    await expect.poll(hook).toBe('""');
-  });
+    await reply.evaluate((node) =>
+      Promise.all(
+        node.getAnimations({ subtree: true }).map((motion) => motion.finished),
+      ),
+    );
+    check(await hookFor(reply));
+  }
+  // An own agents line starting a branch keeps the spine and hooks on the left.
+  await row(startReply).scrollIntoViewIfNeeded();
+  expectHookOnAvatar(await hookFor(row(startReply)), "left");
+
+  // Reactions under an emoji-only bubble do not move the hook off the avatar.
+  const reacted = row(emojiReply);
+  await reacted.scrollIntoViewIfNeeded();
+  await hoverMessage(reacted);
+  await reacted
+    .getByRole("button", { name: "React with 👍", exact: true })
+    .click();
+  await expect(
+    reacted.getByRole("button", { name: /👍/ }).last(),
+  ).toBeVisible();
+  await panel.getByRole("textbox", { name: "Reply to thread" }).focus();
+  const hook = await hookFor(reacted);
+  expect(hook.itemBottom - hook.avatar.center).toBeGreaterThan(30);
+  expectHookOnAvatar(hook, "left");
+});
 
 test("an exact linked reply stays readable when its parent is outside loaded history", async ({
   page,

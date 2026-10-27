@@ -81,7 +81,7 @@ function visible(value: string, label: string, layout: boolean) {
 }
 
 /** Refuses a name or instructions block/buzz would refuse. */
-function checkText(name: string, instructions: string) {
+export function checkText(name: string, instructions: string) {
   const chars = Array.from(name).length;
   if (chars > 128)
     throw new Error(`Display name is too long (${chars} characters, max 128)`);
@@ -143,7 +143,7 @@ export function shareable(
       .some(credentialLike)
   )
     throw new Error(
-      "Portable configuration appears to contain a credential. Remove it before export.",
+      "Portable configuration appears to contain a credential. Remove it before sharing or exporting.",
     );
   return definition;
 }

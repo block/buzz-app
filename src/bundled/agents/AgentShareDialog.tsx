@@ -155,6 +155,13 @@ export function AgentShareDialog({
     else setError(`Failed to update catalog sharing. ${failure}`);
     setPending(false);
   };
+  // A share is a copy: edits reach the catalog only when it is updated. What
+  // can't be shared any more says why on Update share.
+  let current: string | undefined;
+  try {
+    current = catalogContent(shareable(agent, type));
+  } catch {}
+  const stale = !!head && isShared(head) && current !== head.content;
   const exportAgent = async () => {
     if (pending) return;
     setPending(true);
@@ -214,6 +221,16 @@ export function AgentShareDialog({
             onValueChange={(value) => setFormat(value as "png" | "json")}
           />
         </SettingsGroup>
+        {stale && (
+          <div className="flex flex-col items-start gap-2">
+            <p className="m-0 text-body-sm text-secondary">
+              The shared copy is older than this agent.
+            </p>
+            <Button disabled={pending} onClick={() => void share(true)}>
+              Update share
+            </Button>
+          </div>
+        )}
         {notice && (
           <p
             role="status"

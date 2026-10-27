@@ -867,12 +867,14 @@ the relay then shows it only to its author, and Marketplace lists only shared
 heads. An accepted publish can still lose to a newer head, and an unanswered one
 may still land, so the dialog reads the head again before it reports success or
 failure. The native signer and the development broker admit only this owner
-envelope (`src-tauri/src/relay/catalog.rs`, `catalog-envelope.ts`). Delete
-unshares a shared head in each community the agent leaves, before its kind
-30177 record goes, and goes on only once a fresh read no longer finds it
-shared, so a deleted agent can't be adopted. The outbox dates the replacement
-past the head, so one dated ahead of this clock is replaced too. Remove from one
-community leaves its share there.
+envelope (`src-tauri/src/relay/catalog.rs`, `catalog-envelope.ts`). Delete,
+and Remove from one community, unshare a shared head in each community the
+agent leaves, before its kind 30177 record goes, and go on only once a fresh
+read no longer finds it shared: nothing there lists the agent to unshare it
+from afterwards, and a deleted agent can't be adopted. The outbox dates the
+replacement past the head, so one dated ahead of this clock is replaced too.
+While shared, **Update share** appears once the catalog body differs from what
+the agent would share now, and publishes that, still shared.
 
 **Export agent** saves `{name}.agent.png` or, by **File format**,
 `{name}.agent.json` in the `buzz-agent-snapshot` version 1 format that block/buzz

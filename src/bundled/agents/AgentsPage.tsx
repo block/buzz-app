@@ -216,7 +216,6 @@ export function AgentsPage({
   const joinable = agents.joinable();
   const agentImports = [...joinable, ...(legacy?.agents ?? [])];
   const discoveryIncomplete = !legacy || legacy.warnings.length > 0;
-  const canImportAgent = discoveryIncomplete || agentImports.length > 0;
   const canImportTeam =
     discoveryIncomplete ||
     legacy.teams.length + teamsToJoin(snapshot.teams, joinable).length > 0;
@@ -307,11 +306,10 @@ export function AgentsPage({
         >
           <PlusIcon size={16} aria-hidden="true" /> Create a new agent
         </MenuItem>
-        {canImportAgent && (
-          <MenuItem onClick={openImport}>
-            <DownloadIcon size={16} aria-hidden="true" /> Import an agent
-          </MenuItem>
-        )}
+        {/* Even when discovery finds nothing, a file can be imported. */}
+        <MenuItem onClick={openImport}>
+          <DownloadIcon size={16} aria-hidden="true" /> Import an agent
+        </MenuItem>
       </MenuPopup>
     </MenuRoot>
   );
@@ -353,6 +351,13 @@ export function AgentsPage({
         secondary={canImport}
         onClick={openMarketplace}
       />
+      {firstAgent && !canImport && (
+        <NewAgentTile
+          label="Import from a file"
+          secondary
+          onClick={openImport}
+        />
+      )}
     </div>
   );
   // Teams have no marketplace, so New team offers only making and importing.

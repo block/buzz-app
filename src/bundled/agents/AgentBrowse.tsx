@@ -9,7 +9,10 @@ import {
   useSyncExternalStore,
 } from "react";
 import { flushSync } from "react-dom";
-import type { SharedDefinition } from "../../features/agents/agent-share";
+import {
+  checkText,
+  type SharedDefinition,
+} from "../../features/agents/agent-share";
 import { AGENT_CATALOG_KIND } from "../../features/agents/catalog-envelope";
 import { ModelIcon } from "../../features/agents/ModelPicker";
 import type {
@@ -396,6 +399,15 @@ export function SharedImportDialog({
   const form = useRef<HTMLDivElement>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
+  // What block/buzz refuses, such as hidden characters in what is shown here.
+  const [refused] = useState(() => {
+    try {
+      checkText(shared.name, shared.instructions);
+      return "";
+    } catch (reason) {
+      return reason instanceof Error ? reason.message : String(reason);
+    }
+  });
   const chosen = types.find((item) => item.key === type);
   const Model = chosen?.CreateModel;
   const choose = (key: string) => {
@@ -404,7 +416,7 @@ export function SharedImportDialog({
     setConfig(next?.importShared?.(shared) ?? next?.defaults().config);
   };
   const run = async () => {
-    if (!chosen || pending) return;
+    if (!chosen || pending || refused) return;
     setPending(true);
     setError("");
     try {
@@ -438,7 +450,7 @@ export function SharedImportDialog({
           </Button>
           <Button
             variant="primary"
-            disabled={!chosen || pending}
+            disabled={!chosen || pending || !!refused}
             loading={pending}
             onClick={() => void run()}
           >
@@ -526,9 +538,9 @@ export function SharedImportDialog({
             {shared.instructions || "No system prompt included."}
           </div>
         </section>
-        {error && (
+        {(refused || error) && (
           <p role="alert" className="m-0 text-body-sm text-danger">
-            {error}
+            {refused || error}
           </p>
         )}
       </div>

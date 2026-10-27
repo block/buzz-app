@@ -2937,10 +2937,12 @@ describe("an agent in several communities", () => {
     });
     steps.length = 0;
     await service.leave(away);
+    // Its share there goes with it: nothing there lists it to unshare after.
     expect(steps).toEqual([
       "stop",
       "channels",
       "archive",
+      "unshare",
       "record",
       "key",
       "forget",

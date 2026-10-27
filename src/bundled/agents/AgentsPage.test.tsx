@@ -1903,17 +1903,12 @@ it("offers New team on Your teams with create and import, but no marketplace", a
   expect(screen.getByRole("form", { name: "New team" })).toBeInTheDocument();
 });
 
-it("hides Import an agent and Import a team when there is nothing to import", async () => {
+it("hides Import a team when there is nothing to import, and keeps Import an agent for files", async () => {
   const user = userEvent.setup();
-  setup([agent("Ada", 1)], { found: [] });
-  await user.click(screen.getByRole("button", { name: "New agent" }));
-  expect(
-    await screen.findByRole("menuitem", { name: "Create a new agent" }),
-  ).toBeInTheDocument();
-  expect(
-    screen.queryByRole("menuitem", { name: "Import an agent" }),
-  ).not.toBeInTheDocument();
-  await user.keyboard("{Escape}");
+  const { agents } = setup([agent("Ada", 1)], { found: [] });
+  await act(async () => {
+    await agents.portable.mock.results[0]?.value;
+  });
   await user.click(screen.getByRole("tab", { name: "Your teams" }));
   await user.click(screen.getByRole("button", { name: "New team" }));
   expect(
@@ -1922,6 +1917,28 @@ it("hides Import an agent and Import a team when there is nothing to import", as
   expect(
     screen.queryByRole("menuitem", { name: "Import a team" }),
   ).not.toBeInTheDocument();
+  await user.keyboard("{Escape}");
+  await user.click(screen.getByRole("tab", { name: "Your agents" }));
+  await user.click(screen.getByRole("button", { name: "New agent" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Import an agent" }),
+  );
+  const dialog = screen.getByRole("dialog", { name: "Import an agent" });
+  expect(within(dialog).getByLabelText("Choose file")).toBeInTheDocument();
+});
+
+it("offers a first agent from a file when discovery finds nothing", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([], { found: [] });
+  await act(async () => {
+    await agents.portable.mock.results[0]?.value;
+  });
+  expect(
+    screen.queryByRole("button", { name: /Check for agents to import/ }),
+  ).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Import from a file" }));
+  const dialog = screen.getByRole("dialog", { name: "Import an agent" });
+  expect(within(dialog).getByLabelText("Choose file")).toBeInTheDocument();
 });
 
 it.each([

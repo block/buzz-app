@@ -91,7 +91,7 @@ it("refuses a type that cannot share and instructions that look like a credentia
     `Push with ghp_${"A".repeat(36)}.`,
   ])
     expect(() => shareable(agent({ ...saved, instructions }), echo)).toThrow(
-      "Portable configuration appears to contain a credential. Remove it before export.",
+      "Portable configuration appears to contain a credential. Remove it before sharing or exporting.",
     );
 });
 
@@ -192,7 +192,7 @@ it("leaves out a picture whose query or fragment could carry a token", () => {
       echo,
     ),
   ).toThrow(
-    "Portable configuration appears to contain a credential. Remove it before export.",
+    "Portable configuration appears to contain a credential. Remove it before sharing or exporting.",
   );
 });
 

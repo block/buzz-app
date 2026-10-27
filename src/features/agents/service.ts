@@ -3254,8 +3254,9 @@ export class AgentsService extends Service implements Agents {
    * and row here. Nothing is deleted when its community is offline or the
    * cleanup fails. All of it runs under its removal held for this copy of the
    * app, so a cleanup from another copy can't undo its being added there
-   * again afterwards. Delete also takes down its catalog share there and
-   * archives its config channel in its home, which keeps it. */
+   * again afterwards. Its catalog share there goes too, as nothing there
+   * lists it to unshare from after; Delete also archives its config channel
+   * in its home, which keeps it. */
   private async depart(member: Member, deleting = false) {
     const native = this.native;
     const binding = this.bindingOf(member);
@@ -3270,8 +3271,7 @@ export class AgentsService extends Service implements Agents {
           AbortSignal.timeout(CLEANUP_TIMEOUT_MS),
         ]);
         await leaveCommunity(binding.session, pubkey, signal);
-        if (deleting)
-          await unshare(binding.session, binding.viewer, pubkey, signal);
+        await unshare(binding.session, binding.viewer, pubkey, signal);
         await deleteAgentRecord(
           binding.session,
           binding.viewer,

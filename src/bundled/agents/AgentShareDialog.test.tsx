@@ -191,7 +191,7 @@ it("says why sharing failed and keeps the catalog as it was", async () => {
   await vi.waitFor(() => expect(toggle).not.toHaveAttribute("aria-disabled"));
   await user.click(toggle);
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Failed to update catalog sharing. Portable configuration appears to contain a credential. Remove it before export.",
+    "Failed to update catalog sharing. Portable configuration appears to contain a credential. Remove it before sharing or exporting.",
   );
   expect(outbox.send).not.toHaveBeenCalled();
   expect(toggle).not.toBeChecked();
@@ -463,4 +463,67 @@ it("saves an .agent.png natively on desktop, never through a blob link", async (
     desktop.tauri = false;
     click.mockRestore();
   }
+});
+
+it("updates a share older than the agent, keeping it listed", async () => {
+  const user = userEvent.setup();
+  const { session, heads, outbox, accept } = community();
+  heads.push({
+    id: "9".repeat(64),
+    pubkey: owner,
+    created_at: 0,
+    kind: 30175,
+    tags: [
+      ["d", agent.pubkey],
+      ["shared", "true"],
+    ],
+    content: JSON.stringify({ display_name: "Ada", system_prompt: "Old." }),
+  });
+  render(
+    <AgentShareDialog
+      agent={agent}
+      type={echo}
+      session={session}
+      onClose={() => {}}
+    />,
+  );
+  const dialog = screen.getByRole("dialog", { name: "Share Ada" });
+  expect(
+    await within(dialog).findByText(
+      "The shared copy is older than this agent.",
+    ),
+  ).toBeInTheDocument();
+  await user.click(
+    within(dialog).getByRole("button", { name: "Update share" }),
+  );
+  await vi.waitFor(() => expect(outbox.send).toHaveBeenCalledTimes(1));
+  expect(outbox.send).toHaveBeenLastCalledWith(
+    {
+      kind: 30175,
+      content: JSON.stringify({
+        display_name: "Ada",
+        system_prompt: "Review pull requests.",
+        acp_command: "buzz-acp",
+        runtime: "echo",
+        model: "echo-1",
+      }),
+      tags: [
+        ["d", agent.pubkey],
+        ["shared", "true"],
+      ],
+      supersedes: 0,
+    },
+    undefined,
+    expect.any(Function),
+  );
+  accept();
+  expect(
+    await within(dialog).findByText("Published Ada to the community catalog."),
+  ).toBeInTheDocument();
+  expect(
+    within(dialog).queryByRole("button", { name: "Update share" }),
+  ).not.toBeInTheDocument();
+  expect(
+    within(dialog).getByRole("switch", { name: "Share to catalog" }),
+  ).toBeChecked();
 });

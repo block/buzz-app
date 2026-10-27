@@ -1,5 +1,5 @@
 import { expect, it, vi } from "vitest";
-import { AttentionSources, type AttentionSource } from "./attention-sources";
+import { AttentionSources, type AttentionProducer } from "./attention-sources";
 import type { Agent } from "./service";
 import {
   validateObject,
@@ -22,6 +22,7 @@ const object = (): AttentionObject & { value: SourceWatch } => ({
 });
 function agent(watch: ReturnType<typeof object>, enabled = true): Agent {
   return {
+    key: "a",
     pubkey: "a",
     name: "Test",
     type: "test/agent",
@@ -47,9 +48,9 @@ function harness() {
     finish = vi.fn(async () => {}),
     completed = vi.fn(() => false);
   const manager = new AttentionSources({ emit, finish, completed });
-  const inputs: Parameters<AttentionSource["run"]>[0][] = [];
+  const inputs: Parameters<AttentionProducer["run"]>[0][] = [];
   const endings: (() => void)[] = [];
-  const provider: AttentionSource = {
+  const provider: AttentionProducer = {
     id: "command",
     run: vi.fn(async (input) => {
       inputs.push(input);
@@ -93,6 +94,28 @@ it("starts once, spends no turn on empty output, and emits into the registered w
     "CI failed",
     expect.any(Function),
   );
+  h.manager.stop();
+});
+it("runs one agent's watch separately in each of its communities", async () => {
+  const h = harness(),
+    home = object(),
+    joined = object();
+  h.manager.reconcile("example/command", h.provider, [
+    agent(home),
+    { ...agent(joined), key: "a@other.test" },
+  ]);
+  await Promise.resolve();
+  expect(h.inputs.map((input) => input.agent)).toEqual(["a", "a@other.test"]);
+  h.inputs[1]?.emit("CI failed");
+  expect(h.emit).toHaveBeenCalledWith(
+    "a@other.test",
+    joined,
+    "CI failed",
+    expect.any(Function),
+  );
+  h.manager.reconcile("example/command", h.provider, [agent(home)]);
+  expect(h.inputs[0]?.signal.aborted).toBe(false);
+  expect(h.inputs[1]?.signal.aborted).toBe(true);
   h.manager.stop();
 });
 it.each(["off", "removed", "edited", "unloaded"])(
@@ -154,9 +177,9 @@ it("waits for an aborted producer to exit before starting its replacement", asyn
     finish,
     completed: () => false,
   });
-  const inputs: Parameters<AttentionSource["run"]>[0][] = [];
+  const inputs: Parameters<AttentionProducer["run"]>[0][] = [];
   let release = () => {};
-  const provider: AttentionSource = {
+  const provider: AttentionProducer = {
     id: "command",
     run: async (input) => {
       inputs.push(input);

@@ -1,5 +1,6 @@
 // Lifecycle for plugin producers. The host owns registration, cancellation and delivery;
 // plugins own execution. A resolved run is terminal until its watch is edited.
+import type { HostProcess, HostProcessOptions } from "../host/service";
 import type { Agent } from "./service";
 import type { AttentionObject, SourceWatch } from "./attention";
 
@@ -10,14 +11,27 @@ export type AttentionSource = Readonly<{
   configExample?: Readonly<Record<string, unknown>>;
   run(
     input: Readonly<{
+      /** The agent's membership key, as `Agents.wake` takes. */
       agent: string;
       watch: SourceWatch;
       signal: AbortSignal;
+      /** Runs a declared process as this watch's agent and destination.
+       * Buzz revokes access when this run returns, throws or is cancelled. */
+      spawn(
+        process: string,
+        options: Omit<HostProcessOptions, "mcp">,
+      ): Promise<HostProcess>;
       /** Empty output wakes nothing. Throws when delivery cannot be queued. */
       emit(text: string): void;
     }>,
   ): Promise<void>;
 }>;
+/** Host registration after binding the plugin's command capability. */
+export type AttentionProducer = Omit<AttentionSource, "run"> & {
+  run(
+    input: Omit<Parameters<AttentionSource["run"]>[0], "spawn">,
+  ): Promise<void>;
+};
 type SourceObject = AttentionObject & { value: SourceWatch };
 export class AttentionSources {
   private runs = new Map<
@@ -39,7 +53,7 @@ export class AttentionSources {
   ) {}
   reconcile(
     provider: string,
-    source: AttentionSource,
+    source: AttentionProducer,
     agents: readonly Agent[],
   ) {
     const wanted = new Map<string, { agent: Agent; object: SourceObject }>();
@@ -54,7 +68,7 @@ export class AttentionSources {
           agent.attention[`interest/${value.interest_id}`]?.value.type ===
             "interest"
         )
-          wanted.set(`${provider}/${agent.pubkey}/${object.slug}`, {
+          wanted.set(`${provider}/${agent.key}/${object.slug}`, {
             agent,
             object: object as SourceObject,
           });
@@ -66,7 +80,7 @@ export class AttentionSources {
       this.runs.delete(key);
     }
     for (const [key, { agent, object }] of wanted) {
-      if (this.runs.has(key) || this.host.completed(agent.pubkey, object))
+      if (this.runs.has(key) || this.host.completed(agent.key, object))
         continue;
       const run = { object, stop: new AbortController(), done: false };
       this.runs.set(key, run);
@@ -75,7 +89,7 @@ export class AttentionSources {
           throw new Error("This source watch is no longer running");
         if (text.trim())
           this.host.emit(
-            agent.pubkey,
+            agent.key,
             object,
             text,
             () => !run.stop.signal.aborted,
@@ -85,13 +99,10 @@ export class AttentionSources {
       const previous = this.tails.get(key);
       const done = Promise.resolve(previous)
         .then(async () => {
-          if (
-            run.stop.signal.aborted ||
-            this.host.completed(agent.pubkey, object)
-          )
+          if (run.stop.signal.aborted || this.host.completed(agent.key, object))
             return;
           await source.run({
-            agent: agent.pubkey,
+            agent: agent.key,
             watch: object.value,
             signal: run.stop.signal,
             emit,
@@ -106,7 +117,7 @@ export class AttentionSources {
           run.done = true;
           if (succeeded && !run.stop.signal.aborted)
             await this.host
-              .finish(agent.pubkey, object)
+              .finish(agent.key, object)
               .catch((error) =>
                 console.warn(
                   "Attention source completion was not saved",

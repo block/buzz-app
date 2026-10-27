@@ -264,7 +264,7 @@ function ReactionEmoji({
     reactorProfiles.snapshot,
     reactorProfiles.snapshot,
   );
-  const grouped = authorIds.length >= 16;
+  const grouped = authorIds.length >= 9;
   const own = !!session.viewer && authorIds.includes(session.viewer);
   const user = authorIds
     .map((authorId) =>
@@ -304,6 +304,7 @@ function ReactionEmoji({
             size="sm"
             shape={grouped ? "capsule" : "icon"}
             data-reaction={reaction.content}
+            data-reaction-url={reaction.emoji?.url}
             data-reaction-author={grouped ? undefined : authorIds[0]}
             aria-label={`${reaction.content}: ${grouped ? `${authorIds.length} people` : user}`}
             aria-pressed={mine}
@@ -320,7 +321,7 @@ function ReactionEmoji({
               if (unavailable) return;
               const losesFocus =
                 own &&
-                (!grouped || authorIds.length === 16) &&
+                (!grouped || authorIds.length === 9) &&
                 event.currentTarget === document.activeElement;
               if (toggle(reaction.content, reaction.emoji) && losesFocus)
                 onFocusedRemoval?.();
@@ -371,6 +372,25 @@ export function MessageReactions(
     session.emoji.snapshot,
   );
   const [pointerInRow, setPointerInRow] = useState(false);
+  const reactionRow = useRef<HTMLDivElement>(null);
+  const focusedReaction = useRef<HTMLButtonElement | null>(null);
+  useLayoutEffect(() => {
+    const previous = focusedReaction.current;
+    if (!previous || previous.isConnected) return;
+    focusedReaction.current = null;
+    if (!active || document.activeElement !== document.body) return;
+    // Grouping can replace the focused control after a local or live update.
+    const replacement = Array.from(
+      reactionRow.current?.querySelectorAll<HTMLButtonElement>(
+        "button[data-reaction]",
+      ) ?? [],
+    ).find(
+      (button) =>
+        button.dataset.reaction === previous.dataset.reaction &&
+        button.dataset.reactionUrl === previous.dataset.reactionUrl,
+    );
+    if (replacement) replacement.focus({ preventScroll: true });
+  });
   const [preview, setPreview] = useState<{
     key: string | null;
     index: number;
@@ -389,7 +409,7 @@ export function MessageReactions(
           ...new Set(reaction.events.map((event) => event.authorId)),
         ];
         const mine = !!session.viewer && authorIds.includes(session.viewer);
-        return authorIds.length >= 16
+        return authorIds.length >= 9
           ? [{ reaction, authorIds, mine }]
           : authorIds.map((authorId) => ({
               reaction,
@@ -402,12 +422,25 @@ export function MessageReactions(
   return (
     // biome-ignore lint/a11y/useSemanticElements: This groups reactions, not form fields.
     <div
+      ref={reactionRow}
       className={styles.reactions}
       data-message-reactions={(active && reactions.length > 0) || undefined}
       data-testid="reaction-row"
       data-populated={(active && reactions.length > 0) || undefined}
       role="group"
       aria-label="Reactions"
+      onFocusCapture={(event) => {
+        const button = event.target;
+        focusedReaction.current =
+          button instanceof HTMLButtonElement &&
+          button.hasAttribute("data-reaction")
+            ? button
+            : null;
+      }}
+      onBlurCapture={() => {
+        if (focusedReaction.current?.isConnected)
+          focusedReaction.current = null;
+      }}
       onMouseEnter={() => setPointerInRow(true)}
       onMouseLeave={() => {
         setPointerInRow(false);
@@ -419,7 +452,7 @@ export function MessageReactions(
           const key = JSON.stringify([
             reaction.content,
             reaction.emoji?.url,
-            authorIds.length >= 16 ? null : authorIds[0],
+            authorIds.length >= 9 ? null : authorIds[0],
           ]);
           const slideFrom =
             preview?.key === key ? preview.fromIndex : preview?.index;

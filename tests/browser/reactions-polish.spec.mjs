@@ -4,8 +4,12 @@ import { test } from "./source-fixture.mjs";
 test("grouped reaction counts fit and preview in both themes and text sizes", async ({
   page,
 }) => {
-  await page.goto("/tests/fixtures/emoji.html?reactions&grouped&narrow");
-  const group = page.getByRole("button", { name: "👍: 16 people" });
+  await page.goto("/tests/fixtures/emoji.html?reactions&grouped=8&narrow");
+  const individual = page.locator('button[data-reaction="👍"]').nth(3);
+  await individual.focus();
+  await page.keyboard.press("Enter");
+  const group = page.getByRole("button", { name: "👍: 9 people" });
+  await expect(group).toBeFocused();
   for (const theme of ["light", "dark"]) {
     for (const scale of [1, 2]) {
       await page.evaluate(
@@ -19,7 +23,7 @@ test("grouped reaction counts fit and preview in both themes and text sizes", as
         { theme, scale },
       );
       await expect(group).toBeVisible();
-      await expect(group).toContainText("16");
+      await expect(group).toContainText("9");
       await expect
         .poll(() =>
           group.evaluate((button) => {
@@ -38,13 +42,16 @@ test("grouped reaction counts fit and preview in both themes and text sizes", as
         .toBe(true);
     }
   }
+  // Activation dismisses the preview; keyboard re-entry opens it again.
+  await group.press("Tab");
   await group.focus();
-  await expect(page.getByRole("tooltip")).toBeVisible();
+  const preview = page.locator('.buzz-preview-card[role="tooltip"]');
+  await expect(preview).toBeVisible();
   await page.screenshot({
     path: test.info().outputPath("grouped-reactions.png"),
   });
   await page.keyboard.press("Escape");
-  await expect(page.getByRole("tooltip")).toHaveCount(0);
+  await expect(preview).toHaveCount(0);
 });
 
 // Browser-only: actual rem geometry and the line-height clipping boundary need

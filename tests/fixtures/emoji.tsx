@@ -213,13 +213,23 @@ const sessions = ["a", "b"].map((community) => {
     tags: [["e", root.id]],
   });
   const groupedReactions = new URLSearchParams(location.search).has("grouped")
-    ? Array.from({ length: 16 }, (_, index) =>
-        signed(keypair(), {
-          kind: 7,
-          content: "👍",
-          created_at: 40 + index,
-          tags: [["e", root.id]],
-        }),
+    ? Array.from(
+        {
+          length:
+            new URLSearchParams(location.search).get("grouped") === "8" ? 8 : 9,
+        },
+        (_, index) => {
+          const person = keypair();
+          participantProfiles.set(person.pubkey, {
+            name: `Teammate ${index + 1}`,
+          });
+          return signed(person, {
+            kind: 7,
+            content: "👍",
+            created_at: 40 + index,
+            tags: [["e", root.id]],
+          });
+        },
       )
     : [];
   const longReactions = long

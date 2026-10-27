@@ -494,11 +494,65 @@ test.describe("pages inside one second", () => {
       page,
       app,
     }) => {
-      const pending = await reading(page, app, 1400);
+      // Keep Virtua's previous prepend active while the older page measures.
+      // Its 150ms idle callback must not win this ordering on a slower runner.
+      await page.addInitScript(() => {
+        const { setTimeout: schedule, clearTimeout: cancel } = window;
+        const held = new Map();
+        let active = false;
+        window.holdIdle = () => {
+          active = true;
+        };
+        let id = 0;
+        window.setTimeout = (callback, delay, ...args) => {
+          if (!active || delay !== 150)
+            return schedule(callback, delay, ...args);
+          held.set(--id, () => callback(...args));
+          return id;
+        };
+        window.clearTimeout = (id) => held.delete(id) || cancel(id);
+        window.releaseIdle = () => {
+          active = false;
+          const callbacks = [...held.values()];
+          held.clear();
+          for (const callback of callbacks) callback();
+        };
+      });
+      // Recreate the sparse same-second head from CI. The page fills gaps
+      // below the reader without changing their initial item offset.
+      const events = app.histories.get("primary/alpha");
+      const second = events.at(-20).created_at;
+      const sameSecond = events.filter((event) => event.created_at === second);
+      for (const [index, event] of sameSecond.entries()) {
+        let nonce = 0;
+        let signed;
+        do {
+          signed = app.sign({
+            ...event,
+            tags: [...event.tags, ["fixture-order", String(nonce++)]],
+          });
+        } while (
+          Number.parseInt(signed.id[0], 16) < 8 !==
+          [0, 1, 2, 3, 12, 16, 18, 19, 25, 27].includes(index)
+        );
+        events[events.indexOf(event)] = signed;
+      }
+      const pending = await reading(page, app, 1550);
       const before = await anchor(page);
-      publish(app, pending.filter.until, ms);
-      await expect(latest(page)).toHaveText("1 new message");
-      pending.release();
+      await page.evaluate(() => window.holdIdle());
+      try {
+        publish(app, pending.filter.until, ms);
+        await expect(latest(page)).toHaveText("1 new message");
+        const height = await history(page).evaluate((e) => e.scrollHeight);
+        pending.release();
+        await expect
+          .poll(() => history(page).evaluate((e) => e.scrollHeight))
+          .toBeGreaterThan(height);
+        await settle(page);
+        await expectAnchor(page, before);
+      } finally {
+        await page.evaluate(() => window.releaseIdle());
+      }
       await settle(page);
       await expectAnchor(page, before);
       await expect(latest(page)).toHaveText("1 new message");

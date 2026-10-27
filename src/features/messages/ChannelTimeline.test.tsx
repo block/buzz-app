@@ -159,6 +159,7 @@ function setup({
     return frameId;
   });
   vi.stubGlobal("cancelAnimationFrame", (id: number) => frames.delete(id));
+  vi.stubGlobal("CSS", { escape: (id: string) => id });
   const observers = new Map<() => void, Set<unknown>>();
   vi.stubGlobal(
     "ResizeObserver",
@@ -203,14 +204,21 @@ function setup({
         callback();
     }
   };
-  const element = {
+  const element = Object.assign(new EventTarget(), {
+    ownerDocument: new EventTarget(),
     clientWidth: 1124,
     clientHeight: 668,
     scrollHeight: 3706,
     scrollTop: 2388,
     focus: vi.fn(),
     getBoundingClientRect: () => ({ top: 0 }),
-    querySelector: () => list,
+    querySelector: (selector: string) => {
+      if (selector === "ol") return list;
+      const row = mounted.find(
+        ({ id }) => selector === `[data-message-id="${id}"]`,
+      );
+      return row ? { getBoundingClientRect: () => ({ top: row.y }) } : null;
+    },
     querySelectorAll: () =>
       mounted.map(({ id, y }) => ({
         dataset: { messageId: id },
@@ -219,7 +227,7 @@ function setup({
           getBoundingClientRect: () => ({ top: y + 32, bottom: y + 80 }),
         }),
       })),
-  };
+  });
   const handle = {
     scrollOffset: 3038,
     scrollSize: 3649.5,

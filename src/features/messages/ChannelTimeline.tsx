@@ -592,17 +592,9 @@ function Timeline({
       return;
     const moved = handle.current.getItemOffset(index) - reader.current.top;
     const id = reader.current.id;
-    if (
-      !id ||
-      (!moved &&
-        !(
-          heldReader.current?.id === id &&
-          heldReader.current.intent === intent.current
-        ))
-    )
-      return;
-    // A tail append can replace this effect before the previous page's rows
-    // finish measuring. Keep their anchor even when this render moves it by 0.
+    if (!id) return;
+    // A page can initially leave the reader's offset unchanged while moved
+    // rows still await measurement. Hold the anchor through those sizes too.
     correctScrollTop(element, moved);
     const top = () =>
       element

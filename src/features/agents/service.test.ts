@@ -10677,6 +10677,27 @@ it("refuses team drafts that name no such team or agent, or change nothing", asy
   expect(service.teamRequests()).toEqual([]);
 });
 
+it("keeps a team's members from the owner's other communities", async () => {
+  const { service, plugin } = await setup({
+    identities: [here(birch, "wss://other.example.test")],
+  });
+  await service.create({ type: "example/echo", name: "Parent" });
+  await service.saveTeam({ name: "Crew", instructions: "", members: [birch] });
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+  const handle = plugin.agents.handle(bot);
+  if (!handle?.proposeTeam || !handle.teams)
+    throw new Error("Missing team handle");
+  // The agent sees only its own community's members, and a change to them
+  // keeps the rest.
+  expect(handle.teams()).toEqual([
+    expect.objectContaining({ name: "Crew", members: [] }),
+  ]);
+  await handle.proposeTeam({ team: "Crew", members: ["Parent"] });
+  expect(service.teamRequests()).toEqual([
+    expect.objectContaining({ members: [bot, birch] }),
+  ]);
+});
+
 it("refuses approval after leaving the requesting community", async () => {
   const { service, native, plugin, leave } = await setup();
   await service.create({ type: "example/echo", name: "Parent" });

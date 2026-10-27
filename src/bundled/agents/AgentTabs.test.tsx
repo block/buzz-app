@@ -342,6 +342,7 @@ it.each(["here", "hosted"] as const)(
         }
         agent={agent}
         type={undefined}
+        channels={[]}
         memories={owner.capability}
         settingsHost={{ typeControl: () => <p>Provider</p> }}
         settingsContent={<p>Agent settings</p>}
@@ -433,6 +434,7 @@ it("shows History for an agent whose config syncs", () => {
       }
       agent={agent}
       type={undefined}
+      channels={[]}
       memories={undefined}
       settingsHost={{ typeControl: () => <p>Provider</p> }}
       settingsContent={<p>Agent settings</p>}

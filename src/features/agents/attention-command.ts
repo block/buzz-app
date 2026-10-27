@@ -79,13 +79,30 @@ export function registerAttention(ctx: {
           // Deliver full chunks before applying the bound to refused output.
           for (let offset = 0; offset < data.length; ) {
             if (buffer.length === 65536) flush();
-            const chunk = data.slice(
-              offset,
+            let end = Math.min(
+              data.length,
               offset + (65536 - buffer.length || 65536),
             );
+            if (
+              /[\uD800-\uDBFF]/u.test(data.charAt(end - 1)) &&
+              /[\uDC00-\uDFFF]/u.test(data.charAt(end))
+            ) {
+              if (end - offset === 1) {
+                flush();
+                end = Math.min(data.length, offset + 2);
+              } else end--;
+            }
+            const chunk = data.slice(offset, end);
             const combined = buffer + chunk;
-            omitted += Math.max(0, combined.length - 65536);
-            buffer = combined.slice(-65536);
+            let start = Math.max(0, combined.length - 65536);
+            if (
+              start &&
+              /[\uDC00-\uDFFF]/u.test(combined.charAt(start)) &&
+              /[\uD800-\uDBFF]/u.test(combined.charAt(start - 1))
+            )
+              start++;
+            omitted += start;
+            buffer = combined.slice(start);
             offset += chunk.length;
           }
           if (!timer)

@@ -293,3 +293,38 @@ it("drains a command that exits before stdin is closed", async () => {
   await done;
   expect(h.emit).toHaveBeenCalledWith("finished");
 });
+
+for (const prefix of [0, 65535]) {
+  it(`preserves emoji across chunk boundaries with ${prefix} buffered characters`, async () => {
+    const h = harness();
+    const done = h.run(input(h));
+    await h.spawned;
+    if (prefix) h.output("a".repeat(prefix));
+    const burst = "b".repeat(prefix ? 0 : 65535) + "🚀z";
+    h.output(burst);
+    h.exit(0);
+    await done;
+    const chunks = h.emit.mock.calls.map(([text]) => text as string);
+    expect(chunks.join("")).toBe("a".repeat(prefix) + burst);
+    for (const chunk of chunks)
+      expect(chunk).not.toMatch(
+        /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u,
+      );
+  });
+}
+it("retains whole emoji when refused output trims the oldest characters", async () => {
+  const h = harness();
+  h.emit.mockImplementation(() => {
+    throw new Error("busy");
+  });
+  const done = h.run(input(h));
+  await h.spawned;
+  h.output("a🚀" + "b".repeat(65535));
+  h.emit.mockImplementation(() => {});
+  h.exit(0);
+  await done;
+  expect(h.emit.mock.calls.at(-1)?.[0]).toBe(
+    "[3 characters omitted while delivery was unavailable]\n" +
+      "b".repeat(65535),
+  );
+});

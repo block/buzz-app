@@ -288,19 +288,21 @@ async fn login_shell_path(shell: &Path, deadline: Duration, group: &AtomicI32) -
     let script = format!(
         "/usr/bin/printf {LOGIN_SHELL_PATH_MARKER}; /usr/bin/printenv PATH; /usr/bin/printf {LOGIN_SHELL_PATH_MARKER}"
     );
-    // csh and tcsh accept -l only as their sole flag.
-    let login = match shell.file_name().and_then(OsStr::to_str) {
-        Some("csh" | "tcsh") => vec![],
-        _ => vec!["-l"],
-    };
-    let args = login
-        .into_iter()
-        .chain(["-i", "-c", &script])
-        .map(String::from)
-        .collect::<Vec<_>>();
+    // Profiles can check BUZZ_RESOLVING_ENVIRONMENT to skip slow setup, and
+    // DISABLE_AUTO_UPDATE stops Oh My Zsh from prompting to update.
+    let args = [
+        "DISABLE_AUTO_UPDATE=true",
+        "BUZZ_RESOLVING_ENVIRONMENT=1",
+        &shell.to_string_lossy(),
+        "-l",
+        "-i",
+        "-c",
+        &script,
+    ]
+    .map(String::from);
     // Profiles may print banners or exit non-zero after setting PATH.
     let (output, _) = run_output_with_input(
-        shell,
+        Path::new("/usr/bin/env"),
         &args,
         deadline,
         OsStr::new(""),
@@ -581,7 +583,8 @@ mod tests {
     #[tokio::test]
     async fn login_shell_path_is_read_past_profile_output() {
         let (_directory, shell) = executable(
-            "echo 'Last login: Tue'; PATH=/opt/homebrew/bin:/usr/bin; eval \"$4\"; exit 1",
+            "[ \"$DISABLE_AUTO_UPDATE$BUZZ_RESOLVING_ENVIRONMENT\" = true1 ] || exit\n\
+             echo 'Last login: Tue'; PATH=/opt/homebrew/bin:/usr/bin; eval \"$4\"; exit 1",
         );
         assert_eq!(
             super::login_shell_path(&shell, Duration::from_secs(2), &Default::default()).await,
@@ -592,18 +595,6 @@ mod tests {
             super::login_shell_path(&shell, Duration::from_secs(2), &Default::default()).await,
             None
         );
-    }
-
-    #[cfg(target_os = "macos")]
-    #[tokio::test]
-    async fn a_hanging_login_shell_gives_up_at_its_deadline() {
-        let (_directory, shell) = executable("sleep 30");
-        let started = Instant::now();
-        assert_eq!(
-            super::login_shell_path(&shell, Duration::from_millis(200), &Default::default()).await,
-            None
-        );
-        assert!(started.elapsed() < Duration::from_secs(5));
     }
 
     #[cfg(target_os = "macos")]

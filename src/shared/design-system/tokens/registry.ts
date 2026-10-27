@@ -326,6 +326,13 @@ export const ROLE_GROUPS: RoleGroup[] = [
         status: "core",
       },
       {
+        token: "bg-surface-composer",
+        variable: "--surface-composer",
+        pointsAt: "surface-panel light / neutral-4 dark",
+        use: "Message drafting surface, raised above the panel in dark mode.",
+        status: "core",
+      },
+      {
         token: "bg-surface-popover",
         variable: "--surface-popover",
         pointsAt: "neutral-1 light / neutral-raised dark",
@@ -731,7 +738,7 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "border-standard",
         variable: "--border-standard",
-        pointsAt: "neutral-3 light / neutral-4 dark",
+        pointsAt: "neutral-3 light / neutral-5 dark",
         use: "A quiet separator or panel edge.",
         status: "core",
       },

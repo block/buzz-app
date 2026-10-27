@@ -10,7 +10,7 @@
   border: 1px solid var(--border-standard);
   border-radius: var(--radius-panel);
   box-shadow: var(--shadow-xs);
-  background: var(--surface-panel);
+  background: var(--surface-composer);
   color: var(--text-standard);
 }
 

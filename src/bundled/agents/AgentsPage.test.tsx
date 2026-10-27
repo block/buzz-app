@@ -153,6 +153,7 @@ function setup(
     more = [] as RegisteredAgentType[],
     dirtySettings = false,
     found = portable as readonly PortableAgent[],
+    warnings = [] as readonly string[],
     page = {} as {
       navigation?: PageNavigation;
       navigator?: Navigation;
@@ -297,7 +298,7 @@ function setup(
       async (): Promise<FoundAgents> => ({
         agents: found,
         teams: [],
-        warnings: [],
+        warnings,
         here: [],
       }),
     ),
@@ -1660,6 +1661,42 @@ it("hides Import an agent and Import a team when there is nothing to import", as
     screen.queryByRole("menuitem", { name: "Import a team" }),
   ).not.toBeInTheDocument();
 });
+
+it.each([
+  [
+    "Your agents",
+    "New agent",
+    "Import an agent",
+    "No agents found in the sources we could read.",
+  ],
+  [
+    "Your teams",
+    "New team",
+    "Import a team",
+    "No teams found in the sources we could read.",
+  ],
+])(
+  "keeps %s import diagnostics reachable after incomplete discovery",
+  async (tab, menu, entry, partialResult) => {
+    const user = userEvent.setup();
+    const warning = "Couldn't read Buzz (Legacy) agents.";
+    const { agents } = setup([agent("Ada", 1)], {
+      found: [],
+      warnings: [warning],
+    });
+    await act(async () => {
+      await agents.portable.mock.results[0]?.value;
+    });
+    await user.click(screen.getByRole("tab", { name: tab }));
+    await user.click(screen.getByRole("button", { name: menu }));
+    await user.click(await screen.findByRole("menuitem", { name: entry }));
+    const dialog = screen.getByRole("dialog", { name: entry });
+    expect(await within(dialog).findByText(warning)).toBeVisible();
+    expect(within(dialog).getByText(partialResult)).toBeVisible();
+    expect(agents.port).not.toHaveBeenCalled();
+    expect(agents.portTeam).not.toHaveBeenCalled();
+  },
+);
 
 it("imports an old Buzz agent as the type chosen on its button", async () => {
   const user = userEvent.setup();

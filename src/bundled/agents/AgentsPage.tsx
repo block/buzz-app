@@ -206,9 +206,10 @@ export function AgentsPage({
   };
   const joinable = agents.joinable();
   const agentImports = [...joinable, ...(legacy?.agents ?? [])];
-  const canImportAgent = !legacy || agentImports.length > 0;
+  const discoveryIncomplete = !legacy || legacy.warnings.length > 0;
+  const canImportAgent = discoveryIncomplete || agentImports.length > 0;
   const canImportTeam =
-    !legacy ||
+    discoveryIncomplete ||
     legacy.teams.length + teamsToJoin(snapshot.teams, joinable).length > 0;
   const firstAgent = snapshot.status === "ready" && !snapshot.agents.length;
   const [localProviderKey, setLocalProviderKey] = useState<string>();
@@ -1443,7 +1444,11 @@ function ImportAgents({
       ))}
       {empty && !old.length ? (
         <p className="m-0 text-body-sm text-secondary">
-          {only === "teams" ? "No teams to import." : "No agents to import."}
+          {found.warnings.length
+            ? `No ${only} found in the sources we could read.`
+            : only === "teams"
+              ? "No teams to import."
+              : "No agents to import."}
         </p>
       ) : only === "teams" ? (
         <section aria-label="Teams to import">

@@ -246,9 +246,7 @@ function MemoryCommunity({
   return (
     <PopoverRoot>
       <PopoverTrigger
-        openOnHover
-        delay={250}
-        closeDelay={150}
+        openOnHover="preview"
         render={
           <IconButton
             aria-label={`Memory scope: ${name}`}

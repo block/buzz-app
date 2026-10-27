@@ -532,9 +532,7 @@ function SharedSettingsNotice({
     <div className={styles.sharedSettingsNotice}>
       <PopoverRoot>
         <PopoverTrigger
-          openOnHover
-          delay={250}
-          closeDelay={150}
+          openOnHover="preview"
           render={
             <Button variant="plain" size="inline" style={{ maxWidth: "100%" }}>
               <span className="flex min-w-0 flex-wrap items-center justify-center gap-1 whitespace-normal text-subtle">

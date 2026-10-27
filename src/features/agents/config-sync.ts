@@ -131,6 +131,8 @@ export function createConfigSync(
   const confirms = new WeakMap<Bound, Promise<boolean>>();
   /** Bindings the session's access change took, until read again. */
   const held = new WeakSet<Bound>();
+  /** Held bindings that heard a live revision, read again once synced. */
+  const heard = new WeakSet<Bound>();
   /** Bumped by each restart, so work started before one never marks a
    * binding synced. */
   let epoch = 0;
@@ -358,7 +360,7 @@ export function createConfigSync(
             readCurrent(snapshotRead(entry), entry.binding.channel),
           );
           await install(entry, heads, current, false, captured);
-          if (current() && alive(entry)) synced.add(entry);
+          if (current() && alive(entry)) caughtUp(entry);
         } catch (error) {
           failure(entry, error);
         }
@@ -448,7 +450,10 @@ export function createConfigSync(
       );
       if (!entry || !artifact) continue;
       // Held after an access change: only a fresh read installs again.
-      if (held.has(entry) && !synced.has(entry)) continue;
+      if (held.has(entry) && !synced.has(entry)) {
+        heard.add(entry);
+        continue;
+      }
       const { generation } = store.state(artifact.subject);
       record(
         entry,
@@ -463,9 +468,17 @@ export function createConfigSync(
     }
   }
 
+  /** A finite read installed: live revisions apply again, and one held
+   * meanwhile is read by `d`, since the read may predate it. */
+  function caughtUp(entry: Bound) {
+    synced.add(entry);
+    if (heard.delete(entry))
+      for (const artifact of entry.artifacts) reread(entry, artifact);
+  }
+
   /** Followed channels the session no longer grants: their config starts
    * nothing until a confirm and a fresh read give it back, and any failure of
-   * either is a denial. */
+   * either is a denial. A reconnect's own reads take over from this. */
   function followedRevoked(channels: readonly string[]) {
     for (const channel of channels) {
       const before = bound.get(channel);
@@ -477,17 +490,20 @@ export function createConfigSync(
       bound.set(channel, entry);
       held.add(entry);
       for (const { subject } of entry.artifacts) store.rebind(subject);
+      const at = epoch;
+      const current = () => alive(entry) && at === epoch;
       void (async () => {
         try {
-          if (!(await confirm(entry))) return;
+          if (!(await confirm(entry)) || !current()) return;
           const captured = capture(entry);
           const heads = await retrying(entry, () =>
             readCurrent(snapshotRead(entry), channel),
           );
-          await install(entry, heads, () => alive(entry), false, captured);
-          if (alive(entry)) synced.add(entry);
+          await install(entry, heads, current, false, captured);
+          if (current()) caughtUp(entry);
         } catch (error) {
-          failure(entry, error instanceof Denied ? error : new Denied());
+          if (current())
+            failure(entry, error instanceof Denied ? error : new Denied());
         }
       })();
     }
@@ -495,7 +511,7 @@ export function createConfigSync(
 
   /** Strong relay-signed metadata and roster for a bound channel. False when
    * it is archived or the owner left: the binding retires. One started since
-   * read newer authority, so an older confirm takes its answer instead. */
+   * read newer authority, so an older confirm takes its outcome instead. */
   function confirm(entry: Bound): Promise<boolean> {
     const id = entry.binding.channel;
     // Assigned before its first await resumes, which is where it is read.
@@ -519,8 +535,7 @@ export function createConfigSync(
         failed = error;
       }
       const newest = confirms.get(entry);
-      if (newest !== mine) return newest ?? alive(entry);
-      confirms.delete(entry);
+      if (newest && newest !== mine) return newest;
       if (failed) throw failed;
       if (!alive(entry)) return false;
       const signed = events.filter((e) => e.pubkey === feed.relayAuthor);

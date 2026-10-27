@@ -707,9 +707,14 @@ describe("config sync without a sync", () => {
   );
 
   /** A bound channel the relay has no sync for, following live. */
-  async function following() {
+  async function following(
+    answer: (
+      filter: ReadFilter,
+      a: RelayEvent,
+    ) => RelayEvent[] | Promise<RelayEvent[]> = (_, a) => [a],
+  ) {
     const a = await revision("A");
-    const relayFeed = controlled(() => [a]);
+    const relayFeed = controlled((filter) => answer(filter, a));
     relayFeed.state.capacity = false;
     const store = new AgentConfigStore(memoryStorage());
     const spies = hooks();
@@ -803,6 +808,76 @@ describe("config sync without a sync", () => {
   it("follows no channel while a sync is open", async () => {
     const { relayFeed } = await synced();
     expect(relayFeed.follows.size).toBe(0);
+  });
+
+  it("an older confirm takes a newer one's failure too", async () => {
+    const f = await following();
+    const older = held<RelayEvent[]>();
+    f.relayFeed.state.channel = () => older.promise;
+    f.revoke();
+    await flush();
+    f.relayFeed.state.channel = () => {
+      throw new Error("Relay unreachable");
+    };
+    f.hear(members());
+    await vi.waitFor(() =>
+      expect(f.spies.problem).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: "stale" }),
+      ),
+    );
+    older.release([metadata(), members()]);
+    await vi.waitFor(() =>
+      expect(f.spies.problem).toHaveBeenCalledWith({
+        channel,
+        kind: "denied",
+      }),
+    );
+    expect(f.store.instructions(instructions)).toMatchObject({ ok: false });
+  });
+
+  it("a revision heard during a recovery's read is caught up after it", async () => {
+    let b: RelayEvent | undefined;
+    const recovery = held<RelayEvent[]>();
+    let currents = 0;
+    const f = await following((filter, a) => {
+      if (filter.artifact !== "current") return b ? [b] : [a];
+      return ++currents === 2 ? recovery.promise : [a];
+    });
+    f.revoke();
+    await vi.waitFor(() => expect(currents).toBe(2));
+    b = await revision("B", f.a.id);
+    f.relayFeed.emit(b);
+    recovery.release([f.a]);
+    await vi.waitFor(() =>
+      expect(f.store.instructions(instructions)).toEqual({
+        ok: true,
+        text: "B",
+      }),
+    );
+  });
+
+  it("a recovery from before a reconnect never denies what the reconnect read", async () => {
+    const recovery = held<RelayEvent[]>();
+    let currents = 0;
+    const f = await following((filter, a) =>
+      filter.artifact === "current" && ++currents === 2
+        ? recovery.promise
+        : [a],
+    );
+    f.revoke();
+    await vi.waitFor(() => expect(currents).toBe(2));
+    f.relayFeed.reconnect();
+    await vi.waitFor(() =>
+      expect(f.store.instructions(instructions)).toEqual({
+        ok: true,
+        text: "A",
+      }),
+    );
+    recovery.fail(new Error("Relay read failed (403)"));
+    await flush();
+    await flush();
+    expect(f.store.instructions(instructions)).toEqual({ ok: true, text: "A" });
+    expect(f.spies.problem).not.toHaveBeenCalled();
   });
 
   it("a read held across a connection never replaces the deletion read after it", async () => {

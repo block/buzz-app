@@ -216,6 +216,7 @@ export function createPage({
     name,
     find,
     scope,
+    returnFocus,
   }: {
     agent: Agent;
     slug: string;
@@ -223,7 +224,16 @@ export function createPage({
     name(id: string): string;
     find(id: string): Channel | undefined;
     scope?: string | undefined;
+    returnFocus: React.RefObject<HTMLButtonElement | null>;
   }) {
+    const row = React.useRef<HTMLLIElement>(null);
+    React.useLayoutEffect(
+      () => () => {
+        if (row.current?.contains(document.activeElement))
+          returnFocus.current?.focus();
+      },
+      [returnFocus],
+    );
     const [open, setOpen] = React.useState(false);
     const action = useAction();
     const detailsId = React.useId();
@@ -326,6 +336,7 @@ export function createPage({
     return h(
       "li",
       {
+        ref: row,
         className: "attention-card",
         "data-paused":
           completed ||
@@ -558,11 +569,13 @@ export function createPage({
     channels,
     scope,
     picture,
+    returnFocus,
   }: {
     agent: Agent;
     channels: readonly Channel[];
     scope?: string | undefined;
     picture?: string | undefined;
+    returnFocus: React.RefObject<HTMLButtonElement | null>;
   }) {
     const action = useAction();
     const find = (id: string) => channels.find((channel) => channel.id === id);
@@ -708,6 +721,7 @@ export function createPage({
                 name,
                 find,
                 scope,
+                returnFocus,
               }),
             ),
           ),
@@ -749,6 +763,8 @@ export function createPage({
     );
   }
   return function AttentionPage() {
+    const newWatch = React.useRef<HTMLButtonElement>(null);
+    const form = React.useRef<HTMLFormElement>(null);
     const [recipeOpen, setRecipeOpen] = React.useState(false);
     const [adding, setAdding] = React.useState(false);
     const [selected, setSelected] = React.useState("");
@@ -811,6 +827,7 @@ export function createPage({
       h(PanelHeader, {
         title: h(PanelHeaderLabel, { title: "Agent Attention" }),
         actions: h(IconButton, {
+          ref: newWatch,
           size: "sm",
           variant: "ghost",
           icon: h(PlusIcon, { size: 16, "aria-hidden": true }),
@@ -851,7 +868,12 @@ export function createPage({
             h(RecipeForm, {
               running,
               channels,
-              close: () => setRecipeOpen(false),
+              formRef: form,
+              close: () => {
+                if (form.current?.contains(document.activeElement))
+                  newWatch.current?.focus();
+                setRecipeOpen(false);
+              },
             }),
           adding &&
             h(
@@ -911,6 +933,7 @@ export function createPage({
             h(AgentPanel, {
               key: agent.key,
               agent: agent as Agent,
+              returnFocus: newWatch,
               channels,
               scope: connection.scope,
               picture: avatarMedia(

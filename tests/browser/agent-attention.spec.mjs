@@ -43,6 +43,7 @@ test("Agent Attention fits both themes and sizes and creates a subscription by k
     .fill("https://github.com/example/project/pull/42");
   await form.getByRole("button", { name: "Create watch" }).click();
   await expect(form).toHaveCount(0);
+  await expect(create).toBeFocused();
   await expect(
     page.getByRole("link", { name: "Open project#42" }),
   ).toBeVisible();
@@ -103,6 +104,9 @@ test("the allowlist warning opens editable shared settings with usable narrow-la
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(
+    page.getByRole("button", { name: "GitHub allowlist", exact: true }),
+  ).toBeFocused();
+  await expect(
     page.getByText(/GitHub comments and reviews are off/),
   ).toHaveCount(0);
   await page
@@ -129,4 +133,73 @@ test("allowlist dialog discards drafts on Escape and outside click", async ({
   ).toHaveValue("");
   await page.mouse.click(5, 5);
   await expect(page.getByRole("dialog")).toHaveCount(0);
+});
+
+// Browser focus after removal, including async writes, cannot be proved by jsdom.
+test("watch cancellation and deletion restore focus without taking it from another control", async ({
+  page,
+}) => {
+  await page.goto("/tests/fixtures/agent-attention.html");
+  const create = page.getByRole("button", { name: "New watch" });
+  await create.focus();
+  await page.keyboard.press("Enter");
+  const cancel = page.getByRole("button", { name: "Cancel", exact: true });
+  await cancel.focus();
+  await page.keyboard.press("Enter");
+  await expect(create).toBeFocused();
+  const remove = page.getByRole("button", {
+    name: "Delete Release discussion",
+  });
+  await remove.focus();
+  await page.keyboard.press("Enter");
+  await expect(remove).toHaveCount(0);
+  await expect(create).toBeFocused();
+  await expect(
+    page.getByRole("region", { name: "Ada", exact: true }),
+  ).toHaveCount(0);
+
+  await page.reload();
+  await page.evaluate(() => window.attentionFixture.holdSave());
+  await remove.focus();
+  await page.keyboard.press("Enter");
+  try {
+    await expect
+      .poll(() => page.evaluate(() => window.attentionFixture.saveStarted))
+      .toBe(true);
+    await page.getByRole("button", { name: "Edit allowlist" }).focus();
+  } finally {
+    await page.evaluate(() => window.attentionFixture.releaseSave());
+  }
+  await expect(remove).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Edit allowlist" }),
+  ).toBeFocused();
+
+  await create.click();
+  const form = page.getByRole("form", { name: "New watch" });
+  await form.getByRole("combobox", { name: "Agent", exact: true }).click();
+  await page.getByRole("option", { name: "Ada", exact: true }).click();
+  await form
+    .getByRole("textbox", { name: "Interest instructions" })
+    .fill("Review release checks");
+  await form
+    .getByRole("textbox", { name: "Pull request URL" })
+    .fill("https://github.com/example/project/pull/42");
+  await page.evaluate(() => window.attentionFixture.holdSave());
+  await form.getByRole("button", { name: "Create watch" }).click();
+  try {
+    await expect
+      .poll(() => page.evaluate(() => window.attentionFixture.saveStarted))
+      .toBe(true);
+    await page.getByRole("button", { name: "Edit allowlist" }).focus();
+  } finally {
+    await page.evaluate(() => window.attentionFixture.releaseSave());
+  }
+  await expect(form).toHaveCount(0);
+  await expect(
+    page.getByRole("link", { name: "Open project#42" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Edit allowlist" }),
+  ).toBeFocused();
 });

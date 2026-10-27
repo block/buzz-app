@@ -87,6 +87,23 @@ const policyHost = {
     return { exited: Promise.resolve(0) };
   },
 };
+let saveGate: Promise<void> | undefined;
+const controls = {
+  saveStarted: false,
+  releaseSave: () => {},
+  holdSave() {
+    controls.saveStarted = false;
+    saveGate = new Promise<void>((resolve) => {
+      controls.releaseSave = resolve;
+    });
+  },
+};
+declare global {
+  interface Window {
+    attentionFixture: typeof controls;
+  }
+}
+window.attentionFixture = controls;
 const Page = createPage({
   host: policyHost,
   agents: {
@@ -102,6 +119,8 @@ const Page = createPage({
         attention?: Record<string, unknown>;
       },
     ) => {
+      controls.saveStarted = true;
+      await saveGate;
       const agent = snapshot.running[0];
       if (!agent) throw new Error("No fixture agent");
       const attention: Record<string, unknown> = { ...agent.attention };

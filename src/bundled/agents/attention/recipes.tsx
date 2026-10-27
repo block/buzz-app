@@ -269,10 +269,12 @@ export function createRecipeForm({
     running,
     channels,
     close,
+    formRef,
   }: {
     running: ReturnType<Context["agents"]["snapshot"]>["running"];
     channels: readonly { id: string; name: string }[];
     close(): void;
+    formRef?: React.Ref<HTMLFormElement>;
   }) {
     const [agent, setAgent] = React.useState("");
     const [recipe, setRecipe] = React.useState<Recipe>({
@@ -399,6 +401,7 @@ export function createRecipeForm({
     };
     return (
       <form
+        ref={formRef}
         className="attention-card attention-recipe"
         aria-label="New watch"
         onSubmit={(event) => {

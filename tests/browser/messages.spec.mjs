@@ -854,11 +854,30 @@ test("message tables keep their scrollbar inside the row across resizes", async 
     "Headless Chromium hides every scrollbar, and lays out an added one with its ancestors",
   );
   await page.addInitScript((css) => {
-    document.addEventListener("DOMContentLoaded", () => {
-      const style = document.createElement("style");
-      style.textContent = css;
-      document.head.append(style);
-    });
+    const style = document.createElement("style");
+    style.textContent = css;
+    // Virtua measures a row from its first layout, so record whether each
+    // table's message contains it as soon as React inserts it.
+    const mounts = [];
+    window.tableMounts = mounts;
+    new MutationObserver((records) => {
+      if (!style.isConnected) document.head?.append(style);
+      for (const { addedNodes } of records)
+        for (const node of addedNodes) {
+          if (!(node instanceof Element)) continue;
+          const tables = node.matches("table")
+            ? [node]
+            : node.querySelectorAll("table");
+          for (const table of tables)
+            if (table.closest('[aria-label="Channel message history"]'))
+              mounts.push(
+                Math.abs(
+                  table.parentElement.getBoundingClientRect().bottom -
+                    table.getBoundingClientRect().bottom,
+                ) < 0.5,
+              );
+        }
+    }).observe(document, { childList: true, subtree: true });
   }, spaceTakingScrollbars);
   await withMessagesFixture(page, async () => {
     const feed = page.getByRole("region", { name: "Channel message history" });
@@ -906,6 +925,8 @@ test("message tables keep their scrollbar inside the row across resizes", async 
 
     await expect.poll(wide).toEqual(scrolling);
     await expect.poll(narrower).toEqual(fitting);
+    // Both tables have mounted; each was contained in its first layout.
+    expect(await page.evaluate(() => window.tableMounts)).toEqual([true, true]);
     await resize(400);
     await expect.poll(narrower).toEqual(scrolling);
     await resize(900);

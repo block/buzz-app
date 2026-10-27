@@ -409,13 +409,16 @@ const markdownComponents: Components = {
  * have taken their heights, then lays out only the table again. A scrollbar
  * that takes space then overlaps the next row, or leaves a gap when removed.
  * A table's box resizes whenever its overflow changes; CSS chooses the
- * scrollbar from this state, so it is laid out with the ancestors. */
+ * scrollbar from this state, so it is laid out with the ancestors. Measure
+ * on mount too: the observer's first report arrives after the row's. */
 function observeTableOverflow(table: HTMLTableElement | null) {
   if (!table || typeof ResizeObserver === "undefined") return;
-  const observer = new ResizeObserver(() => {
+  const update = () => {
     const overflow = String(table.scrollWidth > table.clientWidth);
     if (table.dataset.overflow !== overflow) table.dataset.overflow = overflow;
-  });
+  };
+  update();
+  const observer = new ResizeObserver(update);
   observer.observe(table);
   return () => observer.disconnect();
 }

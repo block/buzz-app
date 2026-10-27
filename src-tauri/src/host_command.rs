@@ -208,7 +208,7 @@ pub(crate) async fn plugin_host_run_command(
 static LOGIN_SHELL_PATH: tokio::sync::OnceCell<Option<OsString>> =
     tokio::sync::OnceCell::const_new();
 #[cfg(target_os = "macos")]
-const LOGIN_SHELL_DEADLINE: Duration = Duration::from_secs(5);
+const LOGIN_SHELL_DEADLINE: Duration = Duration::from_secs(10);
 #[cfg(target_os = "macos")]
 const LOGIN_SHELL_PATH_MARKER: &str = "__BUZZ_LOGIN_SHELL_PATH__";
 
@@ -220,20 +220,40 @@ pub(crate) async fn load_login_shell_path() {
     #[cfg(target_os = "macos")]
     LOGIN_SHELL_PATH
         .get_or_init(|| async {
+            use std::io::IsTerminal as _;
+            // Started from a terminal, Buzz already has that shell's PATH, and an
+            // interactive probe would stop on the terminal it cannot take over.
+            if std::io::stdin().is_terminal() {
+                return None;
+            }
             let user = nix::unistd::User::from_uid(nix::unistd::getuid()).ok()??;
-            login_shell_path(&user.shell, LOGIN_SHELL_DEADLINE).await
+            let path = login_shell_path(&user.shell, LOGIN_SHELL_DEADLINE).await;
+            if path.is_none() {
+                eprintln!(
+                    "Could not read PATH from login shell {}; agents use the app's PATH",
+                    user.shell.display()
+                );
+            }
+            path
         })
         .await;
 }
 
 #[cfg(target_os = "macos")]
 async fn login_shell_path(shell: &Path, deadline: Duration) -> Option<OsString> {
-    let script = format!("printf '{LOGIN_SHELL_PATH_MARKER}%s{LOGIN_SHELL_PATH_MARKER}' \"$PATH\"");
+    // External commands only, so any shell's syntax runs it and PATH arrives
+    // colon-separated even from shells that keep it as a list, such as fish.
+    let script = format!(
+        "/usr/bin/printf {LOGIN_SHELL_PATH_MARKER}; /usr/bin/printenv PATH; /usr/bin/printf {LOGIN_SHELL_PATH_MARKER}"
+    );
     let args = ["-l", "-i", "-c", &script].map(String::from);
     // Profiles may print banners or exit non-zero after setting PATH.
     let (output, _) =
         run_output_with_input(shell, &args, deadline, OsStr::new(""), 1 << 20, None).await?;
-    let path = output.split(LOGIN_SHELL_PATH_MARKER).nth(1)?;
+    let path = output
+        .split(LOGIN_SHELL_PATH_MARKER)
+        .nth(1)?
+        .trim_end_matches('\n');
     (!path.is_empty()).then(|| path.into())
 }
 

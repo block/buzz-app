@@ -1680,6 +1680,9 @@ readable `text-message-link` at both vibe levels. Own messages use `text-message
 level's bubble fill. Components consume the matching link role;
 never pick a link color per component.
 
+InlineChip uses `affordance-inline-chip`: the existing subtle fill in light mode
+and the mention fill in dark mode, keeping references distinct from the composer.
+
 Mentions are people, not destinations, so they are chips rather than links.
 Spend the accent on mentions of you, not on mentions in general: ordinary
 mentions repeat in almost every message, so they stay a neutral chip

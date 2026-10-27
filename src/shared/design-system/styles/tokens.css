@@ -1076,6 +1076,7 @@
      of you joins the strong group, because it asks for your attention. Own
      bubbles may override the -own trio to stay distinct from their fill. */
   --affordance-mention: var(--neutral-4);
+  --affordance-inline-chip: var(--affordance-subtle);
   --affordance-mention-hover: var(--neutral-5);
   --text-mention: var(--text-standard);
   --affordance-mention-self: var(--affordance-accent-prominent);
@@ -1197,6 +1198,7 @@
      as selected rows and links do. Neutral 7 drops warm accent inks below
      AA, so hover settles one step back. */
   --affordance-mention: var(--neutral-6);
+  --affordance-inline-chip: var(--affordance-mention);
   --affordance-mention-hover: var(--neutral-5);
   --text-mention: var(--text-standard);
   --affordance-mention-self: var(--neutral-6);
@@ -1952,6 +1954,7 @@
   --color-affordance-accent: var(--affordance-accent);
   --color-affordance-accent-hover: var(--affordance-accent-hover);
   --color-affordance-mention: var(--affordance-mention);
+  --color-affordance-inline-chip: var(--affordance-inline-chip);
   --color-affordance-mention-hover: var(--affordance-mention-hover);
   --color-affordance-mention-own: var(--affordance-mention-own);
   --color-affordance-mention-own-hover: var(--affordance-mention-own-hover);

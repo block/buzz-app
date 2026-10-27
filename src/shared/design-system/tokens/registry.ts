@@ -1148,6 +1148,13 @@ export const ROLE_GROUPS: RoleGroup[] = [
         status: "core",
       },
       {
+        token: "bg-affordance-inline-chip",
+        variable: "--affordance-inline-chip",
+        pointsAt: "affordance-subtle light / affordance-mention dark",
+        use: "Inline reference fill, distinct from the composer surface in both themes.",
+        status: "core",
+      },
+      {
         token: "bg-affordance-mention",
         variable: "--affordance-mention",
         pointsAt: "neutral-4 light / neutral-6 dark",

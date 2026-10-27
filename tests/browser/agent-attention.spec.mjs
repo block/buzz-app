@@ -76,16 +76,16 @@ test("watch and interest deletion restore focus without taking it from another c
     name: "Delete Release discussion",
   });
   await page.mouse.move(1, 1);
-  await expect(remove).toHaveCSS("opacity", "0");
+  await expect(remove.locator("..")).toHaveCSS("opacity", "0");
   await remove.locator("xpath=ancestor::li").hover();
-  await expect(remove).toHaveCSS("opacity", "1");
+  await expect(remove.locator("..")).toHaveCSS("opacity", "1");
   await page.mouse.move(1, 1);
   await page.getByRole("switch", { name: "Watch Release discussion" }).focus();
   await page.keyboard.press("Tab");
   await expect(remove).toBeFocused();
   await page.evaluate(() => window.attentionFixture.holdSave());
   await remove.focus();
-  await expect(remove).toHaveCSS("opacity", "1");
+  await expect(remove.locator("..")).toHaveCSS("opacity", "1");
   await page.keyboard.press("Enter");
   try {
     await expect
@@ -106,10 +106,10 @@ test("watch and interest deletion restore focus without taking it from another c
     name: "Delete Interest Release planning",
   });
   await expect(removeInterest).toHaveText("");
-  await expect(removeInterest).toHaveCSS("opacity", "0");
+  await expect(removeInterest.locator("..")).toHaveCSS("opacity", "0");
   await page.evaluate(() => window.attentionFixture.holdSave());
   await removeInterest.focus();
-  await expect(removeInterest).toHaveCSS("opacity", "1");
+  await expect(removeInterest.locator("..")).toHaveCSS("opacity", "1");
   await page.keyboard.press("Enter");
   try {
     await expect
@@ -155,13 +155,13 @@ test.describe("touch delete actions", () => {
     const remove = page.getByRole("button", {
       name: "Delete Release discussion",
     });
-    await expect(remove).toHaveCSS("opacity", "1");
+    await expect(remove.locator("..")).toHaveCSS("opacity", "1");
     await remove.tap();
     await expect(remove).toHaveCount(0);
     const interest = page.getByRole("button", {
       name: "Delete Interest Release planning",
     });
-    await expect(interest).toHaveCSS("opacity", "1");
+    await expect(interest.locator("..")).toHaveCSS("opacity", "1");
     await interest.tap();
     await expect(interest).toHaveCount(0);
   });

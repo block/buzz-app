@@ -1,6 +1,52 @@
 import { expect } from "@playwright/test";
 import { test } from "./source-fixture.mjs";
 
+test("grouped reaction counts fit and preview in both themes and text sizes", async ({
+  page,
+}) => {
+  await page.goto("/tests/fixtures/emoji.html?reactions&grouped&narrow");
+  const group = page.getByRole("button", { name: "👍: 16 people" });
+  for (const theme of ["light", "dark"]) {
+    for (const scale of [1, 2]) {
+      await page.evaluate(
+        ({ theme, scale }) => {
+          document.documentElement.dataset.colorMode = theme;
+          document.documentElement.style.setProperty(
+            "--buzz-text-scale",
+            String(scale),
+          );
+        },
+        { theme, scale },
+      );
+      await expect(group).toBeVisible();
+      await expect(group).toContainText("16");
+      await expect
+        .poll(() =>
+          group.evaluate((button) => {
+            const control = button.getBoundingClientRect();
+            const glyph = button
+              .querySelector("[data-reaction-glyph]")
+              .getBoundingClientRect();
+            return (
+              glyph.left >= control.left &&
+              glyph.right <= control.right &&
+              glyph.top >= control.top &&
+              glyph.bottom <= control.bottom
+            );
+          }),
+        )
+        .toBe(true);
+    }
+  }
+  await group.focus();
+  await expect(page.getByRole("tooltip")).toBeVisible();
+  await page.screenshot({
+    path: test.info().outputPath("grouped-reactions.png"),
+  });
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("tooltip")).toHaveCount(0);
+});
+
 // Browser-only: actual rem geometry and the line-height clipping boundary need
 // the production stylesheet and layout engine, not a DOM emulator.
 test("reaction emojis and hit areas grow together without clipping", async ({

@@ -212,6 +212,16 @@ const sessions = ["a", "b"].map((community) => {
     created_at: 15,
     tags: [["e", root.id]],
   });
+  const groupedReactions = new URLSearchParams(location.search).has("grouped")
+    ? Array.from({ length: 16 }, (_, index) =>
+        signed(keypair(), {
+          kind: 7,
+          content: "👍",
+          created_at: 40 + index,
+          tags: [["e", root.id]],
+        }),
+      )
+    : [];
   const longReactions = long
     ? [
         signed(member, {
@@ -261,6 +271,7 @@ const sessions = ["a", "b"].map((community) => {
     ...(wrap ? [...wrapReactions, ownReaction] : []),
     ...longReactions,
     ...repeatedReactions,
+    ...groupedReactions,
   ]);
   return {
     ...owner,
@@ -272,6 +283,7 @@ const sessions = ["a", "b"].map((community) => {
       ...(wrap ? [...wrapReactions, ownReaction] : []),
       ...longReactions,
       ...repeatedReactions,
+      ...groupedReactions,
       broken,
       unloaded,
       single,

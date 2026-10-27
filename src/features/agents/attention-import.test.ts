@@ -226,13 +226,15 @@ it("retains a registration when its existing Interest has different instructions
 });
 
 it.each([
-  ["registration", true],
-  ["wake", true],
-  ["registration", false],
-  ["wake", false],
+  ["registration", true, true],
+  ["wake", true, true],
+  ["registration", false, true],
+  ["registration", false, false],
+  ["wake", false, true],
+  ["wake", false, false],
 ])(
-  "imports %s into its destination membership (home present: %s)",
-  async (kind, hasHome) => {
+  "imports %s into its destination membership (home present: %s, owner sees channel: %s)",
+  async (kind, hasHome, visible) => {
     const home = {
       key: "agent",
       pubkey: "agent",
@@ -254,7 +256,9 @@ it.each([
             channels: {
               list: () => ({
                 channels:
-                  key === target.key ? [{ id: registration.channel }] : [],
+                  visible && key === target.key
+                    ? [{ id: registration.channel }]
+                    : [],
               }),
             },
           },
@@ -378,9 +382,24 @@ it("retries discovery after a session replacement and cleans up its listeners", 
     snapshot: () => ({
       running: [
         { key: "agent", pubkey: "agent", place: "here", attention: {} },
+        { key: "agent@other", pubkey: "agent", place: "here", attention: {} },
       ],
     }),
-    relay: () => connection,
+    relay: (key: string) =>
+      key === "agent"
+        ? connection
+        : {
+            snapshot: () => ({
+              status: "ready",
+              session: {
+                channels: {
+                  list: () => ({ channels: [] }),
+                  subscribeList: () => () => {},
+                },
+              },
+            }),
+            subscribe: () => () => {},
+          },
     subscribe: () => () => {},
     save,
   } as unknown as Agents;

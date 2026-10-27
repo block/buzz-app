@@ -38,10 +38,15 @@ export async function importAttention(
     return output;
   };
   const recipient = (pubkey: string, channel: string) => {
-    const [agent, ...others] = agents.snapshot().running.filter((agent) => {
-      if (agent.pubkey !== pubkey || agent.place !== "here") return false;
+    const memberships = agents
+      .snapshot()
+      .running.filter(
+        (agent) => agent.pubkey === pubkey && agent.place === "here",
+      );
+    const [agent, ...others] = memberships.filter((agent) => {
       const relay = agents.relay(agent.key)?.snapshot();
       if (relay?.status !== "ready") return false;
+      if (memberships.length === 1) return true;
       const channels = relay.session.channels;
       return (
         channels.list().channels.some(({ id }) => id === channel) ||

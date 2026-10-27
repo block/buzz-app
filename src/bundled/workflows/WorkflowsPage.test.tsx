@@ -889,6 +889,12 @@ it("opens a selected card in the side pane and drops a stale channel filter", as
     </ToastProvider>,
   );
   const user = userEvent.setup();
+  expect(
+    screen.getByRole("button", { name: "Filters" }).closest("header"),
+  ).not.toBeNull();
+  expect(screen.getByRole("button", { name: "Filters" })).toHaveTextContent(
+    /^$/,
+  );
   const openChannels = async () => {
     screen.getByRole("button", { name: "Filters" }).focus();
     await user.keyboard("{Enter}");
@@ -969,9 +975,9 @@ it("opens a selected card in the side pane and drops a stale channel filter", as
       screen.queryByRole("dialog", { name: "Workflow filters" }),
     ).toBeNull(),
   );
-  expect(screen.getByRole("button", { name: "Filters" })).toHaveTextContent(
-    "2 channels",
-  );
+  expect(
+    screen.getAllByRole("button", { name: /^Remove #.* filter$/ }),
+  ).toHaveLength(2);
   expect(
     screen.getByRole("button", { name: /^Open Message helper:/ }),
   ).toBeVisible();
@@ -1002,9 +1008,9 @@ it("opens a selected card in the side pane and drops a stale channel filter", as
       screen.queryByRole("dialog", { name: "Workflow filters" }),
     ).toBeNull(),
   );
-  expect(screen.getByRole("button", { name: "Filters" })).toHaveTextContent(
-    "Filters",
-  );
+  expect(
+    screen.queryByRole("button", { name: /^Remove #.* filter$/ }),
+  ).toBeNull();
   expect(
     screen.getByRole("button", { name: /^Open Message helper:/ }),
   ).toBeVisible();
@@ -1026,11 +1032,8 @@ it("opens a selected card in the side pane and drops a stale channel filter", as
       screen.queryByRole("dialog", { name: "Workflow filters" }),
     ).toBeNull(),
   );
-  expect(screen.getByRole("button", { name: "Filters" })).toHaveTextContent(
-    "Filters",
-  );
   expect(
-    screen.queryByRole("button", { name: /Remove .* channel filter/ }),
+    screen.queryByRole("button", { name: /^Remove #.* filter$/ }),
   ).toBeNull();
   await openChannels();
   await user.click(screen.getByRole("button", { name: "Other channel" }));
@@ -1046,18 +1049,18 @@ it("opens a selected card in the side pane and drops a stale channel filter", as
       data: { partial: false, items: [] },
     }),
   );
-  expect(screen.getByRole("button", { name: "Filters" })).toHaveTextContent(
-    "1 channel",
-  );
+  expect(
+    screen.getByRole("button", { name: "Remove #Other channel filter" }),
+  ).toBeInTheDocument();
   act(() =>
     fixture.definitions.update({
       status: "ready",
       data: { partial: false, items: [fixtureDefinition] },
     }),
   );
-  expect(screen.getByRole("button", { name: "Filters" })).toHaveTextContent(
-    "Filters",
-  );
+  expect(
+    screen.queryByRole("button", { name: /^Remove #.* filter$/ }),
+  ).toBeNull();
   await openChannels();
   await screen.findByRole("button", { name: "Fixture channel" });
   expect(screen.queryByRole("button", { name: "Other channel" })).toBeNull();
@@ -1083,9 +1086,9 @@ it("opens a selected card in the side pane and drops a stale channel filter", as
       screen.queryByRole("dialog", { name: "Workflow filters" }),
     ).toBeNull(),
   );
-  expect(screen.getByRole("button", { name: "Filters" })).toHaveTextContent(
-    "1 channel",
-  );
+  expect(
+    screen.getByRole("button", { name: "Remove #Other channel filter" }),
+  ).toBeInTheDocument();
   act(() => {
     list = {
       ...list,
@@ -1093,9 +1096,9 @@ it("opens a selected card in the side pane and drops a stale channel filter", as
     };
     for (const listener of listeners) listener();
   });
-  expect(screen.getByRole("button", { name: "Filters" })).toHaveTextContent(
-    "Filters",
-  );
+  expect(
+    screen.queryByRole("button", { name: /^Remove #.* filter$/ }),
+  ).toBeNull();
   expect(
     await screen.findByRole("button", { name: /^Open Message helper:/ }),
   ).toBeVisible();

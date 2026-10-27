@@ -527,7 +527,7 @@ test("real session page under StrictMode fences community changes, warns before 
   const { button } = editor;
   const choose = async (name) => {
     await page.getByRole("button", { name: "Filters", exact: true }).click();
-    await page.getByRole("checkbox", { name, exact: true }).click();
+    await page.getByRole("button", { name, exact: true }).click();
     await page.keyboard.press("Escape");
     await expect(
       page.getByRole("dialog", { name: "Workflow filters" }),
@@ -571,10 +571,10 @@ test("real session page under StrictMode fences community changes, warns before 
   await expect(editor.region).toHaveCount(0);
   await page.getByRole("button", { name: "Filters", exact: true }).click();
   await expect(
-    page.getByRole("checkbox", { name: "First channel", exact: true }),
+    page.getByRole("button", { name: "First channel", exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByRole("checkbox", { name: "Second channel", exact: true }),
+    page.getByRole("button", { name: "Second channel", exact: true }),
   ).toHaveCount(0);
   await page.keyboard.press("Escape");
   await expect(
@@ -1790,7 +1790,7 @@ test("real session reconnect retains unsaved YAML and an in-flight run request",
   const dialog = editorDialog(page);
   await page.getByRole("button", { name: "Filters", exact: true }).click();
   await page
-    .getByRole("checkbox", { name: "First channel", exact: true })
+    .getByRole("button", { name: "First channel", exact: true })
     .click();
   await page.keyboard.press("Escape");
   await expect(
@@ -1849,7 +1849,7 @@ test("generic Outbox offers message retry but no workflow replay", async ({
   const button = (name) => page.getByRole("button", { name, exact: true });
   await page.getByRole("button", { name: "Filters", exact: true }).click();
   await page
-    .getByRole("checkbox", { name: "First channel", exact: true })
+    .getByRole("button", { name: "First channel", exact: true })
     .click();
   await page.keyboard.press("Escape");
   await expect(

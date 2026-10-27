@@ -16,8 +16,10 @@ See the [capability contract](../src/features/workflows/types.ts).
   My workflows matches the current viewer's saved workflow ownership. Enabled
   matches the saved enabled setting (omitted means enabled), not confirmed runtime
   activity; unreadable configurations are excluded from this filter. These filters
-  combine with channel selection. The Filters popover summarizes active filters;
-  both Workflow and Channels groups use lightweight selectable rows with a
+  combine with channel selection. A filter icon in the top-right pane header opens
+  the Filters popover; removable active-filter chips appear above the collection.
+  The header icon is a local exception to the usual body-filter placement rule.
+  Both Workflow and Channels groups use lightweight selectable rows with a
   selected fill and trailing check. Channels use a scrollable two-column list.
   Clear all at the top resets every filter.
   Discovery still reads all eligible channels.

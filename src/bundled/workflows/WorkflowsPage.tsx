@@ -90,6 +90,7 @@ export function WorkflowCommunity({
   const [deleteError, setDeleteError] = useState<string>();
   const [createOpen, setCreateOpen] = useState(false);
   const [filter, setFilter] = useState<readonly string[]>([]);
+  const [filterTarget, setFilterTarget] = useState<HTMLDivElement | null>(null);
   const split = usePanelSplit(448, 320);
   const [detail, setDetail] = useState<{ key: string; name: string }>();
   const [detailTarget, setDetailTarget] = useState<HTMLElement | null>(null);
@@ -221,6 +222,12 @@ export function WorkflowCommunity({
                     }
                     onClick={() => setRefreshRequest((request) => request + 1)}
                   />
+                  {eligible.length > 0 && (
+                    <div
+                      className="workflow-filter-action"
+                      ref={setFilterTarget}
+                    />
+                  )}
                 </>
               }
             />
@@ -251,6 +258,7 @@ export function WorkflowCommunity({
                   capability={capability}
                   channels={eligible}
                   filter={filter}
+                  filterTarget={filterTarget}
                   onFilterChange={setFilter}
                   detailTarget={detailTarget}
                   selected={detail?.key}

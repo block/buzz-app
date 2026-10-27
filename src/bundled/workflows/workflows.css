@@ -30,15 +30,27 @@
 .workflow-page-filter {
   position: relative;
   display: flex;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  margin-top: 0;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-3);
   margin-bottom: var(--space-4);
 }
+.workflow-page-filter:empty {
+  display: none;
+}
+.workflow-filter-action {
+  display: flex;
+  align-items: center;
+}
 .workflow-list-transition {
   min-width: 0;
 }
-.workflow-page-filter > .buzz-button {
+.workflow-page-filter > .workflow-list-transition,
+.workflow-page-filter .buzz-button {
   max-width: 100%;
 }
 .workflow-filter-label {

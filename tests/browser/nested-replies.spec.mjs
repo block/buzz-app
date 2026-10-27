@@ -191,7 +191,9 @@ test("nested replies send, stay open, and reveal through links at readable panel
     const pending = panel
       .locator("[data-message-id]")
       .filter({ hasText: "Grandchild browser reply" });
-    await expect(pending.locator('[data-layout="thread"]')).toBeVisible();
+    // Replying to a nested reply continues its branch, so an own consecutive
+    // send stacks as a continuation.
+    await expect(pending.locator('[data-layout="continuation"]')).toBeVisible();
     await expect.poll(() => grandchildRequested).toBe(true);
     await expect(
       (await replyActions(pending)).getByRole("button", {
@@ -229,9 +231,19 @@ test("nested replies send, stay open, and reveal through links at readable panel
   const grandchildRow = panel.locator(`[data-message-id="${grandchild.id}"]`);
   await expect(grandchildRow).toBeInViewport();
   await expect(editor).toBeFocused();
-  // Crossing into a nested branch repeats the author, even for own consecutive sends.
-  await expect(grandchildRow.locator('[data-layout="thread"]')).toBeVisible();
-  await expect(grandchildRow.locator("time")).toBeVisible();
+  // The signed parent stays exact, but the display keeps one level: the reply
+  // joins the nested row's branch instead of opening a deeper one.
+  await expect(
+    grandchildRow.locator('[data-layout="continuation"]'),
+  ).toBeVisible();
+  const branchOf = (row) =>
+    row.locator('xpath=ancestor::*[@data-depth="0"][1]');
+  await expect(
+    grandchildRow.locator("xpath=ancestor::*[@data-depth][1]"),
+  ).toHaveAttribute("data-depth", "1");
+  await expect(
+    branchOf(nestedRow).locator(`[data-message-id="${grandchild.id}"]`),
+  ).toHaveCount(1);
   await editor.focus();
   await expect(
     panel.getByRole("button", { name: /Hide replies|Collapse this branch/ }),
@@ -257,8 +269,21 @@ test("nested replies send, stay open, and reveal through links at readable panel
     const event = app.report.publications.find(
       ({ event }) => event?.content === content,
     ).event;
+    expect(event.tags.filter(([key]) => key === "e")).toContainEqual([
+      "e",
+      root.id,
+      "",
+      "root",
+    ]);
     deepest = panel.locator(`[data-message-id="${event.id}"]`);
     await expect(deepest).toBeInViewport();
+    // Every reply in the chain stays in the same one-level branch.
+    await expect(
+      deepest.locator("xpath=ancestor::*[@data-depth][1]"),
+    ).toHaveAttribute("data-depth", "1");
+    await expect(
+      branchOf(nestedRow).locator(`[data-message-id="${event.id}"]`),
+    ).toHaveCount(1);
   }
   // Include phone widths with the persistent sidebar still visible.
   for (const width of [1492, 1280, 1024, 524, 522, 480, 390]) {
@@ -274,18 +299,11 @@ test("nested replies send, stay open, and reveal through links at readable panel
     ).toHaveCount(0);
     const deepestBox = await deepest.boundingBox();
     expect(deepestBox.width).toBeGreaterThan(140);
-    const capped = deepest.locator(
-      'xpath=ancestor::*[@data-depth and @data-open="true"][1]',
+    // The open branch keeps its spine at every width.
+    const spine = await branchOf(deepest).evaluate(
+      (node) => getComputedStyle(node.firstElementChild, "::after").display,
     );
-    const spine = await capped.evaluate((node) => {
-      const message = node.firstElementChild;
-      return {
-        stub: getComputedStyle(message, "::after").display,
-        offset: getComputedStyle(message, "::after").left,
-      };
-    });
-    expect(spine.stub).not.toBe("none");
-    expect(parseFloat(spine.offset)).toBeLessThan(0);
+    expect(spine).not.toBe("none");
 
     for (const theme of ["light", "dark"]) {
       await page.evaluate(
@@ -530,19 +548,27 @@ for (const width of [1492, 1280, 1024, 700, 390])
     });
     const branchFor = (id) =>
       panel.locator(`[data-message-id="${id}"]`).locator("../..");
+    // The whole reply chain lifts into the first reply's branch, so one
+    // disclosure reveals every reply in history order.
     const expandAll = async () => {
-      for (const id of ids.slice(0, -1)) {
-        const branch = branchFor(id);
-        if ((await branch.getAttribute("data-open")) === "false")
-          await branch
-            .locator(":scope > div")
-            .nth(1)
-            .getByRole("button")
-            .press("Enter");
-        await expect(
-          panel.locator(`[data-message-id="${ids[ids.indexOf(id) + 1]}"]`),
-        ).toBeFocused();
-      }
+      const branch = branchFor(ids[0]);
+      await expect(branch).toHaveAttribute("data-open", "false");
+      await branch
+        .locator(":scope > div")
+        .nth(1)
+        .getByRole("button")
+        .press("Enter");
+      await expect(
+        panel.locator(`[data-message-id="${ids[1]}"]`),
+      ).toBeFocused();
+      await expect(
+        branch.getByRole("button", { name: /^View \d+ repl/ }),
+      ).toHaveCount(0);
+      expect(
+        await branch
+          .locator("[data-message-id]")
+          .evaluateAll((rows) => rows.map((row) => row.dataset.messageId)),
+      ).toEqual([...ids, continuation.id]);
     };
     await page.setViewportSize({ width, height: 950 });
     await expandAll();
@@ -572,7 +598,7 @@ for (const width of [1492, 1280, 1024, 700, 390])
       .locator('[role="tab"][data-tab-value^="thread:"][aria-selected="true"]')
       .hover();
     await expect(clock).toHaveClass(/sr-only/);
-    for (const id of [...ids.slice(0, -1), continuation.id]) {
+    for (const id of [...ids, continuation.id]) {
       const branch = branchFor(id);
       const row = panel.locator(`[data-message-id="${id}"]`);
       await panel.getByRole("textbox", { name: "Reply to thread" }).focus();
@@ -774,7 +800,7 @@ for (const width of [1492, 1280, 1024, 700, 390])
       .hover();
     // Resting state must match the contract for every rendered reply, not just
     // the first: hidden on desktop hover-capable widths, always usable below 640.
-    for (const id of [...ids.slice(0, -1), continuation.id]) {
+    for (const id of [...ids, continuation.id]) {
       await expect(
         panel
           .locator(`[data-message-id="${id}"]`)

@@ -205,7 +205,7 @@ export function DeveloperSettings({ relay }: { relay: RelayData }) {
         <div className="space-y-2">
           <InlineHeader
             title="Agent import"
-            subtitle="Try each case of importing agents and teams on the Agents page. Pretend imports change nothing."
+            subtitle="Simulated findings leave agents unchanged. Real data uses actual imports, even when shown as a new community."
           />
           <SettingsGroup layout="form">
             <PreferenceRow

@@ -381,6 +381,66 @@ test("nested replies send, stay open, and reveal through links at readable panel
   ).toBeEnabled();
 });
 
+// The audience body stacks its own inner row, which must not read as a
+// following bubble in the branch.
+for (const own of [false, true])
+  test(`a final agents reply keeps its branch hook while open (${own ? "viewer" : "peer"} branch)`, async ({
+    page,
+    app,
+  }) => {
+    const root = app.histories
+      .get("primary/alpha")
+      .find((event) => event.content === "Thread root 0");
+    const parent = app.append(
+      "primary",
+      "alpha",
+      "Branch start",
+      false,
+      own,
+      root.id,
+    );
+    const agents = app.append(
+      "primary",
+      "alpha",
+      "Agents coordination note",
+      false,
+      own,
+      root.id,
+      parent.id,
+      [["audience", "agents"]],
+    );
+    await open(page, app);
+    await page
+      .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
+      .getByRole("button", { name: /^View thread:/ })
+      .click();
+    const panel = page.getByRole("complementary", {
+      name: "Thread",
+      exact: true,
+    });
+    const summary = panel
+      .locator(`[data-message-id="${parent.id}"]`)
+      .locator("xpath=ancestor::*[@data-depth][1]")
+      .locator("[data-thread-summary]");
+    if (await summary.count()) await summary.click();
+    const row = panel.locator(`[data-message-id="${agents.id}"]`);
+    await expect(row).toBeVisible();
+    const hook = () =>
+      row.evaluate(
+        (node) => getComputedStyle(node.closest("li"), "::before").content,
+      );
+    await expect.poll(hook).toBe('""');
+    const toggle = row.getByRole("button", {
+      name: /Agents coordination note/,
+    });
+    await toggle.click();
+    await expect(toggle).toHaveAttribute("aria-expanded", "true");
+    await expect.poll(hook).toBe('""');
+    await toggle.click();
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await expect.poll(hook).toBe('""');
+  });
+
 test("an exact linked reply stays readable when its parent is outside loaded history", async ({
   page,
   app,
@@ -581,6 +641,17 @@ for (const width of [1492, 1280, 1024, 700, 390])
     };
     await page.setViewportSize({ width, height: 950 });
     await expandAll();
+    // Stacked bubbles share one avatar, so only the last of a run hooks in.
+    const hooks = await panel
+      .locator(
+        `[data-message-id="${ids[9]}"], [data-message-id="${continuation.id}"]`,
+      )
+      .evaluateAll((rows) =>
+        rows.map(
+          (row) => getComputedStyle(row.closest("li"), "::before").content,
+        ),
+      );
+    expect(hooks).toEqual(["none", '""']);
     // A same-parent continuation keeps its full timestamp for assistive
     // technology without an inline clock or a bubble hover.
     const continuationRow = panel.locator(

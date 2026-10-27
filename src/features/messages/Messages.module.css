@@ -2022,11 +2022,12 @@ html[data-keyboard-input] .quickReactionGlyph {
   border-end-start-radius: var(--radius-control);
   pointer-events: none;
 }
-/* Stacked bubbles share the last one's avatar, so only that row hooks in. */
+/* Stacked bubbles share the last one's avatar, so only that row hooks in.
+   Match the row's own marker, not rows nested inside an agents disclosure. */
 .replyBranchPanel
   > ol
   > .replyItem:has(
-    > .replyBranch > .replyBranchMessage [data-stack-next]
+    > .replyBranch > .replyBranchMessage > [data-message-id] > [data-stack-next]
   )::before {
   content: none;
 }

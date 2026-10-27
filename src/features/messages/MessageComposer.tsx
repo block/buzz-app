@@ -141,7 +141,7 @@ const acceptedDrafts = new WeakMap<
 >();
 type RecoveredSend = {
   draft: MentionDraft;
-  picks?: MentionPicks;
+  picks?: DraftPicks;
   preparationError?: unknown;
 };
 const recoveryListeners = new WeakMap<
@@ -828,7 +828,7 @@ function Composer({
   // Picks belong to the recovered revision alone. They return whenever the
   // composer holds it unedited, never to a later edit that keeps a conflict.
   const reconcileDraft = useEffectEvent(
-    (restored?: MentionDraft, recoveredPicks?: MentionPicks) => {
+    (restored?: MentionDraft, recoveredPicks?: DraftPicks) => {
       if (submission || editing.target || writing.current) return;
       if (accepted) {
         // The recovered revision can precede attachment adoption. The explicit

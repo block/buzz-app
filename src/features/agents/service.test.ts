@@ -919,6 +919,80 @@ it("keeps a team's imported members when the team cannot be saved, and changes n
   expect(service.snapshot().teams).toEqual(teams);
 });
 
+it.each(["edit", "delete"])(
+  "rejects a stale watch toggle after a concurrent %s",
+  async (operation) => {
+    const { service } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    const expected = service.find(bot)?.attention["watch/channel"];
+    if (!expected) throw new Error("fixture");
+    if (expected.value.type !== "event") throw new Error("fixture");
+    const edited = { ...expected.value, channels: "all" as const };
+    await service.save(bot, {
+      attention: { "watch/channel": operation === "delete" ? null : edited },
+    });
+    const before = service.find(bot)?.attention;
+    await expect(
+      service.save(bot, {
+        watchEnabled: { "watch/channel": { enabled: false, expected } },
+      }),
+    ).rejects.toThrow(/changed/);
+    expect(service.find(bot)?.attention).toEqual(before);
+  },
+);
+
+it("sets a watch's target enabled value without changing its configuration", async () => {
+  const { service } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  const expected = service.find(bot)?.attention["watch/channel"];
+  if (!expected) throw new Error("fixture");
+  await service.save(bot, {
+    watchEnabled: { "watch/channel": { enabled: false, expected } },
+  });
+  expect(service.find(bot)?.attention["watch/channel"]?.value).toEqual({
+    ...expected.value,
+    enabled: false,
+  });
+  const paused = service.find(bot)?.attention["watch/channel"];
+  if (!paused) throw new Error("fixture");
+  await service.save(bot, {
+    watchEnabled: { "watch/channel": { enabled: false, expected: paused } },
+  });
+  expect(service.find(bot)?.attention["watch/channel"]).toBe(paused);
+});
+
+it("checks a watch toggle after a queued edit commits", async () => {
+  let hold: Promise<void> | undefined;
+  let entered = () => {};
+  const storage = fileStore(new Map(), async () => {
+    entered();
+    await hold;
+  });
+  const { service } = await setup({ storage });
+  await service.create({ type: "example/echo", name: "Echo" });
+  const expected = service.find(bot)?.attention["watch/channel"];
+  if (!expected) throw new Error("fixture");
+  if (expected.value.type !== "event") throw new Error("fixture");
+  let release = () => {};
+  hold = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const edited = { ...expected.value, channels: "all" as const };
+  const edit = service.save(bot, { attention: { "watch/channel": edited } });
+  await started;
+  const toggle = service.save(bot, {
+    watchEnabled: { "watch/channel": { enabled: false, expected } },
+  });
+  const rejected = expect(toggle).rejects.toThrow(/changed/);
+  release();
+  await edit;
+  await rejected;
+  expect(service.find(bot)?.attention["watch/channel"]?.value).toEqual(edited);
+});
+
 it("delivers mentions and matching watches once, and never the agent's own events", async () => {
   const { service, run, emit } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
@@ -941,6 +1015,15 @@ it("delivers mentions and matching watches once, and never the agent's own event
     slug: "watch/channel",
     interest: { instructions: "Be brief." },
   });
+  await vi.waitFor(() =>
+    expect(
+      service.find(bot)?.attentionHistory?.["watch/channel"]?.output,
+    ).toContain(watched.content),
+  );
+  const output = service.find(bot)?.attentionHistory?.["watch/channel"]?.output;
+  if (!output) throw new Error("missing history");
+  expect(output).toContain(watched.pubkey);
+  expect(output.match(/deploy/g)).toHaveLength(1);
   expect(first?.channelId).toBe(channel);
   expect(first?.config).toEqual({ reply: "ok" });
 });

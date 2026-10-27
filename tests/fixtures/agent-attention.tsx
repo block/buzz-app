@@ -28,6 +28,12 @@ let snapshot = {
       name: "Ada",
       attentionEnabled: true,
       timers: {},
+      attentionHistory: {
+        "watch/discussion": {
+          output:
+            "2026-10-27T14:00:00Z · Alex\nThe release is ready for review.",
+        },
+      },
       attention: {
         "interest/release": {
           slug: "interest/release",
@@ -117,6 +123,7 @@ const Page = createPage({
       patch: {
         attentionEnabled?: boolean;
         attention?: Record<string, unknown>;
+        watchEnabled?: Record<string, { enabled: boolean; expected: unknown }>;
       },
     ) => {
       controls.saveStarted = true;
@@ -127,6 +134,14 @@ const Page = createPage({
       for (const [slug, value] of Object.entries(patch.attention ?? {})) {
         if (value === null) delete attention[slug];
         else attention[slug] = { slug, value, modifiedAt: 2 };
+      }
+      for (const [slug, target] of Object.entries(patch.watchEnabled ?? {})) {
+        const object = agent.attention[slug];
+        if (!object) throw new Error("No watch");
+        attention[slug] = {
+          ...object,
+          value: { ...object.value, enabled: target.enabled },
+        };
       }
       snapshot = {
         ...snapshot,

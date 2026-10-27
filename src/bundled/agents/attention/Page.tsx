@@ -259,7 +259,7 @@ export function createPage({
         : !watch.enabled
           ? "Paused"
           : !agent.attentionEnabled
-            ? "Agent paused"
+            ? "Paused on this device"
             : "On";
     const change = (value: Watch | null) =>
       action.run(() =>
@@ -424,12 +424,34 @@ export function createPage({
           { className: "attention-actions" },
           !completed &&
             !description.spent &&
-            h(Switch, {
-              label: `Watch ${label.text}`,
-              checked: watch.enabled,
-              disabled: action.pending,
-              onClick: () => void change({ ...watch, enabled: !watch.enabled }),
+            pr &&
+            h(IconButton, {
+              size: "sm",
+              variant: "ghost",
+              icon: h(open ? CaretDownIcon : CaretRightIcon, {
+                size: 16,
+                "aria-hidden": true,
+              }),
+              "aria-label": `Details for ${label.text}`,
+              "aria-expanded": open,
+              "aria-controls": detailsId,
+              onClick: () => setOpen(!open),
             }),
+          h(Switch, {
+            label: `Watch ${label.text}`,
+            checked: watch.enabled,
+            disabled: action.pending,
+            onClick: () =>
+              void action.run(() => {
+                const expected = agent.attention[slug];
+                if (!expected) throw new Error("This watch no longer exists.");
+                return agents.save(agent.key, {
+                  watchEnabled: {
+                    [slug]: { enabled: !watch.enabled, expected },
+                  },
+                });
+              }),
+          }),
           <Button
             {...{
               ...button,
@@ -490,14 +512,18 @@ export function createPage({
               },
               `Open ${label.text}`,
             ),
-          watch.type === "source" &&
-            watch.provider === "attention/command" &&
+          (watch.type === "event" || watch.type === "source") &&
             section(
-              "Recent output",
+              watch.type === "source" && watch.provider === "attention/command"
+                ? "Recent output"
+                : "Recent events",
               h(
                 "pre",
                 { className: "text-caption text-standard" },
-                history?.output || "No output recorded yet.",
+                history?.output ||
+                  (watch.type === "event"
+                    ? "No matched messages recorded yet."
+                    : "No output recorded yet."),
               ),
             ),
           watch.type === "event" &&
@@ -641,23 +667,9 @@ export function createPage({
           ),
         ),
         h(
-          "div",
-          { className: "attention-agent-toggle" },
-          h("span", { className: "text-caption text-subtle" }, "Attention"),
-          h(Switch, {
-            label: `Attention for ${agent.name}`,
-            tooltip: agent.attentionEnabled
-              ? "Pause this agent’s watches"
-              : "Resume this agent’s watches",
-            checked: agent.attentionEnabled,
-            disabled: action.pending,
-            onClick: () =>
-              void action.run(() =>
-                agents.save(agent.key, {
-                  attentionEnabled: !agent.attentionEnabled,
-                }),
-              ),
-          }),
+          "span",
+          { className: "text-caption text-subtle" },
+          agent.attentionEnabled ? null : "Attention paused on this device",
         ),
       ),
       problem(action.error),
@@ -853,7 +865,7 @@ export function createPage({
         if (!agent) throw new Error("Choose an available agent.");
         await agents.save(agent.key, { attentionEnabled: true });
         setNotice(
-          `Attention enabled for ${agent.name}. Watches appear here when the agent creates them.`,
+          `Attention enabled for ${agent.name} on this device. Watches appear here when the agent creates them.`,
         );
         setAdding(false);
       });
@@ -902,7 +914,7 @@ export function createPage({
                   onClick: () => setAdding(!adding),
                 }}
               >
-                {"Enable Attention for an agent"}
+                {"Enable Attention on this device"}
               </Button>
             ),
           recipeOpen &&

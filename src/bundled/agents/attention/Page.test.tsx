@@ -55,7 +55,7 @@ it("keeps listening channels distinct from destinations and respects rearmed tim
 });
 it("hides agents without subscriptions, reacts to changes and surfaces save errors", async () => {
   let changed = () => {};
-  let enabled = true;
+  const enabled = true;
   const record = () => ({
     key: "membership-a",
     pubkey: "a",
@@ -154,26 +154,29 @@ it("hides agents without subscriptions, reacts to changes and surfaces save erro
     ),
   ).toBeTruthy();
   expect(within(ada).getByText("Paused")).toBeTruthy();
-  fireEvent.click(
-    within(ada).getByRole("switch", { name: "Attention for Ada" }),
-  );
+  expect(
+    within(ada).queryByRole("switch", { name: "Attention for Ada" }),
+  ).toBeNull();
+  fireEvent.click(within(ada).getByRole("switch", { name: "Watch task" }));
   await waitFor(() =>
     expect(screen.getByRole("alert").textContent).toBe("Save failed"),
   );
   expect(save).toHaveBeenCalledWith("membership-a", {
-    attentionEnabled: false,
+    watchEnabled: {
+      "watch/check": {
+        enabled: true,
+        expected: record().attention["watch/check"],
+      },
+    },
   });
   await act(async () => {
-    enabled = false;
-    snapshot = { ...snapshot, running: [record()] };
+    snapshot = {
+      ...snapshot,
+      running: [{ ...record(), attentionEnabled: false }],
+    };
     changed();
   });
-  expect(screen.queryByRole("region", { name: "Bo" })).toBeNull();
-  expect(
-    within(ada)
-      .getByRole("switch", { name: "Attention for Ada" })
-      .getAttribute("aria-checked"),
-  ).toBe("false");
+  expect(within(ada).getByText("Attention paused on this device")).toBeTruthy();
 });
 
 it.each(["source", "event", "timer"] as const)(
@@ -222,13 +225,29 @@ it.each(["source", "event", "timer"] as const)(
     });
     let rejectInterest = true;
     const save = vi.fn(
-      async (_key: string, patch: { attention: Record<string, unknown> }) => {
-        if (patch.attention["interest/release"] === null && rejectInterest)
+      async (
+        _key: string,
+        patch: {
+          attention?: Record<string, unknown>;
+          watchEnabled?: Record<
+            string,
+            { enabled: boolean; expected: unknown }
+          >;
+        },
+      ) => {
+        if (patch.attention?.["interest/release"] === null && rejectInterest)
           throw new Error("Interest save failed");
         const attention = { ...agent.attention } as Record<string, unknown>;
-        for (const [slug, value] of Object.entries(patch.attention)) {
+        for (const [slug, value] of Object.entries(patch.attention ?? {})) {
           if (value === null) delete attention[slug];
           else attention[slug] = { slug, modifiedAt: 2, value };
+        }
+        for (const [slug, target] of Object.entries(patch.watchEnabled ?? {})) {
+          attention[slug] = {
+            slug,
+            modifiedAt: 2,
+            value: { ...value, enabled: target.enabled },
+          };
         }
         agent = { ...agent, attention: attention as typeof agent.attention };
         snapshot = { ...snapshot, running: [agent] };
@@ -266,7 +285,12 @@ it.each(["source", "event", "timer"] as const)(
         ).toBe("false"),
       );
       expect(save).toHaveBeenLastCalledWith("membership-a", {
-        attention: { "watch/check": { ...value, enabled: false } },
+        watchEnabled: {
+          "watch/check": {
+            enabled: false,
+            expected: { slug: "watch/check", modifiedAt: 1, value },
+          },
+        },
       });
       expect(remove.getAttribute("aria-disabled")).toBe("true");
       fireEvent.click(remove);
@@ -605,6 +629,12 @@ it("scans subscription types and each subscription destination while keeping raw
         name: "Ada",
         attentionEnabled: true,
         timers: {},
+        attentionHistory: {
+          "watch/pr": { output: "CI completed: all checks passed" },
+          "watch/messages": {
+            output: "2026-10-27T14:00:00Z · Alex\nThe release is ready.",
+          },
+        },
         attention: {
           "interest/release": {
             slug: "interest/release",
@@ -684,8 +714,17 @@ it("scans subscription types and each subscription destination while keeping raw
   expect(screen.queryByText("Show raw")).toBeNull();
   expect(screen.getAllByRole("button", { name: "New watch" })).toHaveLength(1);
   expect(
-    screen.queryByRole("button", { name: "Details for Release checks" }),
-  ).toBeNull();
+    screen.getByRole("button", { name: "Details for Release checks" }),
+  ).toBeTruthy();
+  fireEvent.click(
+    screen.getByRole("button", { name: "Details for Release checks" }),
+  );
+  expect(screen.getByRole("heading", { name: "Recent events" })).toBeTruthy();
+  expect(screen.getByText("CI completed: all checks passed")).toBeTruthy();
+  fireEvent.click(
+    screen.getByRole("button", { name: "Details for Discussion" }),
+  );
+  expect(screen.getByText(/The release is ready/)).toBeTruthy();
   const link = screen.getByRole("link", { name: "Open buzz-app#1578" });
   expect(link.getAttribute("href")).toBe(
     "https://github.com/block/buzz-app/pull/1578",
@@ -798,10 +837,5 @@ it("keeps overview, creation choices and destination navigation in the selected 
   expect(screen.queryByRole("region", { name: "Ada" })).toBeNull();
   expect(screen.getByRole("region", { name: "Bo" })).toBeTruthy();
   expect(save).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole("switch", { name: "Attention for Bo" }));
-  await waitFor(() =>
-    expect(save).toHaveBeenCalledWith("membership-b", {
-      attentionEnabled: false,
-    }),
-  );
+  expect(screen.queryByRole("switch", { name: "Attention for Bo" })).toBeNull();
 });

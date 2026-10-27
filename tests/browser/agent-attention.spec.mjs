@@ -12,6 +12,10 @@ test("Agent Attention fits both themes and sizes and creates a subscription by k
   });
   const create = page.getByRole("button", { name: "New watch" });
   await expect(pane).toBeVisible();
+  await page
+    .getByRole("button", { name: "Details for Release discussion" })
+    .click();
+  await expect(page.getByText(/The release is ready for review/)).toBeVisible();
   for (const theme of ["light", "dark"]) {
     for (const width of [390, 1280]) {
       await page.setViewportSize({ width, height: 900 });
@@ -64,6 +68,15 @@ test("Agent Attention fits both themes and sizes and creates a subscription by k
   await toggle.focus();
   await page.keyboard.press("Space");
   await expect(toggle).toHaveAttribute("aria-checked", "false");
+  const details = page.getByRole("button", {
+    name: "Details for example/project#42",
+  });
+  await details.focus();
+  await page.keyboard.press("Enter");
+  await expect(details).toHaveAttribute("aria-expanded", "true");
+  await expect(
+    page.getByRole("link", { name: "Open project#42" }),
+  ).toHaveAttribute("href", "https://github.com/example/project/pull/42");
 });
 
 test("the allowlist warning opens editable shared settings with usable narrow-layout controls", async ({

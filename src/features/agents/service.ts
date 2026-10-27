@@ -186,6 +186,10 @@ export type AgentChange<Config = unknown> = Readonly<{
   attentionEnabled?: boolean;
   /** Slug to new value; `null` deletes the object. */
   attention?: Readonly<Record<string, AttentionValue | null>>;
+  /** Sets only a watch's enabled state, if the displayed object is still current. */
+  watchEnabled?: Readonly<
+    Record<string, Readonly<{ enabled: boolean; expected: AttentionObject }>>
+  >;
   /** Timers in `attention` to start over: a new schedule from their
    * `armed_at`, with no occurrences used. */
   restart?: readonly string[];
@@ -1116,6 +1120,18 @@ function changed(record: AgentRecord, change: AgentChange): AgentRecord {
       undefined,
       change.restart?.includes(slug) ? "restart" : undefined,
     );
+  for (const [slug, { enabled, expected }] of Object.entries(
+    change.watchEnabled ?? {},
+  )) {
+    const current = next.attention[slug];
+    if (!current || JSON.stringify(current) !== JSON.stringify(expected))
+      throw new Error(
+        "This watch changed. Review its current settings and try again.",
+      );
+    if (current.value.type === "interest") throw new Error("Choose a watch");
+    if (current.value.enabled !== enabled)
+      next = setAttention(next, slug, { ...current.value, enabled });
+  }
   // As the spec's writer: an Interest stays while anything still uses it.
   for (const [slug, value] of Object.entries(change.attention ?? {})) {
     const id = parseSlug(slug)?.id;
@@ -1605,8 +1621,18 @@ export class AgentsService extends Service implements Agents {
       soloChat: (agent, channel, signal) =>
         soloChat(() => this.relay(agent.key), agent.owner, channel, signal),
       remembered: (key, slug, body) => this.coreMemory.wrote(key, slug, body),
-      woke: (key, object) =>
-        this.history(key, object, undefined, Math.floor(Date.now() / 1000)),
+      woke: (key, object, events) =>
+        this.history(
+          key,
+          object,
+          events
+            ?.map(
+              (event) =>
+                `${new Date(event.created_at * 1000).toISOString()} · ${event.pubkey}\n${event.content}`,
+            )
+            .join("\n\n"),
+          Math.floor(Date.now() / 1000),
+        ),
       finished: (key) => void this.coreMemory.refresh(key),
       named: (agent, event, title) =>
         void nameSoloChat(
@@ -2712,6 +2738,7 @@ export class AgentsService extends Service implements Agents {
     if (
       own.config !== undefined ||
       own.attention ||
+      own.watchEnabled ||
       own.attentionEnabled !== undefined
     )
       await this.change(key, (saved) =>
@@ -2735,6 +2762,7 @@ export class AgentsService extends Service implements Agents {
     if (
       change.config !== undefined ||
       change.attention ||
+      change.watchEnabled ||
       change.attentionEnabled !== undefined
     )
       throw new Error("A hosted agent's settings save through its provider");

@@ -1,8 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, expect, it } from "vitest";
-import type { ClassifierAvailability } from "./attention-objects";
 import type { Agent, Agents } from "./service";
 import { agentSections } from "./tabs";
 
@@ -44,22 +43,8 @@ const agent: Agent = {
   },
 } as Agent;
 
-it("updates the classifier warning when the key changes while the agent does not", () => {
-  let classifier: ClassifierAvailability = "unavailable";
-  const listeners = new Set<() => void>();
-  const agents = {
-    subscribe: (listener: () => void) => {
-      listeners.add(listener);
-      return () => listeners.delete(listener);
-    },
-    classifier: () => classifier,
-    save: async () => {},
-  } as unknown as Agents;
-  const set = (next: ClassifierAvailability) =>
-    act(() => {
-      classifier = next;
-      for (const listener of listeners) listener();
-    });
+it("keeps only the device runtime control on the agent detail tab", () => {
+  const agents = { save: async () => {} } as unknown as Agents;
   const section = agentSections({
     agents,
     agent,
@@ -68,9 +53,8 @@ it("updates the classifier warning when the key changes while the agent does not
     memories: undefined,
   }).find((tab) => tab.value === "agent:attention");
   render(<div>{section?.render()}</div>);
-  expect(screen.getByText(/cannot run on this device/)).toBeInTheDocument();
-  set("available");
-  expect(screen.queryByText(/cannot run/)).not.toBeInTheDocument();
-  set("unavailable");
-  expect(screen.getByText(/cannot run on this device/)).toBeInTheDocument();
+  expect(
+    screen.getByRole("switch", { name: "Attention on this device" }),
+  ).toBeInTheDocument();
+  expect(screen.queryByText("Triage.")).not.toBeInTheDocument();
 });

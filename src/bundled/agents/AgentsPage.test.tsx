@@ -460,7 +460,9 @@ it("opens the side panel with the type's tabs and the app's Attention and Memory
   await user.click(screen.getByRole("tab", { name: "Reply" }));
   expect(screen.getByText("Reply tab")).toBeInTheDocument();
   await user.click(screen.getByRole("tab", { name: "Attention" }));
-  expect(screen.getByText("Default")).toBeInTheDocument();
+  expect(
+    screen.getByRole("switch", { name: "Attention on this device" }),
+  ).toBeInTheDocument();
 
   await user.click(screen.getByRole("button", { name: "Close Ada tab" }));
   expect(screen.getByRole("gridcell", { name: /Ada/ })).toHaveAttribute(

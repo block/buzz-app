@@ -2,7 +2,7 @@
 // profile panel): the type's tabs, local-only Attention, and Memory.
 // Memory is relay-backed for both local and hosted agents. Agents classified
 // as `elsewhere` expose no sections in these views.
-import { useId, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useId, useState, type ReactNode } from "react";
 import type { ChannelChoice } from "./attention";
 import { AttentionPanel } from "./AttentionPanel";
 import { MemoryPanel, type AgentMemories } from "./MemoryPanel";
@@ -27,7 +27,6 @@ export function agentSections({
   agents,
   agent,
   type,
-  channels,
   conversation,
   settingsHost,
   memories,
@@ -81,9 +80,7 @@ export function agentSections({
     tabs.push({
       value: "agent:attention",
       label: "Attention",
-      render: () => (
-        <AttentionSection agents={agents} agent={agent} channels={channels} />
-      ),
+      render: () => <AttentionSection agents={agents} agent={agent} />,
     });
   return [
     ...tabs,
@@ -135,28 +132,18 @@ function HostSettings({ host }: { host: AgentSettingsHost }) {
   );
 }
 
-/** Follows classifier availability itself: a host that rerenders only when
- * this agent changes would otherwise show a stale classifier warning. */
+/** The one device-local Attention control, beside the agent’s settings. */
 function AttentionSection({
   agents,
   agent,
-  channels,
 }: {
-  agents: Pick<Agents, "subscribe" | "classifier" | "save">;
+  agents: Pick<Agents, "save">;
   agent: Agent;
-  channels: readonly ChannelChoice[];
 }) {
-  const classifier = useSyncExternalStore(
-    agents.subscribe,
-    () => agents.classifier(),
-    () => agents.classifier(),
-  );
   return (
     <AttentionPanel
       agent={agent}
       save={(change) => agents.save(agent.key, change)}
-      channels={channels}
-      classifier={classifier}
     />
   );
 }

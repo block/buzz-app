@@ -1203,7 +1203,7 @@ it("rereads history only once a later run is created", async () => {
   }
 });
 
-it("combines ownership, saved enabled state and channels, and clears every filter", async () => {
+function filterLanding() {
   const fixture = createWorkflowFixture();
   const channels = [
     { id: fixtureChannel, name: "General", channelType: "stream" as const },
@@ -1283,6 +1283,11 @@ it("combines ownership, saved enabled state and channels, and clears every filte
       expect(screen.queryByRole("dialog", { name: "Channels" })).toBeNull(),
     );
   };
+  return { fixture, user, choose, chooseTrigger, chooseChannel, definition };
+}
+
+it("combines ownership, saved enabled state and channels, and clears every filter", async () => {
+  const { user, choose, chooseTrigger, chooseChannel } = filterLanding();
   await screen.findByRole("button", { name: /^Open Mine disabled:/ });
   await choose("Owner", "My workflows");
   expect(
@@ -1370,7 +1375,10 @@ it("combines ownership, saved enabled state and channels, and clears every filte
       screen.getAllByRole("button", { name: /^Open (Mine|Other)/ }),
     ).toHaveLength(3),
   );
+});
 
+it("matches saved trigger types with OR and excludes unreadable status values", async () => {
+  const { fixture, user, choose, chooseTrigger, definition } = filterLanding();
   const triggers = [
     ["Message", "message_posted"],
     ["Reaction", "reaction_added"],
@@ -1515,7 +1523,9 @@ it("sorts across channels by saved recency while retaining filters, details and 
       .map((row) => row.getAttribute("aria-label")?.split(":")[0]);
   try {
     await screen.findByRole("heading", { name: "#General" });
-    expect(screen.getByRole("heading", { name: "#Other" })).toBeVisible();
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { name: "#Other" })).toBeVisible(),
+    );
     await user.click(screen.getByRole("button", { name: /^Open Middle:/ }));
     expect(screen.getByRole("region", { name: "Middle" })).toBeVisible();
 

@@ -864,40 +864,35 @@ it.each([{ huddle: true as const }, { metadataPending: true as const }])(
   },
 );
 
-it("opens a selected card in the side pane and drops a stale channel filter", async () => {
-  const fixture = createWorkflowFixture();
+function channelFilteredPage() {
+  const fixture = mount();
   const other = { id: "other-channel", name: "Other channel" };
-  let list: ChannelList = {
-    status: "ready",
-    channels: [{ id: fixtureChannel, name: "Fixture channel" }, other],
-  };
-  const listeners = new Set<() => void>();
-  const session = {
-    workflows: fixture.capability,
-    channels: {
-      list: () => list,
-      ensureList() {},
-      subscribeList: (listener: () => void) => {
-        listeners.add(listener);
-        return () => listeners.delete(listener);
-      },
-    },
-  } as unknown as RelaySession;
-  render(
-    <ToastProvider>
-      <WorkflowCommunity session={session} viewer={fixtureViewer} />
-    </ToastProvider>,
+  act(() =>
+    fixture.setChannels({
+      status: "ready",
+      channels: [{ id: fixtureChannel, name: "Fixture channel" }, other],
+    }),
   );
   const user = userEvent.setup();
-  expect(
-    screen.getByRole("button", { name: "Channels" }).closest("header"),
-  ).toBeNull();
-  expect(screen.queryByRole("button", { name: "Filters" })).toBeNull();
   const openChannels = async () => {
     screen.getByRole("button", { name: "Channels" }).focus();
     await user.keyboard("{Enter}");
     await screen.findByRole("dialog", { name: "Channels" });
   };
+  const otherDefinition = {
+    ...fixtureDefinition,
+    channelId: other.id,
+    yaml: fixtureYaml.replace("Message helper", "Other helper"),
+  };
+  return { fixture, user, openChannels, otherDefinition };
+}
+
+it("opens a selected card in the side pane and closes its tab", async () => {
+  const { user } = channelFilteredPage();
+  expect(
+    screen.getByRole("button", { name: "Channels" }).closest("header"),
+  ).toBeNull();
+  expect(screen.queryByRole("button", { name: "Filters" })).toBeNull();
   const open = await screen.findByRole("button", {
     name: /^Open Message helper:/,
   });
@@ -915,6 +910,11 @@ it("opens a selected card in the side pane and drops a stale channel filter", as
     detailPane().getByRole("button", { name: "Close Message helper tab" }),
   );
   expect(screen.queryByRole("region", { name: "Workflow details" })).toBeNull();
+});
+
+it("combines channel selections and resets them while closing filtered details", async () => {
+  const { fixture, user, openChannels, otherDefinition } =
+    channelFilteredPage();
   await openChannels();
   expect(
     await screen.findByRole("checkbox", { name: "Fixture channel" }),
@@ -924,11 +924,6 @@ it("opens a selected card in the side pane and drops a stale channel filter", as
   await waitFor(() =>
     expect(screen.queryByRole("dialog", { name: "Channels" })).toBeNull(),
   );
-  const otherDefinition = {
-    ...fixtureDefinition,
-    channelId: other.id,
-    yaml: fixtureYaml.replace("Message helper", "Other helper"),
-  };
   act(() =>
     fixture.definitions.update({
       status: "ready",
@@ -1017,6 +1012,17 @@ it("opens a selected card in the side pane and drops a stale channel filter", as
   expect(
     screen.queryByRole("button", { name: "Clear channels filter" }),
   ).toBeNull();
+});
+
+it("drops stale channel filters after readback and membership changes", async () => {
+  const { fixture, user, openChannels, otherDefinition } =
+    channelFilteredPage();
+  act(() =>
+    fixture.definitions.update({
+      status: "ready",
+      data: { partial: false, items: [fixtureDefinition, otherDefinition] },
+    }),
+  );
   await openChannels();
   await user.click(screen.getByRole("checkbox", { name: "Other channel" }));
   await user.keyboard("{Escape}");
@@ -1066,11 +1072,10 @@ it("opens a selected card in the side pane and drops a stale channel filter", as
     screen.getByRole("button", { name: "Channels" }),
   ).toHaveAccessibleDescription("Other channel");
   act(() => {
-    list = {
-      ...list,
+    fixture.setChannels({
+      status: "ready",
       channels: [{ id: fixtureChannel, name: "Fixture channel" }],
-    };
-    for (const listener of listeners) listener();
+    });
   });
   expect(
     screen.queryByRole("button", { name: "Clear channels filter" }),

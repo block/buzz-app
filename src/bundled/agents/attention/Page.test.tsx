@@ -313,6 +313,16 @@ it.each(["source", "event", "timer"] as const)(
     await waitFor(() =>
       expect(remove.getAttribute("aria-disabled")).not.toBe("true"),
     );
+    if (type === "timer") {
+      expect(
+        screen
+          .getByRole("switch", { name: "Watch release" })
+          .getAttribute("aria-disabled"),
+      ).toBe("true");
+      expect(
+        screen.getByText("Ask Ada to set this timer’s next run."),
+      ).toBeTruthy();
+    }
     fireEvent.click(screen.getByRole("button", { name: "Delete release" }));
     await waitFor(() =>
       expect(

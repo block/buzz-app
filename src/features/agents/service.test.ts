@@ -969,6 +969,47 @@ it("sets a watch's target enabled value without changing its configuration", asy
   expect(service.find(bot)?.attention["watch/channel"]).toBe(paused);
 });
 
+it("requires rearming a paused timer after its deadline passes", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  try {
+    const now = nowSeconds();
+    const { service } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    await service.save(bot, {
+      attention: {
+        "watch/timer": {
+          type: "timer",
+          interest_id: "task",
+          enabled: true,
+          prompt: "Check",
+          armed_at: now,
+          interval_secs: 60,
+          max_occurrences: 5,
+          expires_at: null,
+        },
+      },
+    });
+    const armed = service.find(bot)?.attention["watch/timer"];
+    if (!armed) throw new Error("Missing timer");
+    await service.save(bot, {
+      watchEnabled: { "watch/timer": { enabled: false, expected: armed } },
+    });
+    const paused = service.find(bot)?.attention["watch/timer"];
+    if (!paused) throw new Error("Missing paused timer");
+    const progress = service.find(bot)?.timers["watch/timer"];
+    vi.setSystemTime((now + 120) * 1000);
+    await expect(
+      service.save(bot, {
+        watchEnabled: { "watch/timer": { enabled: true, expected: paused } },
+      }),
+    ).rejects.toThrow(/rearm/);
+    expect(service.find(bot)?.attention["watch/timer"]).toEqual(paused);
+    expect(service.find(bot)?.timers["watch/timer"]).toEqual(progress);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("checks a watch toggle after a queued edit commits", async () => {
   let hold: Promise<void> | undefined;
   let entered = () => {};

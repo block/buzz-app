@@ -456,7 +456,8 @@ export function createPage({
           h(Switch, {
             label: `Watch ${label.text}`,
             checked: watch.enabled,
-            disabled: action.pending,
+            disabled:
+              action.pending || (watch.type === "timer" && !watch.enabled),
             onClick: () =>
               void action.run(() => {
                 const expected = agent.attention[slug];
@@ -486,6 +487,13 @@ export function createPage({
           </span>,
         ),
       ),
+      watch.type === "timer" &&
+        !watch.enabled &&
+        h(
+          "p",
+          { className: "text-caption text-subtle attention-meta" },
+          `Ask ${agent.name} to set this timer’s next run.`,
+        ),
       woke &&
         h("p", { className: "text-caption text-subtle attention-meta" }, woke),
       problem(action.error),

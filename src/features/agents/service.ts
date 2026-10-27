@@ -1129,6 +1129,8 @@ function changed(record: AgentRecord, change: AgentChange): AgentRecord {
         "This watch changed. Review its current settings and try again.",
       );
     if (current.value.type === "interest") throw new Error("Choose a watch");
+    if (enabled && current.value.type === "timer" && !current.value.enabled)
+      throw new Error("Ask the agent to rearm this timer.");
     if (current.value.enabled !== enabled) {
       const history = next.attentionHistory;
       const completed = sourceCompleted(next.sourceRuns, current);

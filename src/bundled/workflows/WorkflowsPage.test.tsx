@@ -875,7 +875,7 @@ function channelFilteredPage() {
   );
   const user = userEvent.setup();
   const openChannels = async () => {
-    screen.getByRole("button", { name: "Channels" }).focus();
+    screen.getByRole("button", { name: /^Channels(?::|$)/ }).focus();
     await user.keyboard("{Enter}");
     await screen.findByRole("dialog", { name: "Channels" });
   };
@@ -890,7 +890,7 @@ function channelFilteredPage() {
 it("opens a selected card in the side pane and closes its tab", async () => {
   const { user } = channelFilteredPage();
   expect(
-    screen.getByRole("button", { name: "Channels" }).closest("header"),
+    screen.getByRole("button", { name: /^Channels(?::|$)/ }).closest("header"),
   ).toBeNull();
   expect(screen.queryByRole("button", { name: "Filters" })).toBeNull();
   const open = await screen.findByRole("button", {
@@ -962,9 +962,12 @@ it("combines channel selections and resets them while closing filtered details",
   await waitFor(() =>
     expect(screen.queryByRole("dialog", { name: "Channels" })).toBeNull(),
   );
-  expect(screen.getByRole("button", { name: "Channels" })).toHaveTextContent(
-    "2 channels",
-  );
+  expect(
+    screen.getByRole("button", { name: /^Channels(?::|$)/ }),
+  ).toHaveTextContent("2 channels");
+  expect(
+    screen.getByRole("button", { name: /^Channels(?::|$)/ }),
+  ).toHaveAccessibleName("Channels: 2 channels");
   await waitFor(() =>
     expect(
       screen.getByRole("button", { name: /^Open Message helper:/ }),
@@ -983,7 +986,9 @@ it("combines channel selections and resets them while closing filtered details",
     expect(screen.queryByRole("dialog", { name: "Channels" })).toBeNull(),
   );
   expect(screen.queryByRole("region", { name: "Workflow details" })).toBeNull();
-  expect(screen.getByRole("button", { name: "Channels" })).toHaveFocus();
+  expect(
+    screen.getByRole("button", { name: /^Channels(?::|$)/ }),
+  ).toHaveFocus();
   expect(
     screen.queryByRole("button", { name: /^Open Message helper:/ }),
   ).toBeNull();
@@ -1042,7 +1047,7 @@ it("drops stale channel filters after readback and membership changes", async ()
     }),
   );
   expect(
-    screen.getByRole("button", { name: "Channels" }),
+    screen.getByRole("button", { name: /^Channels(?::|$)/ }),
   ).toHaveAccessibleDescription("Other channel");
   act(() =>
     fixture.definitions.update({
@@ -1075,7 +1080,7 @@ it("drops stale channel filters after readback and membership changes", async ()
     expect(screen.queryByRole("dialog", { name: "Channels" })).toBeNull(),
   );
   expect(
-    screen.getByRole("button", { name: "Channels" }),
+    screen.getByRole("button", { name: /^Channels(?::|$)/ }),
   ).toHaveAccessibleDescription("Other channel");
   act(() => {
     fixture.setChannels({

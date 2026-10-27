@@ -275,7 +275,7 @@ it("purges globally without automatic reads and recovers remaining channels on m
     await fixture.finish(0, [event(a.id), event(b.id)]);
     fixture.refresh();
     await waitFor(() => expect(fixture.reads).toHaveLength(2));
-    fireEvent.click(screen.getByRole("button", { name: "Status" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Status(?::|$)/ }));
     fireEvent.click(screen.getByRole("radio", { name: "Enabled" }));
     // The filter exit is still mounted, even though role queries hide it.
     expect(screen.getAllByText("Message helper")).toHaveLength(2);
@@ -313,7 +313,7 @@ it("purges a pending filter exit immediately when session access clears", async 
     await fixture.finish(0, [event(channel(1).id)]);
     fixture.refresh();
     await waitFor(() => expect(fixture.reads).toHaveLength(2));
-    fireEvent.click(screen.getByRole("button", { name: "Status" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Status(?::|$)/ }));
     fireEvent.click(screen.getByRole("radio", { name: "Enabled" }));
     expect(screen.getByText("Message helper")).toBeInTheDocument();
     expect(
@@ -348,7 +348,7 @@ for (const sort of ["By channel", "Recently updated"]) {
       expect(removed).toBeInTheDocument();
       fixture.refresh();
       await waitFor(() => expect(fixture.reads).toHaveLength(2));
-      fireEvent.click(screen.getByRole("button", { name: "Status" }));
+      fireEvent.click(screen.getByRole("button", { name: /^Status(?::|$)/ }));
       fireEvent.click(screen.getByRole("radio", { name: "Enabled" }));
       expect(screen.getAllByText("Message helper")).toHaveLength(2);
       expect(
@@ -1017,7 +1017,9 @@ for (const filter of ["Owner", "Status"] as const) {
         }),
       );
       expect(screen.getByRole("status")).toHaveTextContent("Reading workflows");
-      fireEvent.click(screen.getByRole("button", { name: filter }));
+      fireEvent.click(
+        screen.getByRole("button", { name: new RegExp(`^${filter}(?::|$)`) }),
+      );
       fireEvent.click(
         screen.getByRole("radio", {
           name: filter === "Owner" ? "My workflows" : "Enabled",
@@ -1044,7 +1046,7 @@ for (const status of ["loading", "error"] as const) {
           data: { partial: false, items: [] },
         }),
       );
-      fireEvent.click(screen.getByRole("button", { name: "Status" }));
+      fireEvent.click(screen.getByRole("button", { name: /^Status(?::|$)/ }));
       fireEvent.click(screen.getByRole("radio", { name: "Enabled" }));
       await waitFor(() =>
         expect(screen.queryByRole("dialog", { name: "Status" })).toBeNull(),
@@ -1434,7 +1436,7 @@ function filterLanding(save = true) {
   render(<Harness />);
   const user = userEvent.setup();
   const choose = async (menu: string, option: string) => {
-    screen.getByRole("button", { name: menu }).focus();
+    screen.getByRole("button", { name: new RegExp(`^${menu}(?::|$)`) }).focus();
     await user.keyboard("{Enter}");
     await user.click(await screen.findByRole("radio", { name: option }));
     await waitFor(() =>
@@ -1442,7 +1444,7 @@ function filterLanding(save = true) {
     );
   };
   const chooseTrigger = async (option: string) => {
-    screen.getByRole("button", { name: "Trigger" }).focus();
+    screen.getByRole("button", { name: /^Trigger(?::|$)/ }).focus();
     await user.keyboard("{Enter}");
     await user.click(await screen.findByRole("checkbox", { name: option }));
     await user.keyboard("{Escape}");
@@ -1451,7 +1453,7 @@ function filterLanding(save = true) {
     );
   };
   const chooseChannel = async () => {
-    screen.getByRole("button", { name: "Channels" }).focus();
+    screen.getByRole("button", { name: /^Channels(?::|$)/ }).focus();
     await user.keyboard("{Enter}");
     await user.click(await screen.findByRole("checkbox", { name: "General" }));
     await user.keyboard("{Escape}");
@@ -1482,7 +1484,7 @@ it.each([true, false])(
     expect(screen.queryByRole("button", { name: "New workflow" })).toBeNull();
     screen.getByRole("button", { name: "Clear filters" }).focus();
     await user.keyboard("{Enter}");
-    expect(screen.getByRole("button", { name: "Owner" })).toHaveFocus();
+    expect(screen.getByRole("button", { name: /^Owner(?::|$)/ })).toHaveFocus();
     expect(screen.queryByRole("button", { name: "Clear all" })).toBeNull();
     await waitFor(() =>
       expect(screen.getAllByRole("button", { name: /^Open / })).toHaveLength(3),
@@ -1521,6 +1523,9 @@ it("combines ownership, saved enabled state and channels, and clears every filte
   );
   await choose("Status", "Enabled");
   expect(
+    screen.getByRole("button", { name: /^Status(?::|$)/ }),
+  ).toHaveAccessibleName("Status: Enabled");
+  expect(
     screen.queryByRole("button", { name: /^Open Mine disabled:/ }),
   ).toBeNull();
   await waitFor(() =>
@@ -1529,12 +1534,15 @@ it("combines ownership, saved enabled state and channels, and clears every filte
     ).toBeVisible(),
   );
   await chooseChannel();
+  expect(
+    screen.getByRole("button", { name: /^Channels(?::|$)/ }),
+  ).toHaveAccessibleName("Channels: General");
   expect(screen.getByText("No matching workflows")).toBeVisible();
   expect(
     screen.queryByRole("group", { name: "Active workflow filters" }),
   ).toBeNull();
   await user.click(screen.getByRole("button", { name: "Clear owner filter" }));
-  expect(screen.getByRole("button", { name: "Owner" })).toHaveFocus();
+  expect(screen.getByRole("button", { name: /^Owner(?::|$)/ })).toHaveFocus();
   expect(
     screen.getByRole("button", { name: "Clear status filter" }),
   ).toBeInTheDocument();
@@ -1552,14 +1560,16 @@ it("combines ownership, saved enabled state and channels, and clears every filte
   await user.click(
     screen.getByRole("button", { name: "Clear channels filter" }),
   );
-  expect(screen.getByRole("button", { name: "Channels" })).toHaveFocus();
+  expect(
+    screen.getByRole("button", { name: /^Channels(?::|$)/ }),
+  ).toHaveFocus();
   await waitFor(() =>
     expect(
       screen.getByRole("button", { name: /^Open Mine enabled:/ }),
     ).toBeVisible(),
   );
   await user.click(screen.getByRole("button", { name: "Clear status filter" }));
-  expect(screen.getByRole("button", { name: "Status" })).toHaveFocus();
+  expect(screen.getByRole("button", { name: /^Status(?::|$)/ })).toHaveFocus();
   expect(
     screen.queryByRole("button", {
       name: /^Clear (owner|status|trigger|channels) filter$/,
@@ -1585,7 +1595,7 @@ it("combines ownership, saved enabled state and channels, and clears every filte
     screen.queryByRole("button", { name: /^Open Mine enabled:/ }),
   ).toBeNull();
   await user.click(screen.getByRole("button", { name: "Clear all" }));
-  expect(screen.getByRole("button", { name: "Owner" })).toHaveFocus();
+  expect(screen.getByRole("button", { name: /^Owner(?::|$)/ })).toHaveFocus();
   expect(
     screen.queryByRole("button", {
       name: /^Clear (owner|status|trigger|channels) filter$/,
@@ -1645,6 +1655,10 @@ it("matches saved trigger types with OR and excludes unreadable status values", 
   await choose("Status", "Any status");
   for (const [index, [label]] of triggers.entries()) {
     await chooseTrigger(label);
+    if (index === 0)
+      expect(
+        screen.getByRole("button", { name: /^Trigger(?::|$)/ }),
+      ).toHaveAccessibleName("Trigger: Message");
     await waitFor(() =>
       expect(screen.getAllByRole("button", { name: /^Open / })).toHaveLength(
         index + 1,
@@ -1657,29 +1671,35 @@ it("matches saved trigger types with OR and excludes unreadable status values", 
     );
   }
   await chooseTrigger("Webhook");
-  expect(screen.getByRole("button", { name: "Trigger" })).toHaveFocus();
+  expect(
+    screen.getByRole("button", { name: /^Trigger(?::|$)/ }),
+  ).toHaveAccessibleName("Trigger: 4 triggers");
+  expect(screen.getByRole("button", { name: /^Trigger(?::|$)/ })).toHaveFocus();
   await waitFor(() =>
     expect(screen.getAllByRole("button", { name: /^Open / })).toHaveLength(4),
   );
-  expect(screen.getByRole("button", { name: "Trigger" })).toHaveTextContent(
-    "4 triggers",
-  );
+  expect(
+    screen.getByRole("button", { name: /^Trigger(?::|$)/ }),
+  ).toHaveTextContent("4 triggers");
   await user.click(
     screen.getByRole("button", { name: "Clear trigger filter" }),
   );
-  expect(screen.getByRole("button", { name: "Trigger" })).toHaveFocus();
+  expect(screen.getByRole("button", { name: /^Trigger(?::|$)/ })).toHaveFocus();
   await waitFor(() =>
     expect(screen.getAllByRole("button", { name: /^Open / })).toHaveLength(7),
   );
   await choose("Owner", "My workflows");
-  expect(screen.getByRole("button", { name: "Owner" })).toHaveTextContent(
-    "My workflows",
-  );
+  expect(
+    screen.getByRole("button", { name: /^Owner(?::|$)/ }),
+  ).toHaveAccessibleName("Owner: My workflows");
+  expect(
+    screen.getByRole("button", { name: /^Owner(?::|$)/ }),
+  ).toHaveTextContent("My workflows");
   await user.click(screen.getByRole("button", { name: "Clear owner filter" }));
-  expect(screen.getByRole("button", { name: "Owner" })).toHaveTextContent(
-    "Owner",
-  );
-  expect(screen.getByRole("button", { name: "Owner" })).toHaveFocus();
+  expect(
+    screen.getByRole("button", { name: /^Owner(?::|$)/ }),
+  ).toHaveTextContent("Owner");
+  expect(screen.getByRole("button", { name: /^Owner(?::|$)/ })).toHaveFocus();
 });
 
 it("sorts across channels by saved recency while retaining filters, details and partial notices", async () => {
@@ -1776,7 +1796,7 @@ it("sorts across channels by saved recency while retaining filters, details and 
       ).toBeVisible();
     });
 
-    await user.click(screen.getByRole("button", { name: "Channels" }));
+    await user.click(screen.getByRole("button", { name: /^Channels(?::|$)/ }));
     await user.click(await screen.findByRole("checkbox", { name: "General" }));
     await user.keyboard("{Escape}");
     await waitFor(() =>

@@ -1031,7 +1031,7 @@ function WorkflowFilterMenu<Value extends string>({
       <PopoverRoot open={open} onOpenChange={setOpen}>
         <PopoverTrigger
           ref={triggerRef}
-          aria-label={label}
+          aria-label={active ? `${label}: ${selectedLabel}` : label}
           aria-description={active ? selectedLabel : undefined}
           render={
             <Button size="sm" variant="subtle">
@@ -1101,12 +1101,18 @@ function WorkflowMultiFilterMenu<Value extends string>({
 }) {
   const selected = options.filter((option) => value.includes(option.value));
   const active = selected.length > 0;
+  const shownText =
+    selected.length === 1
+      ? (selected[0]?.label ?? label)
+      : active
+        ? `${selected.length} ${pluralLabel}`
+        : label;
   return (
     <div className="workflow-filter-control">
       <PopoverRoot>
         <PopoverTrigger
           ref={triggerRef}
-          aria-label={label}
+          aria-label={active ? `${label}: ${shownText}` : label}
           aria-description={
             active
               ? selected.map((option) => option.label).join(", ")
@@ -1116,13 +1122,7 @@ function WorkflowMultiFilterMenu<Value extends string>({
             <Button size="sm" variant="subtle">
               {active &&
                 (selected.length === 1 ? (selected[0]?.icon ?? icon) : icon)}
-              <span className="workflow-filter-label">
-                {selected.length === 1
-                  ? selected[0]?.label
-                  : active
-                    ? `${selected.length} ${pluralLabel}`
-                    : label}
-              </span>
+              <span className="workflow-filter-label">{shownText}</span>
               <CaretDownIcon size={16} aria-hidden="true" />
             </Button>
           }

@@ -16,6 +16,7 @@
 .workflow-state-card p {
   margin: var(--space-2) 0 0;
 }
+.workflow-filter-toolbar,
 .workflow-page-filter,
 .workflow-page-status,
 .workflow-page-footnote,
@@ -27,13 +28,16 @@
   max-width: 72rem;
   margin-inline: auto;
 }
+.workflow-filter-toolbar,
 .workflow-page-filter {
-  position: relative;
-  display: flex;
   min-width: 0;
   padding: 0;
   border: 0;
   margin-top: 0;
+}
+.workflow-page-filter {
+  position: relative;
+  display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-3);
@@ -42,9 +46,12 @@
 .workflow-page-filter:empty {
   display: none;
 }
-.workflow-filter-action {
+.workflow-filter-toolbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
 }
 .workflow-list-transition {
   min-width: 0;
@@ -662,25 +669,6 @@ html[data-keyboard-navigation]
   }
 }
 
-.workflow-filter-section {
-  min-width: 0;
-  margin: 0;
-  padding: 0;
-  border: 0;
-}
-.workflow-filter-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  margin-bottom: var(--space-3);
-}
-.workflow-filter-section + .workflow-filter-section {
-  margin-top: var(--space-4);
-}
-.workflow-filter-section > .buzz-content-header {
-  margin-bottom: var(--space-2);
-}
 .workflow-filter-channel-label {
   display: flex;
   align-items: center;
@@ -690,14 +678,10 @@ html[data-keyboard-navigation]
 .workflow-filter-channel-icon {
   flex-shrink: 0;
 }
-.workflow-filter-presets,
 .workflow-filter-channels {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-1);
-}
-.workflow-filter-presets {
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 10rem), 1fr));
 }
 .workflow-filter-channels {
   max-height: min(18rem, 40dvh);

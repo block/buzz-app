@@ -25,8 +25,7 @@ import type {
   WorkflowView,
 } from "../../features/workflows/types";
 import {
-  Filter2Icon,
-  CheckIcon,
+  CaretDownIcon,
   XIcon,
   HashIcon,
   ArrowRightIcon,
@@ -52,14 +51,12 @@ import {
   MenuPopup,
   MenuItem,
   MenuIcon,
+  MenuCheckboxItem,
+  MenuRadioGroup,
+  MenuRadioItem,
+  MenuNote,
 } from "../../shared/design-system/ui/Menu";
-import {
-  PopoverRoot,
-  PopoverTrigger,
-  PopoverPopup,
-  PopoverTitle,
-} from "../../shared/design-system/ui/Popover";
-import { Header, InlineHeader } from "../../shared/design-system/ui/Header";
+import { Header } from "../../shared/design-system/ui/Header";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { Switch } from "../../shared/design-system/ui/Switch";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
@@ -945,11 +942,65 @@ function WorkflowChannelCards({
 const workflowKey = (definition: WorkflowDefinition) =>
   `${definition.channelId}:${definition.owner}:${definition.id}`;
 
+const OWNER_OPTIONS = [
+  { value: "all", label: "Anyone" },
+  { value: "mine", label: "My workflows" },
+] as const;
+const STATUS_OPTIONS = [
+  { value: "all", label: "Any status" },
+  { value: "enabled", label: "Enabled" },
+  { value: "disabled", label: "Disabled" },
+] as const;
+const TRIGGER_OPTIONS = [
+  { value: "all", label: "Any trigger" },
+  { value: "message", label: "Message" },
+  { value: "reaction", label: "Reaction" },
+  { value: "diff", label: "Diff" },
+  { value: "schedule", label: "Schedule" },
+  { value: "webhook", label: "Webhook" },
+] as const;
+
+function WorkflowFilterMenu<Value extends string>({
+  label,
+  value,
+  options,
+  onChange,
+  triggerRef,
+}: {
+  label: string;
+  value: Value;
+  options: readonly { value: Value; label: string }[];
+  onChange: (value: Value) => void;
+  triggerRef: Ref<HTMLButtonElement>;
+}) {
+  return (
+    <MenuRoot>
+      <MenuTrigger
+        ref={triggerRef}
+        render={
+          <Button size="sm" variant="outline">
+            {label}
+            <CaretDownIcon size={16} aria-hidden="true" />
+          </Button>
+        }
+      />
+      <MenuPopup size="compact" aria-label={label}>
+        <MenuRadioGroup value={value} onValueChange={onChange}>
+          {options.map((option) => (
+            <MenuRadioItem key={option.value} value={option.value} closeOnClick>
+              {option.label}
+            </MenuRadioItem>
+          ))}
+        </MenuRadioGroup>
+      </MenuPopup>
+    </MenuRoot>
+  );
+}
+
 export function WorkflowLanding({
   capability,
   channels,
   filter,
-  filterTarget,
   onFilterChange,
   refreshRequest,
   saveReadback,
@@ -970,8 +1021,6 @@ export function WorkflowLanding({
   onSelect: (key: string | undefined, name?: string) => void;
   /** Channel IDs to show; every channel is still read. Empty shows all. */
   filter: readonly string[];
-  /** Header action slot; standalone consumers render the trigger in place. */
-  filterTarget?: HTMLElement | null;
   onFilterChange: (channelIds: readonly string[]) => void;
   refreshRequest: number;
   saveReadback?: Pick<WorkflowDefinition, "channelId" | "revision"> | undefined;
@@ -986,8 +1035,14 @@ export function WorkflowLanding({
     capability.operations.snapshot,
   );
   const [mineOnly, setMineOnly] = useState(false);
-  const [enabledOnly, setEnabledOnly] = useState(false);
-  const filterTriggerRef = useRef<HTMLButtonElement>(null);
+  const [status, setStatus] =
+    useState<(typeof STATUS_OPTIONS)[number]["value"]>("all");
+  const [trigger, setTrigger] =
+    useState<(typeof TRIGGER_OPTIONS)[number]["value"]>("all");
+  const ownerTriggerRef = useRef<HTMLButtonElement>(null);
+  const statusTriggerRef = useRef<HTMLButtonElement>(null);
+  const triggerTypeRef = useRef<HTMLButtonElement>(null);
+  const channelsTriggerRef = useRef<HTMLButtonElement>(null);
   const [retryRequest, setRetryRequest] = useState(0);
   // Feedback outlives the card, which a filter may unmount.
   const [runRequests, setRunRequests] = useState<readonly string[]>([]);
@@ -1032,7 +1087,7 @@ export function WorkflowLanding({
     saveReadback,
   );
   const filteredSnapshots = useMemo(() => {
-    if (!mineOnly && !enabledOnly) return snapshots;
+    if (!mineOnly && status === "all" && trigger === "all") return snapshots;
     return Object.fromEntries(
       Object.entries(snapshots).map(([id, snapshot]) => [
         id,
@@ -1042,20 +1097,32 @@ export function WorkflowLanding({
             ...snapshot.data,
             items: snapshot.data.items.filter((definition) => {
               if (mineOnly && definition.owner !== viewer) return false;
-              if (!enabledOnly) return true;
-              const fields = readWorkflowDocumentFields(definition.yaml);
-              return fields.editable && fields.enabled !== false;
+              if (status !== "all") {
+                const fields = readWorkflowDocumentFields(definition.yaml);
+                if (
+                  !fields.editable ||
+                  (fields.enabled !== false) !== (status === "enabled")
+                )
+                  return false;
+              }
+              return (
+                trigger === "all" ||
+                workflowCardPresentation(definition.yaml).triggerIcon ===
+                  trigger
+              );
             }),
           },
         },
       ]),
     );
-  }, [snapshots, mineOnly, enabledOnly, viewer]);
-  const filtered = mineOnly || enabledOnly || filter.length > 0;
+  }, [snapshots, mineOnly, status, trigger, viewer]);
+  const filtered =
+    mineOnly || status !== "all" || trigger !== "all" || filter.length > 0;
   const resetFilters = () => {
     onFilterChange([]);
     setMineOnly(false);
-    setEnabledOnly(false);
+    setStatus("all");
+    setTrigger("all");
   };
   const ordered = [...channels].sort(
     (a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id),
@@ -1116,15 +1183,27 @@ export function WorkflowLanding({
             key: "mine",
             label: "My workflows",
             remove: () => setMineOnly(false),
+            triggerRef: ownerTriggerRef,
           },
         ]
       : []),
-    ...(enabledOnly
+    ...(status !== "all"
       ? [
           {
-            key: "enabled",
-            label: "Enabled",
-            remove: () => setEnabledOnly(false),
+            key: "status",
+            label: status === "enabled" ? "Enabled" : "Disabled",
+            remove: () => setStatus("all"),
+            triggerRef: statusTriggerRef,
+          },
+        ]
+      : []),
+    ...(trigger !== "all"
+      ? [
+          {
+            key: "trigger",
+            label: `${TRIGGER_OPTIONS.find((option) => option.value === trigger)?.label} trigger`,
+            remove: () => setTrigger("all"),
+            triggerRef: triggerTypeRef,
           },
         ]
       : []),
@@ -1132,114 +1211,104 @@ export function WorkflowLanding({
       key: channel.id,
       label: `#${channel.name}`,
       remove: () => removeFilter(channel.id),
+      triggerRef: channelsTriggerRef,
     })),
   ];
-  const filterTrigger = (
-    <PopoverTrigger
-      ref={filterTriggerRef}
-      aria-label="Filters"
-      render={
-        <IconButton
-          size="sm"
-          variant="ghost"
-          aria-label="Filters"
-          title="Filters"
-          icon={<Filter2Icon size="1rem" aria-hidden="true" />}
-        />
-      }
-    />
-  );
   return (
     <>
-      <PopoverRoot>
-        {filterTarget
-          ? createPortal(filterTrigger, filterTarget)
-          : filterTrigger}
-        <PopoverPopup
-          size="wide"
-          align="end"
-          aria-label="Workflow filters"
-          style={{ width: "28rem" }}
-        >
-          <div className="workflow-filter-heading">
-            <PopoverTitle>Workflow filters</PopoverTitle>
-            <Button
-              variant="ghost"
-              size="sm"
-              disabled={!filtered}
-              onClick={resetFilters}
+      <fieldset
+        className="workflow-filter-toolbar"
+        aria-label="Workflow filters"
+      >
+        <WorkflowFilterMenu
+          label="Owner"
+          triggerRef={ownerTriggerRef}
+          value={mineOnly ? "mine" : "all"}
+          options={OWNER_OPTIONS}
+          onChange={(value) => setMineOnly(value === "mine")}
+        />
+        <WorkflowFilterMenu
+          label="Status"
+          triggerRef={statusTriggerRef}
+          value={status}
+          options={STATUS_OPTIONS}
+          onChange={setStatus}
+        />
+        <WorkflowFilterMenu
+          label="Trigger"
+          triggerRef={triggerTypeRef}
+          value={trigger}
+          options={TRIGGER_OPTIONS}
+          onChange={setTrigger}
+        />
+        <MenuRoot>
+          <MenuTrigger
+            ref={channelsTriggerRef}
+            render={
+              <Button size="sm" variant="outline">
+                Channels
+                <CaretDownIcon size={16} aria-hidden="true" />
+              </Button>
+            }
+          />
+          <MenuPopup
+            size="wide"
+            aria-label="Channels"
+            style={{ width: "28rem" }}
+          >
+            {populated.length === 0 && (
+              <MenuNote>No channels with workflows yet.</MenuNote>
+            )}
+            <MenuItem
+              disabled={!filter.length}
+              closeOnClick={false}
+              onClick={() => onFilterChange([])}
             >
-              Clear all
-            </Button>
-          </div>
-          <fieldset className="workflow-filter-section" aria-label="Workflow">
-            <InlineHeader title="Workflow" />
-            <div className="workflow-filter-presets text-body-sm">
-              <NavigationItem
-                variant="option"
-                label="My workflows"
-                selected={mineOnly}
-                aria-current={false}
-                aria-pressed={mineOnly}
-                onClick={() => setMineOnly(!mineOnly)}
-                trailing={
-                  mineOnly && <CheckIcon size={16} aria-hidden="true" />
-                }
-              />
-              <NavigationItem
-                variant="option"
-                label="Enabled"
-                selected={enabledOnly}
-                aria-current={false}
-                aria-pressed={enabledOnly}
-                onClick={() => setEnabledOnly(!enabledOnly)}
-                trailing={
-                  enabledOnly && <CheckIcon size={16} aria-hidden="true" />
-                }
-              />
-            </div>
-          </fieldset>
-          <fieldset className="workflow-filter-section" aria-label="Channels">
-            <InlineHeader title="Channels" />
-            <div className="workflow-filter-channels text-body-sm">
+              Clear channels
+            </MenuItem>
+            <div className="workflow-filter-channels">
               {populated.map((channel) => (
-                <NavigationItem
+                <MenuCheckboxItem
                   key={channel.id}
-                  variant="option"
-                  selected={filter.includes(channel.id)}
-                  aria-current={false}
-                  aria-pressed={filter.includes(channel.id)}
-                  onClick={() =>
-                    filter.includes(channel.id)
-                      ? removeFilter(channel.id)
-                      : onFilterChange([...filter, channel.id])
+                  checked={filter.includes(channel.id)}
+                  closeOnClick={false}
+                  onCheckedChange={(checked) =>
+                    checked
+                      ? onFilterChange([...filter, channel.id])
+                      : removeFilter(channel.id)
                   }
-                  trailing={
-                    filter.includes(channel.id) && (
-                      <CheckIcon size={16} aria-hidden="true" />
-                    )
-                  }
-                  label={
-                    <span className="workflow-filter-channel-label">
-                      <HashIcon
-                        className="workflow-filter-channel-icon"
-                        size={14}
-                        aria-hidden="true"
-                      />
-                      <span
-                        className="workflow-filter-label"
-                        title={channel.name}
-                      >
-                        {channel.name}
-                      </span>
+                >
+                  <span className="workflow-filter-channel-label">
+                    <HashIcon
+                      className="workflow-filter-channel-icon"
+                      size={14}
+                      aria-hidden="true"
+                    />
+                    <span
+                      className="workflow-filter-label"
+                      title={channel.name}
+                    >
+                      {channel.name}
                     </span>
-                  }
-                />
+                  </span>
+                </MenuCheckboxItem>
               ))}
             </div>
-          </fieldset>
-        </PopoverPopup>
-      </PopoverRoot>
+          </MenuPopup>
+        </MenuRoot>
+        {filtered && (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => {
+              resetFilters();
+              ownerTriggerRef.current?.focus();
+            }}
+          >
+            Clear all
+          </Button>
+        )}
+      </fieldset>
       <fieldset
         className="workflow-page-filter"
         aria-label="Active workflow filters"
@@ -1253,7 +1322,7 @@ export function WorkflowLanding({
                 aria-label={`Remove ${active.label} filter`}
                 onClick={() => {
                   active.remove();
-                  filterTriggerRef.current?.focus();
+                  active.triggerRef.current?.focus();
                 }}
               >
                 <span className="workflow-filter-label">{active.label}</span>

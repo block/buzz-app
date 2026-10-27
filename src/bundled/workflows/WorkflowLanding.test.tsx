@@ -1128,48 +1128,52 @@ it("combines ownership, saved enabled state and channels, and clears every filte
   }
   render(<Harness />);
   const user = userEvent.setup();
-  const open = async () => {
-    screen.getByRole("button", { name: "Filters" }).focus();
+  const choose = async (menu: string, option: string) => {
+    screen.getByRole("button", { name: menu }).focus();
     await user.keyboard("{Enter}");
-    await screen.findByRole("dialog", { name: "Workflow filters" });
+    await user.click(
+      await screen.findByRole("menuitemradio", { name: option }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("menu", { name: menu })).toBeNull(),
+    );
   };
-  const close = async () => {
+  const chooseChannel = async () => {
+    screen.getByRole("button", { name: "Channels" }).focus();
+    await user.keyboard("{Enter}");
+    await user.click(
+      await screen.findByRole("menuitemcheckbox", { name: "General" }),
+    );
     await user.keyboard("{Escape}");
     await waitFor(() =>
-      expect(
-        screen.queryByRole("dialog", { name: "Workflow filters" }),
-      ).toBeNull(),
+      expect(screen.queryByRole("menu", { name: "Channels" })).toBeNull(),
     );
   };
   await screen.findByRole("button", { name: /^Open Mine disabled:/ });
-  await open();
-  await user.click(screen.getByRole("button", { name: "My workflows" }));
-  expect(screen.getByRole("button", { name: "Clear all" })).toBeEnabled();
-  await close();
+  await choose("Owner", "My workflows");
   expect(
     screen.queryByRole("button", { name: /^Open Other enabled:/ }),
   ).toBeNull();
-  expect(
-    screen.getByRole("button", { name: /^Open Mine disabled:/ }),
-  ).toBeVisible();
-  await open();
-  await user.click(screen.getByRole("button", { name: "Enabled" }));
-  expect(screen.getByRole("button", { name: "Clear all" })).toBeEnabled();
-  await close();
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: /^Open Mine disabled:/ }),
+    ).toBeVisible(),
+  );
+  await choose("Status", "Enabled");
   expect(
     screen.queryByRole("button", { name: /^Open Mine disabled:/ }),
   ).toBeNull();
-  expect(
-    screen.getByRole("button", { name: /^Open Mine enabled:/ }),
-  ).toBeVisible();
-  await open();
-  await user.click(screen.getByRole("button", { name: "General" }));
-  await close();
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: /^Open Mine enabled:/ }),
+    ).toBeVisible(),
+  );
+  await chooseChannel();
   expect(screen.getByText("No matching workflows")).toBeVisible();
   await user.click(
     screen.getByRole("button", { name: "Remove My workflows filter" }),
   );
-  expect(screen.getByRole("button", { name: "Filters" })).toHaveFocus();
+  expect(screen.getByRole("button", { name: "Owner" })).toHaveFocus();
   expect(
     screen.getByRole("button", { name: "Remove Enabled filter" }),
   ).toBeInTheDocument();
@@ -1187,6 +1191,7 @@ it("combines ownership, saved enabled state and channels, and clears every filte
   await user.click(
     screen.getByRole("button", { name: "Remove #General filter" }),
   );
+  expect(screen.getByRole("button", { name: "Channels" })).toHaveFocus();
   await waitFor(() =>
     expect(
       screen.getByRole("button", { name: /^Open Mine enabled:/ }),
@@ -1195,7 +1200,7 @@ it("combines ownership, saved enabled state and channels, and clears every filte
   await user.click(
     screen.getByRole("button", { name: "Remove Enabled filter" }),
   );
-  expect(screen.getByRole("button", { name: "Filters" })).toHaveFocus();
+  expect(screen.getByRole("button", { name: "Status" })).toHaveFocus();
   expect(
     screen.queryByRole("button", { name: /^Remove .* filter$/ }),
   ).toBeNull();
@@ -1204,37 +1209,90 @@ it("combines ownership, saved enabled state and channels, and clears every filte
       screen.getAllByRole("button", { name: /^Open (Mine|Other)/ }),
     ).toHaveLength(3),
   );
-  await open();
-  expect(screen.getByRole("button", { name: "My workflows" })).toHaveAttribute(
-    "aria-pressed",
-    "false",
+  expect(screen.queryByRole("button", { name: "Clear all" })).toBeNull();
+
+  await choose("Owner", "My workflows");
+  await choose("Status", "Disabled");
+  await choose("Trigger", "Message");
+  await chooseChannel();
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: /^Open Mine disabled:/ }),
+    ).toBeVisible(),
   );
-  expect(screen.getByRole("button", { name: "Enabled" })).toHaveAttribute(
-    "aria-pressed",
-    "false",
-  );
-  expect(screen.getByRole("button", { name: "Clear all" })).toBeDisabled();
-  await user.click(screen.getByRole("button", { name: "My workflows" }));
-  await user.click(screen.getByRole("button", { name: "Enabled" }));
-  await user.click(screen.getByRole("button", { name: "General" }));
+  expect(
+    screen.queryByRole("button", { name: /^Open Mine enabled:/ }),
+  ).toBeNull();
   await user.click(screen.getByRole("button", { name: "Clear all" }));
-  expect(screen.getByRole("button", { name: "Clear all" })).toBeDisabled();
-  expect(screen.getByRole("button", { name: "My workflows" })).toHaveAttribute(
-    "aria-pressed",
-    "false",
-  );
-  expect(screen.getByRole("button", { name: "Enabled" })).toHaveAttribute(
-    "aria-pressed",
-    "false",
-  );
-  expect(screen.getByRole("button", { name: "General" })).toHaveAttribute(
-    "aria-pressed",
-    "false",
-  );
-  await close();
+  expect(screen.getByRole("button", { name: "Owner" })).toHaveFocus();
+  expect(
+    screen.queryByRole("button", { name: /^Remove .* filter$/ }),
+  ).toBeNull();
   await waitFor(() =>
     expect(
       screen.getAllByRole("button", { name: /^Open (Mine|Other)/ }),
     ).toHaveLength(3),
+  );
+
+  const triggers = [
+    ["Message", "message_posted"],
+    ["Reaction", "reaction_added"],
+    ["Diff", "diff_posted"],
+    ["Schedule", "schedule"],
+    ["Webhook", "webhook"],
+  ] as const;
+  act(() =>
+    fixture.definitions.update({
+      status: "ready",
+      data: {
+        partial: false,
+        items: [
+          ...triggers.map(([label, on]) => ({
+            ...definition(label, fixtureViewer, fixtureChannel, true),
+            yaml: fixtureYaml
+              .replace("Message helper", label)
+              .replace("message_posted", on)
+              .replace("enabled: false", ""),
+          })),
+          {
+            ...definition("Unreadable", fixtureViewer, fixtureChannel, false),
+            yaml: "name: [",
+          },
+          {
+            ...definition("Unknown", fixtureViewer, fixtureChannel, false),
+            yaml: fixtureYaml
+              .replace("Message helper", "Unknown")
+              .replace("message_posted", "custom_trigger"),
+          },
+        ],
+      },
+    }),
+  );
+  await choose("Status", "Disabled");
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: /^Open Unknown:/ }),
+    ).toBeVisible(),
+  );
+  expect(screen.queryByRole("button", { name: /^Open Unnamed/ })).toBeNull();
+  expect(screen.queryByRole("button", { name: /^Open Message:/ })).toBeNull();
+  await choose("Status", "Any status");
+  for (const [label] of triggers) {
+    await choose("Trigger", label);
+    await waitFor(() =>
+      expect(screen.getAllByRole("button", { name: /^Open / })).toHaveLength(1),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: new RegExp(`^Open ${label}:`) }),
+      ).toBeVisible(),
+    );
+  }
+  await user.click(
+    screen.getByRole("button", { name: "Remove Webhook trigger filter" }),
+  );
+  expect(screen.getByRole("button", { name: "Trigger" })).toHaveFocus();
+  await waitFor(() =>
+    expect(screen.getAllByRole("button", { name: /^Open / })).toHaveLength(7),
   );
 });

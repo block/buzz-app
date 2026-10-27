@@ -890,15 +890,13 @@ it("opens a selected card in the side pane and drops a stale channel filter", as
   );
   const user = userEvent.setup();
   expect(
-    screen.getByRole("button", { name: "Filters" }).closest("header"),
-  ).not.toBeNull();
-  expect(screen.getByRole("button", { name: "Filters" })).toHaveTextContent(
-    /^$/,
-  );
+    screen.getByRole("button", { name: "Channels" }).closest("header"),
+  ).toBeNull();
+  expect(screen.queryByRole("button", { name: "Filters" })).toBeNull();
   const openChannels = async () => {
-    screen.getByRole("button", { name: "Filters" }).focus();
+    screen.getByRole("button", { name: "Channels" }).focus();
     await user.keyboard("{Enter}");
-    await screen.findByRole("dialog", { name: "Workflow filters" });
+    await screen.findByRole("menu", { name: "Channels" });
   };
   const open = await screen.findByRole("button", {
     name: /^Open Message helper:/,
@@ -919,14 +917,14 @@ it("opens a selected card in the side pane and drops a stale channel filter", as
   expect(screen.queryByRole("region", { name: "Workflow details" })).toBeNull();
   await openChannels();
   expect(
-    await screen.findByRole("button", { name: "Fixture channel" }),
+    await screen.findByRole("menuitemcheckbox", { name: "Fixture channel" }),
   ).toBeVisible();
-  expect(screen.queryByRole("button", { name: "Other channel" })).toBeNull();
+  expect(
+    screen.queryByRole("menuitemcheckbox", { name: "Other channel" }),
+  ).toBeNull();
   await user.keyboard("{Escape}");
   await waitFor(() =>
-    expect(
-      screen.queryByRole("dialog", { name: "Workflow filters" }),
-    ).toBeNull(),
+    expect(screen.queryByRole("menu", { name: "Channels" })).toBeNull(),
   );
   const otherDefinition = {
     ...fixtureDefinition,
@@ -941,13 +939,11 @@ it("opens a selected card in the side pane and drops a stale channel filter", as
   );
   await openChannels();
   await user.click(
-    await screen.findByRole("button", { name: "Other channel" }),
+    await screen.findByRole("menuitemcheckbox", { name: "Other channel" }),
   );
   await user.keyboard("{Escape}");
   await waitFor(() =>
-    expect(
-      screen.queryByRole("dialog", { name: "Workflow filters" }),
-    ).toBeNull(),
+    expect(screen.queryByRole("menu", { name: "Channels" })).toBeNull(),
   );
   expect(
     await screen.findByRole("button", { name: /^Open Other helper:/ }),
@@ -956,24 +952,22 @@ it("opens a selected card in the side pane and drops a stale channel filter", as
     screen.queryByRole("button", { name: /^Open Message helper:/ }),
   ).toBeNull();
   await openChannels();
-  expect(screen.getByRole("button", { name: "Other channel" })).toHaveAttribute(
-    "aria-pressed",
-    "true",
+  expect(
+    screen.getByRole("menuitemcheckbox", { name: "Other channel" }),
+  ).toHaveAttribute("aria-checked", "true");
+  await user.click(
+    screen.getByRole("menuitemcheckbox", { name: "Fixture channel" }),
   );
-  await user.click(screen.getByRole("button", { name: "Fixture channel" }));
   // Multi-selection keeps the menu open and includes both channels.
   expect(
-    screen.getByRole("button", { name: "Fixture channel" }),
-  ).toHaveAttribute("aria-pressed", "true");
-  expect(screen.getByRole("button", { name: "Other channel" })).toHaveAttribute(
-    "aria-pressed",
-    "true",
-  );
+    screen.getByRole("menuitemcheckbox", { name: "Fixture channel" }),
+  ).toHaveAttribute("aria-checked", "true");
+  expect(
+    screen.getByRole("menuitemcheckbox", { name: "Other channel" }),
+  ).toHaveAttribute("aria-checked", "true");
   await user.keyboard("{Escape}");
   await waitFor(() =>
-    expect(
-      screen.queryByRole("dialog", { name: "Workflow filters" }),
-    ).toBeNull(),
+    expect(screen.queryByRole("menu", { name: "Channels" })).toBeNull(),
   );
   expect(
     screen.getAllByRole("button", { name: /^Remove #.* filter$/ }),
@@ -988,25 +982,25 @@ it("opens a selected card in the side pane and drops a stale channel filter", as
     screen.getByRole("region", { name: "Workflow details" }),
   ).toBeVisible();
   await openChannels();
-  await user.click(screen.getByRole("button", { name: "Fixture channel" }));
+  await user.click(
+    screen.getByRole("menuitemcheckbox", { name: "Fixture channel" }),
+  );
   await user.keyboard("{Escape}");
   await waitFor(() =>
-    expect(
-      screen.queryByRole("dialog", { name: "Workflow filters" }),
-    ).toBeNull(),
+    expect(screen.queryByRole("menu", { name: "Channels" })).toBeNull(),
   );
   expect(screen.queryByRole("region", { name: "Workflow details" })).toBeNull();
-  expect(screen.getByRole("button", { name: "Filters" })).toHaveFocus();
+  expect(screen.getByRole("button", { name: "Channels" })).toHaveFocus();
   expect(
     screen.queryByRole("button", { name: /^Open Message helper:/ }),
   ).toBeNull();
   await openChannels();
-  await user.click(screen.getByRole("button", { name: "Other channel" }));
+  await user.click(
+    screen.getByRole("menuitemcheckbox", { name: "Other channel" }),
+  );
   await user.keyboard("{Escape}");
   await waitFor(() =>
-    expect(
-      screen.queryByRole("dialog", { name: "Workflow filters" }),
-    ).toBeNull(),
+    expect(screen.queryByRole("menu", { name: "Channels" })).toBeNull(),
   );
   expect(
     screen.queryByRole("button", { name: /^Remove #.* filter$/ }),
@@ -1016,32 +1010,32 @@ it("opens a selected card in the side pane and drops a stale channel filter", as
   ).toBeVisible();
   expect(screen.queryByRole("button", { name: "Clear all" })).toBeNull();
   await openChannels();
-  await user.click(screen.getByRole("button", { name: "Fixture channel" }));
-  await user.click(screen.getByRole("button", { name: "Other channel" }));
+  await user.click(
+    screen.getByRole("menuitemcheckbox", { name: "Fixture channel" }),
+  );
+  await user.click(
+    screen.getByRole("menuitemcheckbox", { name: "Other channel" }),
+  );
   await user.keyboard("{Escape}");
   await waitFor(() =>
-    expect(
-      screen.queryByRole("dialog", { name: "Workflow filters" }),
-    ).toBeNull(),
+    expect(screen.queryByRole("menu", { name: "Channels" })).toBeNull(),
   );
   await openChannels();
-  await user.click(screen.getByRole("button", { name: "Clear all" }));
+  await user.click(screen.getByRole("menuitem", { name: "Clear channels" }));
   await user.keyboard("{Escape}");
   await waitFor(() =>
-    expect(
-      screen.queryByRole("dialog", { name: "Workflow filters" }),
-    ).toBeNull(),
+    expect(screen.queryByRole("menu", { name: "Channels" })).toBeNull(),
   );
   expect(
     screen.queryByRole("button", { name: /^Remove #.* filter$/ }),
   ).toBeNull();
   await openChannels();
-  await user.click(screen.getByRole("button", { name: "Other channel" }));
+  await user.click(
+    screen.getByRole("menuitemcheckbox", { name: "Other channel" }),
+  );
   await user.keyboard("{Escape}");
   await waitFor(() =>
-    expect(
-      screen.queryByRole("dialog", { name: "Workflow filters" }),
-    ).toBeNull(),
+    expect(screen.queryByRole("menu", { name: "Channels" })).toBeNull(),
   );
   act(() =>
     fixture.definitions.update({
@@ -1062,13 +1056,13 @@ it("opens a selected card in the side pane and drops a stale channel filter", as
     screen.queryByRole("button", { name: /^Remove #.* filter$/ }),
   ).toBeNull();
   await openChannels();
-  await screen.findByRole("button", { name: "Fixture channel" });
-  expect(screen.queryByRole("button", { name: "Other channel" })).toBeNull();
+  await screen.findByRole("menuitemcheckbox", { name: "Fixture channel" });
+  expect(
+    screen.queryByRole("menuitemcheckbox", { name: "Other channel" }),
+  ).toBeNull();
   await user.keyboard("{Escape}");
   await waitFor(() =>
-    expect(
-      screen.queryByRole("dialog", { name: "Workflow filters" }),
-    ).toBeNull(),
+    expect(screen.queryByRole("menu", { name: "Channels" })).toBeNull(),
   );
   act(() =>
     fixture.definitions.update({
@@ -1078,13 +1072,11 @@ it("opens a selected card in the side pane and drops a stale channel filter", as
   );
   await openChannels();
   await user.click(
-    await screen.findByRole("button", { name: "Other channel" }),
+    await screen.findByRole("menuitemcheckbox", { name: "Other channel" }),
   );
   await user.keyboard("{Escape}");
   await waitFor(() =>
-    expect(
-      screen.queryByRole("dialog", { name: "Workflow filters" }),
-    ).toBeNull(),
+    expect(screen.queryByRole("menu", { name: "Channels" })).toBeNull(),
   );
   expect(
     screen.getByRole("button", { name: "Remove #Other channel filter" }),

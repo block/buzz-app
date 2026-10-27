@@ -1998,8 +1998,9 @@ html[data-keyboard-input] .quickReactionGlyph {
 .replyBranchSummary > button > [class~="buzz-button-label"] {
   flex-wrap: wrap;
 }
+/* Replies indent from both edges, so a reply on either side reads as nested. */
 .replyBranchPanel {
-  padding-inline-start: var(--reply-indent);
+  padding-inline: var(--reply-indent);
 }
 .replyItem {
   position: relative;
@@ -2139,14 +2140,10 @@ html[data-keyboard-input] .quickReactionGlyph {
   border-inline-start: 1px solid var(--border-message-thread);
   pointer-events: none;
 }
-/* A branch started by the viewer sits on the right, so its spine, hooks,
-   indent and summary mirror to stay beside the avatar that started it. */
+/* A branch started by the viewer sits on the right, so its spine, hooks
+   and summary mirror to stay beside the avatar that started it. */
 .replyBranch:has(> .replyBranchMessage [data-viewer-message])
-> .replyBranchPanel {
-  padding-inline: 0 var(--reply-indent);
-}
-.replyBranch:has(> .replyBranchMessage [data-viewer-message])
-  > .replyBranchSummary {
+> .replyBranchSummary {
   display: flex;
   justify-content: flex-end;
   margin-inline: 0 calc(var(--size-control-sm) + var(--space-2));

@@ -299,6 +299,40 @@ describe("github_watch_pr", () => {
     app.dispose();
   });
 
+  it("starts fresh when a subscription is edited to another PR", async () => {
+    const app = setup(
+      answer({ checks: [{ name: "unit", conclusion: "SUCCESS" }] }),
+    );
+    const source = {
+      type: "source" as const,
+      interest_id: "first",
+      enabled: true,
+      provider: "attention/github-pr",
+      channel: "c",
+      config: { pr: url },
+    };
+    await app.save(agent, {
+      attention: {
+        "interest/first": { type: "interest", instructions: "Follow" },
+        "watch/first": source,
+      },
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    const next = "https://github.com/block/buzz-app/pull/8";
+    app.gh(
+      answer({
+        head: "2222222222",
+        checks: [{ name: "unit", conclusion: "SUCCESS" }],
+      }),
+    );
+    await app.save(agent, {
+      attention: { "watch/first": { ...source, config: { pr: next } } },
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(app.texts().at(-1)).toBe(`CI passed on 222222222 for ${next}.`);
+    app.dispose();
+  });
+
   it("pauses polling with Attention and catches up when resumed", async () => {
     const app = setup();
     await app.call({ url });

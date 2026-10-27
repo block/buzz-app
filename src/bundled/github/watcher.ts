@@ -166,9 +166,13 @@ export function watchPulls(ctx: Context) {
       const saved = cursors.get(key) as
         | (Watch & { revision?: unknown })
         | undefined;
-      let watch: Watch = (saved && saved.revision === revision
+      let watch: Watch = (saved &&
+      saved.url === pull.url &&
+      saved.revision === revision
         ? saved
-        : seed) ?? {
+        : seed?.url === pull.url
+          ? seed
+          : undefined) ?? {
         agent,
         url: pull.url,
         channel: source.channel ?? "",

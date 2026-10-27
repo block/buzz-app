@@ -5,7 +5,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { ReadFilter, RelayEvent } from "../relay/events";
 import type { LiveCallbacks } from "../relay/live";
 import { createRelaySession } from "../relay/session";
-import { keypair, signed } from "../relay/testing";
+import { flush, keypair, signed } from "../relay/testing";
 import { AgentConfigStore, type Subject } from "./agent-config";
 import { artifactD, artifactTemplate } from "./agent-config-artifacts";
 import { sessionFeed } from "./community-config";
@@ -77,16 +77,23 @@ async function setup() {
     }),
   );
   const records = [metadata(), members([owner.pubkey], 10), head];
+  /** Each answer to a read of the channel's metadata and roster. */
+  const confirms: Promise<RelayEvent[]>[] = [];
   let live!: LiveCallbacks;
   const owned = createRelaySession({
     viewer: owner.pubkey,
     relayAuthor: relay.pubkey,
     scope: "https://one.example",
     media: () => undefined,
-    async query(filters) {
-      return records.filter((event) =>
-        filters.some((filter) => matches(filter, event)),
+    query(filters) {
+      const answer = Promise.resolve(
+        records.filter((event) =>
+          filters.some((filter) => matches(filter, event)),
+        ),
       );
+      if (filters.some((filter) => filter.kinds?.includes(39000)))
+        confirms.push(answer);
+      return answer;
     },
     subscribe(callbacks) {
       live = callbacks;
@@ -115,6 +122,7 @@ async function setup() {
     store,
     storage,
     records,
+    confirms,
     emit: (events: RelayEvent[], phase: "live" | "replay") =>
       live.receive(events, { phase, sourceChannels: [channel] }),
   };
@@ -140,8 +148,12 @@ it.each(["live", "replay"] as const)(
   "keeps a followed config channel through a superseded removal heard in %s",
   async (phase) => {
     const f = await setup();
+    const before = f.confirms.length;
     f.emit([members([], 9)], phase);
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    // The confirm it starts has answered and been applied.
+    await vi.waitFor(() => expect(f.confirms.length).toBe(before + 1));
+    await f.confirms.at(-1);
+    await flush();
     expect(f.store.instructions(instructions)).toEqual({ ok: true, text: "A" });
     // Rebuilt from storage, it still holds the confirmed copy.
     expect(new AgentConfigStore(f.storage).instructions(instructions)).toEqual({

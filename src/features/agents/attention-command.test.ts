@@ -68,6 +68,7 @@ it("batches each burst, retries a refused queue, and drains the final output", a
   const h = harness();
   const done = h.run({
     spawn: h.spawn,
+    id: "watch/test",
     agent: "a",
     watch: {
       type: "source",
@@ -100,6 +101,7 @@ it("kills execution on cancellation and discards buffered output", async () => {
   const h = harness(true);
   const done = h.run({
     spawn: h.spawn,
+    id: "watch/test",
     agent: "a",
     watch: {
       type: "source",
@@ -135,6 +137,7 @@ it("reports a process startup failure to the owning conversation", async () => {
       spawn: async () => {
         throw new Error("program unavailable");
       },
+      id: "watch/test",
       agent: "a",
       watch: {
         type: "source",
@@ -174,6 +177,7 @@ it.each(["command"])("uses only the run-bound launcher for %s", async (id) => {
   const pr = "https://github.com/block/buzz-app/pull/1630";
   await run({
     spawn,
+    id: "watch/test",
     agent: "agent",
     watch: {
       type: "source",
@@ -200,6 +204,7 @@ it("refuses commands when the host has no agent launcher", async () => {
   await expect(
     h.run({
       spawn: h.spawn,
+      id: "watch/test",
       agent: "agent",
       watch: {
         type: "source",
@@ -218,6 +223,7 @@ it("refuses commands when the host has no agent launcher", async () => {
 function input(h: ReturnType<typeof harness>): Input {
   return {
     spawn: h.spawn,
+    id: "watch/test",
     agent: "a",
     watch: {
       type: "source",

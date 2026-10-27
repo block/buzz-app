@@ -20,21 +20,28 @@ const FAILURE_LIMIT = 30;
 const keyOf = (watch: Pick<Watch, "agent" | "url">) =>
   `${watch.agent} ${watch.url}`;
 
-function load(storage = STORAGE_KEY): Map<string, Watch> {
+type Cursor = Watch & { subscription?: string; revision?: unknown };
+
+function load(storage = STORAGE_KEY): Map<string, Cursor> {
   try {
     const value: unknown = JSON.parse(localStorage.getItem(storage) ?? "[]");
     if (!Array.isArray(value)) return new Map();
     return new Map(
       value
         .filter(
-          (watch): watch is Watch =>
+          (watch): watch is Cursor =>
             !!watch &&
             typeof watch.agent === "string" &&
             typeof watch.url === "string" &&
             typeof watch.channel === "string" &&
             typeof watch.wakes === "number",
         )
-        .map((watch) => [keyOf(watch), watch]),
+        .map((watch) => [
+          watch.subscription
+            ? `${watch.agent} ${watch.subscription}`
+            : keyOf(watch),
+          watch,
+        ]),
     );
   } catch {
     return new Map();
@@ -147,13 +154,13 @@ export function watchPulls(ctx: Context) {
     id: "github-pr",
     description: "Follow GitHub pull request feedback and CI",
     configExample: { pr: "https://github.com/OWNER/REPO/pull/NUMBER" },
-    async run({ agent, watch: source, signal, emit }) {
+    async run({ id, agent, watch: source, signal, emit }) {
       const pull =
         typeof source.config.pr === "string"
           ? pullOf(source.config.pr)
           : undefined;
       if (!pull) throw new Error("A PR watch needs a GitHub pull request URL");
-      const key = keyOf({ agent, url: pull.url });
+      const key = `${agent} ${id}`;
       const seed = source.config.initial as Watch | undefined;
       const revision = source.config.revision;
       const saved = cursors.get(key) as
@@ -168,7 +175,7 @@ export function watchPulls(ctx: Context) {
         wakes: 0,
       };
       const persist = () => {
-        cursors.set(key, { ...watch, revision } as Watch);
+        cursors.set(key, { ...watch, revision, subscription: id });
         save(CURSORS, cursors);
       };
       while (!signal.aborted && !disposed) {
@@ -239,10 +246,10 @@ export function watchPulls(ctx: Context) {
       const pull = typeof args.url === "string" ? pullOf(args.url) : undefined;
       if (!pull) throw new Error("url must be a GitHub pull request URL");
       await migrate();
-      const key = keyOf({ agent: client.key, url: pull.url });
       const attention = client.attention;
       if (!attention) throw new Error("This host does not support Attention");
       const id = await slug(pull.url);
+      const key = `${client.key} ${id}`;
       const priorObject = await attention.show(id);
       if (args.stop === true) {
         if (priorObject.result === "found")
@@ -250,7 +257,7 @@ export function watchPulls(ctx: Context) {
             expected: priorObject.expected_state,
           });
         cursors.delete(key);
-        legacy.delete(key);
+        legacy.delete(keyOf({ agent: client.key, url: pull.url }));
         save(CURSORS, cursors);
         save(STORAGE_KEY, legacy);
         return priorObject.result === "found"

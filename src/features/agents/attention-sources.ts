@@ -9,9 +9,10 @@ export type AttentionSource = Readonly<{
   /** Discovery metadata for tools that configure this provider. */
   description?: string;
   configExample?: Readonly<Record<string, unknown>>;
-  warnings?(): Promise<readonly string[]>;
   run(
     input: Readonly<{
+      /** Stable Attention object slug, unique within the agent. */
+      id: string;
       /** The agent's membership key, as `Agents.wake` takes. */
       agent: string;
       watch: SourceWatch;
@@ -103,6 +104,7 @@ export class AttentionSources {
           if (run.stop.signal.aborted || this.host.completed(agent.key, object))
             return;
           await source.run({
+            id: object.slug,
             agent: agent.key,
             watch: object.value,
             signal: run.stop.signal,

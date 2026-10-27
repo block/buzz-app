@@ -392,7 +392,6 @@ export type AgentAttention = Readonly<{
    * agent. The handle still reads and writes them; the attention tools refuse
    * every call while it is off. */
   enabled(): boolean;
-  sourceWarnings?(provider: string): Promise<readonly string[]>;
   /** Whether a watch's classifier can run now. Classifiers can be saved
    * either way; one that cannot run lets every event pass. */
   classifier(): ClassifierAvailability;
@@ -1596,12 +1595,6 @@ export class AgentsService extends Service implements Agents {
       tabs: (agent) => {
         const session = this.bindingOf(agent)?.session;
         return session && channelTabs(session);
-      },
-      sourceWarnings: async (provider: string) => {
-        const source = this.attentionSources
-          .snapshot()
-          .find((source) => this.attentionProvider(source) === provider);
-        return source?.warnings?.() ?? [];
       },
       classifier: () => this.classifier(),
       decisions: () => this.decisions,

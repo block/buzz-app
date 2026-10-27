@@ -224,6 +224,7 @@ function setup(initial: Pull | null = answer()) {
   return {
     call,
     records,
+    save,
     attention: attention(agent),
     completed,
     attentionEnabled(value: boolean) {
@@ -266,6 +267,35 @@ describe("github_watch_pr", () => {
     expect(app.addAttentionSource).toHaveBeenCalledWith(
       expect.objectContaining({ id: "github-pr", run: expect.any(Function) }),
     );
+    app.dispose();
+  });
+
+  it("keeps generic subscriptions for the same PR independent", async () => {
+    const app = setup(
+      answer({ checks: [{ name: "unit", conclusion: "SUCCESS" }] }),
+    );
+    const source = {
+      type: "source" as const,
+      interest_id: "first",
+      enabled: true,
+      provider: "attention/github-pr",
+      channel: "c",
+      config: { pr: url },
+    };
+    await app.save(agent, {
+      attention: {
+        "interest/first": { type: "interest", instructions: "First" },
+        "interest/second": { type: "interest", instructions: "Second" },
+        "watch/first": source,
+      },
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(app.woke).toHaveBeenCalledTimes(1);
+    await app.save(agent, {
+      attention: { "watch/second": { ...source, interest_id: "second", root } },
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(app.woke).toHaveBeenCalledTimes(2);
     app.dispose();
   });
 

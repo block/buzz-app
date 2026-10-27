@@ -318,18 +318,9 @@ async function run(
   const shown = async (promise: ReturnType<AgentAttention["show"]>) => {
     const result = await promise;
     const object = result.object;
-    const warnings =
-      object?.type === "source" && attention.sourceWarnings
-        ? await attention
-            .sourceWarnings(object.provider)
-            .catch((error) => [
-              `Could not check source configuration: ${String(error)}`,
-            ])
-        : [];
     return {
       ...result,
       ...note(object),
-      ...(warnings.length ? { warnings } : {}),
     };
   };
   const scoped = text(args.interest);

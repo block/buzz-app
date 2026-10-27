@@ -1688,8 +1688,39 @@ export function createChannelStore(
         /** When the read finished; a pending read is always reused. */
         at?: number;
         read: Promise<{ events: readonly RelayEvent[]; partial: boolean }>;
+        /** The finished read's open channels, newest metadata per channel. */
+        open?: ReturnType<NonNullable<ChannelQueries["openDirectory"]>>;
       }
     | undefined;
+  const noOpenDirectory: ReturnType<
+    NonNullable<ChannelQueries["openDirectory"]>
+  > = Object.freeze([]);
+  function openDirectoryChannels(events: readonly RelayEvent[]) {
+    const latest = new Map<string, RelayEvent>();
+    for (const event of events) {
+      const id = tag(event, "d");
+      if (id) latest.set(id, newer(latest.get(id), event));
+    }
+    return Object.freeze(
+      [...latest.entries()].flatMap(([id, event]) => {
+        const name = openMetadata(event) && metadataName(event);
+        if (!name) return [];
+        const type = tag(event, "t");
+        return [
+          Object.freeze({
+            id,
+            name,
+            ...(type === "stream" || type === "forum"
+              ? { channelType: type }
+              : {}),
+            ...(hasTag(event, "archived", "true")
+              ? { archived: true as const }
+              : {}),
+          }),
+        ];
+      }),
+    );
+  }
   /** All open channels' metadata, newest first, through the relay's
    * `(until, before_id)` cursor. One read serves every keystroke: a caller
    * that stops waiting leaves it running for the next one. */
@@ -1764,9 +1795,13 @@ export function createChannelStore(
       publicDirectory = entry;
       // A failed read is not reused; the next keystroke starts again.
       void entry.read.then(
-        () => {
+        (directory) => {
           controllers.delete(controller);
           entry.at = now();
+          // Name references in mounted rows read the directory through the
+          // list subscription; the list itself is unchanged.
+          entry.open = openDirectoryChannels(directory.events);
+          notify(listListeners);
         },
         () => {
           controllers.delete(controller);
@@ -2315,6 +2350,10 @@ export function createChannelStore(
     searchPublic,
     findLabeled,
     matchPublic,
+    openDirectory: () =>
+      publicDirectory?.generation === epoch
+        ? (publicDirectory.open ?? noOpenDirectory)
+        : noOpenDirectory,
     describe: describeReference,
     refer: referChannel,
     refreshRoster,

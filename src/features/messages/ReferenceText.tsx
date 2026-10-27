@@ -28,33 +28,56 @@ const noop = () => () => {};
 const profilesSnapshot = () => emptyProfiles;
 const channelsSnapshot = () => emptyChannels;
 const agentsSnapshot = () => undefined;
-type ChannelLists = Pick<RelaySession["channels"], "list">;
+type ChannelLists = Pick<RelaySession["channels"], "list" | "openDirectory">;
 const referenced = new WeakMap<
   ChannelLists,
-  { list: ChannelList; channels: readonly ReferenceChannel[] }
+  {
+    list: ChannelList;
+    open: readonly ReferenceChannel[];
+    channels: readonly ReferenceChannel[];
+  }
 >();
+const sameReference = (a: ReferenceChannel, b: ReferenceChannel | undefined) =>
+  a.id === b?.id &&
+  a.name === b.name &&
+  a.channelType === b.channelType &&
+  a.private === b.private &&
+  a.archived === b.archived;
 /** Previews and activity replace the list and its summaries on every message.
  * Retain the prior channels while every field a reference reads is unchanged,
- * so mounted rows render only when a label could change. */
+ * so mounted rows render only when a label could change.
+ *
+ * Open channels a completed directory read named follow the joined list, so
+ * `#name` prose links a channel the viewer has not joined once the directory
+ * is warm, without reading it to render. The joined list owns a name both
+ * carry: the roster's channel links, the directory's duplicate does not. */
 function referenceChannels(queries: ChannelLists) {
   const list = queries.list();
+  const open = queries.openDirectory?.() ?? emptyChannels;
   const prior = referenced.get(queries);
-  if (prior?.list === list) return prior.channels;
+  if (prior?.list === list && prior.open === open) return prior.channels;
+  const joined = new Set(list.channels.map((channel) => channel.id));
+  const named = new Set(
+    list.channels
+      .filter((channel) => !channel.archived)
+      .map((channel) => channel.name),
+  );
+  const next = open.length
+    ? [
+        ...list.channels,
+        ...open.filter(
+          (channel) => !joined.has(channel.id) && !named.has(channel.name),
+        ),
+      ]
+    : list.channels;
   const channels =
-    prior?.channels.length === list.channels.length &&
-    list.channels.every((channel, index) => {
-      const old = prior.channels[index];
-      return (
-        old?.id === channel.id &&
-        old.name === channel.name &&
-        old.channelType === channel.channelType &&
-        old.private === channel.private &&
-        old.archived === channel.archived
-      );
-    })
+    prior?.channels.length === next.length &&
+    next.every((channel, index) =>
+      sameReference(channel, prior.channels[index]),
+    )
       ? prior.channels
-      : list.channels;
-  referenced.set(queries, { list, channels });
+      : next;
+  referenced.set(queries, { list, open, channels });
   return channels;
 }
 

@@ -737,6 +737,46 @@ it("ranks public name matches before the cut and reuses one metadata page while 
   expect(h.channels.matchPublic?.("ops")).toEqual([]);
 });
 
+it("names the completed public directory's open channels for references, without reading", async () => {
+  const h = setup();
+  h.channels.ensureList();
+  await h.rosters(0);
+  await h.settled();
+  const id = (n: number) =>
+    `40000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+  const open = (n: number, name: string, extra: string[][] = []) =>
+    metadata(relay, id(n), name, 1_700_000_000, [
+      ["public"],
+      ["t", "stream"],
+      ...extra,
+    ]);
+  const page = [
+    open(0, "release-notes"),
+    open(1, "retired", [["archived", "true"]]),
+    metadata(relay, id(2), "members-only", 1_700_000_000, [["private"]]),
+  ];
+  const listChanged = vi.fn();
+  h.channels.subscribeList(listChanged);
+  expect(h.channels.openDirectory?.()).toEqual([]);
+  const search = h.channels.searchPublic?.("zzz");
+  assert.exists(search);
+  // In flight: nothing is named yet.
+  expect(h.channels.openDirectory?.()).toEqual([]);
+  (await h.next(39000)).respond(page);
+  expect(await search).toEqual({ channels: [], partial: false });
+  await vi.waitFor(() => expect(listChanged).toHaveBeenCalled());
+  const named = h.channels.openDirectory?.();
+  expect(named).toEqual([
+    { id: id(0), name: "release-notes", channelType: "stream" },
+    { id: id(1), name: "retired", channelType: "stream", archived: true },
+  ]);
+  // The same array until a later read replaces it, so rows stay retained.
+  expect(h.channels.openDirectory?.()).toBe(named);
+  expect(h.pending).toHaveLength(0);
+  await h.clearCache();
+  expect(h.channels.openDirectory?.()).toEqual([]);
+});
+
 it("reads every public metadata page, and a keystroke that gives up leaves the read for the next", async () => {
   let clock = 1_000_000;
   const h = setup({ now: () => clock });

@@ -1280,7 +1280,7 @@ it("waits for no run again in an agent opened again while Pi could not end a sta
   expect(host.requests("wait")).toHaveLength(1);
 });
 
-it("posts no answer for a left run that sent once another left run's wait continued it", async () => {
+it("posts only the sends of a left run that sent once another left run's wait continued it", async () => {
   // The second run's thread is looked up; the first's wait continues every
   // run, and the second sends its answer itself.
   const later = reply("8", "@Pi older");

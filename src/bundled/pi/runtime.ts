@@ -5,8 +5,7 @@
 // works steers the run. A watch or timer runs as a standalone turn
 // (`runOnce`), in a one-off conversation. Pi acts in Buzz with the in-process
 // Buzz tools, signed by the agent's native-held key. The runtime reports a
-// turn that fails, and posts the answer of a mention's turn that never used
-// `send`.
+// turn that fails; what Pi writes without `send` stays in local activity.
 import { appClient } from "../../buzz-mcp/app-client";
 import type { Context } from "../../buzz-mcp/client";
 import { content, errorText } from "../../buzz-mcp/rpc";
@@ -129,7 +128,7 @@ type Receipt = Pick<Delivery, "step" | "acknowledged" | "superseded"> & {
   scope: string;
   /** Where a run's failure for it is reported. */
   where: Where;
-  /** A recovered turn holds its posting policy until its answer settles. */
+  /** A recovered turn holds its posting policy until its run settles. */
   settled?: Promise<void>;
   /** An Attention prompt rebuilt when the host is ready to submit. */
   prompt?: () => Promise<{ text: string; steer: string } | undefined>;
@@ -368,7 +367,7 @@ export class PiRuntime {
     const key = controlKey(agent, place);
     const control = `${agent.key}/${key}`;
     // Pi continues every run once asked anything: its left runs are taken on
-    // first, and posting their answers needs the agent's handle.
+    // first, and reporting their failures needs the agent's handle.
     const act = async (signal?: AbortSignal) => {
       const handle =
         this.agents.get(agent.key)?.handle ?? this.handle(agent.key);
@@ -436,7 +435,7 @@ export class PiRuntime {
     // for the owner.
     const wake = trigger.type !== "mention" ? trigger : undefined;
     // Only an Attention wake refreshes its Interest's instructions as Pi takes
-    // it, and keeps its own destination for an answer recovered after a stop.
+    // it, and keeps its own destination for a failure recovered after a stop.
     const attention = wake?.type === "attention";
     // Pi runs commands as you; mentions need owner or delegated authority.
     if (
@@ -914,8 +913,8 @@ export class PiRuntime {
         dropped.push({ submission, conversation });
         continue;
       }
-      // A conversation several threads share has no root: its answer goes to
-      // the thread of the mention, whose id is the request.
+      // A conversation several threads share has no root: its failure is
+      // reported in the thread of the mention, whose id is the request.
       const root =
         reply?.root ??
         context.root ??

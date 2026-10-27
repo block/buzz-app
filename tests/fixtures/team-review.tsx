@@ -17,7 +17,7 @@ const running = ["Ada", "Bo", "Cy"].map(
       type: "fixture/agent",
       name,
       config: {},
-      relay: "",
+      relay: "wss://relay.example",
       place: "here",
       skipped: {},
       timers: {},

@@ -10,6 +10,7 @@ afterEach(cleanup);
 
 const kid = "c".repeat(64);
 const pal = "d".repeat(64);
+const far = "e".repeat(64);
 const saved = {
   id: "t1",
   name: "Crew",
@@ -39,8 +40,11 @@ function fixture(change: Partial<TeamRequest> = {}) {
   };
   const snapshot = {
     running: [
-      { pubkey: kid, name: "Kid" },
-      { pubkey: pal, name: "Pal" },
+      { pubkey: kid, name: "Kid", relay: "wss://relay.example" },
+      { pubkey: pal, name: "Pal", relay: "wss://relay.example" },
+      // Running in another community: Kid again, and Far only there.
+      { pubkey: kid, name: "Kid", relay: "wss://other.example" },
+      { pubkey: far, name: "Far", relay: "wss://other.example" },
     ] as unknown as readonly Agent[],
     teams: [saved],
   };
@@ -50,6 +54,8 @@ function fixture(change: Partial<TeamRequest> = {}) {
       return () => listeners.delete(listener);
     },
     snapshot: () => snapshot,
+    memberships: (pubkey: string) =>
+      snapshot.running.filter((agent) => agent.pubkey === pubkey),
     teamRequests: () => requests,
     approveTeam: vi.fn(async () => clear()),
     dismissTeam: vi.fn(clear),
@@ -115,4 +121,16 @@ it("dismisses an unsaved request when the owner closes its review", async () => 
   await user.click(screen.getByRole("button", { name: /^Close$/ }));
   await waitFor(() => expect(agents.dismissTeam).toHaveBeenCalledWith("draft"));
   expect(agents.approveTeam).not.toHaveBeenCalled();
+});
+
+it("lists the request's community's agents and counts members elsewhere", async () => {
+  fixture({ members: [kid, far] });
+  await screen.findByDisplayValue("Crew");
+  expect(screen.getAllByRole("checkbox")).toHaveLength(2);
+  expect(screen.getByRole("checkbox", { name: "Kid" })).toBeChecked();
+  expect(screen.getByRole("checkbox", { name: "Pal" })).not.toBeChecked();
+  expect(screen.queryByRole("checkbox", { name: "Far" })).toBeNull();
+  expect(
+    screen.getByText("+1 in your other communities, who stay on the team."),
+  ).toBeVisible();
 });

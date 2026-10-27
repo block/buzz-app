@@ -1,11 +1,20 @@
 import { useId, useState, useSyncExternalStore } from "react";
 import type { Agents, TeamRequest } from "../../features/agents/service";
+import { communityDestination } from "../../features/communities/destination";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { TeamFields, type TeamDraft } from "./TeamFields";
 
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
+
+const originOf = (relay: string) => {
+  try {
+    return communityDestination(relay).url;
+  } catch {
+    return undefined;
+  }
+};
 
 /** The owner reviews another agent's team request in the Teams form. */
 export function TeamReview({ agents }: { agents: Agents }) {
@@ -18,6 +27,11 @@ export function TeamReview({ agents }: { agents: Agents }) {
 
 function Review({ agents, request }: { agents: Agents; request: TeamRequest }) {
   const { running } = useSyncExternalStore(agents.subscribe, agents.snapshot);
+  // Running agents span every joined community; members come from the
+  // request's.
+  const here = running.filter(
+    (agent) => originOf(agent.relay) === request.community,
+  );
   const [open, setOpen] = useState(true);
   const [draft, setDraft] = useState<TeamDraft>({
     name: request.name,
@@ -35,7 +49,7 @@ function Review({ agents, request }: { agents: Agents; request: TeamRequest }) {
   // Members not in this community, which it doesn't list but keeps.
   const away = draft.members.filter(
     (pubkey) =>
-      !running.some((agent) => agent.pubkey === pubkey) &&
+      !here.some((agent) => agent.pubkey === pubkey) &&
       agents.memberships(pubkey).length > 0,
   ).length;
   const save = async () => {
@@ -92,7 +106,7 @@ function Review({ agents, request }: { agents: Agents; request: TeamRequest }) {
       >
         <TeamFields
           value={draft}
-          agents={running}
+          agents={here}
           disabled={pending}
           autoFocus
           away={away}

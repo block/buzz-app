@@ -52,6 +52,7 @@ export function AgentTabs(props: {
     ...supplied.filter((section) => section.value.startsWith("agent:type:")),
     ...supplied.filter((section) => section.value === "agent:memory"),
     ...supplied.filter((section) => section.value === "agent:activity"),
+    ...supplied.filter((section) => section.value === "agent:history"),
     {
       value: "agent:management",
       label: "Settings",

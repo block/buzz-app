@@ -2,7 +2,7 @@
 // profile panel): the type's tabs, settings, and Memory.
 // Memory is relay-backed for both local and hosted agents. Agents classified
 // as `elsewhere` expose no sections in these views.
-import { useId, useState, type ReactNode } from "react";
+import { useId, useState, useSyncExternalStore, type ReactNode } from "react";
 import { AttentionPanel } from "./AttentionPanel";
 import { MemoryPanel, type AgentMemories } from "./MemoryPanel";
 import type { CommunityReader } from "../communities/service";
@@ -14,6 +14,7 @@ import type {
   RegisteredAgentType,
 } from "./service";
 import { AgentSaveButton, useAgentSaveState } from "./AgentSaveButton";
+import { AgentConfigHistory } from "./AgentConfigHistory";
 
 export type AgentSection = Readonly<{
   /** `agent:<type tab id>`, `agent:settings`, `agent:activity`
@@ -61,20 +62,26 @@ export function agentSections({
     value: (role ? `agent:${role}` : `agent:type:${id}`) as `agent:${string}`,
     label: title,
     render: () => (
-      <Component
-        agent={agent}
-        {...(role === "settings" && settingsSection ? { settingsSection } : {})}
-        {...(role === "settings" && content
-          ? { settingsContent: content }
-          : {})}
-        {...(conversation && { conversation })}
-        save={(config) =>
-          settingsHost?.pendingSave
-            ? settingsHost.pendingSave(config)
-            : agents.save(agent.key, { config })
-        }
-        {...(role === "settings" && settingsHost ? { settingsHost } : {})}
-      />
+      <EditorBase agents={agents} agent={agent}>
+        {(save) => (
+          <Component
+            agent={agent}
+            {...(role === "settings" && settingsSection
+              ? { settingsSection }
+              : {})}
+            {...(role === "settings" && content
+              ? { settingsContent: content }
+              : {})}
+            {...(conversation && { conversation })}
+            save={(config) =>
+              settingsHost?.pendingSave
+                ? settingsHost.pendingSave(config)
+                : save(config)
+            }
+            {...(role === "settings" && settingsHost ? { settingsHost } : {})}
+          />
+        )}
+      </EditorBase>
     ),
   }));
   if (!settingsTab && (settingsHost || attention))
@@ -87,6 +94,12 @@ export function agentSections({
           {attention}
         </>
       ),
+    });
+  if (agent.place === "here" && agents.configHistory(agent.pubkey))
+    tabs.push({
+      value: "agent:history",
+      label: "History",
+      render: () => <ConfigHistoryTab agents={agents} pubkey={agent.pubkey} />,
     });
   return [
     ...tabs,
@@ -166,5 +179,63 @@ export function AttentionSection({
         }
       }}
     />
+  );
+}
+
+/** Each synced side's History, current as the agent's config changes. */
+function ConfigHistoryTab({
+  agents,
+  pubkey,
+}: {
+  agents: Pick<Agents, "configHistory" | "snapshot" | "subscribe">;
+  pubkey: string;
+}) {
+  useSyncExternalStore(agents.subscribe, agents.snapshot);
+  const history = agents.configHistory(pubkey);
+  if (!history) return <p>This agent's config doesn't sync here.</p>;
+  return history.sides.map(({ side, expected, head, version }) => (
+    <AgentConfigHistory
+      key={side}
+      title={side === "settings" ? "Settings history" : "Instructions history"}
+      expected={expected}
+      head={head}
+      version={version}
+      read={history.read}
+      {...(side === "settings" && history.settings
+        ? { settings: history.settings }
+        : {})}
+      onRevert={(template) => history.revise(side, template)}
+    />
+  ));
+}
+
+/** Saves a type tab's config as a revision of the synced heads it opened
+ * with, so an edit made over a stale view conflicts instead of overwriting.
+ * Each save moves the base to what it saved. */
+function EditorBase({
+  agents,
+  agent,
+  children,
+}: {
+  agents: Pick<Agents, "save" | "snapshot">;
+  agent: Agent;
+  children(save: (config: unknown) => Promise<void>): ReactNode;
+}) {
+  const [base, setBase] = useState(agent.configBase);
+  const editor = children(async (config) => {
+    await agents.save(agent.key, { config, ...(base && { base }) });
+    setBase(
+      agents.snapshot().agents.find((a) => a.key === agent.key)?.configBase,
+    );
+  });
+  return agent.configProblem ? (
+    <>
+      <p role="alert" className="buzz-field-error">
+        {agent.configProblem}
+      </p>
+      {editor}
+    </>
+  ) : (
+    editor
   );
 }

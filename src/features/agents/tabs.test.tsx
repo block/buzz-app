@@ -44,7 +44,10 @@ const agent: Agent = {
 } as Agent;
 
 it("puts the device runtime control in Settings without a separate Attention tab", () => {
-  const agents = { save: async () => {} } as unknown as Agents;
+  const agents = {
+    save: async () => {},
+    configHistory: () => undefined,
+  } as unknown as Agents;
   const sections = agentSections({
     agents,
     agent,
@@ -62,7 +65,10 @@ it("puts the device runtime control in Settings without a separate Attention tab
 
 it("supplies the local control once to provider Settings", () => {
   const sections = agentSections({
-    agents: { save: async () => {} } as unknown as Agents,
+    agents: {
+      save: async () => {},
+      configHistory: () => undefined,
+    } as unknown as Agents,
     agent,
     type: {
       tabs: [
@@ -87,4 +93,39 @@ it("supplies the local control once to provider Settings", () => {
   expect(
     screen.getAllByRole("switch", { name: "Attention on this device" }),
   ).toHaveLength(1);
+});
+
+it("shows each synced side's History as its own named section", () => {
+  const side = (name: "settings" | "instructions") => ({
+    side: name,
+    expected: { channel: "c", d: name, type: `buzz.agent.${name}` },
+    head: undefined,
+    version: 0,
+  });
+  const snapshot = {};
+  const history = {
+    read: async () => [],
+    sides: [side("settings"), side("instructions")],
+    revise: async () => ({ ok: true }),
+  };
+  const agents = {
+    subscribe: () => () => {},
+    snapshot: () => snapshot,
+    classifier: () => "available",
+    save: async () => {},
+    configHistory: () => history,
+  } as unknown as Agents;
+  const section = agentSections({
+    agents,
+    agent,
+    type: undefined,
+    memories: undefined,
+  }).find((tab) => tab.value === "agent:history");
+  render(<div>{section?.render()}</div>);
+  expect(
+    screen.getByRole("region", { name: "Settings history" }),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole("region", { name: "Instructions history" }),
+  ).toBeInTheDocument();
 });

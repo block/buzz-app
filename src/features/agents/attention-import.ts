@@ -156,6 +156,7 @@ export async function importAttention(
       );
     }
   }
+  return registrations.length === 0;
 }
 
 /** Retry retained files when local recipients or their connections become usable. */
@@ -221,6 +222,9 @@ export function watchAttentionImport(
     imported = recipients;
     importing = true;
     void importAttention(agents, host, controller.signal)
+      .then((empty) => {
+        if (empty) stop();
+      })
       .catch((error) => {
         if (!controller.signal.aborted)
           console.warn("Attention migration failed", error);
@@ -231,8 +235,8 @@ export function watchAttentionImport(
       });
   };
   const unsubscribe = agents.subscribe(migrate);
-  migrate();
-  return () => {
+  const stop = () => {
+    if (stopped) return;
     stopped = true;
     controller.abort();
     unsubscribe();
@@ -242,4 +246,6 @@ export function watchAttentionImport(
     }
     connections.clear();
   };
+  migrate();
+  return stop;
 }

@@ -18,9 +18,9 @@
       },
       {
         "id": "attention-import",
-        "program": "buzz-attention-import",
+        "program": "buzz-attention-discover",
         "bundled": true,
-        "interpreter": "python3"
+        "interpreter": "bash"
       }
     ]
   }

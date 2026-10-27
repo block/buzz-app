@@ -676,3 +676,38 @@ it("kills import discovery when its plugin scope stops", async () => {
   await vi.waitFor(() => expect(kill).toHaveBeenCalledOnce());
   expect(save).not.toHaveBeenCalled();
 });
+
+it("stops discovery after an empty scan despite recipient changes", async () => {
+  let changed = () => {};
+  let generation = 0;
+  const connection = relay();
+  const unsubscribe = vi.fn();
+  const agents = {
+    snapshot: () => ({
+      running: [{ key: "agent", pubkey: "agent", attentionEnabled: true }],
+    }),
+    relay: () => ({
+      ...connection,
+      snapshot: () => ({ ...connection.snapshot(), generation }),
+    }),
+    subscribe: (listener: () => void) => {
+      changed = listener;
+      return unsubscribe;
+    },
+  } as unknown as Agents;
+  const spawn = vi.fn(async (_id: string, options?: HostProcessOptions) => {
+    options?.onStdout?.("[]");
+    return {
+      write: async () => {},
+      end: async () => {},
+      kill: async () => {},
+      exited: Promise.resolve(0),
+    };
+  });
+  const stop = watchAttentionImport(agents, { spawn });
+  await vi.waitFor(() => expect(unsubscribe).toHaveBeenCalledOnce());
+  generation++;
+  changed();
+  expect(spawn).toHaveBeenCalledOnce();
+  stop();
+});

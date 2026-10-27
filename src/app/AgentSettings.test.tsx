@@ -23,7 +23,7 @@ afterEach(() => {
   localStorage.clear();
 });
 
-it("offers keeping the Mac awake only where the app can, with a wait for Automatic", async () => {
+it("offers keeping the Mac awake only where the app can, with a wait after agents finish", async () => {
   const user = userEvent.setup();
   const view = render(<AgentSettings keepAwakeAvailable={false} />, {
     wrapper: ToastProvider,
@@ -34,12 +34,21 @@ it("offers keeping the Mac awake only where the app can, with a wait for Automat
   view.rerender(<AgentSettings keepAwakeAvailable />);
   const mode = screen.getByRole("combobox", { name: "Keep this Mac awake" });
   expect(mode).toHaveTextContent("Off");
+  await user.click(mode);
   expect(
-    screen.queryByRole("combobox", { name: "Turn off after" }),
+    (await screen.findAllByRole("option")).map((option) => option.textContent),
+  ).toEqual(["Off", "While agents work", "Always"]);
+  await user.keyboard("{Escape}");
+  expect(
+    screen.queryByRole("combobox", { name: "Stay awake after agents finish" }),
   ).not.toBeInTheDocument();
   await user.click(mode);
-  await user.click(await screen.findByRole("option", { name: "Automatic" }));
-  const after = screen.getByRole("combobox", { name: "Turn off after" });
+  await user.click(
+    await screen.findByRole("option", { name: "While agents work" }),
+  );
+  const after = screen.getByRole("combobox", {
+    name: "Stay awake after agents finish",
+  });
   expect(after).toHaveTextContent("1 hour");
   await user.click(after);
   expect(
@@ -73,23 +82,69 @@ it("says when the Mac can't be kept awake and retries the same choice", async ()
     await user.click(
       screen.getByRole("combobox", { name: "Keep this Mac awake" }),
     );
-    await user.click(await screen.findByRole("option", { name: "On" }));
+    await user.click(await screen.findByRole("option", { name: "Always" }));
     expect(
-      await screen.findByText("Keep-awake choice wasn’t applied"),
+      await screen.findByText("Couldn’t keep this Mac awake"),
     ).toBeVisible();
-    expect(
-      screen.getByText("This Mac can still go to sleep. Try again."),
-    ).toBeVisible();
-    await user.click(
-      screen.getByRole("button", { name: "Retry keep-awake choice" }),
-    );
+    await user.click(screen.getByRole("button", { name: "Try again" }));
     await waitFor(() =>
       expect(
-        screen.queryByText("Keep-awake choice wasn’t applied"),
+        screen.queryByText("Couldn’t keep this Mac awake"),
       ).not.toBeInTheDocument(),
     );
     expect(hold.mock.calls).toEqual([[false], [true], [true]]);
     expect(keepAwakePreference().mode).toBe("on");
+  } finally {
+    stop();
+  }
+});
+
+it("shows one keep-awake notice at a time, the Mac's state first", async () => {
+  const user = userEvent.setup();
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  const hold = vi.fn(async (_: boolean) => {});
+  const stop = bindKeepAwake(
+    { isWorking: () => false, subscribeWorking: () => () => {} },
+    hold,
+  );
+  try {
+    render(<AgentSettings keepAwakeAvailable />, { wrapper: ToastProvider });
+    const setItem = vi
+      .spyOn(Storage.prototype, "setItem")
+      .mockImplementation(() => {
+        throw new Error("full");
+      });
+    hold.mockRejectedValueOnce(new Error("refused"));
+    await user.click(
+      screen.getByRole("combobox", { name: "Keep this Mac awake" }),
+    );
+    await user.click(await screen.findByRole("option", { name: "Always" }));
+    expect(
+      await screen.findByText("Couldn’t keep this Mac awake"),
+    ).toBeVisible();
+    expect(
+      screen.queryByText("Keep-awake setting wasn’t saved"),
+    ).not.toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Try again" })).toHaveLength(
+      1,
+    );
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    expect(
+      await screen.findByText("Keep-awake setting wasn’t saved"),
+    ).toBeVisible();
+    expect(
+      screen.queryByText("Couldn’t keep this Mac awake"),
+    ).not.toBeInTheDocument();
+    setItem.mockRestore();
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    await waitFor(() =>
+      expect(
+        screen.queryByText("Keep-awake setting wasn’t saved"),
+      ).not.toBeInTheDocument(),
+    );
+    expect(localStorage.getItem("buzz-keep-awake.v1")).toBe(
+      JSON.stringify({ mode: "on", after: 60 }),
+    );
   } finally {
     stop();
   }

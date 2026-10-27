@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from "react";
 
-/** Off; On while the app runs; or Automatic: while agents work and for
- * `after` minutes once the last turn ends. */
+/** Off; Always ("on") while the app runs; or While agents work ("auto"): while
+ * agents work and for `after` minutes once the last turn ends. */
 export type KeepAwake = Readonly<{
   mode: "off" | "on" | "auto";
   after: number;
@@ -62,8 +62,7 @@ export function setKeepAwakePreference(value: KeepAwake): string | null {
     localStorage.setItem(preferenceKey, JSON.stringify(value));
     unsaved = undefined;
   } catch {
-    error =
-      "This choice is active, but could not be saved on this device. Try again.";
+    error = "It works for now, but Buzz will forget it when it restarts.";
   }
   window.dispatchEvent(new Event(changedEvent));
   return error;
@@ -137,8 +136,8 @@ export function bindKeepAwake(
         held = undefined;
         setApplyError(
           wanted
-            ? "This Mac can still go to sleep. Try again."
-            : "This Mac may still be kept awake. Try again.",
+            ? "Couldn’t keep this Mac awake"
+            : "Couldn’t let this Mac sleep again",
         );
       },
     );

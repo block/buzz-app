@@ -26,8 +26,8 @@ import {
 
 const keepAwakeModes = [
   { value: "off", label: "Off" },
-  { value: "on", label: "On" },
-  { value: "auto", label: "Automatic" },
+  { value: "auto", label: "While agents work" },
+  { value: "on", label: "Always" },
 ] as const;
 const delayLabel = (minutes: number) =>
   minutes < 60
@@ -69,7 +69,7 @@ export function AgentSettings({
           {keepAwakeAvailable && (
             <PreferenceRow
               title="Keep this Mac awake"
-              subtitle="Stops idle sleep so agents can answer. The display can still turn off."
+              subtitle="So agents can keep answering. Closing the lid still puts it to sleep."
               trailing={
                 <Select
                   label="Keep this Mac awake"
@@ -85,11 +85,10 @@ export function AgentSettings({
           )}
           {keepAwakeAvailable && keepAwake.mode === "auto" && (
             <PreferenceRow
-              title="Turn off after"
-              subtitle="Once no agent has worked for this long."
+              title="Stay awake after agents finish"
               trailing={
                 <Select
-                  label="Turn off after"
+                  label="Stay awake after agents finish"
                   variant="compact"
                   value={String(keepAwake.after)}
                   groups={[
@@ -124,30 +123,31 @@ export function AgentSettings({
           </Button>
         </ToastNotice>
       )}
-      {active && keepAwakeError && (
-        <ToastNotice
-          title="Keep-awake choice wasn’t saved"
-          description={keepAwakeError}
-        >
-          <Button
-            type="button"
-            size="sm"
-            onClick={() => changeKeepAwake(keepAwake)}
-          >
-            Retry saving keep-awake choice
-          </Button>
-        </ToastNotice>
-      )}
-      {active && keepAwakeAvailable && keepAwakeApplyError && (
-        <ToastNotice
-          title="Keep-awake choice wasn’t applied"
-          description={keepAwakeApplyError}
-        >
-          <Button type="button" size="sm" onClick={retryKeepAwake}>
-            Retry keep-awake choice
-          </Button>
-        </ToastNotice>
-      )}
+      {/* One notice at a time; whether the Mac sleeps matters more than
+          whether the choice outlives a restart. */}
+      {active &&
+        (keepAwakeAvailable && keepAwakeApplyError ? (
+          <ToastNotice title={keepAwakeApplyError}>
+            <Button type="button" size="sm" onClick={retryKeepAwake}>
+              Try again
+            </Button>
+          </ToastNotice>
+        ) : (
+          keepAwakeError && (
+            <ToastNotice
+              title="Keep-awake setting wasn’t saved"
+              description={keepAwakeError}
+            >
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => changeKeepAwake(keepAwake)}
+              >
+                Try again
+              </Button>
+            </ToastNotice>
+          )
+        ))}
     </section>
   );
 }

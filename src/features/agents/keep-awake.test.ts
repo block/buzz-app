@@ -121,9 +121,7 @@ it("reports a refusal until a retry of the same choice succeeds", async () => {
   keep.hold.mockRejectedValueOnce(new Error("refused"));
   keep.choose({ mode: "on", after: 30 });
   await act(() => vi.advanceTimersByTimeAsync(0));
-  expect(error.result.current).toBe(
-    "This Mac can still go to sleep. Try again.",
-  );
+  expect(error.result.current).toBe("Couldn’t keep this Mac awake");
   // Nothing else changes, so only the retry asks again.
   await act(() => vi.advanceTimersByTimeAsync(24 * 60 * 60_000));
   expect(keep.hold.mock.calls).toEqual([[false], [true]]);

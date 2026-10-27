@@ -1044,6 +1044,17 @@ describe("pasting a bare URL over a selection", () => {
     paste(whole.input, url);
     expect(whole.markdown()).toBe(linked);
 
+    // A selection inside the link widens to the whole link, as the Link dialog
+    // does, and leaves the caret after it.
+    const inside = selectNotes();
+    act(() => inside.input.editLink()?.save("release notes", old));
+    act(() => inside.input.setSelectionRange(10, 17));
+    paste(inside.input, url);
+    expect(inside.markdown()).toBe(linked);
+    expect([inside.input.selectionStart, inside.input.selectionEnd]).toEqual([
+      23, 23,
+    ]);
+
     // The selected part follows the pasted URL; the rest keeps its destination.
     const partial = selectNotes();
     act(() => partial.input.editLink()?.save("release notes", old));
@@ -1052,6 +1063,21 @@ describe("pasting a bare URL over a selection", () => {
     expect(partial.markdown()).toBe(
       `Check [the release](${url})[ notes](${old}) before Friday`,
     );
+  });
+
+  it("swaps a selected URL instead of labelling it", () => {
+    const old = "https://old.example/x";
+    const raw = mount(`Check ${old} before Friday`);
+    act(() => raw.input.setSelectionRange(6, 27));
+    paste(raw.input, url);
+    expect(raw.markdown()).toBe(`Check ${url} before Friday`);
+
+    const labelled = mount(`Check ${old} before Friday`);
+    act(() => labelled.input.setSelectionRange(6, 27));
+    act(() => labelled.input.editLink()?.save(old, "https://other.example/"));
+    act(() => labelled.input.setSelectionRange(6, 27));
+    paste(labelled.input, url);
+    expect(labelled.markdown()).toBe(`Check ${url} before Friday`);
   });
 
   it.each([
@@ -1090,10 +1116,7 @@ describe("pasting a bare URL over a selection", () => {
     const inline = mount("Check the `release notes` before");
     act(() => inline.input.setSelectionRange(11, 24));
     paste(inline.input, url);
-    expect(inline.markdown()).not.toContain("](");
-    expect(inline.markdown()).toMatch(
-      /^Check the `https:\/\/example\.com\/release-notes ?` before$/,
-    );
+    expect(inline.markdown()).toBe(`Check the \`${url} \` before`);
   });
 
   it("falls back to the limit check when the link would exceed maxLength", () => {

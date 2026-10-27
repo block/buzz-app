@@ -1080,9 +1080,11 @@ it("drops stale channel filters after readback and membership changes", async ()
   expect(
     screen.queryByRole("button", { name: "Clear channels filter" }),
   ).toBeNull();
-  expect(
-    await screen.findByRole("button", { name: /^Open Message helper:/ }),
-  ).toBeVisible();
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: /^Open Message helper:/ }),
+    ).toBeVisible(),
+  );
 });
 
 it("closes the side pane when the final channel leaves", async () => {

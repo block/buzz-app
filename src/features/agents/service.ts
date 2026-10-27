@@ -78,7 +78,6 @@ import {
 } from "./attention";
 import type {
   ClassifierAvailability,
-  ClassifierKey,
   Shown,
   WatchFilter,
   WatchSummary,
@@ -87,9 +86,7 @@ import type {
 import {
   excerpt,
   mentionFacts,
-  nativeClassifier,
   type ClassifierContext,
-  type ClassifierNative,
   type ClassifierOutcome,
 } from "./classifier";
 import type { Decisions } from "../decisions/service";
@@ -716,17 +713,21 @@ export type AgentType<Config = unknown> = {
  * the owner's agent list; every step is asked again after a failure, so each
  * must be safe to repeat. `community` is the agent's `wss://` community. */
 export type RemoteAgentType = Readonly<{
-  /** Makes the agent and resolves with its pubkey. Not yet its owner's. */
+  /** Makes the agent and resolves with its pubkey and the picture it was
+   * made with, which a retried creation keeps. Not yet its owner's. */
   provision(
     input: Readonly<{
       name: string;
+      /** An HTTPS image URL. */
+      picture?: string;
       community: string;
       config?: unknown;
       signal: AbortSignal;
     }>,
-  ): Promise<Readonly<{ pubkey: string }>>;
+  ): Promise<Readonly<{ pubkey: string; picture?: string }>>;
   /** Hands over the owner's attestation (NIP-OA), which the agent attaches to
-   * what it signs. The provider publishes its profile and starts it. */
+   * what it signs. The provider publishes its profile with the name and
+   * picture it was made with, and starts it. */
   activate(
     input: Readonly<{
       pubkey: string;
@@ -811,8 +812,6 @@ export type AgentsSnapshot = Readonly<{
   status: "unavailable" | "loading" | "ready" | "error";
   /** Whether a watch's classifier can run on this device now. */
   classifier: ClassifierAvailability;
-  /** What is known about the saved classifier key, for the owner. */
-  classifierKey: ClassifierKey;
   /** The selected community's agents, while it is connected. */
   agents: readonly Agent[];
   /** Every agent kept running here, whichever community is selected: the
@@ -1059,10 +1058,6 @@ export type Agents = {
   unarchive(agent: AgentKey): Promise<string | undefined>;
   /** Whether a watch's classifier can run on this device now. */
   classifier(): ClassifierAvailability;
-  /** Saves the TypeSafe key in native storage, which the classifier uses.
-   * It is never read back into the app or given to an agent. */
-  setClassifierKey(key: string): Promise<void>;
-  clearClassifierKey(): Promise<void>;
   /** Creates a team, or replaces the one with `id`. Members, by pubkey, must
    * be agents on this device. Each community has the members that are in it. */
   saveTeam(team: TeamChange): Promise<Team>;
@@ -1278,13 +1273,6 @@ const wssOf = (origin: string) =>
   relayOrigin(origin).replace(/^https:/, "wss:");
 
 export class AgentsService extends Service implements Agents {
-  /** Settles once the saved TypeSafe key's status is known; until then an
-   * event classified on that backend waits rather than pass unchecked. */
-  private keyStatus: Promise<void> | undefined;
-  /** Goes up when a save or remove of the key starts and when it ends, so
-   * that what a read or classifier call found under an older key is not
-   * shown over the newer one. */
-  private keyGeneration = 0;
   private readonly contributions;
   private readonly addedTools;
   /** Every added tool's name, its plugin active or still starting. */
@@ -1374,7 +1362,6 @@ export class AgentsService extends Service implements Agents {
       signal: AbortSignal,
     ) => Promise<NipOaAuthorization> = prepareRemoteAgentAuthorization,
     localActivity = createLocalAgentActivity(),
-    private readonly jev: ClassifierNative | undefined = nativeClassifier(),
     /** Runs watch classifiers on this device's decision backend. */
     private readonly decisions: Decisions | undefined = undefined,
     /** Which artifact types an agent has synced, from its config channel
@@ -1396,8 +1383,7 @@ export class AgentsService extends Service implements Agents {
     this.teamList = Object.freeze(readTeams(storage));
     this.state = Object.freeze({
       status: native ? "loading" : "unavailable",
-      classifier: this.availability("checking"),
-      classifierKey: "checking",
+      classifier: this.availability(),
       agents: [],
       running: [],
       interrupted: [],
@@ -1619,12 +1605,6 @@ export class AgentsService extends Service implements Agents {
       },
       classifier: () => this.classifier(),
       decisions: () => this.decisions,
-      keyStatus: () => this.keyStatus,
-      classifierKey: () => this.state.classifierKey,
-      classifierKeyGeneration: () => this.keyGeneration,
-      setClassifierKey: (key, generation) => {
-        if (generation === this.keyGeneration) this.setKey(key);
-      },
       context: (agent, event) => this.context(agent, event),
       displayName: (agent, pubkey) => this.displayName(agent, pubkey),
       custody: native,
@@ -1690,24 +1670,12 @@ export class AgentsService extends Service implements Agents {
           this.watch();
           this.update();
         }),
-        // Another backend can make classifiers available or not.
-        this.decisions?.subscribe(() =>
-          this.setKey(this.state.classifierKey),
-        ) ?? (() => {}),
+        // Another provider, or its setup, can make classifiers available.
+        this.decisions?.subscribe(() => this.updateClassifier()) ?? (() => {}),
       ];
       this.watch();
       void this.refresh();
-      const generation = this.keyGeneration;
-      const found = (key: ClassifierKey) => {
-        if (generation === this.keyGeneration) this.setKey(key);
-      };
-      this.keyStatus = this.jev
-        ?.status()
-        .then((configured) => found(configured ? "saved" : "missing"))
-        .catch((error) => {
-          console.warn("The classifier key could not be read", error);
-          found("unreadable");
-        });
+      this.updateClassifier();
       // Wakes each runner, which starts any timer that is due.
       const tick = setInterval(() => {
         this.runners.tick();
@@ -2296,52 +2264,18 @@ export class AgentsService extends Service implements Agents {
       throw new Error(`${kind.title} agents have no instructions to change`);
     return kind;
   }
-  /** Whether watch classifiers can run on this device: there is a decision
-   * backend, and on the `typesafe` backend a key is saved. */
+  /** Whether watch classifiers can run on this device: the selected
+   * decision provider is ready. */
   classifier(): ClassifierAvailability {
     return this.state.classifier;
   }
-  async setClassifierKey(key: string) {
-    const jev = this.jev;
-    if (!jev) throw new Error("The classifier runs only in the desktop app");
-    await this.changeKey(() => jev.setKey(key));
-    this.setKey("saved");
+  private availability(): ClassifierAvailability {
+    return this.decisions?.status() === "ready" ? "available" : "unavailable";
   }
-  async clearClassifierKey() {
-    const jev = this.jev;
-    if (!jev) throw new Error("The classifier runs only in the desktop app");
-    await this.changeKey(() => jev.clearKey());
-    this.setKey("missing");
-  }
-  /** Saves or removes the key. A read or classifier call that started before
-   * it ends may have used the old key, so its finding is ignored. */
-  private async changeKey(change: () => Promise<void>) {
-    this.keyGeneration++;
-    try {
-      await change();
-    } finally {
-      this.keyGeneration++;
-    }
-  }
-  /** On the `typesafe` backend, agents are told a classifier can run only
-   * while a key is known to be saved. A key the service refused still runs,
-   * and each event reports why it passed unchecked. */
-  private availability(classifierKey: ClassifierKey): ClassifierAvailability {
-    const decisions = this.decisions;
-    if (!decisions) return "unavailable";
-    if (decisions.backend() !== "typesafe") return "available";
-    return classifierKey === "saved" || classifierKey === "refused"
-      ? "available"
-      : "unavailable";
-  }
-  private setKey(classifierKey: ClassifierKey) {
-    const classifier = this.availability(classifierKey);
-    if (
-      this.state.classifierKey === classifierKey &&
-      this.state.classifier === classifier
-    )
-      return;
-    this.state = Object.freeze({ ...this.state, classifier, classifierKey });
+  private updateClassifier() {
+    const classifier = this.availability();
+    if (this.state.classifier === classifier) return;
+    this.state = Object.freeze({ ...this.state, classifier });
     this.notify();
   }
   /** The event's surroundings for the classifier, from what the app knows. */
@@ -2415,8 +2349,9 @@ export class AgentsService extends Service implements Agents {
   ) {
     const binding = this.selectedBinding();
     const community = wssOf(binding.origin);
-    const { pubkey } = await remote.provision({
+    const { pubkey, picture: made } = await remote.provision({
       name,
+      ...(picture ? { picture } : {}),
       community,
       ...(config !== undefined ? { config } : {}),
       signal: binding.controller.signal,
@@ -2429,6 +2364,11 @@ export class AgentsService extends Service implements Agents {
       [...this.bound.keys()].some((origin) => this.rowOf(origin, pubkey))
     )
       throw new Error("The provider returned a key that is already in use");
+    if (
+      made !== undefined &&
+      (typeof made !== "string" || !recordPicture(made))
+    )
+      throw new Error("The provider returned an invalid picture");
     await this.writeUnfinished([
       ...this.unfinished.filter((setup) => setup.pubkey !== pubkey),
       {
@@ -2437,7 +2377,7 @@ export class AgentsService extends Service implements Agents {
         name,
         relay: community,
         owner: binding.viewer,
-        ...(picture ? { picture } : {}),
+        ...(made ? { picture: made } : {}),
         ...(config !== undefined ? { config } : {}),
       },
     ]);
@@ -2482,19 +2422,6 @@ export class AgentsService extends Service implements Agents {
     );
     const agent = this.find(pubkey);
     if (!agent) throw new Error("The agent was set up in another community");
-    // Listed with its picture either way; its own profile is the provider's.
-    if (picture)
-      await remote
-        .profile({
-          pubkey,
-          community: setup.relay,
-          name: setup.name,
-          picture,
-          signal,
-        })
-        .catch((error: unknown) =>
-          console.warn(`Agent ${setup.name} picture was not published`, error),
-        );
     return agent;
   }
 
@@ -2826,6 +2753,12 @@ export class AgentsService extends Service implements Agents {
         : recordPicture(change.picture ?? undefined);
     if (change.picture && !picture)
       throw new Error("A hosted agent's picture is an HTTPS image URL");
+    // The provider can replace a picture but not clear one yet; listing the
+    // agent without it would hide a picture its profile still shows.
+    if (agent.picture && change.picture !== undefined && !change.picture)
+      throw new Error(
+        "A hosted agent's picture can't be removed yet; choose another picture",
+      );
     if (name === agent.name && picture === agent.picture) return;
     await remote.profile({
       pubkey,

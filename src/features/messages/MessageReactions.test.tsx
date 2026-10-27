@@ -10,11 +10,8 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ConversationPresentation } from "../conversation/ConversationPresentation";
-import {
-  MessageReactionControls,
-  MessageReactions,
-  REACTION_PREVIEW_DELAY_MS,
-} from "./MessageReactions";
+import { MessageReactionControls, MessageReactions } from "./MessageReactions";
+import { PREVIEW_REST_MS } from "../../shared/design-system/ui/hoverIntent";
 import { createRelaySession } from "../relay/session";
 import {
   flush,
@@ -146,7 +143,7 @@ function harness(
   }
   return { ...owner, live, wire, publish, Controls };
 }
-it("groups matching emoji by unique people and removes all my duplicate events", async () => {
+it("shows one emoji per person and removes all my duplicate events", async () => {
   const mine = react(),
     duplicate = react(viewer, 3),
     theirs = react(other);
@@ -157,17 +154,20 @@ it("groups matching emoji by unique people and removes all my duplicate events",
   ).toHaveLength(3);
   expect(
     screen.getByTestId("reaction-row").querySelectorAll("[data-reaction]"),
-  ).toHaveLength(1);
+  ).toHaveLength(2);
   const own = screen.getByRole("button", {
     name: "👍: You",
   });
   expect(own.getAttribute("aria-pressed")).toBe("true");
-  expect(own.textContent).toBe("👍2");
-  expect(own.getAttribute("aria-description")).toContain("2 reactions");
+  expect(own.textContent).toBe("👍");
+  expect(
+    screen.getByRole("button", { name: `👍: ${other.pubkey.slice(0, 10)}` }),
+  ).toBeTruthy();
   fireEvent.mouseEnter(own);
+  fireEvent.mouseMove(own);
   const preview = await screen.findByRole("tooltip", {}, { timeout: 2500 });
   expect(preview.textContent).toContain("You");
-  expect(preview.textContent).toContain(other.pubkey.slice(0, 10));
+  expect(preview.textContent).not.toContain(other.pubkey.slice(0, 10));
   fireEvent.click(own);
   const operation = h.session.outbox?.snapshot()[0];
   expect(operation?.event).toMatchObject({
@@ -350,6 +350,7 @@ it("uses the original animated emoji in reaction emojis and previews", async () 
   });
   expect(pill.querySelector("img")?.getAttribute("src")).toBe(url);
   fireEvent.mouseEnter(pill);
+  fireEvent.mouseMove(pill);
   const preview = await screen.findByRole("tooltip", {}, { timeout: 2500 });
   expect(preview.querySelector("img")?.getAttribute("src")).toBe(url);
   expect(media).not.toHaveBeenCalledWith(url, "small");
@@ -362,6 +363,7 @@ it("loads names for people who only reacted after a preview opens", async () => 
     name: `👍: ${other.pubkey.slice(0, 10)}`,
   });
   fireEvent.mouseEnter(pill);
+  fireEvent.mouseMove(pill);
   await screen.findByText(other.pubkey.slice(0, 10), {}, { timeout: 2500 });
   await waitFor(() =>
     expect(
@@ -406,10 +408,12 @@ it("shows custom shortcodes in emojis and previews when media is refused or fail
   fireEvent.error(image);
   expect(broken.textContent).toContain(":broken:");
   fireEvent.mouseEnter(denied);
+  fireEvent.mouseMove(denied);
   const preview = await screen.findByRole("tooltip", {}, { timeout: 2500 });
   expect(preview.textContent).toContain(":denied:");
   fireEvent.mouseLeave(denied);
   fireEvent.mouseEnter(broken);
+  fireEvent.mouseMove(broken);
   await waitFor(
     () =>
       expect(
@@ -502,10 +506,12 @@ it("retires reaction previews while retaining the reaction delivery owner", asyn
       </ConversationPresentation>
     );
     const view = render(tree(true));
-    fireEvent.mouseEnter(
-      screen.getByRole("button", { name: `👍: ${other.pubkey.slice(0, 10)}` }),
-    );
-    await act(() => vi.advanceTimersByTimeAsync(REACTION_PREVIEW_DELAY_MS - 1));
+    const pill = screen.getByRole("button", {
+      name: `👍: ${other.pubkey.slice(0, 10)}`,
+    });
+    fireEvent.mouseEnter(pill);
+    fireEvent.mouseMove(pill);
+    await act(() => vi.advanceTimersByTimeAsync(PREVIEW_REST_MS - 1));
     expect(screen.queryByRole("tooltip")).toBeNull();
     await act(() => vi.advanceTimersByTimeAsync(1));
     expect(screen.getByRole("tooltip")).toBeTruthy();
@@ -522,16 +528,14 @@ it("retires reaction previews while retaining the reaction delivery owner", asyn
   }
 });
 
-it("keeps focus on the counted chip while another person's reaction remains", async () => {
+it("hands focus back when my emoji is removed while another person remains", async () => {
   const h = harness([react(), react(other)]);
   const onFocusedRemoval = vi.fn();
   render(<h.Controls onFocusedRemoval={onFocusedRemoval} />);
   const own = screen.getByRole("button", { name: "👍: You" });
   act(() => own.focus());
   fireEvent.click(own);
-  expect(onFocusedRemoval).not.toHaveBeenCalled();
-  expect(document.activeElement).toBe(own);
-  expect(own.textContent).toBe("👍1");
+  expect(onFocusedRemoval).toHaveBeenCalledTimes(1);
   expect(screen.queryByRole("button", { name: "👍: You" })).toBeNull();
   expect(
     screen.getByRole("button", { name: `👍: ${other.pubkey.slice(0, 10)}` }),
@@ -541,7 +545,7 @@ it("keeps focus on the counted chip while another person's reaction remains", as
     await flush();
   });
 });
-it("hands focus back when the last counted reaction is removed", async () => {
+it("hands focus back when the last reaction is removed", async () => {
   const h = harness([react()]);
   const onFocusedRemoval = vi.fn();
   render(<h.Controls onFocusedRemoval={onFocusedRemoval} />);

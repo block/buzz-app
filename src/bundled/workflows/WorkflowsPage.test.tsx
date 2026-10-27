@@ -938,9 +938,11 @@ it("combines channel selections and resets them while closing filtered details",
   await waitFor(() =>
     expect(screen.queryByRole("dialog", { name: "Channels" })).toBeNull(),
   );
-  expect(
-    await screen.findByRole("button", { name: /^Open Other helper:/ }),
-  ).toBeVisible();
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: /^Open Other helper:/ }),
+    ).toBeVisible(),
+  );
   expect(
     screen.queryByRole("button", { name: /^Open Message helper:/ }),
   ).toBeNull();
@@ -963,9 +965,11 @@ it("combines channel selections and resets them while closing filtered details",
   expect(screen.getByRole("button", { name: "Channels" })).toHaveTextContent(
     "2 channels",
   );
-  expect(
-    screen.getByRole("button", { name: /^Open Message helper:/ }),
-  ).toBeVisible();
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: /^Open Message helper:/ }),
+    ).toBeVisible(),
+  );
   await user.click(
     screen.getByRole("button", { name: /^Open Message helper:/ }),
   );
@@ -992,9 +996,11 @@ it("combines channel selections and resets them while closing filtered details",
   expect(
     screen.queryByRole("button", { name: "Clear channels filter" }),
   ).toBeNull();
-  expect(
-    screen.getByRole("button", { name: /^Open Message helper:/ }),
-  ).toBeVisible();
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: /^Open Message helper:/ }),
+    ).toBeVisible(),
+  );
   expect(screen.queryByRole("button", { name: "Clear all" })).toBeNull();
   await openChannels();
   await user.click(screen.getByRole("checkbox", { name: "Fixture channel" }));

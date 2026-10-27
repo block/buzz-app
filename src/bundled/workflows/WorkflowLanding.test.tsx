@@ -614,9 +614,11 @@ for (const interrupt of [false, true]) {
         expected.map((c) => c.id),
       );
       expect(screen.getByRole("status")).toBeEmptyDOMElement();
-      expect(
-        screen.getByRole("button", { name: /^Open Message helper:/ }),
-      ).toBeVisible();
+      await waitFor(() =>
+        expect(
+          screen.getByRole("button", { name: /^Open Message helper:/ }),
+        ).toBeVisible(),
+      );
     } finally {
       fixture.close();
     }
@@ -1715,12 +1717,14 @@ it("sorts across channels by saved recency while retaining filters, details and 
     expect(
       screen.getByRole("button", { name: /^Open Middle:/ }),
     ).toHaveAttribute("aria-pressed", "true");
-    expect(
-      screen.getByText("#General returned a partial workflow list."),
-    ).toBeVisible();
-    expect(
-      screen.getByText("#Other returned a partial workflow list."),
-    ).toBeVisible();
+    await waitFor(() => {
+      expect(
+        screen.getByText("#General returned a partial workflow list."),
+      ).toBeVisible();
+      expect(
+        screen.getByText("#Other returned a partial workflow list."),
+      ).toBeVisible();
+    });
 
     await user.click(screen.getByRole("button", { name: "Channels" }));
     await user.click(await screen.findByRole("checkbox", { name: "General" }));
@@ -1752,8 +1756,10 @@ it("sorts across channels by saved recency while retaining filters, details and 
     expect(screen.queryByText(/returned a partial workflow list/)).toBeNull();
 
     await chooseSort("By channel");
-    expect(screen.getByRole("heading", { name: "#General" })).toBeVisible();
-    expect(screen.getByRole("heading", { name: "#Other" })).toBeVisible();
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "#General" })).toBeVisible();
+      expect(screen.getByRole("heading", { name: "#Other" })).toBeVisible();
+    });
     expect(screen.getByRole("region", { name: "Middle" })).toBeVisible();
 
     await chooseSort("Recently updated");

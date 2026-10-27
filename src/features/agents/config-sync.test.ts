@@ -919,6 +919,59 @@ describe("config sync without a sync", () => {
     expect(f.spies.problem).not.toHaveBeenCalled();
   });
 
+  it("a fallback read from before a reconnect never denies what the reconnect read", async () => {
+    const old = held<RelayEvent[]>();
+    let b: RelayEvent | undefined;
+    let currents = 0;
+    const f = await following((filter, a) => {
+      if (filter.artifact !== "current") return b ? [b] : [a];
+      return ++currents === 2 ? old.promise : b ? [b] : [a];
+    });
+    f.relayFeed.reconnect();
+    await vi.waitFor(() => expect(currents).toBe(2));
+    b = await revision("B", f.a.id);
+    f.relayFeed.reconnect();
+    await vi.waitFor(() =>
+      expect(f.store.instructions(instructions)).toEqual({
+        ok: true,
+        text: "B",
+      }),
+    );
+    old.fail(new Error("Relay read failed (403)"));
+    await flush();
+    await flush();
+    expect(f.store.instructions(instructions)).toEqual({ ok: true, text: "B" });
+    expect(f.spies.problem).not.toHaveBeenCalled();
+  });
+
+  it("a reread from before a reconnect never denies what the reconnect read", async () => {
+    const old = held<RelayEvent[]>();
+    let b: RelayEvent | undefined;
+    let holding = false;
+    const f = await following((filter, a) => {
+      if (filter.artifact === "current" || !holding) return b ? [b] : [a];
+      holding = false;
+      return old.promise;
+    });
+    // A revision past one this device missed: its reread is still out.
+    holding = true;
+    f.relayFeed.emit(await revision("D", (await revision("X", f.a.id)).id));
+    await vi.waitFor(() => expect(holding).toBe(false));
+    b = await revision("B", f.a.id);
+    f.relayFeed.reconnect();
+    await vi.waitFor(() =>
+      expect(f.store.instructions(instructions)).toEqual({
+        ok: true,
+        text: "B",
+      }),
+    );
+    old.fail(new Error("Relay read failed (403)"));
+    await flush();
+    await flush();
+    expect(f.store.instructions(instructions)).toEqual({ ok: true, text: "B" });
+    expect(f.spies.problem).not.toHaveBeenCalled();
+  });
+
   it("a read held across a connection never replaces the deletion read after it", async () => {
     const a = await revision("A");
     const d = await artifactD("buzz.agent.instructions", channel);

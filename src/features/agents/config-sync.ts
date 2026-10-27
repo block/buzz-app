@@ -362,7 +362,8 @@ export function createConfigSync(
           await install(entry, heads, current, false, captured);
           if (current() && alive(entry)) caughtUp(entry);
         } catch (error) {
-          failure(entry, error);
+          // A newer round reads again: an older failure retires nothing.
+          if (current()) failure(entry, error);
         }
       }),
     );
@@ -670,11 +671,15 @@ export function createConfigSync(
       rereads.set(artifact, true);
       return;
     }
+    // Each pass's connection: a failure from before a reconnect retires
+    // nothing, since the reconnect reads again.
+    let at = epoch;
     void (async () => {
       try {
         do {
           rereads.set(artifact, false);
           if (!alive(entry)) return;
+          at = epoch;
           const capture = store.capture(artifact.subject);
           const result = await retrying(entry, () =>
             lookup(entry, artifact.expected),
@@ -687,7 +692,7 @@ export function createConfigSync(
           );
         } while (rereads.get(artifact));
       } catch (error) {
-        failure(entry, error);
+        if (at === epoch) failure(entry, error);
       } finally {
         rereads.delete(artifact);
       }

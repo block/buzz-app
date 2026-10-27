@@ -2174,7 +2174,8 @@ html[data-keyboard-input] .quickReactionGlyph {
 }
 
 /* A reply on the other side of the branch has its avatar out of reach, so the
-   line passes it straight instead of hooking toward an empty edge. */
+   line runs straight past the whole reply instead of hooking toward an empty
+   edge. */
 .replyBranch:not(:has(> .replyBranchMessage [data-viewer-message]))
   > .replyBranchPanel
   > ol
@@ -2187,6 +2188,7 @@ html[data-keyboard-input] .quickReactionGlyph {
   > .replyItem:not(
     :has(> .replyBranch > .replyBranchMessage [data-viewer-message])
   )::before {
+  inset-block-end: 0;
   border-block-end: 0;
   border-end-start-radius: 0;
   border-end-end-radius: 0;

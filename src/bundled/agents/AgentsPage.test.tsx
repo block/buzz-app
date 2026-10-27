@@ -154,6 +154,12 @@ function setup(
     dirtySettings = false,
     found = portable as readonly PortableAgent[],
     warnings = [] as readonly string[],
+    discover = async (): Promise<FoundAgents> => ({
+      agents: found,
+      teams: [],
+      warnings,
+      here: [],
+    }),
     page = {} as {
       navigation?: PageNavigation;
       navigator?: Navigation;
@@ -294,14 +300,7 @@ function setup(
       return created;
     }),
     finish: vi.fn(async (_: string) => created),
-    portable: vi.fn(
-      async (): Promise<FoundAgents> => ({
-        agents: found,
-        teams: [],
-        warnings,
-        here: [],
-      }),
-    ),
+    portable: vi.fn(discover),
     port: vi.fn(async () => ({ agent: created, notes: [] })),
     portTeam: vi.fn(
       async (): Promise<TeamPort> => ({
@@ -1804,6 +1803,77 @@ it.each([
     expect(agents.portTeam).not.toHaveBeenCalled();
   },
 );
+
+it("keeps first-run actions stable from pending to empty discovery", async () => {
+  let finish!: (found: FoundAgents) => void;
+  const discovery = new Promise<FoundAgents>((resolve) => {
+    finish = resolve;
+  });
+  const { agents } = setup([], { discover: () => discovery });
+  expect(agents.portable).toHaveBeenCalledTimes(1);
+  const create = screen.getByRole("button", {
+    name: "Create your first agent",
+  });
+  const marketplace = screen.getByRole("button", {
+    name: "Explore the marketplace",
+  });
+  const expectPrimaryActions = () => {
+    expect(
+      screen.queryByRole("button", {
+        name: /Check for agents to import|Import them now/,
+      }),
+    ).not.toBeInTheDocument();
+    expect(create).toBeEnabled();
+    expect(marketplace).toBeEnabled();
+    expect(
+      within(create).getByText("Create your first agent"),
+    ).not.toHaveAttribute("data-tone", "secondary");
+    expect(
+      within(marketplace).getByText("Explore the marketplace"),
+    ).not.toHaveAttribute("data-tone", "secondary");
+  };
+  create.focus();
+  try {
+    expectPrimaryActions();
+  } finally {
+    await act(async () =>
+      finish({ agents: [], teams: [], warnings: [], here: [] }),
+    );
+  }
+  expectPrimaryActions();
+  expect(screen.getByRole("button", { name: "Create your first agent" })).toBe(
+    create,
+  );
+  expect(screen.getByRole("button", { name: "Explore the marketplace" })).toBe(
+    marketplace,
+  );
+  expect(create).toHaveFocus();
+});
+
+it("offers first-run import diagnostics after discovery fails", async () => {
+  const user = userEvent.setup();
+  let fail!: (reason: Error) => void;
+  const discovery = new Promise<FoundAgents>((_resolve, reject) => {
+    fail = reject;
+  });
+  const { agents } = setup([], { discover: () => discovery });
+  expect(agents.portable).toHaveBeenCalledTimes(1);
+  try {
+    expect(
+      screen.queryByRole("button", { name: /Check for agents to import/ }),
+    ).not.toBeInTheDocument();
+  } finally {
+    await act(async () => fail(new Error("Discovery unavailable")));
+  }
+  await user.click(
+    screen.getByRole("button", { name: /Check for agents to import/ }),
+  );
+  const dialog = screen.getByRole("dialog", { name: "Import an agent" });
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+    "Discovery unavailable",
+  );
+  expect(agents.port).not.toHaveBeenCalled();
+});
 
 it("offers import diagnostics to a first-time owner after warning-only discovery", async () => {
   const user = userEvent.setup();

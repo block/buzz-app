@@ -185,13 +185,14 @@ export function AgentsPage({
   // teams change and as a menu opens. Import's entry points hide only once it
   // is known there is nothing, and an owner with no agents yet is offered it
   // first.
-  const [legacy, setLegacy] = useState<FoundAgents>();
+  // Undefined before the first result; null when discovery failed.
+  const [legacy, setLegacy] = useState<FoundAgents | null>();
   const legacyRead = useRef(0);
   const readLegacy = useCallback(() => {
     const read = ++legacyRead.current;
     agents.portable().then(
       (found) => read === legacyRead.current && setLegacy(found),
-      () => read === legacyRead.current && setLegacy(undefined),
+      () => read === legacyRead.current && setLegacy(null),
     );
   }, [agents]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: What old Buzz has to import changes with the community's agents and teams.
@@ -308,7 +309,9 @@ export function AgentsPage({
   );
   // With no agents yet, each way to get one is its own tile; bringing the
   // owner's own agents leads when there are any.
-  const canImport = firstAgent && canImportAgent;
+  const canImport =
+    firstAgent &&
+    (agentImports.length > 0 || legacy === null || !!legacy?.warnings.length);
   const starts = (
     <div className={cardStyles.starts}>
       {canImport && (

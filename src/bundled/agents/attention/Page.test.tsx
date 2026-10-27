@@ -629,137 +629,148 @@ it("keeps unreadable legacy watches visible and removes only the selected object
   );
 });
 
-it("scans subscription types and each subscription destination while keeping raw configuration collapsed", () => {
-  let snapshot = {
-    classifier: "unavailable",
-    status: "ready",
-    running: [
-      {
-        key: "membership-a",
-        pubkey: "a",
-        owner: viewer,
-        relay: "wss://example.com",
-        name: "Ada",
-        attentionEnabled: true,
-        timers: {},
-        attentionHistory: {
-          "watch/pr": { output: "CI completed: all checks passed" },
-          "watch/messages": {
-            output: "2026-10-27T14:00:00Z · Alex\nThe release is ready.",
-          },
-        },
-        attention: {
-          "interest/release": {
-            slug: "interest/release",
-            modifiedAt: 1,
-            value: { type: "interest", instructions: "Watch the release." },
-          },
-          "watch/pr": {
-            slug: "watch/pr",
-            modifiedAt: 1,
-            value: {
-              type: "source",
-              name: "Release checks",
-              interest_id: "release",
-              enabled: true,
-              provider: "attention/github-pr",
-              config: { pr: "https://github.com/block/buzz-app/pull/1578" },
-              channel,
+it.each([false, true])(
+  "scans subscription types and destinations with history accessible (completed: %s)",
+  (completed) => {
+    let snapshot = {
+      classifier: "unavailable",
+      status: "ready",
+      running: [
+        {
+          key: "membership-a",
+          pubkey: "a",
+          owner: viewer,
+          relay: "wss://example.com",
+          name: "Ada",
+          attentionEnabled: true,
+          timers: {},
+          sourceRuns: {} as Record<string, string>,
+          attentionHistory: {
+            "watch/pr": { output: "CI completed: all checks passed" },
+            "watch/messages": {
+              output: "2026-10-27T14:00:00Z · Alex\nThe release is ready.",
             },
           },
-          "watch/messages": {
-            slug: "watch/messages",
-            modifiedAt: 1,
-            value: {
-              type: "event",
-              name: "Discussion",
-              classifier: {
-                questions: { ready: { question: "Is the release ready?" } },
+          attention: {
+            "interest/release": {
+              slug: "interest/release",
+              modifiedAt: 1,
+              value: { type: "interest", instructions: "Watch the release." },
+            },
+            "watch/pr": {
+              slug: "watch/pr",
+              modifiedAt: 1,
+              value: {
+                type: "source",
+                name: "Release checks",
+                interest_id: "release",
+                enabled: true,
+                provider: "attention/github-pr",
+                config: { pr: "https://github.com/block/buzz-app/pull/1578" },
+                channel,
               },
-              interest_id: "release",
-              enabled: true,
-              channels: ["listen"],
-              channel: "listen",
+            },
+            "watch/messages": {
+              slug: "watch/messages",
+              modifiedAt: 1,
+              value: {
+                type: "event",
+                name: "Discussion",
+                classifier: {
+                  questions: { ready: { question: "Is the release ready?" } },
+                },
+                interest_id: "release",
+                enabled: true,
+                channels: ["listen"],
+                channel: "listen",
+              },
             },
           },
         },
+      ],
+    };
+    if (completed)
+      for (const agent of snapshot.running)
+        agent.sourceRuns["watch/pr"] = JSON.stringify(
+          agent.attention["watch/pr"],
+        );
+    const connection = {
+      status: "ready",
+      ...community,
+      session: {
+        channels: {
+          ensureList() {},
+          subscribeList: () => () => {},
+          list: () => channels,
+        },
+        media: () => "",
       },
-    ],
-  };
-  const connection = {
-    status: "ready",
-    ...community,
-    session: {
-      channels: {
-        ensureList() {},
-        subscribeList: () => () => {},
-        list: () => channels,
+    };
+    const channels = {
+      channels: [
+        { id: channel, name: "Berd-call", channelType: "solo" },
+        { id: "listen", name: "buzz-github-prs", channelType: "stream" },
+      ],
+    };
+    let changed = () => {};
+    const ctx = {
+      react: React,
+      agents: {
+        snapshot: () => snapshot,
+        subscribe: (listener: () => void) => {
+          changed = listener;
+          return () => {};
+        },
       },
-      media: () => "",
-    },
-  };
-  const channels = {
-    channels: [
-      { id: channel, name: "Berd-call", channelType: "solo" },
-      { id: "listen", name: "buzz-github-prs", channelType: "stream" },
-    ],
-  };
-  let changed = () => {};
-  const ctx = {
-    react: React,
-    agents: {
-      snapshot: () => snapshot,
-      subscribe: (listener: () => void) => {
-        changed = listener;
-        return () => {};
-      },
-    },
-    relay: { snapshot: () => connection, subscribe: () => () => {} },
-  } as unknown as Context;
-  render(React.createElement(createPage(ctx)));
-  const icon = (name: string) =>
-    screen
-      .getByRole("button", { name: `Open destination ${name}` })
-      .querySelector("path")
-      ?.getAttribute("d");
-  expect(
-    screen.getByRole("button", { name: "Open destination Berd-call" })
-      .textContent,
-  ).toBe("→Berd-call");
-  expect(icon("Berd-call")).toBeTruthy();
-  expect(icon("buzz-github-prs")).toBeTruthy();
-  expect(icon("Berd-call")).not.toBe(icon("buzz-github-prs"));
-  expect(screen.getByText("GitHub PR")).toBeTruthy();
-  expect(screen.getByText("Messages")).toBeTruthy();
-  expect(screen.getByText("buzz-app#1578")).toBeTruthy();
-  expect(screen.queryByText("On")).toBeNull();
-  expect(screen.queryByText("Shared instructions")).toBeNull();
-  expect(screen.queryByText("Show raw")).toBeNull();
-  expect(screen.getAllByRole("button", { name: "New watch" })).toHaveLength(1);
-  expect(
-    screen.getByRole("button", { name: "Details for Release checks" }),
-  ).toBeTruthy();
-  fireEvent.click(
-    screen.getByRole("button", { name: "Details for Release checks" }),
-  );
-  expect(screen.getByRole("heading", { name: "Recent events" })).toBeTruthy();
-  expect(screen.getByText("CI completed: all checks passed")).toBeTruthy();
-  fireEvent.click(
-    screen.getByRole("button", { name: "Details for Discussion" }),
-  );
-  expect(screen.getByText(/The release is ready/)).toBeTruthy();
-  const link = screen.getByRole("link", { name: "Open buzz-app#1578" });
-  expect(link.getAttribute("href")).toBe(
-    "https://github.com/block/buzz-app/pull/1578",
-  );
-  expect(screen.queryByText("Show raw")).toBeNull();
-  expect(screen.getByText(/Message classifiers cannot run/)).toBeTruthy();
-  act(() => {
-    snapshot = { ...snapshot, classifier: "available" };
-    changed();
-  });
-  expect(screen.queryByText(/Message classifiers cannot run/)).toBeNull();
-});
+      relay: { snapshot: () => connection, subscribe: () => () => {} },
+    } as unknown as Context;
+    render(React.createElement(createPage(ctx)));
+    const icon = (name: string) =>
+      screen
+        .getByRole("button", { name: `Open destination ${name}` })
+        .querySelector("path")
+        ?.getAttribute("d");
+    expect(
+      screen.getByRole("button", { name: "Open destination Berd-call" })
+        .textContent,
+    ).toBe("→Berd-call");
+    expect(icon("Berd-call")).toBeTruthy();
+    expect(icon("buzz-github-prs")).toBeTruthy();
+    expect(icon("Berd-call")).not.toBe(icon("buzz-github-prs"));
+    expect(screen.getByText("GitHub PR")).toBeTruthy();
+    expect(screen.getByText("Messages")).toBeTruthy();
+    expect(screen.getByText("buzz-app#1578")).toBeTruthy();
+    expect(screen.queryByText("On")).toBeNull();
+    expect(screen.queryByText("Shared instructions")).toBeNull();
+    expect(screen.queryByText("Show raw")).toBeNull();
+    expect(screen.getAllByRole("button", { name: "New watch" })).toHaveLength(
+      1,
+    );
+    expect(
+      screen.getByRole("button", { name: "Details for Release checks" }),
+    ).toBeTruthy();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Details for Release checks" }),
+    );
+    expect(screen.getByRole("heading", { name: "Recent events" })).toBeTruthy();
+    expect(screen.getByText("CI completed: all checks passed")).toBeTruthy();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Details for Discussion" }),
+    );
+    expect(screen.getByText(/The release is ready/)).toBeTruthy();
+    const link = screen.getByRole("link", { name: "Open buzz-app#1578" });
+    expect(link.getAttribute("href")).toBe(
+      "https://github.com/block/buzz-app/pull/1578",
+    );
+    expect(screen.queryByText("Show raw")).toBeNull();
+    expect(screen.getByText(/Message classifiers cannot run/)).toBeTruthy();
+    act(() => {
+      snapshot = { ...snapshot, classifier: "available" };
+      changed();
+    });
+    expect(screen.queryByText(/Message classifiers cannot run/)).toBeNull();
+  },
+);
 
 it("keeps overview, creation choices and destination navigation in the selected community", async () => {
   const watch = {

@@ -420,9 +420,7 @@ export function createPage({
         h(
           "div",
           { className: "attention-actions" },
-          !completed &&
-            !description.spent &&
-            pr &&
+          pr &&
             h(IconButton, {
               size: "sm",
               variant: "ghost",

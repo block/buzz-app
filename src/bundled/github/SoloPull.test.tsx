@@ -160,12 +160,14 @@ it("gives agents a link_pr tool for the Solo chat they work in", async () => {
     { id: team, channelType: "stream" },
   ]);
   let tool: AddedTool | undefined;
+  const addAttentionSource = vi.fn();
   apply({
     host: {},
     panels: { register: () => {} },
     conversation: { registerChatIcon: () => {} },
     relay,
     agents: {
+      addAttentionSource,
       addTool: (added: AddedTool) => {
         tool = added;
       },
@@ -177,6 +179,9 @@ it("gives agents a link_pr tool for the Solo chat they work in", async () => {
     key: "a".repeat(64),
     pubkey: "a".repeat(64),
   } as BuzzClient;
+  expect(addAttentionSource).toHaveBeenCalledWith(
+    expect.objectContaining({ id: "github-pr", run: expect.any(Function) }),
+  );
   expect(tool?.name).toBe("link_pr");
   await expect(
     tool?.call(client, { channel: chat }, { url: "https://github.com/block" }),

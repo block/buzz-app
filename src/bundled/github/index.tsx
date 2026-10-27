@@ -30,12 +30,14 @@ import { ownSolo } from "../../features/solo/labels";
 import { createSoloPulls, writeLink, type SoloPulls } from "./solo-pull";
 import { SoloPullIcon, SoloPullLink, stateIcons } from "./SoloPull";
 import { watchPulls } from "./watcher";
+import { registerAttention } from "../../features/agents/attention-command";
 
 /** How often an open pull request panel reads GitHub again. */
 export const REFRESH_MS = 30_000;
 
 export const inject = ["panels", "host", "conversation", "relay", "agents"];
 export const apply: PluginModule["apply"] = (ctx) => {
+  registerAttention(ctx, ["github-pr"]);
   const gh = gitHubCli(ctx.host);
   const pulls = new WeakMap<RelaySession, SoloPulls>();
   const pullsFor = (session: RelaySession) => {

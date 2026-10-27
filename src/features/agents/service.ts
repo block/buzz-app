@@ -1964,8 +1964,7 @@ export class AgentsService extends Service implements Agents {
   private attentionProvider(source: Contribution<AttentionProducer>) {
     return (
       bundledAttention.providers.find(
-        ({ id }) =>
-          source.pluginId === bundledAttention.plugin && source.id === id,
+        ({ plugin, id }) => source.pluginId === plugin && source.id === id,
       )?.provider ?? source.key
     );
   }

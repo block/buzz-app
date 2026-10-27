@@ -2,12 +2,11 @@ import { githubPolicy } from "./github-policy";
 import type { Host } from "../host/service";
 import type { AttentionSource } from "./attention-sources";
 
-/** Saved identities belong to this bundled owner, including legacy aliases. */
+/** Saved identities belong to their bundled owners, including legacy aliases. */
 export const bundledAttention = {
-  plugin: "buzz.agents",
   providers: [
-    { id: "command", provider: "attention/command" },
-    { id: "github-pr", provider: "attention/github-pr" },
+    { plugin: "buzz.agents", id: "command", provider: "attention/command" },
+    { plugin: "buzz.github", id: "github-pr", provider: "attention/github-pr" },
   ],
 } as const;
 
@@ -17,11 +16,14 @@ type Sources = {
 
 /** Attention owns when the producer runs and where output goes. The process
  * host kills descendants on cancellation; no owner credentials are passed as arguments. */
-export function registerAttention(ctx: {
-  agents: Sources;
-  host?: Pick<Host, "spawn">;
-}) {
-  for (const { id } of bundledAttention.providers)
+export function registerAttention(
+  ctx: {
+    agents: Sources;
+    host?: Pick<Host, "spawn">;
+  },
+  ids: readonly ("command" | "github-pr")[] = ["command"],
+) {
+  for (const id of ids)
     ctx.agents.addAttentionSource({
       id,
       description:

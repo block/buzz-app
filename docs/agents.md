@@ -967,7 +967,7 @@ Use `watch_add` with `type: "source"`, a `provider` in `plugin/source` form and 
 
 Source output accepts the same optional classifier questions as event watches. Classification preserves output ordering and completion until the resulting delivery settles. `agents.attentionProviders()` lists active registered provider keys with their optional `description` and `configExample`, including providers from unrelated plugins. Disabled and unloaded registrations disappear from discovery.
 
-Buzz ships the command and GitHub PR producers, discovery tool and legacy Monitor import through the bundled Agents owner. Saved provider IDs remain `attention/command` and `attention/github-pr`, and discovery marks them `builtIn: true`. The external Attention plugin supplies only its overview and editing UI and must be updated alongside this host. The PR monitor is packaged with Buzz; it still requires `gh`, Bash, jq and Python on PATH. Other plugins can register their own source producers through the same lifecycle.
+The bundled Agents plugin owns the command producer, discovery tool and legacy Monitor import. The GitHub plugin owns the GitHub PR producer. Saved provider IDs remain `attention/command` and `attention/github-pr`, and discovery marks them `builtIn: true`. The external Attention plugin supplies only its overview and editing UI and must be updated alongside this host. The PR monitor is packaged with Buzz; it still requires `gh`, Bash, jq and Python on PATH. Other plugins can register their own source producers through the same lifecycle.
 
 ## Attention delivery destinations
 

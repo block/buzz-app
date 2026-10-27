@@ -171,7 +171,7 @@ it.each(["command", "github-pr"])(
         exited: Promise.resolve(0),
       };
     });
-    registerAttention({ agents });
+    registerAttention({ agents }, [id as "command" | "github-pr"]);
     const signal = new AbortController().signal;
     const pr = "https://github.com/block/buzz-app/pull/1630";
     await run({

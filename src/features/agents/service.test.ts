@@ -10177,6 +10177,14 @@ it("registers Buzz-owned command sources with saved provider keys", async () => 
     pluginOwner: { id: "buzz.agents", revision: "bundled" },
   });
   registerAttention({ agents: core.agents });
+  registerAttention(
+    {
+      agents: plugin.extend({
+        pluginOwner: { id: "buzz.github", revision: "bundled" },
+      }).agents,
+    },
+    ["github-pr"],
+  );
   expect(service.attentionProviders()).toEqual([
     expect.objectContaining({ provider: "attention/command", builtIn: true }),
     expect.objectContaining({ provider: "attention/github-pr", builtIn: true }),
@@ -10230,7 +10238,17 @@ it.each(["command", "github-pr"])(
     const core = plugin.extend({
       pluginOwner: { id: "buzz.agents", revision: "bundled" },
     });
-    registerAttention({ agents: core.agents });
+    registerAttention(
+      {
+        agents:
+          id === "command"
+            ? core.agents
+            : plugin.extend({
+                pluginOwner: { id: "buzz.github", revision: "bundled" },
+              }).agents,
+      },
+      [id as "command" | "github-pr"],
+    );
     await vi.waitFor(() => expect(spawn).toHaveBeenCalledTimes(1));
     expect(spawn).toHaveBeenCalledWith(
       id === "command" ? "attention-command" : "attention-pr",
@@ -10266,9 +10284,9 @@ it.each(["spawn", "exit"])(
       }),
     });
     const core = plugin.extend({
-      pluginOwner: { id: "buzz.agents", revision: "bundled" },
+      pluginOwner: { id: "buzz.github", revision: "bundled" },
     });
-    registerAttention({ agents: core.agents });
+    registerAttention({ agents: core.agents }, ["github-pr"]);
     try {
       await service.create({ type: "example/echo", name: "Echo" });
       await service.save(bot, {

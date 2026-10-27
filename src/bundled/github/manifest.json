@@ -13,6 +13,18 @@
         "id": "graphql",
         "program": "gh",
         "args": ["api", "graphql", "--hostname", "github.com", "--input", "-"]
+      },
+      {
+        "id": "attention-pr",
+        "program": "buzz-attention-pr",
+        "bundled": true,
+        "interpreter": "bash"
+      },
+      {
+        "id": "attention-policy",
+        "program": "buzz-attention-policy",
+        "bundled": true,
+        "interpreter": "python3"
       }
     ],
     "commands": [
@@ -32,6 +44,7 @@
         "maxInputBytes": 4096,
         "maxOutputBytes": 1048576
       }
-    ]
+    ],
+    "mcp": true
   }
 }

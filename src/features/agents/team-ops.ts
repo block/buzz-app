@@ -202,7 +202,8 @@ export function teamOps(deps: TeamDeps) {
     const now = after && others(after, owner);
     const missing =
       !now ||
-      add.some((pubkey) => !now.includes(pubkey)) ||
+      after.archived ||
+      edit.members.some((pubkey) => !now.includes(pubkey)) ||
       remove.some((pubkey) => now.includes(pubkey));
     return missing
       ? fail("The team's members couldn't be confirmed; reopen it", {

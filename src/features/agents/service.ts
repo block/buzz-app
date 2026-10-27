@@ -2729,13 +2729,14 @@ export class AgentsService extends Service implements Agents {
     if (!saved && !members.length) return result;
     if (home) {
       try {
-        // An existing team keeps its name and instructions.
+        // An existing synced team keeps its name and instructions; a new one
+        // takes the local copy's edits over old Buzz's text.
         await this.changeSyncedTeam(
           home,
           {
             id: teamId,
-            name: old.name,
-            instructions: old.instructions,
+            name: saved?.name ?? old.name,
+            instructions: saved?.instructions ?? old.instructions,
             members: [...kept, ...members],
           },
           { adopt: true },

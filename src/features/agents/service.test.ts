@@ -11454,10 +11454,13 @@ describe("synced teams", () => {
     };
     return { saveTeam, made };
   }
-  async function ready(identities: AgentIdentity[]) {
+  async function ready(
+    identities: AgentIdentity[],
+    storage?: ReturnType<typeof memoryStorage>,
+  ) {
     coordinators.sync = true;
     const channels = teamChannels();
-    const f = await setup({ identities });
+    const f = await setup({ identities, storage });
     await vi.waitFor(() => expect(channels.made.has(home)).toBe(true));
     return { ...f, ...channels };
   }
@@ -11536,5 +11539,33 @@ describe("synced teams", () => {
     expect(result.notes).toContain("Add Birch to relay.example.test first.");
     expect(result.teamError).toBeUndefined();
     expect(f.storage.get("buzz.agents.teams.v1")).toBeFalsy();
+  });
+
+  it("imports over an edited local copy with its edits, moving templates before removing it", async () => {
+    const storage = memoryStorage();
+    const local = {
+      ...savedShift([alder]),
+      name: "Renamed",
+      instructions: "Mine.",
+    };
+    writeTeams(storage, [local]);
+    const f = await ready([here(alder)], storage);
+    listsTeam(f.native, nightShift([alder]));
+    const moved = vi
+      .spyOn(channelTemplates, "replaceTeam")
+      .mockImplementation(() =>
+        // The local copy is still there when its templates move.
+        expect(f.storage.get("buzz.agents.teams.v1")).toContain("Renamed"),
+      );
+    const result = await importTeam(f.service);
+    expect(f.saveTeam.mock.calls[0]?.[0]).toMatchObject({
+      name: "Renamed",
+      instructions: "Mine.",
+      members: [alder],
+    });
+    const synced = f.saveTeam.mock.calls[0]?.[0] as { id: string } | undefined;
+    expect(moved).toHaveBeenCalledWith(local.id, synced?.id);
+    expect(result.teamError).toBeUndefined();
+    expect(f.storage.get("buzz.agents.teams.v1")).not.toContain("Renamed");
   });
 });

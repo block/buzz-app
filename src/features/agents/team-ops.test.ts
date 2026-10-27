@@ -62,7 +62,10 @@ function setup(
     online: options.online ?? (() => true),
     signal: new AbortController().signal,
   } as never as TeamDeps;
-  return { ops: teamOps(deps), channels, save };
+  const drop = (pubkey: string) => {
+    roster = roster?.filter((p) => p !== pubkey);
+  };
+  return { ops: teamOps(deps), channels, save, drop };
 }
 
 const edit = { id: ID, name: "Crew", instructions: "Ship it" };
@@ -194,6 +197,26 @@ describe("teamOps.change", () => {
     const { ops } = setup({ add: async () => ({ status: "confirmed" }) });
     const result = await ops.change({ ...edit, members: ["a"] });
     expect(result).toMatchObject({ ok: false, added: ["a"] });
+  });
+
+  it("is not ok when a kept member is removed elsewhere during the save", async () => {
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const { ops, channels, drop } = setup({ members: ["a"], stored: head() });
+    const add = channels.addMember.getMockImplementation();
+    channels.addMember.mockImplementation(async (c, pubkey) => {
+      await gate;
+      return add?.(c, pubkey) ?? { status: "uncertain" };
+    });
+    const pending = ops.change({
+      ...edit,
+      members: ["a", "b"],
+      base: { head: "h1", members: ["a"] },
+    });
+    await vi.waitFor(() => expect(channels.addMember).toHaveBeenCalled());
+    drop("a");
+    release();
+    expect(await pending).toMatchObject({ ok: false, added: ["b"] });
   });
 
   it("refuses offline, a deleted team, an unreadable roster and a second change", async () => {

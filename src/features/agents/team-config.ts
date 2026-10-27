@@ -164,21 +164,19 @@ export async function discoverTeams(
         { family: "team-config", subject: id, channel: channel.id },
       ]);
     const members: string[] = [];
-    let unknown = !channel.members;
     for (const pubkey of channel.members ?? []) {
       if (pubkey === owner) continue;
       const proof = prior?.members.includes(pubkey) || (await owns(pubkey));
+      // An unreadable ownership leaves that member out until proven.
       if (proof) members.push(pubkey);
-      else if (proof === undefined) unknown = true;
     }
     found.push({
       id: id ?? channel.label,
       channel: channel.id,
       archived: channel.archived,
       ...(id ? {} : { unproven: true as const }),
-      members: unknown
-        ? [...new Set([...(prior?.members ?? []), ...members])]
-        : members,
+      // Only an unreadable roster keeps the last proven members.
+      members: channel.members ? members : (prior?.members ?? []),
     });
   }
   return found;

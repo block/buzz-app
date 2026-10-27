@@ -85,6 +85,19 @@ describe("discoverTeams", () => {
     expect(team?.members).toEqual(["a"]);
   });
 
+  it("drops a prior member the fresh roster lacks, even when another read fails", async () => {
+    const { deps } = await setup({
+      members: ["o", "b"],
+      owns: async () => {
+        throw new Error("down");
+      },
+    });
+    const [team] = await discoverTeams(deps, [
+      { id: ID, channel: CH, archived: false, members: ["a"] },
+    ]);
+    expect(team?.members).toEqual([]);
+  });
+
   it("marks a never-proven channel unproven and leaves an archived one unbound", async () => {
     const unread = await setup({ head: false });
     expect((await discoverTeams(unread.deps))[0]).toMatchObject({

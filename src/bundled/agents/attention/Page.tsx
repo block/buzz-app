@@ -47,13 +47,9 @@ export function heading(value: string) {
 }
 export function describe(
   watch: Watch,
-  name: (id: string) => string,
   now = Date.now() / 1000,
   usedOccurrences?: number,
 ) {
-  const delivery = watch.channel
-    ? `Delivers to ${name(watch.channel)}${watch.root ? " (thread)" : ""}`
-    : "Independent agent turn";
   if (watch.type === "timer") {
     const used =
       usedOccurrences ??
@@ -64,7 +60,6 @@ export function describe(
         : `Every ${watch.interval_secs % 3600 === 0 ? `${watch.interval_secs / 3600}h` : watch.interval_secs % 60 === 0 ? `${watch.interval_secs / 60}m` : `${watch.interval_secs}s`}${watch.max_occurrences === null ? "" : ` · ${watch.max_occurrences} runs`}`;
     return {
       title: schedule,
-      detail: `${watch.prompt} · ${delivery}${watch.expires_at === null ? "" : ` · Ends ${new Date(watch.expires_at * 1000).toLocaleString()}`}`,
       spent:
         (watch.max_occurrences !== null && used >= watch.max_occurrences) ||
         (watch.expires_at !== null && now >= watch.expires_at),
@@ -73,15 +68,9 @@ export function describe(
   if (watch.type === "source")
     return {
       title: watch.name || watch.provider,
-      detail: `${watch.provider} · ${delivery}`,
     };
-  const channels =
-    watch.channels === "all"
-      ? "all joined channels"
-      : watch.channels.map(name).join(", ");
   return {
     title: watch.name || "Messages",
-    detail: `Listens in ${channels} · ${delivery}${watch.classifier ? " · Relevance classifier" : ""}`,
   };
 }
 type Channel = {
@@ -251,7 +240,6 @@ export function createPage({
     const timer = agent.timers[slug];
     const description = describe(
       watch,
-      name,
       Date.now() / 1000,
       watch.type === "timer" && timer?.armedAt === watch.armed_at
         ? timer.used
@@ -565,6 +553,52 @@ export function createPage({
     );
   }
 
+  function DeleteInterest({
+    agent,
+    slug,
+    label,
+    hasWatches,
+    returnFocus,
+  }: {
+    agent: Agent;
+    slug: string;
+    label: string;
+    hasWatches: boolean;
+    returnFocus: React.RefObject<HTMLButtonElement | null>;
+  }) {
+    const trigger = React.useRef<HTMLButtonElement>(null);
+    const action = useAction();
+    React.useLayoutEffect(
+      () => () => {
+        if (trigger.current === document.activeElement)
+          returnFocus.current?.focus();
+      },
+      [returnFocus],
+    );
+    return (
+      <>
+        <div className="attention-actions">
+          <Button
+            ref={trigger}
+            size="sm"
+            variant="ghost"
+            aria-label={`Delete Interest ${label}`}
+            title={hasWatches ? "Remove its watches first" : "Delete Interest"}
+            disabled={hasWatches || action.pending}
+            focusableWhenDisabled={!hasWatches}
+            onClick={() =>
+              void action.run(() =>
+                agents.save(agent.key, { attention: { [slug]: null } }),
+              )
+            }
+          >
+            Delete Interest
+          </Button>
+        </div>
+        {problem(action.error)}
+      </>
+    );
+  }
   function AgentPanel({
     agent,
     channels,
@@ -701,6 +735,13 @@ export function createPage({
             ),
             <InstructionsMarkdown text={instructions} />,
           ),
+          h(DeleteInterest, {
+            agent,
+            slug: object.slug,
+            label,
+            hasWatches: subscriptions.length > 0,
+            returnFocus,
+          }),
           !subscriptions.length &&
             h(
               "p",
@@ -803,9 +844,8 @@ export function createPage({
     });
     const visible = running.filter(
       (agent) =>
-        Object.values(agent.attention).some(
-          (object) => object.value.type !== "interest",
-        ) || Object.keys(agent.skipped ?? {}).length > 0,
+        Object.keys(agent.attention).length > 0 ||
+        Object.keys(agent.skipped ?? {}).length > 0,
     );
     const enable = () =>
       action.run(async () => {

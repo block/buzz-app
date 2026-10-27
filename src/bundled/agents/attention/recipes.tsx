@@ -22,12 +22,10 @@ export type Recipe = {
   listen?: string;
   kinds?: string;
   keywords?: string;
-  question?: string;
   authors?: string;
   exclude?: string;
   replies?: string;
   tags?: string;
-  classifier?: string;
   interest?: string;
 };
 type Channel = { id: string; name: string };
@@ -175,11 +173,6 @@ export function recipeWatch(
       }
     };
     const tags = parse(recipe.tags, "Tags");
-    const classifier =
-      parse(recipe.classifier, "Classifier") ??
-      (recipe.question?.trim()
-        ? { questions: { relevant: { question: recipe.question.trim() } } }
-        : undefined);
     return {
       ...base,
       type: "event",
@@ -191,7 +184,6 @@ export function recipeWatch(
       ...(exclude.length ? { exclude_authors: exclude } : {}),
       ...(recipe.replies ? { is_reply: recipe.replies === "replies" } : {}),
       ...(tags ? { tags } : {}),
-      ...(classifier ? { classifier } : {}),
     };
   }
   if (recipe.kind === "pr") {

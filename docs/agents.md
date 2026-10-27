@@ -55,7 +55,7 @@ servers do not support these operations.
 
 ## Agent Attention
 
-The Agent Attention tab groups the selected community's local agents' subscriptions by Interest. It shows instructions, listening and delivery destinations, enabled state and available wake history. Create subscriptions with the PR, schedule, command or event recipes; pausing or removing one preserves the other saved objects.
+The Agent Attention tab groups the selected community's local agents' subscriptions by Interest. It shows instructions, listening and delivery destinations, enabled state and available wake history. Create subscriptions with the PR, schedule, command or event recipes; pausing or removing one preserves the other saved objects. Empty Interests remain visible and can be deleted after their watches are removed.
 
 On desktop, GitHub comment author settings edit the shared `~/.buzz/preferences/github-pr.json` policy. Configure trusted organizations and/or individual commenter logins, including bots, and ignored commenters. Saving updates the same file used by PR monitoring. Without trusted authors or organizations, the page shows the shared warning: CI and PR-state monitoring continue, while comments and reviews are withheld. File errors remain visible and rejected saves preserve the draft.
 

@@ -174,9 +174,27 @@ test("watch cancellation and deletion restore focus without taking it from anoth
   }
   await expect(remove).toHaveCount(0);
   await expect(create).toBeFocused();
-  await expect(
-    page.getByRole("region", { name: "Ada", exact: true }),
-  ).toHaveCount(0);
+  const interest = page.getByRole("region", {
+    name: "Interest Release planning",
+    exact: true,
+  });
+  await expect(interest).toBeVisible();
+  const removeInterest = page.getByRole("button", {
+    name: "Delete Interest Release planning",
+  });
+  await page.evaluate(() => window.attentionFixture.holdSave());
+  await removeInterest.focus();
+  await page.keyboard.press("Enter");
+  try {
+    await expect
+      .poll(() => page.evaluate(() => window.attentionFixture.saveStarted))
+      .toBe(true);
+    await expect(removeInterest).toBeFocused();
+  } finally {
+    await page.evaluate(() => window.attentionFixture.releaseSave());
+  }
+  await expect(interest).toHaveCount(0);
+  await expect(create).toBeFocused();
 
   await page.reload();
   await page.evaluate(() => window.attentionFixture.holdSave());

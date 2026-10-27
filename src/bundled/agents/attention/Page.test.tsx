@@ -24,20 +24,6 @@ it("keeps listening channels distinct from destinations and respects rearmed tim
   expect(
     describe(
       {
-        type: "event",
-        interest_id: "task",
-        enabled: true,
-        since: 0,
-        kinds: [],
-        channels: ["listen"],
-        channel: "report",
-      },
-      (value) => value,
-    ),
-  ).toMatchObject({ detail: "Listens in listen · Delivers to report" });
-  expect(
-    describe(
-      {
         type: "timer",
         interest_id: "once",
         enabled: true,
@@ -47,7 +33,6 @@ it("keeps listening channels distinct from destinations and respects rearmed tim
         max_occurrences: 1,
         expires_at: null,
       },
-      (value) => value,
       110,
     ).title,
   ).toMatch(/^Once · /);
@@ -63,7 +48,6 @@ it("keeps listening channels distinct from destinations and respects rearmed tim
         max_occurrences: 2,
         expires_at: null,
       },
-      (value) => value,
       110,
       2,
     ).spent,
@@ -236,8 +220,11 @@ it.each(["source", "event", "timer"] as const)(
     const saving = new Promise<void>((resolve) => {
       finishSave = resolve;
     });
+    let rejectInterest = true;
     const save = vi.fn(
       async (_key: string, patch: { attention: Record<string, unknown> }) => {
+        if (patch.attention["interest/release"] === null && rejectInterest)
+          throw new Error("Interest save failed");
         const attention = { ...agent.attention } as Record<string, unknown>;
         for (const [slug, value] of Object.entries(patch.attention)) {
           if (value === null) delete attention[slug];
@@ -263,6 +250,11 @@ it.each(["source", "event", "timer"] as const)(
       relay: { snapshot: () => disconnected, subscribe: () => () => {} },
     } as unknown as Context;
     render(React.createElement(createPage(ctx)));
+    expect(
+      screen
+        .getByRole("button", { name: "Delete Interest release" })
+        .hasAttribute("disabled"),
+    ).toBe(true);
     fireEvent.click(screen.getByRole("switch", { name: "Watch release" }));
     const remove = screen.getByRole("button", { name: "Delete release" });
     try {
@@ -295,8 +287,27 @@ it.each(["source", "event", "timer"] as const)(
       attention: { "watch/check": null },
     });
     expect(agent.attention["interest/release"]).toBeTruthy();
-    expect(screen.queryByRole("region", { name: "Ada" })).toBeNull();
-    expect(screen.getByText(/No watches yet/)).toBeTruthy();
+    expect(
+      screen.getByRole("region", { name: "Interest release" }),
+    ).toBeTruthy();
+    const removeInterest = screen.getByRole("button", {
+      name: "Delete Interest release",
+    });
+    fireEvent.click(removeInterest);
+    await waitFor(() =>
+      expect(screen.getByRole("alert").textContent).toBe(
+        "Interest save failed",
+      ),
+    );
+    expect(agent.attention["interest/release"]).toBeTruthy();
+    rejectInterest = false;
+    fireEvent.click(removeInterest);
+    await waitFor(() =>
+      expect(screen.queryByRole("region", { name: "Ada" })).toBeNull(),
+    );
+    expect(save).toHaveBeenLastCalledWith("membership-a", {
+      attention: { "interest/release": null },
+    });
   },
 );
 

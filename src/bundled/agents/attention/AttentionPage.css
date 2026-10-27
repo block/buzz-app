@@ -309,18 +309,6 @@ details[open] > .attention-disclosure > svg {
     padding-inline-start: var(--space-6);
   }
 }
-@media (hover: hover) and (pointer: fine) {
-  .attention-delete {
-    opacity: 0;
-    pointer-events: none;
-  }
-  .attention-card:hover .attention-delete,
-  .attention-card:focus-within .attention-delete,
-  .attention-delete:disabled {
-    opacity: 1;
-    pointer-events: auto;
-  }
-}
 
 .attention-field {
   border: 0;

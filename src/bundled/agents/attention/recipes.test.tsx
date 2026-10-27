@@ -205,7 +205,7 @@ it("resolves delivery names and links, infers thread channels, and rejects confl
     conversationLink(`buzz://message?channel=${channel}&id=${root}&thread=bad`),
   ).toBeNull();
 });
-it("creates deterministic event selectors and classifier questions with independent delivery", () => {
+it("creates deterministic event selectors with independent delivery", () => {
   expect(
     recipeWatch(
       { ...recipe, kind: "event", keywords: "failed\n[release]" },
@@ -224,7 +224,6 @@ it("creates deterministic event selectors and classifier questions with independ
       authors: "b".repeat(64),
       replies: "top",
       tags: '{"t":["release"]}',
-      question: "Does this report a blocker?",
     },
     "task",
     now,
@@ -240,9 +239,6 @@ it("creates deterministic event selectors and classifier questions with independ
     authors: ["b".repeat(64)],
     is_reply: false,
     tags: { t: ["release"] },
-    classifier: {
-      questions: { relevant: { question: "Does this report a blocker?" } },
-    },
   });
   expect(value).not.toHaveProperty("prompt");
   expect(

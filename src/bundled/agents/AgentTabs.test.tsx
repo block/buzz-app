@@ -265,7 +265,18 @@ it("discards a staged harness change together with the section draft", async () 
   const user = userEvent.setup();
   const { props } = editingFixture(false);
   const type = { ...props.type, key: "test", title: "Original" };
-  const next = { ...type, key: "next", title: "Next", tabs: [] };
+  // The source form exposes the host's harness selector alongside its draft.
+  type.tabs = [
+    {
+      id: "settings",
+      title: "Settings",
+      role: "settings",
+      component: ({ settingsHost }) => (
+        <>{settingsHost?.typeControl?.(false)}</>
+      ),
+    },
+  ];
+  const next = { ...type, key: "next", title: "Next" };
   const retype = vi.fn();
   const agents = {
     ...props.agents,
@@ -290,18 +301,6 @@ it("discards a staged harness change together with the section draft", async () 
       />
     );
   }
-  // The source form exposes the host's harness selector alongside its draft.
-  type.tabs = [
-    {
-      id: "settings",
-      title: "Settings",
-      role: "settings",
-      component: ({ settingsHost }) => (
-        <>{settingsHost?.typeControl?.(false)}</>
-      ),
-    },
-  ];
-  next.tabs = type.tabs;
   render(<Host />);
   await user.click(
     screen.getByRole("button", { name: "Change harness from Original" }),

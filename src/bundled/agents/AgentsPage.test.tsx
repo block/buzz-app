@@ -1760,7 +1760,7 @@ it("stops queued team joins when the destination changes", async () => {
   await user.click(
     within(
       await screen.findByRole("dialog", { name: "Import Night Shift" }),
-    ).getByRole("button", { name: "Import", exact: true }),
+    ).getByRole("button", { name: "Import" }),
   );
   expect(agents.join).toHaveBeenCalledTimes(1);
   const originalList = screen.getByRole("region", { name: "Teams to import" });

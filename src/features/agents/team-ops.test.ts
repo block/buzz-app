@@ -101,6 +101,20 @@ describe("teamOps.change", () => {
     expect(channels.ensure).toHaveBeenCalledOnce();
   });
 
+  it("refuses a retried Create that drops a member an earlier try added, but Import keeps it", async () => {
+    const { ops, channels, save } = setup({
+      members: ["a"],
+      saved: { status: "conflict", head: head() } as never,
+    });
+    await expect(ops.change({ ...edit, members: ["b"] })).rejects.toThrow(
+      "reopen it to edit them",
+    );
+    expect(save).not.toHaveBeenCalled();
+    expect(channels.addMember).not.toHaveBeenCalled();
+    const result = await ops.change({ ...edit, members: ["b"], adopt: true });
+    expect(result).toMatchObject({ ok: true, added: ["b"], removed: [] });
+  });
+
   it("a Create that meets someone else's different team stops", async () => {
     const { ops, channels } = setup({
       saved: { status: "conflict", head: head("Other", "x") } as never,

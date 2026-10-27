@@ -120,6 +120,16 @@ export function teamOps(deps: TeamDeps) {
       )
     )
       throw new Error("The team's members changed elsewhere; reopen it");
+    // A retried Create only adds; dropping a member an earlier try added is
+    // an Edit. Import only adds too.
+    if (
+      !base &&
+      !edit.adopt &&
+      present.some((pubkey) => !edit.members.includes(pubkey))
+    )
+      throw new Error(
+        "This team already has members you've removed here; reopen it to edit them",
+      );
     const fail = (
       error: string,
       done: Partial<TeamResult> = {},

@@ -856,6 +856,45 @@ describe("config sync without a sync", () => {
     );
   });
 
+  it("catches up a revision even while a reread from before the revocation is out", async () => {
+    let b: RelayEvent | undefined;
+    let lookups = 0;
+    let holdLookup = false;
+    const old = held<RelayEvent[]>();
+    const recovery = held<RelayEvent[]>();
+    let currents = 0;
+    const f = await following((filter, a) => {
+      if (filter.artifact === "current")
+        return ++currents === 2 ? recovery.promise : [a];
+      lookups++;
+      if (holdLookup) {
+        holdLookup = false;
+        return old.promise;
+      }
+      return b ? [b] : [a];
+    });
+    // A revision past one this device missed: its reread is still out.
+    holdLookup = true;
+    const before = lookups;
+    f.relayFeed.emit(await revision("D", (await revision("X", f.a.id)).id));
+    await vi.waitFor(() => expect(lookups).toBe(before + 1));
+    try {
+      f.revoke();
+      await vi.waitFor(() => expect(currents).toBe(2));
+      b = await revision("B", f.a.id);
+      f.relayFeed.emit(b);
+      recovery.release([f.a]);
+      await vi.waitFor(() =>
+        expect(f.store.instructions(instructions)).toEqual({
+          ok: true,
+          text: "B",
+        }),
+      );
+    } finally {
+      old.release([f.a]);
+    }
+  });
+
   it("a recovery from before a reconnect never denies what the reconnect read", async () => {
     const recovery = held<RelayEvent[]>();
     let currents = 0;

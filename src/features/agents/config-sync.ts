@@ -483,10 +483,15 @@ export function createConfigSync(
     for (const channel of channels) {
       const before = bound.get(channel);
       if (!before) continue;
-      // A new lifetime: what the old one had in flight installs nothing.
+      // A new lifetime: what the old one had in flight installs nothing, and
+      // its own artifacts, so no old reread takes a new one's request.
       before.abort.abort();
       synced.delete(before);
-      const entry: Bound = { ...before, abort: new AbortController() };
+      const entry: Bound = {
+        ...before,
+        artifacts: before.artifacts.map((artifact) => ({ ...artifact })),
+        abort: new AbortController(),
+      };
       bound.set(channel, entry);
       held.add(entry);
       for (const { subject } of entry.artifacts) store.rebind(subject);

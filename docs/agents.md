@@ -676,10 +676,10 @@ in its home record and applies everywhere.
   member (or in all of them while it has none), but has one home community. A
   local team is shared by every community; a member's roster lists only teammates
   in the same community, and the editor keeps members that are only elsewhere.
-  Where config sync is on, a new team, or one imported from old Buzz, is synced:
-  its NIP-AP config channel (name and instructions) is created only in the
-  community it was made in, and its members are the owner's agents in that
-  channel. Adding an agent with no membership there is refused with "Add <agent>
+  Where the community's relay supports config channels, a new team, or one
+  imported from old Buzz, is synced: its NIP-AP config channel (name and
+  instructions) is created only in the community it was made in, and its members
+  are the owner's agents in that channel. Adding an agent with no membership there is refused with "Add <agent>
   to <community> first"; the agent is never added to that community for you. A
   member running in any community takes the team's section from the home
   channel's last confirmed copy, and with none its start waits rather than use

@@ -94,8 +94,6 @@ vi.mock("../solo/default-agent", async (original) => ({
 // Each community's config channels, when a test brings them up: the service's
 // own wiring, with the relay's channel work stubbed.
 const coordinators = vi.hoisted(() => ({
-  /** Stands in for `CONFIG_SYNC_ENABLED`, which ships `false`. */
-  sync: false,
   make: undefined as
     | undefined
     | ((community: string, store: AgentConfigStore) => unknown),
@@ -104,9 +102,6 @@ vi.mock("./community-config", async (original) => {
   const actual = await original<typeof import("./community-config")>();
   return {
     ...actual,
-    get CONFIG_SYNC_ENABLED() {
-      return coordinators.sync;
-    },
     communityConfig: (
       ...args: Parameters<typeof actual.communityConfig>
     ): ReturnType<typeof actual.communityConfig> =>
@@ -11441,7 +11436,6 @@ describe("synced teams", () => {
       return {
         attach: vi.fn(async () => {}),
         binding: () => undefined,
-        check: vi.fn(async () => {}),
         remove: vi.fn(async () => {}),
         history: () => [],
         dispose: vi.fn(),
@@ -11458,14 +11452,12 @@ describe("synced teams", () => {
     identities: AgentIdentity[],
     storage?: ReturnType<typeof memoryStorage>,
   ) {
-    coordinators.sync = true;
     const channels = teamChannels();
     const f = await setup({ identities, storage });
     await vi.waitFor(() => expect(channels.made.has(home)).toBe(true));
     return { ...f, ...channels };
   }
   afterEach(() => {
-    coordinators.sync = false;
     coordinators.make = undefined;
   });
   const draft = "6f1c2b9e-3d4a-4f5b-8c7d-1e2f3a4b5c6d";

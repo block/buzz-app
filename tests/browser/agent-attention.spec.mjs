@@ -75,8 +75,17 @@ test("watch and interest deletion restore focus without taking it from another c
   const remove = page.getByRole("button", {
     name: "Delete Release discussion",
   });
+  await page.mouse.move(1, 1);
+  await expect(remove).toHaveCSS("opacity", "0");
+  await remove.locator("xpath=ancestor::li").hover();
+  await expect(remove).toHaveCSS("opacity", "1");
+  await page.mouse.move(1, 1);
+  await page.getByRole("switch", { name: "Watch Release discussion" }).focus();
+  await page.keyboard.press("Tab");
+  await expect(remove).toBeFocused();
   await page.evaluate(() => window.attentionFixture.holdSave());
   await remove.focus();
+  await expect(remove).toHaveCSS("opacity", "1");
   await page.keyboard.press("Enter");
   try {
     await expect
@@ -96,8 +105,11 @@ test("watch and interest deletion restore focus without taking it from another c
   const removeInterest = page.getByRole("button", {
     name: "Delete Interest Release planning",
   });
+  await expect(removeInterest).toHaveText("");
+  await expect(removeInterest).toHaveCSS("opacity", "0");
   await page.evaluate(() => window.attentionFixture.holdSave());
   await removeInterest.focus();
+  await expect(removeInterest).toHaveCSS("opacity", "1");
   await page.keyboard.press("Enter");
   try {
     await expect
@@ -128,4 +140,29 @@ test("watch and interest deletion restore focus without taking it from another c
   await expect(
     page.getByRole("switch", { name: "Attention for Ada on this device" }),
   ).toBeFocused();
+});
+
+// Hover media behavior and tap activation require a real touch browser context.
+test.describe("touch delete actions", () => {
+  test.use({ hasTouch: true });
+  test("keeps watch and Interest deletion available without hover", async ({
+    page,
+  }) => {
+    await page.goto("/tests/fixtures/agent-attention.html");
+    expect(await page.evaluate(() => matchMedia("(hover: none)").matches)).toBe(
+      true,
+    );
+    const remove = page.getByRole("button", {
+      name: "Delete Release discussion",
+    });
+    await expect(remove).toHaveCSS("opacity", "1");
+    await remove.tap();
+    await expect(remove).toHaveCount(0);
+    const interest = page.getByRole("button", {
+      name: "Delete Interest Release planning",
+    });
+    await expect(interest).toHaveCSS("opacity", "1");
+    await interest.tap();
+    await expect(interest).toHaveCount(0);
+  });
 });

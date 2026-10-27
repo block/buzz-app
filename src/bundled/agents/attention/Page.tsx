@@ -472,6 +472,7 @@ export function createPage({
             {...{
               ...button,
               shape: "icon",
+              className: "attention-delete",
               type: "button",
               "aria-label": `Delete ${label.text}`,
               title: "Delete watch",
@@ -637,6 +638,8 @@ export function createPage({
             ref={trigger}
             size="sm"
             variant="ghost"
+            shape="icon"
+            className="attention-delete"
             aria-label={`Delete Interest ${label}`}
             title={hasWatches ? "Remove its watches first" : "Delete Interest"}
             disabled={hasWatches || action.pending}
@@ -647,7 +650,7 @@ export function createPage({
               )
             }
           >
-            Delete Interest
+            <TrashIcon size={16} aria-hidden="true" />
           </Button>
         </div>
         {problem(action.error)}
@@ -759,8 +762,19 @@ export function createPage({
           h(
             "div",
             { className: "attention-interest-head" },
-            h("span", { className: "text-caption text-subtle" }, "Interest"),
-            h("h4", { className: "text-label" }, label),
+            h(
+              "div",
+              null,
+              h("span", { className: "text-caption text-subtle" }, "Interest"),
+              h("h4", { className: "text-label" }, label),
+            ),
+            h(DeleteInterest, {
+              agent,
+              slug: object.slug,
+              label,
+              hasWatches: subscriptions.length > 0,
+              returnFocus,
+            }),
           ),
           h(
             "details",
@@ -787,13 +801,6 @@ export function createPage({
             ),
             <InstructionsMarkdown text={instructions} />,
           ),
-          h(DeleteInterest, {
-            agent,
-            slug: object.slug,
-            label,
-            hasWatches: subscriptions.length > 0,
-            returnFocus,
-          }),
           !subscriptions.length &&
             h(
               "p",

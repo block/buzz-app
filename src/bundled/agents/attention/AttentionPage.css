@@ -123,8 +123,23 @@
 }
 .attention-interest-head {
   display: flex;
-  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.attention-interest-head > div:first-child {
+  min-width: 0;
+  display: grid;
   gap: var(--space-half);
+}
+@media (hover: hover) and (pointer: fine) {
+  .attention-interest-head:not(:hover, :focus-within) .attention-delete,
+  .attention-card:not(:hover, :focus-within)
+    > .attention-head
+    .attention-delete {
+    opacity: 0;
+    pointer-events: none;
+  }
 }
 .attention-instructions summary {
   width: 100%;

@@ -217,16 +217,12 @@ function ProfileDetails({
     type: plugin?.type,
     types: agentTypes,
   });
-  const channelChoices = useChannelChoices(
-    plugin ? session.channels : undefined,
-  );
   const sections =
     settings.agent && agents
       ? agentSections({
           agents,
           agent: settings.agent,
           type: settings.type,
-          channels: channelChoices,
           memories: session.agentMemories,
           conversation: context && {
             channelId: context.channelId,

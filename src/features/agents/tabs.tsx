@@ -1,9 +1,8 @@
 // An agent's sections, wherever they are shown (its Build view and its
-// profile panel): the type's tabs, local-only Attention, and Memory.
+// profile panel): the type's tabs, settings, and Memory.
 // Memory is relay-backed for both local and hosted agents. Agents classified
 // as `elsewhere` expose no sections in these views.
 import { useId, useState, type ReactNode } from "react";
-import type { ChannelChoice } from "./attention";
 import { AttentionPanel } from "./AttentionPanel";
 import { MemoryPanel, type AgentMemories } from "./MemoryPanel";
 import type {
@@ -16,7 +15,7 @@ import type {
 import { AgentSaveButton } from "./AgentSaveButton";
 
 export type AgentSection = Readonly<{
-  /** `agent:<type tab id>`, `agent:settings`, `agent:activity`, `agent:attention`
+  /** `agent:<type tab id>`, `agent:settings`, `agent:activity`
    * or `agent:memory`; never collides with a host tab. */
   value: `agent:${string}`;
   label: string;
@@ -36,7 +35,6 @@ export function agentSections({
   agents: Agents;
   agent: Agent;
   type: RegisteredAgentType | undefined;
-  channels: readonly ChannelChoice[];
   conversation?: AgentConversation | undefined;
   settingsHost?: AgentSettingsHost;
   settingsSection?: "identity" | "runtime";
@@ -45,13 +43,17 @@ export function agentSections({
   memories: AgentMemories | undefined;
 }): readonly AgentSection[] {
   if (agent.place === "elsewhere") return [];
+  const attention =
+    settingsContent === undefined && agent.place === "here" ? (
+      <AttentionSection agents={agents} agent={agent} />
+    ) : null;
+  const content = attention || settingsContent;
   const typeTabs = type?.tabs ?? [];
-  const settingsTab = settingsHost
-    ? typeTabs.find((tab) => tab.role === "settings")
-    : undefined;
-  const orderedTabs = settingsTab
-    ? [settingsTab, ...typeTabs.filter((tab) => tab !== settingsTab)]
-    : typeTabs;
+  const settingsTab = typeTabs.find((tab) => tab.role === "settings");
+  const orderedTabs =
+    settingsHost && settingsTab
+      ? [settingsTab, ...typeTabs.filter((tab) => tab !== settingsTab)]
+      : typeTabs;
   const tabs = orderedTabs.map(({ id, title, role, component: Component }) => ({
     value: (role ? `agent:${role}` : `agent:type:${id}`) as `agent:${string}`,
     label: title,
@@ -59,7 +61,9 @@ export function agentSections({
       <Component
         agent={agent}
         {...(role === "settings" && settingsSection ? { settingsSection } : {})}
-        {...(role === "settings" && settingsContent ? { settingsContent } : {})}
+        {...(role === "settings" && content
+          ? { settingsContent: content }
+          : {})}
         {...(conversation && { conversation })}
         save={(config) =>
           settingsHost?.pendingSave
@@ -70,17 +74,16 @@ export function agentSections({
       />
     ),
   }));
-  if (settingsHost && !settingsTab)
+  if (!settingsTab && (settingsHost || attention))
     tabs.unshift({
       value: "agent:settings",
       label: "Settings",
-      render: () => <HostSettings host={settingsHost} />,
-    });
-  if (agent.place === "here")
-    tabs.push({
-      value: "agent:attention",
-      label: "Attention",
-      render: () => <AttentionSection agents={agents} agent={agent} />,
+      render: () => (
+        <>
+          {settingsHost && <HostSettings host={settingsHost} />}
+          {attention}
+        </>
+      ),
     });
   return [
     ...tabs,

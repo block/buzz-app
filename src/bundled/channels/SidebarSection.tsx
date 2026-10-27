@@ -240,24 +240,6 @@ export function SidebarSection({
               )}
             />
             <MenuPopup align="end" aria-label={`More actions for ${title}`}>
-              {createSection && (
-                <>
-                  <MenuItem
-                    disabled={!createSection.available}
-                    onClick={() => {
-                      setMenuOpen(false);
-                      if (actionsTrigger.current)
-                        createSection.open(actionsTrigger.current);
-                    }}
-                  >
-                    <MenuIcon>
-                      <PlusIcon size={14} />
-                    </MenuIcon>
-                    Create section
-                  </MenuItem>
-                  <MenuSeparator />
-                </>
-              )}
               {filter && (
                 <MenuSubmenu>
                   <MenuSubmenuTrigger>
@@ -399,6 +381,24 @@ export function SidebarSection({
                     </MenuRadioGroup>
                   </MenuSubmenuPopup>
                 </MenuSubmenu>
+              )}
+              {createSection && (
+                <>
+                  {(filter || sort) && <MenuSeparator />}
+                  <MenuItem
+                    disabled={!createSection.available}
+                    onClick={() => {
+                      setMenuOpen(false);
+                      if (actionsTrigger.current)
+                        createSection.open(actionsTrigger.current);
+                    }}
+                  >
+                    <MenuIcon>
+                      <PlusIcon size={14} />
+                    </MenuIcon>
+                    Create section
+                  </MenuItem>
+                </>
               )}
               {move && (
                 <>

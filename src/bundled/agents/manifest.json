@@ -15,12 +15,6 @@
         "id": "attention-command",
         "program": "bash",
         "args": ["-c", "exec \"$@\"", "attention"]
-      },
-      {
-        "id": "attention-import",
-        "program": "buzz-attention-discover",
-        "bundled": true,
-        "interpreter": "bash"
       }
     ]
   }

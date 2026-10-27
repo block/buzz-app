@@ -1,7 +1,6 @@
 import type { PluginModule } from "../../plugins/api";
 import { registerAttention } from "../../features/agents/attention-command";
 import { registerDiscovery } from "../../features/agents/attention-discovery";
-import { watchAttentionImport } from "../../features/agents/attention-import";
 import { AgentsPage } from "./AgentsPage";
 import { availableAgentProviderRoute } from "./routes";
 
@@ -9,7 +8,6 @@ export const inject = ["pages", "agents", "relay", "navigation", "host"];
 export const apply: PluginModule["apply"] = (ctx) => {
   registerAttention(ctx);
   registerDiscovery(ctx.agents);
-  ctx.effect(() => watchAttentionImport(ctx.agents, ctx.host));
   const { agents, relay, navigation: navigator } = ctx;
   ctx.pages.register({
     id: "agents",

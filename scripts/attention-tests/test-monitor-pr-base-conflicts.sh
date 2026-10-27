@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 python3 - "$(cd "$(dirname "$0")/../.." && pwd)" <<'PY'
-import os, pathlib, subprocess, sys, tempfile
+import os, pathlib, select, subprocess, sys, tempfile
 root = pathlib.Path(sys.argv[1])
 with tempfile.TemporaryDirectory() as directory:
     temp = pathlib.Path(directory)
@@ -41,10 +41,21 @@ else: sys.exit('unexpected gh invocation: ' + args)
         if missing: env.update(BASE_REF='', BASE_SHA='')
         result = subprocess.run([str(root/'src-tauri/resources/attention/buzz-attention-pr'), '--repo', 'owner/repo', '--include-non-employees', '--interval', '0.01', '1'], env=env, capture_output=True, text=True, timeout=10, check=True)
         assert int(pathlib.Path(str(tick) + '.identity').read_text()) == identity_failures + 1
-        assert result.stderr.count('could not identify') == bool(identity_failures), result.stderr
+        assert result.stdout.count('could not identify') == bool(identity_failures), result.stdout
         assert result.stdout.count('conflicts with') == conflicts, result.stdout
         assert 'PR #1 closed' in result.stdout, result.stdout
         assert result.stdout.count("Couldn't fetch PR") == bool(failures), result.stdout
+    tick = temp / 'persistent.tick'
+    env = dict(os.environ, PATH=str(temp)+os.pathsep+os.environ['PATH'], FAKE_TICK=str(tick), IDENTITY_FAILURES='999999')
+    process = subprocess.Popen([str(root/'src-tauri/resources/attention/buzz-attention-pr'), '--repo', 'owner/repo', '--include-non-employees', '--interval', '0.01', '1'], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        assert select.select([process.stdout], [], [], 3)[0], 'identity warning was not delivered while retrying'
+        assert 'could not identify' in process.stdout.readline()
+        assert process.poll() is None, 'identity failure should keep retrying'
+        assert not tick.exists(), 'PR polling must wait for identity'
+    finally:
+        process.terminate()
+        process.communicate(timeout=3)
     run('draft', 'CONFLICTING', 1)
     run('mergeable', 'MERGEABLE,MERGEABLE', 0)
     run('later', 'MERGEABLE,CONFLICTING', 1)

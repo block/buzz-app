@@ -100,7 +100,7 @@ while [[ "$INCLUDE_SELF_COMMENTS" != "1" && -z "$CURRENT_GITHUB_USER" ]]; do
   CURRENT_GITHUB_USER="$(gh api user --jq .login 2>/dev/null || true)"
   [[ -z "$CURRENT_GITHUB_USER" ]] || break
   if [[ "$identity_warned" == 0 ]]; then
-    echo "WARNING: could not identify the authenticated GitHub user; retrying before polling comments" >&2
+    echo "WARNING: could not identify the authenticated GitHub user; check GitHub authentication. Retrying before polling comments"
     identity_warned=1
   fi
   sleep "$INTERVAL"

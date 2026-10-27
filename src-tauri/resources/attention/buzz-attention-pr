@@ -1,2 +1,2 @@
 #!/usr/bin/env bash
-exec "$(dirname "$0")/github-pr/monitor-pr-with-base.sh" "$@"
+exec "$(dirname "$0")/github-pr/pr-monitor.sh" --quiet-initial "$@"

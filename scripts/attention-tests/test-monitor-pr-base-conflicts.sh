@@ -1,117 +1,49 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../src-tauri/resources/attention/github-pr" && pwd)"
-monitor="$script_dir/monitor-pr-with-base.sh"
-temp_dir="$(mktemp -d)"
-trap 'rm -rf "$temp_dir"' EXIT
-
-cat >"$temp_dir/producer" <<'SH'
-#!/usr/bin/env bash
-printf '%s\n' "$@" > "${FAKE_PRODUCER_ARGS:-/dev/null}"
-if [[ -n "${FAKE_GH_REVIEW_COUNT:-}" ]]; then
-  expected=$(wc -l <"$FAKE_GH_REVIEW_SEQUENCE")
-  while [[ ! -f "$FAKE_GH_REVIEW_COUNT" ]] || [[ "$(cat "$FAKE_GH_REVIEW_COUNT")" -le "$expected" ]]; do sleep 0.01; done
-else
-  sleep 0.1
-fi
-SH
-chmod +x "$temp_dir/producer"
-
-cat >"$temp_dir/gh" <<'SH'
-#!/usr/bin/env bash
-set -euo pipefail
-if [[ "$1 $2" == "pr view" && "$*" == *"baseRefName"* ]]; then
-  if [[ "${FAIL_BASE_REF:-0}" == 1 && ! -f "$FAKE_GH_BASE_COUNT.ref" ]]; then
-    touch "$FAKE_GH_BASE_COUNT.ref"
-    echo "base lookup offline" >&2; exit 1
-  fi
-  echo main
-elif [[ "$1" == "api" ]]; then
-  count=0
-  [[ -f "$FAKE_GH_BASE_COUNT" ]] && count=$(<"$FAKE_GH_BASE_COUNT")
-  count=$((count + 1))
-  echo "$count" >"$FAKE_GH_BASE_COUNT"
-  value=$(sed -n "${count}p" "$FAKE_GH_BASE_SEQUENCE")
-  [[ -n "$value" ]] || value=$(tail -n 1 "$FAKE_GH_BASE_SEQUENCE")
-  [[ "$value" != FAIL ]] || { echo "branch lookup offline" >&2; exit 1; }
-  printf '%s\n' "$value"
-elif [[ "$1 $2" == "pr view" && "$*" == *"mergeable"* ]]; then
-  count=0
-  [[ -f "$FAKE_GH_REVIEW_COUNT" ]] && count=$(<"$FAKE_GH_REVIEW_COUNT")
-  count=$((count + 1))
-  echo "$count" >"$FAKE_GH_REVIEW_COUNT"
-  value=$(sed -n "${count}p" "$FAKE_GH_REVIEW_SEQUENCE")
-  [[ -n "$value" ]] || value=$(tail -n 1 "$FAKE_GH_REVIEW_SEQUENCE")
-  printf '%s\n' "$value"
-else
-  echo "unexpected gh invocation: $*" >&2
-  exit 1
-fi
-SH
-chmod +x "$temp_dir/gh"
-
-run_case() {
-  local name="$1"
-  local base_sequence="$2"
-  local review_sequence="$3"
-  local output="$temp_dir/$name.out"
-  local -a args=(--repo owner/repo --interval 1 --base-interval 0.01)
-  printf '%s' "$base_sequence" >"$temp_dir/$name.base"
-  printf '%s' "$review_sequence" >"$temp_dir/$name.review"
-  rm -f "$temp_dir/$name.base-count" "$temp_dir/$name.review-count"
-  FAKE_GH_BASE_COUNT="$temp_dir/$name.base-count" \
-  FAKE_GH_BASE_SEQUENCE="$temp_dir/$name.base" \
-  FAKE_GH_REVIEW_COUNT="$temp_dir/$name.review-count" \
-  FAKE_GH_REVIEW_SEQUENCE="$temp_dir/$name.review" \
-  GH_BIN="$temp_dir/gh" \
-  MONITOR_PR_PRODUCER="$temp_dir/producer" \
-    "$monitor" "${args[@]}" 1 >"$output"
-}
-
-run_case draft $'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n' $'CONFLICTING\n'
-grep -q 'PR #1 conflicts with `main` at aaaaaaaa. Rebase it onto `main`.' "$temp_dir/draft.out"
-[[ "$(grep -c 'conflicts with' "$temp_dir/draft.out")" == 1 ]] || exit 1
-
-run_case mergeable $'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n' $'MERGEABLE\nMERGEABLE\n'
-! grep -q 'conflicts with' "$temp_dir/mergeable.out" || exit 1
-
-run_case base-conflict $'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n' $'MERGEABLE\nCONFLICTING\n'
-grep -q 'base moved aaaaaaaa → bbbbbbbb' "$temp_dir/base-conflict.out"
-[[ "$(grep -c 'conflicts with' "$temp_dir/base-conflict.out")" == 1 ]] || exit 1
-
-run_case unknown-keeps-conflict $'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n' $'CONFLICTING\nUNKNOWN\nCONFLICTING\n'
-[[ "$(grep -c 'conflicts with' "$temp_dir/unknown-keeps-conflict.out")" == 1 ]] || exit 1
-
-run_case resolved-then-conflicting $'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n' $'CONFLICTING\nMERGEABLE\nCONFLICTING\n'
-[[ "$(grep -c 'conflicts with' "$temp_dir/resolved-then-conflicting.out")" == 2 ]] || exit 1
-
-# Author filters reach the PR producer.
-FAKE_GH_BASE_COUNT="$temp_dir/args.base-count" FAKE_GH_BASE_SEQUENCE="$temp_dir/draft.base" \
-FAKE_GH_REVIEW_COUNT="$temp_dir/args.review-count" FAKE_GH_REVIEW_SEQUENCE="$temp_dir/draft.review" \
-GH_BIN="$temp_dir/gh" MONITOR_PR_PRODUCER="$temp_dir/producer" FAKE_PRODUCER_ARGS="$temp_dir/producer.args" \
-  "$monitor" --repo owner/repo --interval 1 --base-interval 0.01 --ignore-author noisy --no-ignore-bots --allowlist roster 1 >/dev/null
-[[ "$(tr '\n' ' ' <"$temp_dir/producer.args")" == *"--ignore-author noisy --no-ignore-bots --allowlist roster 1 "* ]] || exit 1
-
-echo "monitor-pr base-conflict tests passed"
-
-# Transient startup failures recover and later conflicts still arrive.
-FAIL_BASE_REF=1 run_case recovery $'FAIL\naaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n' $'MERGEABLE\nCONFLICTING\n' 2>"$temp_dir/recovery.err"
-grep -q 'conflicts with' "$temp_dir/recovery.out"
-[[ "$(grep -c 'startup lookup' "$temp_dir/recovery.err")" == 1 ]] || exit 1
-
-# A missing base branch cannot hold a terminal PR producer open.
-cat >"$temp_dir/terminal-producer" <<'SH'
-#!/usr/bin/env bash
-echo 'PR #1 closed'
-SH
-chmod +x "$temp_dir/terminal-producer"
-printf 'FAIL\n' >"$temp_dir/missing.base"
-FAKE_GH_BASE_COUNT="$temp_dir/missing.count" FAKE_GH_BASE_SEQUENCE="$temp_dir/missing.base" \
-GH_BIN="$temp_dir/gh" MONITOR_PR_PRODUCER="$temp_dir/terminal-producer" \
-python3 - "$monitor" "$temp_dir/terminal.out" <<'PYTEST'
-import subprocess, sys
-with open(sys.argv[2], 'w') as output:
-    subprocess.run([sys.argv[1], '--repo', 'owner/repo', '--base-interval', '0.01', '1'], stdout=output, stderr=subprocess.DEVNULL, timeout=3, check=True)
-PYTEST
-grep -q 'PR #1 closed' "$temp_dir/terminal.out"
+python3 - "$(cd "$(dirname "$0")/../.." && pwd)" <<'PY'
+import os, pathlib, subprocess, sys, tempfile
+root = pathlib.Path(sys.argv[1])
+with tempfile.TemporaryDirectory() as directory:
+    temp = pathlib.Path(directory)
+    gh = temp / 'gh'
+    gh.write_text('''#!/usr/bin/env python3
+import os, pathlib, sys
+args = ' '.join(sys.argv[1:])
+path = pathlib.Path(os.environ['FAKE_TICK'])
+tick = int(path.read_text()) if path.exists() else 0
+if 'mergeQueueEntry' in args:
+    tick += 1
+    path.write_text(str(tick))
+    states = os.environ['SEQUENCE'].split(',')
+    if tick <= int(os.environ.get('FAIL_COUNT', '0')):
+        sys.exit(1)
+    conflict = states[min(tick - int(os.environ.get('FAIL_COUNT', '0')) - 1, len(states)-1)]
+    state = 'CLOSED' if tick > len(states) + int(os.environ.get('FAIL_COUNT', '0')) else 'OPEN'
+    print('\\t'.join([state, 'UNKNOWN', 'APPROVED', 'draft', 'manual-merge', 'https://example/pr/1', 'Test', 'false', '', '', '', '', conflict, os.environ.get('BASE_REF', 'main'), os.environ.get('BASE_SHA', 'aaaaaaaa')]))
+elif args == 'api user --jq .login': print('test-user')
+elif 'reviewThreads(first: 100)' in args:
+    print('{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}')
+elif args.startswith('pr checks '): print('[]')
+elif 'comments' in args or 'reviews' in args: pass
+else: sys.exit('unexpected gh invocation: ' + args)
+''')
+    gh.chmod(0o755)
+    def run(name, sequence, conflicts, failures=0, missing=False):
+        tick = temp / (name + '.tick')
+        state = temp / name
+        state.mkdir()
+        env = dict(os.environ, PATH=str(temp)+os.pathsep+os.environ['PATH'], TMPDIR=str(state), FAKE_TICK=str(tick), SEQUENCE=sequence, FAIL_COUNT=str(failures))
+        if missing: env.update(BASE_REF='', BASE_SHA='')
+        result = subprocess.run([str(root/'src-tauri/resources/attention/buzz-attention-pr'), '--repo', 'owner/repo', '--include-non-employees', '--interval', '0.01', '1'], env=env, capture_output=True, text=True, timeout=10, check=True)
+        assert result.stdout.count('conflicts with') == conflicts, result.stdout
+        assert 'PR #1 closed' in result.stdout, result.stdout
+        assert result.stdout.count("Couldn't fetch PR") == bool(failures), result.stdout
+    run('draft', 'CONFLICTING', 1)
+    run('mergeable', 'MERGEABLE,MERGEABLE', 0)
+    run('later', 'MERGEABLE,CONFLICTING', 1)
+    run('unknown', 'CONFLICTING,UNKNOWN,CONFLICTING', 1)
+    run('resolved', 'CONFLICTING,MERGEABLE,CONFLICTING', 2)
+    run('recovery', 'MERGEABLE,CONFLICTING', 1, failures=2)
+    run('missing-base', 'UNKNOWN', 0, missing=True)
+print('single-owner conflict and recovery tests passed')
+PY

@@ -16,10 +16,6 @@ tick=0
 
 if [[ "$args" == "api user --jq .login" ]]; then
   echo test-user
-elif [[ "$args" == *"baseRefName"* ]]; then echo main
-elif [[ "$args" == "api repos/owner/repo/branches/main"* ]]; then echo aaaaaaaa
-elif [[ "$args" == *"--json mergeable"* ]]; then
-  if [[ "$tick" -ge 2 ]]; then echo CONFLICTING; else echo MERGEABLE; fi
 elif [[ "$args" == *"mergeQueueEntry"* ]]; then
   tick=$((tick + 1))
   echo "$tick" >"$FAKE_TICK"
@@ -27,7 +23,7 @@ elif [[ "$args" == *"mergeQueueEntry"* ]]; then
   [[ "$tick" -ge 2 ]] && merge=DIRTY
   state=OPEN
   [[ "$tick" -ge 5 ]] && state=CLOSED
-  printf '%s\t%s\tAPPROVED\tready\tmanual-merge\thttps://example.test/pr/1\tTest PR\tfalse\t\t\t\t\n' "$state" "$merge"
+  printf '%s\t%s\tAPPROVED\tready\tmanual-merge\thttps://example.test/pr/1\tTest PR\tfalse\t\t\t\t\t%s\tmain\taaaaaaaa\n' "$state" "$merge" "$(if [[ "$merge" == DIRTY ]]; then echo CONFLICTING; else echo MERGEABLE; fi)"
 elif [[ "$args" == *"reviewThreads(first: 100)"* ]]; then
   printf '%s\n' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}'
 elif [[ "$args" == *"issues/1/comments"* || "$args" == *"pulls/1/comments"* || "$args" == *"pulls/1/reviews"* ]]; then
@@ -45,6 +41,6 @@ fi
 SH
 chmod +x "$temp_dir/bin/gh"
 
-PATH="$temp_dir/bin:$PATH" FAKE_TICK="$temp_dir/tick" TMPDIR="$temp_dir/state" MONITOR_PR_PYTHON_BIN="$(command -v python3)" "$script_dir/monitor-pr-with-base.sh" --repo owner/repo --include-non-employees --interval 0.01 --base-interval 0.01 1 >"$temp_dir/stdout" 2>"$temp_dir/stderr"
+PATH="$temp_dir/bin:$PATH" FAKE_TICK="$temp_dir/tick" TMPDIR="$temp_dir/state" MONITOR_PR_PYTHON_BIN="$(command -v python3)" "$script_dir/../buzz-attention-pr" --repo owner/repo --include-non-employees --interval 0.01 1 >"$temp_dir/stdout" 2>"$temp_dir/stderr"
 [[ "$(grep -c 'conflicts with' "$temp_dir/stdout")" == 1 ]] || exit 1
 ! grep -q 'PR is now.*conflicting' "$temp_dir/stdout" || exit 1

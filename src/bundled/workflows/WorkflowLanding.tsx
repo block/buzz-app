@@ -26,6 +26,7 @@ import type {
 } from "../../features/workflows/types";
 import {
   CaretDownIcon,
+  CheckIcon,
   HashIcon,
   ArrowRightIcon,
   DotsThreeIcon,
@@ -51,7 +52,6 @@ import {
   MenuItem,
   MenuIcon,
 } from "../../shared/design-system/ui/Menu";
-import { Checkbox } from "../../shared/design-system/ui/Checkbox";
 import {
   PopoverRoot,
   PopoverTrigger,
@@ -1145,44 +1145,55 @@ export function WorkflowLanding({
                 Clear all
               </Button>
             </div>
-            <fieldset
-              className="workflow-filter-presets"
-              aria-label="Workflow attributes"
-            >
-              <Button
-                size="sm"
-                variant={mineOnly ? "prominent" : "subtle"}
-                aria-pressed={mineOnly}
-                onClick={() => setMineOnly(!mineOnly)}
-              >
-                My workflows
-              </Button>
-              <Button
-                size="sm"
-                variant={enabledOnly ? "prominent" : "subtle"}
-                aria-pressed={enabledOnly}
-                onClick={() => setEnabledOnly(!enabledOnly)}
-              >
-                Enabled only
-              </Button>
+            <fieldset className="workflow-filter-section" aria-label="Workflow">
+              <InlineHeader title="Workflow" />
+              <div className="workflow-filter-presets text-body-sm">
+                <NavigationItem
+                  variant="option"
+                  label="My workflows"
+                  selected={mineOnly}
+                  aria-current={false}
+                  aria-pressed={mineOnly}
+                  onClick={() => setMineOnly(!mineOnly)}
+                  trailing={
+                    mineOnly && <CheckIcon size={16} aria-hidden="true" />
+                  }
+                />
+                <NavigationItem
+                  variant="option"
+                  label="Enabled"
+                  selected={enabledOnly}
+                  aria-current={false}
+                  aria-pressed={enabledOnly}
+                  onClick={() => setEnabledOnly(!enabledOnly)}
+                  trailing={
+                    enabledOnly && <CheckIcon size={16} aria-hidden="true" />
+                  }
+                />
+              </div>
             </fieldset>
-            <fieldset
-              className="workflow-filter-channel-section"
-              aria-label="Channels"
-            >
+            <fieldset className="workflow-filter-section" aria-label="Channels">
               <InlineHeader title="Channels" />
-              <div className="workflow-filter-channels">
+              <div className="workflow-filter-channels text-body-sm">
                 {populated.map((channel) => (
-                  <Checkbox
+                  <NavigationItem
                     key={channel.id}
-                    checked={filter.includes(channel.id)}
-                    onCheckedChange={(checked) =>
-                      checked
-                        ? onFilterChange([...filter, channel.id])
-                        : removeFilter(channel.id)
+                    variant="option"
+                    selected={filter.includes(channel.id)}
+                    aria-current={false}
+                    aria-pressed={filter.includes(channel.id)}
+                    onClick={() =>
+                      filter.includes(channel.id)
+                        ? removeFilter(channel.id)
+                        : onFilterChange([...filter, channel.id])
+                    }
+                    trailing={
+                      filter.includes(channel.id) && (
+                        <CheckIcon size={16} aria-hidden="true" />
+                      )
                     }
                     label={
-                      <span className="workflow-filter-channel-label text-body-sm">
+                      <span className="workflow-filter-channel-label">
                         <HashIcon
                           className="workflow-filter-channel-icon"
                           size={14}

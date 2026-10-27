@@ -650,8 +650,7 @@ html[data-keyboard-navigation]
   }
 }
 
-.workflow-filter-presets,
-.workflow-filter-channel-section {
+.workflow-filter-section {
   min-width: 0;
   margin: 0;
   padding: 0;
@@ -664,10 +663,10 @@ html[data-keyboard-navigation]
   gap: var(--space-3);
   margin-bottom: var(--space-3);
 }
-.workflow-filter-channel-section {
+.workflow-filter-section + .workflow-filter-section {
   margin-top: var(--space-4);
 }
-.workflow-filter-channel-section > .buzz-content-header {
+.workflow-filter-section > .buzz-content-header {
   margin-bottom: var(--space-2);
 }
 .workflow-filter-channel-label {
@@ -685,8 +684,10 @@ html[data-keyboard-navigation]
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-1);
 }
+.workflow-filter-presets {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 10rem), 1fr));
+}
 .workflow-filter-channels {
-  gap: var(--space-3);
   max-height: min(18rem, 40dvh);
   overflow-y: auto;
   overscroll-behavior: contain;

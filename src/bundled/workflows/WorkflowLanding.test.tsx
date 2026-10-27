@@ -1153,7 +1153,7 @@ it("combines ownership, saved enabled state and channels, and clears every filte
     screen.getByRole("button", { name: /^Open Mine disabled:/ }),
   ).toBeVisible();
   await open();
-  await user.click(screen.getByRole("button", { name: "Enabled only" }));
+  await user.click(screen.getByRole("button", { name: "Enabled" }));
   expect(screen.getByRole("button", { name: "Clear all" })).toBeEnabled();
   await close();
   expect(
@@ -1163,7 +1163,7 @@ it("combines ownership, saved enabled state and channels, and clears every filte
     screen.getByRole("button", { name: /^Open Mine enabled:/ }),
   ).toBeVisible();
   await open();
-  await user.click(screen.getByRole("checkbox", { name: "General" }));
+  await user.click(screen.getByRole("button", { name: "General" }));
   await close();
   expect(screen.getByText("No matching workflows")).toBeVisible();
   await open();
@@ -1190,25 +1190,28 @@ it("combines ownership, saved enabled state and channels, and clears every filte
     "aria-pressed",
     "false",
   );
-  expect(screen.getByRole("button", { name: "Enabled only" })).toHaveAttribute(
+  expect(screen.getByRole("button", { name: "Enabled" })).toHaveAttribute(
     "aria-pressed",
     "false",
   );
   expect(screen.getByRole("button", { name: "Clear all" })).toBeDisabled();
   await user.click(screen.getByRole("button", { name: "My workflows" }));
-  await user.click(screen.getByRole("button", { name: "Enabled only" }));
-  await user.click(screen.getByRole("checkbox", { name: "General" }));
+  await user.click(screen.getByRole("button", { name: "Enabled" }));
+  await user.click(screen.getByRole("button", { name: "General" }));
   await user.click(screen.getByRole("button", { name: "Clear all" }));
   expect(screen.getByRole("button", { name: "Clear all" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "My workflows" })).toHaveAttribute(
     "aria-pressed",
     "false",
   );
-  expect(screen.getByRole("button", { name: "Enabled only" })).toHaveAttribute(
+  expect(screen.getByRole("button", { name: "Enabled" })).toHaveAttribute(
     "aria-pressed",
     "false",
   );
-  expect(screen.getByRole("checkbox", { name: "General" })).not.toBeChecked();
+  expect(screen.getByRole("button", { name: "General" })).toHaveAttribute(
+    "aria-pressed",
+    "false",
+  );
   await close();
   await waitFor(() =>
     expect(

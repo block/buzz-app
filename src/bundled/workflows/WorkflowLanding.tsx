@@ -8,6 +8,7 @@ import { WORKFLOW_CHANNEL_BATCH } from "../../features/workflows/queries";
 import {
   type ReactNode,
   type Ref,
+  type RefObject,
   useEffect,
   useId,
   useMemo,
@@ -26,6 +27,9 @@ import type {
 } from "../../features/workflows/types";
 import {
   CaretDownIcon,
+  UserIcon,
+  CheckCircleIcon,
+  CircleIcon,
   XIcon,
   HashIcon,
   ArrowRightIcon,
@@ -51,11 +55,15 @@ import {
   MenuPopup,
   MenuItem,
   MenuIcon,
-  MenuCheckboxItem,
-  MenuRadioGroup,
-  MenuRadioItem,
-  MenuNote,
 } from "../../shared/design-system/ui/Menu";
+import {
+  PopoverRoot,
+  PopoverTrigger,
+  PopoverPopup,
+} from "../../shared/design-system/ui/Popover";
+import { RadioGroup, Radio } from "../../shared/design-system/ui/RadioGroup";
+import { Field } from "../../shared/design-system/ui/Field";
+import { Checkbox } from "../../shared/design-system/ui/Checkbox";
 import { Header } from "../../shared/design-system/ui/Header";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { Switch } from "../../shared/design-system/ui/Switch";
@@ -952,7 +960,6 @@ const STATUS_OPTIONS = [
   { value: "disabled", label: "Disabled" },
 ] as const;
 const TRIGGER_OPTIONS = [
-  { value: "all", label: "Any trigger" },
   { value: "message", label: "Message" },
   { value: "reaction", label: "Reaction" },
   { value: "diff", label: "Diff" },
@@ -966,34 +973,174 @@ function WorkflowFilterMenu<Value extends string>({
   options,
   onChange,
   triggerRef,
+  icon,
 }: {
   label: string;
   value: Value;
-  options: readonly { value: Value; label: string }[];
+  options: readonly [
+    { value: Value; label: string },
+    ...{ value: Value; label: string }[],
+  ];
   onChange: (value: Value) => void;
-  triggerRef: Ref<HTMLButtonElement>;
+  triggerRef: RefObject<HTMLButtonElement | null>;
+  icon: ReactNode;
 }) {
+  const [open, setOpen] = useState(false);
+  const active = value !== options[0].value;
+  const selectedLabel =
+    options.find((option) => option.value === value)?.label ?? label;
   return (
-    <MenuRoot>
-      <MenuTrigger
-        ref={triggerRef}
-        render={
-          <Button size="sm" variant="outline">
-            {label}
-            <CaretDownIcon size={16} aria-hidden="true" />
-          </Button>
-        }
-      />
-      <MenuPopup size="compact" aria-label={label}>
-        <MenuRadioGroup value={value} onValueChange={onChange}>
-          {options.map((option) => (
-            <MenuRadioItem key={option.value} value={option.value} closeOnClick>
-              {option.label}
-            </MenuRadioItem>
-          ))}
-        </MenuRadioGroup>
-      </MenuPopup>
-    </MenuRoot>
+    <div className="workflow-filter-control">
+      <PopoverRoot open={open} onOpenChange={setOpen}>
+        <PopoverTrigger
+          ref={triggerRef}
+          aria-label={label}
+          aria-description={active ? selectedLabel : undefined}
+          render={
+            <Button size="sm" variant="outline">
+              {active && icon}
+              <span className="workflow-filter-label">
+                {active ? selectedLabel : label}
+              </span>
+              <CaretDownIcon size={16} aria-hidden="true" />
+            </Button>
+          }
+        />
+        <PopoverPopup size="compact" aria-label={label}>
+          <Field label={label} labelVisibility="hidden">
+            <RadioGroup value={value} onValueChange={onChange}>
+              {options.map((option) => (
+                <Radio
+                  key={option.value}
+                  value={option.value}
+                  label={<span className="text-body-sm">{option.label}</span>}
+                  onClick={() => setOpen(false)}
+                />
+              ))}
+            </RadioGroup>
+          </Field>
+        </PopoverPopup>
+      </PopoverRoot>
+      {active && (
+        <IconButton
+          size="sm"
+          variant="ghost"
+          aria-label={`Clear ${label.toLowerCase()} filter`}
+          title={`Clear ${label.toLowerCase()} filter`}
+          icon={<XIcon size={16} aria-hidden="true" />}
+          onClick={() => {
+            onChange(options[0].value);
+            triggerRef.current?.focus();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function WorkflowMultiFilterMenu<Value extends string>({
+  label,
+  options,
+  value,
+  onChange,
+  triggerRef,
+  icon,
+  wide = false,
+  pluralLabel,
+}: {
+  label: string;
+  options: readonly { value: Value; label: string; icon?: ReactNode }[];
+  value: readonly Value[];
+  onChange: (value: readonly Value[]) => void;
+  triggerRef: RefObject<HTMLButtonElement | null>;
+  icon: ReactNode;
+  wide?: boolean;
+  pluralLabel: string;
+}) {
+  const selected = options.filter((option) => value.includes(option.value));
+  const active = selected.length > 0;
+  return (
+    <div className="workflow-filter-control">
+      <PopoverRoot>
+        <PopoverTrigger
+          ref={triggerRef}
+          aria-label={label}
+          aria-description={
+            active
+              ? selected.map((option) => option.label).join(", ")
+              : undefined
+          }
+          render={
+            <Button size="sm" variant="outline">
+              {active &&
+                (selected.length === 1 ? (selected[0]?.icon ?? icon) : icon)}
+              <span className="workflow-filter-label">
+                {selected.length === 1
+                  ? selected[0]?.label
+                  : active
+                    ? `${selected.length} ${pluralLabel}`
+                    : label}
+              </span>
+              <CaretDownIcon size={16} aria-hidden="true" />
+            </Button>
+          }
+        />
+        <PopoverPopup
+          size={wide ? "wide" : "compact"}
+          aria-label={label}
+          style={wide ? { width: "28rem" } : undefined}
+        >
+          {options.length === 0 && (
+            <p className="text-body-sm text-secondary">
+              No channels with workflows yet.
+            </p>
+          )}
+          <div
+            className={
+              wide ? "workflow-filter-channels" : "workflow-filter-options"
+            }
+          >
+            {options.map((option) => (
+              <Checkbox
+                key={option.value}
+                checked={value.includes(option.value)}
+                onCheckedChange={(checked) =>
+                  onChange(
+                    checked
+                      ? [...value, option.value]
+                      : value.filter((current) => current !== option.value),
+                  )
+                }
+                label={
+                  <span className="workflow-filter-channel-label text-body-sm">
+                    {option.icon}
+                    <span
+                      className="workflow-filter-label"
+                      title={option.label}
+                    >
+                      {option.label}
+                    </span>
+                  </span>
+                }
+              />
+            ))}
+          </div>
+        </PopoverPopup>
+      </PopoverRoot>
+      {active && (
+        <IconButton
+          size="sm"
+          variant="ghost"
+          aria-label={`Clear ${label.toLowerCase()} filter`}
+          title={`Clear ${label.toLowerCase()} filter`}
+          icon={<XIcon size={16} aria-hidden="true" />}
+          onClick={() => {
+            onChange([]);
+            triggerRef.current?.focus();
+          }}
+        />
+      )}
+    </div>
   );
 }
 
@@ -1037,8 +1184,9 @@ export function WorkflowLanding({
   const [mineOnly, setMineOnly] = useState(false);
   const [status, setStatus] =
     useState<(typeof STATUS_OPTIONS)[number]["value"]>("all");
-  const [trigger, setTrigger] =
-    useState<(typeof TRIGGER_OPTIONS)[number]["value"]>("all");
+  const [triggers, setTriggers] = useState<
+    readonly (typeof TRIGGER_OPTIONS)[number]["value"][]
+  >([]);
   const ownerTriggerRef = useRef<HTMLButtonElement>(null);
   const statusTriggerRef = useRef<HTMLButtonElement>(null);
   const triggerTypeRef = useRef<HTMLButtonElement>(null);
@@ -1087,7 +1235,8 @@ export function WorkflowLanding({
     saveReadback,
   );
   const filteredSnapshots = useMemo(() => {
-    if (!mineOnly && status === "all" && trigger === "all") return snapshots;
+    if (!mineOnly && status === "all" && triggers.length === 0)
+      return snapshots;
     return Object.fromEntries(
       Object.entries(snapshots).map(([id, snapshot]) => [
         id,
@@ -1105,24 +1254,24 @@ export function WorkflowLanding({
                 )
                   return false;
               }
-              return (
-                trigger === "all" ||
-                workflowCardPresentation(definition.yaml).triggerIcon ===
-                  trigger
-              );
+              if (triggers.length === 0) return true;
+              const type = workflowCardPresentation(
+                definition.yaml,
+              ).triggerIcon;
+              return triggers.some((trigger) => trigger === type);
             }),
           },
         },
       ]),
     );
-  }, [snapshots, mineOnly, status, trigger, viewer]);
+  }, [snapshots, mineOnly, status, triggers, viewer]);
   const filtered =
-    mineOnly || status !== "all" || trigger !== "all" || filter.length > 0;
+    mineOnly || status !== "all" || triggers.length > 0 || filter.length > 0;
   const resetFilters = () => {
     onFilterChange([]);
     setMineOnly(false);
     setStatus("all");
-    setTrigger("all");
+    setTriggers([]);
   };
   const ordered = [...channels].sort(
     (a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id),
@@ -1197,16 +1346,17 @@ export function WorkflowLanding({
           },
         ]
       : []),
-    ...(trigger !== "all"
-      ? [
-          {
-            key: "trigger",
-            label: `${TRIGGER_OPTIONS.find((option) => option.value === trigger)?.label} trigger`,
-            remove: () => setTrigger("all"),
-            triggerRef: triggerTypeRef,
-          },
-        ]
-      : []),
+    ...TRIGGER_OPTIONS.filter((option) => triggers.includes(option.value)).map(
+      (option) => ({
+        key: `trigger:${option.value}`,
+        label: `${option.label} trigger`,
+        remove: () =>
+          setTriggers((current) =>
+            current.filter((value) => value !== option.value),
+          ),
+        triggerRef: triggerTypeRef,
+      }),
+    ),
     ...shown.map((channel) => ({
       key: channel.id,
       label: `#${channel.name}`,
@@ -1225,6 +1375,7 @@ export function WorkflowLanding({
           triggerRef={ownerTriggerRef}
           value={mineOnly ? "mine" : "all"}
           options={OWNER_OPTIONS}
+          icon={<UserIcon size={16} aria-hidden="true" />}
           onChange={(value) => setMineOnly(value === "mine")}
         />
         <WorkflowFilterMenu
@@ -1232,70 +1383,56 @@ export function WorkflowLanding({
           triggerRef={statusTriggerRef}
           value={status}
           options={STATUS_OPTIONS}
+          icon={
+            status === "enabled" ? (
+              <CheckCircleIcon size={16} aria-hidden="true" />
+            ) : (
+              <CircleIcon size={16} aria-hidden="true" />
+            )
+          }
           onChange={setStatus}
         />
-        <WorkflowFilterMenu
+        <WorkflowMultiFilterMenu
           label="Trigger"
+          pluralLabel="triggers"
           triggerRef={triggerTypeRef}
-          value={trigger}
-          options={TRIGGER_OPTIONS}
-          onChange={setTrigger}
+          value={triggers}
+          onChange={setTriggers}
+          icon={<LightningIcon size={16} aria-hidden="true" />}
+          options={TRIGGER_OPTIONS.map((option) => {
+            const Icon = ICONS[option.value];
+            return {
+              ...option,
+              icon: (
+                <Icon
+                  className="workflow-filter-channel-icon"
+                  size={14}
+                  aria-hidden="true"
+                />
+              ),
+            };
+          })}
         />
-        <MenuRoot>
-          <MenuTrigger
-            ref={channelsTriggerRef}
-            render={
-              <Button size="sm" variant="outline">
-                Channels
-                <CaretDownIcon size={16} aria-hidden="true" />
-              </Button>
-            }
-          />
-          <MenuPopup
-            size="wide"
-            aria-label="Channels"
-            style={{ width: "28rem" }}
-          >
-            {populated.length === 0 && (
-              <MenuNote>No channels with workflows yet.</MenuNote>
-            )}
-            <MenuItem
-              disabled={!filter.length}
-              closeOnClick={false}
-              onClick={() => onFilterChange([])}
-            >
-              Clear channels
-            </MenuItem>
-            <div className="workflow-filter-channels">
-              {populated.map((channel) => (
-                <MenuCheckboxItem
-                  key={channel.id}
-                  checked={filter.includes(channel.id)}
-                  closeOnClick={false}
-                  onCheckedChange={(checked) =>
-                    checked
-                      ? onFilterChange([...filter, channel.id])
-                      : removeFilter(channel.id)
-                  }
-                >
-                  <span className="workflow-filter-channel-label">
-                    <HashIcon
-                      className="workflow-filter-channel-icon"
-                      size={14}
-                      aria-hidden="true"
-                    />
-                    <span
-                      className="workflow-filter-label"
-                      title={channel.name}
-                    >
-                      {channel.name}
-                    </span>
-                  </span>
-                </MenuCheckboxItem>
-              ))}
-            </div>
-          </MenuPopup>
-        </MenuRoot>
+        <WorkflowMultiFilterMenu
+          label="Channels"
+          pluralLabel="channels"
+          triggerRef={channelsTriggerRef}
+          value={filter}
+          onChange={onFilterChange}
+          wide
+          icon={<HashIcon size={16} aria-hidden="true" />}
+          options={populated.map((channel) => ({
+            value: channel.id,
+            label: channel.name,
+            icon: (
+              <HashIcon
+                className="workflow-filter-channel-icon"
+                size={14}
+                aria-hidden="true"
+              />
+            ),
+          }))}
+        />
         {filtered && (
           <Button
             size="sm"

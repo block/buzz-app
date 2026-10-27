@@ -15,13 +15,17 @@ See the [capability contract](../src/features/workflows/types.ts).
   channel selection shows all channels. Selection is not persisted across sessions.
   Separate Owner, Status, Trigger, and Channels dropdowns sit above the collection,
   with removable active-filter tags on the row below and Clear all alongside the
-  controls. My workflows matches the current viewer's saved workflow ownership.
+  controls. Active dropdown triggers show the selected value and its icon, with a
+  separate clear icon beside each trigger. Owner and Status use inline radios;
+  Trigger and Channels use inline checkboxes. Popups have no Clear action.
+  My workflows matches the current viewer's saved workflow ownership.
   Enabled and Disabled match saved configuration (omitted means enabled), not
   confirmed runtime activity; unreadable configurations are excluded from both.
   Trigger filters use the same saved-type interpretation as the workflow rows:
   Message, Reaction, Diff, Schedule, or Webhook. Unknown/unreadable trigger types
-  remain visible with Any trigger. All filters intersect with the channel
-  selection; selected channels include workflows from any of those channels.
+  remain visible when no trigger types are selected. Selected trigger types match
+  any of those types; this result intersects with Owner, Status, and Channels.
+  Selected channels include workflows from any of those channels.
   Channel choices use a compact, scrollable two-column list and remain available
   regardless of the other filters.
   Discovery still reads all eligible channels.

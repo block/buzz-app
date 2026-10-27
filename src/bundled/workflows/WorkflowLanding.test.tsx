@@ -298,29 +298,43 @@ it("purges a pending filter exit immediately when session access clears", async 
   }
 });
 
-it("purges pending filter exits immediately when channel membership changes", async () => {
-  const [a, b] = [channel(1), channel(2)];
-  const fixture = mount([a, b]);
-  try {
-    await fixture.finish(0, [event(a.id), event(b.id)]);
-    const survivor = screen.getByRole("region", { name: "#Channel 1" });
-    const removed = screen.getByRole("region", { name: "#Channel 2" });
-    fixture.refresh();
-    await waitFor(() => expect(fixture.reads).toHaveLength(2));
-    fireEvent.click(screen.getByRole("button", { name: "Status" }));
-    fireEvent.click(screen.getByRole("radio", { name: "Enabled" }));
-    expect(screen.getAllByText("Message helper")).toHaveLength(2);
-    expect(
-      screen.queryByRole("button", { name: /^Open Message helper:/ }),
-    ).toBeNull();
-    fixture.change([a]);
-    expect(removed).not.toBeInTheDocument();
-    expect(survivor).toBeInTheDocument();
-    expect(screen.getAllByText("Message helper")).toHaveLength(1);
-  } finally {
-    fixture.close();
-  }
-});
+for (const sort of ["By channel", "Recently updated"]) {
+  it(`purges only removed-channel content during a pending filter exit in ${sort}`, async () => {
+    const [a, b] = [channel(1), channel(2)];
+    const fixture = mount([a, b]);
+    try {
+      await fixture.finish(0, [event(a.id), event(b.id)]);
+      if (sort === "Recently updated") {
+        const user = userEvent.setup();
+        screen.getByRole("button", { name: "Sort workflows" }).focus();
+        await user.keyboard("{Enter}");
+        await user.click(
+          await screen.findByRole("menuitemradio", { name: sort }),
+        );
+        await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+      }
+      const [survivor, removed] = screen.getAllByRole("button", {
+        name: /^Open Message helper:/,
+      });
+      expect(survivor).toBeInTheDocument();
+      expect(removed).toBeInTheDocument();
+      fixture.refresh();
+      await waitFor(() => expect(fixture.reads).toHaveLength(2));
+      fireEvent.click(screen.getByRole("button", { name: "Status" }));
+      fireEvent.click(screen.getByRole("radio", { name: "Enabled" }));
+      expect(screen.getAllByText("Message helper")).toHaveLength(2);
+      expect(
+        screen.queryByRole("button", { name: /^Open Message helper:/ }),
+      ).toBeNull();
+      fixture.change([a]);
+      expect(removed).not.toBeInTheDocument();
+      expect(survivor).toBeInTheDocument();
+      expect(screen.getAllByText("Message helper")).toHaveLength(1);
+    } finally {
+      fixture.close();
+    }
+  });
+}
 
 it("finishes paging before the next batch, resets its cursor, and retains loaded cards on retry", async () => {
   const channels = Array.from({ length: 129 }, (_, i) => channel(i + 1));

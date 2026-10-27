@@ -1324,15 +1324,23 @@ export function WorkflowLanding({
   const selectedItem = items.find(
     (definition) => workflowKey(definition) === selected,
   );
+  const selectionFilteredOut =
+    !selectedItem &&
+    ordered.some((channel) =>
+      snapshots[channel.id]?.data.items.some(
+        (definition) => workflowKey(definition) === selected,
+      ),
+    );
   const selectedName = selectedItem
     ? readWorkflowDocumentFields(selectedItem.yaml).name ||
       "Unnamed or malformed workflow"
     : undefined;
   useEffect(() => {
-    // The detail follows the workflow; a vanished selection closes the pane.
-    if (selected && !reading && !selectedName) onSelect(undefined);
+    // Filtering is definitive; disappearance waits for pending reads to settle.
+    if (selected && !selectedName && (selectionFilteredOut || !reading))
+      onSelect(undefined);
     else if (selected && selectedName) onSelect(selected, selectedName);
-  }, [onSelect, reading, selected, selectedName]);
+  }, [onSelect, reading, selected, selectedName, selectionFilteredOut]);
   const cleared = visible.some(
     (channel) =>
       snapshots[channel.id]?.status === "idle" ||

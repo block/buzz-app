@@ -816,6 +816,47 @@ function landing() {
 }
 const fixtureKey = `${fixtureChannel}:${fixtureViewer}:${fixtureDefinition.id}`;
 
+for (const filter of ["Owner", "Status"] as const) {
+  it(`closes a ${filter.toLowerCase()}-filtered selection while a read is still pending`, async () => {
+    const { fixture, target, selections } = landing();
+    try {
+      act(() =>
+        fixture.definitions.update({
+          status: "ready",
+          data: {
+            partial: false,
+            items: [{ ...fixtureDefinition, owner: "b".repeat(64) }],
+          },
+        }),
+      );
+      fireEvent.click(
+        await screen.findByRole("button", { name: /^Open Message helper:/ }),
+      );
+      expect(
+        within(target).getByRole("region", { name: "Message helper" }),
+      ).toBeVisible();
+      act(() =>
+        fixture.definitions.update({
+          status: "loading",
+          data: { partial: false, items: [] },
+        }),
+      );
+      expect(screen.getByRole("status")).toHaveTextContent("Reading workflows");
+      fireEvent.click(screen.getByRole("button", { name: filter }));
+      fireEvent.click(
+        screen.getByRole("radio", {
+          name: filter === "Owner" ? "My workflows" : "Enabled",
+        }),
+      );
+      expect(selections.at(-1)).toEqual([undefined, undefined]);
+      expect(target).toBeEmptyDOMElement();
+      expect(screen.getByRole("status")).toHaveTextContent("Reading workflows");
+    } finally {
+      target.remove();
+    }
+  });
+}
+
 it.each(["rejected", "unknown"] as const)(
   "durably dismisses a %s run and retains recovery after a persistence failure",
   async (outcome) => {

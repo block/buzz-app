@@ -8,6 +8,7 @@ import type {
   RegisteredAgentType,
 } from "../../features/agents/service";
 import type { AgentMemories } from "../../features/agents/MemoryPanel";
+import { AttentionPanel } from "../../features/agents/AttentionPanel";
 import { agentSections } from "../../features/agents/tabs";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
 
@@ -23,6 +24,17 @@ export function AgentTabs(props: {
   conversation?: AgentConversation | undefined;
   initialActivity?: boolean | undefined;
 }) {
+  const settingsContent = (
+    <>
+      {props.agent.place === "here" && (
+        <AttentionPanel
+          agent={props.agent}
+          save={(change) => props.agents.save(props.agent.key, change)}
+        />
+      )}
+      {props.settingsContent}
+    </>
+  );
   const split = props.type?.tabs?.some(
     (section) => section.role === "settings" && section.splitSettings,
   );
@@ -37,12 +49,11 @@ export function AgentTabs(props: {
     ...(identity ? [{ ...identity, label: "Identity" }] : []),
     ...supplied.filter((section) => section.value.startsWith("agent:type:")),
     ...supplied.filter((section) => section.value === "agent:memory"),
-    ...supplied.filter((section) => section.value === "agent:attention"),
     ...supplied.filter((section) => section.value === "agent:activity"),
     {
       value: "agent:management",
       label: "Settings",
-      render: () => props.settingsContent,
+      render: () => settingsContent,
     },
   ];
   const [tab, setTab] = useState<string>(
@@ -61,7 +72,7 @@ export function AgentTabs(props: {
         ...props,
         settingsSection:
           selected?.value === "agent:management" ? "runtime" : "identity",
-        settingsContent: props.settingsContent,
+        settingsContent,
       }).find((section) => section.value === "agent:settings")
     : undefined;
   const settingsValue =

@@ -155,8 +155,10 @@ it("hides agents without subscriptions, reacts to changes and surfaces save erro
   ).toBeTruthy();
   expect(within(ada).getByText("Paused")).toBeTruthy();
   expect(
-    within(ada).queryByRole("switch", { name: "Attention for Ada" }),
-  ).toBeNull();
+    within(ada).getByRole("switch", {
+      name: "Attention for Ada on this device",
+    }),
+  ).toBeTruthy();
   fireEvent.click(within(ada).getByRole("switch", { name: "Watch task" }));
   await waitFor(() =>
     expect(screen.getByRole("alert").textContent).toBe("Save failed"),
@@ -177,6 +179,16 @@ it("hides agents without subscriptions, reacts to changes and surfaces save erro
     changed();
   });
   expect(within(ada).getByText("Attention paused on this device")).toBeTruthy();
+  const toggle = within(ada).getByRole("switch", {
+    name: "Attention for Ada on this device",
+  });
+  fireEvent.click(toggle);
+  await waitFor(() =>
+    expect(save).toHaveBeenCalledWith("membership-a", {
+      attentionEnabled: true,
+    }),
+  );
+  expect(within(ada).getByRole("heading", { name: "task" })).toBeTruthy();
 });
 
 it.each(["source", "event", "timer"] as const)(

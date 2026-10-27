@@ -433,7 +433,7 @@ it("opens settings for a selected agent beside the grid and follows the arrow ke
   expect(grid).toBeInTheDocument();
 });
 
-it("opens the side panel with the type's tabs and the app's Attention and Memory tabs", async () => {
+it("opens the side panel with the type's tabs and the app's Settings and Memory tabs", async () => {
   const user = userEvent.setup();
   setup([agent("Ada", 1)]);
   await user.click(screen.getByRole("gridcell", { name: /Ada/ }));
@@ -449,7 +449,6 @@ it("opens the side panel with the type's tabs and the app's Attention and Memory
     "Identity",
     "Reply",
     "Memory",
-    "Attention",
     "Settings",
   ]);
   expect(
@@ -459,7 +458,7 @@ it("opens the side panel with the type's tabs and the app's Attention and Memory
   ).not.toBeInTheDocument();
   await user.click(screen.getByRole("tab", { name: "Reply" }));
   expect(screen.getByText("Reply tab")).toBeInTheDocument();
-  await user.click(screen.getByRole("tab", { name: "Attention" }));
+  await user.click(screen.getByRole("tab", { name: "Settings" }));
   expect(
     screen.getByRole("switch", { name: "Attention on this device" }),
   ).toBeInTheDocument();
@@ -912,7 +911,7 @@ it("makes a new agent in the create dialog and goes straight to building it", as
     picture: expect.stringMatching(/^https:\/\//),
     config: { reply: "Hi there" },
   });
-  expect(await screen.findByRole("tab", { name: "Attention" })).toBeVisible();
+  expect(await screen.findByRole("tab", { name: "Settings" })).toBeVisible();
   expect(screen.getByRole("heading", { name: "Nova" })).toBeInTheDocument();
 });
 
@@ -1944,7 +1943,7 @@ it("keeps the copy and delete rows in Settings, below the agent identity", async
   const dialog = screen.getByRole("dialog", { name: "Delete Ada?" });
   expect(agents.remove).not.toHaveBeenCalled();
   await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
-  await user.click(screen.getByRole("tab", { name: "Attention" }));
+  await user.click(screen.getByRole("tab", { name: "Reply" }));
   expect(
     screen.queryByRole("button", { name: "Delete agent" }),
   ).not.toBeInTheDocument();

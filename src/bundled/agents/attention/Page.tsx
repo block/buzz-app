@@ -667,9 +667,20 @@ export function createPage({
           ),
         ),
         h(
-          "span",
-          { className: "text-caption text-subtle" },
-          agent.attentionEnabled ? null : "Attention paused on this device",
+          "label",
+          { className: "attention-agent-toggle text-caption text-subtle" },
+          agent.attentionEnabled
+            ? "Attention on this device"
+            : "Attention paused on this device",
+          h(SharedSwitch, {
+            "aria-label": `Attention for ${agent.name} on this device`,
+            checked: agent.attentionEnabled,
+            disabled: action.pending,
+            onCheckedChange: (attentionEnabled) =>
+              void action.run(() =>
+                agents.save(agent.key, { attentionEnabled }),
+              ),
+          }),
         ),
       ),
       problem(action.error),

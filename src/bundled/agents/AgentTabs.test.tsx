@@ -47,9 +47,12 @@ it.each(["here", "hosted"] as const)(
       { wrapper: ToastProvider },
     );
     expect(read).not.toHaveBeenCalled();
-    expect(screen.queryByRole("tab", { name: "Attention" }) !== null).toBe(
-      place === "here",
-    );
+    expect(screen.queryByRole("tab", { name: "Attention" })).toBeNull();
+    await user.click(screen.getByRole("tab", { name: "Settings" }));
+    expect(
+      screen.queryByRole("switch", { name: "Attention on this device" }) !==
+        null,
+    ).toBe(place === "here");
     await user.click(screen.getByRole("tab", { name: "Memory" }));
     expect(await screen.findByText("Original memory")).toBeInTheDocument();
     expect(read).toHaveBeenCalledTimes(1);

@@ -32,6 +32,18 @@ test("Agent Attention fits both themes and sizes and creates a subscription by k
       ).toBe(true);
     }
   }
+  const runtime = page.getByRole("switch", {
+    name: "Attention for Ada on this device",
+  });
+  await runtime.focus();
+  await page.keyboard.press("Space");
+  await expect(runtime).toHaveAttribute("aria-checked", "false");
+  await expect(page.getByText("Attention paused on this device")).toBeVisible();
+  await expect(
+    page.getByRole("switch", { name: "Watch Release discussion" }),
+  ).toBeVisible();
+  await page.keyboard.press("Space");
+  await expect(runtime).toHaveAttribute("aria-checked", "true");
   await create.focus();
   await page.keyboard.press("Enter");
   const form = page.getByRole("form", { name: "New watch" });

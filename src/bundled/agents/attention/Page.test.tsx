@@ -130,7 +130,7 @@ it("hides agents without subscriptions, reacts to changes and surfaces save erro
   fireEvent.click(
     within(ada).getByRole("button", { name: "Details for task" }),
   );
-  expect(within(ada).getByText("Last woke 3m ago")).toBeTruthy();
+  expect(within(ada).getByText("Last woke 3 minutes ago")).toBeTruthy();
   expect(within(ada).getByText("build succeeded")).toBeTruthy();
   expect(within(ada).getByRole("heading", { name: "Command" })).toBeTruthy();
   expect(ada.querySelector(".attention-details code")?.textContent).toBe(
@@ -875,4 +875,75 @@ it("keeps overview and destination navigation in the selected community", async 
   expect(screen.getByRole("region", { name: "Bo" })).toBeTruthy();
   expect(save).not.toHaveBeenCalled();
   expect(screen.queryByRole("switch", { name: "Attention for Bo" })).toBeNull();
+});
+
+it("keeps technical data out of message summaries and avoids repeating the destination", () => {
+  const author = "a".repeat(64);
+  const id = "release-12345678-abcd-1234-abcd-123456789abc";
+  const agent = {
+    key: "membership-a",
+    pubkey: author,
+    owner: viewer,
+    relay: origin,
+    name: "Ada",
+    attentionEnabled: true,
+    timers: {},
+    attentionHistory: {
+      "watch/messages": {
+        output: `2026-10-27T14:00:00.000Z · ${author}\nRelease is ready.`,
+      },
+    },
+    attention: {
+      [`interest/${id}`]: {
+        slug: `interest/${id}`,
+        value: { type: "interest", instructions: "Follow releases." },
+      },
+      "watch/messages": {
+        slug: "watch/messages",
+        value: {
+          type: "event",
+          name: "Release messages",
+          enabled: true,
+          interest_id: id,
+          channels: [channel],
+          channel,
+          kinds: [9],
+          since: 0,
+        },
+      },
+    },
+  };
+  const list = { channels: [{ id: channel, name: "Releases" }] };
+  const queries = {
+    ensureList() {},
+    subscribeList: () => () => {},
+    list: () => list,
+  };
+  const snapshot = { status: "ready", running: [agent] };
+  const connection = {
+    status: "ready",
+    ...community,
+    session: { channels: queries },
+  };
+  const ctx = {
+    agents: { snapshot: () => snapshot, subscribe: () => () => {} },
+    relay: { snapshot: () => connection, subscribe: () => () => {} },
+  } as unknown as Context;
+  render(React.createElement(createPage(ctx)));
+  expect(screen.getByRole("heading", { name: "release" })).toBeTruthy();
+  expect(
+    screen.getByRole("button", { name: "Open destination Releases" }),
+  ).toBeTruthy();
+  expect(screen.getAllByText("Releases")).toHaveLength(1);
+  fireEvent.click(
+    screen.getByRole("button", { name: "Details for Release messages" }),
+  );
+  expect(screen.getByText(/Release is ready/).textContent).not.toContain(
+    author,
+  );
+  expect(screen.getByText(/Release is ready/).textContent).not.toContain(
+    "2026-10-27T",
+  );
+  expect(screen.queryByText("No additional filters")).toBeNull();
+  expect(screen.queryByText("Event kinds: 9")).toBeNull();
 });

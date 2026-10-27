@@ -1,3 +1,4 @@
+import { relativeTimestamp } from "../../../shared/relative-timestamp";
 import {
   attentionOf,
   sourceCompleted,
@@ -35,7 +36,19 @@ import { InstructionsMarkdown } from "./InstructionsMarkdown";
 import "./AttentionPage.css";
 
 const title = (id: string) =>
-  id.replace(/^interest\//, "").replace(/[-_]+/g, " ");
+  id
+    .replace(/^interest\//, "")
+    .replace(
+      /-(?:[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}|[a-f0-9]{32,64})$/i,
+      "",
+    )
+    .replace(/[-_]+/g, " ");
+const recentMessages = (output: string) =>
+  output.replace(
+    /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z) · ([^\n]+)\n/gm,
+    (_header, timestamp: string, author: string) =>
+      `${relativeTimestamp(Date.parse(timestamp) / 1000)}${/^[a-f0-9]{64}$/i.test(author) ? "" : ` · ${author}`}\n`,
+  );
 export function heading(value: string) {
   return {
     text: value
@@ -227,7 +240,7 @@ export function createPage({
     const detailsId = React.useId();
     const history = agent.attentionHistory?.[slug];
     const woke = history?.lastWokeAt
-      ? `Last woke ${Math.max(0, Math.floor((Date.now() / 1000 - history.lastWokeAt) / 60))}m ago`
+      ? `Last woke ${relativeTimestamp(history.lastWokeAt)}`
       : undefined;
     const timer = agent.timers[slug];
     const description = describe(
@@ -308,6 +321,21 @@ export function createPage({
                 )
                 .join(" ")
             : label.text;
+    const sameChannel =
+      watch.type === "event" &&
+      watch.channels !== "all" &&
+      watch.channels.length === 1 &&
+      watch.channels[0] === watch.channel &&
+      !watch.root;
+    const technicalFilters =
+      watch.type === "event" &&
+      Boolean(
+        watch.authors?.length ||
+          watch.exclude_authors?.length ||
+          Object.keys(watch.tags ?? {}).length ||
+          watch.kinds?.length !== 1 ||
+          watch.kinds[0] !== 9,
+      );
     const destination = watch.channel
       ? `→ ${name(watch.channel)}${watch.root ? " thread" : ""}`
       : "Independent turn";
@@ -347,33 +375,37 @@ export function createPage({
             h(TypeIcon, { size: 16, "aria-hidden": true }),
             h("span", { className: "attention-type-label" }, type),
           ),
-          h(
-            "span",
-            {
-              className: "attention-title text-caption text-primary",
-              title:
-                watch.type === "timer" && watch.max_occurrences === 1
-                  ? new Date(
-                      (watch.armed_at + watch.interval_secs) * 1000,
-                    ).toLocaleString()
-                  : label.text,
-            },
-            watch.type === "event" && watch.channels !== "all"
-              ? watch.channels.map((id, index) =>
-                  h(
-                    "span",
-                    { key: id, className: "attention-destination-label" },
-                    index > 0 ? ", " : null,
-                    h(channelIcon(find(id)), { size: 16, "aria-hidden": true }),
+          !sameChannel &&
+            h(
+              "span",
+              {
+                className: "attention-title text-caption text-primary",
+                title:
+                  watch.type === "timer" && watch.max_occurrences === 1
+                    ? new Date(
+                        (watch.armed_at + watch.interval_secs) * 1000,
+                      ).toLocaleString()
+                    : label.text,
+              },
+              watch.type === "event" && watch.channels !== "all"
+                ? watch.channels.map((id, index) =>
                     h(
                       "span",
-                      { className: "attention-channel-name" },
-                      name(id),
+                      { key: id, className: "attention-destination-label" },
+                      index > 0 ? ", " : null,
+                      h(channelIcon(find(id)), {
+                        size: 16,
+                        "aria-hidden": true,
+                      }),
+                      h(
+                        "span",
+                        { className: "attention-channel-name" },
+                        name(id),
+                      ),
                     ),
-                  ),
-                )
-              : target,
-          ),
+                  )
+                : target,
+            ),
           pr &&
             h(
               "span",
@@ -502,40 +534,36 @@ export function createPage({
                 ? "Recent output"
                 : "Recent events",
               h(
-                "pre",
-                { className: "text-caption text-standard" },
-                history?.output ||
+                watch.type === "event" ? "p" : "pre",
+                {
+                  className:
+                    watch.type === "event"
+                      ? "text-body-sm whitespace-pre-wrap"
+                      : "text-caption text-standard",
+                },
+                (watch.type === "event" && history?.output
+                  ? recentMessages(history.output)
+                  : history?.output) ||
                   (watch.type === "event"
                     ? "No matched messages recorded yet."
                     : "No output recorded yet."),
               ),
             ),
           watch.type === "event" &&
+            (watch.keywords?.length ||
+              technicalFilters ||
+              watch.classifier ||
+              watch.is_reply !== undefined) &&
             section(
               "Filters",
               h(
                 "div",
                 { className: "text-body-sm" },
-                h(
-                  "p",
-                  null,
-                  watch.kinds?.length
-                    ? `Event kinds: ${watch.kinds.join(", ")}`
-                    : "All event kinds",
-                ),
                 watch.keywords?.length &&
                   h(
                     "p",
                     null,
                     `Message keywords (any): ${watch.keywords.join(", ")}`,
-                  ),
-                watch.authors?.length &&
-                  h("p", null, `Authors: ${watch.authors.join(", ")}`),
-                watch.exclude_authors?.length &&
-                  h(
-                    "p",
-                    null,
-                    `Excluded authors: ${watch.exclude_authors.join(", ")}`,
                   ),
                 watch.is_reply !== undefined &&
                   h(
@@ -543,20 +571,37 @@ export function createPage({
                     null,
                     watch.is_reply ? "Replies only" : "Top-level messages only",
                   ),
-                ...Object.entries(watch.tags ?? {}).map(([tag, values]) =>
-                  h("p", { key: tag }, `Tag ${tag}: ${values.join(", ")}`),
-                ),
                 ...Object.values(watch.classifier?.questions ?? {}).map(
                   (question, index) =>
                     h("p", { key: index }, question.question),
                 ),
-                !watch.authors?.length &&
-                  !watch.exclude_authors?.length &&
-                  !watch.tags &&
-                  !watch.keywords?.length &&
-                  !watch.classifier &&
-                  watch.is_reply === undefined &&
-                  h("p", null, "No additional filters"),
+                technicalFilters &&
+                  h(
+                    "details",
+                    null,
+                    h(
+                      "summary",
+                      {
+                        className:
+                          "attention-disclosure text-caption text-subtle",
+                      },
+                      "Technical filters",
+                    ),
+                    h(
+                      "pre",
+                      { className: "text-caption text-standard" },
+                      JSON.stringify(
+                        {
+                          kinds: watch.kinds ?? "all",
+                          authors: watch.authors,
+                          exclude_authors: watch.exclude_authors,
+                          tags: watch.tags,
+                        },
+                        null,
+                        2,
+                      ),
+                    ),
+                  ),
               ),
             ),
         ),

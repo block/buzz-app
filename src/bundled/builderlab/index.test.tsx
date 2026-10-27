@@ -744,14 +744,9 @@ it.each([
         await agents.remove(hostedKey);
       });
       expect(agents.find(hostedKey)).toBeUndefined();
-      // Its record, then its catalog share.
-      expect(community.events.at(-2)?.tags).toContainEqual([
-        "a",
-        `30177:${community.viewer}:${hostedKey}`,
-      ]);
       expect(community.events.at(-1)?.tags).toContainEqual([
         "a",
-        `30175:${community.viewer}:${hostedKey}`,
+        `30177:${community.viewer}:${hostedKey}`,
       ]);
       await act(async () => {
         runtime.reconcile([]);

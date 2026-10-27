@@ -11,6 +11,7 @@ import {
   shareable,
   snapshotJson,
   snapshotPng,
+  unshare,
 } from "./agent-share";
 import { validCatalogEnvelope } from "./catalog-envelope";
 import type { Agent, RegisteredAgentType } from "./service";
@@ -448,4 +449,49 @@ it("reads the owner's newest head and replaces it, shared or not", async () => {
       signal,
     ),
   ).rejects.toThrow("This community cannot update catalog sharing.");
+});
+
+it("takes a deleted agent's share down past a head dated ahead of this clock, and says when it stays listed", async () => {
+  const signal = new AbortController().signal;
+  const ahead = Math.floor(Date.now() / 1000) + 30;
+  const head = (shared: boolean): EventData => ({
+    id: "1".repeat(64),
+    pubkey: owner,
+    created_at: ahead,
+    kind: 30175,
+    tags: [["d", pubkey], ...(shared ? [["shared", "true"]] : [])],
+    content: '{"display_name":"Ada"}',
+  });
+  const outbox = {
+    supports: (kind: number) => kind === 30175,
+    ready: async () => {},
+    send: vi.fn(() => "sent"),
+    snapshot: () => [{ event: { id: "sent" }, delivery: "accepted" }],
+    subscribe: () => () => {},
+    dismiss: vi.fn(async () => {}),
+  };
+  const read = vi.fn(async () => [head(true)]);
+  read.mockResolvedValueOnce([head(true)]).mockResolvedValueOnce([head(false)]);
+  await unshare({ read, outbox } as never, owner, pubkey, signal);
+  // The outbox dates a catalog write past the head it supersedes.
+  expect(outbox.send).toHaveBeenCalledWith(
+    {
+      kind: 30175,
+      content: '{"display_name":"Ada"}',
+      tags: [["d", pubkey]],
+      supersedes: ahead,
+    },
+    undefined,
+    expect.any(Function),
+  );
+  // A newer shared head from elsewhere leaves it listed.
+  await expect(
+    unshare({ read, outbox } as never, owner, pubkey, signal),
+  ).rejects.toThrow("Its catalog share is still listed. Try again.");
+  // Nothing shared, nothing sent.
+  outbox.send.mockClear();
+  read.mockResolvedValueOnce([head(false)]).mockResolvedValueOnce([]);
+  await unshare({ read, outbox } as never, owner, pubkey, signal);
+  await unshare({ read, outbox } as never, owner, pubkey, signal);
+  expect(outbox.send).not.toHaveBeenCalled();
 });

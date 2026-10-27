@@ -224,6 +224,22 @@ export async function publishShare(
   return sent;
 }
 
+/** Takes a deleted agent's catalog share down: a shared head is replaced
+ * by its content without the tag, which supersedes it whatever its clock, and
+ * this settles once a fresh read no longer finds it shared. */
+export async function unshare(
+  session: Pick<RelaySession, "read" | "outbox">,
+  owner: string,
+  pubkey: string,
+  signal: AbortSignal,
+) {
+  const head = await catalogHead(session, owner, pubkey, signal);
+  if (!head || !isShared(head)) return;
+  await publishShare(session, pubkey, head.content, false, head, signal);
+  if (isShared(await catalogHead(session, owner, pubkey, signal)))
+    throw new Error("Its catalog share is still listed. Try again.");
+}
+
 /** A buzz-agent-snapshot v1 `.agent.json` without memory. */
 export function snapshotJson(definition: SharedDefinition): string {
   const { name, picture, instructions, runtime, model, provider } = definition;

@@ -868,9 +868,11 @@ heads. An accepted publish can still lose to a newer head, and an unanswered one
 may still land, so the dialog reads the head again before it reports success or
 failure. The native signer and the development broker admit only this owner
 envelope (`src-tauri/src/relay/catalog.rs`, `catalog-envelope.ts`). Delete
-sends a NIP-09 deletion of that head in each community the agent leaves, so a
-deleted agent can't be adopted; Remove from one community leaves its share
-there.
+unshares a shared head in each community the agent leaves, before its kind
+30177 record goes, and goes on only once a fresh read no longer finds it
+shared, so a deleted agent can't be adopted. The outbox dates the replacement
+past the head, so one dated ahead of this clock is replaced too. Remove from one
+community leaves its share there.
 
 **Export agent** saves `{name}.agent.png` or, by **File format**,
 `{name}.agent.json` in the `buzz-agent-snapshot` version 1 format that block/buzz

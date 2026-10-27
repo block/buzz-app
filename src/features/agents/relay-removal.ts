@@ -1,7 +1,6 @@
 import type { EventData } from "../relay/events";
 import type { LocalEvents, Outbox } from "../relay/outbox";
 import type { RelaySession } from "../relay/session";
-import { AGENT_CATALOG_KIND } from "./catalog-envelope";
 
 type RemovalSession = Pick<
   RelaySession,
@@ -113,48 +112,10 @@ export async function publishAgentRecord(
 }
 
 /** NIP-09 coordinate deletion of the viewer's own kind 30177 agent record. */
-export function deleteAgentRecord(
+export async function deleteAgentRecord(
   session: Pick<RelaySession, "outbox">,
   viewer: string,
   pubkey: string,
-  signal: AbortSignal,
-  fence?: AbortSignal,
-) {
-  return deleteCoordinate(
-    session,
-    [["a", `30177:${viewer}:${pubkey}`]],
-    "Record deletion is not confirmed. Retry.",
-    signal,
-    fence,
-  );
-}
-
-/** NIP-09 coordinate deletion of the viewer's catalog share of an agent, the
- * kind 30175 head addressed by its pubkey, so a deleted agent can't be
- * adopted. */
-export function deleteCatalogShare(
-  session: Pick<RelaySession, "outbox">,
-  viewer: string,
-  pubkey: string,
-  signal: AbortSignal,
-) {
-  return deleteCoordinate(
-    session,
-    [
-      ["a", `${AGENT_CATALOG_KIND}:${viewer}:${pubkey}`],
-      ["k", `${AGENT_CATALOG_KIND}`],
-    ],
-    "Catalog share deletion is not confirmed. Retry.",
-    signal,
-  );
-}
-
-/** Sends, or resumes, a kind 5 with `tags`. The relay deletes only the
- * coordinate of its first `a` tag, so each coordinate gets its own. */
-async function deleteCoordinate(
-  session: Pick<RelaySession, "outbox">,
-  tags: [["a", string], ...string[][]],
-  failure: string,
   signal: AbortSignal,
   fence?: AbortSignal,
 ) {
@@ -164,7 +125,7 @@ async function deleteCoordinate(
   const waits = fenced(signal, fence);
   await outbox.ready();
   waits.throwIfAborted();
-  const [[, coordinate]] = tags;
+  const coordinate = `30177:${viewer}:${pubkey}`;
   const active = () => !waits.aborted;
   const previous = await resumable(
     outbox,
@@ -175,8 +136,17 @@ async function deleteCoordinate(
   if (previous) outbox.retry(previous.event.id, active);
   const id =
     previous?.event.id ??
-    outbox.send({ kind: 5, content: "", tags }, undefined, active);
-  await delivered(outbox, id, signal, failure);
+    outbox.send(
+      { kind: 5, content: "", tags: [["a", coordinate]] },
+      undefined,
+      active,
+    );
+  await delivered(
+    outbox,
+    id,
+    signal,
+    "Record deletion is not confirmed. Retry.",
+  );
   await outbox.dismiss(id);
 }
 

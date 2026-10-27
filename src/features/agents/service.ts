@@ -61,9 +61,9 @@ import {
 } from "../../plugins/contributions";
 import { channelTemplates, templateAgents } from "../channel-templates/local";
 import type { LocalAgentsSnapshot } from "./local";
+import { unshare } from "./agent-share";
 import {
   deleteAgentRecord,
-  deleteCatalogShare,
   publishAgentRecord,
   type AgentRecordBody,
   removeAgentFromChannels,
@@ -3270,19 +3270,14 @@ export class AgentsService extends Service implements Agents {
           AbortSignal.timeout(CLEANUP_TIMEOUT_MS),
         ]);
         await leaveCommunity(binding.session, pubkey, signal);
+        if (deleting)
+          await unshare(binding.session, binding.viewer, pubkey, signal);
         await deleteAgentRecord(
           binding.session,
           binding.viewer,
           pubkey,
           signal,
         );
-        if (deleting)
-          await deleteCatalogShare(
-            binding.session,
-            binding.viewer,
-            pubkey,
-            signal,
-          );
         if (deleting && member.key === pubkey) {
           // Home can reconnect while another community's departure awaits,
           // before its new coordinator is up.
@@ -3492,9 +3487,10 @@ export class AgentsService extends Service implements Agents {
       const { agent, remote, origin, binding } = this.hosted(pubkey, true);
       const { signal } = binding.controller;
       await remote.remove({ pubkey, community: agent.relay, signal });
+      // Before its record goes, so a failure leaves it listed to Delete again.
+      await unshare(binding.session, binding.viewer, pubkey, signal);
       // An unfinished one may have published its profile before setup failed.
       await removeRelayAgent(binding.session, binding.viewer, pubkey, signal);
-      await deleteCatalogShare(binding.session, binding.viewer, pubkey, signal);
       this.unlist(origin, pubkey);
       await this.writeUnfinished(
         this.unfinished.filter((setup) => setup.pubkey !== pubkey),

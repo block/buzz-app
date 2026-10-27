@@ -1,3 +1,4 @@
+import { threadReference } from "../../../features/relay/thread-reference";
 import { parseBuzzLink } from "../../../features/navigation/buzz-links";
 import * as React from "react";
 import { Field } from "../../../shared/design-system/ui/Field";
@@ -92,13 +93,7 @@ export async function resolveDelivery(
   );
   if (!message)
     throw new Error("The linked message is unavailable in this channel.");
-  let root: string | undefined, reply: string | undefined;
-  for (const [name, value, , marker] of message.tags) {
-    if (name !== "e" || !value || !eventId.test(value)) continue;
-    if (marker === "root") root = value.toLowerCase();
-    if (marker === "reply") reply = value.toLowerCase();
-  }
-  const target = reply ? (root ?? reply) : link.message;
+  const target = threadReference(message)?.rootId ?? link.message;
   return delivery(
     channel,
     `buzz://message?channel=${link.channel}&id=${link.message}&thread=${target}`,

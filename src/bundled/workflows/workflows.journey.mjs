@@ -652,6 +652,11 @@ test("landing scan survives channel presentation churn without restarting", asyn
   await expect(open).toBeVisible();
   // Browser-only boundary: progressive empty results must not move either
   // actionable card under the pointer. Reads remain held until after metadata.
+  // Visibility can arrive during the group's entrance scale; capture its
+  // baseline only once that real animation has reached the resting geometry.
+  const group = page.locator(".workflow-list-transition").filter({ has: open });
+  await expect(group).toHaveCSS("opacity", "1");
+  await expect(group).toHaveCSS("transform", "none");
   const createBounds = await create.boundingBox();
   const openBounds = await open.boundingBox();
   try {

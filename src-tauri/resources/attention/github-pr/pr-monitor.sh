@@ -657,22 +657,10 @@ while true; do
     mv "$checks_tmp" "$checks_state"
   fi
 
-  terminal_state=0
-  if [[ "$first" == "1" ]]; then
-    case "$current_state" in
-      MERGED) emit "🟣 PR #$PR merged"; terminal_state=1 ;;
-      CLOSED) emit "⛔ PR #$PR closed"; terminal_state=1 ;;
-    esac
-  elif ! cmp -s "$pr_state.prev" "$pr_state" 2>/dev/null; then
-    case "$current_state" in
-      MERGED) emit "🟣 PR #$PR merged"; terminal_state=1 ;;
-      CLOSED) emit "⛔ PR #$PR closed"; terminal_state=1 ;;
-    esac
-  fi
-  cp "$pr_state" "$pr_state.prev"
-  if [[ "$terminal_state" == "1" ]]; then
-    exit 0
-  fi
+  case "$current_state" in
+    MERGED) emit "🟣 PR #$PR merged"; exit 0 ;;
+    CLOSED) emit "⛔ PR #$PR closed"; exit 0 ;;
+  esac
 
   first=0
   sleep "$INTERVAL"

@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import {
   githubPolicy,
   type GithubPolicy,
@@ -15,11 +15,13 @@ export function GitHubPolicyEditor({
   onSave,
   onClose,
   path,
+  finalFocus,
 }: {
   initialValue: GithubPolicy;
   onSave(policy: GithubPolicy): Promise<void>;
   onClose(): void;
   path?: string;
+  finalFocus?: React.ComponentProps<typeof Dialog>["finalFocus"];
 }) {
   const [draft, setDraft] = useState(() => ({
     trustedOrganizations: initialValue.trustedOrganizations.join("\n"),
@@ -84,6 +86,7 @@ export function GitHubPolicyEditor({
       headerGap="compact"
       bodyLayout="flex"
       preventClose={pending}
+      finalFocus={finalFocus}
       onOpenChange={(next) => {
         if (!next && !pending) onClose();
       }}
@@ -152,19 +155,26 @@ export function GitHubPolicyPanel({
   const [error, setError] = useState("");
   const [open, setOpen] = useState(false);
   const [retry, setRetry] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const trigger = useRef<HTMLButtonElement>(null);
   // biome-ignore lint/correctness/useExhaustiveDependencies: Retry and opening the editor explicitly re-read the shared file.
   useEffect(() => {
     if (!host?.spawn) return;
     let active = true;
-    setStatus(undefined);
-    setError("");
+    setLoading(true);
     githubPolicy(host).then(
       (value) => {
-        if (active) setStatus(value);
+        if (active) {
+          setStatus(value);
+          setError("");
+          setLoading(false);
+        }
       },
       (reason) => {
-        if (active)
+        if (active) {
           setError(String(reason instanceof Error ? reason.message : reason));
+          setLoading(false);
+        }
       },
     );
     return () => {
@@ -206,33 +216,32 @@ export function GitHubPolicyPanel({
         </p>
       )}
       <div className="attention-actions">
-        {status && (
-          <Button
-            size="sm"
-            variant="subtle"
-            aria-haspopup="dialog"
-            onClick={() => {
-              setOpen(true);
-              setRetry((value) => value + 1);
-            }}
-          >
-            {status.warning ? "Edit allowlist" : "GitHub allowlist"}
-          </Button>
-        )}
-        {error && (
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => setRetry((value) => value + 1)}
-          >
-            Retry GitHub author settings
-          </Button>
-        )}
+        <Button
+          ref={trigger}
+          size="sm"
+          variant="subtle"
+          aria-haspopup="dialog"
+          aria-disabled={loading}
+          aria-busy={loading}
+          onClick={() => {
+            if (loading) return;
+            if (!error) setOpen(true);
+            setLoading(true);
+            setRetry((value) => value + 1);
+          }}
+        >
+          {error
+            ? "Retry GitHub author settings"
+            : status?.warning
+              ? "Edit allowlist"
+              : "GitHub allowlist"}
+        </Button>
       </div>
-      {open && status && (
+      {open && !loading && !error && status && (
         <GitHubPolicyEditor
           initialValue={status.policy}
           path={status.path}
+          finalFocus={trigger}
           onClose={() => setOpen(false)}
           onSave={async (policy) => {
             const value = await githubPolicy(host, policy);

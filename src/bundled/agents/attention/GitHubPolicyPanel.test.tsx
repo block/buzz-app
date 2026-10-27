@@ -5,6 +5,7 @@ import { mkdtemp, mkdir, readFile, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -133,4 +134,59 @@ it("reports invalid file contents and recovers from a failed initial read withou
   fireEvent.click(screen.getByRole("button", { name: "Save" }));
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(screen.queryByRole("alert")).toBeNull();
+});
+
+it("keeps the allowlist trigger through a delayed refresh and retries a failed read in place", async () => {
+  const { host } = await fixture();
+  const native = host.spawn;
+  render(<GitHubPolicyPanel host={host} />);
+  const trigger = await screen.findByRole("button", { name: "Edit allowlist" });
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  host.spawn = vi
+    .fn()
+    .mockImplementationOnce(async () => {
+      await gate;
+      throw new Error("Refresh unavailable");
+    })
+    .mockImplementation(native);
+  trigger.focus();
+  fireEvent.click(trigger);
+  try {
+    await waitFor(() => expect(host.spawn).toHaveBeenCalledTimes(1));
+    expect(trigger).toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  } finally {
+    await act(async () => release());
+  }
+  await screen.findByText("Refresh unavailable");
+  const retry = screen.getByRole("button", {
+    name: "Retry GitHub author settings",
+  });
+  const retryGate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  host.spawn = vi.fn().mockImplementationOnce(async (...args) => {
+    await retryGate;
+    return native(...args);
+  });
+  retry.focus();
+  fireEvent.click(retry);
+  try {
+    await waitFor(() => expect(host.spawn).toHaveBeenCalledTimes(1));
+    expect(retry).toBeInTheDocument();
+    expect(retry).toHaveFocus();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  } finally {
+    await act(async () => release());
+  }
+  await screen.findByRole("dialog");
+  expect(
+    screen.getByRole("button", { name: "Edit allowlist", hidden: true }),
+  ).toBe(trigger);
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(trigger).toHaveFocus());
 });

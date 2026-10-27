@@ -183,7 +183,7 @@ export class PanelsService extends Service implements Panels {
           typeof panel.launcher.badge !== "function"))
     ) {
       throw new Error(
-        "A panel launcher needs an icon and target string, and a badge component",
+        "A panel launcher needs an icon and target string; an optional badge must be a component",
       );
     }
     if (panel.toolbar !== undefined && typeof panel.toolbar !== "function")

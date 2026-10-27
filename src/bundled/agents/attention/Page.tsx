@@ -11,6 +11,7 @@ import {
   GitPullRequestIcon,
   TerminalWindowIcon,
   CodeIcon,
+  ArrowSquareOutIcon,
   CaretDownIcon,
   CaretRightIcon,
   TrashIcon,
@@ -336,32 +337,19 @@ export function createPage({
         "div",
         { className: "attention-head" },
         h(
-          pr ? "a" : "button",
+          "button",
           {
             className: "attention-heading",
-            ...(pr
-              ? {
-                  href:
-                    watch.type === "source"
-                      ? String(watch.config.pr)
-                      : undefined,
-                  target: "_blank",
-                  rel: "noreferrer",
-                  "aria-label": `Open ${target}`,
-                }
-              : {
-                  type: "button",
-                  "aria-label": `Details for ${label.text}`,
-                  "aria-expanded": open,
-                  "aria-controls": detailsId,
-                  onClick: () => setOpen(!open),
-                }),
+            type: "button",
+            "aria-label": `Details for ${label.text}`,
+            "aria-expanded": open,
+            "aria-controls": detailsId,
+            onClick: () => setOpen(!open),
           },
-          !pr &&
-            h(open ? CaretDownIcon : CaretRightIcon, {
-              size: 16,
-              "aria-hidden": true,
-            }),
+          h(open ? CaretDownIcon : CaretRightIcon, {
+            size: 16,
+            "aria-hidden": true,
+          }),
           h(
             "span",
             { className: "attention-type text-caption", title: type },
@@ -424,14 +412,23 @@ export function createPage({
             h(IconButton, {
               size: "sm",
               variant: "ghost",
-              icon: h(open ? CaretDownIcon : CaretRightIcon, {
-                size: 16,
-                "aria-hidden": true,
-              }),
-              "aria-label": `Details for ${label.text}`,
-              "aria-expanded": open,
-              "aria-controls": detailsId,
-              onClick: () => setOpen(!open),
+              nativeButton: false,
+              role: "link",
+              render: (props) => (
+                <a
+                  {...props}
+                  href={
+                    watch.type === "source"
+                      ? String(watch.config.pr)
+                      : undefined
+                  }
+                  target="_blank"
+                  rel="noreferrer"
+                />
+              ),
+              icon: h(ArrowSquareOutIcon, { size: 16, "aria-hidden": true }),
+              "aria-label": `Open ${target}`,
+              title: "Open on GitHub",
             }),
           h(Switch, {
             label: `Watch ${label.text}`,

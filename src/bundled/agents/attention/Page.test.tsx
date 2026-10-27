@@ -746,9 +746,12 @@ it.each([false, true])(
     expect(screen.getAllByRole("button", { name: "New watch" })).toHaveLength(
       1,
     );
-    expect(
-      screen.getByRole("button", { name: "Details for Release checks" }),
-    ).toBeTruthy();
+    const disclosure = screen.getByRole("button", {
+      name: "Details for Release checks",
+    });
+    expect(disclosure.textContent).toContain("buzz-app#1578");
+    expect(disclosure.classList.contains("attention-heading")).toBe(true);
+    expect(disclosure.getAttribute("aria-expanded")).toBe("false");
     fireEvent.click(
       screen.getByRole("button", { name: "Details for Release checks" }),
     );
@@ -759,6 +762,7 @@ it.each([false, true])(
     );
     expect(screen.getByText(/The release is ready/)).toBeTruthy();
     const link = screen.getByRole("link", { name: "Open buzz-app#1578" });
+    expect(disclosure.contains(link)).toBe(false);
     expect(link.getAttribute("href")).toBe(
       "https://github.com/block/buzz-app/pull/1578",
     );

@@ -204,6 +204,39 @@ pub(crate) async fn plugin_host_run_command(
         .flatten())
 }
 
+#[cfg(target_os = "macos")]
+static LOGIN_SHELL_PATH: tokio::sync::OnceCell<Option<OsString>> =
+    tokio::sync::OnceCell::const_new();
+#[cfg(target_os = "macos")]
+const LOGIN_SHELL_DEADLINE: Duration = Duration::from_secs(5);
+#[cfg(target_os = "macos")]
+const LOGIN_SHELL_PATH_MARKER: &str = "__BUZZ_LOGIN_SHELL_PATH__";
+
+/// Reads PATH from the user's login shell once, so later calls to
+/// [`effective_path`] see it. Apps opened from Finder only inherit launchd's
+/// `/usr/bin:/bin:/usr/sbin:/sbin`, which would run system tools, such as an
+/// older Apple git, instead of the ones the user's terminal finds.
+pub(crate) async fn load_login_shell_path() {
+    #[cfg(target_os = "macos")]
+    LOGIN_SHELL_PATH
+        .get_or_init(|| async {
+            let user = nix::unistd::User::from_uid(nix::unistd::getuid()).ok()??;
+            login_shell_path(&user.shell, LOGIN_SHELL_DEADLINE).await
+        })
+        .await;
+}
+
+#[cfg(target_os = "macos")]
+async fn login_shell_path(shell: &Path, deadline: Duration) -> Option<OsString> {
+    let script = format!("printf '{LOGIN_SHELL_PATH_MARKER}%s{LOGIN_SHELL_PATH_MARKER}' \"$PATH\"");
+    let args = ["-l", "-i", "-c", &script].map(String::from);
+    // Profiles may print banners or exit non-zero after setting PATH.
+    let (output, _) =
+        run_output_with_input(shell, &args, deadline, OsStr::new(""), 1 << 20, None).await?;
+    let path = output.split(LOGIN_SHELL_PATH_MARKER).nth(1)?;
+    (!path.is_empty()).then(|| path.into())
+}
+
 pub(crate) fn effective_path() -> OsString {
     let path = std::env::var_os("PATH").unwrap_or_default();
     #[cfg(target_os = "macos")]
@@ -213,23 +246,38 @@ pub(crate) fn effective_path() -> OsString {
         } else {
             path
         };
-        // Per-user installs, such as Claude's official installer, come first:
-        // an older system-wide copy in /usr/local/bin would otherwise run instead,
-        // and installing again could not replace it.
-        let mut directories = std::env::var_os("HOME")
-            .map(|home| std::path::Path::new(&home).join(".local/bin"))
-            .into_iter()
-            .collect::<Vec<_>>();
-        directories.extend(
-            std::env::split_paths(&path).filter(|directory| !directory.as_os_str().is_empty()),
-        );
-        directories.extend(["/opt/homebrew/bin".into(), "/usr/local/bin".into()]);
-        std::env::join_paths(directories).unwrap_or(path)
+        compose_path(
+            std::env::var_os("HOME").as_deref(),
+            LOGIN_SHELL_PATH.get().cloned().flatten().as_deref(),
+            &path,
+        )
     }
     #[cfg(not(target_os = "macos"))]
     {
         path
     }
+}
+
+#[cfg(target_os = "macos")]
+fn compose_path(home: Option<&OsStr>, login_shell: Option<&OsStr>, inherited: &OsStr) -> OsString {
+    // Per-user installs, such as Claude's official installer, come first:
+    // an older system-wide copy in /usr/local/bin would otherwise run instead,
+    // and installing again could not replace it.
+    let mut directories = home
+        .map(|home| Path::new(home).join(".local/bin"))
+        .into_iter()
+        .collect::<Vec<_>>();
+    let candidates = login_shell
+        .into_iter()
+        .chain([inherited])
+        .flat_map(std::env::split_paths)
+        .chain(["/opt/homebrew/bin".into(), "/usr/local/bin".into()]);
+    for directory in candidates {
+        if !directory.as_os_str().is_empty() && !directories.contains(&directory) {
+            directories.push(directory);
+        }
+    }
+    std::env::join_paths(directories).unwrap_or_else(|_| inherited.to_owned())
 }
 
 pub(crate) fn resolve_program(program: &str, effective_path: &OsStr) -> PathBuf {
@@ -421,6 +469,49 @@ mod tests {
         let first = |directory: &Path| directories.iter().position(|item| item == directory);
         assert_eq!(first(&Path::new(&home).join(".local/bin")), Some(0));
         assert!(first(Path::new("/usr/local/bin")) > Some(0));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn login_shell_order_wins_over_the_launchd_path() {
+        let path = super::compose_path(
+            Some("/Users/me".as_ref()),
+            Some("/opt/homebrew/bin:/usr/bin:/bin".as_ref()),
+            "/usr/bin:/bin:/usr/sbin:/sbin".as_ref(),
+        );
+        assert_eq!(
+            path,
+            "/Users/me/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin"
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn login_shell_path_is_read_past_profile_output() {
+        let (_directory, shell) = executable(
+            "echo 'Last login: Tue'; PATH=/opt/homebrew/bin:/usr/bin; eval \"$4\"; exit 1",
+        );
+        assert_eq!(
+            super::login_shell_path(&shell, Duration::from_secs(2)).await,
+            Some("/opt/homebrew/bin:/usr/bin".into())
+        );
+        let (_directory, shell) = executable("echo 'no PATH here'");
+        assert_eq!(
+            super::login_shell_path(&shell, Duration::from_secs(2)).await,
+            None
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn a_hanging_login_shell_gives_up_at_its_deadline() {
+        let (_directory, shell) = executable("sleep 30");
+        let started = Instant::now();
+        assert_eq!(
+            super::login_shell_path(&shell, Duration::from_millis(200)).await,
+            None
+        );
+        assert!(started.elapsed() < Duration::from_secs(5));
     }
 
     #[tokio::test]

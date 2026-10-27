@@ -729,6 +729,7 @@ pub fn run() {
             }
             #[cfg(target_os = "macos")]
             notifications::macos::init();
+            tauri::async_runtime::spawn(host_command::load_login_shell_path());
             deep_links::setup(app.handle());
             app.manage(relay::Spools::new(
                 app.path()

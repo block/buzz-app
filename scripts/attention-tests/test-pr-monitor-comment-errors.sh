@@ -71,7 +71,7 @@ grep -q 'Comment polling recovered' "$temp_dir/out"
 if [[ "$fail_initial" == 0 ]]; then
   grep -q 'recovered feedback' "$temp_dir/out"
 else
-  ! grep -q 'recovered feedback' "$temp_dir/out"
+  ! grep -q 'recovered feedback' "$temp_dir/out" || exit 1
 fi
 grep -q 'PR #1 closed' "$temp_dir/out"
 # The initial snapshot survives failed polls, and the recovered snapshot advances state.

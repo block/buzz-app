@@ -46,7 +46,7 @@ for owner in squareup block; do
       grep -Fq "**$author** $kind" "$temp_dir/$owner.out"
     done
   done
-  ! grep -q 'test-user\|outsider\|imposter' "$temp_dir/$owner.out"
+  ! grep -q 'test-user\|outsider\|imposter' "$temp_dir/$owner.out" || exit 1
   # Suppressed authors still enter snapshots, so their edits cannot replay.
 done
 # Missing preferences deliver state without comment bodies.
@@ -66,9 +66,9 @@ for mode in default include-self explicit; do
     grep -q '\*\*reviewer\*\* commented ·' "$temp_dir/personal-$mode.out"
   else
     grep -q '0 comments · 0 unresolved' "$temp_dir/personal-$mode.out"
-    ! grep -q '· \[view\]' "$temp_dir/personal-$mode.out"
+    ! grep -q '· \[view\]' "$temp_dir/personal-$mode.out" || exit 1
   fi
-  ! grep -q 'test-user feedback\|builderbot-code-review\|github-actions\|outsider' "$temp_dir/personal-$mode.out"
+  ! grep -q 'test-user feedback\|builderbot-code-review\|github-actions\|outsider' "$temp_dir/personal-$mode.out" || exit 1
   grep -q 'PR #1 \(merged\|closed\)' "$temp_dir/personal-$mode.out"
 done
 # Shared JSON preferences change who is trusted and suppressed.

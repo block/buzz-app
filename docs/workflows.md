@@ -31,6 +31,7 @@ See the [capability contract](../src/features/workflows/types.ts).
   An icon-only sort menu stays at the far right of the filter row. By channel
   keeps the channel groups; Recently updated shows a flat list ordered by saved
   configuration timestamp, newest first, with channel names on each row.
+  Saving an edit, including toggling a row's configured state, moves it to the top.
   Sorting is local to the page and Clear all only resets filters.
   Discovery still reads all eligible channels.
   Creating a workflow can still target any eligible channel. Each row runs the

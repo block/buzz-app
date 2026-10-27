@@ -1073,6 +1073,7 @@ function WorkflowMultiFilterMenu<Value extends string>({
   icon,
   wide = false,
   pluralLabel,
+  emptyMessage,
 }: {
   label: string;
   options: readonly { value: Value; label: string; icon?: ReactNode }[];
@@ -1082,6 +1083,7 @@ function WorkflowMultiFilterMenu<Value extends string>({
   icon: ReactNode;
   wide?: boolean;
   pluralLabel: string;
+  emptyMessage: string;
 }) {
   const selected = options.filter((option) => value.includes(option.value));
   const active = selected.length > 0;
@@ -1115,12 +1117,9 @@ function WorkflowMultiFilterMenu<Value extends string>({
           size={wide ? "wide" : "compact"}
           padding="list"
           aria-label={label}
-          style={wide ? { width: "28rem" } : undefined}
         >
           {options.length === 0 && (
-            <p className="text-body-sm text-secondary">
-              No channels with workflows yet.
-            </p>
+            <p className="text-body-sm text-secondary">{emptyMessage}</p>
           )}
           <div
             className={
@@ -1209,7 +1208,7 @@ export function WorkflowLanding({
     capability.operations.snapshot,
     capability.operations.snapshot,
   );
-  const [sort, setSort] = useState("channel");
+  const [sort, setSort] = useState<"channel" | "recent">("channel");
   const [mineOnly, setMineOnly] = useState(false);
   const [status, setStatus] =
     useState<(typeof STATUS_OPTIONS)[number]["value"]>("all");
@@ -1432,6 +1431,7 @@ export function WorkflowLanding({
           <WorkflowMultiFilterMenu
             label="Trigger"
             pluralLabel="triggers"
+            emptyMessage="No trigger types available."
             triggerRef={triggerTypeRef}
             value={triggers}
             onChange={setTriggers}
@@ -1454,6 +1454,7 @@ export function WorkflowLanding({
           <WorkflowMultiFilterMenu
             label="Channels"
             pluralLabel="channels"
+            emptyMessage="No channels with workflows yet."
             triggerRef={channelsTriggerRef}
             value={filter}
             onChange={onFilterChange}
@@ -1513,7 +1514,9 @@ export function WorkflowLanding({
             <MenuPopup size="compact" align="end" aria-label="Sort workflows">
               <MenuRadioGroup
                 value={sort}
-                onValueChange={(value) => setSort(String(value))}
+                onValueChange={(value) => {
+                  if (value === "channel" || value === "recent") setSort(value);
+                }}
               >
                 <MenuRadioItem value="channel" closeOnClick>
                   By channel

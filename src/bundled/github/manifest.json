@@ -32,7 +32,6 @@
         "maxInputBytes": 4096,
         "maxOutputBytes": 1048576
       }
-    ],
-    "mcp": true
+    ]
   }
 }

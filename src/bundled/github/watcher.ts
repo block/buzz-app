@@ -275,14 +275,15 @@ export function watchPulls(ctx: Context) {
         );
       if (!attention.enabled())
         throw new Error("Turn on Attention to watch pull requests");
+      const object = priorObject.object;
+      const saved = cursors.get(key);
       const prior =
-        priorObject.object?.type === "source" &&
-        priorObject.object.status === "completed"
-          ? undefined
-          : (cursors.get(key) ??
-            (priorObject.object?.type === "source"
-              ? (priorObject.object.config.initial as Watch | undefined)
-              : undefined));
+        object?.type === "source" && object.status !== "completed"
+          ? saved?.revision === object.config.revision &&
+            saved?.url === pull.url
+            ? saved
+            : (object.config.initial as Watch | undefined)
+          : undefined;
       const snapshot = await read(pull.url, prior?.seen);
       if (disposed) throw new Error("The GitHub plugin has stopped");
       if (!snapshot)

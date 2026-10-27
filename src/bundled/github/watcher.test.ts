@@ -400,6 +400,24 @@ describe("github_watch_pr", () => {
     next.dispose();
   });
 
+  it("starts fresh after the owner deletes a watch outside the tool", async () => {
+    const app = setup();
+    await app.call({ url });
+    app.gh(answer({ checks: [{ name: "unit", conclusion: "SUCCESS" }] }));
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+    const id = Object.keys(app.records[agent] ?? {}).find((id) =>
+      id.startsWith("watch/"),
+    );
+    if (!id) throw new Error("Missing watch");
+    await app.save(agent, { attention: { [id]: null } });
+    const reply = await app.call({ url }, true);
+    expect(reply).not.toContain("no longer in the conversation");
+    const record = app.records[agent]?.[id];
+    if (record?.type !== "source") throw new Error("Missing source");
+    expect((record.config.initial as { wakes: number }).wakes).toBe(0);
+    app.dispose();
+  });
+
   it("finishes at the wake limit and a new call starts a fresh watch", async () => {
     const app = setup();
     await app.call({ url });

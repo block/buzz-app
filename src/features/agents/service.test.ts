@@ -8379,7 +8379,7 @@ describe("Attention plugin sources", () => {
     },
   );
   it.each(["fails", "stops"])(
-    "keeps a subscription when delivery %s before its producer completes",
+    "keeps a completed subscription through pause and resume when delivery %s",
     async (outcome) => {
       const { service, run, plugin, native } = await sourceFixture();
       let finish!: () => void;
@@ -8392,13 +8392,13 @@ describe("Attention plugin sources", () => {
         run.mockImplementation(({ workingUntil }) =>
           workingUntil(Promise.resolve({ ok: true, stopped: true })),
         );
-      plugin.agents.addAttentionSource({
-        id: "command",
-        run: async ({ emit }) => {
+      const produce = vi.fn(
+        async ({ emit }: Parameters<AttentionSource["run"]>[0]) => {
           emit("final output");
           await held;
         },
-      });
+      );
+      plugin.agents.addAttentionSource({ id: "command", run: produce });
       await service.create({ type: "example/echo", name: "Echo" });
       await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
       await service.save(bot, { attentionEnabled: true, attention: watches });
@@ -8408,6 +8408,18 @@ describe("Attention plugin sources", () => {
       await vi.waitFor(() =>
         expect(service.find(bot)?.sourceRuns?.["watch/pr"]).toBeDefined(),
       );
+      for (const enabled of [false, true]) {
+        const expected = service.find(bot)?.attention["watch/pr"];
+        if (!expected) throw new Error("Missing completed watch");
+        await service.save(bot, {
+          watchEnabled: { "watch/pr": { enabled, expected } },
+        });
+        expect(service.find(bot)?.sourceRuns?.["watch/pr"]).toBe(
+          JSON.stringify(service.find(bot)?.attention["watch/pr"]),
+        );
+      }
+      await settle();
+      expect(produce).toHaveBeenCalledTimes(1);
       expect(service.find(bot)?.attention["watch/pr"]).toBeDefined();
       expect(service.find(bot)?.attentionHistory?.["watch/pr"]?.output).toBe(
         "final output",

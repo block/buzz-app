@@ -8,7 +8,7 @@ import type {
 } from "../host/service";
 import { spawnAgentCommand } from "./command";
 import { bundledAttention } from "./attention-command";
-import { sourceCompleted } from "./attention";
+import { sourceCompleted, sourceSignature } from "./attention";
 import { createLocalAgentActivity } from "./local-activity";
 import {
   AgentConfigStore,
@@ -1131,8 +1131,15 @@ function changed(record: AgentRecord, change: AgentChange): AgentRecord {
     if (current.value.type === "interest") throw new Error("Choose a watch");
     if (current.value.enabled !== enabled) {
       const history = next.attentionHistory;
+      const completed = sourceCompleted(next.sourceRuns, current);
       next = setAttention(next, slug, { ...current.value, enabled });
       if (history) next = { ...next, attentionHistory: history };
+      const updated = next.attention[slug];
+      if (completed && updated)
+        next = {
+          ...next,
+          sourceRuns: { ...next.sourceRuns, [slug]: sourceSignature(updated) },
+        };
     }
   }
   // As the spec's writer: an Interest stays while anything still uses it.

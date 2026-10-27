@@ -126,7 +126,7 @@ it("preserves a failed draft and saves new Interest instructions on retry", asyn
   const close = vi.fn();
   const Form = createRecipeForm({
     react: React,
-    agents: { save },
+    agents: { save, snapshot: () => ({ running: [{ key: "membership-a" }] }) },
   } as unknown as Context);
   render(
     React.createElement(Form, {
@@ -268,7 +268,7 @@ it("autofills a thread channel and saves event selectors with an existing shared
     close = vi.fn();
   const Form = createRecipeForm({
     react: React,
-    agents: { save },
+    agents: { save, snapshot: () => ({ running: [{ key: "membership-a" }] }) },
   } as unknown as Context);
   render(
     React.createElement(Form, {
@@ -382,3 +382,52 @@ it("resolves ambiguous message links against signed message metadata before savi
     ),
   ).toEqual({ channel, root });
 });
+
+it.each(["community", "membership"])(
+  "rejects a pending recipe after its %s changes",
+  async (change) => {
+    const save = vi.fn(),
+      close = vi.fn();
+    let finish!: (events: { id: string; tags: string[][] }[]) => void;
+    const read = vi.fn(
+      () =>
+        new Promise<{ id: string; tags: string[][] }[]>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    let running = [{ key: "membership-a", pubkey: "a", name: "Ada" }];
+    let connection = {
+      status: "ready",
+      scope: "community-a",
+      session: { read },
+    };
+    const Form = createRecipeForm({
+      agents: { save, snapshot: () => ({ running }) },
+      relay: { snapshot: () => connection },
+    } as unknown as Context);
+    const props = () => ({ running: running as never, channels, close });
+    const view = render(React.createElement(Form, props()));
+    await choose("Agent", "Ada");
+    fireEvent.change(screen.getByLabelText("Interest instructions"), {
+      target: { value: "Report failures" },
+    });
+    fireEvent.change(screen.getByLabelText("Pull request URL"), {
+      target: { value: "https://github.com/example/project/pull/42" },
+    });
+    fireEvent.change(screen.getByLabelText("Thread link (optional)"), {
+      target: { value: `buzz://message?channel=${channel}&id=${root}` },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create watch" }));
+    await waitFor(() => expect(read).toHaveBeenCalledOnce());
+    if (change === "community")
+      connection = { ...connection, scope: "community-b" };
+    else running = [];
+    view.rerender(React.createElement(Form, props()));
+    finish([{ id: root, tags: [["h", channel]] }]);
+    await waitFor(() =>
+      expect(screen.getByRole("alert").textContent).toMatch(/changed/),
+    );
+    expect(save).not.toHaveBeenCalled();
+    expect(close).not.toHaveBeenCalled();
+  },
+);

@@ -364,6 +364,13 @@ export function createRecipeForm({
           id,
         );
         const slug = `watch/${id}`;
+        if (
+          relay?.snapshot().scope !== connection?.scope ||
+          !agents.snapshot().running.some((value) => value.key === agent)
+        )
+          throw new Error(
+            "The community or selected agent changed. Try again.",
+          );
         await agents.save(agent, {
           attentionEnabled: true,
           attention: {

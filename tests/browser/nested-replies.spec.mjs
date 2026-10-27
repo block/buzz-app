@@ -300,10 +300,19 @@ test("nested replies send, stay open, and reveal through links at readable panel
     const deepestBox = await deepest.boundingBox();
     expect(deepestBox.width).toBeGreaterThan(140);
     // The open branch keeps its spine at every width.
-    const spine = await branchOf(deepest).evaluate(
-      (node) => getComputedStyle(node.firstElementChild, "::after").display,
-    );
-    expect(spine).not.toBe("none");
+    const spine = await branchOf(deepest).evaluate((node) => {
+      const message = node.firstElementChild;
+      const style = getComputedStyle(message, "::after");
+      const history = node.closest('[aria-label="Thread messages"]');
+      const x =
+        message.getBoundingClientRect().left + parseFloat(style.left || "0");
+      const bounds = history.getBoundingClientRect();
+      return {
+        content: style.content,
+        inside: x >= bounds.left && x <= bounds.right,
+      };
+    });
+    expect(spine).toEqual({ content: '""', inside: true });
 
     for (const theme of ["light", "dark"]) {
       await page.evaluate(

@@ -322,8 +322,28 @@ export function watchPulls(ctx: Context) {
   });
 
   ctx.effect(() => {
-    const unsubscribe = ctx.agents.subscribe(() => void migrate());
-    void migrate();
+    const changed = () => {
+      // Only running agents have an authoritative local subscription snapshot.
+      const agents = new Map(
+        ctx.agents.snapshot().running.map((agent) => [agent.key, agent]),
+      );
+      let removed = false;
+      for (const [key, cursor] of cursors) {
+        const agent = agents.get(cursor.agent);
+        if (
+          agent &&
+          cursor.subscription &&
+          !agent.attention[cursor.subscription]
+        ) {
+          cursors.delete(key);
+          removed = true;
+        }
+      }
+      if (removed) save(CURSORS, cursors);
+      void migrate();
+    };
+    const unsubscribe = ctx.agents.subscribe(changed);
+    changed();
     return () => {
       disposed = true;
       unsubscribe();

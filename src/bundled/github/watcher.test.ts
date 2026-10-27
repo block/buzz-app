@@ -299,6 +299,33 @@ describe("github_watch_pr", () => {
     app.dispose();
   });
 
+  it("starts fresh when a generic subscription is deleted and recreated", async () => {
+    const app = setup(
+      answer({ checks: [{ name: "unit", conclusion: "SUCCESS" }] }),
+    );
+    const source = {
+      type: "source" as const,
+      interest_id: "first",
+      enabled: true,
+      provider: "attention/github-pr",
+      channel: "c",
+      config: { pr: url },
+    };
+    await app.save(agent, {
+      attention: {
+        "interest/first": { type: "interest", instructions: "Follow" },
+        "watch/first": source,
+      },
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(app.woke).toHaveBeenCalledTimes(1);
+    await app.save(agent, { attention: { "watch/first": null } });
+    await app.save(agent, { attention: { "watch/first": source } });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(app.woke).toHaveBeenCalledTimes(2);
+    app.dispose();
+  });
+
   it("starts fresh when a subscription is edited to another PR", async () => {
     const app = setup(
       answer({ checks: [{ name: "unit", conclusion: "SUCCESS" }] }),

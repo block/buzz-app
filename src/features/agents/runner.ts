@@ -551,9 +551,28 @@ export class AgentRunners {
   private readonly stopped: Interrupted;
   /** The agents whose `left` the owner chose to resume. */
   private resuming = new Set<string>();
+  private workingNow = false;
+  private readonly workingListeners = new Set<() => void>();
   constructor(private readonly host: RunnerHost) {
     this.checkpoints = host.checkpoints.read();
     this.turns = this.left = this.stopped = host.interrupted.read();
+  }
+
+  /** Whether any agent has a job in a lane or a turn still working. */
+  isWorking() {
+    return this.workingNow;
+  }
+  subscribeWorking(listener: () => void) {
+    this.workingListeners.add(listener);
+    return () => void this.workingListeners.delete(listener);
+  }
+  private noteWorking() {
+    const working = [...this.runners.values()].some(
+      (runner) => runner.busy.size > 0 || runner.working > 0,
+    );
+    if (working === this.workingNow) return;
+    this.workingNow = working;
+    for (const listener of this.workingListeners) listener();
   }
 
   /** Agents with turns the app left working last time, until the owner
@@ -2192,6 +2211,7 @@ export class AgentRunners {
     job: Job,
   ) {
     runner.busy.add(lane);
+    this.noteWorking();
     if (job.trigger.type === "source") this.sourceJobs.set(job, agent.key);
     const lifetime = runner.controller.signal;
     const signal = AbortSignal.any([
@@ -2372,6 +2392,7 @@ export class AgentRunners {
           );
     void held.then(() => {
       runner.busy.delete(lane);
+      this.noteWorking();
       void this.drain(runner);
     });
   }
@@ -2520,12 +2541,14 @@ export class AgentRunners {
       stopped = resolve;
     });
     runner.working++;
+    this.noteWorking();
     const stop = () => {
       if (holds < 0) return;
       holds = -1;
       stopped();
       lifetime.removeEventListener("abort", abort);
       runner.working--;
+      this.noteWorking();
       typing?.();
       if (resumable) this.unmark(runner.key, [resumable]);
     };

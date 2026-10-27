@@ -9,12 +9,53 @@ import {
   rememberAgentsPreference,
   setRememberAgentsPreference,
 } from "../features/messages/mention-preferences";
+import {
+  keepAwakePreference,
+  setKeepAwakePreference,
+} from "../features/agents/keep-awake";
 
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
   setRememberAgentsPreference(true);
+  setKeepAwakePreference({ mode: "off", after: 60 });
   localStorage.clear();
+});
+
+it("offers keeping the Mac awake only where the app can, with a wait for Automatic", async () => {
+  const user = userEvent.setup();
+  const view = render(<AgentSettings keepAwakeAvailable={false} />, {
+    wrapper: ToastProvider,
+  });
+  expect(
+    screen.queryByRole("combobox", { name: "Keep this Mac awake" }),
+  ).not.toBeInTheDocument();
+  view.rerender(<AgentSettings keepAwakeAvailable />);
+  const mode = screen.getByRole("combobox", { name: "Keep this Mac awake" });
+  expect(mode).toHaveTextContent("Off");
+  expect(
+    screen.queryByRole("combobox", { name: "Turn off after" }),
+  ).not.toBeInTheDocument();
+  await user.click(mode);
+  await user.click(await screen.findByRole("option", { name: "Automatic" }));
+  const after = screen.getByRole("combobox", { name: "Turn off after" });
+  expect(after).toHaveTextContent("1 hour");
+  await user.click(after);
+  expect(
+    (await screen.findAllByRole("option")).map((option) => option.textContent),
+  ).toEqual([
+    "30 minutes",
+    "1 hour",
+    "2 hours",
+    "4 hours",
+    "8 hours",
+    "12 hours",
+  ]);
+  await user.click(screen.getByRole("option", { name: "8 hours" }));
+  expect(keepAwakePreference()).toEqual({ mode: "auto", after: 480 });
+  expect(localStorage.getItem("buzz-keep-awake.v1")).toBe(
+    JSON.stringify({ mode: "auto", after: 480 }),
+  );
 });
 
 it("defaults on, persists opt-out, and follows another window's preference", async () => {

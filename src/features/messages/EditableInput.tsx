@@ -1586,6 +1586,19 @@ export function EditableInput({
               plain ||
               "";
             if (!text) return true;
+            // A bare URL pasted over selected text links the selection, as other
+            // editors do. editLink() owns the guards (code, resources, unsafe
+            // URLs, limits); when it declines, the paste replaces as before.
+            const url = text.trim().replace(/^<(.*)>$/, "$1");
+            if (!code && !editor.state.selection.empty) {
+              let bare = false;
+              messageLinkParts(url, undefined, (start, end) => {
+                if (start === 0 && end === url.length) bare = true;
+              });
+              const edit = bare ? editLink() : null;
+              // A whitespace-only label is not a link the timeline recognises.
+              if (edit?.text.trim() && edit.save(edit.text, url)) return true;
+            }
             let link = false;
             if (!code)
               messageLinkParts(text, undefined, (start, end) => {

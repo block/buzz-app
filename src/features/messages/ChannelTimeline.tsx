@@ -592,9 +592,18 @@ function Timeline({
       return;
     const moved = handle.current.getItemOffset(index) - reader.current.top;
     const id = reader.current.id;
-    if (!id) return;
-    // A page can initially leave the reader's offset unchanged while moved
-    // rows still await measurement. Hold the anchor through those sizes too.
+    if (
+      !id ||
+      (!moved &&
+        rows.length <= edges.current.order.length &&
+        !(
+          heldReader.current?.id === id &&
+          heldReader.current.intent === intent.current
+        ))
+    )
+      return;
+    // New rows can leave the initial offset unchanged. Hold through their
+    // measurements, but leave ordinary prepend follow-up renders to Virtua.
     correctScrollTop(element, moved);
     const top = () =>
       element

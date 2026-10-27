@@ -706,6 +706,31 @@ describe("config sync without a sync", () => {
     },
   );
 
+  /** A bound channel the relay has no sync for, following live. */
+  async function following() {
+    const a = await revision("A");
+    const relayFeed = controlled(() => [a]);
+    relayFeed.state.capacity = false;
+    const store = new AgentConfigStore(memoryStorage());
+    const spies = hooks();
+    const sync = createConfigSync(
+      store,
+      relayFeed.feed,
+      owner.pubkey,
+      "c",
+      spies,
+    );
+    await sync.bind([binding]);
+    expect(store.instructions(instructions)).toEqual({ ok: true, text: "A" });
+    const revoke = () => {
+      for (const follow of relayFeed.follows) follow.revoked([channel]);
+    };
+    const hear = (event: RelayEvent) => {
+      for (const follow of relayFeed.follows) follow.listener([event]);
+    };
+    return { a, relayFeed, store, spies, revoke, hear };
+  }
+
   it.each([
     [
       "a relay that refuses its state",
@@ -713,45 +738,66 @@ describe("config sync without a sync", () => {
         throw new Error("Relay read failed (403)");
       },
     ],
+    [
+      "a relay that can't be reached",
+      (): RelayEvent[] => {
+        throw new Error("Relay unreachable");
+      },
+    ],
     ["a relay that no longer shows its state", (): RelayEvent[] => []],
   ])(
     "a followed channel the session no longer grants retires as denied, given %s",
     async (_, channelState) => {
-      const a = await revision("A");
-      const relayFeed = controlled(() => [a]);
-      relayFeed.state.capacity = false;
-      const store = new AgentConfigStore(memoryStorage());
-      const spies = hooks();
-      const sync = createConfigSync(
-        store,
-        relayFeed.feed,
-        owner.pubkey,
-        "c",
-        spies,
-      );
-      await sync.bind([binding]);
-      relayFeed.state.channel = channelState;
-      for (const follow of relayFeed.follows) follow.revoked([channel]);
+      const f = await following();
+      f.relayFeed.state.channel = channelState;
+      f.revoke();
       await vi.waitFor(() =>
-        expect(spies.problem).toHaveBeenCalledWith({ channel, kind: "denied" }),
+        expect(f.spies.problem).toHaveBeenCalledWith({
+          channel,
+          kind: "denied",
+        }),
       );
-      expect(store.instructions(instructions)).toMatchObject({
+      expect(f.store.instructions(instructions)).toMatchObject({
         ok: false,
         state: "unavailable",
       });
     },
   );
 
-  it("keeps a followed channel the relay still shows the owner in", async () => {
-    const a = await revision("A");
-    const relayFeed = controlled(() => [a]);
-    relayFeed.state.capacity = false;
-    const store = new AgentConfigStore(memoryStorage());
-    const sync = createConfigSync(store, relayFeed.feed, owner.pubkey, "c");
-    await sync.bind([binding]);
-    for (const follow of relayFeed.follows) follow.revoked([channel]);
+  it("starts nothing from a revoked channel until a confirm and a fresh read give it back", async () => {
+    const f = await following();
+    const confirmed = held<RelayEvent[]>();
+    f.relayFeed.state.channel = () => confirmed.promise;
+    f.revoke();
+    expect(f.store.instructions(instructions)).toMatchObject({ ok: false });
+    // A live revision meanwhile doesn't give it back either.
+    f.relayFeed.emit(await revision("B", f.a.id));
     await flush();
-    expect(store.instructions(instructions)).toEqual({ ok: true, text: "A" });
+    expect(f.store.instructions(instructions)).toMatchObject({ ok: false });
+    confirmed.release([metadata(), members()]);
+    await vi.waitFor(() =>
+      expect(f.store.instructions(instructions)).toEqual({
+        ok: true,
+        text: "A",
+      }),
+    );
+    expect(f.spies.problem).not.toHaveBeenCalled();
+  });
+
+  it("an older confirm never undoes a newer one's authority", async () => {
+    const f = await following();
+    const removal = held<RelayEvent[]>();
+    f.relayFeed.state.channel = () => removal.promise;
+    f.hear(members([]));
+    await flush();
+    // The owner is back, and a confirm since says so first.
+    f.relayFeed.state.channel = () => [metadata(), members()];
+    f.hear(members());
+    await flush();
+    removal.release([metadata(), members([])]);
+    await flush();
+    await flush();
+    expect(f.store.instructions(instructions)).toEqual({ ok: true, text: "A" });
   });
 
   it("follows no channel while a sync is open", async () => {

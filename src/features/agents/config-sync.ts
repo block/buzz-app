@@ -127,6 +127,10 @@ export function createConfigSync(
    * restarted: a set reopened for a new binding confirms and looks up only
    * that one. */
   const synced = new Set<Bound>();
+  /** Each binding's latest confirm: an older one's answer never stands. */
+  const confirms = new WeakMap<Bound, Promise<boolean>>();
+  /** Bindings the session's access change took, until read again. */
+  const held = new WeakSet<Bound>();
   /** Bumped by each restart, so work started before one never marks a
    * binding synced. */
   let epoch = 0;
@@ -443,6 +447,8 @@ export function createConfigSync(
         ({ expected }) => expected.d === tag(event, "d"),
       );
       if (!entry || !artifact) continue;
+      // Held after an access change: only a fresh read installs again.
+      if (held.has(entry) && !synced.has(entry)) continue;
       const { generation } = store.state(artifact.subject);
       record(
         entry,
@@ -457,43 +463,78 @@ export function createConfigSync(
     }
   }
 
-  /** Followed channels the session no longer grants: a confirm decides, and
-   * one whose state the relay no longer shows is denied. */
+  /** Followed channels the session no longer grants: their config starts
+   * nothing until a confirm and a fresh read give it back, and any failure of
+   * either is a denial. */
   function followedRevoked(channels: readonly string[]) {
     for (const channel of channels) {
-      const entry = bound.get(channel);
-      if (entry)
-        void confirm(entry, true).catch((error) => failure(entry, error));
+      const before = bound.get(channel);
+      if (!before) continue;
+      // A new lifetime: what the old one had in flight installs nothing.
+      before.abort.abort();
+      synced.delete(before);
+      const entry: Bound = { ...before, abort: new AbortController() };
+      bound.set(channel, entry);
+      held.add(entry);
+      for (const { subject } of entry.artifacts) store.rebind(subject);
+      void (async () => {
+        try {
+          if (!(await confirm(entry))) return;
+          const captured = capture(entry);
+          const heads = await retrying(entry, () =>
+            readCurrent(snapshotRead(entry), channel),
+          );
+          await install(entry, heads, () => alive(entry), false, captured);
+          if (alive(entry)) synced.add(entry);
+        } catch (error) {
+          failure(entry, error instanceof Denied ? error : new Denied());
+        }
+      })();
     }
   }
 
   /** Strong relay-signed metadata and roster for a bound channel. False when
-   * it is archived or the owner left: the binding retires. `revoked`: the
-   * session took access away, so a missing pair is a denial. */
-  async function confirm(entry: Bound, revoked = false) {
+   * it is archived or the owner left: the binding retires. One started since
+   * read newer authority, so an older confirm takes its answer instead. */
+  function confirm(entry: Bound): Promise<boolean> {
     const id = entry.binding.channel;
-    const events = await snapshot(entry, [
-      // Addressable by (kind, relay key, d): one current event each, so a
-      // full page of 1 is the complete answer.
-      ...[39000, 39002].map((kind) => ({
-        kinds: [kind],
-        authors: [feed.relayAuthor],
-        "#d": [id],
-        limit: 1,
-        consistency: "strong" as const,
-      })),
-    ]);
-    if (!alive(entry)) return false;
-    const signed = events.filter((e) => e.pubkey === feed.relayAuthor);
-    const metadata = signed.find((e) => e.kind === 39000);
-    const members = signed.find((e) => e.kind === 39002);
-    if (!metadata || !members)
-      throw revoked ? new Denied() : new Error("Config channel unconfirmed");
-    for (const event of [metadata, members]) {
-      roster(event);
+    // Assigned before its first await resumes, which is where it is read.
+    let mine!: Promise<boolean>;
+    mine = (async () => {
+      let events: readonly RelayEvent[] = [];
+      let failed: unknown;
+      try {
+        events = await snapshot(entry, [
+          // Addressable by (kind, relay key, d): one current event each, so a
+          // full page of 1 is the complete answer.
+          ...[39000, 39002].map((kind) => ({
+            kinds: [kind],
+            authors: [feed.relayAuthor],
+            "#d": [id],
+            limit: 1,
+            consistency: "strong" as const,
+          })),
+        ]);
+      } catch (error) {
+        failed = error;
+      }
+      const newest = confirms.get(entry);
+      if (newest !== mine) return newest ?? alive(entry);
+      confirms.delete(entry);
+      if (failed) throw failed;
       if (!alive(entry)) return false;
-    }
-    return true;
+      const signed = events.filter((e) => e.pubkey === feed.relayAuthor);
+      const metadata = signed.find((e) => e.kind === 39000);
+      const members = signed.find((e) => e.kind === 39002);
+      if (!metadata || !members) throw new Error("Config channel unconfirmed");
+      for (const event of [metadata, members]) {
+        roster(event);
+        if (!alive(entry)) return false;
+      }
+      return true;
+    })();
+    confirms.set(entry, mine);
+    return mine;
   }
 
   /** Strongly reread which config channels name the owner, so one created

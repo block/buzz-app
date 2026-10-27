@@ -670,3 +670,75 @@ test("owner profile keeps its pane and caret stable during inline name editing",
   ).toBeVisible();
   expect((await profile.boundingBox()).height).toBe(before.height);
 });
+
+// A persisted interface size changes rem geometry; real pointer hit testing
+// must keep each split action inside its own card.
+test("scaled import controls keep pointer actions on their own agent", async ({
+  page,
+}) => {
+  await page.goto("/tests/fixtures/agent-library.html?import");
+  await page.evaluate(() => localStorage.setItem("buzz-font-scale.v1", "1.1"));
+  for (const colorScheme of ["light", "dark"]) {
+    await page.emulateMedia({ colorScheme });
+    for (const width of [361, 800]) {
+      await page.setViewportSize({ width, height: 950 });
+      await page.reload();
+      await expect(page.locator("html")).toHaveCSS("font-size", "17.6px");
+      await page
+        .getByRole("button", { name: "New agent", exact: true })
+        .click();
+      await page
+        .getByRole("menuitem", { name: "Import an agent", exact: true })
+        .click();
+      const dialog = page.getByRole("dialog", {
+        name: "Import an agent",
+        exact: true,
+      });
+      const choose = dialog.getByRole("button", {
+        name: "Choose a type for Legacy 1",
+        exact: true,
+      });
+      await choose.click();
+      await page
+        .getByRole("menuitemradio", { name: "Claude Code", exact: true })
+        .click();
+      const bounds = await choose.boundingBox();
+      expect(bounds).not.toBeNull();
+      await page.mouse.click(
+        bounds.x + bounds.width / 2,
+        bounds.y + bounds.height / 2,
+      );
+      await expect(
+        page.getByRole("menuitemradio", { name: "Claude Code", exact: true }),
+      ).toBeChecked();
+      expect(await page.evaluate(() => window.importTargets)).toEqual([]);
+      await page
+        .getByRole("menuitemradio", { name: "Alternative", exact: true })
+        .click();
+      const action = dialog.getByRole("button", {
+        name: "Import as Alternative, Legacy 1",
+        exact: true,
+      });
+      await expect(action).toContainText("Alternative");
+      for (const control of [choose, action]) {
+        const contained = await control.evaluate((button) => {
+          const card = button.closest('[class*="agentCard"]');
+          const box = button.getBoundingClientRect(),
+            parent = card.getBoundingClientRect();
+          return box.left >= parent.left && box.right <= parent.right;
+        });
+        expect(contained).toBe(true);
+      }
+      await action.click();
+      await expect
+        .poll(() => page.evaluate(() => window.importTargets))
+        .toEqual([
+          {
+            source: "installed",
+            pubkey: "1".repeat(64),
+            type: "fixture/agent",
+          },
+        ]);
+    }
+  }
+});

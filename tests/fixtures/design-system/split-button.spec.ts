@@ -29,6 +29,18 @@ test("split buttons keep their joined edges when the menu opens", async ({
       await expect(trigger).toBeFocused();
       await expect(page.getByRole("menu")).toHaveCount(0);
       await joined();
+      // A wrapped action still shares the complete capsule with its menu.
+      await split.evaluate((element) => {
+        element.style.maxWidth = "140px";
+      });
+      const actionBox = await action.boundingBox();
+      const triggerBox = await trigger.boundingBox();
+      const splitBox = await split.boundingBox();
+      expect(actionBox?.height).toBe(triggerBox?.height);
+      expect(actionBox?.x).toBeGreaterThanOrEqual(splitBox?.x ?? 0);
+      expect(
+        (triggerBox?.x ?? 0) + (triggerBox?.width ?? 0),
+      ).toBeLessThanOrEqual((splitBox?.x ?? 0) + (splitBox?.width ?? 0) + 1);
     }
   }
 });

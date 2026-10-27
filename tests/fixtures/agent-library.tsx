@@ -1,3 +1,5 @@
+import { createAppearance } from "../../src/shared/theme/service";
+import { ClaudeLogoIcon } from "../../src/shared/design-system/icons";
 import { agentAvatars } from "../../src/features/agents/avatar-packs";
 import { createRoot } from "react-dom/client";
 import { useId, useState } from "react";
@@ -21,6 +23,11 @@ import { AgentInstructions } from "../../src/features/agents/AgentInstructions";
 import { CreateModelChoices } from "../../src/features/agents/CreateModelChoices";
 import { ModelPicker } from "../../src/features/agents/ModelPicker";
 import "../../src/shared/styles/globals.css";
+
+const importing = new URLSearchParams(location.search).has("import");
+if (importing) createAppearance();
+const importTargets: { pubkey: string; type: string }[] = [];
+Object.assign(window, { importTargets });
 
 const inheritedModel = new URLSearchParams(location.search).get(
   "inheritedModel",
@@ -150,7 +157,14 @@ const other: RegisteredAgentType = {
 };
 const reviewing = new URLSearchParams(location.search).has("review");
 const changing = new URLSearchParams(location.search).has("change");
-const types = changing ? [type, other] : [type];
+const types = importing
+  ? [
+      { ...type, title: "Alternative" },
+      { ...other, title: "Claude Code", icon: ClaudeLogoIcon },
+    ]
+  : changing
+    ? [type, other]
+    : [type];
 if (changing) snapshot.running = snapshot.agents;
 let updates: readonly AgentUpdateRequest[] = changing
   ? [
@@ -241,7 +255,23 @@ const agents = {
         ]
       : [],
   joinable: () => [],
-  portable: async () => ({ agents: [], teams: [], here: [], warnings: [] }),
+  portable: async () => ({
+    agents: importing
+      ? [1, 2].map((n) => ({
+          source: "installed" as const,
+          pubkey: String(n).repeat(64),
+          name: `Legacy ${n}`,
+          relay: "",
+        }))
+      : [],
+    teams: [],
+    here: [],
+    warnings: [],
+  }),
+  port: async (input: { pubkey: string; type: string }) => {
+    importTargets.push(input);
+    return { agent: snapshot.agents[0], notes: [] };
+  },
   relay: () => undefined,
   save: async (key: string, change: { config?: unknown }) => {
     if (!saveFooter) return;

@@ -1511,7 +1511,11 @@ function ImportAgents({
           </ul>
         </section>
       ) : (
-        <section aria-label="Agents to import" className={cardStyles.grid}>
+        <section
+          aria-label="Agents to import"
+          className={cardStyles.grid}
+          data-import=""
+        >
           {elsewhere.map((agent) => (
             <AgentCard
               key={agent.pubkey}

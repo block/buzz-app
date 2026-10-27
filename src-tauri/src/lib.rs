@@ -924,6 +924,7 @@ pub(crate) fn shut_down<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
         .cancel_all(&app.state::<relay::Uploads>());
     app.state::<image_clipboard::ImageClipboard>().release();
     app.state::<HostProcesses>().shutdown();
+    host_command::stop_login_shell_probe();
     app.state::<HostMcpServers>().stop_all();
     browser::shutdown();
     if let Err(error) = app.state::<Terminals>().shutdown() {

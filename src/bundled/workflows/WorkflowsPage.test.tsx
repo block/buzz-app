@@ -734,7 +734,7 @@ it("resumes a paused read from the deletion toast and never republishes", async 
     });
   try {
     await userEvent.click(
-      screen.getByRole("button", { name: "Check saved configuration" }),
+      await screen.findByRole("button", { name: "Check saved configuration" }),
     );
     expect(reads).toHaveBeenCalledOnce();
     expect(

@@ -34,6 +34,8 @@ import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
 import { Select } from "../../shared/design-system/ui/Select";
+import { formatItemTimestamp } from "../../shared/datetime";
+import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { effortLabel } from "../claude-code/runtime";
 import {
@@ -763,36 +765,50 @@ export function createTabs({
           />
         )}
         <section className={activityStyles.section}>
-          <h3 className="m-0 text-body">Recent conversations</h3>
-          {recent.length ? (
-            <ul className="m-0 grid list-none gap-2 p-0">
-              {recent.map((place) => (
-                <li key={place.key} className={activityStyles.row}>
-                  <span className={activityStyles.copy}>
-                    <span className="block truncate" title={label(place)}>
-                      {label(place)}
-                    </span>
-                    <span className="block text-body-sm text-subtle">
-                      {[status(place), new Date(place.at).toLocaleString()]
-                        .filter(Boolean)
-                        .join(" · ")}
-                    </span>
-                  </span>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    onClick={() => show(place)}
-                  >
-                    View transcript
-                  </Button>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="m-0 text-body-sm text-subtle">
-              None. A conversation starts when the agent is mentioned.
-            </p>
-          )}
+          <InlineHeader title="Recent conversations" />
+          <SettingsGroup layout="form">
+            {recent.length ? (
+              <ul className={activityStyles.list}>
+                {recent.map((place) => (
+                  <li key={place.key} className={activityStyles.entry}>
+                    <div className={activityStyles.row}>
+                      <span className={activityStyles.copy}>
+                        <span
+                          className="block truncate text-label-sm"
+                          title={label(place)}
+                        >
+                          {label(place)}
+                        </span>
+                        <span className="block text-body-sm text-subtle">
+                          {[
+                            status(place),
+                            formatItemTimestamp(place.at / 1000, {
+                              withTime: true,
+                            }),
+                          ]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </span>
+                      </span>
+                      <Button
+                        type="button"
+                        variant="subtle"
+                        size="sm"
+                        aria-label={`View transcript: ${label(place)}`}
+                        onClick={() => show(place)}
+                      >
+                        View transcript
+                      </Button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="m-0 text-body-sm text-subtle">
+                None. A conversation starts when the agent is mentioned.
+              </p>
+            )}
+          </SettingsGroup>
         </section>
         {open && (
           <PanelSubview

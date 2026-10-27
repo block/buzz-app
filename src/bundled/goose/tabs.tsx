@@ -34,6 +34,8 @@ import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
 import { Combobox } from "../../shared/design-system/ui/Combobox";
 import { Select } from "../../shared/design-system/ui/Select";
+import { formatItemTimestamp } from "../../shared/datetime";
+import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { GooseLogoIcon } from "../../shared/design-system/icons";
 import { validWorkspace } from "../codex/config";
@@ -878,54 +880,73 @@ export function createTabs({
           />
         )}
         <section className={activityStyles.section}>
-          <div className="flex items-center justify-between gap-2">
-            <h3 className="m-0 text-body">Recent sessions</h3>
-            <Button
-              type="button"
-              variant="ghost"
-              loading={recent.status === "loading"}
-              onClick={reload}
-            >
-              Refresh
-            </Button>
-          </div>
-          {recent.status === "error" ? (
-            <p role="alert" className="buzz-field-error m-0">
-              Could not list goose's sessions: {recent.error}
-            </p>
-          ) : rows.length ? (
-            <ul className="m-0 grid list-none gap-2 p-0">
-              {rows.map((row) => (
-                <li key={row.sessionId} className={activityStyles.row}>
-                  <span className={activityStyles.copy}>
-                    <span className="block truncate" title={label(row)}>
-                      {label(row)}
-                    </span>
-                    <span className="block text-body-sm text-subtle">
-                      {[
-                        status(row.sessionId),
-                        row.at && new Date(row.at).toLocaleString(),
-                      ]
-                        .filter(Boolean)
-                        .join(" · ")}
-                    </span>
-                  </span>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    aria-label={`View transcript: ${label(row)}`}
-                    onClick={() => show(row)}
-                  >
-                    View transcript
-                  </Button>
-                </li>
-              ))}
-            </ul>
-          ) : recent.status === "ready" ? (
-            <p className="m-0 text-body-sm text-subtle">
-              None. A conversation's session starts when the agent is mentioned.
-            </p>
-          ) : null}
+          <InlineHeader
+            title="Recent sessions"
+            actions={
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                loading={recent.status === "loading"}
+                onClick={reload}
+              >
+                Refresh
+              </Button>
+            }
+          />
+          <SettingsGroup layout="form">
+            {recent.status === "error" ? (
+              <p role="alert" className="buzz-field-error m-0">
+                Could not list goose's sessions: {recent.error}
+              </p>
+            ) : rows.length ? (
+              <ul className={activityStyles.list}>
+                {rows.map((row) => (
+                  <li key={row.sessionId} className={activityStyles.entry}>
+                    <div className={activityStyles.row}>
+                      <span className={activityStyles.copy}>
+                        <span
+                          className="block truncate text-label-sm"
+                          title={label(row)}
+                        >
+                          {label(row)}
+                        </span>
+                        <span className="block text-body-sm text-subtle">
+                          {[
+                            status(row.sessionId),
+                            row.at &&
+                              formatItemTimestamp(row.at / 1000, {
+                                withTime: true,
+                              }),
+                          ]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </span>
+                      </span>
+                      <Button
+                        type="button"
+                        variant="subtle"
+                        size="sm"
+                        aria-label={`View transcript: ${label(row)}`}
+                        onClick={() => show(row)}
+                      >
+                        View transcript
+                      </Button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            ) : recent.status === "ready" ? (
+              <p className="m-0 text-body-sm text-subtle">
+                None. A conversation's session starts when the agent is
+                mentioned.
+              </p>
+            ) : (
+              <p role="status" className="m-0 text-body-sm text-subtle">
+                Reading goose's sessions…
+              </p>
+            )}
+          </SettingsGroup>
         </section>
         {open && (
           <PanelSubview

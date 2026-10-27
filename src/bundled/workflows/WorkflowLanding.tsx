@@ -997,7 +997,7 @@ function WorkflowFilterMenu<Value extends string>({
           aria-label={label}
           aria-description={active ? selectedLabel : undefined}
           render={
-            <Button size="sm" variant={active ? "prominent" : "subtle"}>
+            <Button size="sm" variant="subtle">
               {active && icon}
               <span className="workflow-filter-label">
                 {active ? selectedLabel : label}
@@ -1074,7 +1074,7 @@ function WorkflowMultiFilterMenu<Value extends string>({
               : undefined
           }
           render={
-            <Button size="sm" variant={active ? "prominent" : "subtle"}>
+            <Button size="sm" variant="subtle">
               {active &&
                 (selected.length === 1 ? (selected[0]?.icon ?? icon) : icon)}
               <span className="workflow-filter-label">

@@ -9,6 +9,8 @@ Your home for creating and managing agents. Set them up, group them into teams, 
 3. To take an agent out of one community and keep it in the others, use **Remove from this community** in its menu or settings. **Delete agent** removes it from every community.
 4. Use **Settings** → **Agent setup** → **Harness defaults** to install or sign in to an agent type such as Claude or Codex.
 
+---
+
 ## Developer import scenarios
 
 Development builds expose **Settings → Developer → Agent import**. **What Import finds** supplies simulated community/Legacy findings for reviewing the production Agents page and its dialogs. Simulated imports leave agents unchanged. **Real data** uses actual imports, including when **Show as a new community** hides the existing inventory. Turn that switch off and choose Real data to return to the normal view. These controls are absent from packaged builds.

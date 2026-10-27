@@ -68,6 +68,9 @@ const test = base.extend({
       releaseDirectory = () => {};
     let backgroundReady = Promise.resolve(),
       releaseBackground = () => {};
+    let historyReady = Promise.resolve(),
+      releaseHistory = () => {},
+      failHistory = false;
     const publish = async (event) => {
       // Only hold messages: presence/read-state writes must not replace the gate.
       if (hold && event.kind === 9)
@@ -137,6 +140,7 @@ const test = base.extend({
               },
             ];
           reads.push(...body);
+          if (body.some((filter) => filter.top_level)) await historyReady;
           if (body.some((filter) => filter.kinds?.includes(0) && filter.page))
             await directoryReady;
           if (
@@ -172,7 +176,7 @@ const test = base.extend({
               );
             else if (filter.limit) rows = rows.slice(0, filter.limit);
             for (const row of rows) result.set(row.id, row);
-            if (filter.top_level) {
+            if (filter.top_level && !failHistory) {
               const id = filter["#h"][0];
               const bounds = sign(
                 relay,
@@ -235,6 +239,16 @@ const test = base.extend({
         commands,
         publications: socket.publications,
         errors,
+        failHistory: () => {
+          failHistory = true;
+        },
+        holdHistory: () => {
+          failHistory = false;
+          historyReady = new Promise((resolve) => {
+            releaseHistory = resolve;
+          });
+        },
+        showHistory: () => releaseHistory(),
         holdPeople: () => {
           directoryReady = new Promise((resolve) => {
             releaseDirectory = resolve;
@@ -284,6 +298,7 @@ const test = base.extend({
     } finally {
       releaseDirectory();
       releaseBackground();
+      releaseHistory();
       release();
       server.httpServer.closeAllConnections();
       await new Promise((resolve) => server.httpServer.close(resolve));
@@ -838,30 +853,48 @@ test("a send finishing behind Settings keeps Settings and its unsaved edit", asy
 
 // Browser-only contract: the inline reader's thread action reaches the actual
 // host navigation and mounts its reply editor, preserving the selected target.
+// Recovery also checks native button focus and the handoff to the real editor.
 test("existing DM previews inline and opens its exact thread", async ({
   page,
   app,
 }) => {
   const id = "22222222-2222-4222-8222-222222222222";
   app.seedChannel(id, "Existing DM history", "dm");
+  app.failHistory();
   await open(page, app);
   await page.getByRole("option", { name: "Avery Chen", exact: true }).click();
   const body = page.locator("[data-new-message-body]");
-  await expect(
-    body.getByText("Existing DM history", { exact: true }),
-  ).toBeVisible();
+  const retry = body.getByRole("button", { name: "Retry messages" });
+  await expect(retry).toBeVisible();
   await page
     .getByRole("combobox", { name: "Message recipients" })
     .press("Escape");
   const row = body
     .locator("[data-message-id]")
     .filter({ hasText: "Existing DM history" });
-  const messageId = await row.getAttribute("data-message-id");
   const composer = page.getByRole("textbox", {
     name: "Message Avery Chen",
     exact: true,
   });
   await composer.fill("Keep this draft");
+  app.holdHistory();
+  const historyReads = () =>
+    app.reads.filter((filter) => filter.top_level).length;
+  const beforeRetry = historyReads();
+  try {
+    await retry.focus();
+    await retry.press("Enter");
+    await expect.poll(historyReads).toBeGreaterThan(beforeRetry);
+    await expect(retry).toHaveAttribute("aria-busy", "true");
+    await expect(retry).toBeFocused();
+  } finally {
+    app.showHistory();
+  }
+  await expect(
+    body.getByText("Existing DM history", { exact: true }),
+  ).toBeVisible();
+  await expect(composer).toBeFocused();
+  const messageId = await row.getAttribute("data-message-id");
   const author = row.getByRole("button", { name: "View Avery Chen profile" });
   await author.click();
   const profile = page.getByRole("dialog", { name: "Profile", exact: true });

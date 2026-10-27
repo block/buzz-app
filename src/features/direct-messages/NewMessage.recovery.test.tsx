@@ -790,33 +790,86 @@ it.each([40003, 5])(
   },
 );
 
-it("retries failed initial DM history without losing the new-message draft", async () => {
-  const t = setup();
-  t.events.unshift(message(other, channel, "Recovered history", 1_700_000_001));
-  const read = t.query.getMockImplementation();
-  assert.exists(read);
-  let broken = true;
-  t.query.mockImplementation(async (filters) => {
-    const result = await read(filters);
-    return broken && filters.some((filter) => filter.kinds?.includes(9))
-      ? result.filter((event) => event.kind === 9)
-      : result;
-  });
-  const owner = t.create();
-  t.mount(owner);
-  await t.user.click(await screen.findByRole("option", { name: "Avery" }));
-  await waitFor(() =>
-    expect(owner.session.channels.window(channel).status).toBe("error"),
-  );
-  await t.user.type(screen.getByRole("textbox"), "Keep this draft");
-  broken = false;
-  await t.user.click(screen.getByRole("button", { name: /Retry.*messages/ }));
-  await waitFor(() =>
-    expect(owner.session.channels.window(channel).status).toBe("ready"),
-  );
-  expect(
-    owner.session.channels.window(channel).rows.map((row) => row.content),
-  ).toContain("Recovered history");
-  expect(screen.getByRole("textbox")).toHaveTextContent("Keep this draft");
-  expect(t.publish).not.toHaveBeenCalled();
-});
+it.each([false, true])(
+  "preserves draft and retry focus without stealing moved focus (%s)",
+  async (moveFocus) => {
+    const t = setup();
+    t.events.unshift(
+      message(other, channel, "Recovered history", 1_700_000_001),
+    );
+    const read = t.query.getMockImplementation();
+    assert.exists(read);
+    let broken = true;
+    let pending: Promise<void> | undefined;
+    let started = false;
+    t.query.mockImplementation(async (filters) => {
+      if (filters.some((filter) => filter.kinds?.includes(9))) {
+        started = true;
+        await pending;
+      }
+      const result = await read(filters);
+      return broken && filters.some((filter) => filter.kinds?.includes(9))
+        ? result.filter((event) => event.kind === 9)
+        : result;
+    });
+    const owner = t.create();
+    t.mount(owner);
+    await t.user.click(await screen.findByRole("option", { name: "Avery" }));
+    await waitFor(() =>
+      expect(owner.session.channels.window(channel).status).toBe("error"),
+    );
+    await t.user.type(screen.getByRole("textbox"), "Keep this draft");
+    const retry = screen.getByRole("button", { name: "Retry messages" });
+    const recipients = screen.getByRole("combobox", {
+      name: "Message recipients",
+    });
+    const historyReads = () =>
+      t.query.mock.calls.filter(([filters]) =>
+        filters.some((filter) => filter.kinds?.includes(9)),
+      ).length;
+    for (const fail of [true, false]) {
+      broken = fail;
+      started = false;
+      let release = () => {};
+      pending = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      try {
+        act(() => retry.focus());
+        await t.user.keyboard("{Enter}");
+        await waitFor(() => expect(started).toBe(true));
+        expect(retry).toHaveFocus();
+        expect(retry).toHaveAttribute("aria-busy", "true");
+        const reads = historyReads();
+        await t.user.keyboard("{Enter}");
+        expect(historyReads()).toBe(reads);
+        if (!fail && moveFocus) {
+          await t.user.click(recipients);
+          expect(recipients).toHaveFocus();
+        }
+      } finally {
+        release();
+      }
+      await waitFor(() =>
+        expect(owner.session.channels.window(channel).status).toBe(
+          fail ? "error" : "ready",
+        ),
+      );
+      if (fail) {
+        expect(retry).toHaveFocus();
+        expect(retry).not.toHaveAttribute("aria-busy", "true");
+      }
+    }
+    expect(retry).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        moveFocus ? recipients : screen.getByRole("textbox"),
+      ).toHaveFocus(),
+    );
+    expect(
+      owner.session.channels.window(channel).rows.map((row) => row.content),
+    ).toContain("Recovered history");
+    expect(screen.getByRole("textbox")).toHaveTextContent("Keep this draft");
+    expect(t.publish).not.toHaveBeenCalled();
+  },
+);

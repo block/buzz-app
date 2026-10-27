@@ -153,6 +153,9 @@ export function NewMessage({
   const [restoredDraft, setRestoredDraft] = useState<MentionDraft>();
   const [draftRevision, setDraftRevision] = useState(0);
   const [composerFocus, setComposerFocus] = useState(0);
+  const focusComposer = useCallback(() => {
+    setComposerFocus((request) => request + 1);
+  }, []);
   const retiring = useRef<string | undefined>(undefined);
   const [busy, setBusy] = useState<"sending" | undefined>();
   const [error, setError] = useState("");
@@ -396,7 +399,7 @@ export function NewMessage({
         selected={recipients}
         disabled={locked}
         onChange={change}
-        onComplete={() => setComposerFocus((request) => request + 1)}
+        onComplete={focusComposer}
       />
       <div className={styles.blank} data-new-message-body="">
         {existing ? (
@@ -407,6 +410,7 @@ export function NewMessage({
             channel={existing}
             extensions={extensions}
             host={host}
+            onRecovered={focusComposer}
             onOpen={(messageId, threadRootId, intent) =>
               onOpenThread(existing.id, messageId, threadRootId, intent)
             }
@@ -497,6 +501,7 @@ function ExistingDiscussion({
   extensions,
   host,
   onOpen,
+  onRecovered,
 }: {
   session: RelaySession;
   scope: string;
@@ -504,26 +509,37 @@ function ExistingDiscussion({
   extensions?: ConversationExtensions | undefined;
   host: ConversationHostServices;
   onOpen(messageId: string, threadRootId: string, intent?: "reply"): void;
+  onRecovered(): void;
 }) {
   const window = useChannelWindow(session.channels, channel.id);
-  if (!window.rows.length && window.status !== "ready")
+  const retry = useRef<HTMLButtonElement>(null);
+  const [recovering, setRecovering] = useState(false);
+  const waiting = !window.rows.length && window.status !== "ready";
+  useLayoutEffect(() => {
+    if (waiting || !recovering) return;
+    // Hand off before removing Retry, and only while it still owns focus.
+    if (document.activeElement === retry.current) onRecovered();
+    setRecovering(false);
+  }, [waiting, recovering, onRecovered]);
+  if (waiting || recovering)
     return (
       <div
         className={styles.feedback}
         role={window.status === "error" ? "alert" : "status"}
       >
-        {window.status === "error" ? (
-          <>
-            <p>{window.error}</p>
-            <Button
-              type="button"
-              onClick={() => session.channels.ensure(channel.id)}
-            >
-              Retry messages
-            </Button>
-          </>
-        ) : (
-          "Loading messages…"
+        <p>{window.status === "error" ? window.error : "Loading messages…"}</p>
+        {(window.status === "error" || recovering) && (
+          <Button
+            ref={retry}
+            type="button"
+            loading={window.status !== "error"}
+            onClick={() => {
+              setRecovering(true);
+              session.channels.ensure(channel.id);
+            }}
+          >
+            Retry messages
+          </Button>
         )}
       </div>
     );

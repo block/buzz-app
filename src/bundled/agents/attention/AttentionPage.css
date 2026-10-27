@@ -237,15 +237,6 @@
   background: var(--surface-inset);
   font-family: var(--font-mono);
 }
-.attention-recipe,
-.attention-field {
-  display: grid;
-  gap: var(--space-2);
-  min-width: 0;
-}
-.attention-recipe {
-  gap: var(--space-3);
-}
 .attention-interest {
   display: grid;
   gap: var(--space-3);
@@ -308,12 +299,6 @@ details[open] > .attention-disclosure > svg {
     max-width: 100%;
     padding-inline-start: var(--space-6);
   }
-}
-
-.attention-field {
-  border: 0;
-  margin: 0;
-  padding: 0;
 }
 
 .attention-card[data-paused] .attention-head {

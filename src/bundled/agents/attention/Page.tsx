@@ -1,4 +1,7 @@
-import { attentionOf } from "../../../features/agents/attention";
+import {
+  attentionOf,
+  sourceCompleted,
+} from "../../../features/agents/attention";
 import { relayOrigin } from "../../../features/communities/destination";
 import { relayPartition } from "../../../features/relay/partition";
 import { avatarMedia } from "../../../shared/avatar-source";
@@ -15,7 +18,6 @@ import {
   CaretDownIcon,
   CaretRightIcon,
   TrashIcon,
-  PlusIcon,
 } from "../../../shared/design-system/icons";
 import * as React from "react";
 import {
@@ -28,7 +30,6 @@ import { Switch as SharedSwitch } from "../../../shared/design-system/ui/Switch"
 import { Select } from "../../../shared/design-system/ui/Select";
 import type { Context } from "../../../plugins/author";
 import type { Agent, Watch } from "./model";
-import { createRecipeForm } from "./recipes";
 import { InstructionsMarkdown } from "./InstructionsMarkdown";
 
 import "./AttentionPage.css";
@@ -95,7 +96,6 @@ export function createPage({
   navigation,
 }: Pick<Context, "agents" | "relay" | "navigation">) {
   const h = React.createElement;
-  const RecipeForm = createRecipeForm({ agents, relay });
   const none = () => () => {};
   const noChannels = { channels: [] as { id: string; name: string }[] };
   const emptyChannels = () => noChannels;
@@ -212,7 +212,7 @@ export function createPage({
     name(id: string): string;
     find(id: string): Channel | undefined;
     scope?: string | undefined;
-    returnFocus: React.RefObject<HTMLButtonElement | null>;
+    returnFocus: React.RefObject<HTMLElement | null>;
   }) {
     const row = React.useRef<HTMLLIElement>(null);
     React.useLayoutEffect(
@@ -225,14 +225,7 @@ export function createPage({
     const [open, setOpen] = React.useState(false);
     const action = useAction();
     const detailsId = React.useId();
-    const history = (
-      agent as Agent & {
-        attentionHistory?: Record<
-          string,
-          { lastWokeAt?: number; output?: string }
-        >;
-      }
-    ).attentionHistory?.[slug];
+    const history = agent.attentionHistory?.[slug];
     const woke = history?.lastWokeAt
       ? `Last woke ${Math.max(0, Math.floor((Date.now() / 1000 - history.lastWokeAt) / 60))}m ago`
       : undefined;
@@ -248,9 +241,7 @@ export function createPage({
       ("name" in watch && watch.name) ||
         title(watch.interest_id ?? slug.slice(6)),
     );
-    const completed =
-      watch.type === "source" &&
-      agent.sourceRuns?.[slug] === JSON.stringify(agent.attention[slug]);
+    const completed = sourceCompleted(agent.sourceRuns, agent.attention[slug]);
     const state = completed
       ? "Completed"
       : description.spent
@@ -583,7 +574,7 @@ export function createPage({
     slug: string;
     label: string;
     hasWatches: boolean;
-    returnFocus: React.RefObject<HTMLButtonElement | null>;
+    returnFocus: React.RefObject<HTMLElement | null>;
   }) {
     const trigger = React.useRef<HTMLButtonElement>(null);
     const action = useAction();
@@ -629,7 +620,7 @@ export function createPage({
     channels: readonly Channel[];
     scope?: string | undefined;
     picture?: string | undefined;
-    returnFocus: React.RefObject<HTMLButtonElement | null>;
+    returnFocus: React.RefObject<HTMLElement | null>;
   }) {
     const action = useAction();
     const find = (id: string) => channels.find((channel) => channel.id === id);
@@ -821,9 +812,7 @@ export function createPage({
     );
   }
   return function AttentionPage() {
-    const newWatch = React.useRef<HTMLButtonElement>(null);
-    const form = React.useRef<HTMLFormElement>(null);
-    const [recipeOpen, setRecipeOpen] = React.useState(false);
+    const page = React.useRef<HTMLElement>(null);
     const [adding, setAdding] = React.useState(false);
     const [selected, setSelected] = React.useState("");
     const [notice, setNotice] = React.useState("");
@@ -879,21 +868,12 @@ export function createPage({
         "data-buzz-ui": "",
         className: "attention-page",
         "aria-label": "Agent Attention",
+        ref: page,
+        tabIndex: -1,
       },
 
       h(PanelHeader, {
         title: h(PanelHeaderLabel, { title: "Agent Attention" }),
-        actions: h(IconButton, {
-          ref: newWatch,
-          size: "sm",
-          variant: "ghost",
-          icon: h(PlusIcon, { size: 16, "aria-hidden": true }),
-          "aria-label": "New watch",
-          title: "New watch",
-          onClick: () => setRecipeOpen(!recipeOpen),
-          disabled: !running.length,
-          "aria-expanded": recipeOpen,
-        }),
       }),
       h(
         "div",
@@ -923,7 +903,6 @@ export function createPage({
                 {...{
                   ...button,
                   type: "button",
-                  "aria-label": "Add agent",
                   "aria-expanded": adding,
                   onClick: () => setAdding(!adding),
                 }}
@@ -931,17 +910,6 @@ export function createPage({
                 {"Enable Attention on this device"}
               </Button>
             ),
-          recipeOpen &&
-            h(RecipeForm, {
-              running,
-              channels,
-              formRef: form,
-              close: () => {
-                if (form.current?.contains(document.activeElement))
-                  newWatch.current?.focus();
-                setRecipeOpen(false);
-              },
-            }),
           adding &&
             h(
               "form",
@@ -994,13 +962,13 @@ export function createPage({
             h(
               "p",
               { className: "text-body-sm text-secondary" },
-              "No watches yet. Create a watch, or enable Attention for an agent and ask it to watch something.",
+              "No watches yet. Ask an agent to watch something.",
             ),
           ...visible.map((agent) =>
             h(AgentPanel, {
               key: agent.key,
               agent: agent as Agent,
-              returnFocus: newWatch,
+              returnFocus: page,
               channels,
               scope: connection.scope,
               picture: avatarMedia(

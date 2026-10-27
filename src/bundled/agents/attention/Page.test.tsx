@@ -504,7 +504,9 @@ it("enables a chosen empty agent without creating subscriptions and reports fail
   } as unknown as Context;
   render(React.createElement(createPage(ctx)));
   expect(screen.queryByRole("region", { name: "Bo" })).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "Add agent" }));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Enable Attention on this device" }),
+  );
   expect(
     (
       screen.getByRole("button", {
@@ -743,9 +745,7 @@ it.each([false, true])(
     expect(screen.queryByText("On")).toBeNull();
     expect(screen.queryByText("Shared instructions")).toBeNull();
     expect(screen.queryByText("Show raw")).toBeNull();
-    expect(screen.getAllByRole("button", { name: "New watch" })).toHaveLength(
-      1,
-    );
+    expect(screen.queryByRole("button", { name: "New watch" })).toBeNull();
     const disclosure = screen.getByRole("button", {
       name: "Details for Release checks",
     });
@@ -776,7 +776,7 @@ it.each([false, true])(
   },
 );
 
-it("keeps overview, creation choices and destination navigation in the selected community", async () => {
+it("keeps overview and destination navigation in the selected community", async () => {
   const watch = {
     type: "source",
     interest_id: "task",
@@ -863,13 +863,6 @@ it("keeps overview, creation choices and destination navigation in the selected 
       channelId: channel,
     }),
   );
-  fireEvent.click(screen.getByRole("button", { name: "New watch" }));
-  const user = userEvent.setup();
-  await user.click(screen.getByRole("combobox", { name: "Agent" }));
-  expect(await screen.findByRole("option", { name: "Ada" })).toBeTruthy();
-  expect(screen.queryByRole("option", { name: "Bo" })).toBeNull();
-  expect(screen.queryByRole("option", { name: "Cy" })).toBeNull();
-  await user.keyboard("{Escape}");
   await act(async () => {
     connection = {
       ...connection,

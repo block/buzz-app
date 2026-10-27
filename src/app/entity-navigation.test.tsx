@@ -240,7 +240,7 @@ it("lists active primary pages in their sidebar and header placements", async ()
   expect(
     await screen.findByRole("region", { name: "Agent Attention" }),
   ).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "New watch" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "New watch" })).toBeNull();
 
   // The fixture page is active and searchable but never a sidebar row.
   expect(current.pages.snapshot().map((page) => page.key)).toContain(

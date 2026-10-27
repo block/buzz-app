@@ -104,6 +104,14 @@ function row(id: string, replyParentId?: string): ChannelMessage {
     replyCount: 0,
   };
 }
+/** The top-level branch panel a displayed reply sits in. */
+function branchOf(text: string) {
+  const branch = screen
+    .getByText(text)
+    .closest('[data-depth="0"]') as HTMLElement | null;
+  if (!branch) throw new Error(`${text} is not in a branch`);
+  return branch;
+}
 function setup(messageId = "root") {
   let snapshot: ThreadSnapshot = {
     root: row("root"),
@@ -270,6 +278,37 @@ it("targets a child, cancels on repeated Reply, resets after send and reveals th
   expect(composer).not.toHaveAttribute("data-parent");
   expect(HTMLElement.prototype.scrollIntoView).toHaveBeenCalled();
 });
+it("continues a branch when replying to a nested reply", () => {
+  const h = setup();
+  fireEvent.click(screen.getByRole("button", { name: "View 2 replies" }));
+  fireEvent.click(screen.getByRole("button", { name: "Reply to child" }));
+  expect(screen.getByLabelText("Composer")).toHaveAttribute(
+    "data-parent",
+    "child",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Send fixture reply" }));
+  h.update([
+    row("parent", "root"),
+    row("child", "parent"),
+    row("grandchild", "child"),
+    row("new", "child"),
+  ]);
+  const branch = branchOf("new");
+  expect(branch).toBe(branchOf("child"));
+  for (const id of ["child", "grandchild", "new"])
+    expect(screen.getByText(id).closest("[data-depth]")).toHaveAttribute(
+      "data-depth",
+      "1",
+    );
+  expect(
+    [...branch.querySelectorAll<HTMLElement>("[data-message-id]")].map(
+      (row) => row.dataset.messageId,
+    ),
+  ).toEqual(["parent", "child", "grandchild", "new"]);
+  expect(
+    screen.queryByRole("button", { name: /^View \d+ repl/ }),
+  ).not.toBeInTheDocument();
+});
 it("keeps a reply target chosen while a background send is still publishing", () => {
   setup();
   fireEvent.click(screen.getByRole("button", { name: "View 2 replies" }));
@@ -294,6 +333,18 @@ it("reveals all available ancestors for a selected descendant, including late hi
   expect(
     screen.queryByText("Earlier reply unavailable in loaded history."),
   ).not.toBeInTheDocument();
+  // A deep reply whose chain arrives late still lands in the top-level branch.
+  h.update([
+    row("missing", "root"),
+    row("grandchild", "missing"),
+    row("deeper", "grandchild"),
+  ]);
+  expect(screen.getByText("deeper")).toBeVisible();
+  expect(branchOf("deeper")).toBe(branchOf("grandchild"));
+  expect(screen.getByText("missing").closest("[data-depth]")).toHaveAttribute(
+    "data-depth",
+    "0",
+  );
 });
 it("does not silently retarget a deleted parent to the root", () => {
   const h = setup();

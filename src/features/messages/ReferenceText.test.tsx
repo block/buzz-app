@@ -87,7 +87,13 @@ it("lets the joined list own a name the directory also carries", () => {
     "buzz://channel/joined",
   );
   expect(screen.queryByRole("link", { name: "#retired" })).toBeNull();
-  // Leaving the channel hands the name to the directory's open channel.
+  // Archiving the joined channel frees the name for the directory's open one.
+  act(() => h.rename([{ id: "joined", name: "general", archived: true }]));
+  expect(screen.getByRole("link", { name: "#general" })).toHaveAttribute(
+    "href",
+    "buzz://channel/open-general",
+  );
+  // Leaving it does too.
   act(() => h.rename([]));
   expect(screen.getByRole("link", { name: "#general" })).toHaveAttribute(
     "href",

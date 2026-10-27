@@ -1788,12 +1788,20 @@ export function createChannelStore(
     ) {
       const controller = new AbortController();
       controllers.add(controller);
+      // A refresh keeps naming the prior read's channels until it completes;
+      // mounted `#name` links do not blink off while the pages are in flight.
+      const prior =
+        publicDirectory?.generation === generation
+          ? publicDirectory
+          : undefined;
       const entry: NonNullable<typeof publicDirectory> = {
         generation,
         read: readPublicDirectory(transport, generation, controller.signal),
+        ...(prior?.open ? { open: prior.open } : {}),
       };
       publicDirectory = entry;
-      // A failed read is not reused; the next keystroke starts again.
+      // A failed read is not reused: the expired prior entry comes back, so
+      // its names survive and the next keystroke starts again.
       void entry.read.then(
         (directory) => {
           controllers.delete(controller);
@@ -1805,7 +1813,7 @@ export function createChannelStore(
         },
         () => {
           controllers.delete(controller);
-          if (publicDirectory === entry) publicDirectory = undefined;
+          if (publicDirectory === entry) publicDirectory = prior;
         },
       );
     }

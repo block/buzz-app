@@ -345,8 +345,9 @@ failures show a retry.
 The search waits for a ready channel list.
 
 A finished read also names every open channel for `#name` prose in messages
-and drafts, through `channels.openDirectory()`, until a later read or a cache
-clear replaces it. Rendering never starts the read: a name the joined list
+and drafts, through `channels.openDirectory()`, until a later read completes
+or the cache is cleared; a refresh that is still reading, or that fails, keeps
+the prior names. Rendering never starts the read: a name the joined list
 lacks stays prose on a cold directory and links once a search has warmed it.
 The joined list owns a name both carry. Opening such a link resolves the
 channel through `refer`, as any channel-only link does.

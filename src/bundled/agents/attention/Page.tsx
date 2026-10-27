@@ -903,6 +903,17 @@ export function createPage({
             "Interests and watches in this community wake your agents.",
           ),
           <GitHubPolicyPanel host={host} />,
+          snapshot.classifier !== "available" &&
+            running.some((agent) =>
+              Object.values(agent.attention).some(
+                ({ value }) => value.type === "event" && value.classifier,
+              ),
+            ) &&
+            h(
+              "p",
+              { className: "text-body-sm text-secondary" },
+              "Message classifiers cannot run on this device, so every matching event passes.",
+            ),
           !visible.length &&
             running.some((agent) => !agent.attentionEnabled) && (
               <Button

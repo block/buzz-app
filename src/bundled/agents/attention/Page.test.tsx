@@ -618,7 +618,8 @@ it("keeps unreadable legacy watches visible and removes only the selected object
 });
 
 it("scans subscription types and each subscription destination while keeping raw configuration collapsed", () => {
-  const snapshot = {
+  let snapshot = {
+    classifier: "unavailable",
     status: "ready",
     running: [
       {
@@ -660,6 +661,9 @@ it("scans subscription types and each subscription destination while keeping raw
             value: {
               type: "event",
               name: "Discussion",
+              classifier: {
+                questions: { ready: { question: "Is the release ready?" } },
+              },
               interest_id: "release",
               enabled: true,
               channels: ["listen"],
@@ -688,9 +692,16 @@ it("scans subscription types and each subscription destination while keeping raw
       { id: "listen", name: "buzz-github-prs", channelType: "stream" },
     ],
   };
+  let changed = () => {};
   const ctx = {
     react: React,
-    agents: { snapshot: () => snapshot, subscribe: () => () => {} },
+    agents: {
+      snapshot: () => snapshot,
+      subscribe: (listener: () => void) => {
+        changed = listener;
+        return () => {};
+      },
+    },
     relay: { snapshot: () => connection, subscribe: () => () => {} },
   } as unknown as Context;
   render(React.createElement(createPage(ctx)));
@@ -730,6 +741,12 @@ it("scans subscription types and each subscription destination while keeping raw
     "https://github.com/block/buzz-app/pull/1578",
   );
   expect(screen.queryByText("Show raw")).toBeNull();
+  expect(screen.getByText(/Message classifiers cannot run/)).toBeTruthy();
+  act(() => {
+    snapshot = { ...snapshot, classifier: "available" };
+    changed();
+  });
+  expect(screen.queryByText(/Message classifiers cannot run/)).toBeNull();
 });
 
 it("keeps overview, creation choices and destination navigation in the selected community", async () => {

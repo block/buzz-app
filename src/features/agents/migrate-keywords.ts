@@ -1,9 +1,9 @@
 // TEMPORARY: remove this module and its startup call (service.ts) after
 // 2026-11-30, once the development users have upgraded. Event watches had a
 // `keywords` selector until it was removed; the relay attention spec never had
-// one. Startup turns each such watch off and gives its Interest a one-shot
+// one. Startup turns each such watch off and gives its Interest a notice
 // timer that tells the agent why, so the agent can rework the watch.
-import { MIN_INTERVAL_SECS } from "./attention-objects";
+import { AGENT_BYTES } from "./attention-objects";
 import { OBJECT_LIMIT, validateObject, watchSlug } from "./attention";
 import type { AgentStore } from "./state";
 import { RECORD_PREFIX, STORAGE_KEY } from "./store";
@@ -11,8 +11,20 @@ import { RECORD_PREFIX, STORAGE_KEY } from "./store";
 const isObject = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === "object" && !Array.isArray(value);
 
-const notice = (id: string, name: unknown, keywords: unknown) =>
-  `Buzz no longer supports the keywords selector on event watches. Your watch ${JSON.stringify(id)}${typeof name === "string" ? ` (${name})` : ""} matched only events whose content contained any of ${JSON.stringify(keywords)}. Buzz removed the keywords and turned the watch off. If you turn it on as it is, it wakes you for every event its channels and kinds match. Show the watch, then either narrow it with a classifier question or with authors, exclude_authors, tags or is_reply, and enable it; or remove it if the Interest no longer needs it.`;
+/** The notice first runs a minute after startup. A failed turn spends an
+ * occurrence, so it repeats hourly until the agent removes it or it runs out. */
+const FIRST_SECS = 60;
+const REPEAT_SECS = 3_600;
+const OCCURRENCES = 3;
+
+const notice = (
+  id: string,
+  name: unknown,
+  keywords: unknown,
+  wasOn: boolean,
+  fix: string,
+) =>
+  `Buzz no longer supports the keywords selector on event watches. Your watch ${JSON.stringify(id)}${typeof name === "string" ? ` (${name})` : ""} matched only events whose content contained any of ${JSON.stringify(keywords)}. ${wasOn ? "Buzz removed the keywords and turned the watch off." : "Buzz removed the keywords. The watch was already off: someone paused it before this change, so leave it off unless your instructions call for it to run."} If you turn it on as it is, it wakes you for every event its remaining selectors match. To keep it, first narrow it with a classifier question or with authors, exclude_authors, tags or is_reply${wasOn ? ", then enable it" : ""}. If the Interest no longer needs it, remove it. Then remove this notice with watch_remove id ${JSON.stringify(fix.slice("watch/".length))}; until you do, it repeats up to ${OCCURRENCES} times, an hour apart.`;
 
 /** A free timer slug for the watch `id`. */
 function timerSlug(attention: Record<string, unknown>, id: string) {
@@ -26,7 +38,7 @@ function timerSlug(attention: Record<string, unknown>, id: string) {
 
 /** Converts the record's keyword watches in place; true when any changed. A
  * watch stays as it is (skipped, for the owner to repair) when its timer does
- * not fit the record's object limit. */
+ * not fit the record's object or byte limit. */
 function upgradeRecord(record: unknown, now: number) {
   const attention = isObject(record) ? record.attention : undefined;
   if (!isObject(record) || !isObject(attention)) return false;
@@ -47,14 +59,14 @@ function upgradeRecord(record: unknown, now: number) {
     const timer = {
       type: "timer",
       interest_id: watch.interest_id,
-      prompt: notice(id, watch.name, keywords),
+      prompt: notice(id, watch.name, keywords, value.enabled !== false, fix),
       enabled: true,
-      interval_secs: MIN_INTERVAL_SECS,
+      interval_secs: REPEAT_SECS,
       armed_at: now,
-      max_occurrences: 1,
+      max_occurrences: OCCURRENCES,
       expires_at: null,
-      ...(typeof watch.channel === "string" ? { channel: watch.channel } : {}),
-      ...(typeof watch.root === "string" ? { root: watch.root } : {}),
+      // No delivery address: the watch's own channel or thread may no longer
+      // be deliverable, and the repair is configuration, not that conversation.
     };
     const watches = Object.values(attention).filter(
       (other) =>
@@ -62,22 +74,31 @@ function upgradeRecord(record: unknown, now: number) {
         isObject(other.value) &&
         other.value.type !== "interest",
     ).length;
+    const after = {
+      ...attention,
+      [slug]: { ...object, value: watch, modifiedAt: now },
+      [fix]: { slug: fix, value: timer, modifiedAt: now },
+    };
+    // About what the writer counts: past it, every edit but a removal fails.
+    const bytes = new TextEncoder().encode(JSON.stringify([after, {}])).length;
     const problem =
       validateObject(slug, watch) ??
       validateObject(fix, timer) ??
       (watches >= OBJECT_LIMIT
         ? `the notice timer would pass the limit of ${OBJECT_LIMIT} watches and timers`
-        : undefined);
+        : bytes > AGENT_BYTES
+          ? `the notice timer would pass the limit of ${AGENT_BYTES / 1024} KB`
+          : undefined);
     if (problem) {
       console.error(`Cannot remove the keywords of ${slug}: ${problem}`);
       continue;
     }
-    attention[slug] = { ...object, value: watch, modifiedAt: now };
-    attention[fix] = { slug: fix, value: timer, modifiedAt: now };
-    // Saved state, so a timer first seen after its interval still runs once.
+    Object.assign(attention, after);
+    // Saved state: the first run comes soon, not one interval later, and a
+    // timer first seen long after (Attention was off) still runs.
     record.timers = {
       ...(isObject(record.timers) ? record.timers : {}),
-      [fix]: { armedAt: now, nextDue: now + MIN_INTERVAL_SECS, used: 0 },
+      [fix]: { armedAt: now, nextDue: now + FIRST_SECS, used: 0 },
     };
     changed = true;
   }

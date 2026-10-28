@@ -59,25 +59,50 @@ describe("migrateWatchKeywords", () => {
       type: "timer",
       interest_id: "triage",
       enabled: true,
-      interval_secs: 60,
+      interval_secs: 3_600,
       armed_at: NOW,
-      max_occurrences: 1,
+      max_occurrences: 3,
       expires_at: null,
-      channel,
     });
-    expect(timer?.type === "timer" && timer.prompt).toContain(
-      '"builds" (Build failures) matched only events whose content contained any of ["failed","[release]"]',
+    // The watch's own address may no longer be deliverable.
+    expect(timer).not.toHaveProperty("channel");
+    const prompt = timer?.type === "timer" ? timer.prompt : "";
+    expect(prompt).toContain(
+      '"builds" (Build failures) matched only events whose content contained any of ["failed","[release]"]. Buzz removed the keywords and turned the watch off.',
     );
-    // Seen first long after its interval (Attention was off), it still runs once.
-    const state = timerState(
-      timer as never,
-      read?.timers?.["watch/fix-builds"],
-      NOW + 86_400,
-    );
-    expect(state.nextDue).toBeLessThanOrEqual(NOW + 86_400);
-    expect(timerSpent(timer as never, state, NOW + 86_400)).toBe(false);
+    expect(prompt).toContain('watch_remove id "fix-builds"');
+    // It first runs a minute after startup, not one interval later.
+    const saved = read?.timers?.["watch/fix-builds"];
+    expect(timerState(timer as never, saved, NOW)).toMatchObject({
+      nextDue: NOW + 60,
+      used: 0,
+    });
+    // Seen first long after (Attention was off), it still runs.
+    const late = timerState(timer as never, saved, NOW + 86_400);
+    expect(late.nextDue).toBeLessThanOrEqual(NOW + 86_400);
+    expect(timerSpent(timer as never, late, NOW + 86_400)).toBe(false);
     await migrateWatchKeywords(storage, NOW + 5);
     expect(storage.getItem(`${RECORD_PREFIX}${agent}`)).toBe(once);
+  });
+  it("keeps a paused watch off and says it was paused before", async () => {
+    const storage = seed({
+      "watch/builds": stored("watch/builds", {
+        ...watch,
+        enabled: false,
+        keywords: ["x"],
+      }),
+    });
+    await migrateWatchKeywords(storage, NOW);
+    const read = readRecords(storage)[agent];
+    expect(read?.attention["watch/builds"]?.value).toEqual({
+      ...watch,
+      enabled: false,
+    });
+    const timer = read?.attention["watch/fix-builds"]?.value;
+    const prompt = timer?.type === "timer" ? timer.prompt : "";
+    expect(prompt).toContain("The watch was already off");
+    expect(prompt).not.toContain("turned the watch off");
+    expect(prompt).not.toContain("then enable it");
   });
   it("picks a free timer id", async () => {
     const long = "w".repeat(62);
@@ -113,6 +138,28 @@ describe("migrateWatchKeywords", () => {
     ).toMatchObject({ problem: "Unknown field: keywords" });
     expect(console.error).toHaveBeenCalledWith(
       expect.stringMatching(/watch\/builds: the notice timer would pass/),
+    );
+  });
+  it("leaves the watch for the owner when its timer passes the byte limit", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const attention: Record<string, unknown> = {
+      "watch/builds": stored("watch/builds", { ...watch, keywords: ["x"] }),
+    };
+    // Just under the limit before the notice: 17 Interests of 15 KB each.
+    for (let i = 0; i < 17; i++)
+      attention[`interest/i${i}`] = stored(`interest/i${i}`, {
+        type: "interest",
+        instructions: "x".repeat(15_300),
+      });
+    const storage = seed(attention);
+    const before = storage.getItem(`${RECORD_PREFIX}${agent}`);
+    expect(before?.length).toBeLessThan(256 * 1024);
+    await migrateWatchKeywords(storage, NOW);
+    expect(storage.getItem(`${RECORD_PREFIX}${agent}`)).toBe(before);
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /watch\/builds: the notice timer would pass the limit of 256 KB/,
+      ),
     );
   });
   it("converts keyword watches in the legacy shared record", async () => {

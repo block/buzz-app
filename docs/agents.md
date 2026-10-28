@@ -483,11 +483,17 @@ send entry. The next draft keeps only agents that the sent message notified. Thi
 changes during enrollment, dispatch or retry are intentionally not covered. The
 existing relay membership/send/retry validator is unchanged.
 
-After an accepted send, the next draft starts with the exact selected agent-name
-mentions, deduplicated by key. Agent classification uses already-cached profile hints
-or the shared agent-choice projection (library and local agents), not a new lookup or
-permission grant. Human recipients and
-plain typed names are not carried forward. The prefill is an ordinary scoped draft:
+After an accepted send, the composer keeps the exact selected agent-name mentions,
+deduplicated by key, as its next prefill. That prefill is not a draft: an empty
+composer derives it from the agents your latest message in that conversation
+notified, so a channel, the thread a message started, a DM or a Solo chat shows
+the same prefill on every device, and nothing is saved until you type there.
+Sending without the agent ends it. Removing the prefilled mention lasts until the
+composer is shown again or your latest message there changes; a draft you have
+typed is left as written.
+Agent classification uses already-cached profile hints or the shared agent-choice
+projection (library and local agents), not a new lookup or permission grant. Human recipients and
+plain typed names are not carried forward. Once typed, the draft is an ordinary scoped draft:
 channel/thread/account isolation, edits, removal, undo and delivery checks still apply.
 **Settings → Buzz → Agent setup → Agent behavior → Remember mentioned agents** defaults on and is saved on this
 device. Turning it off stops future prefills without changing the current draft;
@@ -1063,3 +1069,5 @@ Subscription runtime history stays on this device, outside configuration: the la
 An Attention source run receives `spawn(processId, { args, cwd, env, onStdout, onStderr })`. Buzz binds it to the watch's owning agent, destination and lifetime. There is no public agent connection or caller-selected agent identity. The process must be declared in the calling plugin's `host.processes`, and the plugin must declare `host.mcp` (and `host.files` when its tools read local paths). The host retains process permission checks and signing keys. The bundled command helper initializes one MCP session, adds an agent-scoped `buzz` to PATH and passes that session to the command and its children. `buzz tools` lists tools; `buzz <tool> --field value` and `buzz call <tool> '<JSON object>'` invoke them. There is no owner-identity fallback.
 
 Source return or failure, cancellation, Attention off, agent stop, plugin unload, command exit or closing the MCP transport revokes command access. Successful queued output remains valid after the source returns. Killing a command uses the existing host process group/job cleanup for descendants. OS access is the same as the app user's. Buzz owns batching, queue retries and final output draining for its built-in command sources. Other source plugins retain their own producer policies. See the [executable scheduled-source example](../tests/fixtures/agent-command/README.md), including the scope of its fixture-based custody evidence.
+
+Native agent hook callbacks are described in [Agent hook callbacks](agent-tool-hooks.md).

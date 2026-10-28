@@ -5,6 +5,8 @@ import type {
   ArtifactSyncSink,
 } from "./artifact-sync-filter.ts";
 import {
+  LIVE_RECOVERY_INTERVAL,
+  liveSlowRetryDelay,
   liveChannels,
   livePresenceAuthors,
   liveJoined,
@@ -24,7 +26,8 @@ export function subscribeBrokerTraffic(
 ): LiveSubscription {
   let closed = false,
     generation = 0,
-    attempts = 0;
+    attempts = 0,
+    refusals = 0;
   let channels: string[] = [];
   let joined: string[] = [];
   let sentChannels: string[] = [];
@@ -174,6 +177,7 @@ export function subscribeBrokerTraffic(
     const startingObserver = observer;
     const startingPresence = JSON.stringify(presenceAuthors);
     void (async () => {
+      let opened: number | undefined;
       try {
         const response = await fetch(`${endpoint}/stream`, {
           method: "POST",
@@ -196,10 +200,12 @@ export function subscribeBrokerTraffic(
           !response.headers.get("content-type")?.startsWith("text/event-stream")
         ) {
           if ([400, 401, 403, 413].includes(response.status)) {
+            // A broker restart drops registrations, so even a 4xx can clear.
             state(
               "error",
               `Live broker rejected subscription (${response.status})`,
             );
+            retryTimer = setTimeout(start, liveSlowRetryDelay(++refusals));
             return;
           }
           throw new Error(`Live broker unavailable (${response.status})`);
@@ -208,6 +214,7 @@ export function subscribeBrokerTraffic(
         if (identity !== null && !/^[0-9a-f]{32}$/.test(identity))
           throw new Error("Invalid live broker control identity");
         streamId = identity ?? undefined;
+        opened = Date.now();
         if (startingInterests !== interestRevision) sendInterests();
         if (startingPriority !== JSON.stringify(priority)) sendPriority();
         if (startingObserver !== observer) sendObserver();
@@ -353,6 +360,13 @@ export function subscribeBrokerTraffic(
       } catch (error) {
         if (closed || current !== generation) return;
         loseSyncs("disconnected: live broker interrupted");
+        // A stream up for a minute proves the broker healthy again. Its first
+        // frame does not: every accepted stream sends its state at once.
+        if (
+          opened !== undefined &&
+          Date.now() - opened >= LIVE_RECOVERY_INTERVAL
+        )
+          attempts = refusals = 0;
         state(
           "retrying",
           error instanceof Error ? error.message : "Live broker interrupted",

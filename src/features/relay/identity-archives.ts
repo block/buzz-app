@@ -1,3 +1,4 @@
+import { retryRead } from "./read-retry";
 import { getEventHash } from "nostr-tools";
 import { authTagOwner, withinTimeBounds } from "../agents/owner-attestation";
 import { byteSize } from "./budget";
@@ -83,9 +84,14 @@ export function createIdentityArchives(
     void (async () => {
       try {
         if (closed || owned.signal.aborted) return;
-        const events = await reader.read(
-          [{ kinds: [13535], authors: [authority], limit: 1 }],
-          { signal: owned.signal, priority: "background", fresh: true },
+        const events = await retryRead(
+          (signal) =>
+            reader.read([{ kinds: [13535], authors: [authority], limit: 1 }], {
+              signal,
+              priority: "background",
+              fresh: true,
+            }),
+          owned.signal,
         );
         if (closed || owned.signal.aborted) return;
         // The relay publishes its first snapshot with its first archive, so

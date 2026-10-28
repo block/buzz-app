@@ -1207,13 +1207,17 @@ Replies show a day divider only when their day differs from the previous row.
 
 Ordinary replies remain flat beneath the root. Replies to those replies form nested
 lists, with ascending timestamp/event-ID order among siblings. Nested branches start
-closed and expand one level at a time; once opened, they stay open for the lifetime
-of the thread view, including through child disappearance and rearrival. Expanding
-moves focus to the first revealed reply; deleting a focused reply returns focus to
+closed and expand one level deep; once opened, they stay open for the lifetime
+of the thread view, including through child disappearance and rearrival, until the
+reader collapses them from their thread line. Expanding moves focus to the first
+revealed reply and collapsing returns it to the branch's summary; deleting a focused reply returns focus to
 its available parent or thread history. Labeled expansion controls remain available
 when visual indentation is capped in narrow panels. Exact links reveal available
 ancestors; a reply whose parent is outside loaded history remains visible with a
 notice.
+Agents reply beneath the root with `send`. Their core `reply_in_subthread` tool
+replies under a named message instead, recording that message as the parent exactly
+as a person's Reply does.
 Retry appears only after a failed read; there is no routine Refresh control. Names
 are optional shared background enrichment. The panel describes **replies loaded**,
 not visible rows or complete history.
@@ -1245,19 +1249,20 @@ saves as usual and the text still renders as code once sent.
 Typing the space after a list or quote marker that starts a line (`- `, `* `, `+ ` or `• `, a number
 with a dot or parenthesis such as `1. ` or `3) `, or `> `) turns that line into a bullet, a
 numbered item starting at that number, or a quoted paragraph at once, the same block the
-formatting toolbar creates, and one undo restores the typed marker and its space. The typed
+formatting toolbar creates. Mentions, emoji, links and formatting later on the line move into
+the new block, and one undo restores the typed marker and its space. The typed
 `• ` alias sends as Markdown `- `. The channel placeholder appears only in an empty plain
 paragraph, not beside a list marker. Enter
 continues a list and exits an empty item; use the Send button to send while the caret is
 in a list (or Save changes when editing). Enter in ordinary prose still sends or saves. Inside a
 quote the markers nest: `- ` opens a list and `> ` a second quote. Inside a list item only a
 marker of the item's own list kind, typed as the only text of an item after the first,
-converts, nesting that item as Tab does. A marker typed after prose on the same line, inside
-a code block or inside pasted fenced text stays literal and renders as prose or code once
-sent. A marker on a line holding a mention, emoji or link, a quote marker or a marker of the
-other list kind typed inside a list item, and any marker typed in a list's first item or
-beside an item's prose also stay literal text in the composer but still render once sent: the
-timeline shows the list or quote, nested inside the item, where the composer shows the marker.
+converts, nesting that item as Tab does. A marker typed after prose on the same line, as
+inline code or link text, inside a code block or inside pasted fenced text stays literal and
+renders as prose or code once sent. A quote marker or a marker of the other list kind typed
+inside a list item, and any marker typed in a list's first item or beside an item's prose also
+stay literal text in the composer but still render once sent: the timeline shows the list or
+quote, nested inside the item, where the composer shows the marker.
 Two lists of one kind typed one after the other, or separated only by empty lines, send with
 alternating markers (`-` then `*`, `1.` then `1)`) so they stay separate lists once sent.
 Typing an inline span (`**bold**` or `__bold__`, `_italic_` or `*italic*`, `~~strike~~`,

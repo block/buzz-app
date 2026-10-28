@@ -1,4 +1,5 @@
 /** Owner-view NIP-AE snapshot from a purpose-bound key-owning host. */
+import { retryRead } from "../relay/read-retry.ts";
 /** Budgets of the development broker's single memory query. */
 export const MEMORY_EVENT_LIMIT = 256;
 export const MEMORY_WIRE_BYTES = 2 * 1024 * 1024;
@@ -171,7 +172,9 @@ export function createAgentMemories(
             owned.signal,
             AbortSignal.timeout(10000),
           ]);
-          const listing = memoryListing(await source(agent, signal));
+          const listing = memoryListing(
+            await retryRead((signal) => source(agent, signal), signal),
+          );
           signal.throwIfAborted();
           if (!owned.signal.aborted)
             publish(

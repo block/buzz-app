@@ -102,7 +102,8 @@ export function useTeamMentions(
         roster,
         session.agentChoices.snapshot().identities,
       );
-    const current = candidates();
+    // Only shown team rows read eligibility; a closed chooser builds none.
+    const current = open && rows?.length ? candidates() : [];
     const eligible = new Map(current.map((c) => [c.recipient.pubkey, c]));
     const choices = (open ? (rows ?? []) : []).map(
       ({ value, eventId, members }) => {

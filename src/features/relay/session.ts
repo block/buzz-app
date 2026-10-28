@@ -251,6 +251,7 @@ export function createRelaySession(
         )
       : undefined;
   const rawLocal = () => writes?.local.snapshot() ?? [];
+  let retainedChannelEvents: () => readonly RelayEvent[] = () => [];
   let retainedChannelEvent: (id: string) => RelayEvent | undefined = () =>
     undefined;
   function retainedThreadEvent(id: string) {
@@ -259,6 +260,11 @@ export function createRelaySession(
       const event = thread.event(id);
       if (event) return event;
     }
+  }
+  function retainedThreadEvents() {
+    return [...threads].flatMap((thread) =>
+      canAccess(thread.channelId) ? thread.events() : [],
+    );
   }
   function retainedEvent(id: string) {
     return retainedThreadEvent(id) ?? retainedChannelEvent(id);
@@ -791,6 +797,7 @@ export function createRelaySession(
   );
   canAccess = channels.canAccess;
   retainedChannelEvent = channels.retainedEvent;
+  retainedChannelEvents = channels.retainedEvents;
   const repositories = repoDestinations(async (filters, signal) => {
     const bound = AbortSignal.any([signal, lifetime.signal]);
     bound.throwIfAborted();
@@ -2064,6 +2071,8 @@ export function createRelaySession(
           [
             ...local().map((item) => item.event),
             ...recent.entries().map(([, item]) => item.event),
+            ...retainedThreadEvents(),
+            ...retainedChannelEvents(),
           ]
             .filter((event) =>
               event.tags.some(

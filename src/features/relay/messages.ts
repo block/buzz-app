@@ -97,6 +97,28 @@ export function createMessages(
         ...(effort === undefined ? [] : [[EFFORT_TAG, key, effort]]),
       ];
     });
+  /** The author's other copies of a message: its source reply and every
+   * sent-to-channel copy of it, deduplicated, never the message itself. */
+  const linkedCopies = (message: EventData, channelId: string) => {
+    if (!ownedMessage(message) || message.kind !== 9) return [];
+    const sourceId = message.tags.find(
+      ([name, value]) => name === "buzz:copy-of" && value,
+    )?.[1];
+    const root = sourceId ? find(sourceId) : message;
+    const candidates = [
+      ...(root ? [root] : []),
+      ...copiesOf(sourceId ?? message.id),
+    ];
+    return [
+      ...new Map(candidates.map((event) => [event.id, event])).values(),
+    ].filter(
+      (other) =>
+        other.id !== message.id &&
+        other.kind === 9 &&
+        ownedMessage(other) &&
+        other.tags.some(([name, value]) => name === "h" && value === channelId),
+    );
+  };
   const edit = (
     messageId: string,
     content: string,
@@ -150,27 +172,11 @@ export function createMessages(
     const id = sendEdit(messageId);
     // A sent-to-channel copy and its thread reply are one message to the author:
     // mirror the edit onto the counterpart. Best effort; the primary edit stands.
-    if (ownedMessage(original)) {
-      const sourceId = original.tags.find(
-        ([name, value]) => name === "buzz:copy-of" && value,
-      )?.[1];
-      const counterparts = sourceId ? [find(sourceId)] : copiesOf(messageId);
-      for (const other of counterparts) {
-        if (
-          !other ||
-          other.kind !== 9 ||
-          other.id === messageId ||
-          !ownedMessage(other) ||
-          !other.tags.some(
-            ([name, value]) => name === "h" && value === channelId,
-          )
-        )
-          continue;
-        try {
-          sendEdit(other.id);
-        } catch {
-          // Counterpart unavailable; leave it as-is.
-        }
+    for (const other of linkedCopies(original, channelId)) {
+      try {
+        sendEdit(other.id);
+      } catch {
+        // Counterpart unavailable; leave it as-is.
       }
     }
     return id;
@@ -210,13 +216,21 @@ export function createMessages(
     const channelId = first ? channel(first) : undefined;
     if (!channelId || originals.some((event) => channel(event) !== channelId))
       throw new Error("Removal must belong to one loaded conversation");
+    // Deleting a thread reply or its sent-to-channel copy removes the author's
+    // other linked copies too, so none lingers as an orphan.
+    const linked = originals
+      .flatMap((event) => linkedCopies(event, channelId))
+      .filter((event) => !ids.includes(event.id));
+    const all = [...ids, ...new Set(linked.map((event) => event.id))];
+    const removed = all.length <= 100 ? all : ids;
+    const targets = [...originals, ...(all.length <= 100 ? linked : [])];
     return writer(5, channelId).send({
       kind: 5,
       content: "",
       tags: [
         ["h", channelId],
-        ...ids.map((id) => ["e", id]),
-        ...[...new Set(originals.map((event) => event.kind))].map((kind) => [
+        ...removed.map((id) => ["e", id]),
+        ...[...new Set(targets.map((event) => event.kind))].map((kind) => [
           "k",
           String(kind),
         ]),

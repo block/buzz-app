@@ -17,7 +17,7 @@ const reply = message(author, "channel", "Hello :wave:", 2, [
 ]);
 function setup(events: EventData[] = [root, reply], allowed = true) {
   const writer = {
-    kinds: [9, 40003],
+    kinds: [9, 5, 40003],
     sign: vi.fn(async (event) => signed(author, event)),
     publish: vi.fn(async () => {}),
   };
@@ -298,4 +298,75 @@ it("mirrors an edit between a thread reply and its channel copy", async () => {
   linked.edit(reply.id, "Changed again", reply.id);
   expect(targets(next)).toEqual([copy.id, reply.id].sort());
   void writer;
+});
+
+function linkedSetup() {
+  const { messages: base, row, outbox } = setup();
+  const copies: EventData[] = [];
+  const events: EventData[] = [root, reply];
+  const messages = createMessages(
+    outbox,
+    author.pubkey,
+    (id) => events.find((event) => event.id === id),
+    () => [],
+    () => {},
+    () => true,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    (id) =>
+      events.filter((event) =>
+        event.tags.some(([n, v]) => n === "buzz:copy-of" && v === id),
+      ),
+  );
+  void base;
+  const send = () => {
+    const before = outbox.snapshot().length;
+    messages.sendToChannel(row);
+    const event = outbox.snapshot()[before]?.event;
+    assert.exists(event);
+    // Distinct ids: nudge created_at so two sends differ.
+    events.push(event);
+    copies.push(event);
+    return event;
+  };
+  const targets = (before: number, kind: number) =>
+    outbox
+      .snapshot()
+      .slice(before)
+      .map((item) => item.event)
+      .filter((event) => event.kind === kind)
+      .flatMap((event) =>
+        event.tags.filter(([n]) => n === "e").map(([, id]) => id),
+      )
+      .sort();
+  return { messages, outbox, send, targets, copies };
+}
+it("editing one of two copies also updates the reply and the sibling copy", async () => {
+  const { messages, outbox, send, targets, copies } = linkedSetup();
+  await outbox.ready();
+  send();
+  send();
+  const [a, b] = copies;
+  assert.exists(a);
+  assert.exists(b);
+  const before = outbox.snapshot().length;
+  messages.edit(a.id, "Changed", a.id);
+  expect(targets(before, 40003)).toEqual([a.id, b.id, reply.id].sort());
+});
+it("deleting the reply or either copy removes every linked copy", async () => {
+  const { messages, outbox, send, targets, copies } = linkedSetup();
+  await outbox.ready();
+  send();
+  send();
+  const [a, b] = copies;
+  assert.exists(a);
+  assert.exists(b);
+  const before = outbox.snapshot().length;
+  messages.remove([a.id]);
+  expect(targets(before, 5)).toEqual([a.id, b.id, reply.id].sort());
+  const next = outbox.snapshot().length;
+  messages.remove([reply.id]);
+  expect(targets(next, 5)).toEqual([a.id, b.id, reply.id].sort());
 });

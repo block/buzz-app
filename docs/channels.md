@@ -1274,12 +1274,13 @@ the composer's own blocks and formatting; text copied from anywhere else pastes 
 keeping only its web links. A copied spoiler stays a spoiler whether or not it was revealed, and
 keeps its `||` delimiters elsewhere. Headings, task checkboxes and horizontal rules, which the
 composer has no block for, paste as their Markdown source (`# `, `[ ]`/`[x]`, `***`) so they still
-render once sent, wherever the paste lands; plain text keeps a task's state and a rule (`---`) but
-not heading markers. Blocks pasted at the start of a list item, or over a selection that starts
-there, cannot precede its
-text: a pasted list of the same kind (bulleted or numbered) has its items join the list before
-that item, or take the place of an item whose only content was selected, and other blocks, including
-a list of the other kind, which keeps its own numbering, follow the item's text. Pasted into an
+render once sent. Copied with other blocks, each keeps a line of its own; a heading or rule copied
+alone pastes into the current line like copied prose, so after other text on that line it stays
+text. Plain text keeps a task's state and a rule (`---`) but not heading markers. Blocks pasted at
+the start of a list item, or over a selection that starts there, cannot precede its text: a pasted
+list of the same kind (bulleted or numbered) has its items join the list before that item, or take
+the place of an item whose only content was selected, and other blocks, including a list of the
+other kind, which keeps its own numbering, follow the item's text. Pasted into an
 empty item, such blocks leave the list first, as Enter does there, and take the empty line's place.
 Typing the space after a list or quote marker that starts a line (`- `, `* `, `+ ` or `• `, a number
 with a dot or parenthesis such as `1. ` or `3) `, or `> `) turns that line into a bullet, a

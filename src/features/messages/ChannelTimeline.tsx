@@ -665,7 +665,10 @@ function Timeline({
       const row = top();
       if (list.style.height === height) return;
       height = list.style.height;
-      if (row !== undefined && settled.current && !follow.current)
+      // Rows that measure while the held row is unmounted move it without a
+      // scroll event; follow it there, or its remount would correct for them.
+      if (row === undefined) read();
+      else if (settled.current && !follow.current)
         correctScrollTop(
           element,
           row - element.getBoundingClientRect().top - y,

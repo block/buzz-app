@@ -1,3 +1,4 @@
+import { releaseTabWorkspace } from "../messages/tab-workspace-lifetime";
 import type { LocalAgentSource } from "../agents/local-activity";
 import { readView } from "../../shared/view-state";
 import type { LocalAgents } from "../agents/local";
@@ -93,6 +94,7 @@ export function provideRelay(
     for (const listener of listeners) listener();
   };
   const reset = () => {
+    releaseTabWorkspace(store.session.scope);
     generation++;
     connecting = false;
     controller?.abort();

@@ -1,9 +1,16 @@
 // @vitest-environment jsdom
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
+import { Context } from "@deepseek-ai/cordis";
+import { provideRelay } from "../../features/relay/service";
+import type { ReadTransport } from "../../features/relay/transport";
 import type { RelaySession } from "../../features/relay/session";
 import type { RegisteredPanel } from "../../features/panels/service";
-import { panelTabId, useChannelTabState } from "./useChannelTabState";
+import {
+  channelTabs,
+  panelTabId,
+  useChannelTabState,
+} from "./useChannelTabState";
 import {
   readTabWorkspaces,
   tabWorkspaceStorageKey,
@@ -512,3 +519,46 @@ test.each(["pending", "resolved"])(
     );
   },
 );
+
+test("a reset successor recovers descriptors even before the old workspace unmounts", async () => {
+  const ctx = new Context();
+  const transport: ReadTransport = {
+    viewer: "viewer",
+    relayAuthor: "relay",
+    scope: "https://reset-order.example",
+    media: () => undefined,
+    query: async () => [],
+  };
+  const relay = provideRelay(ctx, async () => transport);
+  try {
+    await vi.waitFor(() => expect(relay.snapshot().status).toBe("ready"));
+    const before = relay.snapshot();
+    const old = mount(before.session);
+    const liveEntry = opening();
+    act(() => old.result.current.setEntries([liveEntry]));
+
+    // Deliberately hold the old hook mounted through the actual service reset.
+    // A service may request the successor before React applies its new page key.
+    relay.disconnect();
+    relay.retry();
+    await vi.waitFor(() => expect(relay.snapshot().status).toBe("ready"));
+    const successor = relay.snapshot();
+    expect(successor.scope).toBe(before.scope);
+    expect(successor.generation).toBeGreaterThan(before.generation);
+    expect(successor.session).not.toBe(before.session);
+    channelTabs(successor.session).list("alpha");
+    expect(old.result.current.entries[0]).toBe(liveEntry);
+
+    const recovered = mount(successor.session);
+    expect(recovered.result.current.entries).toEqual([]);
+    expect(recovered.result.current.pendingEntries).toMatchObject([
+      { key: profile.key, target: liveEntry.target },
+    ]);
+    act(() => recovered.result.current.restoreEntries(() => profile));
+    expect(recovered.result.current.entries[0]).not.toBe(liveEntry);
+    expect(recovered.result.current.entries[0]?.restored).toBe(true);
+  } finally {
+    cleanup();
+    await ctx.fiber.dispose();
+  }
+});

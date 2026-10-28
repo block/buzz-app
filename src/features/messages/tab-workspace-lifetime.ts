@@ -8,10 +8,15 @@ export function retainTabWorkspace(scope: string, forget: () => void) {
   purges.set(scope, forget);
 }
 
-/** Revoke the live writer even when removing browser storage fails. */
-export function forgetTabWorkspaces(scope: string) {
+/** End live handoff before a connection reset; saved addresses remain recoverable. */
+export function releaseTabWorkspace(scope: string) {
   const forget = purges.get(scope);
   purges.delete(scope);
   forget?.();
+}
+
+/** Revoke the live writer even when removing browser storage fails. */
+export function forgetTabWorkspaces(scope: string) {
+  releaseTabWorkspace(scope);
   sessionStorage.removeItem(tabWorkspaceStorageKey(scope));
 }

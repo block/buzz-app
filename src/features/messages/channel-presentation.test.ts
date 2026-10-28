@@ -2,6 +2,9 @@ import { profileTarget } from "../profiles/target";
 import { expect, it } from "vitest";
 import { createChannelPresentation } from "./channel-presentation";
 import { createAgentLibrary } from "../agents/library";
+import { createAgentChoices } from "../agents/choices";
+import { createLocalAgents } from "../agents/local";
+import { localAgentsFixture } from "../agents/local-testing";
 import { bindNames } from "../identity-names/service";
 import { createAgentDirectory } from "../identity-names/testing";
 
@@ -306,59 +309,112 @@ it("retires authoritative row access even when a selected name policy fails, and
   );
 });
 
-it("pairs a refreshed library identity with its current label after a live naming-provider replacement", async () => {
-  const key = "cd".repeat(32);
-  let alias = "Original alias";
-  const library = createAgentLibrary(async () => ({
-    definitions: [],
-    identities: [{ pubkey: key, name: alias }],
-  }));
-  const f = fixture([row("agent", { authorId: key })]);
-  f.channel({ members: [key] });
-  let provider = createAgentDirectory();
-  const registry = new Set<() => void>();
-  const names = bindNames(
-    { profiles: f.session.profiles, agentLibrary: library.queries },
-    {
-      snapshot: () => [provider],
-      subscribe(listener) {
-        registry.add(listener);
-        return () => {
-          registry.delete(listener);
-        };
+it.each(["library", "native"] as const)(
+  "pairs current %s agent facts with their label after a live naming-provider replacement",
+  async (mode) => {
+    const key = "cd".repeat(32),
+      viewer = "ef".repeat(32);
+    const relayUrl = "wss://relay.example.test";
+    let alias = "Original alias";
+    const library = createAgentLibrary(
+      mode === "library"
+        ? async () => ({
+            definitions: [],
+            identities: [{ pubkey: key, name: alias }],
+          })
+        : undefined,
+    );
+    const input = localAgentsFixture();
+    const native = createLocalAgents();
+    const unbind = native.bind(input);
+    const lifetime = new AbortController();
+    const choices = createAgentChoices({
+      scope: `https://relay.example.test:${viewer}`,
+      library: library.queries,
+      ...(mode === "native" ? { native: native.agents } : {}),
+      signal: lifetime.signal,
+    });
+    const f = fixture([row("agent", { authorId: key })]);
+    f.channel({ members: [key] });
+    if (mode === "native") f.profile(key, { name: "Public person" });
+    const makeProvider = () =>
+      createAgentDirectory(mode === "native" ? native.agents : undefined);
+    let provider = makeProvider();
+    const registry = new Set<() => void>();
+    const names = bindNames(
+      {
+        profiles: f.session.profiles,
+        agentLibrary: library.queries,
+        viewer,
+        relayUrl,
       },
-    },
-  );
-  await library.queries.refresh();
-  const owner = createChannelPresentation(
-    { ...f.session, agentLibrary: library.queries, names },
-    "room",
-    { chat: false, viewer: "viewer" },
-  );
-  const selected = owner.names([key]);
-  const stopNames = selected.subscribe(() => {});
-  const observed: [string, string | undefined][] = [];
-  const stopRow = owner.subscribeRow("agent", () => {
-    const current = library.queries.snapshot();
-    const identity = owner.row("agent")?.directory.agents[0];
-    if (current.status === "ready" && identity)
-      observed.push([identity.name, selected.snapshot().get(key)]);
-  });
-  try {
-    expect(selected.snapshot().get(key)).toBe(alias);
-    // bindNames reattaches its real library subscription after the owner.
-    provider = createAgentDirectory();
-    for (const changed of [...registry]) changed();
+      {
+        snapshot: () => [provider],
+        subscribe(listener) {
+          registry.add(listener);
+          return () => {
+            registry.delete(listener);
+          };
+        },
+      },
+    );
     await library.queries.refresh();
-    observed.length = 0;
-    alias = "Replacement alias";
-    await library.queries.refresh();
-    expect(observed).toContainEqual([alias, alias]);
-    expect(observed.every(([fact, label]) => fact === label)).toBe(true);
-  } finally {
-    stopRow();
-    stopNames();
-    names.dispose();
-    library.dispose();
-  }
-});
+    const owner = createChannelPresentation(
+      {
+        ...f.session,
+        agentLibrary: library.queries,
+        agentChoices: choices,
+        names,
+      },
+      "room",
+      { chat: false, viewer },
+    );
+    const selected = owner.names([key]);
+    const stopNames = selected.subscribe(() => {});
+    const observed: [boolean, string | undefined][] = [];
+    const stopRow = owner.subscribeRow("agent", () => {
+      if (mode === "native" || library.queries.snapshot().status === "ready")
+        observed.push([
+          !!owner.row("agent")?.agentPubkeys.has(key),
+          selected.snapshot().get(key),
+        ]);
+    });
+    try {
+      expect(selected.snapshot().get(key)).toBe(
+        mode === "library" ? alias : "Public person",
+      );
+      // Actual provider replacement moves its input listener after the owner.
+      provider = makeProvider();
+      for (const changed of [...registry]) changed();
+      await library.queries.refresh();
+      observed.length = 0;
+      alias = "Replacement alias";
+      if (mode === "library") await library.queries.refresh();
+      else
+        input.set({
+          agents: [{ pubkey: key, name: alias, relayUrl, owner: viewer }],
+        });
+      expect(observed).toContainEqual([true, alias]);
+      expect(observed.every(([agent, label]) => agent && label === alias)).toBe(
+        true,
+      );
+      if (mode === "native") {
+        observed.length = 0;
+        input.set({ agents: [] });
+        expect(observed).toContainEqual([false, "Public person"]);
+        expect(
+          observed.every(
+            ([agent, label]) => !agent && label === "Public person",
+          ),
+        ).toBe(true);
+      }
+    } finally {
+      stopRow();
+      stopNames();
+      names.dispose();
+      lifetime.abort();
+      unbind();
+      library.dispose();
+    }
+  },
+);

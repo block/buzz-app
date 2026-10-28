@@ -68,6 +68,7 @@ export type ChannelPresentationView = Readonly<{
 type NameContext = Readonly<{
   members: readonly string[];
   revision: number | undefined;
+  choices: ReturnType<RelaySession["agentChoices"]["snapshot"]>;
   profiles: ReadonlyMap<string, Profile>;
   library: ReturnType<RelaySession["agentLibrary"]["snapshot"]>;
 }>;
@@ -441,11 +442,13 @@ export function createChannelPresentation(
         }
         // A direct source can notify before the naming view advances its revision
         // after provider replacement. Include the already-read source identities.
+        // Choices also observes the provider's native input before its listener.
         // Keep full ambiguity scope; project labels only for real consumers.
         const revision = session.names?.snapshot();
         const nameContext =
           root &&
           root.nameContext.revision === revision &&
+          root.nameContext.choices === choices &&
           root.nameContext.profiles === allProfiles &&
           root.nameContext.library === library &&
           sameArray(root.nameContext.members, members)
@@ -453,6 +456,7 @@ export function createChannelPresentation(
             : Object.freeze({
                 members,
                 revision,
+                choices,
                 profiles: allProfiles,
                 library,
               });

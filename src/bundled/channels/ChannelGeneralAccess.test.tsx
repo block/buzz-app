@@ -41,9 +41,7 @@ it.each(["public", "private"] as const)(
     );
     expect(
       screen.getByRole("region", { name: "General access" }),
-    ).toHaveTextContent(
-      "Read-only for you. Ask an owner or admin to contribute.",
-    );
+    ).toHaveTextContent("Viewing only. Ask an owner or admin to participate.");
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(h.load).not.toHaveBeenCalled();
@@ -151,11 +149,11 @@ it.each(["public", "private"] as const)(
     );
   },
 );
-it("confirms new people's Read/Contribute access independently of private reading access", async () => {
+it("confirms new people's View only/Participate access independently of private reading access", async () => {
   const h = harness();
   const user = userEvent.setup();
   render(<ChannelGeneralAccess capability={h.capability} channelId="alpha" />);
-  await select(user, "New people can", "Contribute");
+  await select(user, "New people can", "Participate");
   expect(screen.getByRole("alertdialog")).toHaveTextContent(
     "People already in the channel keep their access.",
   );
@@ -185,9 +183,9 @@ it("shows the absent Member default without saving, and a declined save reloads 
   );
   expect(
     screen.getByRole("combobox", { name: "New people can" }),
-  ).toHaveTextContent("Contribute");
+  ).toHaveTextContent("Participate");
   expect(h.save).not.toHaveBeenCalled();
-  await select(user, "New people can", "Only read");
+  await select(user, "New people can", "View only");
   await user.click(screen.getByRole("button", { name: "Change access" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Channel details changed",
@@ -197,7 +195,7 @@ it("shows the absent Member default without saving, and a declined save reloads 
   await waitFor(() =>
     expect(
       screen.getByRole("combobox", { name: "New people can" }),
-    ).toHaveTextContent("Only read"),
+    ).toHaveTextContent("View only"),
   );
   expect(
     screen.getByRole("combobox", { name: "New people can" }),
@@ -222,7 +220,7 @@ it("locks both choices while saving and recovers an uncertain save after remount
   const view = render(
     <ChannelGeneralAccess capability={h.capability} channelId="alpha" />,
   );
-  await select(user, "New people can", "Contribute");
+  await select(user, "New people can", "Participate");
   try {
     await user.click(screen.getByRole("button", { name: "Change access" }));
     await waitFor(() => expect(h.save).toHaveBeenCalledOnce());

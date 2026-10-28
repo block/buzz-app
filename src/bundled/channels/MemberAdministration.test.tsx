@@ -244,9 +244,9 @@ async function setup(
         name === "Make admin"
           ? "Admin"
           : name === "Make member"
-            ? "Contribute"
+            ? "Participating"
             : name === "Make guest"
-              ? "Read"
+              ? "Viewing only"
               : undefined;
       await user.click(
         roleChoice
@@ -692,7 +692,11 @@ it.each(["member", "admin", "guest"] as const)(
     const t = await setup("owner", role);
     const row = required(screen.getByText("Morgan").closest("li"));
     const caption =
-      role === "member" ? "Contribute" : role === "guest" ? "Read" : "Admin";
+      role === "member"
+        ? "Participating"
+        : role === "guest"
+          ? "Viewing only"
+          : "Admin";
     const actions = within(row).getByRole("button", {
       name: "Actions for Morgan",
     });
@@ -708,7 +712,7 @@ it.each(["member", "admin", "guest"] as const)(
     await screen.findByRole("menuitem", { name: "Remove from channel" });
     expect(
       screen.getAllByRole("menuitemradio").map((item) => item.textContent),
-    ).toEqual(["Admin", "Contribute", "Read"]);
+    ).toEqual(["Admin", "Participating", "Viewing only"]);
     expect(
       screen.getByRole("menuitemradio", { name: caption }),
     ).toHaveAttribute("aria-checked", "true");
@@ -791,7 +795,7 @@ it.each([false, true])(
     ).toBeVisible();
     expect(screen.getByRole("menuitemradio", { name: "Admin" })).toBeVisible();
     expect(
-      screen.getByRole("menuitemradio", { name: "Contribute" }),
+      screen.getByRole("menuitemradio", { name: "Participating" }),
     ).toBeVisible();
     expect(t.publish).not.toHaveBeenCalled();
     await t.user.click(
@@ -1801,7 +1805,7 @@ it.each(["owner", "admin"])(
       screen.getByRole("button", { name: "Actions for Morgan" }),
     );
     expect(
-      await screen.findByRole("menuitemradio", { name: "Contribute" }),
+      await screen.findByRole("menuitemradio", { name: "Participating" }),
     ).toHaveAttribute("aria-checked", "true");
     await t.user.keyboard("{Escape}");
     const dialog = await t.choose("Make admin");

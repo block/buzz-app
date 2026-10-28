@@ -130,9 +130,9 @@ export function MemberRow({
     );
   const roleCaption =
     role === "member" || role === "bot"
-      ? "Contribute"
+      ? "Participating"
       : role === "guest"
-        ? "Read"
+        ? "Viewing only"
         : role === "owner"
           ? "Owner"
           : role === "admin"
@@ -191,9 +191,9 @@ export function MemberRow({
               {editableMemberRoles.map((next) => (
                 <MenuRadioItem key={next} value={next}>
                   {next === "member"
-                    ? "Contribute"
+                    ? "Participating"
                     : next === "guest"
-                      ? "Read"
+                      ? "Viewing only"
                       : "Admin"}
                 </MenuRadioItem>
               ))}

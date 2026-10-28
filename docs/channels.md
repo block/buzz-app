@@ -725,14 +725,15 @@ only stages the choice and Create channel performs the write.
 
 Access management lives in the members dialog. It retains the existing member
 list, row menus and confirmed role changes. Roles appear as muted
-text before each row’s ellipsis button; Member and Guest are shown as **Contribute**
-and **Read**. The ellipsis menu contains permitted role choices with the verified
-selection checked, alongside profile/removal actions and the existing role
+text before each row’s ellipsis button; Member and Guest are shown as **Participating**
+and **Viewing only**. The ellipsis menu contains permitted role choices with
+the verified selection checked, alongside profile/removal actions and the existing role
 confirmation. Immutable roles such as Owner and self remain protected.
 **General access** sits below the list as one sentence-like row: a community/lock
 icon, a compact audience Select (**Who can read**), a short result description,
-and the trailing **New people can** Select (Contribute / Only read). Both Selects
-use the shared ghost Button treatment. On narrow screens the role control wraps
+and the trailing **New people can** Select (Participate / View only), with short
+descriptions of the permitted actions. Audience options show the community and
+lock icons inside the dropdown. Both Selects use the shared ghost Button treatment. On narrow screens the role control wraps
 under the audience. The confirmation explains “People already in the channel keep
 their access.”; the note is not a permanent paragraph below the controls.
 Each selection opens a consequence confirmation. Cancel/Escape returns focus to
@@ -1022,8 +1023,8 @@ another non-owner member:
 Agent identity is independent of channel role. Explicitly promoting a Bot to Admin grants authority to that agent’s own public key and preserves its verified agent identity; the human owner’s roles do not confer authority.
 
 The menu includes **Make guest** through the existing deliberate confirmation
-flow. Contribute and Read captions represent each participant's verified Member
-and Guest role; changing the admission default never changes those roles.
+flow. Participating and Viewing only captions represent each participant's
+verified Member and Guest role; changing the admission default never changes those roles.
 Agent Bot roles retain the contributing presentation.
 
 The members dialog's General access controls keep reading access and new people's

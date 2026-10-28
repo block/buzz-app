@@ -2452,11 +2452,11 @@ it("shows personal contribution roles and General access in the members dialog",
   );
   expect(
     screen.getByRole("combobox", { name: "New people can" }),
-  ).toHaveTextContent("Only read");
+  ).toHaveTextContent("View only");
   expect(
     await within(
       screen.getByRole("region", { name: "Member list" }),
-    ).findAllByText("Contribute"),
+    ).findAllByText("Participating"),
   ).not.toHaveLength(0);
   role = "guest";
   await h.user.click(
@@ -2465,7 +2465,7 @@ it("shows personal contribution roles and General access in the members dialog",
   expect(
     await within(
       screen.getByRole("region", { name: "Member list" }),
-    ).findByText("Read"),
+    ).findByText("Viewing only"),
   ).toBeVisible();
   expect(save).not.toHaveBeenCalled();
 });
@@ -2553,7 +2553,7 @@ it.each([false, true])(
     await user.click(screen.getByRole("button", { name: "Access" }));
     expect(
       await screen.findByText(
-        "Read-only for you. Ask an owner or admin to contribute.",
+        "Viewing only. Ask an owner or admin to participate.",
       ),
     ).toBeVisible();
     expect(
@@ -2568,9 +2568,7 @@ it.each([false, true])(
     ).toHaveTextContent("Anyone in the community can read.");
     expect(
       screen.getByRole("region", { name: "General access" }),
-    ).toHaveTextContent(
-      "Read-only for you. Ask an owner or admin to contribute.",
-    );
+    ).toHaveTextContent("Viewing only. Ask an owner or admin to participate.");
     // Finish the roster read before checking that the dialog cannot invite or mutate.
     await vi.waitFor(() =>
       expect(

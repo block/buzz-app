@@ -53,9 +53,9 @@ export function ChannelGeneralAccess({
             </p>
             <p className="text-caption text-subtle">
               {channel.viewerRole === "guest" || channel.joinRole === "guest"
-                ? "Read-only for you. Ask an owner or admin to contribute."
+                ? "Viewing only. Ask an owner or admin to participate."
                 : channel.joinRole === "member"
-                  ? "New people can contribute. People already in the channel keep their access."
+                  ? "New people can participate. People already in the channel keep their access."
                   : "New people’s access could not be confirmed."}
             </p>
           </div>
@@ -183,8 +183,16 @@ function ChannelGeneralAccessEditor({
               {
                 label: "",
                 options: [
-                  { value: "public", label: "Anyone in the community" },
-                  { value: "private", label: "Invited people only" },
+                  {
+                    value: "public",
+                    label: "Anyone in the community",
+                    leading: <UsersIcon size={20} />,
+                  },
+                  {
+                    value: "private",
+                    label: "Invited people only",
+                    leading: <LockIcon size={20} />,
+                  },
                 ],
               },
             ]}
@@ -202,8 +210,8 @@ function ChannelGeneralAccessEditor({
                 ? "Checking channel access…"
                 : "Channel access could not be confirmed."
               : base.visibility === "public"
-                ? `Anyone in the community can find and ${base.joinRole === "guest" ? "read" : "contribute"}.`
-                : `Invited people can ${base.joinRole === "guest" ? "read" : "contribute"}.`}
+                ? `Anyone in the community can find and ${base.joinRole === "guest" ? "view" : "participate"}.`
+                : `Invited people can ${base.joinRole === "guest" ? "view" : "participate"}.`}
           </p>
         </div>
         <div className={styles.accessRole}>
@@ -218,8 +226,16 @@ function ChannelGeneralAccessEditor({
               {
                 label: "",
                 options: [
-                  { value: "member", label: "Contribute" },
-                  { value: "guest", label: "Only read" },
+                  {
+                    value: "member",
+                    label: "Participate",
+                    description: "Send messages, reply, and react.",
+                  },
+                  {
+                    value: "guest",
+                    label: "View only",
+                    description: "Read messages and threads.",
+                  },
                 ],
               },
             ]}
@@ -274,7 +290,7 @@ function ChannelGeneralAccessEditor({
           description={
             choice.visibility !== base.visibility
               ? privacyConsequence(choice.visibility)
-              : `New people will ${choice.joinRole === "guest" ? "only be able to read" : "be able to contribute"}. People already in the channel keep their access.`
+              : `New people will ${choice.joinRole === "guest" ? "only be able to view" : "be able to participate"}. People already in the channel keep their access.`
           }
           onClose={() => setChoice(undefined)}
           initialFocus={cancel}

@@ -16,4 +16,4 @@ runs:
           target/goose-acp-build/staged.json
         # GitHub scopes entries to the run's branch: other branches can restore main's
         # entries, but only runs on main can save them.
-        key: goose-acp-${{ runner.os }}-${{ runner.arch }}-rust-${{ steps.rust.outputs.version }}-${{ hashFiles('runtime/goose-acp.json', 'scripts/build-goose-acp.mjs', '.cargo/config.toml', '.github/workflows/release.yml', '.github/actions/goose-cache/action.yml') }}
+        key: goose-acp-${{ runner.os }}-${{ runner.arch }}-rust-${{ steps.rust.outputs.version }}-${{ hashFiles('runtime/goose-acp.json', 'scripts/build-goose-acp.mjs', '.cargo/config.toml', 'bin/hermit.hcl', '.github/workflows/release.yml', '.github/actions/goose-cache/action.yml') }}

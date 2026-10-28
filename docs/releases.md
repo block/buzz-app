@@ -204,11 +204,11 @@ covers the binary; nothing else checks it at launch. Each release job checks tha
 its package contains it.
 
 Every desktop build job caches the staged binary and its stamp per platform,
-keyed by the Rust version and the pin, build script, Cargo config and release
-workflow. A miss builds it as before. GitHub scopes cache entries to the run's
-branch: a candidate run on another branch can restore `main`'s binary but saves
-only to its own branch, so only runs on `main` supply releases. Signing and
-package checks run either way.
+keyed by the Rust version and the pin, build script, Cargo and Hermit config and
+release workflow. A miss builds it as before. GitHub scopes cache entries to the
+run's branch: a candidate run on another branch can restore `main`'s binary but
+saves only to its own branch, so only runs on `main` supply releases. Signing
+and package checks run either way.
 
 ## Windows and Linux installers and candidate-only runs
 

@@ -277,10 +277,9 @@ test("member identity geometry and separate addition focus", async ({
     expect(field.y - header.y - header.height).toBeCloseTo(12, 0);
     await expect(add).toHaveCSS("font-size", "12px");
     expect((await add.boundingBox()).height).toBe(24);
-    const members = dialog.getByRole("region", {
-      name: "People",
-      exact: true,
-    });
+    const members = dialog.locator(
+      ':scope section[aria-label="Member list"] > section[aria-label="People"]',
+    );
     const others = dialog.getByRole("region", {
       name: "Not in this channel",
       exact: true,
@@ -290,7 +289,9 @@ test("member identity geometry and separate addition focus", async ({
       exact: true,
     });
     await expect(members).toHaveCount(0);
-    await expect(others.getByRole("heading")).toHaveCSS("position", "sticky");
+    await expect(
+      others.getByRole("heading", { name: "People", exact: true }),
+    ).toHaveCSS("position", "sticky");
     // With no roster matches, search results start at the top without an orphan divider.
     await expect(others).toHaveCSS("border-top-width", "0px");
     expect((await others.boundingBox()).y).toBeCloseTo(
@@ -726,14 +727,16 @@ test("large known-agent searches mount only the first invitation page", async ({
     body: JSON.stringify({ counts, ...sample }),
     contentType: "application/json",
   });
-  expect(counts.slice(0, 3)).toEqual([30, 30, 30]);
+  expect(counts.slice(0, 3)).toEqual([4, 4, 4]);
   // A random npub may contain "hell"; it cannot contain "hello" (no o in bech32).
-  expect(counts[3]).toBeLessThanOrEqual(30);
+  expect(counts[3]).toBeLessThanOrEqual(4);
   expect(counts.slice(4)).toEqual([0, 0]);
   await search.fill("helper");
   await expect(refresh).toHaveAttribute("aria-busy", "false");
-  const more = dialog.getByRole("button", { name: "Show more results" });
-  for (const count of [60, 90, 120, 150, 180, 210, 240]) {
+  const more = dialog
+    .getByRole("region", { name: "Your other agents", exact: true })
+    .getByRole("button", { name: "Show more", exact: true });
+  for (let count = 8; count <= 240; count += 4) {
     await more.click();
     await expect(
       dialog.getByRole("button", { name: /^Add Helper/ }),
@@ -1049,7 +1052,9 @@ for (const rejected of [false, true]) {
     } else {
       await expect(
         members
-          .getByRole("region", { name: "People", exact: true })
+          .locator(
+            'section[aria-label="Member list"] > section[aria-label="People"]',
+          )
           .getByRole("button", { name: /Open profile for Morgan/ }),
       ).toHaveCount(0);
       await expect(page.locator(".buzz-toast")).toHaveCount(0);

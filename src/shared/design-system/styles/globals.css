@@ -38,7 +38,7 @@
   /* Pointer focus has a caret or pressed control to make its destination clear.
      Chrome also matches :focus-visible for text fields clicked with a pointer,
      so the app-root modality fact gates every focus treatment consistently;
-     the focused element carries its mark (useKeyboardFocusVisibility). */
+     the focused element mirrors it (useKeyboardFocusVisibility). */
   :focus:not(:focus-visible),
   html :focus-visible:not([data-keyboard-focus]) {
     outline: none;

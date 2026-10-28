@@ -1,28 +1,28 @@
 // @vitest-environment jsdom
-import { act, fireEvent, render } from "@testing-library/react";
+import { render } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { useKeyboardFocusVisibility } from "../../../shared/design-system/useKeyboardFocusVisibility";
 import { EffortSlider } from "./EffortSlider";
-
-vi.stubGlobal(
-  "ResizeObserver",
-  class {
-    observe() {}
-    disconnect() {}
-  },
-);
 
 afterEach(() => {
   delete document.documentElement.dataset.keyboardInput;
+  vi.unstubAllGlobals();
 });
 
-function Slider() {
-  useKeyboardFocusVisibility();
-  return (
+it("mirrors document keyboard input onto the slider for its snap rule", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  const root = document.documentElement;
+  root.dataset.keyboardInput = "";
+  const view = render(
     <EffortSlider
-      name="Agent"
+      name="Ada"
       avatarSrc={undefined}
-      model={() => null}
+      model={() => "Model"}
       efforts={[
         { id: "low", label: "Low" },
         { id: "high", label: "High" },
@@ -31,22 +31,18 @@ function Slider() {
       value={undefined}
       disabled={false}
       pick={() => {}}
-    />
+    />,
   );
-}
-
-it("follows the app's keyboard-input modality on the slider root", async () => {
-  // Pinned by the transition rule, which keys on the slider's own attribute.
-  document.documentElement.dataset.keyboardInput = "";
-  const { container } = render(<Slider />);
-  const slider = () => container.querySelector("[data-keyboard]");
-  expect(slider()).not.toBeNull();
-  await act(async () => {
-    fireEvent.pointerDown(document.body);
-  });
-  expect(slider()).toBeNull();
-  await act(async () => {
-    fireEvent.keyDown(document.body, { key: "a" });
-  });
-  expect(slider()).not.toBeNull();
+  const slider = view.container.firstElementChild as HTMLElement;
+  // The document observer delivers its records as a microtask.
+  const snapping = async () => {
+    await Promise.resolve();
+    return slider.hasAttribute("data-keyboard-snap");
+  };
+  expect(await snapping()).toBe(true);
+  delete root.dataset.keyboardInput;
+  expect(await snapping()).toBe(false);
+  root.dataset.keyboardInput = "";
+  expect(await snapping()).toBe(true);
+  view.unmount();
 });

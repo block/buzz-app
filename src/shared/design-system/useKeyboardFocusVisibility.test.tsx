@@ -44,7 +44,7 @@ it("treats Ctrl+Tab after a pointer as keyboard navigation, but not other Ctrl c
   hook.unmount();
 });
 
-it("marks only the focused element with keyboard modality", () => {
+it("mirrors keyboard modality onto the focused element only", () => {
   const hook = renderHook(() => useKeyboardFocusVisibility());
   const first = document.body.appendChild(document.createElement("button"));
   const second = document.body.appendChild(document.createElement("button"));
@@ -63,9 +63,6 @@ it("marks only the focused element with keyboard modality", () => {
     expect(marked()).toEqual([]);
     first.focus();
     expect(marked()).toEqual([]);
-    fireEvent.keyDown(first, { key: "ArrowDown" });
-    expect(marked()).toEqual([first]);
-    fireEvent.pointerDown(first);
     focusWithKeyboard(first);
     expect(marked()).toEqual([first]);
     hook.unmount();

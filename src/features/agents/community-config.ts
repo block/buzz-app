@@ -156,7 +156,8 @@ export async function communityConfig(
   const read = session.snapshotRead;
   const relayAuthor = session.relayAuthor;
   if (!writer || !read || !relayAuthor) return null;
-  const support = configSupport(await input.info(signal).catch(() => null));
+  // A failed fetch rejects: it is checked again, unlike a relay without them.
+  const support = configSupport(await input.info(signal));
   if (!support.supported || signal.aborted) return null;
   const feed = sessionFeed(session, read, relayAuthor);
   let configs: CommunityConfig | undefined;

@@ -149,7 +149,7 @@ describe("teamOps.change", () => {
         members: ["a", "b"],
         base: { head: "h1", members: ["a", "b"] },
       }),
-    ).rejects.toThrow("changed elsewhere");
+    ).rejects.toThrow("changed since it was opened");
     expect(save).not.toHaveBeenCalled();
   });
 
@@ -240,6 +240,13 @@ describe("teamOps.change", () => {
     await expect(
       setup({ archived: true }).ops.change({ ...edit, members: [] }),
     ).rejects.toThrow("deleted");
+    await expect(
+      setup({ archived: true }).ops.change({
+        ...edit,
+        members: [],
+        adopt: true,
+      }),
+    ).rejects.toThrow("can't be imported again");
     await expect(
       setup({ members: undefined }).ops.change({ ...edit, members: [] }),
     ).rejects.toThrow("couldn't be read");

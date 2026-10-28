@@ -109,17 +109,25 @@ export function teamOps(deps: TeamDeps) {
       ? await channels.find("team-config", subject, signal)
       : await channels.ensure("team-config", subject, edit.name, signal);
     if (!channel) throw new Error("This team's config channel can't be found");
-    if (channel.archived) throw new Error("This team was deleted");
+    if (channel.archived)
+      throw new Error(
+        edit.adopt
+          ? "This team was deleted, so it can't be imported again"
+          : "This team was deleted",
+      );
     const present = others(channel, owner);
     if (!present) throw new Error("The team's members couldn't be read");
-    // An edit made elsewhere since the editor opened is never overwritten.
+    // A change since the editor opened, here or elsewhere, is never
+    // overwritten.
     if (
       base &&
       [...new Set([...base.members, ...edit.members])].some(
         (pubkey) => base.members.includes(pubkey) !== present.includes(pubkey),
       )
     )
-      throw new Error("The team's members changed elsewhere; reopen it");
+      throw new Error(
+        "The team's members changed since it was opened; reopen it",
+      );
     // A retried Create only adds; dropping a member an earlier try added is
     // an Edit. Import only adds too.
     if (
@@ -171,7 +179,7 @@ export function teamOps(deps: TeamDeps) {
         );
       if (saved.status === "refused") return fail(saved.message);
       if (saved.status !== "saved" && !adopted)
-        return fail("The team changed elsewhere; reopen it");
+        return fail("The team changed since it was opened; reopen it");
     }
 
     const add = edit.members.filter((pubkey) => !present.includes(pubkey));

@@ -1294,6 +1294,9 @@ type Binding = {
   controller: AbortController;
   stopLive: () => void;
   connection: Connection;
+  /** Its config support while no config channels are up: being checked, the
+   * check failed (and when), or the relay has none. */
+  support?: "checking" | "unsupported" | Readonly<{ failed: number }>;
 };
 /** A community the viewer has an agent in, and its session while live. */
 type Bound = {
@@ -1394,6 +1397,8 @@ export class AgentsService extends Service implements Agents {
   private teamList: readonly Team[];
   /** Synced teams as discovery last found them, by home community. */
   private readonly syncedTeams: SyncedTeams;
+  /** The account whose synced teams `state.teams` shows. */
+  private teamsFor: string | undefined;
   /** Each new synced team's home, fixed at its first Save, by draft id. */
   private readonly teamDrafts = new Map<string, string>();
   private state: AgentsSnapshot;
@@ -1766,6 +1771,11 @@ export class AgentsService extends Service implements Agents {
             this.notify();
           }
           this.watch();
+          // Synced teams are the signed-in account's.
+          if (viewer !== this.teamsFor) {
+            this.teamsChanged();
+            this.notify();
+          }
           this.update();
         }),
         // Another provider, or its setup, can make classifiers available.
@@ -3638,10 +3648,7 @@ export class AgentsService extends Service implements Agents {
     const home = synced
       ? synced.community
       : !id && draft
-        ? (this.teamDrafts.get(draft) ??
-          (selected && this.communityConfigs.has(selected)
-            ? selected
-            : undefined))
+        ? (this.teamDrafts.get(draft) ?? this.newTeamHome(selected))
         : undefined;
     const teamId = id ?? draft;
     if (home && teamId) {
@@ -3678,6 +3685,16 @@ export class AgentsService extends Service implements Agents {
         : [...this.teamList, team],
     );
     return team;
+  }
+
+  /** Where a new team made with `selected` selected syncs: nowhere only
+   * when its relay is known to have no config channels. */
+  private newTeamHome(selected: string | undefined) {
+    if (!selected || this.communityConfigs.has(selected)) return selected;
+    if (this.bound.get(selected)?.binding?.support === "unsupported") return;
+    throw new Error(
+      `Can't tell yet whether ${hostOf({ relay: selected })} syncs teams; try again shortly`,
+    );
   }
 
   /** Puts `members` on an old Buzz team's copy `id`, made from `saved` or,
@@ -3718,7 +3735,9 @@ export class AgentsService extends Service implements Agents {
 
   /** Synced teams with a confirmed copy, as members use them. */
   private synced() {
+    const { viewer } = this.communities.snapshot();
     return this.syncedTeams.all().flatMap(({ owner, community, team }) => {
+      if (owner !== viewer) return [];
       const subject = teamArtifact(owner, community, team);
       const head = !team.archived && this.configStore.state(subject).head;
       const body = head && teamBody(head.content);
@@ -3741,6 +3760,7 @@ export class AgentsService extends Service implements Agents {
     return [...this.teamList, ...this.synced().map((entry) => entry.team)];
   }
   private teamsChanged() {
+    this.teamsFor = this.communities.snapshot().viewer;
     this.state = Object.freeze({ ...this.state, teams: this.allTeams() });
   }
 
@@ -3756,9 +3776,15 @@ export class AgentsService extends Service implements Agents {
     }>,
   ) {
     const host = hostOf({ relay: home });
-    const name = (pubkey: string) => this.liveRows(pubkey)[0]?.name || pubkey;
+    const opened = extra.base?.members ?? [];
+    const labels = publicKeyLabels(new Set([...team.members, ...opened]));
+    const name = (pubkey: string) =>
+      this.liveRows(pubkey)[0]?.name || (labels.get(pubkey) ?? pubkey);
+    // Members the team already has may run on another device; the roster
+    // proves them.
     const outside = team.members.find(
       (pubkey) =>
+        !opened.includes(pubkey) &&
         !this.liveRows(pubkey).some((row) => originOf(row.relay) === home),
     );
     if (outside) throw new Error(`Add ${name(outside)} to ${host} first`);
@@ -4622,7 +4648,8 @@ export class AgentsService extends Service implements Agents {
     }
   }
   /** Tries each unselected community whose connection failed again, since
-   * nobody is there to press its Retry; its agents wait on it. */
+   * nobody is there to press its Retry; its agents wait on it. Checks config
+   * support again where its check failed. */
   private reconnect() {
     const selected = originOf(this.communities.snapshot().selected ?? "");
     const now = Date.now();
@@ -4635,6 +4662,12 @@ export class AgentsService extends Service implements Agents {
         entry.retried = now;
         entry.relay.retry();
       }
+    for (const [origin, { binding }] of this.bound)
+      if (
+        typeof binding?.support === "object" &&
+        now - binding.support.failed >= RETRY_MS
+      )
+        void this.startConfig(origin, binding);
   }
   private unbind(origin: string) {
     const entry = this.bound.get(origin);
@@ -4698,6 +4731,7 @@ export class AgentsService extends Service implements Agents {
   /** Brings up the community's config channels when config sync is on and
    * its relay passes the support check; a replaced binding drops it. */
   private async startConfig(origin: string, binding: Binding) {
+    binding.support = "checking";
     const config = await communityConfig(
       {
         session: binding.session,
@@ -4712,9 +4746,14 @@ export class AgentsService extends Service implements Agents {
         },
       },
       binding.controller.signal,
-    ).catch(() => null);
-    if (!config) return;
-    if (this.bound.get(origin)?.binding !== binding) return config.dispose();
+    ).catch(() => undefined);
+    if (this.bound.get(origin)?.binding !== binding) return config?.dispose();
+    if (!config) {
+      binding.support =
+        config === null ? "unsupported" : { failed: Date.now() };
+      return;
+    }
+    delete binding.support;
     this.communityConfigs.set(origin, config);
     this.update();
   }
@@ -5052,8 +5091,10 @@ function teamOutcome(result: TeamResult, name: (pubkey: string) => string) {
     result.removed.length && `Removed ${list(result.removed)}.`,
     result.failed && `Stopped at ${name(result.failed)}.`,
     result.skipped.length && `Not tried: ${list(result.skipped)}.`,
-    result.uncertain &&
-      "The last change had no answer and may still take effect; reopen the team to see where it stands.",
+    result.uncertain
+      ? "The last change had no answer and may still take effect; reopen the team to see where it stands."
+      : (result.added.length || result.removed.length) &&
+        "Reopen the team to continue.",
   ]
     .filter(Boolean)
     .join(" ");

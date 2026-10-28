@@ -50,6 +50,7 @@ import { CATCH_UP_PREFIX, readCheckpoints } from "./catch-up";
 import { fileStore, type AgentStore } from "./state";
 import { readInterrupted, writeInterrupted } from "./interrupted";
 import { memoryStorage } from "./test-fakes";
+import { SyncedTeams } from "./team-config";
 import { STANDALONE_DEADLINE_MS } from "../agent-harness/standalone";
 import { readTeams, writeTeams } from "./store";
 import {
@@ -11431,8 +11432,10 @@ describe("synced teams", () => {
   function teamChannels(answer: () => Promise<unknown> = async () => {}) {
     const saveTeam = vi.fn((_edit: unknown) => answer());
     const made = new Set<string>();
-    coordinators.make = (community) => {
+    const stores = new Map<string, AgentConfigStore>();
+    coordinators.make = (community, store) => {
       made.add(community);
+      stores.set(community, store);
       return {
         attach: vi.fn(async () => {}),
         binding: () => undefined,
@@ -11446,7 +11449,7 @@ describe("synced teams", () => {
           ),
       };
     };
-    return { saveTeam, made };
+    return { saveTeam, made, stores };
   }
   async function ready(
     identities: AgentIdentity[],
@@ -11466,6 +11469,102 @@ describe("synced teams", () => {
     name: "Crew",
     instructions: "Ship it",
     members,
+  });
+
+  const CH = "9b353519-f4fe-4757-aef4-bec6cc0ae54c";
+  /** A synced team `owner` has in home, with `members`, as discovery saved
+   * it; `confirm` gives it its confirmed copy. */
+  function stored(owner: string, members: string[]) {
+    const storage = memoryStorage();
+    new SyncedTeams(storage).set(owner, home, [
+      { id: draft, channel: CH, archived: false, members },
+    ]);
+    const confirm = (store: AgentConfigStore | undefined) => {
+      const subject: Subject = {
+        owner,
+        community: home,
+        subject: draft,
+        channel: CH,
+        type: "buzz.team",
+      };
+      store?.applyRead(subject, store.capture(subject), {
+        kind: "head",
+        event: finalizeEvent(
+          {
+            kind: 45010,
+            created_at: 1,
+            content: JSON.stringify({
+              version: 1,
+              name: "Crew",
+              instructions: "Ship it",
+            }),
+            tags: [["op", "create"]],
+          },
+          generateSecretKey(),
+        ) as RelayEvent,
+      });
+    };
+    return { storage, confirm };
+  }
+
+  it("edits a team whose members run on another device, naming them by npub", async () => {
+    const away = "9".repeat(64);
+    const team = stored(viewer, [away]);
+    const f = await ready([here(alder)], team.storage);
+    team.confirm(f.stores.get(home));
+    const opened = f.service.snapshot().teams.find((t) => t.id === draft);
+    expect(opened?.members).toEqual([away]);
+    f.saveTeam.mockResolvedValueOnce({
+      ok: false,
+      added: [alder],
+      removed: [],
+      skipped: [],
+      failed: away,
+      error: "Its owner couldn't be checked",
+    });
+    const error = await f.service
+      .saveTeam({
+        id: draft,
+        name: "Renamed",
+        instructions: "Ship it",
+        members: [alder],
+        ...(opened && { opened }),
+      })
+      .catch((error: Error) => error.message);
+    expect(f.saveTeam.mock.calls[0]?.[0]).toMatchObject({
+      base: { members: [away] },
+    });
+    expect(error).toMatch(
+      /Added Alder\. Stopped at npub…\w+\. Reopen the team to continue\./,
+    );
+    expect(error).not.toContain(away);
+  });
+
+  it("shows only the signed-in account's synced teams", async () => {
+    const team = stored(other, []);
+    const f = await ready([here(alder)], team.storage);
+    team.confirm(f.stores.get(home));
+    expect(f.service.snapshot().teams).toEqual([]);
+    await expect(f.service.removeTeam(draft)).resolves.toBeUndefined();
+    expect(f.saveTeam).not.toHaveBeenCalled();
+  });
+
+  it("refuses New team until a failed support check succeeds again", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const channels = teamChannels();
+    const make = coordinators.make;
+    coordinators.make = () => Promise.reject(new Error("discovery failed"));
+    const f = await setup({ identities: [here(alder)] });
+    await settle();
+    await expect(f.service.saveTeam(crew([alder]))).rejects.toThrow(
+      "Can't tell yet whether relay.example.test syncs teams",
+    );
+    expect(f.storage.get("buzz.agents.teams.v1")).toBeFalsy();
+    coordinators.make = make;
+    await vi.advanceTimersByTimeAsync(40_000);
+    await vi.waitFor(() => expect(channels.made.has(home)).toBe(true));
+    await f.service.saveTeam(crew([alder]));
+    expect(channels.saveTeam).toHaveBeenCalledOnce();
   });
 
   it("creates a new team in its home community with the agents there", async () => {

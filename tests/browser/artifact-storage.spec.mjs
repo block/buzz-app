@@ -140,30 +140,40 @@ test("rolls back received batches and migration failures without publishing chan
       );
     const after = await c.get("good");
     const checkpoint = await c.checkpoint();
+    const original = window.artifactTest.open("viewer", "relay", "test", {
+      name: "migration",
+    });
+    await original.importBatch({
+      records: [{ id: "one", local: { title: "saved" } }],
+      preferences: [{ id: "one", value: false }],
+      marker: "done",
+    });
+    const refresh = await original.beginRefresh("all");
+    await original.completeRefresh(refresh, { expected: null, next: "saved" });
     const failing = window.artifactTest.open("viewer", "relay", "test", {
       name: "migration",
+      version: 2,
       project: () => {
         throw new Error("projection failed");
       },
     });
-    const migration = await failing
-      .importBatch({
-        records: [{ id: "one", local: {} }],
-        preferences: [{ id: "one", value: false }],
-        marker: "done",
-      })
-      .then(
-        () => "unexpected",
-        (error) => error.message,
-      );
+    const migration = await failing.get("one").then(
+      () => "unexpected",
+      (error) => error.message,
+    );
     return {
       failure,
       after,
       checkpoint,
       notices,
       migration,
-      imported: await failing.imported("done"),
-      pref: await failing.preferences.get("one"),
+      imported: await original.imported("done"),
+      pref: await original.preferences.get("one"),
+      saved: (await original.get("one")).record.local,
+      progress: await original.checkpoint(),
+      indexed: (
+        await original.page({ index: "archive", value: "false" })
+      ).entries.map((entry) => entry.record.id),
     };
   });
   expect(result).toEqual({
@@ -172,8 +182,11 @@ test("rolls back received batches and migration failures without publishing chan
     checkpoint: null,
     notices: [],
     migration: "projection failed",
-    imported: false,
-    pref: undefined,
+    imported: true,
+    pref: false,
+    saved: { title: "saved" },
+    progress: "saved",
+    indexed: ["one"],
   });
 });
 

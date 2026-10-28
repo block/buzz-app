@@ -1537,6 +1537,10 @@ it("reads and replaces the canvas of a named channel or the current one", async 
     callTool(client, {}, "canvas_set", { content: "x" }),
   ).rejects.toThrow("channel is required here.");
   await expect(
+    callTool(client, {}, "canvas_set", { path: "plan.md" }),
+  ).rejects.toThrow("channel is required here.");
+  expect(client.read).not.toHaveBeenCalled();
+  await expect(
     callTool(client, { channel: "chan" }, "canvas_set", {}),
   ).rejects.toThrow("Give content or path.");
   await expect(

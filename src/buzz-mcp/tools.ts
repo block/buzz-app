@@ -1100,14 +1100,18 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
   },
 
   async canvas_get(tools, args) {
-    const { head } = await canvas(tools, args);
+    const channel = text(args.channel) ?? tools.context.channel;
+    if (!channel) throw new Error("channel is required here.");
+    const head = await canvas(tools, channel);
     return head?.content || "No canvas.";
   },
 
   async canvas_set(tools, args) {
-    const { client } = tools;
+    const { client, context } = tools;
+    const channel = text(args.channel) ?? context.channel;
+    if (!channel) throw new Error("channel is required here.");
     const content = (await tools.body(args, true, "content")) as string;
-    const { channel, head } = await canvas(tools, args);
+    const head = await canvas(tools, channel);
     // The newest canvas wins, so a write must be dated after the current one.
     const after = head ? (head.created_at + 1) * 1000 : 0;
     if (after - Date.now() > 5000)
@@ -2042,14 +2046,12 @@ const unread = (error: unknown) =>
   new Error(`its state could not be read back: ${reason(error)}`);
 
 /** The channel's newest canvas, once the channel is known to be visible. */
-async function canvas(tools: Tools, args: Args) {
-  const channel = text(args.channel) ?? tools.context.channel;
-  if (!channel) throw new Error("channel is required here.");
+async function canvas(tools: Tools, channel: string) {
   const [head] = await tools.client.query([
     { kinds: [40100], "#h": [channel], limit: 1 },
   ]);
   if (!head && !(await tools.metadata(channel))) throw unseen(channel);
-  return { channel, head };
+  return head;
 }
 
 /** The `channel` argument, or the current channel only when it is left out. */

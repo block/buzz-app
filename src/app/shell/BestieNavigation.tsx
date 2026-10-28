@@ -61,7 +61,7 @@ export function BestieNavigationProvider({
   const mark: BestieMark | undefined = agent
     ? {
         label: bestieName(agent),
-        searchLabel: "Main agent",
+        searchLabel: "Bestie",
         avatar: { src, shape: "squircle" },
       }
     : undefined;

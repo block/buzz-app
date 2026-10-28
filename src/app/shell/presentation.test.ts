@@ -30,7 +30,7 @@ function page(key: string, title: string, icon?: string): RegisteredPage {
 
 const messages = page("buzz.channels/channels", "Channels");
 const inbox = page("buzz.inbox/inbox", "Inbox");
-const bestie = page("buzz.bestie/bestie", "Main agent");
+const bestie = page("buzz.bestie/bestie", "Bestie");
 const projects = page("fixture.projects/projects", "Projects");
 
 test("bundled page order ignores activation order without mutating the registry", () => {
@@ -75,7 +75,7 @@ test("other pages sort by label then full key and cannot claim bundled slots", (
   ).toEqual(expected);
 });
 
-test("bundled pages get their own icons and Main agent uses the agent mark", () => {
+test("bundled pages get their own icons and Bestie uses the agent mark", () => {
   expect(pagePresentation(inbox).icon).toBe(BellIcon);
   expect(pagePresentation(page("buzz.agents/agents", "Agents")).icon).toBe(
     RobotIcon,

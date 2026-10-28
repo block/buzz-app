@@ -42,7 +42,7 @@ vi.mock("../bundled", async () => ({
       module: await import("../bundled/inbox"),
     },
     {
-      manifest: { id: "buzz.bestie", name: "Main agent", apiVersion: 1 },
+      manifest: { id: "buzz.bestie", name: "Bestie", apiVersion: 1 },
       module: await import("../bundled/bestie"),
     },
     {
@@ -227,7 +227,7 @@ it("lists active primary pages in their sidebar and header placements", async ()
       within(pages)
         .getAllByRole("button")
         .map((row) => row.textContent),
-    ).toEqual(["Inbox", "Main agent"]),
+    ).toEqual(["Inbox", "Bestie"]),
   );
 
   expect(
@@ -246,7 +246,7 @@ it("lists active primary pages in their sidebar and header placements", async ()
       within(screen.getByRole("navigation", { name: "Pages" }))
         .getAllByRole("button")
         .map((row) => row.textContent),
-    ).toEqual(["Inbox", "Main agent"]),
+    ).toEqual(["Inbox", "Bestie"]),
   );
 
   expect(screen.queryByRole("tab", { name: "Agents" })).not.toBeInTheDocument();
@@ -267,14 +267,14 @@ it("lists active primary pages in their sidebar and header placements", async ()
   ).not.toBeInTheDocument();
   await userEvent.keyboard("{Escape}");
 
-  // Main agent remains pinned when optional primary pages are disabled.
+  // Bestie remains pinned when optional primary pages are disabled.
   for (const id of ["buzz.inbox", "buzz.bestie", "buzz.repos"])
     await act(() => current.plugins.change("disable", id));
   await waitFor(() =>
     expect(
       within(screen.getByRole("navigation", { name: "Pages" })).getByRole(
         "button",
-        { name: "Main agent" },
+        { name: "Bestie" },
       ),
     ).toBeInTheDocument(),
   );

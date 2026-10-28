@@ -78,7 +78,7 @@ const page: RegisteredPage = {
   key: "buzz.bestie/bestie",
   pluginId: "buzz.bestie",
   revision: "bundled",
-  title: "Main agent",
+  title: "Bestie",
   primary: true,
   component: () => null,
 };
@@ -162,11 +162,9 @@ it("updates the mounted sidebar and search from the exact shared choice, includi
     </StrictMode>,
   );
   const nav = screen.getByRole("navigation", { name: "Pages" });
-  expect(within(nav).getByRole("button", { name: "Main agent" })).toBeVisible();
+  expect(within(nav).getByRole("button", { name: "Bestie" })).toBeVisible();
   expect(
-    within(nav)
-      .getByRole("button", { name: "Main agent" })
-      .querySelector("image"),
+    within(nav).getByRole("button", { name: "Bestie" }).querySelector("image"),
   ).toBeNull();
   act(() => {
     setDefaultAgent(scope, pollen);
@@ -187,7 +185,7 @@ it("updates the mounted sidebar and search from the exact shared choice, includi
     within(dialog).getByRole("option", { name: "Pollen" }).querySelector("img"),
   ).toHaveAttribute("src", portrait.preview);
   const search = within(dialog).getByRole("combobox", { name: "Search Buzz" });
-  await userEvent.type(search, "Main agent");
+  await userEvent.type(search, "Bestie");
   expect(
     within(dialog).getByRole("option", { name: "Pollen" }),
   ).toBeInTheDocument();
@@ -206,13 +204,13 @@ it("updates the mounted sidebar and search from the exact shared choice, includi
     forgetDefaultAgent(fizz);
   });
   expect(
-    within(nav).getByRole("button", { name: "Main agent" }),
+    within(nav).getByRole("button", { name: "Bestie" }),
   ).toBeInTheDocument();
   act(() => {
     setDefaultAgent(scope, "d".repeat(64));
   });
   expect(
-    within(nav).getByRole("button", { name: "Main agent" }),
+    within(nav).getByRole("button", { name: "Bestie" }),
   ).toBeInTheDocument();
 });
 
@@ -257,15 +255,11 @@ it("follows roster changes and community replacement without remounting content 
   act(() => {
     f.update({ status: "connecting", generation: 2 });
   });
-  expect(
-    screen.getByRole("button", { name: "Main agent" }),
-  ).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Bestie" })).toBeInTheDocument();
   act(() => {
     f.update({ status: "ready", scope: `https://other.test:${viewer}` });
   });
-  expect(
-    screen.getByRole("button", { name: "Main agent" }),
-  ).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Bestie" })).toBeInTheDocument();
   expect(screen.getByRole("textbox", { name: "Draft" })).toHaveValue(
     "keep this",
   );
@@ -447,7 +441,7 @@ it("shows the promoted DM's shared unread pip, clears when read, and follows rep
   });
   expect(
     screen
-      .getByRole("button", { name: "Main agent" })
+      .getByRole("button", { name: "Bestie" })
       .querySelector("[data-channel-priority]"),
   ).toBeNull();
 });

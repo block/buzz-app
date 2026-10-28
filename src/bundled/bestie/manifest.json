@@ -1,7 +1,7 @@
 {
   "id": "buzz.bestie",
-  "name": "Main agent",
+  "name": "Bestie",
   "apiVersion": 1,
-  "description": "Open a continuing private conversation with your main agent.",
+  "description": "Open a continuing private conversation with your bestie.",
   "discovery": { "category": "agent-tools" }
 }

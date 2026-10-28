@@ -2340,7 +2340,7 @@ it("retains the selected profile draft while viewing teams", async () => {
   expect(agents.save).not.toHaveBeenCalled();
 });
 
-it("announces the main agent and presents its menu status without a fake toggle", async () => {
+it("announces the Bestie on its card without repeating it in actions", async () => {
   const ada = agent("Ada", 1);
   const view = setup([ada]);
   const choices = {
@@ -2366,20 +2366,20 @@ it("announces the main agent and presents its menu status without a fake toggle"
     subscribe: () => () => {},
   } as unknown as RelayData;
   view.rerender(<AgentsPage agents={view.agents} relay={relay} />);
-  const card = screen.getByRole("gridcell", { name: "Ada, Main agent" });
-  expect(within(card).getByText("Main agent")).toBeVisible();
-  expect(within(card).queryByRole("img", { name: "Main agent" })).toBeNull();
+  const card = screen.getByRole("gridcell", { name: "Ada, Bestie" });
+  expect(within(card).getByText("Bestie")).toBeVisible();
+  expect(within(card).queryByRole("img", { name: "Bestie" })).toBeNull();
   fireEvent.keyDown(card, { key: "F10", shiftKey: true });
   const menu = await screen.findByRole("menu", { name: "Actions for Ada" });
-  expect(within(menu).getByText("Main agent")).toBeVisible();
-  // Right-click carries the same actions as the card's "..." menu.
+  expect(within(menu).queryByText("Bestie")).toBeNull();
+  // Right-click carries the same ordinary actions as the card's "..." menu.
   expect(
     within(menu).getByRole("menuitem", { name: "Copy public key" }),
   ).toBeVisible();
   expect(within(menu).queryByRole("menuitemcheckbox")).toBeNull();
 });
 
-it("offers Make main agent from the card's actions button", async () => {
+it("offers Make my bestie from the card's actions button", async () => {
   const user = userEvent.setup();
   const ada = agent("Ada", 1);
   const bea = agent("Bea", 2);
@@ -2415,38 +2415,43 @@ it("offers Make main agent from the card's actions button", async () => {
     subscribe: () => () => {},
   } as unknown as RelayData;
   view.rerender(<AgentsPage agents={view.agents} relay={relay} />);
-  expect(
-    screen.getByRole("gridcell", { name: "Ada, Main agent" }),
-  ).toBeVisible();
+  expect(screen.getByRole("gridcell", { name: "Ada, Bestie" })).toBeVisible();
   const card = screen.getByRole("gridcell", { name: "Bea" });
   await user.click(
     within(card).getByRole("button", { name: "Actions for Bea" }),
   );
   await user.click(
-    await screen.findByRole("menuitem", { name: "Make main agent" }),
+    await screen.findByRole("menuitem", { name: "Make my bestie" }),
   );
-  await user.click(
-    within(await screen.findByRole("alertdialog")).getByRole("button", {
-      name: "Make main agent",
-    }),
+  const confirmation = await screen.findByRole("alertdialog", {
+    name: "Make Bea your bestie?",
+  });
+  expect(confirmation).toHaveAccessibleDescription(
+    "Your existing chats with Ada will still be available in your DMs.",
   );
   expect(
-    await screen.findByRole("gridcell", { name: "Bea, Main agent" }),
+    within(confirmation).getByRole("button", { name: "Keep Ada" }),
+  ).toBeVisible();
+  await user.click(
+    within(confirmation).getByRole("button", { name: "Switch to Bea" }),
+  );
+  expect(
+    await screen.findByRole("gridcell", { name: "Bea, Bestie" }),
   ).toBeVisible();
   expect(screen.getByRole("gridcell", { name: "Ada" })).toBeVisible();
-  // Right-click opens the same actions, including the main agent choice.
+  // Right-click opens the same actions, including the Bestie choice.
   fireEvent.contextMenu(screen.getByRole("gridcell", { name: "Ada" }));
   const menu = await screen.findByRole("menu", { name: "Actions for Ada" });
   await user.click(
-    within(menu).getByRole("menuitem", { name: "Make main agent" }),
+    within(menu).getByRole("menuitem", { name: "Make my bestie" }),
   );
   await user.click(
     within(await screen.findByRole("alertdialog")).getByRole("button", {
-      name: "Make main agent",
+      name: "Switch to Ada",
     }),
   );
   expect(
-    await screen.findByRole("gridcell", { name: "Ada, Main agent" }),
+    await screen.findByRole("gridcell", { name: "Ada, Bestie" }),
   ).toBeVisible();
   expect(screen.getByRole("gridcell", { name: "Bea" })).toBeVisible();
 });
@@ -2540,7 +2545,7 @@ it("opens a Marketplace tile in the profile pane and returns focus on close and 
   }
 });
 
-it("offers Make main agent on a stand-in for a missing chosen agent", async () => {
+it("offers Make my bestie on a stand-in for a missing chosen agent", async () => {
   const ada = agent("Ada", 1);
   const view = setup([ada]);
   const choices = {
@@ -2575,16 +2580,14 @@ it("offers Make main agent on a stand-in for a missing chosen agent", async () =
   fireEvent.contextMenu(card);
   const menu = await screen.findByRole("menu", { name: "Actions for Ada" });
   fireEvent.click(
-    within(menu).getByRole("menuitem", { name: "Make main agent" }),
+    within(menu).getByRole("menuitem", { name: "Make my bestie" }),
   );
-  expect(
-    screen.getByRole("gridcell", { name: "Ada, Main agent" }),
-  ).toBeVisible();
+  expect(screen.getByRole("gridcell", { name: "Ada, Bestie" })).toBeVisible();
   fireEvent.contextMenu(card);
   expect(
     within(
       await screen.findByRole("menu", { name: "Actions for Ada" }),
-    ).queryByRole("menuitem", { name: "Make main agent" }),
+    ).queryByRole("menuitem", { name: "Make my bestie" }),
   ).toBeNull();
 });
 
@@ -2638,7 +2641,7 @@ async function bestieTiles(destination = "tiles", libraryOnly = false) {
     key: "buzz.bestie/bestie",
     pluginId: "buzz.bestie",
     revision: "bundled",
-    title: "Main agent",
+    title: "Bestie",
     primary: true,
     component: () => null,
   };
@@ -2659,7 +2662,7 @@ async function bestieTiles(destination = "tiles", libraryOnly = false) {
 }
 
 it.each([false, true])(
-  "moves the main-agent label without reordering and shares selection with pinned navigation (library-only: %s)",
+  "moves the Bestie label without reordering and shares selection with pinned navigation (library-only: %s)",
   async (libraryOnly) => {
     const user = userEvent.setup();
     const f = await bestieTiles("tiles", libraryOnly);
@@ -2669,26 +2672,19 @@ it.each([false, true])(
     const cards = within(
       screen.getByRole("grid", { name: "Agents" }),
     ).getAllByRole("gridcell");
-    const ada = screen.getByRole("gridcell", { name: "Ada, Main agent" });
-    expect(within(ada).getByText("Main agent")).toBeVisible();
+    const ada = screen.getByRole("gridcell", { name: "Ada, Bestie" });
+    expect(within(ada).getByText("Bestie")).toBeVisible();
     fireEvent.keyDown(ada, { key: "F10", shiftKey: true });
     const menu = await screen.findByRole("menu", { name: "Actions for Ada" });
     expect(
       within(menu).getByRole("menuitem", { name: "Copy public key" }),
     ).toBeVisible();
     expect(within(menu).queryByRole("menuitem", { name: /Remove/ })).toBeNull();
-    const change = within(menu).getByRole("menuitem", {
-      name: "Change main agent…",
-    });
-    change.focus();
-    await user.keyboard("{ArrowRight}");
-    const boChoice = await screen.findByRole("menuitemradio", { name: /^Bo / });
-    boChoice.focus();
-    await user.keyboard("{Enter}");
-    const confirm = await screen.findByRole("alertdialog", {
-      name: "Make Bo your main agent?",
-    });
-    await user.click(within(confirm).getByRole("button", { name: "Keep Ada" }));
+    expect(within(menu).queryByText("Bestie")).toBeNull();
+    expect(
+      within(menu).queryByRole("menuitem", { name: /Change.*bestie/i }),
+    ).toBeNull();
+    await user.keyboard("{Escape}");
     expect(readDefaultAgent(f.scope)).toBe(f.ada.pubkey);
     const bo = screen.getByRole("gridcell", { name: "Bo" });
     await user.click(
@@ -2696,20 +2692,20 @@ it.each([false, true])(
     );
     await user.click(
       await screen.findByRole("menuitem", {
-        name: "Make main agent",
+        name: "Make my bestie",
       }),
     );
     await user.click(
       within(await screen.findByRole("alertdialog")).getByRole("button", {
-        name: "Make main agent",
+        name: "Switch to Bo",
       }),
     );
     expect(readDefaultAgent(f.scope)).toBe(f.bo.pubkey);
     expect(within(nav).getByRole("button", { name: "Bo" })).toBeVisible();
     expect(
-      within(
-        screen.getByRole("gridcell", { name: "Bo, Main agent" }),
-      ).getByText("Main agent"),
+      within(screen.getByRole("gridcell", { name: "Bo, Bestie" })).getByText(
+        "Bestie",
+      ),
     ).toBeVisible();
     expect(
       within(screen.getByRole("grid", { name: "Agents" })).getAllByRole(
@@ -2718,35 +2714,31 @@ it.each([false, true])(
     ).toEqual(cards);
     expect(
       within(screen.getByRole("gridcell", { name: "Ada" })).queryByText(
-        "Main agent",
+        "Bestie",
       ),
     ).toBeNull();
     fireEvent.contextMenu(screen.getByRole("gridcell", { name: "Ada" }));
     await user.click(
       within(
         await screen.findByRole("menu", { name: "Actions for Ada" }),
-      ).getByRole("menuitem", { name: "Make main agent" }),
+      ).getByRole("menuitem", { name: "Make my bestie" }),
     );
     await user.click(
       within(await screen.findByRole("alertdialog")).getByRole("button", {
-        name: "Make main agent",
+        name: "Switch to Ada",
       }),
     );
     expect(readDefaultAgent(f.scope)).toBe(f.ada.pubkey);
     f.rerender(f.tree(false));
-    expect(
-      screen.getByRole("gridcell", { name: "Ada, Main agent" }),
-    ).toBeVisible();
+    expect(screen.getByRole("gridcell", { name: "Ada, Bestie" })).toBeVisible();
     expect(readDefaultAgent(f.scope)).toBe(f.ada.pubkey);
     f.rerender(f.tree());
-    expect(
-      screen.getByRole("gridcell", { name: "Ada, Main agent" }),
-    ).toBeVisible();
+    expect(screen.getByRole("gridcell", { name: "Ada, Bestie" })).toBeVisible();
     expect(f.agents.remove).not.toHaveBeenCalled();
   },
 );
 
-it("retains the main agent on a failed save and retries, rejecting a stale chooser candidate", async () => {
+it("retains the Bestie on a failed save and retries, rejecting a stale chooser candidate", async () => {
   const user = userEvent.setup();
   const f = await bestieTiles("save");
   const replace = async () => {
@@ -2754,10 +2746,10 @@ it("retains the main agent on a failed save and retries, rejecting a stale choos
     await user.click(
       within(
         await screen.findByRole("menu", { name: "Actions for Bo" }),
-      ).getByRole("menuitem", { name: "Make main agent" }),
+      ).getByRole("menuitem", { name: "Make my bestie" }),
     );
     return screen.findByRole("alertdialog", {
-      name: "Make Bo your main agent?",
+      name: "Make Bo your bestie?",
     });
   };
   const dialog = await replace();
@@ -2766,10 +2758,10 @@ it("retains the main agent on a failed save and retries, rejecting a stale choos
   });
   try {
     await user.click(
-      within(dialog).getByRole("button", { name: "Make main agent" }),
+      within(dialog).getByRole("button", { name: "Switch to Bo" }),
     );
     expect(screen.getByRole("alert")).toHaveTextContent(
-      "The main agent couldn't be saved",
+      "Your bestie couldn't be saved",
     );
     expect(readDefaultAgent(f.scope)).toBe(f.ada.pubkey);
   } finally {
@@ -2788,9 +2780,7 @@ it("retains the main agent on a failed save and retries, rejecting a stale choos
       ],
     }),
   );
-  await user.click(
-    within(stale).getByRole("button", { name: "Make main agent" }),
-  );
+  await user.click(within(stale).getByRole("button", { name: "Switch to Bo" }));
   expect(readDefaultAgent(f.scope)).toBe(f.ada.pubkey);
   act(() =>
     f.native.set({
@@ -2803,13 +2793,15 @@ it("retains the main agent on a failed save and retries, rejecting a stale choos
     }),
   );
   await user.click(
-    within(await replace()).getByRole("button", { name: "Make main agent" }),
+    within(await replace()).getByRole("button", {
+      name: "Switch to Bo",
+    }),
   );
   expect(readDefaultAgent(f.scope)).toBe(f.bo.pubkey);
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });
 
-it("keeps a single main agent's status without offering removal or an empty chooser", async () => {
+it("keeps a single Bestie's pill without adding a status or change action", async () => {
   const f = await bestieTiles("single");
   act(() =>
     f.native.set({
@@ -2823,11 +2815,9 @@ it("keeps a single main agent's status without offering removal or an empty choo
       ],
     }),
   );
-  fireEvent.contextMenu(
-    screen.getByRole("gridcell", { name: "Ada, Main agent" }),
-  );
+  fireEvent.contextMenu(screen.getByRole("gridcell", { name: "Ada, Bestie" }));
   const menu = await screen.findByRole("menu", { name: "Actions for Ada" });
-  expect(within(menu).getByText("Main agent")).toBeVisible();
+  expect(within(menu).queryByText("Bestie")).toBeNull();
   expect(
     within(menu).queryByRole("menuitem", { name: /Change|Remove/ }),
   ).toBeNull();

@@ -1,30 +1,29 @@
-# Main agent
+# Bestie
 
-Your main agent is pinned below Inbox in the left navigation and selected by default
+Your bestie is pinned below Inbox in the left navigation and selected by default
 in new Solo chats. The pinned destination opens your continuing private DM.
 
 ## Getting started
 
-Open **Agents** to see the **Main agent** accent pill beneath the selected agent’s name.
-Use another agent’s right-click or **… → Make main agent** action to change it, or
-**Change main agent…** on the current one. The label moves; cards keep their order.
-There is no independent removal action. Changing the selection does not delete
-agents, move drafts between conversations, or stop work already running.
+Open **Agents** to see the **Bestie** accent pill beneath the selected agent’s name.
+Use another agent’s right-click or **… → Make my bestie** action to change it.
+The label moves; cards keep their order. There is no action on the current bestie
+and no independent removal action. Changing the selection does not delete agents,
+move drafts between conversations, or stop work already running.
 
 ---
 
 ## Selection and compatibility
 
 The saved default remains device-local for each account and community. With no
-saved choice, main’s existing policy saves the first managed agent, then the first
-selectable agent, after discovery settles. A stopped or signed-out runtime does
-not replace it. Onboarding’s explicit assignment will use this same preference;
-this change does not add onboarding or remote provisioning.
+saved choice, the existing default-agent policy saves the first managed agent,
+then the first selectable agent, after discovery settles. A stopped or signed-out
+runtime does not replace it. Onboarding’s explicit assignment will use this same
+preference; this change does not add onboarding or remote provisioning.
 
 The destination is built in, not an optional plugin. Its legacy `buzz.bestie/bestie`
 key is retained for existing navigation. Old experimental enable/disable flags are
-ignored, without rewriting the saved main agent. Visible copy and artwork no
-longer present a separate Bestie role.
+ignored, without rewriting the saved bestie.
 
 The pinned DM uses the exact verified one-to-one roster, shared thread reader,
 drafts and unread state. It is promoted out of the ordinary DM inventory while
@@ -32,7 +31,7 @@ shown at the pinned destination. Choosing another agent returns the prior DM to
 Messages. Choices use `session.agentChoices.selectable`, including hosted,
 library-only and other-device agents; local custody is not required. Known-archived
 agents remain excluded. A saved library-only choice opens its DM without an import.
-The identity, library entry and main role do not prove the agent is running or
+The identity, library entry and bestie role do not prove the agent is running or
 that its harness answers untagged DMs; opening and sending retain ordinary relay
 membership checks.
 

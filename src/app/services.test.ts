@@ -204,16 +204,16 @@ it.each([
       services.conversation.inline.snapshot().map(({ key }) => key),
     ).toEqual(["buzz.emoji/custom"]);
     expect(services.settingsCards.has("buzz.emoji/custom-emoji")).toBe(true);
-    const mainAgent = services.pages
+    const bestie = services.pages
       .snapshot()
       .find((page) => page.key === "buzz.bestie/bestie");
-    expect(mainAgent?.title).toBe("Main agent");
+    expect(bestie?.title).toBe("Bestie");
     await services.plugins.change("disable", "buzz.bestie");
     expect(
       services.pages
         .snapshot()
         .find((page) => page.key === "buzz.bestie/bestie"),
-    ).toBe(mainAgent);
+    ).toBe(bestie);
     const tools = services.conversation.tools.snapshot();
     await services.plugins.change("disable", "buzz.emoji");
     await services.plugins.change("disable", "buzz.mentions");

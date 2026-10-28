@@ -1,14 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { afterEach, expect, it, vi } from "vitest";
-import {
-  act,
-  cleanup,
-  render,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { composerDOMFixture } from "../../features/messages/composer-testing";
@@ -322,7 +315,7 @@ it("reuses an existing DM and its ordinary draft after leaving and reopening Bes
   expect(f.open).not.toHaveBeenCalled();
 });
 
-it("switches DMs without carrying the old agent's draft or modifying the Solo draft", async () => {
+it("follows a bestie changed elsewhere without carrying the old DM draft or modifying the Solo draft", async () => {
   const f = await fixture();
   const user = userEvent.setup();
   writeView(f.scope, "solo:new-draft", "Untouched Solo notes");
@@ -332,11 +325,12 @@ it("switches DMs without carrying the old agent's draft or modifying the Solo dr
     await screen.findByRole("textbox", { name: "Message Pollen" }),
     "Keep these notes",
   );
-  await user.click(screen.getByRole("button", { name: "Change main agent…" }));
-  await user.click(await screen.findByRole("menuitemradio", { name: /Fizz/ }));
-  await user.click(
-    await screen.findByRole("button", { name: "Make main agent" }),
-  );
+  expect(
+    screen.queryByRole("button", { name: /Change.*bestie/i }),
+  ).not.toBeInTheDocument();
+  act(() => {
+    f.choose(fizz);
+  });
   expect(
     await screen.findByRole("textbox", { name: "Message Fizz" }),
   ).not.toHaveTextContent("Keep these notes");
@@ -413,15 +407,9 @@ it("offers agents from a successful source, with recovery for the failed source"
     ).not.toBeInTheDocument(),
   );
   await screen.findByRole("textbox", { name: "Message Pollen" });
-  await userEvent.click(
-    screen.getByRole("button", { name: "Change main agent…" }),
-  );
   expect(
-    await screen.findByRole("menuitemradio", { name: /Pollen/ }),
-  ).toBeInTheDocument();
-  expect(
-    screen.getByRole("menuitemradio", { name: /Library only/ }),
-  ).toBeInTheDocument();
+    screen.queryByRole("button", { name: /Change.*bestie/i }),
+  ).not.toBeInTheDocument();
 });
 
 it("offers library-only agents during a local-source failure and recovers the source", async () => {
@@ -429,7 +417,7 @@ it("offers library-only agents during a local-source failure and recovers the so
   f.mount();
   await screen.findByText("Local agents unavailable");
   await userEvent.click(
-    screen.getByRole("button", { name: "Choose main agent" }),
+    screen.getByRole("button", { name: "Choose your bestie" }),
   );
   expect(
     await screen.findByRole("menuitemradio", { name: /Library only/ }),
@@ -559,39 +547,16 @@ it.each([true, false])(
   },
 );
 
-it("confirms replacing a saved library-only main agent, and cancel keeps its conversation", async () => {
+it("keeps a saved library-only bestie's conversation without a change action", async () => {
   const f = await fixture();
   f.choose(libraryOnly);
   f.mount();
-  const user = userEvent.setup();
   await screen.findByRole("textbox", { name: "Message Library only" });
-  await user.click(screen.getByRole("button", { name: "Change main agent…" }));
-  await user.click(
-    await screen.findByRole("menuitemradio", { name: /Pollen/ }),
-  );
-  const confirm = await screen.findByRole("alertdialog", {
-    name: "Make Pollen your main agent?",
-  });
-  expect(readView(f.scope, "solo:default-agent", null)).toBe(libraryOnly);
-  await user.click(
-    within(confirm).getByRole("button", { name: "Keep Library only" }),
-  );
-  expect(readView(f.scope, "solo:default-agent", null)).toBe(libraryOnly);
   expect(
-    screen.getByRole("textbox", { name: "Message Library only" }),
-  ).toBeVisible();
+    screen.queryByRole("button", { name: /Change.*bestie/i }),
+  ).not.toBeInTheDocument();
+  expect(readView(f.scope, "solo:default-agent", null)).toBe(libraryOnly);
   expect(f.open.mock.calls.every(([keys]) => keys[0] === libraryOnly)).toBe(
     true,
   );
-  await user.click(screen.getByRole("button", { name: "Change main agent…" }));
-  await user.click(
-    await screen.findByRole("menuitemradio", { name: /Pollen/ }),
-  );
-  await user.click(
-    within(await screen.findByRole("alertdialog")).getByRole("button", {
-      name: "Make main agent",
-    }),
-  );
-  await screen.findByRole("textbox", { name: "Message Pollen" });
-  expect(readView(f.scope, "solo:default-agent", null)).toBe(pollen);
 });

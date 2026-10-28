@@ -1559,7 +1559,7 @@ it("promotes exactly the Bestie DM, restores prior local removal, and releases i
     key: "buzz.bestie/bestie",
     pluginId: "buzz.bestie",
     revision: "bundled",
-    title: "Main agent",
+    title: "Bestie",
     primary: true,
     component: () => null,
   };
@@ -1608,9 +1608,7 @@ it("promotes exactly the Bestie DM, restores prior local removal, and releases i
     act(() => {
       forgetDefaultAgent(fizz);
     });
-    expect(
-      screen.getByRole("button", { name: "Main agent" }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Bestie" })).toBeInTheDocument();
     expect(row("fizz-dm")).not.toBeNull();
 
     act(() => {
@@ -1635,9 +1633,7 @@ it("promotes exactly the Bestie DM, restores prior local removal, and releases i
       native.set({ agents: [] });
     });
     expect(row("pollen-dm")).not.toBeNull();
-    expect(
-      screen.getByRole("button", { name: "Main agent" }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Bestie" })).toBeInTheDocument();
     expect(h.session.channels.list().channels).toHaveLength(4);
     expect(readView(scope, "hidden-dms", [])).toEqual([]);
   } finally {

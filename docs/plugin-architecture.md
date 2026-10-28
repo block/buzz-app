@@ -71,7 +71,7 @@ features/agents/       Agents service: saved agents, creation, deletion
 features/agents/        session-owned agent inventory, choices, local agents and activity
 features/agent-harness/ Buzz base prompt, memory reads, attention prompts and wakes shared by harness plugins
 bundled/github/         builtin GitHub panel plugin
-bundled/bestie/         built-in pinned Main agent DM (legacy contribution key)
+bundled/bestie/         built-in pinned Bestie DM (legacy contribution key)
 bundled/inbox/          builtin Inbox page for unread conversations and mentions
 ```
 
@@ -444,7 +444,7 @@ Saved `buzz.me` and `buzz.sessions` flags are ignored like any uninstalled owner
 Saved enabled/disabled flags win over defaults (except required Channels). Profiles
 without a saved flag use the current default, so changing a default also changes
 those existing profiles. Native profiles store per-plugin overrides. The pinned
-Main agent destination is a built-in host feature: old `buzz.bestie` enable/disable
+Bestie destination is a built-in host feature: old `buzz.bestie` enable/disable
 flags are ignored, and it has no optional catalog entry. Its legacy page key and
 saved default-agent selection remain unchanged. Default-on does not promise platform support: Terminal contributes UI
 only on macOS/Linux desktop; Hosted communities needs either the desktop app or
@@ -711,11 +711,10 @@ are ordinary shared components, not another registry.
 
 Only open intent crosses pages: the panel component can remount under a new page,
 so this mechanism does not promise persistent agent sessions or drafts. The built-in
-Main agent page reuses the selected agent’s verified one-to-one DM, ordinary drafts,
+Bestie page reuses the selected agent’s verified one-to-one DM, ordinary drafts,
 thread reader and shared unread state. It adds no runtime, onboarding or hosted
 provisioning. The page and shell keep the `buzz.bestie/bestie` key for saved
-navigation, while visible copy uses Main agent. See
-[Main agent](../src/bundled/bestie/README.md).
+navigation. See [Bestie](../src/bundled/bestie/README.md).
 
 `main.tsx` creates the shared services once; `app/App.tsx` owns startup screens,
 navigation, and built-in Settings. `app/services.ts` composes the core services.

@@ -57,82 +57,59 @@ export function BestiePortrait({
   );
 }
 
-/** Picking a Bestie, from the setup state and from the page header. The menu
- * owns keyboard selection; replacing one confirms first and names what moves. */
+/** Picking a bestie before one is set. Replacements start from another agent's
+ * card, where the shared confirmation names what changes. */
 export function BestieChoice({
   agents,
-  current,
   community,
   trigger,
   align = "start",
   onChoose,
 }: {
   agents: readonly BestieAgent[];
-  /** The Bestie in place, marked in the list; absent before the first pick. */
-  current?: BestieAgent | undefined;
   community?: string | undefined;
   trigger: ReactElement;
   align?: "start" | "end";
   onChoose(agent: BestieAgent): void;
 }) {
-  const [replacing, setReplacing] = useState<BestieAgent>();
   const [open, setOpen] = useState(false);
   const choose = (pubkey: string) => {
     const agent = agents.find((item) => item.pubkey === pubkey);
-    if (!agent || agent.pubkey === current?.pubkey) return;
-    // Replacing a Bestie moves where messages for an agent go: confirm first.
-    // The menu closes with the same click, so the dialog owns focus from here.
-    if (current) {
-      setOpen(false);
-      setReplacing(agent);
-    } else onChoose(agent);
+    if (agent) onChoose(agent);
   };
   return (
-    <>
-      <MenuRoot open={open} onOpenChange={setOpen}>
-        <MenuTrigger render={trigger} />
-        <MenuPopup align={align} aria-label="Choose main agent">
-          <MenuGroup>
-            <MenuGroupLabel emphasis="quiet">Your agents</MenuGroupLabel>
-            <MenuRadioGroup
-              value={current?.pubkey ?? ""}
-              onValueChange={choose}
-            >
-              {agents.map((agent) => (
-                <MenuRadioItem
-                  key={agent.pubkey}
-                  value={agent.pubkey}
-                  closeOnClick
-                >
-                  <ChoiceRow
-                    leading={
-                      <BestiePortrait agent={agent} community={community} />
-                    }
-                    label={bestieName(agent)}
-                    description={formatPublicKey(agent.pubkey)}
-                  />
-                </MenuRadioItem>
-              ))}
-            </MenuRadioGroup>
-          </MenuGroup>
-          {!agents.length && (
-            <MenuNote>No agents to choose from in this community.</MenuNote>
-          )}
-        </MenuPopup>
-      </MenuRoot>
-      {replacing && current && (
-        <BestieConfirmation
-          current={current}
-          replacing={replacing}
-          onChoose={onChoose}
-          onClose={() => setReplacing(undefined)}
-        />
-      )}
-    </>
+    <MenuRoot open={open} onOpenChange={setOpen}>
+      <MenuTrigger render={trigger} />
+      <MenuPopup align={align} aria-label="Choose your bestie">
+        <MenuGroup>
+          <MenuGroupLabel emphasis="quiet">Your agents</MenuGroupLabel>
+          <MenuRadioGroup value="" onValueChange={choose}>
+            {agents.map((agent) => (
+              <MenuRadioItem
+                key={agent.pubkey}
+                value={agent.pubkey}
+                closeOnClick
+              >
+                <ChoiceRow
+                  leading={
+                    <BestiePortrait agent={agent} community={community} />
+                  }
+                  label={bestieName(agent)}
+                  description={formatPublicKey(agent.pubkey)}
+                />
+              </MenuRadioItem>
+            ))}
+          </MenuRadioGroup>
+        </MenuGroup>
+        {!agents.length && (
+          <MenuNote>No agents to choose from in this community.</MenuNote>
+        )}
+      </MenuPopup>
+    </MenuRoot>
   );
 }
 
-/** Both the Agents actions and the Bestie picker explain the same replacement. */
+/** Agent actions explain what a bestie replacement changes. */
 export function BestieConfirmation({
   current,
   replacing,
@@ -147,8 +124,8 @@ export function BestieConfirmation({
   const keep = useRef<HTMLButtonElement>(null);
   return (
     <AlertDialog
-      title={`Make ${bestieName(replacing)} your main agent?`}
-      description={`${bestieName(replacing)} replaces ${bestieName(current)} here, and new chats are addressed to ${bestieName(replacing)}. Your chat with ${bestieName(current)} stays in your chats.`}
+      title={`Make ${bestieName(replacing)} your bestie?`}
+      description={`Your existing chats with ${bestieName(current)} will still be available in your DMs.`}
       initialFocus={keep}
       onClose={() => onClose()}
       actions={
@@ -163,7 +140,7 @@ export function BestieConfirmation({
               onClose();
             }}
           >
-            Make main agent
+            Switch to {bestieName(replacing)}
           </Button>
         </>
       }

@@ -14,14 +14,10 @@ import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import { useDefaultAgent } from "../../features/solo/default-agent";
 import { SoloColumn } from "../../features/solo/SoloPresentation";
-import {
-  ArrowsLeftRightIcon,
-  RobotIcon,
-} from "../../shared/design-system/icons";
+import { RobotIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { FullPageSurface } from "../../shared/design-system/ui/FullPageSurface";
-import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
 import {
   PanelHeader,
@@ -52,7 +48,7 @@ export function BestiePage({
     connection.status === "ready" && viewer && scope?.endsWith(`:${viewer}`);
   return (
     <div className="h-full min-h-0">
-      <FullPageSurface aria-label="Main agent">
+      <FullPageSurface aria-label="Bestie">
         {joined && scope ? (
           <BestieView
             key={`${scope}:${connection.generation}`}
@@ -73,9 +69,9 @@ export function BestiePage({
               }
               description={
                 connection.status === "connecting"
-                  ? "Your main agent conversation opens once this community is connected."
+                  ? "Your bestie conversation opens once this community is connected."
                   : (connection.error ??
-                    "Choose a community to chat with your main agent.")
+                    "Choose a community to chat with your bestie.")
               }
               action={
                 connection.status === "error" ? (
@@ -116,7 +112,6 @@ function BestieView({
     viewer: session.viewer,
   });
   const bestie = "bestie" in state ? state.bestie : undefined;
-  const agents = "agents" in state ? state.agents : [];
   const choose = (agent: BestieAgent) => {
     if (
       !session.agentChoices
@@ -131,7 +126,7 @@ function BestieView({
     <PanelHeader
       title={
         <PanelHeaderLabel
-          title={bestie ? bestieName(bestie) : "Main agent"}
+          title={bestie ? bestieName(bestie) : "Bestie"}
           icon={
             bestie ? (
               <BestiePortrait agent={bestie} community={community} />
@@ -140,25 +135,6 @@ function BestieView({
             )
           }
         />
-      }
-      actions={
-        bestie &&
-        agents.some((agent) => agent.pubkey !== bestie.pubkey) && (
-          <BestieChoice
-            agents={agents}
-            current={bestie}
-            community={community}
-            align="end"
-            trigger={
-              <IconButton
-                aria-label="Change main agent…"
-                title="Change main agent…"
-                icon={<ArrowsLeftRightIcon size="1rem" aria-hidden="true" />}
-              />
-            }
-            onChoose={choose}
-          />
-        )
       }
     />
   );
@@ -215,7 +191,7 @@ function BestieView({
       >
         {state.kind === "loading" ? (
           <Notice
-            title="Choose your main agent"
+            title="Choose your bestie"
             description="Loading the agents you can choose from…"
           />
         ) : state.agents.length ? (
@@ -224,17 +200,17 @@ function BestieView({
             <h3 className="text-heading">
               {state.missing
                 ? `${state.missing} is no longer here`
-                : "Choose your main agent"}
+                : "Choose your bestie"}
             </h3>
             <p className="max-w-xs text-body-sm text-muted">
               {state.missing
                 ? "Choose another agent to pick up with. Your chat with them stays in your chats."
-                : "Your main agent is pinned here and selected by default in new Solo chats. You can change it at any time."}
+                : "Your bestie is pinned here and selected by default in new Solo chats. You can change it from another agent’s menu at any time."}
             </p>
             <BestieChoice
               agents={state.agents}
               community={community}
-              trigger={<Button variant="prominent">Choose main agent</Button>}
+              trigger={<Button variant="prominent">Choose your bestie</Button>}
               onChoose={choose}
             />
             {state.partial && (
@@ -416,10 +392,7 @@ function Frame({
       {header ?? (
         <PanelHeader
           title={
-            <PanelHeaderLabel
-              title="Main agent"
-              icon={<RobotIcon size="1rem" />}
-            />
+            <PanelHeaderLabel title="Bestie" icon={<RobotIcon size="1rem" />} />
           }
         />
       )}

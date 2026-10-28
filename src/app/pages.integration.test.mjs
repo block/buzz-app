@@ -291,11 +291,11 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
     const mainPage = services.pages
       .snapshot()
       .find((page) => page.key === "buzz.bestie/bestie");
-    assert.equal(mainPage.title, "Main agent");
+    assert.equal(mainPage.title, "Bestie");
     assert.equal(mainPage.primary, true);
     assert.match(
       renderToStaticMarkup(createElement(mainPage.component)),
-      /aria-label="Main agent"/,
+      /aria-label="Bestie"/,
     );
     assert.equal(
       services.plugins
@@ -409,7 +409,7 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
       /Select a community to open a repository/,
     );
     await services.plugins.change("disable", "buzz.repos");
-    // Built-in Main agent remains, regardless of optional activation order.
+    // Built-in Bestie remains, regardless of optional activation order.
     assert.deepEqual(
       services.pages
         .snapshot()

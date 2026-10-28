@@ -502,6 +502,35 @@ it("retains edits on rejection but locks unknown outcomes until read-only confir
   expect(h.owner.capability.snapshot(id)).toBeUndefined();
   expect(h.publish).toHaveBeenCalledTimes(2);
 });
+it.each([
+  ["initial read", "Could not verify current channel access"],
+  ["signing", "Could not sign the channel change"],
+  ["final read", "Could not recheck channel access after signing"],
+] as const)(
+  "identifies a failed %s without publishing or retrying",
+  async (phase, context) => {
+    const h = harness();
+    const base = await h.owner.capability.load(id);
+    // Native IPC can reject with a plain string; read adapters use Error.
+    const failure =
+      phase === "signing"
+        ? "Relay request failed (503)"
+        : new Error("Relay request failed (503)");
+    if (phase === "signing") h.sign.mockRejectedValueOnce(failure);
+    else {
+      if (phase === "final read") h.read.mockResolvedValueOnce(h.events());
+      h.read.mockRejectedValueOnce(failure);
+    }
+    await expect(h.owner.capability.save(base, draft)).rejects.toMatchObject({
+      message: `${context}: Relay request failed (503)`,
+      cause: failure,
+    });
+    expect(h.publish).not.toHaveBeenCalled();
+    expect(h.sign).toHaveBeenCalledTimes(phase === "initial read" ? 0 : 1);
+    expect(h.read).toHaveBeenCalledTimes(phase === "final read" ? 3 : 2);
+    expect(h.owner.capability.snapshot(id)).toBeUndefined();
+  },
+);
 it("receipt alone is not success and repeated Save cannot publish twice", async () => {
   const h = harness();
   const base = await h.owner.capability.load(id);

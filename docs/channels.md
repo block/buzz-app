@@ -738,8 +738,10 @@ their access.”; the note is not a permanent paragraph below the controls.
 Each selection opens a consequence confirmation. Cancel/Escape returns focus to
 the unchanged Select. **Change access** saves immediately through the existing
 channel-details capability, then reloads signed metadata. Loading, pending and
-unconfirmed saves disable both controls. Rejections offer **Reload access**;
-uncertain results survive closing the dialog and offer **Check save status**,
+unconfirmed saves disable both controls. Rejections offer **Reload access**.
+failures before publication identify the initial access check, signing, or final
+access check that failed, retaining the underlying error. No request is retried.
+Uncertain results survive closing the dialog and offer **Check save status**,
 which reads without republishing. Opening or checking never writes. Private
 channels with a Guest default remain intact when changing unrelated details.
 

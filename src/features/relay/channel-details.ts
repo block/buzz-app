@@ -215,6 +215,7 @@ export function createChannelDetails({
       )
         throw channelIdentityUnsupported();
       let publicationStarted = false;
+      let phase = "Could not verify current channel access";
       attempts.set(id, Object.freeze({ draft, status: "saving" }));
       emit();
       try {
@@ -234,6 +235,7 @@ export function createChannelDetails({
             };
             await authorize();
             const template = detailsTemplate(id, draft, base);
+            phase = "Could not sign the channel change";
             const signed = await writer.sign(structuredClone(template), signal);
             signal.throwIfAborted();
             if (
@@ -246,6 +248,7 @@ export function createChannelDetails({
               !verifyEvent(signed)
             )
               throw new Error("Signer changed the channel details command.");
+            phase = "Could not recheck channel access after signing";
             await authorize();
             signal.throwIfAborted();
             if (active?.() === false)
@@ -263,6 +266,11 @@ export function createChannelDetails({
           throw new Error(uncertain);
         }
         attempts.delete(id);
+        if (!publicationStarted)
+          throw new Error(
+            `${phase}: ${error instanceof Error ? error.message : String(error)}`,
+            { cause: error },
+          );
         throw error;
       } finally {
         emit();

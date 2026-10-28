@@ -33,6 +33,16 @@
 .results > * {
   flex-shrink: 0;
 }
+/* Sticks to the list's bottom while more rows lie below, and takes up the
+   gap after the last row so it never covers it. */
+.resultsEdge {
+  position: sticky;
+  bottom: 0;
+  isolation: isolate;
+  height: var(--space-6);
+  margin-top: calc(-1 * var(--space-4));
+  pointer-events: none;
+}
 .groupHeading {
   position: sticky;
   top: 0;

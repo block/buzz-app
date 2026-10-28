@@ -312,9 +312,15 @@ it("imports a shared agent through the import path, then hands back", async () =
   expect(within(dialog).queryByLabelText("Import as")).not.toBeInTheDocument();
   fireEvent.click(within(dialog).getByRole("button", { name: "Import" }));
   const confirmation = screen.getByRole("dialog", {
-    name: "Import Shared helper",
+    name: "Shared helper",
   });
-  expect(within(confirmation).queryByRole("combobox")).not.toBeInTheDocument();
+  // Laid out as the Identity tab: the type it runs as is chosen in place.
+  expect(
+    within(confirmation).getByRole("combobox", { name: "Harness" }),
+  ).toBeVisible();
+  expect(
+    within(confirmation).getByRole("textbox", { name: "Instructions" }),
+  ).toHaveValue("Help with tasks.");
   expect(props.agents.port).not.toHaveBeenCalled();
   fireEvent.click(within(confirmation).getByRole("button", { name: "Import" }));
   await vi.waitFor(() => expect(props.onImported).toHaveBeenCalledOnce());
@@ -347,7 +353,7 @@ it("refuses a shared agent whose instructions block/buzz would refuse", async ()
   });
   fireEvent.click(within(panel).getByRole("button", { name: "Import" }));
   const confirmation = screen.getByRole("dialog", {
-    name: "Import Shared helper",
+    name: "Shared helper",
   });
   expect(within(confirmation).getByRole("alert")).toHaveTextContent(
     "Agent instructions contains prohibited invisible or formatting character U+202E",
@@ -371,14 +377,11 @@ it("imports as the chosen type, and keeps the panel open with the error when it 
   });
   fireEvent.click(within(dialog).getByRole("button", { name: "Import" }));
   const confirmation = screen.getByRole("dialog", {
-    name: "Import Shared helper",
+    name: "Shared helper",
   });
-  fireEvent.click(
-    within(confirmation).getByRole("button", { name: "Change settings" }),
-  );
   expect(
-    within(confirmation).getByRole("combobox", { name: "Import as" }),
-  ).toHaveFocus();
+    within(confirmation).queryByRole("button", { name: "Change settings" }),
+  ).not.toBeInTheDocument();
   fireEvent.click(within(confirmation).getByRole("button", { name: "Import" }));
   expect(await within(confirmation).findByRole("alert")).toHaveTextContent(
     "Connect to a community first",
@@ -395,10 +398,10 @@ it("does not silently replace an unavailable shared runtime", async () => {
   render(<AgentBrowse relay={community(read)} {...props} />);
   fireEvent.click(await screen.findByRole("button", { name: "Shared helper" }));
   fireEvent.click(screen.getByRole("button", { name: "Import" }));
-  const dialog = screen.getByRole("dialog", { name: "Import Shared helper" });
+  const dialog = screen.getByRole("dialog", { name: "Shared helper" });
   expect(within(dialog).getByRole("button", { name: "Import" })).toBeDisabled();
   expect(
-    within(dialog).getByRole("combobox", { name: "Import as" }),
+    within(dialog).getByRole("combobox", { name: "Harness" }),
   ).toBeVisible();
   expect(props.agents.port).not.toHaveBeenCalled();
 });

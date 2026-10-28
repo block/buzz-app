@@ -51,10 +51,10 @@ export function AgentCardAttachment({
     return <img className={styles.picture} src={source} alt={name} />;
   const runnable = types.filter((type) => !type.remote);
   return (
-    <>
+    <div className={styles.frame}>
       <SurfaceButton
         ref={trigger}
-        className={`${cardStyles.card} ${cardStyles.agentCard} ${styles.card}`}
+        className={`${cardStyles.card} ${cardStyles.agentCard}`}
         aria-label={`${shared?.name ?? name}, shared agent`}
         aria-haspopup="dialog"
         disabled={!shared}
@@ -77,6 +77,6 @@ export function AgentCardAttachment({
           finalFocus={trigger}
         />
       )}
-    </>
+    </div>
   );
 }

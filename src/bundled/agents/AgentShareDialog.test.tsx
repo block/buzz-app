@@ -170,7 +170,7 @@ function share(session: RelaySession, overrides: Partial<Agent> = {}) {
 /** The Marketplace switch, once the listing has been read. */
 async function listing() {
   const toggle = await screen.findByRole("switch", {
-    name: "Post to Marketplace",
+    name: /^Publish(ed)? to Marketplace$/,
   });
   await vi.waitFor(() =>
     expect(toggle).not.toHaveAttribute("aria-disabled", "true"),
@@ -197,7 +197,7 @@ const sharedContent = JSON.stringify({
 const LISTING_NOTE =
   "Anyone in this community can add a copy, instructions included. Memories and chats stay with you.";
 const toggle = () =>
-  screen.getByRole("switch", { name: "Post to Marketplace" });
+  screen.getByRole("switch", { name: /^Publish(ed)? to Marketplace$/ });
 /** Done applies what the switch asks for. */
 const done = (user: ReturnType<typeof userEvent.setup>) =>
   user.click(screen.getByRole("button", { name: "Done" }));
@@ -223,6 +223,7 @@ it("publishes on Done when switched on, and removes what it published when switc
   await user.click(await listing());
   // The switch only asks; nothing is published until Done.
   expect(toggle()).toBeChecked();
+  expect(toggle()).toHaveAccessibleName("Publish to Marketplace");
   expect(outbox.send).not.toHaveBeenCalled();
   await done(user);
   await vi.waitFor(() => expect(outbox.send).toHaveBeenCalledTimes(1));
@@ -248,7 +249,9 @@ it("publishes on Done when switched on, and removes what it published when switc
     await screen.findByText("Published Ada to the Marketplace."),
   ).toBeInTheDocument();
   await vi.waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+  // Coming back, it says what it is.
   expect(toggle()).toBeChecked();
+  expect(toggle()).toHaveAccessibleName("Published to Marketplace");
 
   await user.click(await listing());
   expect(outbox.send).toHaveBeenCalledTimes(1);
@@ -293,6 +296,35 @@ it("closes on Done without publishing when the switch is unchanged", async () =>
   await done(user);
   expect(onClose).toHaveBeenCalledTimes(1);
   expect(outbox.send).not.toHaveBeenCalled();
+});
+
+it("opens a published agent in the Marketplace from its toast", async () => {
+  const user = userEvent.setup();
+  const { session, accept } = community();
+  const onViewListing = vi.fn();
+  render(
+    <AgentShareDialog
+      agent={agent}
+      type={echo}
+      session={session}
+      onViewListing={onViewListing}
+      onClose={() => {}}
+    />,
+    { wrapper: ToastProvider },
+  );
+  await user.click(await listing());
+  await done(user);
+  accept();
+  await screen.findByText("Published Ada to the Marketplace.");
+  // A toast captures the pointer, which jsdom lacks; click it directly.
+  fireEvent.click(screen.getByRole("button", { name: "View" }));
+  expect(onViewListing).toHaveBeenCalledExactlyOnceWith(
+    expect.objectContaining({
+      id: `${owner}:${agent.pubkey}`,
+      name: "Ada",
+      instructions: "Review pull requests.",
+    }),
+  );
 });
 
 it("says up front why an agent can't be shared, before anything is sent", async () => {
@@ -390,7 +422,7 @@ it("reads the listing again after the first read fails, leaving Export usable", 
     await screen.findByText("Couldn’t check the Marketplace."),
   ).toBeInTheDocument();
   expect(
-    screen.getByRole("switch", { name: "Post to Marketplace" }),
+    screen.getByRole("switch", { name: /^Publish(ed)? to Marketplace$/ }),
   ).toHaveAttribute("aria-disabled", "true");
   expect(exportButton()).toBeEnabled();
   await user.click(screen.getByRole("button", { name: "Try again" }));
@@ -605,7 +637,7 @@ it("updates a listing older than the agent, keeping it listed", async () => {
     screen.queryByRole("button", { name: "Update Marketplace" }),
   ).not.toBeInTheDocument();
   expect(
-    screen.getByRole("switch", { name: "Post to Marketplace" }),
+    screen.getByRole("switch", { name: /^Publish(ed)? to Marketplace$/ }),
   ).toBeChecked();
 });
 

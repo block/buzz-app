@@ -8,7 +8,6 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { flushSync } from "react-dom";
 import {
   checkText,
   type SharedDefinition,
@@ -43,6 +42,7 @@ import { SurfaceButton } from "../../shared/design-system/ui/SurfaceButton";
 import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
+import { AgentInstructions } from "../../features/agents/AgentInstructions";
 import { ProfileBackdrop } from "../../features/profiles/ProfileBackdrop";
 import { agentAvatars } from "../../features/agents/avatar-packs";
 import hero from "../../features/profiles/ProfileHero.module.css";
@@ -408,19 +408,16 @@ export function SharedImportDialog({
   });
   const [type, setType] = useState(initial?.key ?? "");
   const [config, setConfig] = useState<unknown>(initial?.config);
-  const [changing, setChanging] = useState(!initial);
-  const form = useRef<HTMLDivElement>(null);
+  const [instructions, setInstructions] = useState(shared.instructions);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   // What block/buzz refuses, such as hidden characters in what is shown here.
-  const [refused] = useState(() => {
-    try {
-      checkText(shared.name, shared.instructions);
-      return "";
-    } catch (reason) {
-      return reason instanceof Error ? reason.message : String(reason);
-    }
-  });
+  let refused = "";
+  try {
+    checkText(shared.name, instructions);
+  } catch (reason) {
+    refused = reason instanceof Error ? reason.message : String(reason);
+  }
   const chosen = types.find((item) => item.key === type);
   const Model = chosen?.CreateModel;
   const choose = (key: string) => {
@@ -438,7 +435,7 @@ export function SharedImportDialog({
         type: chosen.key,
         name: shared.name,
         ...(shared.picture ? { picture: shared.picture } : {}),
-        instructions: shared.instructions,
+        instructions,
         ...(config !== undefined ? { config } : {}),
       });
       onImported();
@@ -450,7 +447,7 @@ export function SharedImportDialog({
   return (
     <Dialog
       open
-      title={`Import ${shared.name}`}
+      title={shared.name}
       finalFocus={finalFocus}
       preventClose={pending}
       onOpenChange={(open) => {
@@ -472,85 +469,57 @@ export function SharedImportDialog({
         </>
       }
     >
-      <div ref={form} className="grid gap-4">
-        {types.length === 0 && (
+      {/* Laid out as the agent's Identity tab will show it once imported. */}
+      <div className="grid gap-4">
+        {types.length === 0 ? (
           <p className="m-0 text-body-sm text-secondary">
             Enable an agent type plugin to import agents.
           </p>
-        )}
-        {initial && !changing ? (
-          <>
-            <SettingsGroup>
-              <PreferenceRow title="Import as" trailing={chosen?.title} />
-              {shared.provider && (
-                <PreferenceRow title="Provider" trailing={shared.provider} />
-              )}
+        ) : (
+          <SettingsGroup>
+            <PreferenceRow
+              title="Harness"
+              trailing={
+                <Select
+                  label="Harness"
+                  variant="compact"
+                  align="end"
+                  placeholder="Choose"
+                  value={type}
+                  disabled={pending}
+                  groups={[
+                    {
+                      label: "",
+                      options: types.map((item) => ({
+                        value: item.key,
+                        label: item.title,
+                      })),
+                    },
+                  ]}
+                  onValueChange={choose}
+                />
+              }
+            />
+            {Model && (
               <PreferenceRow
                 title="Model"
-                trailing={shared.model || "Default"}
-              />
-            </SettingsGroup>
-            <Button
-              variant="ghost"
-              onClick={() => {
-                // The button goes with the summary; keep focus on what replaces it.
-                flushSync(() => setChanging(true));
-                form.current
-                  ?.querySelector<HTMLElement>("[role='combobox']")
-                  ?.focus();
-              }}
-            >
-              Change settings
-            </Button>
-          </>
-        ) : (
-          types.length > 0 && (
-            <>
-              <Select
-                variant="field"
-                label="Import as"
-                placeholder="Choose an agent type"
-                value={type}
-                disabled={pending}
-                groups={[
-                  {
-                    label: "Agent types",
-                    options: types.map((item) => ({
-                      value: item.key,
-                      label: item.title,
-                    })),
-                  },
-                ]}
-                onValueChange={choose}
-              />
-              {Model && (
-                <SettingsGroup>
-                  <PreferenceRow
-                    title="Model"
-                    trailing={
-                      <Model
-                        key={type}
-                        config={config}
-                        disabled={pending}
-                        onChange={setConfig}
-                      />
-                    }
+                trailing={
+                  <Model
+                    key={type}
+                    config={config}
+                    disabled={pending}
+                    onChange={setConfig}
                   />
-                </SettingsGroup>
-              )}
-            </>
-          )
+                }
+              />
+            )}
+          </SettingsGroup>
         )}
-        {/* What the new agent will do is never hidden behind a summary. */}
-        <section aria-label="Agent instructions">
-          <InlineHeader
-            title="Agent instructions"
-            subtitle="Review the instructions this agent will follow after import."
-          />
-          <div className={styles.instructions}>
-            {shared.instructions || "No system prompt included."}
-          </div>
-        </section>
+        <AgentInstructions
+          value={instructions}
+          disabled={pending}
+          onChange={setInstructions}
+        />
         {(refused || error) && (
           <p role="alert" className="m-0 text-body-sm text-danger">
             {refused || error}

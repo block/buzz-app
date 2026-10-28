@@ -12,6 +12,10 @@ import {
   snapshotPng,
 } from "../../features/agents/agent-share";
 import type { Agent, RegisteredAgentType } from "../../features/agents/service";
+import {
+  type SharedAgent,
+  sharedAgents,
+} from "../../features/agents/shared-agents";
 import type { EventData } from "../../features/relay/events";
 import { downloadNativeFile } from "../../features/messages/native-download";
 import type { UploadedAttachment } from "../../features/relay/attachments";
@@ -129,11 +133,14 @@ export function AgentShareDialog({
   agent,
   type,
   session,
+  onViewListing,
   onClose,
 }: {
   agent: Agent;
   type: RegisteredAgentType | undefined;
   session: RelaySession;
+  /** Opens the agent as the Marketplace lists it. */
+  onViewListing?: ((agent: SharedAgent) => void) | undefined;
   onClose(): void;
 }) {
   const notify = useToastNotification();
@@ -212,11 +219,15 @@ export function AgentShareDialog({
     if (
       shared ? isShared(next) && next?.content === content : !isShared(next)
     ) {
+      const listed = shared ? sharedAgents(next ? [next] : [])[0] : undefined;
       notify(
         shared
           ? `Published ${agent.name} to the Marketplace.`
           : `Removed ${agent.name} from the Marketplace.`,
         "success",
+        listed && onViewListing
+          ? { label: "View", onClick: () => onViewListing(listed) }
+          : undefined,
       );
       return true;
     }
@@ -340,6 +351,7 @@ export function AgentShareDialog({
     <Dialog
       open
       headerGap="compact"
+      footerGap="compact"
       title={`Share ${agent.name}`}
       description="Everyone gets their own copy. Later changes won’t sync."
       height="stable"
@@ -431,7 +443,9 @@ export function AgentShareDialog({
         <div className="grid gap-2">
           <SettingsGroup>
             <SwitchPreferenceRow
-              label="Post to Marketplace"
+              label={
+                listed ? "Published to Marketplace" : "Publish to Marketplace"
+              }
               description={
                 unread
                   ? "Couldn’t check the Marketplace."

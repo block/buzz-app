@@ -89,14 +89,20 @@ it("shows a sent agent as its card, and adds it from there", async () => {
   expect(fetch).toHaveBeenCalledWith("buzz-media://ada.png", expect.anything());
   expect(within(button).getByText("echo-1")).toBeInTheDocument();
   await user.click(button);
-  const dialog = screen.getByRole("dialog", { name: "Import Ada" });
+  const dialog = screen.getByRole("dialog", { name: "Ada" });
+  // What it will follow can be changed before it is added.
+  const instructions = within(dialog).getByRole("textbox", {
+    name: "Instructions",
+  });
+  await user.clear(instructions);
+  await user.type(instructions, "Review small pull requests.");
   await user.click(within(dialog).getByRole("button", { name: "Import" }));
   await vi.waitFor(() =>
     expect(agents.port).toHaveBeenCalledWith(
       expect.objectContaining({
         source: "shared",
         name: "Ada",
-        instructions: "Review pull requests.",
+        instructions: "Review small pull requests.",
       }),
     ),
   );

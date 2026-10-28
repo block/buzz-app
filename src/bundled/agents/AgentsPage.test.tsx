@@ -1430,12 +1430,12 @@ it("imports an exported agent file as a new agent of the type that runs it", asy
     ),
   );
   const confirmation = await screen.findByRole("dialog", {
-    name: "Import Scout",
+    name: "Scout",
   });
   // What the new agent will follow is shown before it is accepted.
   expect(
-    within(confirmation).getByRole("region", { name: "Agent instructions" }),
-  ).toHaveTextContent("Scout ahead.");
+    within(confirmation).getByRole("textbox", { name: "Instructions" }),
+  ).toHaveValue("Scout ahead.");
   await user.click(
     within(confirmation).getByRole("button", { name: "Import" }),
   );
@@ -3349,7 +3349,7 @@ it("opens a Marketplace tile in the profile pane and returns focus on close and 
     await user.click(tile);
     await user.click(screen.getByRole("button", { name: "Import" }));
     const dialog = screen.getByRole("dialog", {
-      name: "Import Marketplace helper",
+      name: "Marketplace helper",
     });
     await user.click(within(dialog).getByRole("button", { name: "Import" }));
     await vi.waitFor(() =>

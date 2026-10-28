@@ -55,6 +55,7 @@ export type NavigationSnapshot = Readonly<{
   /** An incoming URL failed before it could create a history destination. */
   ingress?: boolean;
   retryable?: boolean;
+  retainedVisits?: readonly string[] | undefined;
   canGoBack: boolean;
   canGoForward: boolean;
 }>;
@@ -174,6 +175,7 @@ export function createNavigationController(
       entry: state.current,
       attempt,
       status: "opening",
+      retainedVisits: state.retainedVisits,
       canGoBack: state.canGoBack,
       canGoForward: state.canGoForward,
     });
@@ -191,6 +193,18 @@ export function createNavigationController(
     emit();
     return promise;
   }
+  let departureGuard:
+    | ((next: NavigationEntry, decide: (proceed: boolean) => void) => boolean)
+    | undefined;
+  let departure:
+    | {
+        from: string;
+        to: string;
+        proceed: boolean;
+        result: Promise<OpenResult>;
+        settle: (result: OpenResult) => void;
+      }
+    | undefined;
   let resolving: Operation | undefined;
   // Both host drivers publish pushes synchronously; consume this opening only.
   let openingFocus: NavigationFocus | undefined;
@@ -208,6 +222,7 @@ export function createNavigationController(
         });
         snapshot = Object.freeze({
           ...snapshot,
+          retainedVisits: state.retainedVisits,
           entry: state.current,
           attempt: active.attempt,
           canGoBack: state.canGoBack,
@@ -216,9 +231,53 @@ export function createNavigationController(
         emit();
       } else {
         const state = history.snapshot();
+        if (departure?.from === state.current.id) {
+          if (departure.proceed) history.returnTo(departure.to);
+          return;
+        }
+        const admitted =
+          departure?.proceed && departure.to === state.current.id;
+        const admittedDeparture = admitted ? departure : undefined;
+        if (admitted) departure = undefined;
+        if (
+          !admitted &&
+          state.current.id !== active.attempt.entry.id &&
+          departureGuard
+        ) {
+          departure?.settle({ status: "superseded" });
+          let settle: (result: OpenResult) => void = () => {};
+          const result = new Promise<OpenResult>((resolve) => {
+            settle = resolve;
+          });
+          const pending = {
+            result,
+            settle,
+            from: active.attempt.entry.id,
+            to: state.current.id,
+            proceed: false,
+          };
+          departure = pending;
+          const blocked = departureGuard(state.current, (proceed) => {
+            if (departure !== pending) return;
+            if (!proceed) {
+              departure = undefined;
+              pending.settle({ status: "cancelled" });
+              return;
+            }
+            pending.proceed = true;
+            if (history.snapshot().current.id === pending.from)
+              history.returnTo(pending.to);
+          });
+          if (blocked) {
+            history.returnTo(pending.from);
+            return;
+          }
+          departure = undefined;
+        }
         if (state.current === active.attempt.entry) {
           snapshot = Object.freeze({
             ...snapshot,
+            retainedVisits: state.retainedVisits,
             canGoBack: state.canGoBack,
             canGoForward: state.canGoForward,
           });
@@ -227,7 +286,8 @@ export function createNavigationController(
         }
         const focus = openingFocus ?? returningFocus;
         openingFocus = returningFocus = undefined;
-        start(focus);
+        const result = start(focus);
+        if (admittedDeparture) void result.then(admittedDeparture.settle);
       }
     });
   });
@@ -295,7 +355,7 @@ export function createNavigationController(
               }
             } else history.push(target);
           }
-          return active.promise;
+          return departure?.result ?? active.promise;
         } catch {
           // Drivers commit atomically and notify only their exclusive controller.
           return Promise.resolve<OpenResult>({
@@ -338,6 +398,17 @@ export function createNavigationController(
   });
   return {
     navigation,
+    /** Shell-owned draft guard; native traversal bounces before presentation unmounts. */
+    guardDeparture(guard: NonNullable<typeof departureGuard>) {
+      departureGuard = guard;
+      return () => {
+        if (departureGuard === guard) {
+          departureGuard = undefined;
+          departure?.settle({ status: "cancelled" });
+          departure = undefined;
+        }
+      };
+    },
     /** Normalize a pending presentation, not a new intent; never reset its deadline. */
     resolve(attempt: OpenAttempt, input: OpenTarget) {
       return transaction(() => {
@@ -409,6 +480,8 @@ export function createNavigationController(
       transaction(() => {
         if (disposed) return;
         disposed = true;
+        departure?.settle({ status: "cancelled" });
+        departure = undefined;
         ingressRetry = undefined;
         unsubscribe();
         finish(active, { status: "cancelled" });

@@ -583,7 +583,7 @@ function ChannelWorkspace({
       channelType: current?.channelType,
     };
   }, [currentId, queries, current?.channelType]);
-  const tabState = useChannelTabState(queries, currentId);
+  const tabState = useChannelTabState(queries, currentId, "messages", navigator);
   const { settings, setSettings } = tabState;
   useEffect(() => {
     if (!currentId || composingMessage || draft) return;
@@ -1193,7 +1193,7 @@ function ChannelWorkspace({
           detail.target,
           detail.rootId,
         );
-        if (entry && historyPanel(entry)) open(entry, true);
+        if (entry && historyPanel(entry)) open(entry);
         else navigation.complete({ status: "failed", reason: "unavailable" });
       }
       if (kept && navigation.entryId !== kept.from) {

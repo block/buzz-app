@@ -1,3 +1,4 @@
+import type { Navigation } from "../../features/navigation/controller";
 import { retainTabVisits } from "../../features/messages/tab-visit-lifetime";
 import { retainTabWorkspace } from "../../features/messages/tab-workspace-lifetime";
 import { threadPlacementPreference } from "../../features/messages/thread-preferences";
@@ -309,6 +310,36 @@ function createTabStore(
         else mounts.delete(key);
       };
     },
+    prune(ids: ReadonlySet<string>) {
+      for (const [key, state] of Object.entries(channels)) {
+        const filter = <T>(
+          records: Record<string, T> | undefined,
+          layout = false,
+        ) => {
+          if (!records) return records;
+          const kept = Object.entries(records).filter(([id]) =>
+            ids.has(layout ? id.slice(0, id.lastIndexOf(":")) : id),
+          );
+          return kept.length === Object.keys(records).length
+            ? records
+            : Object.fromEntries(kept);
+        };
+        const routedVisits = filter(state.routedVisits);
+        const detailVisits = filter(state.detailVisits);
+        const visits = filter(state.visits, true);
+        if (
+          routedVisits !== state.routedVisits ||
+          detailVisits !== state.detailVisits ||
+          visits !== state.visits
+        )
+          this.update(key, (current) => ({
+            ...current,
+            routedVisits,
+            detailVisits,
+            visits,
+          }));
+      }
+    },
     snapshot: () => channels,
     subscribe(listener: () => void) {
       listeners.add(listener);
@@ -374,7 +405,7 @@ export const rootOfTab = (tab: Extract<ConversationTab, { kind: "thread" }>) =>
  * page. Tabs the viewer opened for other channels' threads are left alone.
  * Opening never moves the viewer's selection or focus, and closing refuses
  * the tab the viewer sees, so no selection needs repair. */
-export function channelTabs(session: RelaySession) {
+export function channelTabs(session: RelaySession, navigation?: Navigation) {
   const store = storeOf(session);
   const stateOf = (channelId: string) =>
     store.snapshot()[keyOf("messages", channelId)] ?? empty;
@@ -444,10 +475,22 @@ export function channelTabs(session: RelaySession) {
       const thread = threads(channelId).find((item) => item.root === rootId);
       if (!thread) return "missing";
       if (thread.shown) return "shown";
+      const visits = Object.entries(
+        stateOf(channelId).routedVisits ?? {},
+      ).flatMap(([id, visit]) =>
+        visit.channelId === channelId && visit.rootId === rootId ? [id] : [],
+      );
       store.update(keyOf("messages", channelId), (state) => ({
         ...state,
         tabs: state.tabs.filter((tab) => tab !== thread.tab),
       }));
+      // Exact session-owned visit IDs cannot retire a different scope. Inactive
+      // close preserves the current destination and its presentation authority.
+      if (navigation) {
+        navigation.dismiss(visits, navigation.snapshot().entry.target);
+        const retained = navigation.snapshot().retainedVisits;
+        if (retained) store.prune(new Set(retained));
+      }
       return "closed";
     },
     /** Names thread `rootId`'s tab; an empty name restores its automatic
@@ -471,9 +514,19 @@ export function useChannelTabState(
   session: RelaySession,
   channelId: string | undefined,
   page = "messages",
+  navigation?: Navigation,
 ) {
   const store = storeOf(session);
   const channels = useSyncExternalStore(store.subscribe, store.snapshot);
+  useLayoutEffect(() => {
+    if (!navigation) return;
+    const prune = () => {
+      const retained = navigation.snapshot().retainedVisits;
+      if (retained) store.prune(new Set(retained));
+    };
+    prune();
+    return navigation.subscribe(prune);
+  }, [navigation, store]);
   const snapshot = store.snapshot;
   const key = keyOf(page, channelId ?? "");
   // Retain descriptors across navigation, but protect only a mounted workspace.

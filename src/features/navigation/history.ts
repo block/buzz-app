@@ -1,5 +1,7 @@
 import { parseOpenTarget, targetKey, type OpenTarget } from "./targets";
 
+export const HISTORY_CAPACITY = 100;
+
 /** Stable visit identity, distinct from the cancellable attempts to reveal it. */
 export type NavigationEntry = Readonly<{ id: string; target: OpenTarget }>;
 /** Match a logical dialog (including its sections), or exact content visits. */
@@ -8,6 +10,8 @@ export type DismissedVisits =
   | ((target: OpenTarget) => boolean);
 export type HistorySnapshot = Readonly<{
   current: NavigationEntry;
+  /** Managed, non-dismissed return window, including identities retained across reload. */
+  retainedVisits?: readonly string[] | undefined;
   canGoBack: boolean;
   canGoForward: boolean;
   /** The preceding eligible visit, when known to this driver. */
@@ -42,7 +46,7 @@ export function navigationEntry(target: OpenTarget): NavigationEntry {
 /** Non-browser host driver. Browser hosts supply actual session-history traversal. */
 export function createMemoryHistory(
   initial: OpenTarget = homeTarget,
-  capacity = 100,
+  capacity = HISTORY_CAPACITY,
 ): NavigationHistory {
   if (!Number.isSafeInteger(capacity) || capacity < 2 || capacity > 1000)
     throw new Error("Invalid navigation history capacity");
@@ -61,6 +65,9 @@ export function createMemoryHistory(
   const current = () =>
     Object.freeze({
       current: entries[index] as NavigationEntry,
+      retainedVisits: entries
+        .filter((entry) => !dismissed.has(entry.id))
+        .map((entry) => entry.id),
       canGoBack: adjacent(-1) !== -1,
       canGoForward: adjacent(1) !== -1,
       ...(adjacent(-1) !== -1 ? { previous: entries[adjacent(-1)] } : {}),

@@ -351,3 +351,46 @@ it("resolution observers may introduce real competing intent without capturing t
   await expect(next).resolves.toEqual({ status: "opened" });
   off();
 });
+
+it("guards driver traversal before aborting the current presentation", () => {
+  const { host, navigation: nav } = setup();
+  void nav.open(page);
+  void nav.open(settings);
+  const original = nav.snapshot().attempt;
+  let decide: ((proceed: boolean) => void) | undefined;
+  host.guardDeparture((_next, decision) => {
+    decide = decision;
+    return true;
+  });
+  nav.back();
+  expect(nav.snapshot().attempt).toBe(original);
+  expect(original.signal.aborted).toBe(false);
+  decide?.(false);
+  expect(nav.snapshot().entry.target).toEqual(settings);
+  nav.back();
+  decide?.(true);
+  expect(nav.snapshot().entry.target).toEqual(page);
+  expect(original.signal.aborted).toBe(true);
+  nav.forward();
+  expect(nav.snapshot().entry.target).toEqual(page);
+  decide?.(true);
+  expect(nav.snapshot().entry.target).toEqual(settings);
+});
+
+it("settles guarded open callers only after the user's decision and destination completion", async () => {
+  const { host, navigation: nav } = setup();
+  void nav.open(settings);
+  host.complete(nav.snapshot().attempt, { status: "opened" });
+  let decide: ((proceed: boolean) => void) | undefined;
+  host.guardDeparture((_next, decision) => {
+    decide = decision;
+    return true;
+  });
+  const cancelled = nav.open(page);
+  decide?.(false);
+  expect(await cancelled).toEqual({ status: "cancelled" });
+  const opened = nav.open(page);
+  decide?.(true);
+  host.complete(nav.snapshot().attempt, { status: "opened" });
+  expect(await opened).toEqual({ status: "opened" });
+});

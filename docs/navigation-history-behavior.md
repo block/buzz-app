@@ -14,7 +14,9 @@ in place. Explicitly opening the same thread later creates a fresh visit.
 Profiles and GitHub use the same rule. Their read-only target and optional
 thread context are carried as `detail` in the scoped conversation address;
 Back/Forward restores selection and reload resolves the panel through the
-existing registry. Opening another content tab retains the earlier tab.
+existing registry. A new link replaces the transient Profile/GitHub detail;
+opening a thread clears it. Replacement does not retire the earlier visit, so
+Back/Forward can reconstruct it. Explicitly retained tabs keep their existing rules.
 Replacing the live session within the same account/community reconstructs the
 read-only address, including after deliberate same-community resets. Old panel
 callbacks are revoked; local editors do not carry across sessions. A different
@@ -39,7 +41,9 @@ visit beneath the new destination.
 
 Settings Close retires its known section visits for the same account/community
 scope and returns to the covered workspace. Back/Forward between sections remains
-reversible until Close. Profile discard confirmation still precedes dismissal.
+reversible until Close. Profile discard confirmation precedes dismissal and Back/Forward departure.
+Keep editing preserves the mounted draft and current visit; Discard changes
+continues the requested traversal without retiring the Settings visit.
 Agents-page provider controls retire that provider's known visits on the same
 scoped Agents page, preserving other providers and page visits. Their pending-work
 close protection remains in the shared Dialog. Settings → Agent setup provider
@@ -54,7 +58,8 @@ not add new history visits to every existing confirmation or editor.
 App arrows, supported history shortcuts and mouse Back/Forward use the same
 navigation driver. Browsers retain their physical history entries; the driver
 skips retired entries rather than claiming to delete arbitrary native history.
-The app's traversal affordances account for those skipped entries. Dismissal
+The app's traversal affordances account for those skipped entries. The managed
+window is capped at 100 visits; expired and dismissed tab associations are pruned. Dismissal
 indices and known visit targets are kept in sessionStorage for the browser chain.
 Same-window refresh restores addressable conversation, thread, panel and Channel
 settings tabs with their order, panes and selection. Explicit Close can retire
@@ -67,9 +72,7 @@ Recovery is best-effort when storage is unavailable or full. Quit/relaunch,
 cross-device sync, feature-local inspection sub-tabs, drawer visibility and edit
 dialogs are not guaranteed by this layer. Another window keeps its own session
 storage copy; leaving a community revokes its live tab writer and clears this
-window's partition. No retention
-policy currently prunes saved workspace visit associations or the driver's known
-visit map, and each update serializes its full store. A failed workspace save
+window's partition. Each update serializes its full store. A failed workspace save
 removes the older snapshot when storage permits, preventing stale tabs from
 returning; live navigation remains usable. If storage also refuses removal,
 recovery remains best effort.

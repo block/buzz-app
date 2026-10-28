@@ -505,3 +505,48 @@ it("a late hashchange cannot release the next dismissal's pending traversal", ()
   expect(driver.snapshot().canGoForward).toBe(false);
   driver.dispose();
 });
+
+it("bounds browser return paths and metadata to 100 visits, including native traversal and reload", () => {
+  const fixture = browser();
+  const driver = createBrowserHistory(fixture.host);
+  for (let i = 0; i < 150; i++)
+    driver.push({ ...settings, section: `section-${i}` });
+  expect(driver.snapshot().retainedVisits).toHaveLength(100);
+  fixture.host.history.go(-149);
+  expect(driver.snapshot().current.target).toEqual({
+    ...settings,
+    section: "section-50",
+  });
+  expect(driver.snapshot().canGoBack).toBe(false);
+  driver.dispose();
+  const restored = createBrowserHistory(fixture.host);
+  expect(restored.snapshot().retainedVisits).toHaveLength(100);
+  fixture.host.history.back();
+  expect(restored.snapshot().current.target).toEqual({
+    ...settings,
+    section: "section-50",
+  });
+  restored.dispose();
+});
+
+it("guards asynchronous native traversal without losing the presentation or its return path", () => {
+  const fixture = browser("", true);
+  const host = createNavigationController(createBrowserHistory(fixture.host));
+  const nav = host.navigation;
+  void nav.open(settings);
+  const original = nav.snapshot().attempt;
+  let decide: ((proceed: boolean) => void) | undefined;
+  host.guardDeparture((_next, decision) => {
+    decide = decision;
+    return true;
+  });
+  fixture.host.history.back();
+  expect(nav.snapshot().attempt).toBe(original);
+  expect(original.signal.aborted).toBe(false);
+  decide?.(true); // Even before the bounce has reached Settings again.
+  fixture.flush();
+  fixture.flush();
+  expect(nav.snapshot().entry.target).toEqual(homeTarget);
+  expect(original.signal.aborted).toBe(true);
+  host.dispose();
+});

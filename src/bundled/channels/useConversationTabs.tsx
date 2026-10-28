@@ -277,9 +277,7 @@ export function useConversationTabs({
         : entryList.current.filter(
             (entry) =>
               entry === existing ||
-              ((entry.channelContext ||
-                entry.panel.keepOpen ||
-                historyPanel(entry)) &&
+              ((entry.channelContext || entry.panel.keepOpen) &&
                 (!selected || panelTabId(entry) !== panelTabId(selected))),
           );
       const updated =
@@ -342,10 +340,8 @@ export function useConversationTabs({
         (item) => item.panel === next && item.target === target,
       );
       const replacement = existing ?? { ...entry, panel: next, target };
-      if (historyPanel(replacement)) {
-        open(replacement, true);
-        return true;
-      }
+      if (historyPanel(replacement))
+        panelHistory.current.onVisitPanel?.(replacement);
       entryList.current = entryList.current
         .map((item) => (item === entry ? replacement : item))
         .filter((item, index, all) => all.indexOf(item) === index);

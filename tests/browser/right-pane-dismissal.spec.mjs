@@ -468,9 +468,10 @@ for (const keep of ["thread", "GitHub"]) {
     const channelVisit = (await address()).entry.id;
     await openThread(0);
     const threadVisit = (await address()).entry.id;
+    await openThread(1);
     const github = await openGitHub(page, app);
     const githubVisit = (await address()).entry.id;
-    await openThread(1);
+    await tabs.last().click();
     const kept = keep === "thread" ? tabs.first() : github;
     const keptVisit = keep === "thread" ? threadVisit : githubVisit;
     await kept.click({ button: "right" });

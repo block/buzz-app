@@ -1,4 +1,5 @@
 import {
+  HISTORY_CAPACITY,
   navigationEntry,
   homeTarget,
   type NavigationEntry,
@@ -137,15 +138,65 @@ export function createBrowserHistory(host: Window): NavigationHistory {
   } catch {
     /* Restoration of forward affordance is best effort. */
   }
+  const identitiesKey = () => `buzz-navigation-identities:${stamp.chain}`;
+  const floorKey = () => `buzz-navigation-floor:${stamp.chain}`;
+  let floor = Math.max(0, end - HISTORY_CAPACITY + 1);
+  let identities = new Map<number, string>();
+  function readWindow() {
+    identities = new Map();
+    try {
+      const savedFloor = Number(host.sessionStorage.getItem(floorKey()));
+      if (
+        Number.isSafeInteger(savedFloor) &&
+        savedFloor >= 0 &&
+        savedFloor <= end
+      )
+        floor = Math.max(floor, savedFloor);
+      const saved: unknown = JSON.parse(
+        host.sessionStorage.getItem(identitiesKey()) ?? "[]",
+      );
+      if (Array.isArray(saved))
+        for (const item of saved)
+          if (
+            Array.isArray(item) &&
+            Number.isSafeInteger(item[0]) &&
+            typeof item[1] === "string"
+          )
+            identities.set(item[0], item[1]);
+    } catch {
+      /* The current document still bounds its managed window. */
+    }
+  }
+  function trimWindow() {
+    floor = Math.max(floor, end - HISTORY_CAPACITY + 1);
+    for (const [index, entry] of known) identities.set(index, entry.id);
+    for (const index of identities.keys())
+      if (index < floor || index > end) identities.delete(index);
+    for (const index of known.keys())
+      if (index < floor || index > end) known.delete(index);
+    for (const index of dismissed)
+      if (index < floor || index > end) dismissed.delete(index);
+    try {
+      host.sessionStorage.setItem(identitiesKey(), JSON.stringify([...identities]));
+      host.sessionStorage.setItem(floorKey(), String(floor));
+    } catch {
+      /* Best-effort persistence; no unbounded in-memory fallback. */
+    }
+  }
+  readWindow();
+  trimWindow();
   const adjacent = (from: number, direction: -1 | 1) => {
     let next = from + direction;
     while (dismissed.has(next)) next += direction;
-    return next >= 0 && next <= end ? next : -1;
+    return next >= floor && next <= end ? next : -1;
   };
   function snapshotOf(): HistorySnapshot {
     const previous = known.get(adjacent(stamp.index, -1));
     return Object.freeze({
       current: stamp.entry,
+      retainedVisits: [...identities]
+        .filter(([index]) => !dismissed.has(index))
+        .map(([, id]) => id),
       invalidAddress: stamp.invalidAddress === true,
       canGoBack: adjacent(stamp.index, -1) !== -1,
       canGoForward: adjacent(stamp.index, 1) !== -1,
@@ -154,6 +205,7 @@ export function createBrowserHistory(host: Window): NavigationHistory {
   }
   let snapshot = snapshotOf();
   function publish() {
+    trimWindow();
     snapshot = snapshotOf();
     try {
       host.sessionStorage.setItem(
@@ -243,6 +295,15 @@ export function createBrowserHistory(host: Window): NavigationHistory {
       dismissed.delete(next.index);
       saveDismissed();
     }
+    if (next.chain === stamp.chain && next.index < floor) {
+      const destination = dismissed.has(floor) ? adjacent(floor, 1) : floor;
+      const index = destination === -1 ? stamp.index : destination;
+      if (skipping !== index) {
+        skipping = index;
+        host.history.go(index - next.index);
+      }
+      return;
+    }
     if (next.index === skipping) skipping = undefined;
     if (
       next.entry.id === stamp.entry.id &&
@@ -287,6 +348,8 @@ export function createBrowserHistory(host: Window): NavigationHistory {
     if (newChain) {
       known = readKnown();
       dismissed = readDismissed();
+      floor = Math.max(0, end - HISTORY_CAPACITY + 1);
+      readWindow();
     }
     known.set(stamp.index, stamp.entry);
     if (stamp.index > 0 && stamp.previous && !known.has(stamp.index - 1))

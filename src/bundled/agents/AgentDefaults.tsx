@@ -30,6 +30,18 @@ export function AgentDefaults({
     agents.types,
   );
   useEffect(() => {
+    const target = navigation?.target;
+    if (
+      onProvider &&
+      navigation &&
+      target?.kind === "settings" &&
+      target.provider &&
+      !navigation.signal.aborted &&
+      !types.some((type) => type.key === target.provider && type.provider)
+    )
+      navigation.complete({ status: "failed", reason: "unavailable" });
+  }, [navigation, onProvider, types]);
+  useEffect(() => {
     for (const { provider } of types) {
       if (!provider) continue;
       try {

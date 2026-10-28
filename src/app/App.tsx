@@ -91,6 +91,36 @@ function ConnectedApp({ services }: { services: AppServices }) {
     null,
   );
   const route = useAppNavigation(services, departure);
+  const settingsTraversal = useRef<((proceed: boolean) => void) | undefined>(
+    undefined,
+  );
+  const discardSettings = useRef(false);
+  useLayoutEffect(() => {
+    if (!settingsUnsaved) return;
+    return services.navigationHost.guardDeparture((next, decide) => {
+      if (discardSettings.current) {
+        discardSettings.current = false;
+        return false;
+      }
+      const current = services.navigation.snapshot().entry.target;
+      // Settings sections share the mounted Profile editor. A different scope
+      // or leaving the dialog would unmount it.
+      if (
+        next.target.kind === "settings" &&
+        current.kind === "settings" &&
+        JSON.stringify(next.target.scope) === JSON.stringify(current.scope)
+      )
+        return false;
+      settingsTraversal.current = decide;
+      setConfirmSettingsDiscard(true);
+      return true;
+    });
+  }, [services, settingsUnsaved]);
+  const keepSettings = () => {
+    settingsTraversal.current?.(false);
+    settingsTraversal.current = undefined;
+    setConfirmSettingsDiscard(false);
+  };
   const launcher = usePanelLauncher(services.panels, startup === "ready");
   const client = useSyncExternalStore(
     services.communities.subscribe,
@@ -527,17 +557,21 @@ function ConnectedApp({ services }: { services: AppServices }) {
               <AlertDialog
                 title="Discard changes?"
                 description="Your profile has unsaved changes."
-                onClose={() => setConfirmSettingsDiscard(false)}
+                onClose={keepSettings}
                 actions={
                   <>
-                    <Button onClick={() => setConfirmSettingsDiscard(false)}>
-                      Keep editing
-                    </Button>
+                    <Button onClick={keepSettings}>Keep editing</Button>
                     <Button
                       variant="destructive"
                       onClick={() => {
                         setConfirmSettingsDiscard(false);
-                        route.leaveSettings();
+                        const decide = settingsTraversal.current;
+                        settingsTraversal.current = undefined;
+                        if (decide) decide(true);
+                        else {
+                          discardSettings.current = true;
+                          route.leaveSettings();
+                        }
                       }}
                     >
                       Discard changes

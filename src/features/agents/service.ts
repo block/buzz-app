@@ -1382,12 +1382,9 @@ export class AgentsService extends Service implements Agents {
     this.runner = new AgentsRunner(storage, native, localActivity, decisions, {
       ownershipChanged: () => this.notify(),
       changed: () => this.update(),
-      ready: (key) => this.ready(key),
-      agent: (key) => this.agent(key),
       member: (agent, event) => this.member(agent, event),
       dm: (agent, event) => this.dm(agent, event),
       open: (origin) => this.communities.open(origin),
-      running: () => this.state.running,
       liveMember: (key) => this.liveMember(key),
       types: () => this.types(),
       defaults,
@@ -3585,12 +3582,7 @@ export class AgentsService extends Service implements Agents {
   }
   /** A running agent, in any community. */
   private agent(key: AgentKey) {
-    return this.state.running.find((agent) => agent.key === key);
-  }
-  /** The agent, while its community's session is live to run it in. */
-  private ready(key: AgentKey) {
-    const agent = this.agent(key);
-    return agent && this.runner.connections.binding(agent) ? agent : undefined;
+    return this.runner.agent(key);
   }
 
   /** Reads the agent list from native. Every change is made there first and
@@ -3847,88 +3839,60 @@ export class AgentsService extends Service implements Agents {
   }
 
   private update() {
-    const identities = this.identities.filter((identity) => !identity.deleted);
+    const { viewer, selected } = this.communities.snapshot();
+    // The Runner decides what runs; the screens show what it decided.
+    this.runner.update(this.identities, viewer);
     const alive: Agent[] = [];
-    for (const identity of identities) {
-      if (!this.alive(identity)) continue;
+    for (const identity of this.identities) {
+      if (identity.deleted || !this.alive(identity)) continue;
       const record = this.runner.records.recordOf(identity);
       // Reuse the frozen agent while nothing visible changed, so subscribers see
-      // a stable snapshot.
-      const prior =
-        this.agent(identity.key) ??
-        this.state.agents.find(
-          (agent) => agent.key === identity.key && agent.deleting,
-        );
+      // a stable snapshot: as the Runner runs it or, when that is not what is
+      // shown, as it was shown.
+      const fits = (prior: Agent | undefined) =>
+        prior?.name === identity.name &&
+        prior.picture === identity.picture &&
+        prior.type === identity.type &&
+        prior.attention === record.attention &&
+        prior.skipped === (record.skipped ?? EMPTY) &&
+        prior.timers === (record.timers ?? EMPTY) &&
+        prior.sourceRuns === record.sourceRuns &&
+        prior.attentionHistory === record.attentionHistory &&
+        prior.attentionEnabled === (record.attentionEnabled === true) &&
+        prior.config === record.config &&
+        prior.archiveUnchecked === this.archiveUnchecked(identity.key) &&
+        prior.deleting === identity.deleting;
+      const before = this.state.agents.find(
+        (agent) => agent.key === identity.key && agent.place === "here",
+      );
       alive.push(
-        prior &&
-          prior.name === identity.name &&
-          prior.picture === identity.picture &&
-          prior.type === identity.type &&
-          prior.attention === record.attention &&
-          prior.skipped === (record.skipped ?? EMPTY) &&
-          prior.timers === (record.timers ?? EMPTY) &&
-          prior.sourceRuns === record.sourceRuns &&
-          prior.attentionHistory === record.attentionHistory &&
-          prior.attentionEnabled === (record.attentionEnabled === true) &&
-          prior.config === record.config &&
-          prior.archiveUnchecked === this.archiveUnchecked(identity.key) &&
-          prior.deleting === identity.deleting
-          ? prior
-          : this.view(identity, record),
+        [this.agent(identity.key), before].find(fits) ??
+          this.view(identity, record),
       );
     }
-    // An unfinished Delete or Remove stays listed, but nothing runs it: its
-    // types' plugins stop what they keep for it.
-    const running = alive.filter((agent) => !agent.deleting);
-    const selected = originOf(this.communities.snapshot().selected ?? "");
+    const shown = originOf(selected ?? "");
     const agents = [
       ...alive.filter(
-        (agent) => originOf(agent.relay) === selected && this.bindingOf(agent),
+        (agent) => originOf(agent.relay) === shown && this.bindingOf(agent),
       ),
-      ...this.listedAgents(selected),
+      ...this.listedAgents(shown),
     ];
-    this.runner.runners.reconcile(
-      identities
-        .filter((identity) => !identity.deleting)
-        .map(({ key, pubkey, relay, type, owner }) => ({
-          key,
-          pubkey,
-          relay,
-          type,
-          scope: relayPartition(originOf(relay) ?? relay, owner),
-        })),
-      new Map(this.types().map((type) => [type.key, type])),
-    );
-    const left = this.runner.runners.interrupted();
-    // Only the copy that holds an agent may resume or forget its turns.
-    const interrupted = running.filter(
-      (agent) => left.has(agent.key) && this.runner.runners.runs(agent.key),
-    );
-    const same = (next: readonly Agent[], prior: readonly Agent[]) =>
-      next.length === prior.length &&
-      next.every((agent, index) => agent === prior[index]);
+    const running = this.runner.running();
+    const interrupted = this.runner.interrupted();
     if (
       !same(agents, this.state.agents) ||
-      !same(running, this.state.running) ||
-      !same(interrupted, this.state.interrupted)
+      running !== this.state.running ||
+      interrupted !== this.state.interrupted
     ) {
       this.state = Object.freeze({
         ...this.state,
         agents: Object.freeze(agents),
-        running: Object.freeze(running),
-        interrupted: Object.freeze(interrupted),
+        running,
+        interrupted,
       });
       this.notify();
     }
-    this.runner.runners.resume(
-      new Set(
-        running
-          .filter((agent) => this.runner.connections.binding(agent))
-          .map((a) => a.key),
-      ),
-    );
     this.presence.announce();
-    this.runner.runners.catchUp(false);
   }
 
   private notify() {
@@ -3969,6 +3933,10 @@ export class AgentsService extends Service implements Agents {
     );
   }
 }
+
+const same = (next: readonly Agent[], prior: readonly Agent[]) =>
+  next.length === prior.length &&
+  next.every((agent, index) => agent === prior[index]);
 
 /** An old Buzz team's copy for one owner in one community (`scope`), the same
  * from every import. */

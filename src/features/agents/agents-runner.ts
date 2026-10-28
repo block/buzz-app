@@ -1,9 +1,9 @@
-// The Runner: the part of agents that runs them. It owns the agent runners
-// and the agent storage they keep, which is records, catch-up progress, turns
-// in progress and synced config copies. What it needs from the Manager, the
-// part the screens use, it asks through `RunnerManager`; those facts and
-// requests are what will cross the agents link when the Runner moves to its
-// own page.
+// The Runner: the part of agents that runs them. It decides which agents run,
+// and owns the agent runners and the agent storage they keep, which is
+// records, catch-up progress, turns in progress and synced config copies.
+// What it needs from the Manager, the part the screens use, it asks through
+// `RunnerManager`; those facts and requests are what will cross the agents
+// link when the Runner moves to its own page.
 import { AgentConfigStore } from "./agent-config";
 import { isSynced, resolveStart } from "./agent-start";
 import {
@@ -21,13 +21,14 @@ import { migrateWatchFilters } from "./migrate-filter";
 import { migrateAgentStorage } from "./migrate-storage";
 import type { AgentIdentity } from "./native";
 import { ownerReads } from "./reads";
-import { AgentRecords, type Member } from "./records";
+import { AgentRecords, EMPTY, type Member } from "./records";
 import { AgentRunners, type Connection, type RunnerHost } from "./runner";
 import type { Agent, ConfigBinding, RegisteredAgentType } from "./service";
 import { soloChat } from "./solo-chat";
 import { nameSoloChat } from "./solo-chat-name";
 import type { AgentStore } from "./state";
 import type { AgentRecord } from "./store";
+import { relayPartition } from "../relay/partition";
 import type { RelayData } from "../relay/service";
 import type { RelaySession } from "../relay/session";
 import type { Decisions } from "../decisions/service";
@@ -36,8 +37,6 @@ import { channelTabs } from "../../bundled/channels/useChannelTabState";
 /** What the Runner asks of the Manager. */
 export type RunnerManager = Pick<
   RunnerHost,
-  | "ready"
-  | "agent"
   | "member"
   | "dm"
   | "team"
@@ -60,8 +59,6 @@ export type RunnerManager = Pick<
     changed(): void;
     /** The community's relay, while the viewer is in it. */
     open(origin: string): RelayData | undefined;
-    /** The agents running here, in every community. */
-    running(): readonly Agent[];
     /** The membership of this key, unless it was deleted. */
     liveMember(key: AgentKey): Member | undefined;
     types(): readonly RegisteredAgentType[];
@@ -81,6 +78,12 @@ export class AgentsRunner {
   readonly connections: RunnerConnections;
   /** Confirmed synced config copies, the only synced launch source. */
   private readonly configStore: AgentConfigStore;
+  /** The agents running here, in every community, and those of them with
+   * turns the app left working last time. */
+  private state: Readonly<{
+    running: readonly Agent[];
+    interrupted: readonly Agent[];
+  }> = { running: [], interrupted: [] };
 
   constructor(
     storage: AgentStore,
@@ -123,8 +126,8 @@ export class AgentsRunner {
     let savedProgress: Checkpoints = {};
     this.runners = new AgentRunners({
       ownershipChanged: () => manager.ownershipChanged(),
-      ready: (key) => manager.ready(key),
-      agent: (key) => manager.agent(key),
+      ready: (key) => this.ready(key),
+      agent: (key) => this.agent(key),
       member: (agent, event) => manager.member(agent, event),
       dm: (agent, event) => manager.dm(agent, event),
       starting: (agent, channelId) =>
@@ -257,15 +260,99 @@ export class AgentsRunner {
   watch(identities: readonly AgentIdentity[], viewer: string | undefined) {
     this.connections.watch(identities, viewer);
   }
+  /** Decides which agents run: each of the viewer's agents whose community is
+   * joined and not disconnected. A reconnect does not stop one. An unfinished
+   * Delete or Remove stops it, and its types' plugins stop what they keep for
+   * it. Then each runner goes on with what it can do now. */
+  update(identities: readonly Member[], viewer: string | undefined) {
+    const live = identities.filter(
+      (identity) => !identity.deleted && !identity.deleting,
+    );
+    const running: Agent[] = [];
+    for (const identity of live) {
+      const status = this.connections
+        .relay(originOf(identity.relay))
+        ?.snapshot().status;
+      if (identity.owner !== viewer || !status || status === "disconnected")
+        continue;
+      const record = this.records.recordOf(identity);
+      // Reuse the frozen agent while nothing it shows changed, so subscribers
+      // see a stable snapshot.
+      const prior = this.agent(identity.key);
+      running.push(
+        prior &&
+          prior.name === identity.name &&
+          prior.picture === identity.picture &&
+          prior.type === identity.type &&
+          prior.attention === record.attention &&
+          prior.skipped === (record.skipped ?? EMPTY) &&
+          prior.timers === (record.timers ?? EMPTY) &&
+          prior.sourceRuns === record.sourceRuns &&
+          prior.attentionHistory === record.attentionHistory &&
+          prior.attentionEnabled === (record.attentionEnabled === true) &&
+          prior.config === record.config
+          ? prior
+          : view(identity, record),
+      );
+    }
+    this.runners.reconcile(
+      live.map(({ key, pubkey, relay, type, owner }) => ({
+        key,
+        pubkey,
+        relay,
+        type,
+        scope: relayPartition(originOf(relay) ?? relay, owner),
+      })),
+      new Map(this.manager.types().map((type) => [type.key, type])),
+    );
+    const left = this.runners.interrupted();
+    // Only the copy that holds an agent may resume or forget its turns.
+    const interrupted = running.filter(
+      (agent) => left.has(agent.key) && this.runners.runs(agent.key),
+    );
+    this.state = {
+      running: same(running, this.state.running)
+        ? this.state.running
+        : Object.freeze(running),
+      interrupted: same(interrupted, this.state.interrupted)
+        ? this.state.interrupted
+        : Object.freeze(interrupted),
+    };
+    this.runners.resume(
+      new Set(
+        running
+          .filter((agent) => this.connections.binding(agent))
+          .map((agent) => agent.key),
+      ),
+    );
+    this.runners.catchUp(false);
+  }
+  /** The agents running here, in every community. */
+  running() {
+    return this.state.running;
+  }
+  /** The running agents with turns the app left working last time. */
+  interrupted() {
+    return this.state.interrupted;
+  }
+  /** A running agent, in any community. */
+  agent(key: AgentKey) {
+    return this.state.running.find((agent) => agent.key === key);
+  }
+  /** The agent, while its community's session is live to run it in. */
+  ready(key: AgentKey) {
+    const agent = this.agent(key);
+    return agent && this.connections.binding(agent) ? agent : undefined;
+  }
   /** The running agent's community, while the Runner is connected to it. */
   relay(key: AgentKey) {
-    return this.connections.relay(
-      originOf(this.manager.agent(key)?.relay ?? ""),
-    );
+    return this.connections.relay(originOf(this.agent(key)?.relay ?? ""));
   }
+  /** Stops it all without reconciling, which would make new runners. */
   clear() {
     this.connections.clear();
     this.runners.clear();
+    this.state = { running: [], interrupted: [] };
   }
 
   /** Delivers the session's live events, and retries what failed whenever its
@@ -311,8 +398,32 @@ export class AgentsRunner {
   /** Refreshes the cached `core` memory of each agent running in the
    * community, which may have changed elsewhere while it was not connected. */
   refreshCore(origin: string) {
-    for (const agent of this.manager.running())
+    for (const agent of this.state.running)
       if (originOf(agent.relay) === origin)
         void this.coreMemory.refresh(agent.key);
   }
+}
+
+const same = (next: readonly Agent[], prior: readonly Agent[]) =>
+  next.length === prior.length &&
+  next.every((agent, index) => agent === prior[index]);
+/** A membership as it runs here. */
+function view(identity: Member, record: AgentRecord): Agent {
+  return Object.freeze({
+    key: identity.key,
+    pubkey: identity.pubkey,
+    name: identity.name,
+    ...(identity.picture && { picture: identity.picture }),
+    type: identity.type,
+    owner: identity.owner,
+    relay: identity.relay,
+    place: "here",
+    attention: record.attention,
+    skipped: record.skipped ?? EMPTY,
+    timers: record.timers ?? EMPTY,
+    ...(record.sourceRuns ? { sourceRuns: record.sourceRuns } : {}),
+    attentionHistory: record.attentionHistory,
+    attentionEnabled: record.attentionEnabled === true,
+    config: record.config,
+  });
 }

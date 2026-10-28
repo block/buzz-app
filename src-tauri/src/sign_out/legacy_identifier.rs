@@ -3,7 +3,8 @@
 //! old identifier, with any sign-out trash and pending sign-out marker, so an
 //! update keeps its data and still finishes a sign-out the old build committed.
 //! Development builds shared that storage until they became `.dev`; the first
-//! development launch copies the installed app's, leaving it in place.
+//! development launch copies the installed app's, leaving it in place. They
+//! still share its Agents folder (`agents`).
 use super::{agents_stopped, marker_name, trash, wait_for, AGENTS};
 use std::fs::{self, File};
 use std::io::ErrorKind;
@@ -79,12 +80,12 @@ pub(super) fn seeds(identifier: &str) -> Option<Vec<PathBuf>> {
 
 /// The Agents folder for the app data at `app_data`. Development builds use the
 /// installed app's, as they did before they became `.dev`, so both share one
-/// agent list, its state and its hosting locks. Until the installed app has
-/// storage they keep their own: creating it beside legacy storage still due to
-/// move would make the next release launch refuse to start.
+/// agent list, its state and its hosting locks. Only while legacy storage is
+/// still due to move do they keep their own: creating release storage beside it
+/// would make the next release launch refuse to start.
 pub(crate) fn agents(identifier: &str, app_data: &Path) -> PathBuf {
     let release = app_data.with_file_name(CURRENT);
-    if identifier == DEV && release.is_dir() {
+    if identifier == DEV && (release.is_dir() || !app_data.with_file_name(LEGACY).exists()) {
         return release.join(AGENTS);
     }
     app_data.join(AGENTS)

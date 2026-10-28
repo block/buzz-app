@@ -1,10 +1,14 @@
 // Real timeline and Virtua, with local data and no broker or live credentials.
 import { createRoot } from "react-dom/client";
-import { useState } from "react";
+import { useState, useMemo, useSyncExternalStore } from "react";
+import { createChannelPresentation } from "../../src/features/messages/channel-presentation";
 import { ChannelTimeline } from "../../src/features/messages/ChannelTimeline";
 import { createRelaySession } from "../../src/features/relay/session";
 import { keypair } from "../../src/features/relay/testing";
-import type { ChannelMessage } from "../../src/features/relay/contracts";
+import type {
+  ChannelMessage,
+  ChannelWindow,
+} from "../../src/features/relay/contracts";
 import { Button } from "../../src/shared/design-system/ui/Button";
 import { useKeyboardFocusVisibility } from "../../src/shared/design-system/useKeyboardFocusVisibility";
 import styles from "../../src/features/messages/Messages.module.css";
@@ -30,10 +34,54 @@ const update = (index: number): ChannelMessage => ({
   replyCount: 0,
   participants: [],
 });
+let current: ChannelWindow = Object.freeze({
+  channelId: "solo",
+  rows: Object.freeze(Array.from({ length: 16 }, (_, index) => update(index))),
+  status: "ready",
+  hasMore: false,
+  loadingOlder: false,
+  freshness: "verified",
+  error: undefined,
+});
+const listeners = new Set<() => void>();
+const subscribe = (listener: () => void) => {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+};
+const snapshot = () => current;
+const publish = (rows: readonly ChannelMessage[]) => {
+  current = Object.freeze({ ...current, rows: Object.freeze([...rows]) });
+  for (const listener of [...listeners]) listener();
+};
+const queries = {
+  ...owner.session,
+  channels: {
+    ...owner.session.channels,
+    window: (id: string) =>
+      id === "solo" ? current : owner.session.channels.window(id),
+    subscribeWindow: (id: string, listener: () => void) =>
+      id === "solo"
+        ? subscribe(listener)
+        : owner.session.channels.subscribeWindow(id, listener),
+  },
+};
+const keyed =
+  new URLSearchParams(location.search).get("presentation") === "keyed";
 function Fixture() {
   useKeyboardFocusVisibility();
-  const [rows, setRows] = useState<ChannelMessage[]>(
-    Array.from({ length: 16 }, (_, index) => update(index)),
+  const window = useSyncExternalStore(subscribe, snapshot, snapshot);
+  const rows = window.rows;
+  const presentation = useMemo(
+    () =>
+      keyed
+        ? createChannelPresentation(queries, "solo", {
+            chat: true,
+            viewer: undefined,
+          })
+        : undefined,
+    [],
   );
   const [inlineTarget, setTarget] = useState<{
     messageId: string;
@@ -52,7 +100,7 @@ function Fixture() {
       <nav style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
         <Button
           onClick={() =>
-            setRows([
+            publish([
               ...rows,
               update(Number(rows.at(-1)?.id.split("-").at(-1) ?? -1) + 1),
             ])
@@ -70,7 +118,7 @@ function Fixture() {
         >
           Visit first update
         </Button>
-        <Button onClick={() => setRows([update(-1), ...rows])}>
+        <Button onClick={() => publish([update(-1), ...rows])}>
           Prepend history
         </Button>
       </nav>
@@ -79,18 +127,10 @@ function Fixture() {
           transient
           channelId="solo"
           scope="activity-groups-fixture"
-          queries={owner.session}
+          queries={queries}
           chatPresentation
           inlineTarget={inlineTarget}
-          window={{
-            channelId: "solo",
-            rows,
-            status: "ready",
-            hasMore: false,
-            loadingOlder: false,
-            freshness: "verified",
-            error: undefined,
-          }}
+          {...(presentation ? { presentation } : { window })}
           onOpenLink={() => false}
         />
       </div>

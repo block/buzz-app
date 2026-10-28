@@ -58,9 +58,12 @@ export function profileActivityViewKey(target: string): string | undefined {
     return undefined;
   }
 }
-/** Transcript destinations an opener has just opened, not yet shown. */
-const transcriptRequests = new Set<string>();
+/** Transcript destinations an opener has just opened, not yet claimed by the
+ * profile shown for them. Each opening is numbered, so a profile can tell a
+ * new one from one it already has. */
+const transcriptRequests = new Map<string, number>();
 const transcriptListeners = new Set<() => void>();
+let transcriptOpenings = 0;
 const changed = () => {
   for (const listener of transcriptListeners) listener();
 };
@@ -76,19 +79,22 @@ export function openProfileTranscript(
   open: (target: string) => boolean,
 ): boolean {
   if (!profileActivityTranscript(target)) return open(target);
-  transcriptRequests.add(target);
+  transcriptRequests.set(target, ++transcriptOpenings);
   const opened = open(target);
   if (!opened) transcriptRequests.delete(target);
   changed();
   return opened;
 }
-/** Whether an opener still asks `target`'s profile for its transcript. */
-export function profileTranscriptRequested(target: string): boolean {
-  return transcriptRequests.has(target);
+/** The opening still asking `target`'s profile for its transcript. */
+export function profileTranscriptRequest(target: string): number | undefined {
+  return transcriptRequests.get(target);
 }
-/** The request has been offered; opening the target again asks anew. */
-export function settleProfileTranscript(target: string): void {
+/** Takes `target`'s opening for the profile now showing it, so a profile
+ * mounted later, as on returning to the channel, finds nothing to act on. */
+export function claimProfileTranscript(target: string): number | undefined {
+  const opening = transcriptRequests.get(target);
   if (transcriptRequests.delete(target)) changed();
+  return opening;
 }
 /** Whether an Activity destination asks for its conversation's transcript. */
 export function profileActivityTranscript(target: string): boolean {

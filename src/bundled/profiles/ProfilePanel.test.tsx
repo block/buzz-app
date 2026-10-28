@@ -421,8 +421,9 @@ function renderAgentActivity(
     profileActivityViewTarget(key, { transcript: !!transcript }) ?? "";
   // Like Working now: the opener asks as it opens the target.
   if (transcript === "opened") openProfileTranscript(target, () => true);
-  render(
+  const panel = (mount: number) => (
     <ProfilePanel
+      key={mount}
       relay={relay}
       agents={agents}
       target={target}
@@ -433,12 +434,21 @@ function renderAgentActivity(
         open: vi.fn(() => true),
       }}
       close={() => {}}
-    />,
+    />
   );
-  return () => {
-    cleanup();
-    owner.dispose();
-  };
+  let mounts = 0;
+  const view = render(panel(mounts));
+  return Object.assign(
+    () => {
+      cleanup();
+      owner.dispose();
+    },
+    {
+      target,
+      /** Remounts the retained profile, as on returning to its channel. */
+      remount: () => view.rerender(panel(++mounts)),
+    },
+  );
 }
 
 it("opens an agent's activity on its type's Activity tab, the profile's only one", async () => {
@@ -510,6 +520,38 @@ it("asks for the transcript once, not again on returning from another section", 
     await user.click(screen.getByRole("tab", { name: "Identity" }));
     await user.click(screen.getByRole("tab", { name: "Activity" }));
     expect(screen.getByText("Echo activity")).toBeVisible();
+    expect(screen.queryByText("Transcript first")).toBeNull();
+  } finally {
+    dispose();
+  }
+});
+
+it("keeps a new opening for a profile on another section to itself, so a remount does not reopen it", async () => {
+  const sections = [
+    { title: "Settings", role: "settings" },
+    { title: "Activity", role: "activity" },
+  ];
+  const user = userEvent.setup();
+  let dispose = renderAgentActivity(sections, "thread-root", "shown again");
+  try {
+    await user.click(screen.getByRole("tab", { name: "Identity" }));
+    // Working now opens the retained profile again while it shows Identity.
+    act(() => void openProfileTranscript(dispose.target, () => true));
+    dispose.remount();
+    expect(screen.getByText("Echo activity")).toBeVisible();
+    expect(screen.queryByText("Transcript first")).toBeNull();
+  } finally {
+    dispose();
+  }
+  dispose = renderAgentActivity(sections, "thread-root", "shown again");
+  try {
+    await user.click(screen.getByRole("tab", { name: "Identity" }));
+    act(() => void openProfileTranscript(dispose.target, () => true));
+    // Not remounted, the profile still has the opening for its Activity tab.
+    await user.click(screen.getByRole("tab", { name: "Activity" }));
+    expect(screen.getByText("Transcript first")).toBeVisible();
+    await user.click(screen.getByRole("tab", { name: "Identity" }));
+    await user.click(screen.getByRole("tab", { name: "Activity" }));
     expect(screen.queryByText("Transcript first")).toBeNull();
   } finally {
     dispose();

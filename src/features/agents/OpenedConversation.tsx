@@ -88,6 +88,8 @@ export function useOpenedSession<T extends Saved>(
  * `request` asks for the conversation's transcript first. It opens by itself
  * only if already known when the conversation is shown, since one found later
  * must not take the reader's focus; `request.done` reports that it was offered.
+ * `done` identifies the request: the same function across renders is one
+ * request, and a new one asks again, even for the conversation already shown.
  * Closing that tab calls `close`, since it was all that was asked for, unless
  * the host is only clearing the profile's own detail tabs. */
 export function useOpenTranscript<T>(
@@ -105,19 +107,29 @@ export function useOpenTranscript<T>(
     initial?: true;
   }>();
   // Forgotten, not just hidden: returning to the first conversation must not
-  // reopen it unasked.
-  const [offered, setOffered] = useState("");
-  if (offered !== place) {
-    setOffered(place);
-    setShown(
-      place && request?.initial !== undefined
-        ? { place, row: request.initial, initial: true }
-        : undefined,
-    );
-  }
+  // reopen it unasked. A new request opens it again in the same one.
   const done = request?.done;
-  useEffect(() => done?.(), [done]);
+  const [offered, setOffered] = useState<{ place: string; done?: () => void }>({
+    place: "",
+  });
+  const moved = offered.place !== place;
+  if (moved || (done && done !== offered.done)) {
+    setOffered({ place, ...(done && { done }) });
+    const asked =
+      place && request?.initial !== undefined
+        ? { place, row: request.initial, initial: true as const }
+        : undefined;
+    if (moved || asked) setShown(asked);
+  }
   const tabs = usePanelTabHost();
+  // A transcript already open in its tab is brought forward when asked again.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: once per request.
+  useEffect(() => {
+    if (!done) return;
+    if (tabs && shown?.initial && shown.place === place)
+      tabs.activate(tabs.owner, title(shown.row));
+    done();
+  }, [done]);
   return {
     open: shown?.place === place ? shown.row : undefined,
     show(row: T) {

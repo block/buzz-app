@@ -248,7 +248,8 @@ export type AgentViewProps<Config = unknown> = {
   conversation?: AgentConversation;
   /** Present while the panel asks to show that conversation's transcript
    * first: an Activity tab does so, if it knows it then, and calls this once
-   * it has, so the panel asks only once. */
+   * it has, so the panel asks only once. It stays the same function for one
+   * opening; a new one is a new opening, even of the conversation shown. */
   initialTranscript?: () => void;
   /** Closes the panel showing the tab. */
   close?: () => void;

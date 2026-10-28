@@ -7,6 +7,8 @@ type Row = { key: string; channelId: string; root?: string };
 const conversation = { channelId: "channel", rootId: "root" };
 const recent: Row = { key: "recent", channelId: "other" };
 const found: Row = { key: "found", channelId: "channel", root: "root" };
+// One request keeps one `done` across renders; a new one is a new request.
+const settled = () => {};
 
 it("keeps the reader's choice when the opened conversation's lookup finishes later", async () => {
   let resolve: (row: Row) => void = () => {};
@@ -21,7 +23,7 @@ it("keeps the reader's choice when the opened conversation's lookup finishes lat
     );
     return useOpenTranscript<Row>(conversation, (row) => row.key, {
       initial: session,
-      done() {},
+      done: settled,
     });
   });
   expect(result.current.open).toBeUndefined();
@@ -61,10 +63,41 @@ it("opens the known conversation's transcript once, not again after Back", () =>
     );
     return useOpenTranscript<Row>(conversation, (row) => row.key, {
       initial: session,
-      done() {},
+      done: settled,
     });
   });
   expect(result.current.open).toBe(found);
   act(() => result.current.back());
+  expect(result.current.open).toBeUndefined();
+});
+
+it("opens the transcript again for a new request in the same conversation", () => {
+  const { result, rerender } = renderHook(
+    ({ done }: { done: (() => void) | undefined }) => {
+      const { session } = useOpenedSession<Row>(
+        [found],
+        conversation,
+        async () => undefined,
+      );
+      return useOpenTranscript<Row>(
+        conversation,
+        (row) => row.key,
+        done && { initial: session, done },
+      );
+    },
+    { initialProps: { done: settled as (() => void) | undefined } },
+  );
+  expect(result.current.open).toBe(found);
+  act(() => result.current.back());
+  // Offered and settled: rendering on without a request leaves it closed.
+  rerender({ done: undefined });
+  expect(result.current.open).toBeUndefined();
+  const again = vi.fn();
+  rerender({ done: again });
+  expect(result.current.open).toBe(found);
+  expect(again).toHaveBeenCalledOnce();
+  // The same request, rendered again after Back, does not reopen it.
+  act(() => result.current.back());
+  rerender({ done: again });
   expect(result.current.open).toBeUndefined();
 });

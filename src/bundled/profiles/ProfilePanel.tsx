@@ -29,10 +29,10 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
 import type { PanelProps } from "../../features/panels/service";
 import {
+  claimProfileTranscript,
   profileActivityTranscript,
   profileActivityViewKey,
-  profileTranscriptRequested,
-  settleProfileTranscript,
+  profileTranscriptRequest,
   subscribeProfileTranscripts,
   profileAgentHint,
   profilePanelKey,
@@ -79,15 +79,30 @@ export function ProfilePanel({
   const activityKey = profileActivityViewKey(target);
   const transcript = profileActivityTranscript(target);
   const opening = transcript ? "transcript" : activityKey ? "activity" : "info";
-  // Asked once per opening: neither changing sections nor remounting with
-  // the channel reopens it.
-  const requested = useSyncExternalStore(
-    subscribeProfileTranscripts,
-    () => transcript && profileTranscriptRequested(target),
+  // Asked once per opening. This profile takes the opening as soon as it is
+  // shown, even on another section, so remounting with the channel finds
+  // nothing to reopen; changing sections back after it was offered does not
+  // ask again either.
+  const asked = useSyncExternalStore(subscribeProfileTranscripts, () =>
+    transcript ? profileTranscriptRequest(target) : undefined,
   );
-  const initialTranscript = requested
-    ? () => settleProfileTranscript(target)
-    : undefined;
+  const [held, setHeld] = useState<number>();
+  const [offered, setOffered] = useState(0);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: each new opening is claimed.
+  useEffect(() => {
+    const claimed = claimProfileTranscript(target);
+    if (claimed !== undefined) setHeld(claimed);
+  }, [asked, target]);
+  const pending = asked ?? held;
+  const request =
+    pending !== undefined && pending > offered ? pending : undefined;
+  const initialTranscript = useMemo(
+    () =>
+      request === undefined
+        ? undefined
+        : () => setOffered((last) => Math.max(last, request)),
+    [request],
+  );
   const pubkey = profilePanelKey(target) ?? activityKey;
   const owned = useAgent(agents, pubkey ?? "");
   if (!pubkey) return <p>Unsupported profile.</p>;

@@ -1,6 +1,8 @@
 import { expect, it } from "vitest";
 import {
+  claimProfileTranscript,
   openProfileTranscript,
+  profileTranscriptRequest,
   profileAgentHint,
   profileActivityTranscript,
   profileActivityViewTarget,
@@ -8,8 +10,6 @@ import {
   profileKey,
   profilePanelKey,
   profileTarget,
-  profileTranscriptRequested,
-  settleProfileTranscript,
 } from "./target";
 it("round-trips only exact public identity locators", () => {
   const key = "ab".repeat(32);
@@ -82,17 +82,22 @@ it("marks only the transcript Activity destination as asking for it", () => {
   expect(profileActivityTranscript(`${transcript}&owner=true`)).toBe(false);
 });
 
-it("asks for a transcript only while an opening of its target is unsettled", () => {
+it("asks for a transcript once per opening until its profile claims it", () => {
   const key = "cd".repeat(32);
   const plain = profileActivityViewTarget(key) ?? "";
   const transcript = profileActivityViewTarget(key, { transcript: true }) ?? "";
   expect(openProfileTranscript(plain, () => true)).toBe(true);
-  expect(profileTranscriptRequested(plain)).toBe(false);
+  expect(profileTranscriptRequest(plain)).toBeUndefined();
   // An opening that fails leaves nothing for a later remount to act on.
   expect(openProfileTranscript(transcript, () => false)).toBe(false);
-  expect(profileTranscriptRequested(transcript)).toBe(false);
+  expect(profileTranscriptRequest(transcript)).toBeUndefined();
   expect(openProfileTranscript(transcript, () => true)).toBe(true);
-  expect(profileTranscriptRequested(transcript)).toBe(true);
-  settleProfileTranscript(transcript);
-  expect(profileTranscriptRequested(transcript)).toBe(false);
+  const first = profileTranscriptRequest(transcript);
+  expect(first).toBeDefined();
+  expect(claimProfileTranscript(transcript)).toBe(first);
+  expect(profileTranscriptRequest(transcript)).toBeUndefined();
+  expect(claimProfileTranscript(transcript)).toBeUndefined();
+  // Opening the same target again is a new opening.
+  openProfileTranscript(transcript, () => true);
+  expect(claimProfileTranscript(transcript)).toBeGreaterThan(first ?? 0);
 });

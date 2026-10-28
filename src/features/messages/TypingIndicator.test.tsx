@@ -15,8 +15,8 @@ import type { RelaySession } from "../relay/session";
 import type { TypingEntry } from "../relay/typing";
 import {
   profileActivityViewTarget,
-  profileTranscriptRequested,
-  settleProfileTranscript,
+  claimProfileTranscript,
+  profileTranscriptRequest,
 } from "../profiles/target";
 import { TypingIndicator } from "./TypingIndicator";
 
@@ -111,8 +111,8 @@ it("opens one avatar by hover, with separate thread and activity actions and key
     rootId: root,
   });
   // The click asks the profile it opens for the transcript, once.
-  expect(profileTranscriptRequested(transcript ?? "")).toBe(true);
-  settleProfileTranscript(transcript ?? "");
+  expect(profileTranscriptRequest(transcript ?? "")).toBeDefined();
+  claimProfileTranscript(transcript ?? "");
   trigger.focus();
   await user.keyboard("{Enter}");
   dialog = await screen.findByRole("dialog", { name: "Working now" });

@@ -1906,12 +1906,15 @@ it("does not convert an inserted or pasted marker, or one typed inside pasted fe
 });
 
 it.each([
-  ["- ", "ul > li > p"],
-  ["1. ", "ol > li > p"],
-  ["> ", "blockquote > p"],
-])(
-  "converts %j typed before a mention, link chip, link and code, keeping each in the block",
-  async (marker, selector) => {
+  ["- ", false, "ul > li > p"],
+  ["1. ", false, "ol > li > p"],
+  ["> ", false, "blockquote > p"],
+  ["- ", true, "ul > li > p"],
+  ["1. ", true, "ol > li > p"],
+  ["> ", true, "blockquote > p"],
+] as const)(
+  "converts %j typed before a mention, link chip, link and code, keeping each in the block (next line=%s)",
+  async (marker, followed, selector) => {
     const h = mount("", { links: true });
     const honey = { pubkey: "a".repeat(64), name: "Honey" };
     const url = "https://example.com/a";
@@ -1922,29 +1925,45 @@ it.each([
       const at = h.input.value.indexOf("docs");
       h.input.setSelectionRange(at, at + 4);
       h.input.editLink()?.save("docs", "https://example.com/docs");
-      h.input.setSelectionRange(0, 0);
+      h.input.setSelectionRange(h.input.value.length, h.input.value.length);
     });
+    // A later line of the same paragraph stays behind when the line converts.
+    if (followed) await h.user.keyboard("{Shift>}{Enter}{/Shift}next");
+    act(() => h.input.setSelectionRange(0, 0));
     const line = `@Honey see ${url} and [docs](https://example.com/docs) \`x\``;
-    expect(h.markdown()).toBe(line);
+    const tail = followed ? "\nnext" : "";
+    expect(h.markdown()).toBe(`${line}${tail}`);
+    const value = h.input.value;
+    const converted = () => {
+      const block = h.input.querySelector(selector);
+      expect(block).not.toBeNull();
+      expect(block?.querySelector('[data-source="@Honey"]')).not.toBeNull();
+      expect(block?.querySelector(`[data-source="${url}"]`)).not.toBeNull();
+      expect(
+        block?.querySelector('a[href="https://example.com/docs"]'),
+      ).toHaveTextContent("docs");
+      expect(block?.querySelector("code")).toHaveTextContent("x");
+      expect(h.input.querySelector(":scope > p")?.textContent ?? null).toBe(
+        followed ? "next" : null,
+      );
+      // Only the marker went: every chip and the recipient keep their offsets.
+      expect(h.input.value).toBe(value);
+      expect(h.draft().recipients).toEqual([{ ...honey, start: 0, end: 6 }]);
+      expect(h.markdown()).toBe(
+        `${marker}${line}${followed ? "\n\nnext" : ""}`,
+      );
+    };
     await h.user.keyboard(marker);
-    const block = h.input.querySelector(selector);
-    expect(block).not.toBeNull();
-    expect(block?.querySelector('[data-source="@Honey"]')).not.toBeNull();
-    expect(block?.querySelector(`[data-source="${url}"]`)).not.toBeNull();
-    expect(
-      block?.querySelector('a[href="https://example.com/docs"]'),
-    ).toHaveTextContent("docs");
-    expect(block?.querySelector("code")).toHaveTextContent("x");
-    expect(h.input.value).not.toContain(marker);
-    expect(h.draft().recipients).toEqual([{ ...honey, start: 0, end: 6 }]);
-    expect(h.markdown()).toBe(`${marker}${line}`);
+    converted();
     act(() => h.input.undo(false));
     expect(h.input.querySelector("ul, ol, blockquote")).toBeNull();
-    expect(h.input.value.startsWith(`${marker}@Honey see `)).toBe(true);
+    expect(h.input.value).toBe(`${marker}${value}`);
     expect(h.draft().recipients).toEqual([
       { ...honey, start: marker.length, end: marker.length + 6 },
     ]);
-    expect(h.markdown()).toBe(`${marker}${line}`);
+    expect(h.markdown()).toBe(`${marker}${line}${tail}`);
+    act(() => h.input.undo(true));
+    converted();
   },
 );
 

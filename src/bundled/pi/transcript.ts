@@ -59,9 +59,10 @@ type Conversation = Readonly<{
   channelId: string;
   root?: string;
 }>;
-/** Where the read entries sit in the conversation: its current session's
- * epoch, when the host keeps one, and whether they reach its start. */
-type Span = Readonly<{ epoch?: number | undefined; start: boolean }>;
+/** Where the read entries sit in the conversation: the session the oldest
+ * is in, as the host reads it, and whether they reach its start. A session
+ * is the id of the reset that began it, or 0 before any reset. */
+type Span = Readonly<{ session?: number | undefined; start: boolean }>;
 type PiTranscript = Transcript & { more: boolean };
 
 const text = (content: Message["content"]) =>
@@ -108,12 +109,7 @@ export function piTurns(
   working: boolean,
   span: Span = { start: false },
 ): TranscriptTurn[] {
-  // Each reset starts a session, so those before the last are numbered back
-  // from the current one.
-  let epoch =
-    span.epoch === undefined
-      ? undefined
-      : span.epoch - entries.filter(({ kind }) => kind === "pi.reset").length;
+  let session = span.session;
   let starts = span.start;
   const turns: TranscriptTurn[] = [];
   const tools = new Map<string, ToolItem>();
@@ -134,9 +130,9 @@ export function piTurns(
       threadRootId: conversation.root ?? null,
       triggeringEventIds: [],
       sessionId:
-        epoch === undefined
+        session === undefined
           ? String(conversation.conversation)
-          : `${conversation.conversation}:${epoch}`,
+          : `${conversation.conversation}:${session}`,
       newSession: starts && !partial,
       config: [],
       startedAt: at,
@@ -149,7 +145,8 @@ export function piTurns(
   };
   for (const entry of entries) {
     if (entry.kind === "pi.reset") {
-      if (epoch !== undefined) epoch++;
+      // Each reset starts a session of its own.
+      if (session !== undefined) session = entry.id;
       starts = true;
       continue;
     }
@@ -294,12 +291,12 @@ export async function readTranscript(
   const entries: PiEntry[] = [];
   let turns = 0;
   let cursor: unknown;
-  let epoch: number | undefined;
+  let session: number | undefined;
   do {
     const page = await pi.request<{
       entries: PiEntry[];
       next?: unknown;
-      epoch?: number;
+      session?: number;
     }>("entries", {
       agent,
       conversation: conversation.conversation,
@@ -307,13 +304,14 @@ export async function readTranscript(
     });
     signal.throwIfAborted();
     entries.push(...page.entries);
-    epoch ??= page.epoch;
+    // The oldest page read says where the shown entries begin.
+    session = page.session ?? session;
     turns += page.entries.filter(opens).length;
     cursor = page.next;
     // One more than shown, so the oldest shown turn starts with its prompt.
   } while (cursor && turns <= TURN_LIMIT);
   const all = piTurns(entries.reverse(), conversation, working, {
-    epoch,
+    session,
     start: !cursor,
   });
   return {

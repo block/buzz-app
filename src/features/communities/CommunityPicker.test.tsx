@@ -1237,7 +1237,7 @@ it("shows only the active community until opened and routes creation through Hos
       onOpenTarget={onOpenTarget}
       settingsCards={{
         subscribe: () => () => {},
-        has: (key) => key === "block.hosted-communities/hosted",
+        has: (key) => key === "block.builderlab/login",
       }}
     />,
     { wrapper: ToastProvider },
@@ -1265,7 +1265,7 @@ it("shows only the active community until opened and routes creation through Hos
   expect(onOpenTarget).toHaveBeenCalledWith({
     version: 1,
     kind: "settings",
-    section: "block.hosted-communities/hosted",
+    section: "block.builderlab/login",
   });
   expect(h.select).not.toHaveBeenCalled();
   await waitFor(() =>

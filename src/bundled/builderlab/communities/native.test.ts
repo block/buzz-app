@@ -1,11 +1,28 @@
-import { expect, it, vi } from "vitest";
-import type { Host, HostRequest } from "../../features/host/service";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import type { Host, HostRequest } from "../../../features/host/service";
+import type { Credential } from "../oauth/browser";
+import { createOAuthSession } from "../oauth/session";
 import { createNativeBackend } from "./native";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
 const API = "https://app.builderlab.xyz/api/goose";
 type Reply = { status?: number; body: unknown };
+
+beforeEach(() =>
+  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://app.builderlab.xyz"),
+);
+afterEach(() => vi.unstubAllEnvs());
+
+const credential = (value: string): Credential =>
+  Object.freeze({
+    value,
+    account: Object.freeze({
+      subject: "user",
+      email: "a@example.com",
+      canUseRemoteAgents: false,
+    }),
+  });
 
 function setup(
   replies: Record<string, Reply | (() => Reply | Promise<Reply>)>,
@@ -31,10 +48,6 @@ function setup(
   const invoke = vi.fn(
     async (name: string, input?: Record<string, unknown>) => {
       const handlers: typeof commands = {
-        oauth_callback_begin: () => ({ id: "attempt" }),
-        oauth_callback_wait: () => ({ parameters: [["code", "one-time"]] }),
-        oauth_callback_cancel: () => undefined,
-        nsec_backup_session: () => undefined,
         nsec_backup_retry: () => undefined,
         ...commands,
       };
@@ -43,15 +56,22 @@ function setup(
       return handler(input);
     },
   );
-  const native = createNativeBackend(host, {
+  let token = "token";
+  let link = Promise.resolve();
+  const session = createOAuthSession(async () => credential(token));
+  const backend = createNativeBackend(host, session, () => link, {
     invoke: invoke as <T>(n: string, a?: Record<string, unknown>) => Promise<T>,
   });
-  return { ...native, requests, invoke };
+  const signIn = async (next = "token") => {
+    token = next;
+    await session.signIn();
+  };
+  const holdLink = (held: Promise<void>) => {
+    link = held;
+  };
+  return { backend, session, signIn, holdLink, requests, invoke };
 }
 const signedIn = {
-  "/v1/auth/login/exchange": {
-    body: { session_credential: "token", expires_at: "2030" },
-  },
   "/v1/auth/me": {
     body: {
       email: "a@example.com",
@@ -60,8 +80,6 @@ const signedIn = {
     },
   },
 };
-const login = (backend: ReturnType<typeof setup>["backend"]) =>
-  backend.send("login", {}, new AbortController().signal);
 
 it("reports no account before sign-in and refuses account calls", async () => {
   const { backend, requests } = setup({});
@@ -72,12 +90,14 @@ it("reports no account before sign-in and refuses account calls", async () => {
   expect(requests).toEqual([]);
 });
 
-it("keeps the credential out of results and forwards only allowlisted fields", async () => {
-  const { backend, requests } = setup({
-    ...signedIn,
-    "/v1/buzz/communities/archive": { body: { community: { id: "c" } } },
-  });
-  const { value } = await login(backend);
+it("signs in through the shared session and keeps its credential out of results", async () => {
+  const { backend, session } = setup(signedIn);
+  const { value } = await backend.send(
+    "login",
+    {},
+    new AbortController().signal,
+  );
+  expect(session.snapshot().status).toBe("signed-in");
   expect(value).toEqual({
     auth: {
       email: "a@example.com",
@@ -86,6 +106,21 @@ it("keeps the credential out of results and forwards only allowlisted fields", a
     },
   });
   expect(JSON.stringify(value)).not.toContain("token");
+  await expect(backend.send("sign-out")).resolves.toEqual({
+    status: 200,
+    value: {},
+  });
+  expect(session.snapshot().status).toBe("signed-out");
+  await expect(backend.auth()).resolves.toBeNull();
+});
+
+it("forwards only allowlisted fields to the configured Builderlab", async () => {
+  const { backend, signIn, requests } = setup({
+    ...signedIn,
+    "/v1/buzz/communities/archive": { body: { community: { id: "c" } } },
+  });
+  await signIn();
+  expect(backend.origin).toBe("https://app.builderlab.xyz");
   await backend.send("archive", { community_id: "c", extra: "dropped" });
   expect(requests.at(-1)).toEqual({
     url: `${API}/v1/buzz/communities/archive`,
@@ -105,65 +140,16 @@ it("keeps the credential out of results and forwards only allowlisted fields", a
   );
 });
 
-it("rejects a code exchange whose expiry does not match the session", async () => {
-  const { backend } = setup({
-    ...signedIn,
-    "/v1/auth/me": { body: { email: "a@example.com", expires_at: "2031" } },
-  });
-  await expect(login(backend)).rejects.toThrow(
-    "Builderlab session expiry did not match code exchange",
-  );
-  await expect(backend.auth()).resolves.toBeNull();
-});
-
-it("surfaces a provider callback error and always releases the listener", async () => {
-  const { backend, invoke } = setup(signedIn, {
-    oauth_callback_wait: () => ({
-      parameters: [
-        ["error", "access_denied"],
-        ["error_description", "Denied"],
-      ],
-    }),
-  });
-  await expect(login(backend)).rejects.toThrow("Denied");
-  expect(invoke).toHaveBeenCalledWith("oauth_callback_cancel", {
-    id: "attempt",
-  });
-});
-
-it("cancels the native listener when sign-in is aborted", async () => {
-  let release: () => void = () => {};
-  const { backend, invoke } = setup(signedIn, {
-    oauth_callback_wait: () =>
-      new Promise((_, reject) => {
-        release = () => reject("canceled");
-      }),
-    oauth_callback_cancel: () => release(),
-  });
-  const abort = new AbortController();
-  const pending = backend.send("login", {}, abort.signal);
-  await vi.waitFor(() =>
-    expect(invoke).toHaveBeenCalledWith("oauth_callback_wait", {
-      id: "attempt",
-    }),
-  );
-  abort.abort();
-  await expect(pending).rejects.toThrow("Builderlab authentication canceled");
-  expect(invoke).toHaveBeenCalledWith("oauth_callback_cancel", {
-    id: "attempt",
-  });
-});
-
 it("passes structured errors through with their status and rejects others", async () => {
   let reply: Reply = {
     status: 409,
     body: { error: { code: "deletion_conflict" } },
   };
-  const { backend } = setup({
+  const { backend, signIn } = setup({
     ...signedIn,
     "/v1/buzz/communities/list": () => reply,
   });
-  await login(backend);
+  await signIn();
   await expect(backend.send("list")).resolves.toEqual({
     status: 409,
     value: { error: { code: "deletion_conflict" } },
@@ -187,85 +173,63 @@ it("passes structured errors through with their status and rejects others", asyn
 });
 
 it("turns a host transport rejection into an error", async () => {
-  const { backend } = setup(signedIn);
-  await login(backend);
+  const { backend, signIn } = setup(signedIn);
+  await signIn();
   await expect(backend.send("list")).rejects.toThrow("Host request failed");
 });
 
-it("clears the session when it can no longer be verified", async () => {
+it("signs the shared session out when Builderlab rejects it", async () => {
   let me: Reply = signedIn["/v1/auth/me"];
-  const { backend } = setup({ ...signedIn, "/v1/auth/me": () => me });
-  await login(backend);
-  me = { status: 401, body: {} };
+  const { backend, session, signIn } = setup({
+    ...signedIn,
+    "/v1/auth/me": () => me,
+  });
+  await signIn();
+  me = { status: 500, body: {} };
   await expect(backend.auth()).rejects.toThrow(
-    "Builderlab session check failed with HTTP 401",
+    "Builderlab session check failed with HTTP 500",
   );
+  expect(session.snapshot().status).toBe("signed-in");
+  me = { status: 401, body: {} };
   await expect(backend.auth()).resolves.toBeNull();
+  expect(session.snapshot().status).toBe("signed-out");
 });
 
-it("forgets the credential on sign-out and plugin disposal", async () => {
-  const { backend, dispose, invoke } = setup(signedIn);
-  await login(backend);
-  const firstHandoff = invoke.mock.calls.find(
-    ([name, input]) =>
-      name === "nsec_backup_session" && input?.credential === "token",
-  )?.[1];
-  expect(firstHandoff).toMatchObject({ source: "hosted", credential: "token" });
-  await expect(backend.send("sign-out")).resolves.toEqual({
-    status: 200,
-    value: {},
-  });
-  await expect(backend.auth()).resolves.toBeNull();
-  expect(invoke).toHaveBeenLastCalledWith("nsec_backup_session", {
-    source: "hosted",
-    generation: expect.any(Number),
-    credential: null,
-  });
-  await login(backend);
-  const replacement = invoke.mock.calls
-    .filter(
-      ([name, input]) =>
-        name === "nsec_backup_session" && input?.credential === "token",
-    )
-    .at(-1)?.[1];
-  expect(replacement?.generation).toBeGreaterThan(
-    Number(firstHandoff?.generation),
+it("reads the account only after sign-in's identity link settles", async () => {
+  const { backend, signIn, holdLink, requests } = setup(signedIn);
+  let finish: () => void = () => {};
+  holdLink(
+    new Promise<void>((resolve) => {
+      finish = resolve;
+    }),
   );
-  dispose();
-  await expect(backend.auth()).resolves.toBeNull();
-  expect(invoke).toHaveBeenLastCalledWith("nsec_backup_session", {
-    source: "hosted",
-    generation: expect.any(Number),
-    credential: null,
-  });
+  await signIn();
+  const checking = backend.auth();
+  await Promise.resolve();
+  expect(requests).toEqual([]);
+  finish();
+  await expect(checking).resolves.toMatchObject({ email: "a@example.com" });
+  expect(requests.map(({ url }) => url)).toEqual([`${API}/v1/auth/me`]);
 });
 
-it("finishes login while the silent backup handoff is still pending", async () => {
-  let release!: () => void;
-  const pending = new Promise<void>((resolve) => {
-    release = resolve;
+it("does not describe a session that ended during its check", async () => {
+  let answer: (reply: Reply) => void = () => {};
+  const { backend, session, signIn } = setup({
+    "/v1/auth/me": () =>
+      new Promise<Reply>((resolve) => {
+        answer = resolve;
+      }),
   });
-  const { backend, invoke } = setup(signedIn, {
-    nsec_backup_session: (input) => (input?.credential ? pending : undefined),
-  });
-  try {
-    await expect(login(backend)).resolves.toMatchObject({ status: 200 });
-    expect(invoke).toHaveBeenCalledWith("nsec_backup_session", {
-      source: "hosted",
-      generation: expect.any(Number),
-      credential: "token",
-    });
-    await expect(backend.auth()).resolves.toMatchObject({
-      email: "a@example.com",
-    });
-  } finally {
-    release();
-  }
+  await signIn();
+  const checking = backend.auth();
+  session.signOut();
+  answer(signedIn["/v1/auth/me"]);
+  await expect(checking).rejects.toThrow("Builderlab session changed");
 });
 
 it("returns a challenge error without signing", async () => {
   const sign = vi.fn();
-  const { backend } = setup(
+  const { backend, signIn } = setup(
     {
       ...signedIn,
       "/v1/buzz/nostr-identities/challenge": {
@@ -275,7 +239,7 @@ it("returns a challenge error without signing", async () => {
     },
     { identity_sign_builderlab_binding: sign },
   );
-  await login(backend);
+  await signIn();
   await expect(backend.send("bind")).resolves.toMatchObject({
     value: { error: { code: "unauthorized" } },
   });
@@ -285,7 +249,7 @@ it("returns a challenge error without signing", async () => {
 it("does not sign a challenge issued to a session that has since ended", async () => {
   let issue: (reply: Reply) => void = () => {};
   const sign = vi.fn();
-  const { backend, requests } = setup(
+  const { backend, session, signIn, requests } = setup(
     {
       ...signedIn,
       "/v1/buzz/nostr-identities/challenge": () =>
@@ -295,21 +259,21 @@ it("does not sign a challenge issued to a session that has since ended", async (
     },
     { identity_sign_builderlab_binding: sign },
   );
-  await login(backend);
+  await signIn();
   const binding = backend.send("bind");
   await vi.waitFor(() =>
     expect(requests.at(-1)?.url).toBe(
       `${API}/v1/buzz/nostr-identities/challenge`,
     ),
   );
-  await backend.send("sign-out");
+  session.signOut();
   issue({ body: { challenge_id: "x" } });
   await expect(binding).rejects.toThrow("Builderlab session changed");
   expect(sign).not.toHaveBeenCalled();
 });
 
 it("forwards a native signing refusal as an error", async () => {
-  const { backend, requests } = setup(
+  const { backend, signIn, requests } = setup(
     {
       ...signedIn,
       "/v1/buzz/nostr-identities/challenge": {
@@ -322,7 +286,7 @@ it("forwards a native signing refusal as an error", async () => {
       },
     },
   );
-  await login(backend);
+  await signIn();
   await expect(backend.send("bind")).rejects.toThrow(
     "Invalid Nostr identity challenge",
   );
@@ -373,7 +337,7 @@ function bindingWithHeldSignature() {
     },
   );
   const start = async () => {
-    await login(native.backend);
+    await native.signIn();
     const binding = native.backend.send("bind");
     await vi.waitFor(() =>
       expect(native.invoke).toHaveBeenCalledWith(
@@ -389,8 +353,13 @@ function bindingWithHeldSignature() {
 }
 
 it("verifies a signed binding with the session that requested it", async () => {
-  const { start, verified, invoke } = bindingWithHeldSignature();
+  const { start, verified, invoke, requests } = bindingWithHeldSignature();
   const { binding, release } = await start();
+  expect(
+    JSON.parse(
+      String(requests.find(({ url }) => url.endsWith("/challenge"))?.body),
+    ),
+  ).toEqual({ origin: "https://app.builderlab.xyz" });
   release();
   await expect(binding).resolves.toEqual({
     status: 200,
@@ -406,7 +375,7 @@ it("verifies a signed binding with the session that requested it", async () => {
     }),
   });
   expect(invoke).toHaveBeenCalledWith("nsec_backup_retry", {
-    source: "hosted",
+    source: "builderlab",
   });
 });
 
@@ -414,16 +383,19 @@ it.each([
   [
     "sign-out",
     (native: ReturnType<typeof bindingWithHeldSignature>) =>
-      native.backend.send("sign-out"),
+      native.session.signOut(),
   ],
   [
     "a replacement sign-in",
-    (native: ReturnType<typeof bindingWithHeldSignature>) =>
-      login(native.backend),
+    async (native: ReturnType<typeof bindingWithHeldSignature>) => {
+      native.session.signOut();
+      await native.signIn("replacement");
+    },
   ],
   [
     "plugin disposal",
-    (native: ReturnType<typeof bindingWithHeldSignature>) => native.dispose(),
+    (native: ReturnType<typeof bindingWithHeldSignature>) =>
+      native.session.dispose(),
   ],
 ])("does not verify a signature completed after %s", async (_, end) => {
   const native = bindingWithHeldSignature();
@@ -432,7 +404,8 @@ it.each([
   release();
   await expect(binding).rejects.toThrow("Builderlab session changed");
   expect(native.verified()).toEqual([]);
-  expect(native.invoke).not.toHaveBeenCalledWith("nsec_backup_retry", {
-    source: "hosted",
-  });
+  expect(native.invoke).not.toHaveBeenCalledWith(
+    "nsec_backup_retry",
+    expect.anything(),
+  );
 });

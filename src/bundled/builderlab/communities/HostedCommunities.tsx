@@ -1,4 +1,4 @@
-import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
+import { SettingsGroup } from "../../../shared/design-system/ui/SettingsGroup";
 import {
   type ReactNode,
   useCallback,
@@ -9,14 +9,14 @@ import {
   useState,
 } from "react";
 import { npubEncode } from "nostr-tools/nip19";
-import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
-import { Button } from "../../shared/design-system/ui/Button";
-import { Checkbox } from "../../shared/design-system/ui/Checkbox";
-import { Dialog } from "../../shared/design-system/ui/Dialog";
-import { EmptyState } from "../../shared/design-system/ui/EmptyState";
-import { Header, InlineHeader } from "../../shared/design-system/ui/Header";
-import { Field } from "../../shared/design-system/ui/Field";
-import { Input } from "../../shared/design-system/ui/Input";
+import { AlertDialog } from "../../../shared/design-system/ui/AlertDialog";
+import { Button } from "../../../shared/design-system/ui/Button";
+import { Checkbox } from "../../../shared/design-system/ui/Checkbox";
+import { Dialog } from "../../../shared/design-system/ui/Dialog";
+import { EmptyState } from "../../../shared/design-system/ui/EmptyState";
+import { InlineHeader } from "../../../shared/design-system/ui/Header";
+import { Field } from "../../../shared/design-system/ui/Field";
+import { Input } from "../../../shared/design-system/ui/Input";
 import {
   ArchiveIcon,
   ArrowSquareOutIcon,
@@ -30,7 +30,7 @@ import {
   SignOutIcon,
   TrashIcon,
   WarningCircleIcon,
-} from "../../shared/design-system/icons";
+} from "../../../shared/design-system/icons";
 import {
   ApiFailure,
   boundKey,
@@ -69,9 +69,12 @@ type Confirm = {
 export function HostedCommunities({
   api,
   active,
+  sharedSignIn = false,
 }: {
   api: Api;
   active(): boolean;
+  /** The surrounding page owns sign-in, sign-out and the account row. */
+  sharedSignIn?: boolean;
 }) {
   const activeRef = useRef(active);
   activeRef.current = active;
@@ -417,11 +420,14 @@ export function HostedCommunities({
   };
 
   return (
-    <section aria-labelledby="hosted-communities-title">
-      <Header
+    <section
+      aria-labelledby="hosted-communities-title"
+      className={sectionClassName}
+    >
+      <InlineHeader
         id="hosted-communities-title"
-        title="Builderlab hosting"
-        subtitle="Manage Block-hosted communities with Builderlab. Other relays don’t require this sign-in."
+        title="Communities"
+        subtitle="Create and manage Block-hosted communities. Other relays don’t require a Builderlab account."
       />
       {failure}
       {unsupported ? (
@@ -441,67 +447,71 @@ export function HostedCommunities({
           Checking sign-in…
         </p>
       ) : !auth ? (
-        <EmptyState
-          icon={<GlobeIcon />}
-          title="Sign in to manage hosted communities"
-          description="Sign in through your browser to manage Block hosting. The rest of Buzz works without a Builderlab account."
-          action={
-            <>
-              <Button
-                variant="primary"
-                loading={action === "login"}
-                disabled={busy}
-                onClick={() =>
-                  void run("login", async () => {
-                    loginAbort.current = new AbortController();
-                    const next = await api.login(loginAbort.current.signal);
-                    setAuth(next);
-                    await settle();
-                  })
-                }
-              >
-                <ArrowSquareOutIcon size={18} aria-hidden="true" /> Sign in with
-                Builderlab
-              </Button>
-              {action === "login" && (
-                <Button onClick={() => loginAbort.current?.abort()}>
-                  Cancel
+        sharedSignIn ? null : (
+          <EmptyState
+            icon={<GlobeIcon />}
+            title="Sign in to manage hosted communities"
+            description="Sign in through your browser to manage Block hosting. The rest of Buzz works without a Builderlab account."
+            action={
+              <>
+                <Button
+                  variant="primary"
+                  loading={action === "login"}
+                  disabled={busy}
+                  onClick={() =>
+                    void run("login", async () => {
+                      loginAbort.current = new AbortController();
+                      const next = await api.login(loginAbort.current.signal);
+                      setAuth(next);
+                      await settle();
+                    })
+                  }
+                >
+                  <ArrowSquareOutIcon size={18} aria-hidden="true" /> Sign in
+                  with Builderlab
                 </Button>
-              )}
-            </>
-          }
-        />
+                {action === "login" && (
+                  <Button onClick={() => loginAbort.current?.abort()}>
+                    Cancel
+                  </Button>
+                )}
+              </>
+            }
+          />
+        )
       ) : (
         <>
-          <InlineHeader title="Account" />
+          {!sharedSignIn && <InlineHeader title="Account" />}
           <SettingsGroup layout="form">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <p className="m-0 text-label">
-                  {auth.name || auth.email || "Builderlab account"}
-                </p>
-                {auth.name && auth.email && (
-                  <p className="m-0 text-body-sm text-muted">{auth.email}</p>
-                )}
+            {!sharedSignIn && (
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="m-0 text-label">
+                    {auth.name || auth.email || "Builderlab account"}
+                  </p>
+                  {auth.name && auth.email && (
+                    <p className="m-0 text-body-sm text-muted">{auth.email}</p>
+                  )}
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={busy}
+                  onClick={() =>
+                    void run("sign-out", async () => {
+                      await api.signOut();
+                      setPendingDeletion(null);
+                      setAuth(null);
+                      setIdentity(null);
+                      setCommunities([]);
+                      setQuotaState(null);
+                    })
+                  }
+                >
+                  <SignOutIcon aria-hidden="true" /> Sign out
+                </Button>
               </div>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={busy}
-                onClick={() =>
-                  void run("sign-out", async () => {
-                    await api.signOut();
-                    setPendingDeletion(null);
-                    setAuth(null);
-                    setIdentity(null);
-                    setCommunities([]);
-                    setQuotaState(null);
-                  })
-                }
-              >
-                <SignOutIcon aria-hidden="true" /> Sign out
-              </Button>
-            </div>
+            )}
             {!identity ? (
               identityLoadFailed ? null : (
                 <div className="space-y-3">

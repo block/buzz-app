@@ -117,7 +117,7 @@ export function CommunityPicker({
   );
   const hostedAvailable = useSyncExternalStore(
     settingsCards?.subscribe ?? noSubscription,
-    () => settingsCards?.has("block.hosted-communities/hosted") ?? false,
+    () => settingsCards?.has("block.builderlab/login") ?? false,
   );
   const invites = !!onOpenTarget && membershipAvailable;
   const role = useCommunityRole(invites ? session : undefined, client.viewer);
@@ -326,7 +326,7 @@ export function CommunityPicker({
                   onOpenTarget({
                     version: 1,
                     kind: "settings",
-                    section: "block.hosted-communities/hosted",
+                    section: "block.builderlab/login",
                   });
                 }}
               />

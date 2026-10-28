@@ -1,13 +1,12 @@
 // Packaged-desktop Builderlab account backend, mirroring browser-host/builderlab.mjs route for
-// route. The session credential lives only in this plugin's memory; native code owns
-// the browser callback, host HTTP, and the kind 24243 binding signature.
+// route. It uses the plugin's shared Builderlab sign-in; native code owns host HTTP
+// and the kind 24243 binding signature.
 import { invoke } from "@tauri-apps/api/core";
-import type { Host, HostRequest } from "../../features/host/service";
+import type { Host, HostRequest } from "../../../features/host/service";
+import { oauthTarget } from "../oauth/browser";
+import type { OAuthSession } from "../oauth/session";
 import { boundKey, type Account, type Backend } from "./api";
-import { handoffBackupSession } from "../../features/identity/backup";
 
-export const BUILDERLAB_ORIGIN = "https://app.builderlab.xyz";
-const API = `${BUILDERLAB_ORIGIN}/api/goose`;
 const MAX_RESPONSE_BYTES = 64 * 1024;
 
 /** Account routes forwarded with allowlisted string fields only. */
@@ -47,47 +46,15 @@ const command = <T>(
     throw asError(error);
   });
 
-/** Waits for one loopback redirect carrying `code`, through the native listener. */
-async function awaitCode(bridge: Native, signal: AbortSignal) {
-  signal.throwIfAborted();
-  const login = new URL(`${API}/v1/auth/login`);
-  login.search = new URLSearchParams({
-    type: "cli",
-    product: "buzz",
-  }).toString();
-  const { id } = await command<{ id: string }>(bridge, "oauth_callback_begin", {
-    authorizationUrl: login.href,
-    callbackPath: `/callback/${crypto.randomUUID().replaceAll("-", "")}`,
-    useState: true,
-  });
-  const cancel = () =>
-    void bridge.invoke("oauth_callback_cancel", { id }).catch(() => {});
-  try {
-    signal.throwIfAborted();
-    signal.addEventListener("abort", cancel, { once: true });
-    const { parameters } = await command<{
-      parameters: readonly (readonly [string, string])[];
-    }>(bridge, "oauth_callback_wait", { id });
-    signal.throwIfAborted();
-    const query = new URLSearchParams(parameters.map(([k, v]) => [k, v]));
-    const code = query.get("code");
-    if (!code)
-      throw new Error(
-        query.get("error_description") ??
-          query.get("error") ??
-          "Authentication callback did not include a code",
-      );
-    return code;
-  } catch (error) {
-    if (signal.aborted) throw new Error("Builderlab authentication canceled");
-    throw error;
-  } finally {
-    signal.removeEventListener("abort", cancel);
-    cancel();
-  }
-}
-
-export function createNativeBackend(host: Host, bridge: Native = native) {
+export function createNativeBackend(
+  host: Host,
+  session: OAuthSession,
+  /** Settles once sign-in's automatic identity link has finished. */
+  linked: () => Promise<void>,
+  bridge: Native = native,
+): Backend {
+  const api = oauthTarget();
+  const origin = new URL(api).origin;
   const http = (input: HostRequest) =>
     host.request(input).catch((error: unknown) => {
       throw asError(error);
@@ -101,23 +68,30 @@ export function createNativeBackend(host: Host, bridge: Native = native) {
       throw new Error("Builderlab returned an invalid response");
     }
   };
-  let credential: string | undefined;
+  // Results from an earlier sign-in never describe or act for the current one.
+  const ensureCurrent = (credential: object) => {
+    if (
+      session.snapshot().status !== "signed-in" ||
+      session.credential() !== credential
+    )
+      throw new Error("Builderlab session changed");
+  };
   const request = async (
     path: string,
     body: object,
-    session = credential,
+    credential = session.credential(),
   ): Promise<{ status: number; value: object }> => {
-    if (!session) throw new Error("Sign in to Builderlab first");
     const response = await http({
-      url: `${API}${path}`,
+      url: `${api}${path}`,
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "X-BB-Session-Credential": session,
-        Origin: BUILDERLAB_ORIGIN,
+        "X-BB-Session-Credential": credential.value,
+        Origin: origin,
       },
       body: JSON.stringify(body),
     });
+    ensureCurrent(credential);
     const value = parse(response.body);
     const ok = response.status >= 200 && response.status < 300;
     // Structured `{ error: { code, ... } }` bodies pass through for friendly UI messages.
@@ -130,12 +104,22 @@ export function createNativeBackend(host: Host, bridge: Native = native) {
       return { status: response.status, value };
     throw new Error(`Builderlab request failed (HTTP ${response.status}).`);
   };
-  const me = async (session: string, signal: AbortSignal): Promise<Account> => {
+  const auth = async (): Promise<Account | null> => {
+    if (session.snapshot().status !== "signed-in") return null;
+    const credential = session.credential();
+    // Read the account after sign-in links this device's key, so the
+    // identity it then shows is settled.
+    await linked();
+    ensureCurrent(credential);
     const response = await http({
-      url: `${API}/v1/auth/me`,
-      headers: { "X-BB-Session-Credential": session },
+      url: `${api}/v1/auth/me`,
+      headers: { "X-BB-Session-Credential": credential.value },
     });
-    signal.throwIfAborted();
+    ensureCurrent(credential);
+    if (response.status === 401) {
+      session.signOut();
+      return null;
+    }
     if (response.status < 200 || response.status >= 300)
       throw new Error(
         `Builderlab session check failed with HTTP ${response.status}`,
@@ -159,70 +143,23 @@ export function createNativeBackend(host: Host, bridge: Native = native) {
       },
     };
   };
-  // Sign-in and sign-out bump the generation; late results from an older one never
-  // write, clear or describe the current session.
-  let generation = 0;
-  const backupSession = (current: string | null) =>
-    handoffBackupSession("hosted", current, bridge.invoke);
-  let session = new AbortController();
-  const revoke = () => {
-    generation += 1;
-    session.abort();
-    session = new AbortController();
-    credential = undefined;
-    backupSession(null);
-  };
-  const login = async (signal: AbortSignal) => {
-    revoke();
-    const started = generation;
-    const attempt = AbortSignal.any([signal, session.signal]);
-    const code = await awaitCode(bridge, attempt);
-    const response = await http({
-      url: `${API}/v1/auth/login/exchange`,
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code }),
-    });
-    attempt.throwIfAborted();
-    if (response.status < 200 || response.status >= 300)
-      throw new Error(
-        `Builderlab code exchange failed with HTTP ${response.status}`,
-      );
-    const exchanged = (parse(response.body) ?? {}) as {
-      session_credential?: unknown;
-      expires_at?: unknown;
-    };
-    if (
-      typeof exchanged.session_credential !== "string" ||
-      !exchanged.session_credential
-    )
-      throw new Error("Builderlab code exchange returned an empty credential");
-    const account = await me(exchanged.session_credential, attempt);
-    if (account.expiresAt !== exchanged.expires_at)
-      throw new Error("Builderlab session expiry did not match code exchange");
-    if (attempt.aborted || started !== generation)
-      throw new Error("Builderlab authentication canceled");
-    credential = exchanged.session_credential;
-    backupSession(credential);
-    return account;
-  };
   const bind = async () => {
-    const current = credential;
-    const started = generation;
+    // A sign-out or new sign-in while the challenge or native signature is
+    // pending must not let the old credential claim this device's key.
+    const credential = session.credential();
     const challenge = await request(
       "/v1/buzz/nostr-identities/challenge",
-      { origin: BUILDERLAB_ORIGIN },
-      current,
+      { origin },
+      credential,
     );
     if ((challenge.value as { error?: unknown }).error) return challenge;
-    // A sign-out, new sign-in or disposal while the challenge or native signature
-    // is pending must not let the old credential claim this device's key.
-    const ensureCurrent = () => {
-      if (started !== generation) throw new Error("Builderlab session changed");
-    };
-    ensureCurrent();
-    const { challenge_id, nonce, verification_code, origin, expires_at } =
-      challenge.value as Record<string, unknown>;
+    const {
+      challenge_id,
+      nonce,
+      verification_code,
+      origin: challengeOrigin,
+      expires_at,
+    } = challenge.value as Record<string, unknown>;
     const event = await command<object>(
       bridge,
       "identity_sign_builderlab_binding",
@@ -231,25 +168,24 @@ export function createNativeBackend(host: Host, bridge: Native = native) {
           challenge_id,
           nonce,
           verification_code,
-          origin,
+          origin: challengeOrigin,
           expires_at,
         },
       },
     );
-    ensureCurrent();
+    ensureCurrent(credential);
     const verified = await request(
       "/v1/buzz/nostr-identities/verify",
       { challenge_id, nonce, signed_payload: JSON.stringify(event) },
-      current,
+      credential,
     );
-    ensureCurrent();
     if (
       verified.status >= 200 &&
       verified.status < 300 &&
       !(verified.value as { error?: unknown }).error
     )
       void bridge
-        .invoke("nsec_backup_retry", { source: "hosted" })
+        .invoke("nsec_backup_retry", { source: "builderlab" })
         .catch(() => {});
     return verified;
   };
@@ -271,30 +207,16 @@ export function createNativeBackend(host: Host, bridge: Native = native) {
     }
     return request(path, body);
   };
-  const backend: Backend = {
-    origin: BUILDERLAB_ORIGIN,
-    async auth() {
-      const current = credential;
-      if (!current) return null;
-      const started = generation;
-      try {
-        const account = await me(current, session.signal);
-        if (started !== generation)
-          throw new Error("Builderlab session changed");
-        return account;
-      } catch (error) {
-        if (started === generation) revoke();
-        throw error;
-      }
-    },
+  return {
+    origin,
+    auth,
     async send(action, body, signal) {
-      if (action === "login")
-        return {
-          status: 200,
-          value: { auth: await login(signal ?? session.signal) },
-        };
+      if (action === "login") {
+        await session.ensureSignedIn(signal ?? new AbortController().signal);
+        return { status: 200, value: { auth: await auth() } };
+      }
       if (action === "sign-out") {
-        revoke();
+        session.signOut();
         return { status: 200, value: {} };
       }
       if (action === "bind") return bind();
@@ -309,5 +231,4 @@ export function createNativeBackend(host: Host, bridge: Native = native) {
       }
     },
   };
-  return { backend, dispose: revoke };
 }

@@ -1207,13 +1207,17 @@ Replies show a day divider only when their day differs from the previous row.
 
 Ordinary replies remain flat beneath the root. Replies to those replies form nested
 lists, with ascending timestamp/event-ID order among siblings. Nested branches start
-closed and expand one level at a time; once opened, they stay open for the lifetime
-of the thread view, including through child disappearance and rearrival. Expanding
-moves focus to the first revealed reply; deleting a focused reply returns focus to
+closed and expand one level deep; once opened, they stay open for the lifetime
+of the thread view, including through child disappearance and rearrival, until the
+reader collapses them from their thread line. Expanding moves focus to the first
+revealed reply and collapsing returns it to the branch's summary; deleting a focused reply returns focus to
 its available parent or thread history. Labeled expansion controls remain available
 when visual indentation is capped in narrow panels. Exact links reveal available
 ancestors; a reply whose parent is outside loaded history remains visible with a
 notice.
+Agents reply beneath the root with `send`. Their core `reply_in_subthread` tool
+replies under a named message instead, recording that message as the parent exactly
+as a person's Reply does.
 Retry appears only after a failed read; there is no routine Refresh control. Names
 are optional shared background enrichment. The panel describes **replies loaded**,
 not visible rows or complete history.

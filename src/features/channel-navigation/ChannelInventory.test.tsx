@@ -15,6 +15,8 @@ import { DiscoveryState } from "../relay/discovery";
 import { keypair, metadata, roster, signed } from "../relay/testing";
 import { huddleDescription } from "../huddle/lifecycle";
 import { createRelaySession } from "../relay/session";
+import { createChannelLifecycle } from "../relay/channel-lifecycle";
+import { ReadError } from "../relay/errors";
 import { createSidebarPreferencesStore } from "../relay/sidebar-preferences-store";
 import type {
   SidebarGroups,
@@ -152,6 +154,12 @@ function fixture(
       };
       for (const listener of listeners) listener();
     });
+  // A discovery commit, as live roster events produce.
+  const commit = () =>
+    act(() => {
+      list = { ...list, asOf: (list.asOf ?? 0) + 1 };
+      for (const listener of listeners) listener();
+    });
   const drop = (id: string) =>
     act(() => {
       list = {
@@ -223,6 +231,7 @@ function fixture(
     list,
     session,
     publish,
+    commit,
     drop,
     connection(next: RelaySnapshot) {
       act(() => {
@@ -232,6 +241,86 @@ function fixture(
     },
   };
 }
+
+function visibilityFixture() {
+  const f = fixture();
+  const read = vi
+    .fn()
+    .mockRejectedValue(new ReadError("unavailable", "offline", 503));
+  const lifecycle = createChannelLifecycle({
+    reader: { read },
+    viewer: f.session.viewer,
+    relayAuthor: "b".repeat(64),
+    canAccess: () => true,
+    acceptDiscovery() {},
+    removed() {},
+  });
+  f.session.channelLifecycle = lifecycle.capability;
+  return { f, read, lifecycle };
+}
+
+it("keeps visibility recovery quiet, then offers the existing retry after exhaustion", async () => {
+  vi.useFakeTimers();
+  const random = vi.spyOn(Math, "random").mockReturnValue(0.5);
+  const { f, read, lifecycle } = visibilityFixture();
+  try {
+    render(f.view("alpha"));
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    expect(read).toHaveBeenCalledOnce();
+    expect(
+      screen.queryByText("Hidden conversations could not be refreshed."),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Retry hidden conversations" }),
+    ).not.toBeInTheDocument();
+    f.commit();
+    await act(() => vi.advanceTimersByTimeAsync(1000));
+    f.commit();
+    await act(() => vi.advanceTimersByTimeAsync(4250));
+    expect(read).toHaveBeenCalledTimes(4);
+    expect(
+      screen.getByText("Hidden conversations could not be refreshed."),
+    ).toBeVisible();
+    read.mockResolvedValue([]);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Retry hidden conversations" }),
+    );
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    expect(read).toHaveBeenCalledTimes(5);
+    expect(
+      screen.queryByRole("button", { name: "Retry hidden conversations" }),
+    ).not.toBeInTheDocument();
+  } finally {
+    cleanup();
+    lifecycle.dispose();
+    random.mockRestore();
+    vi.useRealTimers();
+  }
+});
+
+it("cancels visibility retries on sidebar unmount and session changes", async () => {
+  vi.useFakeTimers();
+  const { f, read, lifecycle } = visibilityFixture();
+  try {
+    const mounted = render(f.view("alpha"));
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    expect(read).toHaveBeenCalledOnce();
+    const next = fixture();
+    mounted.rerender(next.view("beta"));
+    await act(() => vi.advanceTimersByTimeAsync(120_000));
+    expect(read).toHaveBeenCalledOnce();
+    mounted.rerender(f.view("alpha"));
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    expect(read).toHaveBeenCalledTimes(2);
+    mounted.unmount();
+    await act(() => vi.advanceTimersByTimeAsync(120_000));
+    expect(read).toHaveBeenCalledTimes(2);
+  } finally {
+    cleanup();
+    lifecycle.dispose();
+    vi.useRealTimers();
+  }
+});
 
 it.each(["Retry", "Dismiss"] as const)(
   "%s restores mute recovery focus after cached-to-live session handoff without remounting",

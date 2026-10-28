@@ -1949,6 +1949,9 @@ html[data-keyboard-input] .quickReactionGlyph {
     opacity: 0;
     pointer-events: none;
     translate: 0 -100%;
+    /* Transparent while closed: its glass would only composite it as a
+       layer, and each bubble painted over it as another. */
+    backdrop-filter: none;
   }
   /* Closed controls remain focusable at the slot, not at viewport offsets. */
   .messageActions[popover] {
@@ -1960,6 +1963,7 @@ html[data-keyboard-input] .quickReactionGlyph {
     overflow: visible;
   }
   .messageActions[popover]:popover-open {
+    @apply elevated-material;
     position: fixed;
     inset: auto;
     opacity: 1;

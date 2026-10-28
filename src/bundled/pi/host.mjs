@@ -763,8 +763,9 @@ export function serve({
       for (const extension of packages.extensions) install(extension);
       /** Conversations with a task Pi parked, which the next wait stops. */
       const parked = new Set();
+      const storage = await openNodeSqliteStorage(path);
       harness = await Harness.open(
-        await openNodeSqliteStorage(path),
+        storage,
         {
           models: protectedAgent
             ? protectModels(models, inspect, conversationFor)
@@ -785,6 +786,7 @@ export function serve({
       const opened = {
         agent,
         harness,
+        storage,
         registry,
         install,
         conversations,
@@ -1084,21 +1086,38 @@ export function serve({
   /** The session `conversation` is in at entry `at`, or now: the id of the
    * reset that began it, or 0 before any reset. Read from Pi's own head
    * markers, so it always agrees with the history: a compaction's marker
-   * leads back to the one before it. */
-  async function sessionOf(conversation, at) {
-    let { head } = await conversation.context(context, at ? { at } : {});
+   * leads back to the one before it. Only markers are read, never the
+   * history between them. */
+  async function sessionOf(storage, conversation, at) {
+    let head = await storage.findLatestHeadMarker(conversation, at, context);
     while (head && head.kind !== "pi.reset")
-      ({ head } = await conversation.context(context, { at: head.head }));
+      head = await storage.findLatestHeadMarker(
+        conversation,
+        head.head,
+        context,
+      );
     return head?.id ?? 0;
   }
-  /** Whether the next turn is its session's first: no prompt in the active
-   * context, none queued, and no compaction since the session began. */
-  async function firstTurn(harness, conversation) {
-    const { head, entries } = await conversation.context(context);
+  /** Whether the next turn is its session's first: no compaction since the
+   * session began, no prompt in it, and none queued. A prompt follows its
+   * reset closely, so only the entries before the first one are read. */
+  async function firstTurn({ harness, storage }, conversation) {
+    const head = await storage.findLatestHeadMarker(
+      conversation,
+      undefined,
+      context,
+    );
     if (head && head.kind !== "pi.reset") return false;
-    if (entries.some((entry) => entry.kind === "pi.user")) return false;
+    const query = { conversationId: conversation, order: "ascending" };
+    if (head) query.minEntryId = head.head;
+    let cursor;
+    do {
+      const page = await storage.scanEntries(query, 20, cursor, context);
+      if (page.items.some((entry) => entry.kind === "pi.user")) return false;
+      cursor = page.next;
+    } while (cursor);
     const { submissions } = await harness.inspect(context);
-    return !submissions.some((s) => s.conversationId === conversation.id);
+    return !submissions.some((s) => s.conversationId === conversation);
   }
 
   /** Starts a request in a conversation configured for this turn. One that
@@ -1314,14 +1333,16 @@ export function serve({
     /** A page of a conversation's entries, newest first, as a transcript
      * shows them. */
     async entries({ agent, conversation, cursor }) {
-      const { harness } = await opening(agent);
+      const { harness, storage } = await opening(agent);
       const found = await harness.conversation(conversation, context);
       if (!found) return { entries: [] };
       const page = await found.entries({}, PAGE, cursor, context);
       const oldest = page.items.at(-1);
       return {
         // The session the page's oldest entry is in, however old its reset.
-        ...(oldest ? { session: await sessionOf(found, oldest.id) } : {}),
+        ...(oldest
+          ? { session: await sessionOf(storage, found.id, oldest.id) }
+          : {}),
         entries: page.items.map(({ id, kind, model, data }) => ({
           id,
           kind,
@@ -1395,8 +1416,8 @@ export function serve({
         const { busy } = await watch(opened, conversation.id);
         // Read before the turn is submitted: what Pi then holds decides it.
         const session =
-          !busy && (await firstTurn(harness, conversation))
-            ? await sessionOf(conversation)
+          !busy && (await firstTurn(opened, conversation.id))
+            ? await sessionOf(opened.storage, conversation.id)
             : undefined;
         if (reply)
           await harness.commit(async (tx) => {

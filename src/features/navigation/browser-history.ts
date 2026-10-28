@@ -177,7 +177,10 @@ export function createBrowserHistory(host: Window): NavigationHistory {
     for (const index of dismissed)
       if (index < floor || index > end) dismissed.delete(index);
     try {
-      host.sessionStorage.setItem(identitiesKey(), JSON.stringify([...identities]));
+      host.sessionStorage.setItem(
+        identitiesKey(),
+        JSON.stringify([...identities]),
+      );
       host.sessionStorage.setItem(floorKey(), String(floor));
     } catch {
       /* Best-effort persistence; no unbounded in-memory fallback. */

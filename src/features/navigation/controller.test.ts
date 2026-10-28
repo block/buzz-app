@@ -386,9 +386,12 @@ it("settles guarded open callers only after the user's decision and destination 
     decide = decision;
     return true;
   });
+  const retained = nav.snapshot().retainedVisits;
   const cancelled = nav.open(page);
   decide?.(false);
   expect(await cancelled).toEqual({ status: "cancelled" });
+  expect(nav.snapshot().retainedVisits).toEqual(retained);
+  expect(nav.snapshot().canGoForward).toBe(false);
   const opened = nav.open(page);
   decide?.(true);
   host.complete(nav.snapshot().attempt, { status: "opened" });

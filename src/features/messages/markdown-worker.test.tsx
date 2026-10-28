@@ -98,12 +98,12 @@ it("renders worker-prepared bodies identically and consumes each tree once", asy
       />,
     );
   const expected = corpus.map(render);
-  await prepareMessageContents(corpus);
+  await prepareMessageContents(corpus, 1000);
   for (const content of corpus)
     expect(preparedMarkdown(content)).toEqual(prepareMarkdown(content));
   expect(corpus.map(render)).toEqual(expected);
   const source = corpus[1] ?? "";
-  await prepareMessageContents([`${source} again`]);
+  await prepareMessageContents([`${source} again`], 1000);
   render(`${source} again`);
   expect(takeMarkdownTree(`${source} again`)).toBeUndefined();
   // A remount parses on the main thread again rather than reuse a mutated tree.

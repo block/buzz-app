@@ -686,7 +686,10 @@ export function createChannelStore(
       if (!live(state, generation)) return;
       // Older pages are off the opening path: prepare their bodies off-thread.
       if (cursor) {
-        await prepareMessageContents(page.events.map((event) => event.content));
+        await prepareMessageContents(
+          page.events.map((event) => event.content),
+          50,
+        );
         if (!live(state, generation)) return;
       }
       const combined = new Map(

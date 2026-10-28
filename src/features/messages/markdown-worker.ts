@@ -51,8 +51,19 @@ function preparationWorker() {
 }
 
 /** Prepare and parse message bodies off the main thread before their rows
- * render. Resolves without work when no worker is available. */
-export async function prepareMessageContents(contents: readonly string[]) {
+ * render. Waits at most `waitMs`; later results still serve rows that mount
+ * afterwards. Resolves without work when no worker is available. */
+export function prepareMessageContents(
+  contents: readonly string[],
+  waitMs: number,
+) {
+  return Promise.race([
+    prepare(contents),
+    new Promise<void>((resolve) => setTimeout(resolve, waitMs)),
+  ]);
+}
+
+async function prepare(contents: readonly string[]) {
   const target = preparationWorker();
   const missing = [...new Set(contents)].filter(
     (content) => !preparedByContent.has(content),

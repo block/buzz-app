@@ -179,7 +179,7 @@ it("shows every affected community with unsaved shared settings and submits the 
     name: "Ada’s shared settings",
   });
   expect(popover).toHaveTextContent(
-    "Ada’s profile and settings are shared across these communities:",
+    "Ada’s name, instructions, and settings are shared across these communities:",
   );
   expect(popover).not.toHaveTextContent(/pictures|attention/i);
   expect(popover).toHaveTextContent("Feedback");
@@ -194,7 +194,7 @@ it("shows every affected community with unsaved shared settings and submits the 
     for (const listener of listeners) listener();
   });
   expect(popover).toHaveTextContent(
-    "Ada’s profile and settings are shared across these communities:",
+    "Ada’s name, instructions, and settings are shared across these communities:",
   );
   expect(within(popover).getAllByRole("listitem")[0]).toHaveTextContent(
     "current.example",

@@ -193,3 +193,60 @@ it("leave purges live workspace ownership before late writes and same-window rej
   const rejoined = renderHook(() => useChannelTabState(makeSession(), "alpha"));
   expect(rejoined.result.current.tabs).toEqual([]);
 });
+
+it("leave purges retained tab visit addresses before same-window rejoin and rejects late writes", async () => {
+  const left = `https://${crypto.randomUUID()}.example`;
+  const scope = `${left}:${viewer}`;
+  const mount = (scope: string, account = viewer) =>
+    renderHook(() =>
+      useChannelTabState({ scope, viewer: account } as RelaySession, "alpha"),
+    );
+  const old = mount(scope);
+  const otherAccount = mount(`${left}:${other}`, other);
+  const otherCommunity = mount(`${kept}:${viewer}`);
+  for (const hook of [old, otherAccount, otherCommunity])
+    act(() => {
+      hook.result.current.enterVisit("profile:detail", undefined, true, {
+        channelId: "alpha",
+        target: "nostr:profile",
+      });
+      hook.result.current.enterVisit("thread:thread", {
+        channelId: "alpha",
+        messageId: "reply",
+        rootId: "verified",
+      });
+    });
+  expect(await purgeCommunityDeviceState(left, viewer)).toEqual([]);
+  act(() =>
+    old.result.current.enterVisit("late:detail", undefined, true, {
+      channelId: "alpha",
+      target: "nostr:profile",
+    }),
+  );
+  const rejoined = mount(scope);
+  expect(
+    rejoined.result.current.detailVisits("alpha", "nostr:profile"),
+  ).toEqual([]);
+  expect(rejoined.result.current.threadVisits("alpha", "verified")).toEqual([]);
+  act(() => rejoined.result.current.select("new-selection"));
+  // A further successor must not rediscover metadata in the purged old store.
+  const successor = mount(scope);
+  expect(
+    successor.result.current.detailVisits("alpha", "nostr:profile"),
+  ).toEqual([]);
+  expect(successor.result.current.threadVisits("alpha", "verified")).toEqual(
+    [],
+  );
+  for (const [partition, account] of [
+    [`${left}:${other}`, other],
+    [`${kept}:${viewer}`, viewer],
+  ] as const) {
+    const retained = mount(partition, account);
+    expect(
+      retained.result.current.detailVisits("alpha", "nostr:profile"),
+    ).toEqual(["profile"]);
+    expect(retained.result.current.threadVisits("alpha", "verified")).toEqual([
+      "thread",
+    ]);
+  }
+});

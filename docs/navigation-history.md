@@ -78,7 +78,9 @@ Known thread/detail visit identities also survive same-scope session replacement
 so explicit Close still retires earlier visits for that target. These records
 carry only visit IDs, channel IDs, targets and verified thread roots; they do not
 restore the tab layout or grant old callbacks authority. Different scopes keep
-separate retirement records.
+separate retirement records. Leaving a community purges its retained records and
+fences old stores from publishing them again; viewer-less offline sessions do
+not retain records across sessions.
 
 ## One navigation owner
 

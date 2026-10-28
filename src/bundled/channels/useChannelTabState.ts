@@ -1,3 +1,4 @@
+import { retainTabVisits } from "../../features/messages/tab-visit-lifetime";
 import { retainTabWorkspace } from "../../features/messages/tab-workspace-lifetime";
 import { threadPlacementPreference } from "../../features/messages/thread-preferences";
 import {
@@ -258,11 +259,14 @@ const writers = new Map<
 // account/community, never layout, panel objects, editors or callbacks.
 type Retirement = Pick<State, "routedVisits" | "detailVisits">;
 const visitOwners = new Map<string, { channels: Record<string, Retirement> }>();
+const forgetVisits = (scope: string) => {
+  visitOwners.delete(scope);
+};
 function createTabStore(
   session: RelaySession,
   initial = readTabWorkspaces(session),
 ) {
-  const scope = session.scope;
+  const scope = session.viewer ? session.scope : undefined;
   const owner = { channels: (scope && visitOwners.get(scope)?.channels) || {} };
   let channels: Record<string, State> = { ...initial };
   for (const [key, visits] of Object.entries(owner.channels)) {
@@ -282,7 +286,10 @@ function createTabStore(
       },
     ]),
   );
-  if (scope) visitOwners.set(scope, owner);
+  if (scope) {
+    visitOwners.set(scope, owner);
+    retainTabVisits(scope, forgetVisits);
+  }
   const listeners = new Set<() => void>();
   const mounts = new Map<string, number>();
   const store = {

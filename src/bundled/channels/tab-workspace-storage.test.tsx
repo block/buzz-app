@@ -1,3 +1,4 @@
+import { forgetTabWorkspaces } from "../../features/messages/tab-workspace-lifetime";
 // @vitest-environment jsdom
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
@@ -651,4 +652,48 @@ test("a denied cached session cannot hand live entries to a later accepted succe
     cleanup();
     await ctx.fiber.dispose();
   }
+});
+
+test("leave invalidation cannot repersist retained addresses after a same-scope rejoin", () => {
+  const queries = session(`https://${crypto.randomUUID()}.example`);
+  const old = mount(queries);
+  const target = "https://github.com/sample/project/pull/42";
+  act(() => {
+    old.result.current.enterVisit("purged-detail:detail", undefined, true, {
+      channelId: "alpha",
+      target,
+    });
+    old.result.current.enterVisit("purged-thread:thread", {
+      channelId: "alpha",
+      messageId: "purged-reply",
+      rootId: "purged-root",
+    });
+  });
+  const key = tabWorkspaceStorageKey(queries.scope);
+  expect(sessionStorage.getItem(key)).toContain(target);
+  forgetTabWorkspaces(queries.scope);
+  expect(sessionStorage.getItem(key)).toBeNull();
+  act(() =>
+    old.result.current.enterVisit("late-detail:detail", undefined, true, {
+      channelId: "alpha",
+      target,
+    }),
+  );
+  expect(sessionStorage.getItem(key)).toBeNull();
+  const rejoined = mount({ ...queries });
+  expect(rejoined.result.current.detailVisits("alpha", target)).toEqual([]);
+  expect(rejoined.result.current.threadVisits("alpha", "purged-root")).toEqual(
+    [],
+  );
+  act(() => rejoined.result.current.select("new-selection"));
+  const saved = sessionStorage.getItem(key);
+  expect(saved).not.toBeNull();
+  for (const address of [
+    target,
+    "purged-reply",
+    "purged-root",
+    "purged-detail",
+    "late-detail",
+  ])
+    expect(saved).not.toContain(address);
 });

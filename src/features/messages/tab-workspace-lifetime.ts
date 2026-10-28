@@ -1,3 +1,4 @@
+import { forgetTabVisits } from "./tab-visit-lifetime";
 /** Shared partition owner for window-session tab storage and leave cleanup. */
 export const tabWorkspaceStorageKey = (scope: string) =>
   `buzz-tab-workspaces.v1:${scope}`;
@@ -17,6 +18,7 @@ export function releaseTabWorkspace(scope: string) {
 
 /** Revoke the live writer even when removing browser storage fails. */
 export function forgetTabWorkspaces(scope: string) {
+  forgetTabVisits(scope);
   releaseTabWorkspace(scope);
   sessionStorage.removeItem(tabWorkspaceStorageKey(scope));
 }

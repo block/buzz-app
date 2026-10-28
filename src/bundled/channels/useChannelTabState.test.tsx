@@ -501,7 +501,7 @@ test.each(["nostr:profile", "https://github.com/sample/project/pull/42"])(
   "same-scope successors inherit all addressed visits for %s without old callback authority",
   (target) => {
     const scope = crypto.randomUUID();
-    const first = { scope } as RelaySession;
+    const first = { scope, viewer: "viewer" } as RelaySession;
     const h = renderHook(
       ({ session }) => useChannelTabState(session, "alpha"),
       { initialProps: { session: first } },
@@ -520,7 +520,7 @@ test.each(["nostr:profile", "https://github.com/sample/project/pull/42"])(
       h.result.current.enterVisit("last:detail", undefined, true, detail),
     );
     const old = h.result.current;
-    h.rerender({ session: { scope } as RelaySession });
+    h.rerender({ session: { scope, viewer: "viewer" } as RelaySession });
     expect(h.result.current.detailVisits("alpha", target)).toEqual([
       "first",
       "last",
@@ -535,7 +535,7 @@ test.each(["nostr:profile", "https://github.com/sample/project/pull/42"])(
     act(() =>
       h.result.current.enterVisit("fresh:detail", undefined, true, detail),
     );
-    h.rerender({ session: { scope } as RelaySession });
+    h.rerender({ session: { scope, viewer: "viewer" } as RelaySession });
     expect(h.result.current.detailVisits("alpha", target)).toEqual([
       "first",
       "last",
@@ -546,7 +546,7 @@ test.each(["nostr:profile", "https://github.com/sample/project/pull/42"])(
 
 test("successors retain verified roots and page/channel retirement partitions", () => {
   const scope = crypto.randomUUID();
-  const first = { scope } as RelaySession;
+  const first = { scope, viewer: "viewer" } as RelaySession;
   const h = renderHook(
     ({ session, channel, page }) => useChannelTabState(session, channel, page),
     { initialProps: { session: first, channel: "alpha", page: "messages" } },
@@ -570,7 +570,7 @@ test("successors retain verified roots and page/channel retirement partitions", 
       rootId: "root",
     }),
   );
-  const successor = { scope } as RelaySession;
+  const successor = { scope, viewer: "viewer" } as RelaySession;
   h.rerender({ session: successor, channel: "alpha", page: "messages" });
   expect(h.result.current.threadVisits("alpha", "verified")).toEqual(["reply"]);
   expect(h.result.current.threadVisits("alpha", "hint")).toEqual([]);
@@ -599,7 +599,10 @@ test("successors retain verified roots and page/channel retirement partitions", 
 test.each(["account", "community", "unknown"])(
   "%s scope does not inherit another session's retirement records",
   (change) => {
-    const first = { scope: `${crypto.randomUUID()}:viewer` } as RelaySession;
+    const first = {
+      viewer: "viewer",
+      scope: `${crypto.randomUUID()}:viewer`,
+    } as RelaySession;
     const h = renderHook(
       ({ session }) => useChannelTabState(session, "alpha"),
       { initialProps: { session: first } },
@@ -619,6 +622,7 @@ test.each(["account", "community", "unknown"])(
     );
     h.rerender({
       session: {
+        viewer: "viewer",
         scope:
           change === "unknown"
             ? undefined
@@ -980,3 +984,18 @@ test.each(["foreground", "background"])(
     expect(page.result.current.tabs[0]).toMatchObject({ name: "Launch plan" });
   },
 );
+
+test("offline sessions with the shared undefined scope never inherit retirement addresses", () => {
+  const scope = "undefined:undefined";
+  const h = renderHook(({ session }) => useChannelTabState(session, "alpha"), {
+    initialProps: { session: { scope } as RelaySession },
+  });
+  act(() =>
+    h.result.current.enterVisit("offline:detail", undefined, true, {
+      channelId: "alpha",
+      target: "nostr:profile",
+    }),
+  );
+  h.rerender({ session: { scope } as RelaySession });
+  expect(h.result.current.detailVisits("alpha", "nostr:profile")).toEqual([]);
+});

@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as messageContent from "../relay/message-content";
 import { MAX_MARKDOWN_LENGTH } from "../relay/message-content";
-import { prepareMarkdown } from "./markdown-preparation";
+import { fromMarkdown } from "mdast-util-from-markdown";
+import { prepareMarkdown, takeScannedMarkdown } from "./markdown-preparation";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -150,5 +151,19 @@ describe("prepareMarkdown", () => {
     );
     expect(prepareMarkdown(`${"> ".repeat(20_000)}deep`).kind).toBe("plain");
     expect(prepareMarkdown(`\uFEFF${"- ".repeat(100)}deep`).kind).toBe("plain");
+  });
+
+  it("hands its final parse to one renderer of exactly that content", () => {
+    const content = "Follow-ups:\n- one\n  - **two**";
+    prepareMarkdown(content);
+    expect(takeScannedMarkdown(`${content} `)).toBeUndefined();
+    prepareMarkdown(content);
+    expect(takeScannedMarkdown(content)).toEqual(fromMarkdown(content));
+    expect(takeScannedMarkdown(content)).toBeUndefined();
+    // A normalized body hands over the parse of the normalized content.
+    const prepared = prepareMarkdown("[label]\\(https://example.test)");
+    expect(takeScannedMarkdown(prepared.content)).toEqual(
+      fromMarkdown(prepared.content),
+    );
   });
 });

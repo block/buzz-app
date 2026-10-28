@@ -1980,6 +1980,162 @@ it.each(["reconnect", "service-first reconnect", "explicit reopen"])(
   },
 );
 
+it.each(["profile", "thread", "legacy-profile"])(
+  "opening %s replaces a pending restored transient without retiring its address",
+  (action) => {
+    const scope = `https://pending-${action}.example:viewer`;
+    const oldVisit = crypto.randomUUID();
+    const makeSession = () =>
+      ({
+        scope,
+        viewer: "viewer",
+        channels: { list: () => ({ channels: [] }) },
+      }) as unknown as RelaySession;
+    const github: RegisteredPanel = {
+      key: "fixture/github",
+      pluginId: "fixture",
+      id: "github",
+      revision: "1",
+      title: "GitHub",
+      matches: (target) => target === "github",
+      restore: "view",
+      component: () => <p>GitHub</p>,
+    };
+    const app: RegisteredPanel = {
+      ...github,
+      key: "fixture/app",
+      id: "app",
+      title: "App",
+      keepOpen: true,
+      matches: (target) => target === "app",
+    };
+    const profile: RegisteredPanel = {
+      ...github,
+      key: "fixture/profile",
+      id: "profile",
+      title: "Profile",
+      matches: (target) => target === "profile",
+    };
+    const tool: RegisteredPanel = {
+      ...github,
+      key: "fixture/tool",
+      id: "tool",
+      title: "Tool",
+      matches: () => false,
+      channelMenu: { label: "Tool", eligible: () => true },
+    };
+    const seed = renderHook(() => useChannelTabState(makeSession(), "alpha"));
+    act(() =>
+      seed.result.current.setEntries([
+        { panel: github, target: "github", channelId: "alpha" },
+        { panel: app, target: "app", channelId: "alpha" },
+        {
+          panel: tool,
+          target: "tool",
+          channelId: "alpha",
+          channelContext: {
+            scope,
+            viewer: "viewer",
+            relayUrl: "wss://pending.example",
+            channelId: "alpha",
+            channelName: "Alpha",
+          },
+        },
+      ]),
+    );
+    act(() =>
+      seed.result.current.enterVisit(`${oldVisit}:detail`, undefined, true, {
+        channelId: "alpha",
+        target: "github",
+      }),
+    );
+    seed.unmount();
+    if (action === "legacy-profile") {
+      const key = `buzz-tab-workspaces.v1:${scope}`;
+      const raw = sessionStorage.getItem(key);
+      expect(raw).not.toBeNull();
+      const saved = JSON.parse(raw ?? "{}");
+      for (const workspace of Object.values(saved.workspaces) as {
+        entries: { key: string; keepOpen?: boolean }[];
+      }[])
+        for (const entry of workspace.entries)
+          if (entry.key === github.key) delete entry.keepOpen;
+      sessionStorage.setItem(key, JSON.stringify(saved));
+    }
+    onTestFinished(() =>
+      sessionStorage.removeItem(`buzz-tab-workspaces.v1:${scope}`),
+    );
+    let available = [profile];
+    const listeners = new Set<() => void>();
+    const panels = {
+      snapshot: () => available,
+      subscribe: (listener: () => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      resolve: (target: string) =>
+        available.find((panel) => panel.matches(target)),
+    } as unknown as Panels;
+    const session = makeSession();
+    const closed = vi.fn();
+    const h = renderHook(() => {
+      const state = useChannelTabState(session, "alpha");
+      const workspace = useConversationTabs({
+        state,
+        session,
+        panels,
+        relay: {
+          snapshot: () => ({ status: "ready", session }),
+        } as unknown as RelayData,
+        current: { id: "alpha", name: "Alpha" },
+        channels: [],
+        profiles: new Map(),
+        scope,
+        leadingIds: [],
+        continuingVisit: false,
+        conversationIcon: () => null,
+        isLive: () => true,
+        openLink: () => false,
+        onClosePending: closed,
+        onClosePanel: closed,
+      });
+      return { state, workspace };
+    });
+    expect(h.result.current.state.pendingEntries).toHaveLength(3);
+    act(() => {
+      if (action.endsWith("profile"))
+        h.result.current.workspace.open({
+          panel: profile,
+          target: "profile",
+          channelId: "alpha",
+        });
+      else h.result.current.workspace.open(undefined);
+    });
+    expect(
+      h.result.current.state.pendingEntries?.map((saved) => saved.key),
+    ).toEqual(
+      action === "legacy-profile"
+        ? [github.key, app.key, tool.key]
+        : [app.key, tool.key],
+    );
+    act(() => {
+      available = [github, app, profile, tool];
+      for (const listener of listeners) listener();
+    });
+    expect(
+      h.result.current.state.entries.map((entry) => entry.panel.key),
+    ).toEqual(
+      action.endsWith("profile")
+        ? [app.key, tool.key, profile.key]
+        : [app.key, tool.key],
+    );
+    expect(h.result.current.state.detailVisits("alpha", "github")).toEqual([
+      oldVisit,
+    ]);
+    expect(closed).not.toHaveBeenCalled();
+  },
+);
+
 it("reload keeps unavailable tabs, rechecks channel eligibility and loads background plugins only on selection", async () => {
   const user = userEvent.setup();
   const scope = "https://restore.example:viewer";

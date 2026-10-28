@@ -271,6 +271,14 @@ test("only validated fields survive loading and saving a workspace", () => {
               target: "app",
               channelId: "alpha",
               index: 0,
+              keepOpen: false,
+            },
+            {
+              key: "missing/invalid",
+              target: "app",
+              channelId: "alpha",
+              index: 1,
+              keepOpen: "yes",
             },
           ],
           visits: { visit: { ...extra, selected: "thread", paneOpen: true } },
@@ -290,6 +298,10 @@ test("only validated fields survive loading and saving a workspace", () => {
     }),
   );
   expect(JSON.stringify(readTabWorkspaces(queries))).not.toContain("not-owned");
+  expect(readTabWorkspaces(queries)[key]?.pendingEntries).toMatchObject([
+    { key: "missing/panel", keepOpen: false },
+  ]);
+  expect(readTabWorkspaces(queries)[key]?.pendingEntries).toHaveLength(1);
   const live = mount(queries);
   act(() => live.result.current.setPaneOpen(false));
   expect(

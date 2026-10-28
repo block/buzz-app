@@ -585,6 +585,7 @@ export function useChannelTabState(
         if (!state.pendingEntries?.length) return state;
         const pendingEntries: SavedPanel[] = [];
         const entries = [...state.entries];
+        let replaced = 0;
         for (const saved of [...state.pendingEntries].sort(
           (a, b) => a.index - b.index,
         )) {
@@ -593,6 +594,20 @@ export function useChannelTabState(
             ? channelContext?.(saved)
             : undefined;
           if (panel && (!saved.channelBound || context)) {
+            // Older snapshots lack retention metadata; decide once the provider returns.
+            if (
+              !saved.channelBound &&
+              !panel.keepOpen &&
+              entries.some(
+                (entry) =>
+                  !entry.restored &&
+                  !entry.channelContext &&
+                  !entry.panel.keepOpen,
+              )
+            ) {
+              replaced++;
+              continue;
+            }
             if (
               entries.some(
                 (entry) =>
@@ -602,7 +617,7 @@ export function useChannelTabState(
             )
               continue;
             entries.splice(
-              Math.max(0, saved.index - pendingEntries.length),
+              Math.max(0, saved.index - pendingEntries.length - replaced),
               0,
               {
                 panel,

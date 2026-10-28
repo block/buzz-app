@@ -151,7 +151,12 @@ export function useConversationTabs({
 }) {
   const currentId = current?.id;
   const viewer = queries.viewer;
-  const { entries, setEntries } = tabState;
+  const {
+    entries,
+    setEntries,
+    pendingEntries: pendingRecords,
+    closePendingEntry,
+  } = tabState;
   const panelHistory = useRef({ onVisitPanel, onClosePanel });
   panelHistory.current = { onVisitPanel, onClosePanel };
   const available = useSyncExternalStore(
@@ -287,12 +292,16 @@ export function useConversationTabs({
             ? [...retained, selected]
             : retained;
       entryList.current = updated;
+      if (!append)
+        for (const saved of pendingRecords ?? [])
+          if (saved.keepOpen === false && !saved.channelBound)
+            closePendingEntry(savedPanelId(saved));
       if (selected && historyPanel(selected))
         panelHistory.current.onVisitPanel?.(selected);
       setEntries(updated);
       selectOpening(selected);
     },
-    [selectOpening, setEntries],
+    [selectOpening, setEntries, pendingRecords, closePendingEntry],
   );
   const panelTabs = entries.filter(
     (entry) =>
@@ -439,7 +448,7 @@ export function useConversationTabs({
     queries,
     eligible,
   ]);
-  const pendingEntries = tabState.pendingEntries ?? [];
+  const pendingEntries = pendingRecords ?? [];
   const pendingMain = (entry: SavedPanel) =>
     mainPane && !!mainEntries?.includes(savedPanelId(entry));
   const panelOrder: (

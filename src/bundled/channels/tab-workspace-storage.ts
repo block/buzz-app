@@ -12,6 +12,7 @@ export type SavedPanel = {
   title?: string;
   channelBound?: boolean;
   channelMenu?: boolean;
+  keepOpen?: boolean;
 };
 export const savedPanelId = (entry: SavedPanel) =>
   `${entry.key}:${entry.target}`;
@@ -70,6 +71,7 @@ function savedPanel(value: unknown): SavedPanel | undefined {
       typeof value.channelId === "string" &&
       optionalString(value.rootId) &&
       optionalString(value.title) &&
+      (value.keepOpen === undefined || typeof value.keepOpen === "boolean") &&
       (value.channelBound === undefined ||
         typeof value.channelBound === "boolean") &&
       (value.channelMenu === undefined ||
@@ -86,6 +88,7 @@ function savedPanel(value: unknown): SavedPanel | undefined {
     index: value.index as number,
     rootId: value.rootId as string | undefined,
     ...(typeof value.title === "string" && { title: value.title }),
+    ...(typeof value.keepOpen === "boolean" && { keepOpen: value.keepOpen }),
     ...(value.channelMenu === true && { channelMenu: true }),
     ...(typeof value.channelBound === "boolean" && {
       channelBound: value.channelBound,
@@ -222,6 +225,7 @@ export function saveTabWorkspaces(
         const panels: SavedPanel[] = entries.map((entry, index) => ({
           key: entry.panel.key,
           title: entry.panel.title,
+          keepOpen: !!entry.panel.keepOpen,
           target: entry.target,
           channelId: entry.channelId,
           rootId: entry.rootId,

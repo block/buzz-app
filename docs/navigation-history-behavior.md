@@ -67,6 +67,12 @@ associated visits made before the refresh; Back/Forward then skips that content.
 Current registrations and channel eligibility still govern restored content.
 Background content waits for selection; missing providers stay closeable and
 unreviewed recovery requires Resume.
+New snapshots retain each panel's keep-open policy, so opening a new transient
+detail also replaces known transient placeholders whose provider is unavailable.
+Retained apps and channel tools survive that replacement. Older snapshots without
+this metadata are classified when their provider returns; an older transient does
+not reappear beside a newer transient detail. Replacement preserves history
+addresses; it does not perform an explicit Close.
 
 Recovery is best-effort when storage is unavailable or full. Quit/relaunch,
 cross-device sync, feature-local inspection sub-tabs, drawer visibility and edit

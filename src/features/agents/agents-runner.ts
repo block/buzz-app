@@ -5,6 +5,7 @@
 // `RunnerManager`; those facts and requests are what will cross the agents
 // link when the Runner moves to its own page.
 import { AgentConfigStore } from "./agent-config";
+import { excerpt, mentionFacts, type ClassifierContext } from "./classifier";
 import { isSynced, resolveStart } from "./agent-start";
 import {
   readCheckpoints,
@@ -29,7 +30,9 @@ import { nameSoloChat } from "./solo-chat-name";
 import type { AgentStore } from "./state";
 import type { AgentRecord } from "./store";
 import { relayPartition } from "../relay/partition";
+import type { RelayEvent } from "../relay/events";
 import type { RelayData } from "../relay/service";
+import { threadReference } from "../relay/thread-reference";
 import type { RelaySession } from "../relay/session";
 import type { Decisions } from "../decisions/service";
 import { channelTabs } from "../../bundled/channels/useChannelTabState";
@@ -37,8 +40,6 @@ import { channelTabs } from "../../bundled/channels/useChannelTabState";
 /** What the Runner asks of the Manager. */
 export type RunnerManager = Pick<
   RunnerHost,
-  | "member"
-  | "dm"
   | "team"
   | "createAgent"
   | "updateAgent"
@@ -49,8 +50,6 @@ export type RunnerManager = Pick<
   | "classifierKey"
   | "classifierKeyGeneration"
   | "setClassifierKey"
-  | "context"
-  | "displayName"
 > &
   Readonly<{
     /** Who runs which agent changed. */
@@ -87,7 +86,7 @@ export class AgentsRunner {
 
   constructor(
     storage: AgentStore,
-    custody: RunnerHost["custody"],
+    private readonly custody: RunnerHost["custody"],
     activity: LocalAgentActivity,
     decisions: Decisions | undefined,
     private readonly manager: RunnerManager,
@@ -128,8 +127,8 @@ export class AgentsRunner {
       ownershipChanged: () => manager.ownershipChanged(),
       ready: (key) => this.ready(key),
       agent: (key) => this.agent(key),
-      member: (agent, event) => manager.member(agent, event),
-      dm: (agent, event) => manager.dm(agent, event),
+      member: (agent, event) => this.member(agent, event),
+      dm: (agent, event) => this.dm(agent, event),
       starting: (agent, channelId) =>
         this.connections
           .binding(agent)
@@ -230,8 +229,8 @@ export class AgentsRunner {
       classifierKeyGeneration: () => manager.classifierKeyGeneration(),
       setClassifierKey: (key, generation) =>
         manager.setClassifierKey(key, generation),
-      context: (agent, event) => manager.context(agent, event),
-      displayName: (agent, pubkey) => manager.displayName(agent, pubkey),
+      context: (agent, event) => this.context(agent, event),
+      displayName: (agent, pubkey) => this.displayName(agent, pubkey),
       custody,
       activity,
       soloChat: (agent, channel, signal) =>
@@ -402,8 +401,103 @@ export class AgentsRunner {
       if (originOf(agent.relay) === origin)
         void this.coreMemory.refresh(agent.key);
   }
+  /** The event's surroundings for the classifier, from what the app knows. */
+  private async context(
+    agent: Agent,
+    event: RelayEvent,
+  ): Promise<ClassifierContext> {
+    const channelId = event.tags.find((tag) => tag[0] === "h")?.[1];
+    const channels = this.connections.binding(agent)?.session.channels;
+    const summary = channelId
+      ? (channels?.list().channels.find((item) => item.id === channelId) ??
+        channels?.get?.(channelId))
+      : undefined;
+    const parent = threadReference(event)?.parentId ?? null;
+    let found: RelayEvent | undefined;
+    const native = this.custody;
+    if (parent && native)
+      try {
+        // Bounded: classified events release in order, so a stuck lookup
+        // would hold back every later one.
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        [found] = await Promise.race([
+          native.query(agent, [{ ids: [parent], limit: 1 }]),
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(
+              () => reject(new Error("The parent lookup timed out")),
+              PARENT_LOOKUP_MS,
+            );
+          }),
+        ]).finally(() => clearTimeout(timer));
+      } catch {
+        // The parent stays unknown; the classifier still runs.
+      }
+    return {
+      channel: { name: summary?.name ?? null },
+      thread: {
+        is_reply: !!parent,
+        parent: found
+          ? {
+              author: {
+                role:
+                  found.pubkey === agent.pubkey
+                    ? "self"
+                    : found.pubkey === agent.owner
+                      ? "owner"
+                      : "other",
+                name: this.displayName(agent, found.pubkey),
+              },
+              content: excerpt(found.content),
+            }
+          : null,
+      },
+      mentions: mentionFacts(event.tags, agent.pubkey, agent.owner),
+    };
+  }
+  private displayName(agent: Agent, pubkey: string) {
+    return (
+      this.connections.binding(agent)?.session.profiles?.snapshot().get(pubkey)
+        ?.name ?? null
+    );
+  }
+  /** The event's channel as the agent's community knows it, if at all. */
+  private channelOf(agent: Agent, event: Pick<RelayEvent, "tags">) {
+    const channel = event.tags.find((tag) => tag[0] === "h")?.[1];
+    const channels = this.connections.binding(agent)?.session.channels;
+    if (!channel || !channels) return undefined;
+    return (
+      channels.list().channels.find((item) => item.id === channel) ??
+      channels.get?.(channel)
+    );
+  }
+  /** Whether the agent is in the event's channel, by its relay-signed roster.
+   * The stream is the owner's, so a watch, even of "all", sees only what the
+   * agent itself could read; an event with no channel, or whose roster is
+   * unknown, wakes no watch. A roster only loaded from disk decides nothing
+   * (undefined): the agent may have been removed or added since it was saved,
+   * so the event waits until the relay confirms it. */
+  private member(
+    agent: Agent,
+    event: Pick<RelayEvent, "tags">,
+  ): boolean | undefined {
+    const summary = this.channelOf(agent, event);
+    if (summary?.cached) return undefined;
+    return !!summary?.members?.includes(agent.pubkey);
+  }
+  /** Whether the event's channel is a DM of exactly the agent and one other,
+   * by the same roster. A group DM, or one whose roster is unknown, is not. */
+  private dm(agent: Agent, event: RelayEvent) {
+    const summary = this.channelOf(agent, event);
+    return (
+      summary?.channelType === "dm" &&
+      summary.members?.length === 2 &&
+      summary.members.includes(agent.pubkey)
+    );
+  }
 }
 
+/** How long the classifier waits for a reply's parent before it goes on. */
+const PARENT_LOOKUP_MS = 5_000;
 const same = (next: readonly Agent[], prior: readonly Agent[]) =>
   next.length === prior.length &&
   next.every((agent, index) => agent === prior[index]);

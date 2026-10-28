@@ -55,7 +55,6 @@ import { avatarSource } from "../../shared/avatar-source";
 import { publicKeyLabels } from "../../shared/identity/public-key";
 import { newer, type EventData, type RelayEvent } from "../relay/events";
 import { relayPartition } from "../relay/partition";
-import { threadReference } from "../relay/thread-reference";
 import type { channelTabs } from "../../bundled/channels/useChannelTabState";
 import type { RelayData } from "../relay/service";
 import type { RelaySession } from "../relay/session";
@@ -76,10 +75,7 @@ import type {
   WriteOptions,
 } from "./attention-objects";
 import {
-  excerpt,
-  mentionFacts,
   nativeClassifier,
-  type ClassifierContext,
   type ClassifierNative,
   type ClassifierOutcome,
 } from "./classifier";
@@ -1129,8 +1125,6 @@ function defaults(pubkey: string, type: RegisteredAgentType) {
     record = setAttention(record, slug, value);
   return record;
 }
-/** How long the classifier waits for a reply's parent before it goes on. */
-const PARENT_LOOKUP_MS = 5_000;
 const message = (error: unknown) =>
   String(error instanceof Error ? error.message : error);
 /** The team sections for agent `self`: each team it is on, its members that
@@ -1382,8 +1376,6 @@ export class AgentsService extends Service implements Agents {
     this.runner = new AgentsRunner(storage, native, localActivity, decisions, {
       ownershipChanged: () => this.notify(),
       changed: () => this.update(),
-      member: (agent, event) => this.member(agent, event),
-      dm: (agent, event) => this.dm(agent, event),
       open: (origin) => this.communities.open(origin),
       liveMember: (key) => this.liveMember(key),
       types: () => this.types(),
@@ -1507,8 +1499,6 @@ export class AgentsService extends Service implements Agents {
       setClassifierKey: (key, generation) => {
         if (generation === this.keyGeneration) this.setKey(key);
       },
-      context: (agent, event) => this.context(agent, event),
-      displayName: (agent, pubkey) => this.displayName(agent, pubkey),
     });
     this.unfinished = Object.freeze(readUnfinished(storage));
     this.unarchiving = readArchiveUnchecked(storage);
@@ -2210,68 +2200,6 @@ export class AgentsService extends Service implements Agents {
     this.state = Object.freeze({ ...this.state, classifier, classifierKey });
     this.notify();
   }
-  /** The event's surroundings for the classifier, from what the app knows. */
-  private async context(
-    agent: Agent,
-    event: RelayEvent,
-  ): Promise<ClassifierContext> {
-    const channelId = event.tags.find((tag) => tag[0] === "h")?.[1];
-    const channels = this.runner.connections.binding(agent)?.session.channels;
-    const summary = channelId
-      ? (channels?.list().channels.find((item) => item.id === channelId) ??
-        channels?.get?.(channelId))
-      : undefined;
-    const parent = threadReference(event)?.parentId ?? null;
-    let found: RelayEvent | undefined;
-    const native = this.native;
-    if (parent && native)
-      try {
-        // Bounded: classified events release in order, so a stuck lookup
-        // would hold back every later one.
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        [found] = await Promise.race([
-          native.query(agent, [{ ids: [parent], limit: 1 }]),
-          new Promise<never>((_, reject) => {
-            timer = setTimeout(
-              () => reject(new Error("The parent lookup timed out")),
-              PARENT_LOOKUP_MS,
-            );
-          }),
-        ]).finally(() => clearTimeout(timer));
-      } catch {
-        // The parent stays unknown; the classifier still runs.
-      }
-    return {
-      channel: { name: summary?.name ?? null },
-      thread: {
-        is_reply: !!parent,
-        parent: found
-          ? {
-              author: {
-                role:
-                  found.pubkey === agent.pubkey
-                    ? "self"
-                    : found.pubkey === agent.owner
-                      ? "owner"
-                      : "other",
-                name: this.displayName(agent, found.pubkey),
-              },
-              content: excerpt(found.content),
-            }
-          : null,
-      },
-      mentions: mentionFacts(event.tags, agent.pubkey, agent.owner),
-    };
-  }
-  private displayName(agent: Agent, pubkey: string) {
-    return (
-      this.runner.connections
-        .binding(agent)
-        ?.session.profiles?.snapshot()
-        .get(pubkey)?.name ?? null
-    );
-  }
-
   /** Has the provider make the agent, then sets it up. From here on it is
    * kept, unfinished until set up, so a failure never makes a second one. */
   private async provision(
@@ -3897,40 +3825,6 @@ export class AgentsService extends Service implements Agents {
 
   private notify() {
     for (const listener of this.listeners) listener();
-  }
-  /** The event's channel as the agent's community knows it, if at all. */
-  private channelOf(agent: Agent, event: Pick<RelayEvent, "tags">) {
-    const channel = event.tags.find((tag) => tag[0] === "h")?.[1];
-    const channels = this.runner.connections.binding(agent)?.session.channels;
-    if (!channel || !channels) return undefined;
-    return (
-      channels.list().channels.find((item) => item.id === channel) ??
-      channels.get?.(channel)
-    );
-  }
-  /** Whether the agent is in the event's channel, by its relay-signed roster.
-   * The stream is the owner's, so a watch, even of "all", sees only what the
-   * agent itself could read; an event with no channel, or whose roster is
-   * unknown, wakes no watch. A roster only loaded from disk decides nothing
-   * (undefined): the agent may have been removed or added since it was saved,
-   * so the event waits until the relay confirms it. */
-  private member(
-    agent: Agent,
-    event: Pick<RelayEvent, "tags">,
-  ): boolean | undefined {
-    const summary = this.channelOf(agent, event);
-    if (summary?.cached) return undefined;
-    return !!summary?.members?.includes(agent.pubkey);
-  }
-  /** Whether the event's channel is a DM of exactly the agent and one other,
-   * by the same roster. A group DM, or one whose roster is unknown, is not. */
-  private dm(agent: Agent, event: RelayEvent) {
-    const summary = this.channelOf(agent, event);
-    return (
-      summary?.channelType === "dm" &&
-      summary.members?.length === 2 &&
-      summary.members.includes(agent.pubkey)
-    );
   }
 }
 

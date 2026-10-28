@@ -1304,8 +1304,9 @@ function ChannelWorkspace({
   const hasPanel = companion || hasChannelPanel;
   const showingChannelPanel = tabState.paneOpen && hasChannelPanel;
   const showingPanel = companion || showingChannelPanel;
-  // An explicit channel opening resumes its visible selected thread. Passive
-  // restoration and another channel’s retained tab keep their existing focus.
+  // An explicit channel opening reads its visible selected thread along with
+  // the conversation that holds focus. Passive restoration and another
+  // channel’s retained tab do not.
   const readingThread =
     showingChannelPanel &&
     !companion &&
@@ -1319,28 +1320,6 @@ function ChannelWorkspace({
         tab.channelId === currentId,
     );
   const split = usePanelSplit();
-  const readingVisit = useRef<AbortSignal | string | undefined>(undefined);
-  useLayoutEffect(() => {
-    const visit = navigation?.signal ?? currentId;
-    if (!readingThread || readingVisit.current === visit) return;
-    readingVisit.current = visit;
-    const focused = document.activeElement;
-    // Only hand off the channel opener. A person who moved focus while the
-    // retained pane mounted keeps their new target.
-    if (
-      focused !== document.body &&
-      (!(focused instanceof Element) ||
-        focused
-          .closest("[data-channel-id]")
-          ?.getAttribute("data-channel-id") !== currentId)
-    )
-      return;
-    split.ref.current
-      ?.querySelector<HTMLElement>(
-        `[role="tab"][data-tab-value="${CSS.escape(selectedTab)}"]`,
-      )
-      ?.focus({ preventScroll: true });
-  }, [readingThread, navigation?.signal, currentId, selectedTab, split.ref]);
   useEffect(() => {
     // Only an explicit settings click moves focus; restoring a visit does not.
     if (settingsFocus)
@@ -1514,8 +1493,7 @@ function ChannelWorkspace({
             !current.readOnly &&
             !requestedMessage &&
             !requestedThread &&
-            !routedThread &&
-            !readingThread
+            !routedThread
           }
           trailingTool={
             solo ? (
@@ -1535,6 +1513,7 @@ function ChannelWorkspace({
   const workspace = (
     <div
       data-channel-workspace={currentId ?? ""}
+      data-reading-thread={readingThread ? "" : undefined}
       ref={split.ref}
       style={split.style}
       className={`${styles.board} ${panelStyles.splitMotion}`}

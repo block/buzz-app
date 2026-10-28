@@ -769,7 +769,7 @@ for (const { paneOpen, width } of [
       panel.getByText("Unread reply 1", { exact: true }),
     ).toBeInViewport();
     await expect(
-      page.locator(`[role="tab"][data-tab-value="thread:alpha:${root.id}"]`),
+      page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
     ).toBeFocused();
     await expect.poll(unread).toBe(0);
     // The other thread was never opened and remains unread.
@@ -782,3 +782,66 @@ for (const { paneOpen, width } of [
         .getByRole("button", { name: /^View thread:/ }),
     ).toHaveAccessibleName(/Observed unread replies/);
   });
+
+// An explicit return reads the whole visit: the channel's own conversation, which
+// holds focus in its composer, and the visible selected thread beside it.
+test("returning to a channel reads both its conversation and its open thread", async ({
+  page,
+  app,
+}) => {
+  await page.clock.install();
+  await holdReadingFocus(page);
+  await open(page, app);
+  const root = app.histories
+    .get("primary/alpha")
+    .find((row) => row.content === "Thread root 1");
+  const alpha = page.locator("button[data-channel-id=alpha]");
+  const beta = page.locator("button[data-channel-id=beta]");
+  const panel = page.getByRole("complementary", {
+    name: "Thread",
+    exact: true,
+  });
+  const observed = (target) =>
+    page.evaluate(
+      (target) =>
+        window.fixtureRelay.snapshot().session.unread.snapshot(target)
+          .observedCount,
+      target,
+    );
+  const channelUnread = () => observed({ kind: "channel", channelId: "alpha" });
+  const threadUnread = (rootId = root.id) =>
+    observed({ kind: "thread", channelId: "alpha", rootId });
+  // The neighboring thread is never opened, so its replies stay unread and
+  // are the only unread left in the channel.
+  const otherRoot = app.histories
+    .get("primary/alpha")
+    .find((row) => row.content === "Thread root 0");
+  await page
+    .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
+    .getByRole("button", { name: /^View thread:/ })
+    .click();
+  await expect(
+    panel.getByText("Unread reply 1", { exact: true }),
+  ).toBeInViewport();
+  // Setup must stay unread even when opening and switching channels is slow.
+  await page.clock.runFor(1000);
+  await beta.click();
+  await expect(
+    page.getByRole("textbox", { name: "Message #Beta", exact: true }),
+  ).toBeVisible();
+  expect(await threadUnread()).toBeGreaterThan(0);
+  const neighbor = () => threadUnread(otherRoot.id);
+  expect(await neighbor()).toBeGreaterThan(0);
+  expect(await channelUnread()).toBeGreaterThan(await neighbor());
+  await releaseReadingFocus(page);
+  await alpha.click();
+  await expect(
+    panel.getByText("Unread reply 1", { exact: true }),
+  ).toBeInViewport();
+  await expect.poll(threadUnread).toBe(0);
+  // The conversation's own messages are read; only the neighbor remains.
+  await expect
+    .poll(async () => (await channelUnread()) - (await neighbor()))
+    .toBe(0);
+  expect(await neighbor()).toBeGreaterThan(0);
+});

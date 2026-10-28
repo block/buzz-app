@@ -46,6 +46,18 @@ export function useAppNavigation(
   const startup = plugins.configuration.status;
   const target = state.entry.target;
   const settings = target.kind === "settings";
+  const provider = settings ? target.provider : undefined;
+  const providerAvailable = useSyncExternalStore(
+    (listener) =>
+      provider && services.agents
+        ? services.agents.subscribe(listener)
+        : () => {},
+    () =>
+      !!provider &&
+      !!services.agents
+        ?.types()
+        .some((type) => type.key === provider && type.provider),
+  );
   const visibility = useSyncExternalStore(
     services.settingsCards.subscribe,
     () =>
@@ -153,6 +165,15 @@ export function useAppNavigation(
         waiting = true;
       else failure = "unavailable";
     }
+  }
+  if (provider && !failure && !waiting) {
+    const owner = provider.split("/")[0] ?? "";
+    if (
+      startup === "loading" ||
+      plugins.activation[owner]?.status === "starting"
+    )
+      waiting = true;
+    else if (!providerAvailable) failure = "unavailable";
   }
   // Legacy Home resolves to Messages; version-1 placeholder routes resolve to
   // their standalone plugins. Preserve scope so normalization never grants access.

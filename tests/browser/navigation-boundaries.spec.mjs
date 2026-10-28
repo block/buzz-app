@@ -63,6 +63,45 @@ test("cold destination waits for its enabled provider to activate", async ({
   }
 });
 
+test("cold Settings provider waits for its plugin activation", async ({
+  page,
+  app,
+}) => {
+  await page.addInitScript(() => {
+    window.delayFixture = { started: false };
+  });
+  const target = {
+    version: 1,
+    kind: "settings",
+    section: "agents",
+    provider: "fixture.delayed/provider",
+  };
+  try {
+    await page.goto(
+      `${app.origin}/#buzz=${encodeURIComponent(JSON.stringify(target))}`,
+    );
+    await expect
+      .poll(() => page.evaluate(() => window.delayFixture.started))
+      .toBe(true);
+    await expect
+      .poll(() =>
+        page.evaluate(() => window.fixtureNavigation?.snapshot().status),
+      )
+      .toBe("opening");
+    await page.evaluate(() => window.delayFixture.release());
+    await expect(
+      page.getByRole("dialog", { name: "Delayed provider", exact: true }),
+    ).toBeVisible();
+    await expect
+      .poll(() =>
+        page.evaluate(() => window.fixtureNavigation.snapshot().status),
+      )
+      .toBe("opened");
+  } finally {
+    await page.evaluate(() => window.delayFixture?.release?.());
+  }
+});
+
 test("Messages default resolution returns opened to cold and warm callers without an extra visit", async ({
   page,
   app,

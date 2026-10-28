@@ -397,3 +397,23 @@ it("settles guarded open callers only after the user's decision and destination 
   host.complete(nav.snapshot().attempt, { status: "opened" });
   expect(await opened).toEqual({ status: "opened" });
 });
+
+it("continues Discard to the preceding eligible visit if its destination was dismissed", () => {
+  const { host, navigation: nav } = setup();
+  void nav.open(page);
+  const closed = nav.snapshot().entry.id;
+  void nav.open(settings);
+  const original = nav.snapshot().attempt;
+  let decide: ((proceed: boolean) => void) | undefined;
+  const guard = vi.fn((_next, decision) => {
+    decide = decision;
+    return true;
+  });
+  host.guardDeparture(guard);
+  nav.back();
+  nav.dismiss([closed], homeTarget);
+  decide?.(true);
+  expect(nav.snapshot().entry.target).toEqual(homeTarget);
+  expect(original.signal.aborted).toBe(true);
+  expect(guard).toHaveBeenCalledTimes(1);
+});

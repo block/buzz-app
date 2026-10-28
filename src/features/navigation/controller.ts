@@ -197,6 +197,15 @@ export function createNavigationController(
     | ((next: OpenTarget, decide: (proceed: boolean) => void) => boolean)
     | undefined;
   let departure: { from: string; to: string; proceed: boolean } | undefined;
+  function resumeDeparture(pending: NonNullable<typeof departure>) {
+    if (history.returnTo(pending.to)) return;
+    const previous = history.snapshot().previous;
+    if (previous) {
+      pending.to = previous.id;
+      if (history.returnTo(previous.id)) return;
+    }
+    departure = undefined;
+  }
   let admittingOpen = false;
   let opening = false;
   let openingDecision: { settle: (result: OpenResult) => void } | undefined;
@@ -227,7 +236,7 @@ export function createNavigationController(
       } else {
         const state = history.snapshot();
         if (departure?.from === state.current.id) {
-          if (departure.proceed) history.returnTo(departure.to);
+          if (departure.proceed) resumeDeparture(departure);
           return;
         }
         const admitted =
@@ -253,7 +262,7 @@ export function createNavigationController(
             }
             pending.proceed = true;
             if (history.snapshot().current.id === pending.from)
-              history.returnTo(pending.to);
+              resumeDeparture(pending);
           });
           if (blocked) {
             history.returnTo(pending.from);

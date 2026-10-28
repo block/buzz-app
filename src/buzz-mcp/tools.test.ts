@@ -627,6 +627,38 @@ it("replaces memory only at the version it was shown, newer than the entry it re
   );
 });
 
+it("deletes memory only at the version it was shown, and never core", async () => {
+  const { client } = fake();
+  await expect(
+    callTool(client, {}, "mem_rm", { slug: "notes", expected: "0".repeat(16) }),
+  ).rejects.toThrow(
+    "mem/notes changed since version 0000000000000000. Read it again with mem_get before you delete it.",
+  );
+  await expect(
+    callTool(client, {}, "mem_rm", { slug: "core", expected: "0".repeat(16) }),
+  ).rejects.toThrow("core cannot be deleted; replace it with mem_set.");
+  await expect(
+    callTool(client, {}, "mem_rm", { slug: "notes" }),
+  ).rejects.toThrow("expected is required.");
+  expect(client.remember).not.toHaveBeenCalled();
+  await expect(
+    callTool(client, {}, "mem_rm", {
+      slug: "notes",
+      expected: await memoryVersion("old"),
+    }),
+  ).resolves.toBe("deleted mem/notes");
+  // A tombstone, dated after the entry it deletes.
+  expect(client.remember).toHaveBeenCalledWith("mem/notes", null, 50);
+  vi.mocked(client.memories).mockResolvedValue({ entries: [], partial: true });
+  await expect(
+    callTool(client, {}, "mem_rm", { slug: "gone", expected: "0".repeat(16) }),
+  ).rejects.toThrow("Memory mem/gone could not be read; try again.");
+  vi.mocked(client.memories).mockResolvedValue({ entries: [], partial: false });
+  await expect(
+    callTool(client, {}, "mem_rm", { slug: "gone", expected: "0".repeat(16) }),
+  ).rejects.toThrow("No memory mem/gone.");
+});
+
 it("refuses to overwrite core that another session changed since this one read it", async () => {
   const { client } = fake();
   let core = "I am Gander.";

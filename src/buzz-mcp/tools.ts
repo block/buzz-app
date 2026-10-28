@@ -223,6 +223,12 @@ export const TOOLS: readonly Tool[] = [
     ["slug"],
   ),
   tool(
+    "mem_rm",
+    "Delete memory. Pass the version from your latest mem_get of it as expected. core cannot be deleted.",
+    { slug: str, expected: str },
+    ["slug", "expected"],
+  ),
+  tool(
     "notes_get",
     "Read a shared note, such as a team runbook, by name; without name, list notes. author: me (default for lists), all, an npub, a hex pubkey or a display name.",
     {
@@ -930,6 +936,27 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     return size > CORE_TARGET_BYTES
       ? `${saved}; core is ${amount}, over the ~10 KB target. Move detail you do not need every turn to a mem/ slug.`
       : `${saved}; core is ${amount}.`;
+  },
+
+  async mem_rm(tools, args) {
+    const key = memorySlug(required(args, "slug"));
+    const expected = required(args, "expected");
+    // NIP-AE has no tombstone for core; only a write replaces it.
+    if (key === "core")
+      throw new Error("core cannot be deleted; replace it with mem_set.");
+    const { entries, partial } = await tools.client.memories(key);
+    const current = entries.find((entry) => entry.slug === key);
+    if (!current && partial)
+      throw new Error(`Memory ${key} could not be read; try again.`);
+    if (!current) throw new Error(`No memory ${key}.`);
+    // As with mem_set, nothing another session wrote since this one read it
+    // is lost.
+    if (expected !== (await memoryVersion(current.body)))
+      throw new Error(
+        `${key} changed since version ${expected}. Read it again with mem_get before you delete it.`,
+      );
+    await tools.client.remember(key, null, current.createdAt);
+    return `deleted ${key}`;
   },
 
   async notes_get(tools, args) {

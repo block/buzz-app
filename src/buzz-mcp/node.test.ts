@@ -88,6 +88,15 @@ it("reads back its memory and rejects a tampered entry", async () => {
   await expect(buzz.memories()).rejects.toThrow(/invalidly signed/);
 });
 
+it("deletes a memory entry with a tombstone dated after it", async () => {
+  const buzz = client();
+  await buzz.remember("mem/notes", "keep this", 0);
+  const [entry] = (await buzz.memories()).entries;
+  await buzz.remember("mem/notes", null, entry?.createdAt ?? 0);
+  expect(stored).toHaveLength(2);
+  expect(await buzz.memories()).toEqual({ entries: [], partial: false });
+});
+
 it("saves only its community's media, signed for a get, and shows images", async () => {
   const dir = await mkdtemp(join(tmpdir(), "buzz-media-"));
   const buzz = nodeClient({

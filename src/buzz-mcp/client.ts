@@ -130,8 +130,9 @@ export interface BuzzClient {
   read(path: string): Promise<Uint8Array>;
   /** The agent's memory entries, decrypted; only entry `slug` when given. */
   memories(slug?: string): Promise<Memories>;
-  /** Writes entry `slug`, newer than the one it replaces (`after`, or 0). */
-  remember(slug: string, body: string, after: number): Promise<void>;
+  /** Writes entry `slug`, newer than the one it replaces (`after`, or 0);
+   * a `null` body deletes it. */
+  remember(slug: string, body: string | null, after: number): Promise<void>;
   /** The owner's channel templates, where the host has them. */
   templates?(): Promise<readonly ChannelTemplate[]>;
   /** The agent's attention, where its host keeps one. Without it the

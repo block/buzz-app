@@ -949,7 +949,7 @@ mod tests {
         .map(|(slug, body)| {
             Some(
                 agent_key
-                    .memory_event(&owner, slug, body, 1_700_000_001)
+                    .memory_event(&owner, slug, Some(body), 1_700_000_001)
                     .unwrap(),
             )
         })

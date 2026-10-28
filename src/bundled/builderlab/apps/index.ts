@@ -14,7 +14,6 @@ import {
   viewerAppDomain,
 } from "./environment";
 
-import { EmptyState } from "../../../shared/design-system/ui/EmptyState";
 import { Login } from "../login/Login";
 
 type Ctx = Parameters<PluginModule["apply"]>[0];
@@ -57,20 +56,13 @@ export function applyApps(
       session.snapshot,
       session.snapshot,
     );
-    // Without a Settings login there is no account to bootstrap from; keep the
-    // credential-free browser login the app has always had.
-    if (!loginAvailable)
+    // Unconfigured login and other tenants keep their own browser login.
+    // Only this build's exact app tenant may receive the Settings credential.
+    if (!loginAvailable || (viewerAppDomain() && !isViewerTarget(target)))
       return createElement(View, {
         url: target,
         storage: "builderlab-apps",
         label: appName(target),
-      });
-    if (viewerAppDomain() && !isViewerTarget(target))
-      return createElement(EmptyState, {
-        icon: null,
-        title: "Open this app with its Builderlab environment",
-        description:
-          "This app uses a different Builderlab environment than this Buzz build.",
       });
     if (state.status !== "signed-in")
       return createElement(Login, {

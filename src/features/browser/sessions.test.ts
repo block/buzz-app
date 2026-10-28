@@ -1,3 +1,4 @@
+import { setImmediate as nextTurn } from "node:timers/promises";
 import { expect, it, vi } from "vitest";
 import type { BrowserPlatform } from "./platform";
 import { BrowserSessions } from "./sessions";
@@ -186,4 +187,79 @@ it("sign-out closes live and parked account guests even while another attach is 
   expect(sessions.owns("other-account")).toBe(true);
   expect(browserPlatform.attach).toHaveBeenCalledTimes(4);
   other.abort();
+});
+
+it.each([undefined, "a"])(
+  "hides a closing guest before another authenticated attach finishes (park %s)",
+  async (park) => {
+    const browserPlatform = platform();
+    const held = deferred<string>();
+    vi.mocked(browserPlatform.attach)
+      .mockResolvedValueOnce("a")
+      .mockImplementationOnce(() => held.promise);
+    const sessions = new BrowserSessions(browserPlatform);
+    await sessions.attach("https://a.example", bounds, () => true);
+    sessions.present("a", true);
+    const lifetime = new AbortController();
+    const pending = sessions.attach(
+      "https://b.example",
+      bounds,
+      () => true,
+      "account",
+      "b",
+      {
+        credential: "private",
+        storage: "account",
+        signal: lifetime.signal,
+      },
+    );
+    await vi.waitFor(() =>
+      expect(browserPlatform.attach).toHaveBeenCalledTimes(2),
+    );
+    const detached = sessions.detach("a", park);
+    try {
+      expect(browserPlatform.setBounds).toHaveBeenCalledWith(
+        "a",
+        expect.anything(),
+        false,
+      );
+      expect(browserPlatform.attach).toHaveBeenCalledTimes(2);
+    } finally {
+      held.resolve("b");
+      await pending;
+      await detached;
+      await sessions.detach("a");
+      lifetime.abort();
+    }
+  },
+);
+
+it("does not re-adopt a parked guest before its previous hide completes", async () => {
+  const browserPlatform = platform();
+  const hidden = deferred<void>();
+  vi.mocked(browserPlatform.attach).mockResolvedValue("a");
+  vi.mocked(browserPlatform.setBounds).mockImplementationOnce(
+    () => hidden.promise,
+  );
+  const sessions = new BrowserSessions(browserPlatform);
+  await sessions.attach("https://a.example", bounds, () => true, "s", "a");
+  const detached = sessions.detach("a", "a");
+  let adopted = false;
+  const reopened = sessions
+    .attach("https://a.example", bounds, () => true, "s", "a")
+    .then((id) => {
+      adopted = true;
+      return id;
+    });
+  try {
+    // Submitted Promise jobs have run; the explicit native-hide gate remains held.
+    await nextTurn();
+    expect(adopted).toBe(false);
+    expect(browserPlatform.attach).toHaveBeenCalledTimes(1);
+  } finally {
+    hidden.resolve();
+    await detached;
+    await expect(reopened).resolves.toBe("a");
+    await sessions.detach("a");
+  }
 });

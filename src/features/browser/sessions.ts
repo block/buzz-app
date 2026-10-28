@@ -77,7 +77,14 @@ export class BrowserSessions {
   /** Closes the guest, or with `park` hides it for the next view that
    * attaches with that key. */
   detach(sessionId: string, park?: string): Promise<void> {
-    return this.enqueue(async () => {
+    // An unrelated attach can wait on network exchange; presentation must stop now.
+    const hidden = this.owns(sessionId)
+      ? this.platform.setBounds(sessionId, HIDDEN, false)
+      : Promise.resolve();
+    this.shown.delete(sessionId);
+    const detached = this.enqueue(async () => {
+      // Re-adoption must not overtake the old view's in-flight hide.
+      await hidden;
       if (park === undefined || !this.owns(sessionId))
         return this.close(sessionId);
       this.shown.delete(sessionId);
@@ -93,8 +100,8 @@ export class BrowserSessions {
         PARK_MS,
       );
       this.parked.set(park, { sessionId, timer });
-      await this.platform.setBounds(sessionId, HIDDEN, false);
     });
+    return Promise.all([hidden, detached]).then(() => undefined);
   }
 
   /** The last title the page opened under `key` reported. */

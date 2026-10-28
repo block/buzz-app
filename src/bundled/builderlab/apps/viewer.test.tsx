@@ -113,7 +113,7 @@ it("closing an observing app panel does not cancel Settings' pending login", asy
   session.dispose();
 });
 
-it("an app from a different tenant never receives the Settings credential", async () => {
+it("an app from a different tenant keeps browser login without the Settings credential", async () => {
   const { session, viewed, panel } = setup();
   await session.signIn();
   render(
@@ -121,10 +121,12 @@ it("an app from a different tenant never receives the Settings credential", asyn
       target: "https://counter.apps.other.example/",
     } as PanelProps),
   );
-  expect(
-    screen.getByText("Open this app with its Builderlab environment"),
-  ).toBeInTheDocument();
-  expect(viewed).not.toHaveBeenCalled();
+  expect(screen.getByLabelText("App website")).toBeInTheDocument();
+  expect(viewed.mock.lastCall?.[0]).toMatchObject({
+    url: "https://counter.apps.other.example/",
+    storage: "builderlab-apps",
+  });
+  expect(viewed.mock.lastCall?.[0].builderlab).toBeUndefined();
   session.dispose();
 });
 

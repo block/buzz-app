@@ -20,8 +20,13 @@ export type SavedHead = {
   events: unknown[];
   profiles: unknown[];
 };
+export type SavedHeadIndex = Pick<SavedHead, "channelId" | "savedAt">;
 export interface HeadPersistence {
   read(): Promise<SavedHead[]>;
+  /** The store can prioritize current intent before loading unrelated payloads.
+   * Implementations without both capabilities retain the complete read path. */
+  readIndex?(): Promise<SavedHeadIndex[]>;
+  readHead?(channelId: string): Promise<SavedHead | undefined>;
   readStartup?(): Promise<SavedStartup | undefined>;
   writeStartup?(patch: SavedStartup): Promise<void>;
   write(head: SavedHead): Promise<void>;
@@ -388,6 +393,37 @@ export function createHeadPersistence(
     }
   }
   return {
+    readIndex: () =>
+      transact("readonly", (store, done, then) => {
+        metadata(store, then, (rows) =>
+          done(
+            rows
+              .filter(
+                (row) =>
+                  row.scope === scope && Date.now() - row.savedAt < MAX_AGE,
+              )
+              .slice(0, MAX_HEADS)
+              .map(({ channelId, savedAt }) => ({ channelId, savedAt })),
+          ),
+        );
+      }),
+    readHead: (channelId) =>
+      transact("readonly", (store, done, then, tx) => {
+        then(
+          store.get(`${scope}:${channelId}`),
+          (row: Record | Manifest | undefined) => {
+            if (
+              !row ||
+              row.scope !== scope ||
+              Date.now() - row.savedAt >= MAX_AGE
+            ) {
+              done(undefined);
+              return;
+            }
+            decodeHead(row, tx, then, done);
+          },
+        );
+      }),
     readStartup: () =>
       transact(
         "readonly",

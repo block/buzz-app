@@ -26,7 +26,7 @@ import type { RelayReader, ReadOptions, Priority } from "./reader";
 import type { ProfileDirectory } from "./profile-directory";
 import { parseWindow, windowFilter, type WindowCursor } from "./window";
 import { ByteLru, byteSize, listByteSize } from "./budget";
-import type { HeadPersistence, SavedHead } from "./persistence";
+import type { HeadPersistence, SavedHead, SavedHeadIndex } from "./persistence";
 import { createMediaPreparation, saveData } from "./media";
 import { relayDebug } from "./debug";
 import { clientMetrics } from "../developer/client-metrics";
@@ -750,9 +750,14 @@ export function createChannelStore(
     const reveal = revealHydration;
     if (!persistence || !transport) return;
     const generation = epoch;
-    let records: SavedHead[];
+    const readHead =
+      persistence.readIndex && persistence.readHead?.bind(persistence);
+    let records: (SavedHead | SavedHeadIndex)[];
     try {
-      records = await persistence.read();
+      records =
+        readHead && persistence.readIndex
+          ? await persistence.readIndex()
+          : await persistence.read();
     } catch {
       return;
     }
@@ -764,25 +769,42 @@ export function createChannelStore(
       const priorityIndex = records.findIndex(
         (record) => record.channelId === intent,
       );
-      const [record] = records.splice(
-        priorityIndex >= 0 ? priorityIndex : 0,
-        1,
-      );
-      if (!record) break;
-      const initial = record.channelId === options.initialChannelId;
-      const accessVersion = accessVersions.get(record.channelId) ?? 0;
+      const [entry] = records.splice(priorityIndex >= 0 ? priorityIndex : 0, 1);
+      if (!entry) break;
+      const initial = entry.channelId === options.initialChannelId;
+      const accessVersion = accessVersions.get(entry.channelId) ?? 0;
       if (disposed || generation !== epoch) return;
       if (
-        !allowed?.has(record.channelId) ||
-        heads.peek(record.channelId) ||
-        !Number.isFinite(record.savedAt) ||
-        record.savedAt > now() ||
-        now() - record.savedAt > 86_400_000
+        !allowed?.has(entry.channelId) ||
+        heads.peek(entry.channelId) ||
+        !Number.isFinite(entry.savedAt) ||
+        entry.savedAt > now() ||
+        now() - entry.savedAt > 86_400_000
       ) {
         if (initial) reveal?.();
         continue;
       }
       try {
+        const record = readHead
+          ? await readHead(entry.channelId)
+          : (entry as SavedHead);
+        // Indexed retrieval adds a storage boundary before verification. Capture
+        // access above that await, so revoke/regrant cannot revive its old result.
+        if (
+          disposed ||
+          generation !== epoch ||
+          accessVersion !== (accessVersions.get(entry.channelId) ?? 0) ||
+          !allowed?.has(entry.channelId)
+        )
+          return;
+        if (
+          !record ||
+          record.channelId !== entry.channelId ||
+          !Number.isFinite(record.savedAt) ||
+          record.savedAt > now() ||
+          now() - record.savedAt > 86_400_000
+        )
+          continue;
         // Verify in channel-sized batches and yield between them; cache parsing never monopolizes startup.
         // Persisted input is untrusted even if an in-memory test object carries nostr-tools'
         // cached verification symbol. Reconstruct only wire fields before verification.

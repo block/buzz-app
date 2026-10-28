@@ -1058,10 +1058,20 @@ The port retains the prepared-store implementation and its behavior tests:
 - 1,024 profile entries / 2 MiB signed-record budget, narrow row profile selectors,
   and request-warmed avatars (fetched and decoded, nothing retained; disabled
   under the Save-Data preference). Signature verification yields in batches.
-- Account/relay-scoped IndexedDB: 64 records / 8 MiB global disk budget, 24-hour
-  expiry. Signed cached events are reverified before display. The same database
+- Account/relay-scoped IndexedDB: 64 records / 8 MiB global logical disk budget, 24-hour
+  expiry. Schema 3 stores ordered head manifests and shared, scope-local exact
+  signed-wire payloads. Duplicate occurrences still count against the original
+  logical byte budget; deduplication does not enlarge retained evidence. Payload
+  ownership edges, head replacement, global pruning and last-owner cleanup commit
+  atomically. A fresh valid save repairs corrupted shared wire data. One corrupt
+  manifest cannot suppress healthy sibling heads.
+  Signed cached events are reverified before display; payload hashes are storage
+  coordinates, never verification or membership proof. The same database
   stores account/relay-scoped startup discovery and sidebar organization (a separate
-  8 MiB global budget); old version-1 head records survive the version-2 upgrade.
+  8 MiB global budget). Version-1/2 whole-head records survive the schema upgrade
+  and remain readable until normal replacement/removal. Metadata indexes let the
+  store select its current destination before reading unrelated event payloads;
+  remaining heads still pass the same bounded verification/admission path.
 - A 60-second head freshness lease; warm revisits reuse heads without new reads.
   Partial discovery never treats an omitted channel as a membership revocation.
   Explicit denial or signed membership removal invalidates private cached views.

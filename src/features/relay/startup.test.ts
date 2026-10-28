@@ -138,6 +138,156 @@ function setup(
     storage,
   };
 }
+
+function indexedDisk(ids = ["alpha", "beta", "gamma"]) {
+  const storage = disk();
+  const records = ids.map(
+    (channelId): SavedHead => ({
+      channelId,
+      savedAt: Date.now(),
+      profiles: [],
+      events: [
+        message(viewer, channelId, `saved ${channelId}`, 20),
+        bounds(relay, channelId, "head", {
+          has_more: false,
+          next_cursor: null,
+        }),
+      ],
+    }),
+  );
+  storage.readStartup = vi.fn(async () => ({
+    discovery: {
+      savedAt: Date.now(),
+      relayAuthor: relay.pubkey,
+      events: ids.flatMap((id) => [
+        roster(relay, id, [viewer.pubkey]),
+        metadata(relay, id, id),
+      ]),
+    },
+  }));
+  storage.readIndex = vi.fn(async () =>
+    records
+      .slice()
+      .reverse()
+      .map(({ channelId, savedAt }) => ({ channelId, savedAt })),
+  );
+  storage.readHead = vi.fn(async (id) =>
+    records.find((row) => row.channelId === id),
+  );
+  return { storage, records };
+}
+
+describe("indexed device heads", () => {
+  it("restores selected content without waiting for unrelated payloads and reprioritizes a changed destination", async () => {
+    const { storage, records } = indexedDisk();
+    const alpha = deferred<SavedHead | undefined>(),
+      beta = deferred<SavedHead | undefined>();
+    const read = vi.fn((id: string) =>
+      id === "alpha"
+        ? alpha.promise
+        : id === "beta"
+          ? beta.promise
+          : Promise.resolve(records.find((row) => row.channelId === id)),
+    );
+    storage.readHead = read;
+    const { owner, channels, query } = setup(storage, true, "alpha");
+    const restoring = owner.restore();
+    try {
+      await vi.waitFor(() =>
+        expect(read).toHaveBeenCalledExactlyOnceWith("alpha"),
+      );
+      channels.ensure("alpha");
+      channels.ensure("beta");
+      alpha.resolve(records.find((row) => row.channelId === "alpha"));
+      await restoring;
+      expect(channels.window("alpha").rows[0]?.content).toBe("saved alpha");
+      await vi.waitFor(() =>
+        expect(read.mock.calls.map(([id]) => id)).toEqual(["alpha", "beta"]),
+      );
+      expect(channels.window("beta").rows).toEqual([]);
+      expect(storage.read).not.toHaveBeenCalled();
+      beta.resolve(records.find((row) => row.channelId === "beta"));
+      await vi.waitFor(() =>
+        expect(channels.window("beta").rows[0]?.content).toBe("saved beta"),
+      );
+      await vi.waitFor(() =>
+        expect(read.mock.calls.map(([id]) => id)).toEqual([
+          "alpha",
+          "beta",
+          "gamma",
+        ]),
+      );
+      channels.ensure("gamma");
+      await vi.waitFor(() =>
+        expect(channels.window("gamma").rows[0]?.content).toBe("saved gamma"),
+      );
+      expect(query).not.toHaveBeenCalled();
+    } finally {
+      alpha.resolve(undefined);
+      beta.resolve(undefined);
+    }
+  });
+
+  it.each(["missing", "failed"])(
+    "an indexed %s selected head reveals startup and still restores healthy siblings",
+    async (mode) => {
+      const { storage, records } = indexedDisk(["alpha", "beta"]);
+      storage.readHead = vi.fn(async (id) => {
+        if (id === "alpha") {
+          if (mode === "failed") throw new Error("Unavailable payload");
+          return undefined;
+        }
+        return records.find((row) => row.channelId === id);
+      });
+      const { owner, channels } = setup(storage, true, "alpha");
+      await owner.restore();
+      channels.ensure("beta");
+      await vi.waitFor(() =>
+        expect(channels.window("beta").rows[0]?.content).toBe("saved beta"),
+      );
+      channels.ensure("alpha");
+      expect(channels.window("alpha").rows).toEqual([]);
+    },
+  );
+
+  it.each(["clear", "dispose", "revoke-regrant"])(
+    "an indexed payload delivered after %s cannot restore old content",
+    async (action) => {
+      const { storage, records } = indexedDisk(["alpha"]);
+      const payload = deferred<SavedHead | undefined>();
+      const read = vi.fn(() => payload.promise);
+      storage.readHead = read;
+      // Without an initial destination restore() is the full hydration completion
+      // barrier, including the held payload and any verification it could start.
+      const { owner, channels, query } = setup(storage);
+      const restoring = owner.restore();
+      try {
+        await vi.waitFor(() => expect(read).toHaveBeenCalledOnce());
+        if (action === "clear") await owner.clearCache();
+        else if (action === "dispose") owner.dispose();
+        else {
+          query.mockResolvedValueOnce([
+            roster(relay, "alpha", [], 1_700_000_001),
+          ]);
+          await owner.session.read([
+            { kinds: [39002], "#d": ["alpha"], limit: 1 },
+          ]);
+          query.mockResolvedValueOnce([
+            roster(relay, "alpha", [viewer.pubkey], 1_700_000_002),
+          ]);
+          await owner.session.read([
+            { kinds: [39002], "#d": ["alpha"], limit: 1 },
+          ]);
+        }
+        payload.resolve(records[0]);
+        await restoring;
+        expect(channels.window("alpha").rows).toEqual([]);
+      } finally {
+        payload.resolve(undefined);
+      }
+    },
+  );
+});
 describe("device-local startup", () => {
   let pagedRosters: RelayEvent[];
   let capacityRosters: readonly RelayEvent[];

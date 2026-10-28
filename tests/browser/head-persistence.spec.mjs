@@ -350,3 +350,248 @@ test("v2 upgrade keeps legacy order and supports mixed normalized writes without
     contents: ["old cache", "old cache"],
   });
 });
+
+test("native blocked upgrade, versionchange and late close failures preserve legacy content", async ({
+  page,
+}) => {
+  const result = await page.evaluate(async () => {
+    const f = window.headPersistence,
+      viewer = f.keypair();
+    const head = {
+      channelId: "a",
+      savedAt: Date.now(),
+      events: [f.message(viewer, "a", "preserved", 10)],
+      profiles: [],
+    };
+    const legacy = await new Promise((yes, no) => {
+      const r = indexedDB.open("buzz-channel-heads-v1", 2);
+      r.onupgradeneeded = () => {
+        r.result.createObjectStore("heads", { keyPath: "key" });
+        r.result.createObjectStore("startup", { keyPath: "key" });
+      };
+      r.onsuccess = () => yes(r.result);
+      r.onerror = () => no(r.error);
+    });
+    await new Promise((yes, no) => {
+      const tx = legacy.transaction("heads", "readwrite");
+      tx.objectStore("heads").put({
+        ...head,
+        key: `${viewer.pubkey}:relay:a`,
+        scope: `${viewer.pubkey}:relay`,
+        bytes: JSON.stringify(head).length,
+      });
+      tx.oncomplete = yes;
+      tx.onabort = () => no(tx.error);
+    });
+    const blocked = f.createHeadPersistence(viewer.pubkey, "relay");
+    let blockedError;
+    try {
+      await blocked.read();
+    } catch (error) {
+      blockedError = error.message;
+    } finally {
+      blocked.close();
+      legacy.close();
+    }
+    const active = f.createHeadPersistence(viewer.pubkey, "relay");
+    const before = (await active.read()).map((h) => h.events[0].content);
+    const upgrade = await new Promise((yes, no) => {
+      const r = indexedDB.open("buzz-channel-heads-v1", 4);
+      r.onsuccess = () => yes(r.result);
+      r.onerror = () => no(r.error);
+    });
+    let versionChangedWriteRejected = false;
+    try {
+      await active.write({ ...head, events: [] });
+    } catch {
+      versionChangedWriteRejected = true;
+    } finally {
+      active.close();
+      upgrade.close();
+    }
+    const unavailable = f.createHeadPersistence(viewer.pubkey, "relay");
+    let openRejected = false;
+    try {
+      await unavailable.read();
+    } catch {
+      openRejected = true;
+    } finally {
+      unavailable.close();
+    }
+    const closed = f.createHeadPersistence(viewer.pubkey, "relay");
+    closed.close();
+    let lateWriteRejected = false;
+    try {
+      await closed.write(head);
+    } catch {
+      lateWriteRejected = true;
+    }
+    const db = await new Promise((yes, no) => {
+      const r = indexedDB.open("buzz-channel-heads-v1");
+      r.onsuccess = () => yes(r.result);
+      r.onerror = () => no(r.error);
+    });
+    const after = await new Promise((yes, no) => {
+      const tx = db.transaction("heads");
+      const r = tx.objectStore("heads").get(`${viewer.pubkey}:relay:a`);
+      tx.oncomplete = () => yes(r.result.events[0].content);
+      tx.onabort = () => no(tx.error);
+    });
+    db.close();
+    return {
+      blockedError,
+      before,
+      versionChangedWriteRejected,
+      openRejected,
+      lateWriteRejected,
+      after,
+    };
+  });
+  expect(result).toEqual({
+    blockedError: "Cache blocked",
+    before: ["preserved"],
+    versionChangedWriteRejected: true,
+    openRejected: true,
+    lateWriteRejected: true,
+    after: "preserved",
+  });
+});
+
+test("real disk tampering and signed denied membership never become session history", async ({
+  page,
+}) => {
+  const result = await page.evaluate(async () => {
+    const f = window.headPersistence,
+      viewer = f.keypair(),
+      relay = f.keypair();
+    const output = [];
+    for (const mode of ["signature", "membership"]) {
+      const cache = f.createHeadPersistence(viewer.pubkey, mode);
+      const event = f.message(viewer, "a", "private cache", 10);
+      await cache.writeStartup({
+        discovery: {
+          savedAt: Date.now(),
+          relayAuthor: relay.pubkey,
+          events: [
+            f.roster(relay, "a", mode === "membership" ? [] : [viewer.pubkey]),
+            f.metadata(relay, "a", "A"),
+          ],
+        },
+      });
+      await cache.write({
+        channelId: "a",
+        savedAt: Date.now(),
+        events: [
+          mode === "signature" ? { ...event, sig: "0".repeat(128) } : event,
+          f.bounds(relay, "a", "head", { has_more: false, next_cursor: null }),
+        ],
+        profiles: [],
+      });
+      cache.close();
+      const restored = f.createHeadPersistence(viewer.pubkey, mode);
+      const owner = f.createRelaySession(
+        {
+          viewer: viewer.pubkey,
+          relayAuthor: relay.pubkey,
+          query: async () => {
+            throw new Error("No network for cached authority");
+          },
+          media: () => undefined,
+        },
+        {
+          persistence: restored,
+          prepared: true,
+          cachedOnly: true,
+          initialChannelId: "a",
+        },
+      );
+      try {
+        await owner.restore();
+        owner.session.channels.ensure("a");
+        output.push({
+          mode,
+          rows: owner.session.channels.window("a").rows.map((r) => r.content),
+        });
+        await restored.clear();
+      } finally {
+        owner.dispose();
+        restored.close();
+      }
+    }
+    return output;
+  });
+  expect(result).toEqual([
+    { mode: "signature", rows: [] },
+    { mode: "membership", rows: [] },
+  ]);
+});
+
+test("logical global head count, UTF8 bytes, expiry and tied order stay bounded with shared wires", async ({
+  page,
+}) => {
+  await page.clock.setFixedTime(new Date("2026-10-28T05:00:00Z"));
+  const result = await page.evaluate(async () => {
+    const f = window.headPersistence,
+      viewer = f.keypair(),
+      cache = f.createHeadPersistence(viewer.pubkey, "relay");
+    const event = f.message(viewer, "a", "shared", 10),
+      now = Date.now();
+    const make = (channelId, savedAt = now, events = [event]) => ({
+      channelId,
+      savedAt,
+      events,
+      profiles: [],
+    });
+    try {
+      for (let i = 64; i >= 0; i--)
+        await cache.write(make(`a${String(i).padStart(2, "0")}`));
+      const tied = (await cache.read()).map((h) => h.channelId);
+      await cache.write(make("expired", now - 86_400_000));
+      const expiry = (await cache.read()).some(
+        (h) => h.channelId === "expired",
+      );
+      await cache.clear();
+      const big = f.message(viewer, "a", "é".repeat(1_600_000), 11);
+      for (let i = 0; i < 3; i++)
+        await cache.write(make(`large${i}`, now + i, [big]));
+      const retained = await cache.read();
+      const logicalBytes = retained.reduce(
+        (n, h) => n + new TextEncoder().encode(JSON.stringify(h)).byteLength,
+        0,
+      );
+      const before = retained.map((h) => h.channelId);
+      await cache.write(
+        make("large2", now + 4, [
+          f.message(viewer, "a", "é".repeat(4_200_000), 12),
+        ]),
+      );
+      const after = (await cache.read()).map((h) => h.channelId);
+      const db = await new Promise((yes, no) => {
+        const r = indexedDB.open("buzz-channel-heads-v1");
+        r.onsuccess = () => yes(r.result);
+        r.onerror = () => no(r.error);
+      });
+      const counts = await new Promise((yes, no) => {
+        const tx = db.transaction(["heads", "payloads", "references"]);
+        const requests = ["heads", "payloads", "references"].map((n) =>
+          tx.objectStore(n).count(),
+        );
+        tx.oncomplete = () => yes(requests.map((r) => r.result));
+        tx.onabort = () => no(tx.error);
+      });
+      db.close();
+      return { tied, expiry, logicalBytes, before, after, counts };
+    } finally {
+      await cache.clear();
+      cache.close();
+    }
+  });
+  expect(result.tied).toEqual(
+    Array.from({ length: 64 }, (_, i) => `a${String(i).padStart(2, "0")}`),
+  );
+  expect(result.expiry).toBe(false);
+  expect(result.logicalBytes).toBeLessThanOrEqual(8 * 1024 * 1024);
+  expect(result.before).toEqual(["large2", "large1"]);
+  expect(result.after).toEqual(result.before);
+  expect(result.counts).toEqual([2, 1, 2]);
+});

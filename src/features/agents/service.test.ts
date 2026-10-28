@@ -5491,10 +5491,12 @@ describe("a turn closing or reloading the app stopped", () => {
     await settle();
     expect(resumedOf(app.run)).toEqual(["Echo, go on (resumed)"]);
     expect(names(app.service.snapshot().interrupted)).toEqual(["Birch"]);
+    const dismissed = { [bot]: { [asked.id]: channel } };
+    expect(readInterrupted(app.storage)).not.toEqual(dismissed);
     app.service.dismissInterrupted();
-    expect(readInterrupted(app.storage)).toEqual({
-      [bot]: { [asked.id]: channel },
-    });
+    await vi.waitFor(() =>
+      expect(readInterrupted(app.storage)).toEqual(dismissed),
+    );
   });
 
   it("stays saved when it cannot be read again, and is given on the next try", async () => {
@@ -8067,7 +8069,7 @@ it("gives a run its owner's channel templates with the owner's agents each adds"
     },
   ]);
   const { templates } = await handleOf(run, emit);
-  expect(templates()).toEqual([
+  await expect(templates()).resolves.toEqual([
     { name: "Launch", canvas: "# Plan", agents: [bot, sibling] },
   ]);
 });

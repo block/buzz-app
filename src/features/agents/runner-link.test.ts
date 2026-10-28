@@ -6,6 +6,7 @@ import type { RunnerStatus } from "./agents-runner";
 import { blank, type Member, type RecordEdit } from "./records";
 import {
   linkedActivity,
+  type ManagerClassifier,
   managerSide,
   routed,
   runnerSide,
@@ -18,7 +19,7 @@ import type {
   SessionPlace,
   SessionState,
 } from "./service";
-import type { AgentRecord } from "./store";
+import type { AgentRecord, Team } from "./store";
 
 const open: Link[] = [];
 afterEach(() => {
@@ -170,6 +171,9 @@ function fakeRunner() {
     }),
     retypes: () => types,
     types: () => kinds,
+    setTeams: vi.fn((_teams: readonly Team[]) => {}),
+    resumeInterrupted: vi.fn((_keys: readonly string[]) => {}),
+    dismissInterrupted: vi.fn((_keys: readonly string[]) => {}),
     /** The types that run here change, as when a plugin reloads. */
     setTypes(next: readonly RegisteredAgentType[]) {
       kinds = next;
@@ -226,12 +230,40 @@ function split(identities: Member[] = []) {
   const retyped = vi.fn((_types: Readonly<Record<string, string>>) => {});
   const runnerLink = runnerSide(channel.port1, runner);
   const shares = new Map<string, Served>();
+  let teams: readonly Team[] = [];
+  let classifier: ManagerClassifier = {
+    key: "checking",
+    generation: 0,
+    checking: true,
+  };
+  const setClassifierKey = vi.fn();
+  const asks = {
+    createAgent: vi.fn(async () => ({
+      requestId: "made",
+      saved: false as const,
+    })),
+    updateAgent: vi.fn(async () => ({
+      requestId: "changed",
+      saved: false as const,
+    })),
+    templates: vi.fn(async () => [{ name: "Team", canvas: "", agents: [] }]),
+  };
   const sharesChanged = new Set<() => void>();
   const manager = managerSide(channel.port2, {
-    members: () => ({ loaded: true, identities: shown, viewer: owner }),
+    members: () => ({
+      loaded: true,
+      identities: shown,
+      viewer: owner,
+      teams,
+      classifier,
+    }),
     defaults,
     retyped: (types) => retyped(types),
     changed,
+    setClassifierKey,
+    createAgent: asks.createAgent,
+    updateAgent: asks.updateAgent,
+    templates: asks.templates,
     shared: (plugin) => shares.get(plugin),
     subscribeShared(listener) {
       sharesChanged.add(listener);
@@ -247,6 +279,18 @@ function split(identities: Member[] = []) {
     runnerLink,
     changed,
     retyped,
+    asks,
+    setClassifierKey,
+    tell(
+      next: Readonly<{
+        teams?: readonly Team[];
+        classifier?: ManagerClassifier;
+      }>,
+    ) {
+      teams = next.teams ?? teams;
+      classifier = next.classifier ?? classifier;
+      manager.changed();
+    },
     share(plugin: string, served: Served | undefined) {
       if (served) shares.set(plugin, served);
       else shares.delete(plugin);
@@ -359,10 +403,16 @@ it("does not take what the Runner decided for a page that reloaded as an answer"
         loaded: true,
         identities: identities(),
         viewer: owner,
+        teams: [],
+        classifier: { key: "saved", generation: 0, checking: false },
       }),
       defaults: () => undefined,
       retyped: () => {},
       changed: () => {},
+      setClassifierKey: () => {},
+      createAgent: async () => ({ requestId: "", saved: false }),
+      updateAgent: async () => ({ requestId: "", saved: false }),
+      templates: async () => [],
       shared: () => undefined,
       subscribeShared: () => () => {},
     });
@@ -684,4 +734,49 @@ it("gives a plugin's agent entry what its UI shares, from when it shares, and fo
   share("github", undefined);
   await vi.waitFor(() => expect(reached.read("signIn")).toBeNull());
   expect(changed).toHaveBeenCalled();
+});
+
+it("tells the Runner the teams and the classifier key, and takes what it asks of the Manager", async () => {
+  const { runner, runnerLink, manager, asks, setClassifierKey, tell } = split();
+  const team: Team = { id: "t", name: "Crew", instructions: "", members: [] };
+  // Until the key's first read ends, a classifier waits for it.
+  const status = runnerLink.keyStatus();
+  expect(status).toBeInstanceOf(Promise);
+  let known = false;
+  void status?.then(() => {
+    known = true;
+  });
+  await vi.waitFor(() => expect(runnerLink.classifierKey()).toBe("checking"));
+  expect(known).toBe(false);
+  tell({
+    teams: [team],
+    classifier: { key: "saved", generation: 2, checking: false },
+  });
+  await vi.waitFor(() => expect(known).toBe(true));
+  expect(runnerLink.keyStatus()).toBeUndefined();
+  expect(runnerLink.classifierKey()).toBe("saved");
+  expect(runnerLink.classifierKeyGeneration()).toBe(2);
+  expect(runner.setTeams).toHaveBeenLastCalledWith([team]);
+  runnerLink.setClassifierKey("refused", 2);
+  await vi.waitFor(() =>
+    expect(setClassifierKey).toHaveBeenCalledWith("refused", 2),
+  );
+  const ada = agentOf(member("a".repeat(64), "Ada"));
+  await expect(
+    runnerLink.createAgent(ada, { type: "echo", name: "Bo" }),
+  ).resolves.toEqual({ requestId: "made", saved: false });
+  expect(asks.createAgent).toHaveBeenCalledWith(ada, {
+    type: "echo",
+    name: "Bo",
+  });
+  await expect(
+    runnerLink.updateAgent(ada, { agent: "Bo", name: "Cy" }),
+  ).resolves.toEqual({ requestId: "changed", saved: false });
+  await expect(runnerLink.templates(ada)).resolves.toEqual([
+    { name: "Team", canvas: "", agents: [] },
+  ]);
+  await manager.resume([ada.key]);
+  expect(runner.resumeInterrupted).toHaveBeenCalledWith([ada.key]);
+  await manager.dismiss([ada.key]);
+  expect(runner.dismissInterrupted).toHaveBeenCalledWith([ada.key]);
 });

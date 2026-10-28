@@ -16,6 +16,16 @@ import type {
   SessionState,
 } from "./service";
 import type { RuntimeLink } from "./exposed";
+import type { ClassifierKey } from "./attention-objects";
+import type { RunnerManager } from "./agents-runner";
+import type { Team } from "./store";
+
+/** What the Runner asks of the Manager for an agent: requests the owner
+ * approves, and the owner's channel templates. */
+type ManagerAsks = Pick<
+  RunnerManager,
+  "createAgent" | "updateAgent" | "templates"
+>;
 
 type WorkKey = Pick<LocalWork, "scope" | "agent" | "messageId">;
 
@@ -87,6 +97,17 @@ type Members = Readonly<{
   loaded: boolean;
   identities: readonly Member[];
   viewer: string | null;
+  /** The owner's teams, which the Runner tells each member of. */
+  teams: readonly Team[];
+  classifier: ManagerClassifier;
+}>;
+/** What the Manager knows of the saved classifier key: what it is, its
+ * generation (which changes each time the owner saves or removes it), and
+ * whether its first read is still under way. */
+export type ManagerClassifier = Readonly<{
+  key: ClassifierKey;
+  generation: number;
+  checking: boolean;
 }>;
 /** What the Runner decided from the memberships it was last sent, which
  * were `revision` of the Manager page `from`: the agents running here, the
@@ -270,6 +291,9 @@ export function runnerSide(
     | "retypes"
     | "types"
     | "subscribeTypes"
+    | "setTeams"
+    | "resumeInterrupted"
+    | "dismissInterrupted"
   > &
     Readonly<{ records: Pick<AgentsRunner["records"], "all"> }>,
 ) {
@@ -412,13 +436,32 @@ export function runnerSide(
         await runner.retype(key, type, config);
         return null;
       },
+      "agents.resume": (keys) => {
+        runner.resumeInterrupted(keys as readonly AgentKey[]);
+        return null;
+      },
+      "agents.dismiss": (keys) => {
+        runner.dismissInterrupted(keys as readonly AgentKey[]);
+        return null;
+      },
     },
   });
+  // The key's status is known once the Manager says its first read ended.
+  let classifier: ManagerClassifier | undefined;
+  const known = new Set<() => void>();
+  const ask = async (command: string, args: unknown) =>
+    (await side.call(command, args as Json)) as unknown;
   side.watch("manager.members", null, () => {
     const members = side.read("manager.members") as unknown as
       | Members
       | undefined;
     if (!members) return;
+    runner.setTeams(members.teams);
+    classifier = members.classifier;
+    if (!classifier.checking) {
+      for (const resolve of [...known]) resolve();
+      known.clear();
+    }
     try {
       runner.members(
         members.identities,
@@ -434,7 +477,39 @@ export function runnerSide(
     revision = members.revision;
     for (const listener of [...decided]) listener();
   });
-  return side;
+  const asks: ManagerAsks = {
+    createAgent: async (agent, input) =>
+      (await ask("manager.createAgent", { agent, input })) as Awaited<
+        ReturnType<ManagerAsks["createAgent"]>
+      >,
+    updateAgent: async (agent, input) =>
+      (await ask("manager.updateAgent", { agent, input })) as Awaited<
+        ReturnType<ManagerAsks["updateAgent"]>
+      >,
+    templates: async (agent) =>
+      (await ask("manager.templates", agent)) as Awaited<
+        ReturnType<ManagerAsks["templates"]>
+      >,
+  };
+  return Object.assign(side, {
+    ...asks,
+    /** Settles once the saved key's status is known. */
+    keyStatus: () =>
+      classifier && !classifier.checking
+        ? undefined
+        : new Promise<void>((resolve) => known.add(resolve)),
+    classifierKey: (): ClassifierKey => classifier?.key ?? "checking",
+    classifierKeyGeneration: () => classifier?.generation ?? 0,
+    /** Tells the Manager what a classifier call that started under
+     * `generation` found out about the key. */
+    setClassifierKey(key: ClassifierKey, generation: number) {
+      side
+        .call("manager.classifierKey", { key, generation })
+        .catch((error) =>
+          console.warn("The Manager was not told of the key", error),
+        );
+    },
+  });
 }
 
 /** The Manager's side: it sends the Runner the viewer's memberships, and
@@ -454,7 +529,11 @@ export function managerSide(
     retyped(types: Readonly<Record<string, string>>): void;
     /** What the Runner decided, or a record, changed. */
     changed(): void;
+    /** What a classifier call that started under `generation` found out
+     * about the saved key. */
+    setClassifierKey(key: ClassifierKey, generation: number): void;
   }> &
+    ManagerAsks &
     Shared,
 ) {
   const { members, changed } = host;
@@ -507,6 +586,30 @@ export function managerSide(
       "plugin.topic": (args) => sharedTopic(host, args),
     },
     commands: {
+      "manager.createAgent": async (args) => {
+        const { agent, input } = args as unknown as Readonly<{
+          agent: Agent;
+          input: Parameters<ManagerAsks["createAgent"]>[1];
+        }>;
+        return (await host.createAgent(agent, input)) as unknown as Json;
+      },
+      "manager.updateAgent": async (args) => {
+        const { agent, input } = args as unknown as Readonly<{
+          agent: Agent;
+          input: Parameters<ManagerAsks["updateAgent"]>[1];
+        }>;
+        return (await host.updateAgent(agent, input)) as unknown as Json;
+      },
+      "manager.templates": async (agent) =>
+        (await host.templates(agent as unknown as Agent)) as unknown as Json,
+      "manager.classifierKey": (args) => {
+        const { key, generation } = args as unknown as Readonly<{
+          key: ClassifierKey;
+          generation: number;
+        }>;
+        host.setClassifierKey(key, generation);
+        return null;
+      },
       "plugin.call": async (args) => {
         const {
           plugin,
@@ -614,6 +717,14 @@ export function managerSide(
     return record;
   };
   return {
+    /** Gives each of `keys` again the turns it was working on. */
+    async resume(keys: readonly AgentKey[]) {
+      await side.call("agents.resume", keys as unknown as Json);
+    },
+    /** Forgets the turns the app left `keys` working on. */
+    async dismiss(keys: readonly AgentKey[]) {
+      await side.call("agents.dismiss", keys as unknown as Json);
+    },
     /** The memberships may have changed: sends them if they did. */
     changed() {
       const json = JSON.stringify(members());

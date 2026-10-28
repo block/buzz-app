@@ -37,23 +37,26 @@ import type {
 import { soloChat } from "./solo-chat";
 import { nameSoloChat } from "./solo-chat-name";
 import type { AgentStore } from "./state";
-import type { AgentRecord } from "./store";
+import type { AgentRecord, Team } from "./store";
+import { teamPrompt } from "./team-prompt";
 import { relayPartition } from "../relay/partition";
 import type { RelayEvent } from "../relay/events";
 import type { RelayData } from "../relay/service";
 import { threadReference } from "../relay/thread-reference";
 import type { RelaySession } from "../relay/session";
 import type { Decisions } from "../decisions/service";
+import type {
+  ClassifierAvailability,
+  ClassifierKey,
+} from "./attention-objects";
 import { channelTabs } from "../../bundled/channels/useChannelTabState";
 
 /** What the Runner asks of the Manager. */
 export type RunnerManager = Pick<
   RunnerHost,
-  | "team"
   | "createAgent"
   | "updateAgent"
   | "templates"
-  | "classifier"
   | "keyStatus"
   | "classifierKey"
   | "classifierKeyGeneration"
@@ -70,6 +73,20 @@ export type RunnerManager = Pick<
     /** Which artifact types an agent has synced. */
     configBinding?: ((agent: Agent) => ConfigBinding) | undefined;
   }>;
+
+/** On the `typesafe` backend, agents are told a classifier can run only
+ * while a key is known to be saved. A key the service refused still runs,
+ * and each event reports why it passed unchecked. */
+export function classifierAvailability(
+  decisions: Decisions | undefined,
+  classifierKey: ClassifierKey,
+): ClassifierAvailability {
+  if (!decisions) return "unavailable";
+  if (decisions.backend() !== "typesafe") return "available";
+  return classifierKey === "saved" || classifierKey === "refused"
+    ? "available"
+    : "unavailable";
+}
 
 export class AgentsRunner {
   /** Each membership's settings as saved, by key, and as the owner and the
@@ -105,6 +122,8 @@ export class AgentsRunner {
   private readonly listeners = new Set<() => void>();
   private readonly recordListeners = new Set<() => void>();
   private readonly typeListeners = new Set<() => void>();
+  /** The owner's teams, as the Manager last sent them. */
+  private teams: readonly Team[] = [];
 
   constructor(
     storage: AgentStore,
@@ -237,7 +256,21 @@ export class AgentsRunner {
           ...(instructions ? { instructions } : {}),
         });
       },
-      team: (key) => manager.team(key),
+      team: (key) => {
+        const member = this.liveMember(key);
+        const origin = member && originOf(member.relay);
+        // Only teammates in the same community, where it can reach them.
+        return member
+          ? teamPrompt(
+              this.teams,
+              this.identities.filter(
+                (identity) =>
+                  !identity.deleted && originOf(identity.relay) === origin,
+              ),
+              member.pubkey,
+            )
+          : "";
+      },
       agentTypes: () =>
         manager
           .types()
@@ -252,7 +285,8 @@ export class AgentsRunner {
         const session = this.connections.binding(agent)?.session;
         return session && channelTabs(session);
       },
-      classifier: () => manager.classifier(),
+      classifier: () =>
+        classifierAvailability(decisions, manager.classifierKey()),
       decisions: () => decisions,
       keyStatus: () => manager.keyStatus(),
       classifierKey: () => manager.classifierKey(),
@@ -375,6 +409,10 @@ export class AgentsRunner {
   resumeInterrupted(keys: readonly AgentKey[]) {
     this.runners.resumeInterrupted(keys);
     this.update();
+  }
+  /** The owner's teams changed. */
+  setTeams(teams: readonly Team[]) {
+    this.teams = teams;
   }
   /** Forgets the turns the app left `keys` working on last time. */
   dismissInterrupted(keys: readonly AgentKey[]) {

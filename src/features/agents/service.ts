@@ -17,7 +17,6 @@ import { TIMEOUT_LIMIT_MS } from "./runner";
 // can show it: as here, hosted, or on another device.
 import { agentStorage, type AgentStore } from "./state";
 import { Service, type Context } from "@deepseek-ai/cordis";
-import { npubEncode } from "nostr-tools/nip19";
 import { bytesToHex } from "nostr-tools/utils";
 import type { ComponentType, ReactNode } from "react";
 import type { DefinedIcon } from "../../shared/design-system/icons";
@@ -84,8 +83,13 @@ import {
 } from "./native";
 import { agentKey, pubkeyOf, type AgentKey } from "./membership";
 import { EMPTY, type Member } from "./records";
-import { AgentsRunner, type RunnerStatus } from "./agents-runner";
+import {
+  AgentsRunner,
+  classifierAvailability,
+  type RunnerStatus,
+} from "./agents-runner";
 import { RunnerPlugins } from "./runner-plugins";
+export { teamPrompt } from "./team-prompt";
 import { managerSide, routed, runnerSide, type TypeInfo } from "./runner-link";
 import type { RuntimeLink } from "./exposed";
 import type { Served } from "./link";
@@ -337,11 +341,13 @@ export type AgentHandle = Readonly<{
   remember(slug: string, body: string, after: number): Promise<RelayEvent>;
   /** The owner's channel templates on this device, each with the agents it
    * adds that are the owner's agents in this agent's community. */
-  templates(): readonly Readonly<{
-    name: string;
-    canvas: string;
-    agents: readonly string[];
-  }>[];
+  templates(): Promise<
+    readonly Readonly<{
+      name: string;
+      canvas: string;
+      agents: readonly string[];
+    }>[]
+  >;
   /** The owner's thread tabs on this device in the agent's community;
    * undefined while it is not connected. */
   tabs(): ReturnType<typeof channelTabs> | undefined;
@@ -1113,42 +1119,6 @@ function defaults(pubkey: string, type: RegisteredAgentType) {
 }
 const message = (error: unknown) =>
   String(error instanceof Error ? error.message : error);
-/** The team sections for agent `self`: each team it is on, its members that
- * still exist by name and npub, and the team's instructions. */
-export function teamPrompt(
-  teams: readonly Team[],
-  agents: readonly Pick<AgentIdentity, "pubkey" | "name">[],
-  self: string,
-) {
-  const names = new Map(agents.map((agent) => [agent.pubkey, agent.name]));
-  return teams
-    .filter((team) => team.members.includes(self))
-    .map((team) => {
-      const roster = team.members.flatMap((pubkey) => {
-        const name = names.get(pubkey);
-        return name === undefined
-          ? []
-          : [
-              `- ${name} (${npubEncode(pubkey)})${pubkey === self ? ", you" : ""}`,
-            ];
-      });
-      return [
-        "<team>",
-        `You are on the team ${JSON.stringify(team.name)}. Its members, you included:`,
-        ...roster,
-        "Mention a teammate by name, with their npub, to reach them.",
-        ...(team.instructions.trim()
-          ? [
-              "<team-instructions>",
-              team.instructions.trim(),
-              "</team-instructions>",
-            ]
-          : []),
-        "</team>",
-      ].join("\n");
-    })
-    .join("\n\n");
-}
 export { fromOwner } from "./owner-attestation";
 
 /** What Agents needs of the communities: the viewer, the selected one, and
@@ -1231,13 +1201,12 @@ const wssOf = (origin: string) =>
   relayOrigin(origin).replace(/^https:/, "wss:");
 
 export class AgentsService extends Service implements Agents {
-  /** Settles once the saved TypeSafe key's status is known; until then an
-   * event classified on that backend waits rather than pass unchecked. */
-  private keyStatus: Promise<void> | undefined;
   /** Goes up when a save or remove of the key starts and when it ends, so
    * that what a read or classifier call found under an older key is not
    * shown over the newer one. */
   private keyGeneration = 0;
+  /** Whether the saved key's first read ended, or there is none to read. */
+  private keyChecked = false;
   private readonly contributions;
   private readonly presentations;
   private readonly shares;
@@ -1375,21 +1344,53 @@ export class AgentsService extends Service implements Agents {
       types: () => this.contributions.snapshot(),
       defaults,
       configBinding: this.configBinding,
-      team: (key) => {
-        const member = this.liveMember(key);
-        const origin = member && originOf(member.relay);
-        // Only teammates in the same community, where it can reach them.
-        return member
-          ? teamPrompt(
-              this.teamList,
-              this.identities.filter(
-                (identity) =>
-                  !identity.deleted && originOf(identity.relay) === origin,
-              ),
-              member.pubkey,
-            )
-          : "";
+      // What the Runner asks of the Manager crosses the link.
+      createAgent: (agent, input) => this.runnerLink.createAgent(agent, input),
+      updateAgent: (agent, input) => this.runnerLink.updateAgent(agent, input),
+      templates: (agent) => this.runnerLink.templates(agent),
+      keyStatus: () => this.runnerLink.keyStatus(),
+      classifierKey: () => this.runnerLink.classifierKey(),
+      classifierKeyGeneration: () => this.runnerLink.classifierKeyGeneration(),
+      setClassifierKey: (key, generation) =>
+        this.runnerLink.setClassifierKey(key, generation),
+    });
+    this.plugins = new RunnerPlugins(ctx, this.runner);
+    // The Runner decides from the memberships the Manager sends over the
+    // link, and the screens show what it sends back. Only JSON crosses, as it
+    // will between pages.
+    const channel = new MessageChannel();
+    this.runnerLink = runnerSide(channel.port1, this.runner);
+    this.decided = managerSide(channel.port2, {
+      members: () => ({
+        loaded: this.loaded,
+        identities: this.identities,
+        viewer: this.communities.snapshot().viewer ?? null,
+        teams: this.teamList,
+        classifier: {
+          key: this.state.classifierKey,
+          generation: this.keyGeneration,
+          checking: !this.keyChecked,
+        },
+      }),
+      defaults: ({ pubkey, type }) => {
+        const kind = this.types().find((entry) => entry.key === type);
+        if (kind)
+          try {
+            return defaults(pubkey, kind);
+          } catch (error) {
+            console.warn(`Agent type ${type} has invalid defaults`, error);
+          }
       },
+      // Shown with its new type once the Runner saved its config.
+      retyped: (types) => {
+        this.identities = this.identities.map((identity) => {
+          const type = types[identity.pubkey];
+          return type && type !== identity.type
+            ? { ...identity, type }
+            : identity;
+        });
+      },
+      changed: () => this.update(),
       createAgent: async (agent, input) => {
         const binding = this.bindingOf(agent);
         if (!binding || !this.liveMember(agent.key))
@@ -1466,7 +1467,7 @@ export class AgentsService extends Service implements Agents {
         this.notify();
         return { requestId: id, saved: false };
       },
-      templates: (agent) => {
+      templates: async (agent) => {
         // The agents Agents shows for this community, as the create dialog
         // offers a template's.
         const origin = originOf(agent.relay);
@@ -1484,45 +1485,9 @@ export class AgentsService extends Service implements Agents {
           agents: templateAgents(template, this.teamList, here),
         }));
       },
-      classifier: () => this.classifier(),
-      keyStatus: () => this.keyStatus,
-      classifierKey: () => this.state.classifierKey,
-      classifierKeyGeneration: () => this.keyGeneration,
       setClassifierKey: (key, generation) => {
         if (generation === this.keyGeneration) this.setKey(key);
       },
-    });
-    this.plugins = new RunnerPlugins(ctx, this.runner);
-    // The Runner decides from the memberships the Manager sends over the
-    // link, and the screens show what it sends back. Only JSON crosses, as it
-    // will between pages.
-    const channel = new MessageChannel();
-    this.runnerLink = runnerSide(channel.port1, this.runner);
-    this.decided = managerSide(channel.port2, {
-      members: () => ({
-        loaded: this.loaded,
-        identities: this.identities,
-        viewer: this.communities.snapshot().viewer ?? null,
-      }),
-      defaults: ({ pubkey, type }) => {
-        const kind = this.types().find((entry) => entry.key === type);
-        if (kind)
-          try {
-            return defaults(pubkey, kind);
-          } catch (error) {
-            console.warn(`Agent type ${type} has invalid defaults`, error);
-          }
-      },
-      // Shown with its new type once the Runner saved its config.
-      retyped: (types) => {
-        this.identities = this.identities.map((identity) => {
-          const type = types[identity.pubkey];
-          return type && type !== identity.type
-            ? { ...identity, type }
-            : identity;
-        });
-      },
-      changed: () => this.update(),
       shared: (plugin) =>
         this.shares.snapshot().find((entry) => entry.pluginId === plugin)
           ?.served,
@@ -1580,13 +1545,19 @@ export class AgentsService extends Service implements Agents {
       const found = (key: ClassifierKey) => {
         if (generation === this.keyGeneration) this.setKey(key);
       };
-      this.keyStatus = this.jev
+      const checked = () => {
+        this.keyChecked = true;
+        this.decided.changed();
+      };
+      if (!this.jev) checked();
+      void this.jev
         ?.status()
         .then((configured) => found(configured ? "saved" : "missing"))
         .catch((error) => {
           console.warn("The classifier key could not be read", error);
           found("unreadable");
-        });
+        })
+        .finally(checked);
       // Wakes each runner, which starts any timer that is due.
       const tick = setInterval(() => {
         this.runner.runners.tick();
@@ -1751,10 +1722,14 @@ export class AgentsService extends Service implements Agents {
     };
   };
   resumeInterrupted = () => {
-    this.runner.resumeInterrupted(this.interruptedKeys());
+    this.decided
+      .resume(this.interruptedKeys())
+      .catch((error) => console.warn("Turns could not be resumed", error));
   };
   dismissInterrupted = () => {
-    this.runner.dismissInterrupted(this.interruptedKeys());
+    this.decided
+      .dismiss(this.interruptedKeys())
+      .catch((error) => console.warn("Turns could not be dismissed", error));
   };
   /** The agents the notice names, and only they, are resumed or forgotten. */
   private interruptedKeys() {
@@ -1960,33 +1935,33 @@ export class AgentsService extends Service implements Agents {
     if (!jev) throw new Error("The classifier runs only in the desktop app");
     await this.changeKey(() => jev.setKey(key));
     this.setKey("saved");
+    // Settles once the Runner has the new key's generation.
+    await this.decided.decided();
   }
   async clearClassifierKey() {
     const jev = this.jev;
     if (!jev) throw new Error("The classifier runs only in the desktop app");
     await this.changeKey(() => jev.clearKey());
     this.setKey("missing");
+    await this.decided.decided();
   }
   /** Saves or removes the key. A read or classifier call that started before
    * it ends may have used the old key, so its finding is ignored. */
   private async changeKey(change: () => Promise<void>) {
     this.keyGeneration++;
+    this.decided.changed();
     try {
       await change();
     } finally {
       this.keyGeneration++;
+      this.decided.changed();
     }
   }
   /** On the `typesafe` backend, agents are told a classifier can run only
    * while a key is known to be saved. A key the service refused still runs,
    * and each event reports why it passed unchecked. */
   private availability(classifierKey: ClassifierKey): ClassifierAvailability {
-    const decisions = this.decisions;
-    if (!decisions) return "unavailable";
-    if (decisions.backend() !== "typesafe") return "available";
-    return classifierKey === "saved" || classifierKey === "refused"
-      ? "available"
-      : "unavailable";
+    return classifierAvailability(this.decisions, classifierKey);
   }
   private setKey(classifierKey: ClassifierKey) {
     const classifier = this.availability(classifierKey);
@@ -1996,6 +1971,7 @@ export class AgentsService extends Service implements Agents {
     )
       return;
     this.state = Object.freeze({ ...this.state, classifier, classifierKey });
+    this.decided.changed();
     this.notify();
   }
   /** Has the provider make the agent, then sets it up. From here on it is
@@ -2890,14 +2866,21 @@ export class AgentsService extends Service implements Agents {
   private writeTeams(teams: readonly Team[]) {
     const saving = writeTeams(this.storage, teams);
     const shown = this.showTeams(teams);
-    return saving.catch((error: unknown) => {
-      if (this.teamList === shown) this.showTeams(readTeams(this.storage));
-      throw error;
-    });
+    return (
+      saving
+        .catch((error: unknown) => {
+          if (this.teamList === shown) this.showTeams(readTeams(this.storage));
+          throw error;
+        })
+        // Settles once the Runner has them, so the next turn uses them.
+        .then(() => this.decided.decided())
+    );
   }
   private showTeams(teams: readonly Team[]) {
     this.teamList = Object.freeze(teams);
     this.state = Object.freeze({ ...this.state, teams: this.teamList });
+    // The Runner gets them with the memberships.
+    this.decided.changed();
     this.notify();
     return this.teamList;
   }

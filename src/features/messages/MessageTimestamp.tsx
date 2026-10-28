@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { memo, type ReactNode } from "react";
 import { Tooltip } from "../../shared/design-system/ui/Tooltip";
 import {
   formatDayGroupLabel,
@@ -55,7 +55,11 @@ export function DayDivider({ createdAt }: { createdAt: number }) {
 }
 
 /** The byline includes a day outside today because its divider can scroll away. */
-export function MessageTimestamp({ createdAt }: { createdAt: number }) {
+export const MessageTimestamp = memo(function MessageTimestamp({
+  createdAt,
+}: {
+  createdAt: number;
+}) {
   useLocalDay();
   const date = new Date(createdAt * 1000);
   const fullDate = formatFullTimestamp(createdAt);
@@ -70,7 +74,7 @@ export function MessageTimestamp({ createdAt }: { createdAt: number }) {
       </time>
     </Tooltip>
   );
-}
+});
 
 /** Grouped messages keep their date for assistive technology without an inline clock. */
 export function MessageTimestampHint({

@@ -1,6 +1,7 @@
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import {
   type CSSProperties,
+  memo,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -380,7 +381,7 @@ function ReactionEmoji({
 }
 
 /** Always mounted under the message so failed add/remove operations stay recoverable. */
-export function MessageReactions(
+export const MessageReactions = memo(function MessageReactions(
   props: Props & {
     onFocusedRemoval?: () => void;
     profiles?: ReadonlyMap<string, Profile>;
@@ -545,4 +546,4 @@ export function MessageReactions(
       <ReactionDelivery session={session} messageId={row.id} />
     </div>
   );
-}
+});

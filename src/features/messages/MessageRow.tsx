@@ -360,6 +360,10 @@ function MessageRowContent({
   );
   const rowRef = useRef<HTMLDivElement>(null);
   const menuTrigger = useRef<HTMLButtonElement>(null);
+  const focusMenuTrigger = useCallback(
+    () => menuTrigger.current?.focus({ preventScroll: true }),
+    [],
+  );
   const active = useConversationPresentation();
   const [reporting, setReporting] = useState<"open" | "sent">();
   const registeredActions = useSyncExternalStore(
@@ -802,9 +806,7 @@ function MessageRowContent({
   const reactionContent =
     session && scope && extensions ? (
       <MessageReactions
-        onFocusedRemoval={() =>
-          menuTrigger.current?.focus({ preventScroll: true })
-        }
+        onFocusedRemoval={focusMenuTrigger}
         row={row}
         session={session}
         scope={scope}
@@ -1249,9 +1251,7 @@ function MessageRowContent({
               channelId={row.channelId}
               threadRootId={row.threadRootId}
               message={row}
-              onFocusedRemoval={() =>
-                menuTrigger.current?.focus({ preventScroll: true })
-              }
+              onFocusedRemoval={focusMenuTrigger}
               openThread={
                 summaryThread
                   ? () => {

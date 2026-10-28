@@ -76,7 +76,7 @@
   --magenta-12-light: #42242f;
   --magenta-contrast-light: #ffffff;
   --magenta-ink-light: #ffffff;
-  --magenta-pressed-light: #d12c7f;
+  --magenta-pressed-light: #c20272;
   --magenta-link-light: #84034b;
   --magenta-link-hover-light: #ffeef3;
   --magenta-1-dark: #120e10;
@@ -93,7 +93,7 @@
   --magenta-12-dark: #feeaf1;
   --magenta-contrast-dark: #ffffff;
   --magenta-ink-dark: #ffffff;
-  --magenta-pressed-dark: #d12c7f;
+  --magenta-pressed-dark: #c20272;
   --magenta-link-dark: #fdb6d0;
   --magenta-link-hover-dark: #2b1f23;
   --iris-1-light: #fbfcff;
@@ -110,7 +110,7 @@
   --iris-12-light: #282b48;
   --iris-contrast-light: #ffffff;
   --iris-ink-light: #ffffff;
-  --iris-pressed-light: #5648ea;
+  --iris-pressed-light: #4f3bd7;
   --iris-link-light: #3c04c3;
   --iris-link-hover-light: #f0f2ff;
   --iris-1-dark: #0f0f13;
@@ -127,7 +127,7 @@
   --iris-12-dark: #edf0fe;
   --iris-contrast-dark: #ffffff;
   --iris-ink-dark: #ffffff;
-  --iris-pressed-dark: #5648ea;
+  --iris-pressed-dark: #4f3bd7;
   --iris-link-dark: #c2cafd;
   --iris-link-hover-dark: #20212e;
   --cobalt-1-light: #fafcff;
@@ -144,7 +144,7 @@
   --cobalt-12-light: #1e2f45;
   --cobalt-contrast-light: #ffffff;
   --cobalt-ink-light: #ffffff;
-  --cobalt-pressed-light: #2271cf;
+  --cobalt-pressed-light: #0161cc;
   --cobalt-link-light: #02468e;
   --cobalt-link-hover-light: #ecf4ff;
   --cobalt-1-dark: #0e1012;
@@ -161,7 +161,7 @@
   --cobalt-12-dark: #e8f2fe;
   --cobalt-contrast-dark: #ffffff;
   --cobalt-ink-dark: #ffffff;
-  --cobalt-pressed-dark: #2271cf;
+  --cobalt-pressed-dark: #0161cc;
   --cobalt-link-dark: #afd1fe;
   --cobalt-link-hover-dark: #1c232c;
   --bee-1-light: #fdfcf8;
@@ -173,12 +173,12 @@
   --bee-7-light: #ddcb98;
   --bee-8-light: #d0b979;
   --bee-9-light: #f5c518;
-  --bee-10-light: #f2bd0f;
+  --bee-10-light: #f0b70c;
   --bee-11-light: #584504;
   --bee-12-light: #362d13;
   --bee-contrast-light: #000000;
   --bee-ink-light: #000000;
-  --bee-pressed-light: #ffd763;
+  --bee-pressed-light: #eba80c;
   --bee-link-light: #594501;
   --bee-link-hover-light: #faf3df;
   --bee-1-dark: #100f0c;
@@ -190,12 +190,12 @@
   --bee-7-dark: #5c5234;
   --bee-8-dark: #766842;
   --bee-9-dark: #f5c518;
-  --bee-10-dark: #f2bd0f;
+  --bee-10-dark: #f0b70c;
   --bee-11-dark: #e0cd97;
   --bee-12-dark: #f6f0df;
   --bee-contrast-dark: #000000;
   --bee-ink-dark: #000000;
-  --bee-pressed-dark: #ffd763;
+  --bee-pressed-dark: #eba80c;
   --bee-link-dark: #f2c94e;
   --bee-link-hover-dark: #252118;
   --citrus-1-light: #fcfdf7;
@@ -212,7 +212,7 @@
   --citrus-12-light: #2b3110;
   --citrus-contrast-light: #000000;
   --citrus-ink-light: #000000;
-  --citrus-pressed-light: #bcd83a;
+  --citrus-pressed-light: #97bf13;
   --citrus-link-light: #485400;
   --citrus-link-hover-light: #f1f6de;
   --citrus-1-dark: #0f100c;
@@ -229,7 +229,7 @@
   --citrus-12-dark: #edf7d2;
   --citrus-contrast-dark: #000000;
   --citrus-ink-dark: #000000;
-  --citrus-pressed-dark: #bcd83a;
+  --citrus-pressed-dark: #97bf13;
   --citrus-link-dark: #cbe648;
   --citrus-link-hover-dark: #202413;
   --mono-1-light: #fcfcfc;
@@ -246,7 +246,7 @@
   --mono-12-light: #2e2e2e;
   --mono-contrast-light: #ffffff;
   --mono-ink-light: #ffffff;
-  --mono-pressed-light: #0f0f0f;
+  --mono-pressed-light: #4d4d4d;
   --mono-link-light: #484848;
   --mono-link-hover-light: #f3f3f3;
   --mono-1-dark: #0f0f0f;
@@ -263,7 +263,7 @@
   --mono-12-dark: #f0f0f0;
   --mono-contrast-dark: #000000;
   --mono-ink-dark: #000000;
-  --mono-pressed-dark: #f7f7f7;
+  --mono-pressed-dark: #c6c6c6;
   --mono-link-dark: #cecece;
   --mono-link-hover-dark: #222222;
   --flame-1-light: #fefcfc;

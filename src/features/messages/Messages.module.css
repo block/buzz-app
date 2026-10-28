@@ -252,12 +252,6 @@
 .reactions[data-populated]:has(> .inlineReactionTool:not(:empty):last-child) {
   padding-inline-end: 0;
 }
-/* Only reactions inside your bubble take its ink and overlay. Reactions that
-   sit outside it, under an emoji-only message, stay on the panel's. */
-.messageBubble[data-own] {
-  --reaction-surface: var(--affordance-reaction-own);
-  --reaction-ink: var(--text-message-own);
-}
 .reactions:empty {
   margin-top: 0;
 }
@@ -2866,6 +2860,10 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   --mention-fill: var(--affordance-mention-own);
   --mention-hover: var(--affordance-mention-own-hover);
   --mention-text: var(--text-mention-own);
+  /* Only reactions inside your bubble take its ink and overlay. Reactions
+     that sit outside it, under an emoji-only message, stay on the panel's. */
+  --reaction-surface: var(--affordance-reaction-own);
+  --reaction-ink: var(--text-message-own);
 }
 /* Neutral content and unboxed renderers keep selection paired with their surface. */
 .messageBubble[data-emoji-only],

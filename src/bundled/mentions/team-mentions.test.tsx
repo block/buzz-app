@@ -32,6 +32,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
   vi.restoreAllMocks();
@@ -574,5 +575,4 @@ it("an @ keystroke reuses the name index across draft and team rerenders", async
   expect(starts).toHaveBeenCalled();
   view.unmount();
   h.library.dispose();
-  vi.useRealTimers();
 });

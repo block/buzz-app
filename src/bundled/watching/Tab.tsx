@@ -8,7 +8,6 @@ import {
   LockIcon,
   HashIcon,
   ClockIcon,
-  GitPullRequestIcon,
   TerminalWindowIcon,
   CodeIcon,
   ArrowSquareOutIcon,
@@ -273,36 +272,28 @@ export function createTab({
         h("h4", { className: "text-label-sm text-subtle" }, label),
         content,
       );
+    const shown =
+      watch.type === "source"
+        ? agents.presentWatch(watch, label.text)
+        : undefined;
     const type =
       watch.type === "event"
         ? "Messages"
         : watch.type === "timer"
           ? "Schedule"
-          : watch.provider === "attention/github-pr"
-            ? "GitHub PR"
-            : watch.provider === "attention/command"
-              ? "Command"
-              : "Function";
+          : watch.provider === "attention/command"
+            ? "Command"
+            : (shown?.type ?? "Function");
     const TypeIcon =
-      type === "Messages"
+      watch.type === "event"
         ? ChatCircleIcon
-        : type === "Schedule"
+        : watch.type === "timer"
           ? ClockIcon
-          : type === "GitHub PR"
-            ? GitPullRequestIcon
-            : type === "Command"
-              ? TerminalWindowIcon
-              : CodeIcon;
-    const pr =
-      watch.type === "source" &&
-      watch.provider === "attention/github-pr" &&
-      typeof watch.config.pr === "string"
-        ? /^https:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)$/.exec(
-            watch.config.pr,
-          )
-        : null;
-    const target = pr
-      ? `${pr[1]?.split("/")[1]}#${pr[2]}`
+          : watch.provider === "attention/command"
+            ? TerminalWindowIcon
+            : (shown?.icon ?? CodeIcon);
+    const target = shown?.target
+      ? shown.target
       : watch.type === "event"
         ? watch.channels === "all"
           ? "All joined channels"
@@ -402,11 +393,11 @@ export function createTab({
                   )
                 : target,
             ),
-          pr &&
+          shown?.subtitle &&
             h(
               "span",
               { className: "attention-subtitle text-body-sm text-subtle" },
-              label.text.replace(/^(?:PR\s+\d+:?\s*|[^ ]*#\d+\s*)/i, ""),
+              shown.subtitle,
             ),
         ),
         h(
@@ -427,7 +418,7 @@ export function createTab({
         h(
           "div",
           { className: "attention-actions" },
-          pr &&
+          shown?.link &&
             h(IconButton, {
               size: "sm",
               variant: "ghost",
@@ -436,18 +427,14 @@ export function createTab({
               render: (props) => (
                 <a
                   {...props}
-                  href={
-                    watch.type === "source"
-                      ? String(watch.config.pr)
-                      : undefined
-                  }
+                  href={shown.link?.href}
                   target="_blank"
                   rel="noreferrer"
                 />
               ),
               icon: h(ArrowSquareOutIcon, { size: 16, "aria-hidden": true }),
               "aria-label": `Open ${target}`,
-              title: "Open on GitHub",
+              title: shown.link.title,
             }),
           h(Switch, {
             label: `Watch ${label.text}`,
@@ -512,8 +499,9 @@ export function createTab({
                   ),
                 ),
               )
-            : !pr &&
-                h(
+            : shown?.details
+              ? h(shown.details)
+              : h(
                   "p",
                   { className: "text-body-sm text-secondary" },
                   watch.type === "source"
@@ -522,7 +510,7 @@ export function createTab({
                       ? `New messages in ${watch.channels === "all" ? "all joined channels" : watch.channels.map(name).join(", ")}${watch.classifier ? ", filtered for relevance" : ""}.`
                       : `${description.title}. ${watch.prompt}`,
                 ),
-          !pr &&
+          !shown?.details &&
             label.url &&
             h(
               "a",

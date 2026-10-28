@@ -112,6 +112,7 @@ it("shows one agent's watches, reacts to changes and surfaces save errors", asyn
   const ctx = {
     react: React,
     agents: {
+      presentWatch: () => undefined,
       snapshot: () => snapshot,
       subscribe: (listener: () => void) => {
         changed = listener;
@@ -271,6 +272,7 @@ it.each(["source", "event", "timer"] as const)(
     const ctx = {
       react: React,
       agents: {
+        presentWatch: () => undefined,
         snapshot: () => snapshot,
         subscribe: (listener: () => void) => {
           changed = listener;
@@ -399,7 +401,12 @@ it("keeps subscription controls disabled and the tab open while saving, and pres
   const save = vi.fn(() => held);
   const ctx = {
     react: React,
-    agents: { snapshot: () => snapshot, subscribe: () => () => {}, save },
+    agents: {
+      presentWatch: () => undefined,
+      snapshot: () => snapshot,
+      subscribe: () => () => {},
+      save,
+    },
     relay: { snapshot: () => disconnected, subscribe: () => () => {} },
   } as unknown as Context;
   const report = vi.fn();
@@ -737,6 +744,19 @@ it.each([false, true])(
     const ctx = {
       react: React,
       agents: {
+        presentWatch: (watch: { provider: string }) =>
+          watch.provider === "attention/github-pr"
+            ? {
+                type: "GitHub PR",
+                target: "buzz-app#1578",
+                subtitle: "Release checks",
+                link: {
+                  href: "https://github.com/block/buzz-app/pull/1578",
+                  title: "Open on GitHub",
+                },
+                details: () => React.createElement("p", null, "Who wakes it"),
+              }
+            : undefined,
         snapshot: () => snapshot,
         subscribe: (listener: () => void) => {
           changed = listener;
@@ -778,6 +798,7 @@ it.each([false, true])(
     );
     expect(screen.getByRole("heading", { name: "Recent events" })).toBeTruthy();
     expect(screen.getByText("CI completed: all checks passed")).toBeTruthy();
+    expect(screen.getByText("Who wakes it")).toBeTruthy();
     fireEvent.click(
       screen.getByRole("button", { name: "Details for Discussion" }),
     );
@@ -861,7 +882,12 @@ it("keeps overview and destination navigation in the selected community", async 
   const open = vi.fn(),
     save = vi.fn();
   const ctx = {
-    agents: { snapshot: () => snapshot, subscribe: () => () => {}, save },
+    agents: {
+      presentWatch: () => undefined,
+      snapshot: () => snapshot,
+      subscribe: () => () => {},
+      save,
+    },
     relay: {
       snapshot: () => connection,
       subscribe: (listener: () => void) => {

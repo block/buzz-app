@@ -1,6 +1,7 @@
 // GitHub detects changes; Attention owns subscriptions, cancellation and delivery.
 import type { Context } from "@deepseek-ai/cordis";
 import { callAttentionTool } from "../../buzz-mcp/attention";
+import type { AttentionSource } from "../../features/agents/attention-sources";
 import {
   FEEDBACK_READ,
   feedbackRequest,
@@ -86,7 +87,7 @@ const subscription = (watch: Watch) => ({
   ...(watch.root ? { root: watch.root } : {}),
 });
 
-export function watchPulls(ctx: Context) {
+export function watchPulls(ctx: Context, present?: AttentionSource["present"]) {
   localStorage.removeItem(RETIRED_STORAGE_KEY);
   const cursors = load();
   let disposed = false;
@@ -270,6 +271,7 @@ export function watchPulls(ctx: Context) {
     id: "github-pr",
     description: "Follow GitHub pull request feedback and CI",
     configExample: { pr: "https://github.com/OWNER/REPO/pull/NUMBER" },
+    ...(present && { present }),
     async run({ id, agent, watch: source, signal, emit }) {
       const pull =
         typeof source.config.pr === "string"

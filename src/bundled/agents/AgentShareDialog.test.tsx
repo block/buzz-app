@@ -8,7 +8,7 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, assert, expect, it, vi } from "vitest";
 import { readSnapshot } from "../../features/agents/agent-share";
 import { agentAvatars } from "../../features/agents/avatar-packs";
 import type { Agent, RegisteredAgentType } from "../../features/agents/service";
@@ -94,12 +94,22 @@ function community() {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
+    // As the outbox does: a receipt is let go once delivered, and removed
+    // by hand only once it has definitively failed.
     acknowledge: vi.fn(async (id: string) => {
       const at = journal.findIndex((item) => item.event.id === id);
-      if (at >= 0) journal.splice(at, 1);
+      const item = journal[at];
+      if (!item?.recovery) return;
+      if (item.delivery !== "accepted" && item.delivery !== "seen")
+        throw new Error("Confirm delivery before completing this message");
+      journal.splice(at, 1);
     }),
     dismiss: vi.fn(async (id: string) => {
       const at = journal.findIndex((item) => item.event.id === id);
+      if (journal[at]?.recovery && journal[at]?.delivery !== "failed")
+        throw new Error(
+          "Confirm this message in New message before removing it",
+        );
       if (at >= 0) journal.splice(at, 1);
     }),
   };
@@ -129,7 +139,9 @@ function community() {
       hasMore: false,
     })),
     open: vi.fn(async ([pubkey]: string[]) => `dm-${pubkey?.[0]}`),
-    delivered: vi.fn(async (_id: string, _channel: string) => {}),
+    delivered: vi.fn(
+      async (_id: string, _channel: string, _signal?: AbortSignal) => {},
+    ),
     delivery: vi.fn((_id: string) => "accepted"),
   };
   const attachments = {
@@ -170,7 +182,15 @@ function community() {
       viewer: owner,
       // Each test's community is its own.
       scope: `https://relay${++communities}.example ${owner}`,
-      directMessages,
+      directMessages: {
+        ...directMessages,
+        // Confirming follows the outbox, which records the delivery.
+        delivered: async (id: string, channel: string, signal: AbortSignal) => {
+          await directMessages.delivered(id, channel, signal);
+          const item = journal.find((entry) => entry.event.id === id);
+          if (item) item.delivery = "accepted";
+        },
+      },
       attachments,
       messages,
       channels: {
@@ -839,16 +859,21 @@ it("confirms an unconfirmed message after a reload rather than sending it again"
   expect(outbox.acknowledge).toHaveBeenCalledWith("sent-dm-b");
 });
 
-it("sends anew once an unconfirmed message is removed from the outbox", async () => {
+it("sends anew once a failed message is removed from the outbox", async () => {
   const user = userEvent.setup();
-  const { session, directMessages, messages, outbox } = community();
-  directMessages.delivered.mockRejectedValueOnce(new Error("Offline"));
+  const { session, directMessages, messages, outbox, journal } = community();
+  directMessages.delivered.mockRejectedValueOnce(new Error("Refused"));
   share(session);
   await user.click(await choice("Bea"));
   await user.click(screen.getByRole("button", { name: "Send" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Couldn’t send to Bea. Offline.",
+    "Couldn’t send to Bea. Refused.",
   );
+  // Undecided, it stays; refused for good, it can be removed.
+  await expect(outbox.dismiss("sent-dm-b")).rejects.toThrow();
+  const [sent] = journal;
+  assert.exists(sent);
+  sent.delivery = "failed";
   await outbox.dismiss("sent-dm-b");
   await user.click(screen.getByRole("button", { name: "Send" }));
   expect(await screen.findByText("Sent Ada to Bea.")).toBeInTheDocument();

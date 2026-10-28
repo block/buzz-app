@@ -400,6 +400,8 @@ const markdownComponents: Components = {
   img: (props) => useMessageComponents().img(props),
   span: (props) => useMessageComponents().span(props),
   pre: (props) => useMessageComponents().pre(props),
+  // Most tables fit; starting there spares each mount a write that would make
+  // the next table's measurement lay out the whole history again.
   table: ({ node: _node, ...props }) => (
     <table ref={observeTableOverflow} data-overflow="false" {...props} />
   ),

@@ -1,51 +1,63 @@
 import { useCallback } from "react";
 import { mediaCornerPath } from "./media-corners";
 
-type Measure = () => (() => void) | undefined;
+type Measured = {
+  element: HTMLElement;
+  width: number;
+  height: number;
+  radius: number;
+};
 
-// Media mounted in one commit is measured together before any clip is written.
-// Measuring each on attach made every write force the next element's style and
-// layout again; the microtask still runs before the frame renders.
-let mounting: Measure[] = [];
-function measureOnMount(measure: Measure) {
-  if (mounting.push(measure) > 1) return;
-  queueMicrotask(() => {
-    const batch = mounting;
-    mounting = [];
-    for (const apply of batch.map((pending) => pending())) apply?.();
-  });
+// Media mounted in one commit is measured together before the next frame:
+// a write between reads would force a layout of the whole history per item.
+let mounted: HTMLElement[] = [];
+
+function measure(element: HTMLElement): Measured | undefined {
+  const { offsetWidth: width, offsetHeight: height } = element;
+  if (!width || !height) return;
+  const radius = Number.parseFloat(
+    getComputedStyle(element).borderTopLeftRadius,
+  );
+  return { element, width, height, radius };
+}
+
+function apply({ element, width, height, radius }: Measured) {
+  const path = mediaCornerPath(width, height, radius || 0);
+  const clip = `path("${path}")`;
+  if (element.style.getPropertyValue("--media-corner-clip") !== clip)
+    element.style.setProperty("--media-corner-clip", clip);
+  // Set the SVG attribute so the outline does not depend on CSS d support.
+  const outline = element.querySelector("[data-image-outline] path");
+  if (outline && outline.getAttribute("d") !== path)
+    outline.setAttribute("d", path);
+  if (element.dataset.smoothCorners === undefined)
+    element.dataset.smoothCorners = "";
+}
+
+function flushMounted() {
+  const elements = mounted;
+  mounted = [];
+  const measured = elements
+    .filter((element) => element.isConnected)
+    .map(measure);
+  for (const entry of measured) if (entry) apply(entry);
 }
 
 /** CSS chooses where to clip, so floating menus can escape the media surface. */
 export function useMediaCorners() {
   return useCallback((element: HTMLElement | null) => {
     if (!element || typeof ResizeObserver === "undefined") return;
-    let attached = true;
-    const measure: Measure = () => {
-      if (!attached) return;
-      const { offsetWidth: width, offsetHeight: height } = element;
-      if (!width || !height) return;
-      const radius = Number.parseFloat(
-        getComputedStyle(element).borderTopLeftRadius,
-      );
-      const path = mediaCornerPath(width, height, radius || 0);
-      return () => {
-        const clip = `path("${path}")`;
-        if (element.style.getPropertyValue("--media-corner-clip") !== clip)
-          element.style.setProperty("--media-corner-clip", clip);
-        // Set the SVG attribute so the outline does not depend on CSS d support.
-        element
-          .querySelector("[data-image-outline] path")
-          ?.setAttribute("d", path);
-        element.dataset.smoothCorners = "";
-      };
+    const sync = () => {
+      const entry = measure(element);
+      if (entry) apply(entry);
     };
-    measureOnMount(measure);
-    const observer = new ResizeObserver(() => measure()?.());
+    if (!mounted.length) queueMicrotask(flushMounted);
+    mounted.push(element);
+    const observer = new ResizeObserver(sync);
     observer.observe(element);
     return () => {
-      attached = false;
       observer.disconnect();
+      mounted = mounted.filter((item) => item !== element);
       element.style.removeProperty("--media-corner-clip");
       delete element.dataset.smoothCorners;
     };

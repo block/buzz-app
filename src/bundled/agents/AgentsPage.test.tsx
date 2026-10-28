@@ -383,6 +383,8 @@ function setup(
     updateRequests: () => [],
     dismissUpdate: vi.fn(),
     approveUpdate: vi.fn(),
+    registerHook: vi.fn(),
+    dispatchHook: vi.fn(async () => undefined),
     configHistory: () => undefined,
   } satisfies Agents;
   const disconnected = { status: "disconnected", generation: 0 };

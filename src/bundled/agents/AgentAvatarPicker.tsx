@@ -400,6 +400,15 @@ export function AgentAvatarPicker({
               </PopoverTrigger>
               <PopoverPopup
                 aria-label="Choose emoji"
+                onKeyDownCapture={(event) => {
+                  // Emoji Mart consumes Escape in its shadow-root search.
+                  // Close this popup before the key reaches the widget.
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    setEmojiOpen(false);
+                  }
+                }}
                 side="bottom"
                 align="start"
               >

@@ -1139,6 +1139,24 @@ function Timeline({
           resolveName,
         );
       });
+  const virtualizer = (
+    <Virtualizer
+      ref={handle}
+      scrollRef={scroller}
+      // Before Virtua measures its viewport there is no reading position
+      // to preserve; shifting then can freeze its initial empty range.
+      shift={prepend && !!handle.current?.viewportSize}
+      bufferSize={1600}
+      // Reflow must not evict the focused control or a row's open report.
+      keepMounted={keptIndices}
+      as="ol"
+      item="li"
+      startMargin={size.edgeHeight}
+      {...(initialCache.current ? { cache: initialCache.current } : {})}
+    >
+      {rowElements}
+    </Virtualizer>
+  );
   return (
     <section
       ref={scroller}
@@ -1270,28 +1288,16 @@ function Timeline({
           activityLane ? { session: queries, channelId } : undefined
         }
       />
-      {width > 0 && (
-        <ChannelPresentationContext.Provider value={presentation}>
-          <RowEnvironmentContext.Provider value={environment}>
-            <Virtualizer
-              ref={handle}
-              scrollRef={scroller}
-              // Before Virtua measures its viewport there is no reading position
-              // to preserve; shifting then can freeze its initial empty range.
-              shift={prepend && !!handle.current?.viewportSize}
-              bufferSize={1600}
-              // Reflow must not evict the focused control or a row's open report.
-              keepMounted={keptIndices}
-              as="ol"
-              item="li"
-              startMargin={size.edgeHeight}
-              {...(initialCache.current ? { cache: initialCache.current } : {})}
-            >
-              {rowElements}
-            </Virtualizer>
-          </RowEnvironmentContext.Provider>
-        </ChannelPresentationContext.Provider>
-      )}
+      {width > 0 &&
+        (presentation ? (
+          <ChannelPresentationContext.Provider value={presentation}>
+            <RowEnvironmentContext.Provider value={environment}>
+              {virtualizer}
+            </RowEnvironmentContext.Provider>
+          </ChannelPresentationContext.Provider>
+        ) : (
+          virtualizer
+        ))}
       {!rows.length &&
         !window.hasMore &&
         window.status === "ready" &&

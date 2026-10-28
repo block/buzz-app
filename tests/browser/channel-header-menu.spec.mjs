@@ -30,6 +30,19 @@ test("header actions use the full-size menu and retain pane/dialog focus owners"
   await page
     .locator('button[data-channel-id="11111111-1111-4111-8111-111111111111"]')
     .click();
+  // The header's single title tab fills the title slot: a long name truncates
+  // only when the header runs out of room, not at the tab strip's 12rem cap.
+  const heading = page.getByRole("tab", { name: channelName, exact: true });
+  await expect(heading).toBeVisible();
+  await expect
+    .poll(
+      () =>
+        heading
+          .locator(".navigation-item-label")
+          .evaluate((label) => label.scrollWidth <= label.clientWidth),
+      "the header title shows the whole channel name",
+    )
+    .toBe(true);
   const trigger = page.getByRole("button", {
     name: "Channel actions",
     exact: true,

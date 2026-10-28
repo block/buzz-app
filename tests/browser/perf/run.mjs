@@ -16,9 +16,13 @@ const cases = [
   "scroll-paging-delayed",
   "scroll-paging-fast-keyboard",
   "scroll-paging-fast-markdown",
+  "scroll-paging-fast-first-seen",
+  "thread-open-rich",
+  "thread-close-rich",
+  "thread-reopen-rich",
 ];
 // A case name selects only that case; a group selects every case it prefixes.
-const groups = ["all", "channel-open", "scroll-paging"];
+const groups = ["all", "channel-open", "scroll-paging", "thread"];
 const scenarios = [...groups, ...cases];
 try {
   const { values } = parseArgs({

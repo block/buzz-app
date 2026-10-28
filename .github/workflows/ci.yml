@@ -82,6 +82,8 @@ jobs:
       # --workspace includes Tauri, unlike the default Cargo member selection.
       - name: All Rust tests and doctests
         run: ./bin/cargo test --workspace --locked
+      - name: Scheduled agent command identity
+        run: ./bin/node scripts/test-agent-command.mjs
       - name: All Node integration tests
         run: ./bin/node --test tests/integration/*.test.mjs
 
@@ -110,9 +112,9 @@ jobs:
           key: windows-native
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Native lint including Windows backend
-        run: cargo clippy -p buzz-foundation -p buzz-agent-controller -p buzz-credential-store --locked --all-targets -- -D warnings
+        run: cargo clippy -p Buzz -p buzz-agent-controller -p buzz-credential-store --locked --all-targets -- -D warnings
       - name: All native package tests
-        run: cargo test -p buzz-foundation -p buzz-agent-controller -p buzz-credential-store --locked --no-fail-fast
+        run: cargo test -p Buzz -p buzz-agent-controller -p buzz-credential-store --locked --no-fail-fast
 
   measurements:
     if: github.event_name != 'workflow_dispatch'
@@ -152,6 +154,10 @@ jobs:
         env:
           PLAYWRIGHT_JSON_OUTPUT_FILE: test-results/browser-classic-scrollbars/ci-report.json
         run: ./bin/node scripts/ci-test-report.mjs kind=playwright report=test-results/browser-classic-scrollbars/ci-report.json evidence=test-results/browser-classic-scrollbars/ci-timing.json title="Browser classic scrollbars" -- ./bin/pnpm test:browser:ci --project chromium-classic-scrollbars --no-deps --reporter=list,json
+      # Exercise the actual perf harness once per case; timing comparisons stay
+      # separate. Keep its Chromium workload serial with the measurements above.
+      - name: Perf suite smoke check
+        run: ./bin/pnpm perf --scenario all --repeat 1 --cpu 4
       - name: Measurement evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -160,6 +166,7 @@ jobs:
           path: |
             test-results/browser
             test-results/browser-classic-scrollbars
+            test-results/perf
           retention-days: 7
 
   browser_fixture:

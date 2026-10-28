@@ -373,7 +373,7 @@ export function CommunityDialog({
                   autoComplete="url"
                   autoCapitalize="none"
                   spellCheck={false}
-                  placeholder="wss://community.example.com"
+                  placeholder="wss://communities.buzz.xyz"
                   maxLength={2048}
                   disabled={busy}
                   value={url}

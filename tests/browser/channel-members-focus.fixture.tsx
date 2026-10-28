@@ -54,14 +54,18 @@ const scrollMembers = new URLSearchParams(location.search).has("scroll")
 const invitationScale = new URLSearchParams(location.search).has(
   "invitation-scale",
 );
-const inventory = invitationScale
-  ? Array.from({ length: 240 }, (_, index) => ({
-      pubkey: keypair().pubkey,
-      name: `Helper ${String(index + 1).padStart(3, "0")}`,
-    }))
-  : solo
-    ? [{ pubkey: person.pubkey, name: "Morgan" }]
-    : [];
+const invitationFocus = new URLSearchParams(location.search).has(
+  "invitation-focus",
+);
+const inventory =
+  invitationScale || invitationFocus
+    ? Array.from({ length: invitationScale ? 240 : 10 }, (_, index) => ({
+        pubkey: keypair().pubkey,
+        name: `Helper ${String(index + 1).padStart(3, "0")}`,
+      }))
+    : solo
+      ? [{ pubkey: person.pubkey, name: "Morgan" }]
+      : [];
 const searchScale = new URLSearchParams(location.search).has("search-scale");
 const managed = searchScale
   ? Array.from({ length: 60 }, (_, index) => ({

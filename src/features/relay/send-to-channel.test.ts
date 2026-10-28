@@ -278,6 +278,7 @@ it("mirrors an edit between a thread reply and its channel copy", async () => {
     undefined,
     undefined,
     undefined,
+    undefined,
     (id) =>
       events.filter((event) =>
         event.tags.some(([n, v]) => n === "buzz:copy-of" && v === id),
@@ -311,6 +312,7 @@ function linkedSetup() {
     () => [],
     () => {},
     () => true,
+    undefined,
     undefined,
     undefined,
     undefined,

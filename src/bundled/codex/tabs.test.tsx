@@ -16,7 +16,8 @@ import {
 } from "@testing-library/react";
 import { StrictMode } from "react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { pubkeyOf } from "../../features/agents/membership";
 import { ownerReads } from "../../features/agents/reads";
 import {
   fileStore,
@@ -194,7 +195,7 @@ function fixture({
   } as unknown as Storage);
   const runtime = new CodexRuntime(
     spawn,
-    (pubkey) => ownerReads(relay, pubkey),
+    (key) => ownerReads(relay, pubkeyOf(key)),
     async () => undefined,
     sessions,
     (raw) => provider.resolve(raw),
@@ -202,7 +203,12 @@ function fixture({
   const tabs = createTabs(provider, runtime, spawn, setup);
   const props = (settings = defaults, save = vi.fn(async () => {})) =>
     ({
-      agent: { pubkey: "a".repeat(64), name: "Sol", config: settings },
+      agent: {
+        key: "a".repeat(64),
+        pubkey: "a".repeat(64),
+        name: "Sol",
+        config: settings,
+      },
       save,
     }) as unknown as AgentViewProps<Config>;
   return {
@@ -376,6 +382,108 @@ it("brings an open transcript's tab back, and closes it when the profile moves",
   expect(screen.queryByRole("tab", { name: transcript })).toBeNull();
   await viewHere();
   expect(tab(transcript)).toHaveAttribute("aria-selected", "true");
+});
+
+describe("opened from activity", () => {
+  const root = "e".repeat(64);
+  const transcript = "#general · thread eeeeeeee";
+  const opened = () => {
+    const f = fixture({
+      saved: {
+        [JSON.stringify(["channel", root])]: {
+          threadId: "kept",
+          workspace: "/w",
+          at: 2,
+        },
+      },
+    });
+    const close = vi.fn();
+    const done = vi.fn();
+    // Each call is a new opening, as each Working now click is.
+    let openings = 0;
+    const panel = (done?: () => void) => (
+      <PanelWorkspace
+        value="profile"
+        select={() => undefined}
+        tabMenu={{
+          key: "channel",
+          closeAll: () => false,
+          closeOthers: () => false,
+        }}
+        items={[
+          {
+            id: "profile",
+            label: "Sol",
+            close: () => undefined,
+            content: (
+              <f.tabs.ActivityTab
+                {...f.props()}
+                conversation={{ channelId: "channel", rootId: root }}
+                {...(done && {
+                  initialTranscript: { opening: ++openings, done },
+                })}
+                close={close}
+              />
+            ),
+          },
+        ]}
+      />
+    );
+    return { close, done, panel };
+  };
+
+  it("shows the transcript, and closing it closes the panel", async () => {
+    const { close, done, panel } = opened();
+    render(panel(done));
+    expect(
+      await screen.findByRole("tab", { name: transcript }),
+    ).toHaveAttribute("aria-selected", "true");
+    expect(done).toHaveBeenCalled();
+    await userEvent.click(
+      screen.getByRole("button", { name: `Close ${transcript} tab` }),
+    );
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the panel when the profile's other tabs are closed", async () => {
+    const user = userEvent.setup();
+    const { close, done, panel } = opened();
+    render(panel(done));
+    await screen.findByRole("tab", { name: transcript });
+    await user.pointer({
+      target: screen.getByRole("tab", { name: "Sol" }),
+      keys: "[MouseRight]",
+    });
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Close other tabs" }),
+    );
+    expect(screen.queryByRole("tab", { name: transcript })).toBeNull();
+    expect(close).not.toHaveBeenCalled();
+  });
+
+  it("shows the transcript again when the kept profile is opened again", async () => {
+    const user = userEvent.setup();
+    const { done, panel } = opened();
+    const view = render(panel(done));
+    await screen.findByRole("tab", { name: transcript });
+    await user.pointer({
+      target: screen.getByRole("tab", { name: "Sol" }),
+      keys: "[MouseRight]",
+    });
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Close other tabs" }),
+    );
+    // The panel offered its request, so it no longer asks.
+    view.rerender(panel());
+    expect(screen.queryByRole("tab", { name: transcript })).toBeNull();
+    // Working now opens the same profile again: a new request.
+    const again = vi.fn();
+    view.rerender(panel(again));
+    expect(
+      await screen.findByRole("tab", { name: transcript }),
+    ).toHaveAttribute("aria-selected", "true");
+    expect(again).toHaveBeenCalledOnce();
+  });
 });
 
 it("finds the thread's Codex session another build started", async () => {
@@ -1395,7 +1503,7 @@ it("cancels a Codex login when its setup dialog closes", async () => {
 });
 
 it.each(["Identity", "Settings"])(
-  "preserves both settings drafts and retries a failed save from %s",
+  "keeps editing after cancelling a tab switch and retries a failed save from %s",
   async (saveFrom) => {
     const f = fixture();
     const Settings = f.tabs.SettingsTab;
@@ -1406,7 +1514,12 @@ it.each(["Identity", "Settings"])(
       .fn()
       .mockRejectedValueOnce(new Error("Save failed"))
       .mockResolvedValue(undefined);
-    const agents = { save } as unknown as Agents;
+    const agents = {
+      save,
+      configHistory: () => undefined,
+      memberships: () => [],
+      subscribe: () => () => {},
+    } as unknown as Agents;
     const type = {
       tabs: [
         {
@@ -1429,29 +1542,26 @@ it.each(["Identity", "Settings"])(
         settingsContent={<p>Agent details</p>}
       />,
     );
-    await user.clear(screen.getByLabelText("Instructions"));
-    await user.type(
-      screen.getByLabelText("Instructions"),
-      "Keep this identity draft.",
-    );
-    await user.click(screen.getByRole("tab", { name: "Settings" }));
-    await user.clear(screen.getByLabelText("Workspace"));
-    await user.type(screen.getByLabelText("Workspace"), "/tmp/combined-draft");
-    await user.click(screen.getByRole("tab", { name: "Memory" }));
-    await user.click(screen.getByRole("tab", { name: "Identity" }));
-    expect(screen.getByLabelText("Instructions")).toHaveValue(
-      "Keep this identity draft.",
-    );
     if (saveFrom === "Settings")
       await user.click(screen.getByRole("tab", { name: "Settings" }));
+    const label = saveFrom === "Identity" ? "Instructions" : "Workspace";
+    const value =
+      saveFrom === "Identity" ? "Keep this identity draft." : "/tmp/kept-draft";
+    await user.clear(screen.getByLabelText(label));
+    await user.type(screen.getByLabelText(label), value);
+    await user.click(screen.getByRole("tab", { name: "Memory" }));
+    expect(await screen.findByRole("alertdialog")).toHaveTextContent(
+      "unsaved changes will be lost",
+    );
+    await user.click(screen.getByRole("button", { name: "Keep editing" }));
+    expect(screen.getByLabelText(label)).toHaveValue(value);
     expect(screen.getAllByRole("button", { name: "Save" })).toHaveLength(1);
     await user.click(screen.getByRole("button", { name: "Save" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Save failed");
     await user.click(screen.getByRole("button", { name: "Save" }));
     expect(save).toHaveBeenLastCalledWith(savedAgent.pubkey, {
       config: expect.objectContaining({
-        instructions: "Keep this identity draft.",
-        workspace: "/tmp/combined-draft",
+        [saveFrom === "Identity" ? "instructions" : "workspace"]: value,
       }),
     });
   },

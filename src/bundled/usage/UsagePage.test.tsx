@@ -10,6 +10,7 @@ import type {
   SessionUsage,
 } from "../../features/agents/service";
 import { loadPrices } from "./pricing";
+import { since } from "./stats";
 import { UsagePage } from "./UsagePage";
 
 vi.mock("./pricing", async (actual) => {
@@ -31,6 +32,7 @@ const owner = "f".repeat(64);
 const root = "e".repeat(64);
 const agent = (name: string, type = "buzz.claude-code/claude"): Agent =>
   ({
+    key: name.padEnd(64, "0"),
     pubkey: name.padEnd(64, "0"),
     name,
     type,
@@ -141,9 +143,9 @@ it("summarises the agents' spend and opens a costly session's thread", async () 
     ),
   ).toBeTruthy();
   expect(reads).toHaveLength(2);
-  // 30 days back, what Claude Code keeps by default.
-  expect(Date.now() - (reads[0]?.since ?? 0)).toBeGreaterThan(29 * 86_400_000);
-  expect(Date.now() - (reads[0]?.since ?? 0)).toBeLessThan(30 * 86_400_000);
+  // 30 days back, what Claude Code keeps by default: local midnight 29 days
+  // ago, which is not 29 × 24 h before now across a daylight-saving change.
+  expect(reads[0]?.since).toBe(since(Date.now()));
   const hero = screen.getByRole("region", { name: "Estimated cost" });
   expect(within(hero).getByText("$4.00")).toBeTruthy();
   // The daily figures are in a table for assistive technology.
@@ -377,6 +379,48 @@ it("reads again when an agent is renamed or reconfigured", async () => {
     for (const listener of listeners) listener();
   });
   await vi.waitFor(() => expect(names).toEqual(["Pixel", "Pix"]));
+});
+
+it("reads the same agent apart in another community, without the first's sessions", async () => {
+  const pixel = agent("Pixel");
+  const there = {
+    ...pixel,
+    key: `${pixel.pubkey}@other.example.com`,
+    relay: "wss://other.example.com",
+  };
+  const read: string[] = [];
+  let listeners: (() => void)[] = [];
+  const agents = host([pixel], async (target) => {
+    read.push(target.key);
+    // Its read in the other community is still under way.
+    return target === pixel ? [session("a", 750_000)] : new Promise(() => {});
+  });
+  let snapshot = agents.snapshot();
+  const live = {
+    ...agents,
+    snapshot: () => snapshot,
+    types: agents.types,
+    subscribe: (listener: () => void) => {
+      listeners.push(listener);
+      return () => {
+        listeners = listeners.filter((entry) => entry !== listener);
+      };
+    },
+  } as unknown as Agents;
+  render(<UsagePage agents={live} open={vi.fn()} />);
+  expect(
+    await screen.findByText(
+      summary("Pixel ran 1 session in the last 30 days."),
+    ),
+  ).toBeTruthy();
+  snapshot = { ...snapshot, agents: [there], running: [there] };
+  act(() => {
+    for (const listener of listeners) listener();
+  });
+  await vi.waitFor(() => expect(read).toEqual([pixel.key, there.key]));
+  expect(
+    screen.queryByText(summary("Pixel ran 1 session in the last 30 days.")),
+  ).toBeNull();
 });
 
 it("drops a filter whose agent is gone", async () => {

@@ -46,10 +46,12 @@ import { PanelLaunchers } from "./shell/PanelLaunchers";
 import { PanelCard } from "../features/panels/PanelCard";
 import { communityDestination } from "../features/communities/destination";
 import { CommunityLanding } from "../features/communities/CommunityLanding";
+import { LegacyCommunityImport } from "../features/communities/LegacyCommunityImport";
 import { launchVisible, setLaunchReady, subscribeLaunch } from "./launch";
 
 export function App({ services }: { services: AppServices }) {
   const identity = services.identity;
+  const launching = useSyncExternalStore(subscribeLaunch, launchVisible);
   useEffect(() => {
     if (!identity) return;
     const update = () => {
@@ -69,6 +71,9 @@ export function App({ services }: { services: AppServices }) {
         {services.identity ? (
           <IdentitySetup identity={services.identity}>
             <ConnectedApp services={services} />
+            {!launching && (
+              <LegacyCommunityImport communities={services.communities} />
+            )}
           </IdentitySetup>
         ) : (
           <ConnectedApp services={services} />
@@ -371,6 +376,8 @@ function ConnectedApp({ services }: { services: AppServices }) {
                   navigator={services.navigation}
                   agents={services.agents}
                   chatIcons={services.conversation.chatIcons}
+                  chatMenus={services.conversation.chatMenus}
+                  sidebarSections={services.sidebarSections}
                   target={workspace.target}
                 >
                   {pageNavigation}

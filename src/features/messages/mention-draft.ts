@@ -69,6 +69,33 @@ export function mentionDraft(value: unknown): MentionDraft {
       .map(({ pubkey, name, start, end }) => ({ pubkey, name, start, end })),
   };
 }
+/** What counts as a draft everywhere: text, an attached chat, or `files`.
+ * A typed tag is text the person put there; the composer no longer saves
+ * tags of its own, and the ones earlier releases saved are not content. */
+export function hasDraftContent(value: MentionDraft, files = 0): boolean {
+  return (
+    files > 0 ||
+    !!value.chatCards?.length ||
+    (!!value.text.trim() && !legacyFollowupDraft(value))
+  );
+}
+/** A remembered-agent follow-up that a release through preview.177.1 saved
+ * as the draft: selected recipients and nothing else, without the editor
+ * snapshot every typed draft carries. Relay history seeds it now. */
+export function legacyFollowupDraft(value: MentionDraft): boolean {
+  return !value.document && addressingOnly(value);
+}
+/** Selected recipients and nothing else: no prose outside their spans and no
+ * attached chat. */
+export function addressingOnly(value: MentionDraft): boolean {
+  if (!value.recipients.length || value.chatCards?.length) return false;
+  let rest = value.text;
+  for (const { start, end } of [...value.recipients].sort(
+    (a, b) => b.start - a.start,
+  ))
+    rest = rest.slice(0, start) + rest.slice(end);
+  return !rest.trim();
+}
 /** Prefill exact, already-selected identities; never infer recipients from prose. */
 export function followupDraft(
   recipients: readonly MentionRecipient[],
@@ -84,70 +111,4 @@ export function followupDraft(
     spans.push({ pubkey, name, start, end: next.text.length - 1 });
   }
   return mentionDraft({ text: next.text, recipients: spans });
-}
-/** Known editor replacement keeps only untouched spans. */
-export function replaceMentionDraft(
-  value: MentionDraft,
-  start: number,
-  end: number,
-  inserted: string,
-): MentionDraft {
-  const text = value.text.slice(0, start) + inserted + value.text.slice(end);
-  const delta = inserted.length - (end - start);
-  return mentionDraft({
-    text,
-    recipients: value.recipients.flatMap((item) => {
-      if (item.end <= start) return [item];
-      if (item.start >= end)
-        return [{ ...item, start: item.start + delta, end: item.end + delta }];
-      return [];
-    }),
-  });
-}
-export type MentionEdit = Readonly<{
-  text: string;
-  start: number;
-  end: number;
-  inputType: string;
-}>;
-/** Preserve identity only when the browser supplied the actual replacement range.
- * Matching before/after prose cannot distinguish a paste from untouched text. */
-export function editMentionDraft(
-  value: MentionDraft,
-  text: string,
-  edit?: MentionEdit,
-): MentionDraft {
-  if (
-    edit?.text === value.text &&
-    Number.isInteger(edit.start) &&
-    Number.isInteger(edit.end) &&
-    edit.start >= 0 &&
-    edit.end >= edit.start &&
-    edit.end <= value.text.length
-  ) {
-    const insertion = [
-      "insertText",
-      "insertReplacementText",
-      "insertFromPaste",
-      "insertLineBreak",
-    ].includes(edit.inputType);
-    const selectionDeletion =
-      edit.inputType.startsWith("delete") && edit.end > edit.start;
-    // Collapsed word/grapheme deletion, IME and history operations have no reliable
-    // textarea target range. They fail closed instead of reconstructing one.
-    const length = text.length - (value.text.length - (edit.end - edit.start));
-    if (
-      (insertion || (selectionDeletion && length === 0)) &&
-      length >= 0 &&
-      text.slice(0, edit.start) === value.text.slice(0, edit.start) &&
-      text.slice(edit.start + length) === value.text.slice(edit.end)
-    )
-      return replaceMentionDraft(
-        value,
-        edit.start,
-        edit.end,
-        text.slice(edit.start, edit.start + length),
-      );
-  }
-  return { text, recipients: [] };
 }

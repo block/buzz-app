@@ -740,9 +740,9 @@ export function createTabs(
       setLoading(true);
       void readTranscript(
         spawn,
-        { agent: { pubkey: agent.pubkey, name: agent.name }, ...conversation },
+        { agent: { key: agent.key, name: agent.name }, ...conversation },
         abort.signal,
-        (pubkey) => runtime.name(agent.pubkey, pubkey),
+        (pubkey) => runtime.name(agent.key, pubkey),
       )
         .then(
           (transcript): Read =>
@@ -764,6 +764,7 @@ export function createTabs(
           title="Transcript"
           actions={
             <IconButton
+              hint="familiar"
               aria-label="Refresh transcript"
               title="Refresh transcript"
               loading={loading}
@@ -813,25 +814,34 @@ export function createTabs(
   function ActivityTab({
     agent,
     conversation,
+    initialTranscript,
+    close,
   }: {
     agent: AgentViewProps<Config>["agent"];
     conversation?: AgentViewProps<Config>["conversation"];
+    initialTranscript?: AgentViewProps<Config>["initialTranscript"];
+    close?: AgentViewProps<Config>["close"];
   }) {
     const sessions = useSyncExternalStore(runtime.subscribe, () =>
-      runtime.sessions(agent.pubkey),
+      runtime.sessions(agent.key),
     );
-    const conversations = runtime.conversations(agent.pubkey);
+    const conversations = runtime.conversations(agent.key);
     const {
       session: here,
       searching,
       error: lookupError,
     } = useOpenedSession(conversations, conversation, (place, signal) =>
-      runtime.find({ pubkey: agent.pubkey, name: agent.name }, place, signal),
+      runtime.find({ key: agent.key, name: agent.name }, place, signal),
     );
     const recent = conversations
       .filter((item) => item.key !== here?.key)
       .slice(0, CONVERSATION_LIMIT);
-    const { open, show, back } = useOpenTranscript(conversation, label);
+    const { open, show, back } = useOpenTranscript(
+      conversation,
+      label,
+      initialTranscript && { initial: here, ...initialTranscript },
+      close,
+    );
     const saved = new Set(conversations.map((row) => row.key));
     const views = new Map(sessions.map((view) => [view.key, view]));
     const unbound = sessions.filter((view) => !saved.has(view.key));
@@ -934,7 +944,7 @@ export function createTabs(
             backLabel="Back to profile"
             onBack={back}
           >
-            <TranscriptView agent={agent} conversation={open} />
+            <TranscriptView key={open.key} agent={agent} conversation={open} />
           </PanelSubview>
         )}
       </div>

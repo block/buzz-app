@@ -1,10 +1,14 @@
 // @vitest-environment jsdom
+import { Context } from "@deepseek-ai/cordis";
+import { PluginRuntime } from "../../plugins/runtime";
+import { ConversationService } from "../conversation/service";
+import * as emojiPlugin from "../../bundled/emoji";
 import { File as NodeFile } from "node:buffer";
 import { createMemberAdditions } from "../channel-members/operations";
 import { addChannelMember } from "../channel-members/members";
 import "@testing-library/jest-dom/vitest";
 import { mentionHistory } from "./mention-history";
-import { composerDOMFixture } from "./composer-testing";
+import { composerDOMFixture, typedDraft } from "./composer-testing";
 import { bindNames } from "../identity-names/service";
 import { createAgentDirectory } from "../identity-names/testing";
 import {
@@ -60,7 +64,8 @@ import type {
   ChannelSummary,
   Profile,
 } from "../relay/contracts";
-import { readView, writeView } from "../../shared/view-state";
+import { readView, viewRevision, writeView } from "../../shared/view-state";
+import { followupDraft } from "./mention-draft";
 import { emojiMatches, type CustomEmoji } from "../relay/emoji";
 import { CustomEmoji as CustomEmojiImage } from "../../bundled/emoji/CustomEmoji";
 import { EmojiCompletion } from "../../bundled/emoji/EmojiCompletion";
@@ -74,6 +79,7 @@ import { setRememberAgentsPreference } from "./mention-preferences";
 import { ResourcePicker } from "../../bundled/repos/ResourcePicker";
 import { entityHref } from "../repos/routes";
 import type { Entity, RepositoryHome } from "../repos/destinations";
+import { HELPFUL_HINT_REST_MS } from "../../shared/design-system/ui/hoverIntent";
 
 composerDOMFixture();
 
@@ -92,6 +98,12 @@ const soloList = {
     },
   ],
 };
+/** What every send saves for its key; remembered agents are not a draft. */
+const emptied = { text: "", recipients: [] };
+/** The message the fixture send ("channel-id") started, as ThreadPanel supplies
+ * the viewer's latest message in that thread. */
+const startedSeed = (mentions: readonly string[]) =>
+  editableMessage({ id: "channel-id", mentions });
 const resourceOwner = "c".repeat(64);
 const resourceRoute = {
   type: "issue",
@@ -286,7 +298,7 @@ function mount(
       ),
     },
     channels: {
-      window: () => ({ rows }),
+      window: () => ({ status: "ready", rows }),
       subscribeWindow(_id: string, listener: () => void) {
         rowListeners.add(listener);
         return () => rowListeners.delete(listener);
@@ -1417,7 +1429,14 @@ it.each(["never", "before the failure", "after the failure"])(
     // Snapshots are stable, as the service's are.
     const snapshot = {
       status: "ready",
-      agents: [{ pubkey: first.pubkey, name: "Honey", type: "test/agent" }],
+      agents: [
+        {
+          key: first.pubkey,
+          pubkey: first.pubkey,
+          name: "Honey",
+          type: "test/agent",
+        },
+      ],
     };
     const models = {
       current: "fast",
@@ -1434,6 +1453,9 @@ it.each(["never", "before the failure", "after the failure"])(
     };
     const types = [{ key: "test/agent", models: () => models }];
     const agents = {
+      find: (pubkey: string) =>
+        snapshot.agents.find((agent) => agent.pubkey === pubkey),
+      joinable: () => [],
       sessionState: () => "unavailable" as const,
       subscribe: () => () => {},
       snapshot: () => snapshot,
@@ -2442,10 +2464,20 @@ it("opens the model picker while discovery is pending, then fills its controls",
   const pending = deferred<typeof models>();
   const snapshot = {
     status: "ready",
-    agents: [{ pubkey: first.pubkey, name: "Honey", type: "test/agent" }],
+    agents: [
+      {
+        key: first.pubkey,
+        pubkey: first.pubkey,
+        name: "Honey",
+        type: "test/agent",
+      },
+    ],
   };
   const types = [{ key: "test/agent", models: () => pending.promise }];
   const agents = {
+    find: (pubkey: string) =>
+      snapshot.agents.find((agent) => agent.pubkey === pubkey),
+    joinable: () => [],
     sessionState: () => "unavailable" as const,
     subscribe: () => () => {},
     snapshot: () => snapshot,
@@ -2468,6 +2500,124 @@ it("opens the model picker while discovery is pending, then fills its controls",
   ).not.toBeInTheDocument();
 });
 
+/** Honey, whose type offers High effort, and a type it can be retyped to
+ * whose discovery is pending or failed. */
+function retypableHoney(other: "pending" | "failed") {
+  const tunable = {
+    current: "fast",
+    models: [
+      {
+        id: "fast",
+        label: "Fast",
+        efforts: [
+          { id: "low", label: "Low" },
+          { id: "high", label: "High" },
+        ],
+      },
+    ],
+  };
+  const agent = {
+    key: first.pubkey,
+    pubkey: first.pubkey,
+    name: "Honey",
+    type: "test/agent",
+  };
+  let snapshot = { status: "ready", agents: [agent] };
+  const listeners = new Set<() => void>();
+  const listing = { fails: false };
+  const types = [
+    {
+      key: "test/agent",
+      models: () =>
+        listing.fails ? Promise.reject(new Error("offline")) : tunable,
+    },
+    {
+      key: "test/other",
+      models: () =>
+        other === "pending"
+          ? new Promise(() => {})
+          : Promise.reject(new Error("offline")),
+    },
+  ];
+  const agents = {
+    find: (pubkey: string) =>
+      snapshot.agents.find((agent) => agent.pubkey === pubkey),
+    joinable: () => [],
+    sessionState: () => "unavailable" as const,
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    snapshot: () => snapshot,
+    types: () => types,
+  } as unknown as Agents;
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  const h = mount({}, undefined, undefined, agents);
+  /** A new snapshot of Honey, of `type`; discovery runs again. */
+  const refresh = (type = agent.type) =>
+    act(() => {
+      snapshot = { status: "ready", agents: [{ ...agent, type }] };
+      for (const listener of listeners) listener();
+    });
+  const pickHigh = async () => {
+    await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+    await h.user.click(
+      await screen.findByRole("button", { name: /Model.*effort/ }),
+    );
+    const slider = await screen.findByLabelText("Effort for Honey's next run");
+    slider.focus();
+    await h.user.keyboard("{ArrowRight}");
+    expect(slider).toHaveAttribute("aria-valuetext", "High");
+    await h.user.keyboard("{Escape}");
+  };
+  const sentPick = async () => {
+    await h.user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(h.messages.send).toHaveBeenCalledOnce();
+    return h.messages.send.mock.calls[0]?.[6]?.[first.pubkey];
+  };
+  return { h, listing, refresh, pickHigh, sentPick };
+}
+
+it.each(["pending", "failed"] as const)(
+  "drops a pick made for the agent's previous type while the new type's discovery is %s",
+  async (discovery) => {
+    const honey = retypableHoney(discovery);
+    await honey.pickHigh();
+    // Retyped elsewhere: the new type's choices never show the old pick.
+    honey.refresh("test/other");
+    expect(await honey.sentPick()).toBeUndefined();
+  },
+);
+
+it("drops a pick when its agent is retyped while the picker is unmounted", async () => {
+  const honey = retypableHoney("pending");
+  await honey.pickHigh();
+  // Without a mention the picker unmounts; the draft keeps the pick.
+  honey.h.fill("hi");
+  honey.refresh("test/other");
+  await honey.h.user.click(screen.getByRole("button", { name: "First Honey" }));
+  expect(await honey.sentPick()).toBeUndefined();
+});
+
+it("keeps a pick through a failed discovery of the agent's same type", async () => {
+  const honey = retypableHoney("pending");
+  await honey.pickHigh();
+  honey.listing.fails = true;
+  honey.refresh();
+  // Discovery's failure omits Honey, and the picker with it.
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("button", { name: /Model.*effort/ }),
+    ).not.toBeInTheDocument(),
+  );
+  honey.listing.fails = false;
+  honey.refresh();
+  expect(
+    await screen.findByRole("button", { name: /Model.*effort/ }),
+  ).toBeVisible();
+  expect(await honey.sentPick()).toEqual({ effort: "high" });
+});
+
 /** Agents with none here yet, where an earlier Buzz saved `first` and `second`. */
 const oldBuzzAgents = () => {
   const port = vi.fn<Agents["port"]>(async () => ({
@@ -2482,6 +2632,7 @@ const oldBuzzAgents = () => {
     snapshot: () => snapshot,
     types: () => types,
     find: () => undefined,
+    joinable: () => [],
     portable: async () => ({
       agents: [first, second].map((agent) => ({
         ...agent,
@@ -2664,11 +2815,22 @@ it("keeps the draft when the import dialog is closed", async () => {
  * efforts unless `models` are given. */
 const sessionAgents = (
   scope: "thread" | "channel",
-  models = [{ id: "fast", label: "Fast", efforts: [] }],
+  models: readonly {
+    id: string;
+    label: string;
+    efforts: readonly { id: string; label: string }[];
+  }[] = [{ id: "fast", label: "Fast", efforts: [] }],
 ) => {
   const snapshot = {
     status: "ready",
-    agents: [{ pubkey: first.pubkey, name: "Honey", type: "test/agent" }],
+    agents: [
+      {
+        key: first.pubkey,
+        pubkey: first.pubkey,
+        name: "Honey",
+        type: "test/agent",
+      },
+    ],
   };
   let state: "idle" | "active" | "compacting" | "unavailable" = "idle";
   const listeners = new Set<() => void>();
@@ -2703,6 +2865,7 @@ const sessionAgents = (
     types: () => types,
     find: (pubkey: string) =>
       snapshot.agents.find((agent) => agent.pubkey === pubkey),
+    joinable: () => [],
     sessionState: () => state,
     session,
     setSessionState(
@@ -2841,6 +3004,8 @@ it("refreshes unavailable session buttons when runner ownership changes without 
     expect(announcement).toBeEmptyDOMElement();
     await act(async () => fireEvent.mouseLeave(fresh));
     await act(async () => fireEvent.mouseEnter(fresh));
+    await act(async () => fireEvent.mouseMove(fresh));
+    act(() => vi.advanceTimersByTime(HELPFUL_HINT_REST_MS));
     expect(screen.getByRole("tooltip")).toHaveTextContent(
       "Start a new session",
     );
@@ -3048,6 +3213,66 @@ it("blocks plain-text DM sends during compaction even after removing the mention
   expect(h.messages.send).toHaveBeenCalledWith("channel", "plain text", [], []);
 });
 
+it("offers a one-to-one DM's agent its model and effort without a mention", async () => {
+  const agents = sessionAgents("channel", [
+    {
+      id: "fast",
+      label: "Fast",
+      efforts: [
+        { id: "low", label: "Low" },
+        { id: "high", label: "High" },
+      ],
+    },
+  ]);
+  const h = mount({}, undefined, second.pubkey, agents);
+  const dm = (members: string[]) => ({
+    status: "ready" as const,
+    channels: [
+      { id: "channel", name: "Honey DM", channelType: "dm" as const, members },
+    ],
+  });
+  const retarget = (members: string[]) => {
+    const list = dm(members);
+    h.retarget({
+      session: {
+        ...h.session,
+        channels: {
+          ...h.session.channels,
+          list: () => list,
+          get: () => list.channels[0],
+        },
+      },
+    });
+  };
+  const picker = () => screen.queryByRole("button", { name: /Model.*effort/ });
+  // A group DM still needs the mention.
+  retarget([first.pubkey, second.pubkey, "c".repeat(64)]);
+  await h.user.type(h.input(), "think hard");
+  expect(picker()).toBeNull();
+  retarget([first.pubkey, second.pubkey]);
+  await h.user.click(
+    await screen.findByRole("button", { name: /Model.*effort/ }),
+  );
+  expect(
+    await screen.findByRole("button", { name: "Compact session" }),
+  ).toBeVisible();
+  const slider = await screen.findByLabelText("Effort for Honey's next run");
+  slider.focus();
+  await h.user.keyboard("{ArrowRight}");
+  expect(slider).toHaveAttribute("aria-valuetext", "High");
+  await h.user.keyboard("{Escape}");
+  await h.user.click(screen.getByRole("button", { name: "Send message" }));
+  expect(h.messages.send).toHaveBeenLastCalledWith(
+    "channel",
+    "think hard",
+    [],
+    [],
+    undefined,
+    [],
+    { [first.pubkey]: { effort: "high" } },
+  );
+});
+
 it("keeps session controls available when model discovery fails", async () => {
   const agents = sessionAgents("channel");
   const type = agents.types()[0];
@@ -3139,7 +3364,14 @@ it.each([
   async (current) => {
     const snapshot = {
       status: "ready",
-      agents: [{ pubkey: first.pubkey, name: "Honey", type: "claude" }],
+      agents: [
+        {
+          key: first.pubkey,
+          pubkey: first.pubkey,
+          name: "Honey",
+          type: "claude",
+        },
+      ],
     };
     const types = [
       {
@@ -3154,6 +3386,9 @@ it.each([
       },
     ];
     const agents = {
+      find: (pubkey: string) =>
+        snapshot.agents.find((agent) => agent.pubkey === pubkey),
+      joinable: () => [],
       sessionState: () => "unavailable" as const,
       subscribe: () => () => {},
       snapshot: () => snapshot,
@@ -3207,7 +3442,14 @@ it("keeps an active Claude model when a follow-up composer picker is untouched",
   const quick = claude.send("quick", { model: "haiku" });
   const snapshot = {
     status: "ready",
-    agents: [{ pubkey: first.pubkey, name: "Honey", type: "claude" }],
+    agents: [
+      {
+        key: first.pubkey,
+        pubkey: first.pubkey,
+        name: "Honey",
+        type: "claude",
+      },
+    ],
   };
   const types = [
     {
@@ -3222,6 +3464,9 @@ it("keeps an active Claude model when a follow-up composer picker is untouched",
     },
   ];
   const agents = {
+    find: (pubkey: string) =>
+      snapshot.agents.find((agent) => agent.pubkey === pubkey),
+    joinable: () => [],
     sessionState: () => "unavailable" as const,
     subscribe: () => () => {},
     snapshot: () => snapshot,
@@ -3268,7 +3513,14 @@ it("keeps an active Claude model when a follow-up composer picker is untouched",
 it("sends the model and effort shown by an untouched agent picker", async () => {
   const snapshot = {
     status: "ready",
-    agents: [{ pubkey: first.pubkey, name: "Honey", type: "test/agent" }],
+    agents: [
+      {
+        key: first.pubkey,
+        pubkey: first.pubkey,
+        name: "Honey",
+        type: "test/agent",
+      },
+    ],
   };
   const models = {
     current: "gpt-6.1-sol",
@@ -3288,6 +3540,9 @@ it("sends the model and effort shown by an untouched agent picker", async () => 
   };
   const types = [{ key: "test/agent", models: () => models }];
   const agents = {
+    find: (pubkey: string) =>
+      snapshot.agents.find((agent) => agent.pubkey === pubkey),
+    joinable: () => [],
     sessionState: () => "unavailable" as const,
     subscribe: () => () => {},
     snapshot: () => snapshot,
@@ -3345,7 +3600,14 @@ it.each(["settings refresh", "model pick"])(
   async (change) => {
     let snapshot = {
       status: "ready",
-      agents: [{ pubkey: first.pubkey, name: "Honey", type: "test/agent" }],
+      agents: [
+        {
+          key: first.pubkey,
+          pubkey: first.pubkey,
+          name: "Honey",
+          type: "test/agent",
+        },
+      ],
     };
     let current = "fast";
     const models = [
@@ -3376,6 +3638,9 @@ it.each(["settings refresh", "model pick"])(
       },
     ];
     const agents = {
+      find: (pubkey: string) =>
+        snapshot.agents.find((agent) => agent.pubkey === pubkey),
+      joinable: () => [],
       sessionState: () => "unavailable" as const,
       subscribe: (listener: () => void) => {
         listeners.add(listener);
@@ -3439,7 +3704,14 @@ it("asks a mentioned agent of the viewer's for a model and effort on the next ru
   // Snapshots are stable, as the service's are.
   const snapshot = {
     status: "ready",
-    agents: [{ pubkey: first.pubkey, name: "Honey", type: "test/agent" }],
+    agents: [
+      {
+        key: first.pubkey,
+        pubkey: first.pubkey,
+        name: "Honey",
+        type: "test/agent",
+      },
+    ],
   };
   const models = {
     current: "fast",
@@ -3464,6 +3736,9 @@ it("asks a mentioned agent of the viewer's for a model and effort on the next ru
   };
   const types = [{ key: "test/agent", models: () => models }];
   const agents = {
+    find: (pubkey: string) =>
+      snapshot.agents.find((agent) => agent.pubkey === pubkey),
+    joinable: () => [],
     sessionState: () => "unavailable" as const,
     subscribe: () => () => {},
     snapshot: () => snapshot,
@@ -3565,7 +3840,14 @@ it("asks a mentioned agent of the viewer's for a model and effort on the next ru
 it("opens the effort picker at the effort the agent's next run uses", async () => {
   const snapshot = {
     status: "ready",
-    agents: [{ pubkey: first.pubkey, name: "Honey", type: "test/agent" }],
+    agents: [
+      {
+        key: first.pubkey,
+        pubkey: first.pubkey,
+        name: "Honey",
+        type: "test/agent",
+      },
+    ],
   };
   const models = {
     current: "fast",
@@ -3584,6 +3866,9 @@ it("opens the effort picker at the effort the agent's next run uses", async () =
   };
   const types = [{ key: "test/agent", models: () => models }];
   const agents = {
+    find: (pubkey: string) =>
+      snapshot.agents.find((agent) => agent.pubkey === pubkey),
+    joinable: () => [],
     sessionState: () => "unavailable" as const,
     subscribe: () => () => {},
     snapshot: () => snapshot,
@@ -4427,6 +4712,8 @@ it.each([
   ["hello :-1", "hello 👎"],
   [":+1", "👍"],
   ["say :SMILE", "say 😄"],
+  // The second shortcode may follow a converted emoji with no space between them.
+  ["😄:wave", "😄👋"],
 ])(
   "replaces an exact shortcode with its emoji on the closing colon: %s",
   async (typed, expected) => {
@@ -4719,7 +5006,17 @@ for (const threadRootId of [undefined, "f".repeat(64)])
     expect(retry).not.toHaveBeenCalled();
     expect(send.mock.calls[0]?.[threadRootId ? 3 : 2]).toEqual([first.pubkey]);
     // Native evidence now shares the ordinary remember-agent classification.
+    // The follow-up stays in memory under the draft's own name; the started
+    // thread seeds the agent under its current known name: with no profile,
+    // the native inventory's.
     expect(h.input().value).toBe("@Honey ");
+    if (!threadRootId) {
+      h.retarget({
+        threadRootId: "channel-id",
+        threadSeed: startedSeed([first.pubkey]),
+      });
+      expect(h.input().value).toBe("@Fixture agent ");
+    }
   });
 
 it.each([false, true])(
@@ -5059,7 +5356,8 @@ it("keeps retry submission available while a new Solo draft is locked", () => {
 it.each([undefined, "root"])(
   "prefills only exact selected agents after an accepted send in %s",
   (threadRootId) => {
-    const h = mount(threadRootId ? { threadRootId } : {});
+    const viewer = "e".repeat(64);
+    const h = mount(threadRootId ? { threadRootId } : {}, undefined, viewer);
     vi.spyOn(h.session.profiles, "snapshot").mockReturnValue(
       new Map([[second.pubkey, { name: "Honey", isAgent: true }]]),
     );
@@ -5099,7 +5397,21 @@ it.each([undefined, "root"])(
     ).toBeNull();
     h.retarget({ channelId: "other" });
     expect(h.input()).toHaveValue("");
-    h.retarget({ channelId: "channel" });
+    // Nothing was saved: on return the composer seeds from the sent message
+    // once it lands, in the thread (ThreadPanel) or the channel window.
+    const sent = editableMessage({
+      id: "5".repeat(64),
+      authorId: viewer,
+      mentions: [first.pubkey, second.pubkey, second.pubkey],
+    });
+    h.retarget({
+      channelId: "channel",
+      ...(threadRootId ? { threadSeed: sent } : {}),
+    });
+    if (!threadRootId) {
+      expect(h.input()).toHaveValue("");
+      h.setRows([sent]);
+    }
     expect(h.input()).toHaveValue("@Honey ");
     h.submit();
     expect(send.mock.calls.at(-1)?.[threadRootId ? 3 : 2]).toEqual([
@@ -5116,6 +5428,474 @@ it.each([undefined, "root"])(
     expect(h.input()).toHaveValue("");
   },
 );
+
+it("remembers agents in memory at the root and in the thread the send started, saving neither", () => {
+  const h = mount();
+  h.setProfiles(new Map([[first.pubkey, { name: "Honey", isAgent: true }]]));
+  act(() => {
+    h.commands().insertMention(first);
+    h.commands().insertText("hello");
+  });
+  h.submit();
+  expect(h.messages.send.mock.calls[0]?.[2]).toEqual([first.pubkey]);
+  // The root keeps the follow-up in memory; the send saves only the empty stub.
+  expect(h.input()).toHaveValue("@Honey ");
+  expect(readView("scope", "draft:channel", "")).toEqual(emptied);
+  // The thread has no draft until the user acts there.
+  expect(viewRevision("scope", "draft:channel:thread:channel-id")).toBeNull();
+  h.retarget({
+    threadRootId: "channel-id",
+    threadSeed: startedSeed([first.pubkey]),
+  });
+  expect(h.input()).toHaveValue("@Honey ");
+  expect(
+    within(screen.getByRole("region", { name: "Explicit mentions" })).getByRole(
+      "button",
+      { name: `Remove mention Honey ${first.pubkey}` },
+    ),
+  ).toBeVisible();
+  expect(viewRevision("scope", "draft:channel:thread:channel-id")).toBeNull();
+  // A reply there keeps its follow-up in memory too, and saves only the stub.
+  h.submit();
+  expect(h.messages.reply.mock.calls[0]?.[3]).toEqual([first.pubkey]);
+  expect(h.input()).toHaveValue("@Honey ");
+  expect(readView("scope", "draft:channel:thread:channel-id", "")).toEqual(
+    emptied,
+  );
+});
+
+it("seeds a channel composer from the viewer's latest top-level message once its window is ready, without saving", () => {
+  const viewer = "e".repeat(64);
+  const h = mount({}, undefined, viewer);
+  h.setProfiles(
+    new Map([
+      [first.pubkey, { name: "Honey", isAgent: true }],
+      [second.pubkey, { name: "Bea", isAgent: true }],
+    ]),
+  );
+  const own = (id: string, mentions: readonly string[], extra = {}) =>
+    editableMessage({
+      id: id.repeat(64),
+      authorId: viewer,
+      mentions,
+      ...extra,
+    });
+  expect(h.input()).toHaveValue("");
+  h.setRows([
+    own("1", [second.pubkey]),
+    own("2", [first.pubkey]),
+    // Neither another author's message nor the viewer's thread reply counts,
+    // nor the Huddle and membership rows the viewer signs.
+    editableMessage({ id: "3".repeat(64), mentions: [second.pubkey] }),
+    own("4", [second.pubkey], { threadRootId: "1".repeat(64) }),
+    own("5", [], { huddle: { room: "room", state: "started" } }),
+    own("6", [], {
+      membership: { type: "member_joined", actor: viewer, target: viewer },
+    }),
+  ]);
+  expect(h.input()).toHaveValue("@Honey ");
+  expect(viewRevision("scope", "draft:channel")).toBeNull();
+  // Typing saves an ordinary draft with the seeded recipient.
+  h.fill("@Honey please");
+  expect(readView("scope", "draft:channel", "")).toMatchObject({
+    text: "@Honey please",
+  });
+});
+
+it("ends the remembered chain at the root when the viewer's latest message tagged no agent, replacing its own prefill", () => {
+  const viewer = "e".repeat(64);
+  const h = mount({}, undefined, viewer);
+  h.setProfiles(new Map([[first.pubkey, { name: "Honey", isAgent: true }]]));
+  const own = (id: string, mentions: readonly string[]) =>
+    editableMessage({ id: id.repeat(64), authorId: viewer, mentions });
+  h.setRows([own("1", [first.pubkey])]);
+  expect(h.input()).toHaveValue("@Honey ");
+  // An untagged later message of the viewer's lands, e.g. sent elsewhere.
+  h.setRows([own("1", [first.pubkey]), own("2", [])]);
+  expect(h.input()).toHaveValue("");
+  expect(viewRevision("scope", "draft:channel")).toBeNull();
+  // A removed chip stays removed until the composer is shown again.
+  h.setRows([own("1", [first.pubkey]), own("2", []), own("3", [first.pubkey])]);
+  expect(h.input()).toHaveValue("@Honey ");
+  act(() => h.input().removeRecipient(first.pubkey));
+  h.fill("");
+  expect(h.input()).toHaveValue("");
+  h.present(false);
+  h.present(true);
+  expect(h.input()).toHaveValue("@Honey ");
+});
+
+it("ends the remembered chain when the viewer's latest message tagged only people, once their profiles are known", () => {
+  const viewer = "e".repeat(64);
+  const h = mount({}, undefined, viewer);
+  h.setProfiles(new Map([[first.pubkey, { name: "Honey", isAgent: true }]]));
+  const own = (id: string, mentions: readonly string[]) =>
+    editableMessage({ id: id.repeat(64), authorId: viewer, mentions });
+  h.setRows([own("1", [first.pubkey])]);
+  expect(h.input()).toHaveValue("@Honey ");
+  // A later message tagging an unknown key waits for its profile.
+  h.setRows([own("1", [first.pubkey]), own("2", [second.pubkey])]);
+  expect(h.input()).toHaveValue("@Honey ");
+  h.setProfiles(
+    new Map([
+      [first.pubkey, { name: "Honey", isAgent: true }],
+      [second.pubkey, { name: "Pat" }],
+    ]),
+  );
+  expect(h.input()).toHaveValue("");
+  expect(viewRevision("scope", "draft:channel")).toBeNull();
+});
+
+it("completes a seed taken from partial agent evidence as the other agents' names arrive", () => {
+  const viewer = "e".repeat(64);
+  const h = mount({}, undefined, viewer);
+  h.setProfiles(new Map([[first.pubkey, { name: "Honey", isAgent: true }]]));
+  h.setRows([
+    editableMessage({
+      id: "1".repeat(64),
+      authorId: viewer,
+      mentions: [first.pubkey, second.pubkey],
+    }),
+  ]);
+  expect(h.input()).toHaveValue("@Honey ");
+  h.setProfiles(
+    new Map([
+      [first.pubkey, { name: "Honey", isAgent: true }],
+      [second.pubkey, { name: "Bea", isAgent: true }],
+    ]),
+  );
+  expect(h.input()).toHaveValue("@Honey @Bea ");
+  // Settled evidence seeds once: the user's edit is kept afterwards.
+  h.fill("@Honey @Bea hi");
+  h.setProfiles(
+    new Map([
+      [first.pubkey, { name: "Honey", isAgent: true }],
+      [second.pubkey, { name: "Bea", isAgent: true }],
+    ]),
+  );
+  expect(h.input()).toHaveValue("@Honey @Bea hi");
+});
+
+it("keeps a partial-evidence seed the user cleared, and seeds from a newer message", () => {
+  const viewer = "e".repeat(64);
+  const h = mount({}, undefined, viewer);
+  const both = new Map<string, Profile>([
+    [first.pubkey, { name: "Honey", isAgent: true }],
+    [second.pubkey, { name: "Bea", isAgent: true }],
+  ]);
+  h.setProfiles(new Map([[first.pubkey, { name: "Honey", isAgent: true }]]));
+  const sent = editableMessage({
+    id: "1".repeat(64),
+    authorId: viewer,
+    mentions: [first.pubkey, second.pubkey],
+  });
+  h.setRows([sent]);
+  expect(h.input()).toHaveValue("@Honey ");
+  // One edit to empty (Select All → Delete) settles this message's seed.
+  h.fill("");
+  expect(h.input()).toHaveValue("");
+  h.setProfiles(both);
+  expect(h.input()).toHaveValue("");
+  // A newer message of the viewer's, sent from another device, still seeds.
+  h.setRows([
+    sent,
+    editableMessage({
+      id: "2".repeat(64),
+      authorId: viewer,
+      mentions: [second.pubkey],
+    }),
+  ]);
+  expect(h.input()).toHaveValue("@Bea ");
+});
+
+it("seeds over the follow-up a send leaves once a newer message of the viewer's lands", () => {
+  const viewer = "e".repeat(64);
+  const h = mount({}, undefined, viewer);
+  h.setProfiles(
+    new Map([
+      [first.pubkey, { name: "Honey", isAgent: true }],
+      [second.pubkey, { name: "Bea", isAgent: true }],
+    ]),
+  );
+  const own = (id: string, mentions: readonly string[]) =>
+    editableMessage({ id: id.repeat(64), authorId: viewer, mentions });
+  h.setRows([own("1", [first.pubkey])]);
+  expect(h.input()).toHaveValue("@Honey ");
+  // Typing closes seeding for this showing, including for a message of the
+  // viewer's that lands from another device meanwhile.
+  act(() => {
+    h.input().setSelectionRange(7, 7);
+    h.commands().insertText("hello");
+  });
+  expect(h.input()).toHaveValue("@Honey hello");
+  h.setRows([own("1", [first.pubkey]), own("2", [second.pubkey])]);
+  expect(h.input()).toHaveValue("@Honey hello");
+  // The send replaces the typed draft with the composer's own follow-up,
+  // which holds over that message until the sent one lands.
+  h.submit();
+  expect(h.messages.send.mock.calls[0]?.[2]).toEqual([first.pubkey]);
+  expect(h.input()).toHaveValue("@Honey ");
+  h.setRows([
+    own("1", [first.pubkey]),
+    own("2", [second.pubkey]),
+    own("3", [first.pubkey]),
+  ]);
+  expect(h.input()).toHaveValue("@Honey ");
+  // A newer message of the viewer's, sent elsewhere, seeds over that follow-up.
+  h.setRows([
+    own("1", [first.pubkey]),
+    own("2", [second.pubkey]),
+    own("3", [first.pubkey]),
+    own("4", [second.pubkey]),
+  ]);
+  expect(h.input()).toHaveValue("@Bea ");
+  expect(readView("scope", "draft:channel", "")).toEqual(emptied);
+});
+
+it("seeds from history over a follow-up an earlier release saved as the draft, until the first save replaces it", () => {
+  const viewer = "e".repeat(64);
+  const legacy = followupDraft([{ pubkey: first.pubkey, name: "Honey" }]);
+  writeView("scope", "draft:channel", legacy);
+  const h = mount({}, undefined, viewer);
+  h.setProfiles(
+    new Map([
+      [first.pubkey, { name: "Honey", isAgent: true }],
+      [second.pubkey, { name: "Bea", isAgent: true }],
+    ]),
+  );
+  const own = (id: string, mentions: readonly string[]) =>
+    editableMessage({ id: id.repeat(64), authorId: viewer, mentions });
+  // The chain ended on another device: the saved follow-up is not restored.
+  h.setRows([own("1", [])]);
+  expect(h.input()).toHaveValue("");
+  h.setRows([own("1", []), own("2", [second.pubkey])]);
+  expect(h.input()).toHaveValue("@Bea ");
+  expect(readView("scope", "draft:channel", "")).toEqual(legacy);
+  act(() => {
+    h.input().setSelectionRange(5, 5);
+    h.commands().insertText("hello");
+  });
+  expect(h.input()).toHaveValue("@Bea hello");
+  expect(readView("scope", "draft:channel", "")).toMatchObject({
+    text: "@Bea hello",
+    recipients: [{ pubkey: second.pubkey, name: "Bea", start: 0, end: 4 }],
+  });
+  // A tag the user typed, saved with its editor snapshot, is their draft.
+  h.unmount();
+  writeView("scope", "draft:channel", typedDraft(legacy));
+  const typed = mount({}, undefined, viewer);
+  typed.setProfiles(
+    new Map([
+      [first.pubkey, { name: "Honey", isAgent: true }],
+      [second.pubkey, { name: "Bea", isAgent: true }],
+    ]),
+  );
+  typed.setRows([own("1", []), own("2", [second.pubkey])]);
+  expect(typed.input()).toHaveValue("@Honey ");
+});
+
+it("does not seed a channel composer until its window is ready", () => {
+  const viewer = "e".repeat(64);
+  const h = mount({}, undefined, viewer);
+  h.setProfiles(new Map([[first.pubkey, { name: "Honey", isAgent: true }]]));
+  const rows = [
+    editableMessage({
+      id: "1".repeat(64),
+      authorId: viewer,
+      mentions: [first.pubkey],
+    }),
+  ];
+  const withStatus = (status: "loading" | "ready") =>
+    h.retarget({
+      session: {
+        ...h.session,
+        channels: {
+          ...h.session.channels,
+          window: () => ({ status, rows }),
+        },
+      } as unknown as RelaySession,
+    });
+  withStatus("loading");
+  expect(h.input()).toHaveValue("");
+  withStatus("ready");
+  expect(h.input()).toHaveValue("@Honey ");
+});
+
+const honeyAgent: ReadonlyMap<string, Profile> = new Map([
+  [first.pubkey, { name: "Honey", isAgent: true }],
+]);
+const removeHoney = () =>
+  fireEvent.click(
+    screen.getByRole("button", {
+      name: `Remove mention Honey ${first.pubkey}`,
+    }),
+  );
+
+it("seeds an untouched thread composer from the viewer's latest message without saving", () => {
+  const stored = localStorage.length;
+  const h = mount({
+    threadRootId: "root",
+    threadSeed: editableMessage({ mentions: [first.pubkey, second.pubkey] }),
+  });
+  h.setProfiles(
+    new Map<string, Profile>([...honeyAgent, [second.pubkey, { name: "Pat" }]]),
+  );
+  expect(h.input()).toHaveValue("@Honey ");
+  const recipients = screen.getByRole("region", { name: "Explicit mentions" });
+  expect(within(recipients).getAllByRole("button")).toHaveLength(1);
+  expect(
+    within(recipients).getByRole("button", {
+      name: `Remove mention Honey ${first.pubkey}`,
+    }),
+  ).toBeVisible();
+  expect(viewRevision("scope", "draft:channel:thread:root")).toBeNull();
+  expect(localStorage.length).toBe(stored);
+  const editor = h.input();
+  act(() => {
+    editor.focus();
+    editor.setSelectionRange(editor.value.length, editor.value.length);
+    h.commands().insertText("hi");
+  });
+  expect(h.input()).toHaveValue("@Honey hi");
+  expect(readView("scope", "draft:channel:thread:root", "")).toMatchObject({
+    text: "@Honey hi",
+    recipients: [{ pubkey: first.pubkey, name: "Honey", start: 0, end: 6 }],
+  });
+});
+
+it("removing the seeded mention saves an untagged draft so reopening the thread does not reseed", () => {
+  const threadSeed = editableMessage({ mentions: [first.pubkey] });
+  const h = mount({ threadRootId: "root", threadSeed });
+  h.setProfiles(honeyAgent);
+  expect(h.input()).toHaveValue("@Honey ");
+  // Removing the chip leaves its plain text; the saved draft is what sticks.
+  removeHoney();
+  expect(h.input()).toHaveValue("@Honey ");
+  expect(screen.queryByRole("button", { name: /^Remove mention/ })).toBeNull();
+  expect(readView("scope", "draft:channel:thread:root", "")).toMatchObject({
+    text: "@Honey ",
+    recipients: [],
+  });
+  h.retarget({ threadRootId: "other", threadSeed: undefined });
+  h.retarget({ threadRootId: "root", threadSeed });
+  expect(h.input()).toHaveValue("@Honey ");
+  expect(screen.queryByRole("button", { name: /^Remove mention/ })).toBeNull();
+});
+
+it("keeps a saved thread draft over the viewer's latest mentions", () => {
+  writeView("scope", "draft:channel:thread:root", "Already typed");
+  const h = mount({
+    threadRootId: "root",
+    threadSeed: editableMessage({ mentions: [first.pubkey] }),
+  });
+  h.setProfiles(honeyAgent);
+  expect(h.input()).toHaveValue("Already typed");
+  expect(screen.queryByRole("button", { name: /^Remove mention/ })).toBeNull();
+});
+
+it("does not seed a thread when Remember mentioned agents is off", () => {
+  setRememberAgentsPreference(false);
+  try {
+    const h = mount({
+      threadRootId: "root",
+      threadSeed: editableMessage({ mentions: [first.pubkey] }),
+    });
+    h.setProfiles(honeyAgent);
+    expect(h.input()).toHaveValue("");
+  } finally {
+    setRememberAgentsPreference(true);
+  }
+});
+
+it("seeds from the viewer's latest reply when no draft is saved", () => {
+  const h = mount({
+    threadRootId: "root",
+    threadSeed: editableMessage({
+      id: "r2",
+      threadRootId: "root",
+      mentions: [first.pubkey],
+    }),
+  });
+  h.setProfiles(honeyAgent);
+  expect(h.input()).toHaveValue("@Honey ");
+  expect(viewRevision("scope", "draft:channel:thread:root")).toBeNull();
+});
+
+it("does not seed when the viewer's latest message tagged no agent", () => {
+  const h = mount({
+    threadRootId: "root",
+    threadSeed: editableMessage({ id: "r2", threadRootId: "root" }),
+  });
+  h.setProfiles(honeyAgent);
+  expect(h.input()).toHaveValue("");
+  expect(screen.queryByRole("button", { name: /^Remove mention/ })).toBeNull();
+});
+
+it("seeds when the thread finishes loading after the composer mounted", () => {
+  const h = mount({ threadRootId: "root" });
+  h.setProfiles(honeyAgent);
+  expect(h.input()).toHaveValue("");
+  h.retarget({ threadSeed: editableMessage({ mentions: [first.pubkey] }) });
+  expect(h.input()).toHaveValue("@Honey ");
+  expect(viewRevision("scope", "draft:channel:thread:root")).toBeNull();
+});
+
+it("seeds when the profiles arrive after the thread loaded into a mounted composer", async () => {
+  // The profile subscription goes live with `threadSeed`, not at mount.
+  const h = mount({ threadRootId: "root" });
+  h.retarget({ threadSeed: editableMessage({ mentions: [first.pubkey] }) });
+  expect(h.input()).toHaveValue("");
+  h.setProfiles(honeyAgent);
+  await waitFor(() => expect(h.input()).toHaveValue("@Honey "));
+  expect(viewRevision("scope", "draft:channel:thread:root")).toBeNull();
+});
+
+it("keeps a partial-evidence thread seed the user cleared as the names arrive", () => {
+  const h = mount({
+    threadRootId: "root",
+    threadSeed: editableMessage({ mentions: [first.pubkey, second.pubkey] }),
+  });
+  h.setProfiles(honeyAgent);
+  expect(h.input()).toHaveValue("@Honey ");
+  h.fill("");
+  expect(h.input()).toHaveValue("");
+  h.setProfiles(
+    new Map<string, Profile>([
+      ...honeyAgent,
+      [second.pubkey, { name: "Bea", isAgent: true }],
+    ]),
+  );
+  expect(h.input()).toHaveValue("");
+});
+
+it("does not seed a thread whose message notified only people", () => {
+  const h = mount({
+    threadRootId: "root",
+    threadSeed: editableMessage({ mentions: [second.pubkey] }),
+  });
+  h.setProfiles(new Map([[second.pubkey, { name: "Pat" }]]));
+  expect(h.input()).toHaveValue("");
+  expect(screen.queryByRole("button", { name: /^Remove mention/ })).toBeNull();
+});
+
+it("seeds once the agent inventory classifies the agent, and never after the composer is touched", async () => {
+  const h = mount({
+    threadRootId: "root",
+    threadSeed: editableMessage({ mentions: [first.pubkey] }),
+  });
+  h.setLibrary([], "idle");
+  h.setProfiles(new Map([[first.pubkey, { name: "Honey" }]]));
+  expect(h.input()).toHaveValue("");
+  h.setLibrary([{ pubkey: first.pubkey, name: "Honey" }]);
+  await waitFor(() => expect(h.input()).toHaveValue("@Honey "));
+  expect(viewRevision("scope", "draft:channel:thread:root")).toBeNull();
+  removeHoney();
+  expect(screen.queryByRole("button", { name: /^Remove mention/ })).toBeNull();
+  h.setLibrary([], "idle");
+  h.setLibrary([{ pubkey: first.pubkey, name: "Honey" }]);
+  expect(h.input()).toHaveValue("@Honey ");
+  expect(screen.queryByRole("button", { name: /^Remove mention/ })).toBeNull();
+});
 
 it("opt-out changes future prefills, not the current draft, and re-enable revives nothing", () => {
   const h = mount();
@@ -5212,9 +5992,14 @@ it.each([
       session: {
         ...h.session,
         channels: {
-          window: () => {
-            throw new Error("Unused fixture window");
-          },
+          window: () => ({
+            channelId: "channel",
+            status: "idle",
+            rows: [],
+            hasMore: true,
+            loadingOlder: false,
+            error: undefined,
+          }),
           subscribeWindow: () => () => {},
           ensureList() {},
           ensure() {},
@@ -6395,12 +7180,21 @@ it.each(["Do nothing", "Invite"])(
     fireEvent.submit(screen.getByRole("form"));
     fireEvent.click(screen.getByRole("button", { name: action }));
     await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
-    await h.user.keyboard("again");
+    // The sent message started a thread; its follow-up continues there. After
+    // "Do nothing" the agent is a reference, not a notified mention.
+    h.retarget({
+      threadRootId: "channel-id",
+      threadSeed: startedSeed(action === "Invite" ? [first.pubkey] : []),
+    });
+    const editor = h.input();
+    editor.focus();
+    editor.setSelectionRange(editor.value.length, editor.value.length);
+    await h.user.type(editor, "again", { skipClick: true });
     await h.user.click(screen.getByRole("button", { name: "Send message" }));
     // A reference is not addressed again, so the send needs no second prompt.
     expect(screen.queryByRole("dialog")).toBeNull();
-    expect(h.messages.send).toHaveBeenCalledTimes(2);
-    expect(h.messages.send.mock.calls[1]?.[2]).toEqual(
+    expect(h.messages.reply).toHaveBeenCalledOnce();
+    expect(h.messages.reply.mock.calls[0]?.[3]).toEqual(
       action === "Invite" ? [first.pubkey] : [],
     );
   },
@@ -6429,6 +7223,90 @@ it("Enter invites a nonmember before sending", async () => {
   expect(add).toHaveBeenCalledWith("channel", first.pubkey);
   expect(h.messages.send.mock.calls[0]?.[2]).toEqual([first.pubkey]);
 });
+
+it.each([
+  ["", false],
+  [", taking it out of its archive here after a Remove", true],
+])(
+  "asks before bringing another community's agent in, then adds it and sends%s",
+  async (_, archived) => {
+    const calls: string[] = [];
+    const join = vi.fn(async () => {
+      calls.push("join");
+      return { agent: {} as never, notes: [] };
+    });
+    const snapshot = { agents: [] };
+    const types: never[] = [];
+    const agents = {
+      snapshot: () => snapshot,
+      subscribe: () => () => {},
+      find: () => undefined,
+      types: () => types,
+      joinable: () => [
+        {
+          key: first.pubkey,
+          pubkey: first.pubkey,
+          name: "Honey",
+          relay: "wss://oss.example.com",
+        },
+      ],
+      join,
+    } as unknown as Agents;
+    const h = mount({}, undefined, undefined, agents);
+    const add = vi.fn(async () => {
+      calls.push("add");
+    });
+    const list = {
+      status: "ready",
+      channels: [
+        { id: "channel", channelType: "stream", members: ["d".repeat(64)] },
+      ],
+    };
+    Object.assign(h.session, {
+      viewer: "d".repeat(64),
+      scope: `https://relay.example.test:${"d".repeat(64)}`,
+      channels: { list: () => list, subscribeList: () => () => {} },
+      memberAdditions: { add },
+      ...(archived && {
+        archives: {
+          state: (key: string) =>
+            key === first.pubkey ? "archived" : "not-archived",
+        },
+      }),
+    });
+    h.messages.send.mockImplementation(() => {
+      calls.push("send");
+      return "channel-id";
+    });
+    act(() => h.commands().insertMention(first));
+    fireEvent.submit(screen.getByRole("form"));
+    expect(await screen.findByRole("dialog")).toHaveTextContent(
+      "Bring Honey into relay.example.test?",
+    );
+    expect(screen.getByRole("dialog")).toHaveTextContent(
+      "Honey is in oss.example.com. Bringing it here adds the same agent",
+    );
+    // Enter on the initial focus declines: nothing joins, sends, or is lost.
+    const safe = screen.getByRole("button", { name: "Don't bring" });
+    await waitFor(() => expect(safe).toHaveFocus());
+    await userEvent.setup().keyboard("{Enter}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(join).not.toHaveBeenCalled();
+    expect(add).not.toHaveBeenCalled();
+    expect(h.messages.send).not.toHaveBeenCalled();
+    expect(h.input()).toHaveValue("@Honey ");
+    // Confirming joins first, then adds to the channel, then sends.
+    fireEvent.submit(screen.getByRole("form"));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Bring it here" }),
+    );
+    await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+    expect(join).toHaveBeenCalledWith(first.pubkey);
+    expect(calls).toEqual(["join", "add", "send"]);
+    expect(h.messages.send.mock.calls[0]?.[2]).toEqual([first.pubkey]);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  },
+);
 
 it.each(["close", "escape"])(
   "%s preserves the captured draft and returns focus without adding or sending",
@@ -7555,17 +8433,12 @@ it.each([false, true])(
         screen.queryByRole("button", { name: "Retry draft cleanup" }),
       ).not.toBeInTheDocument();
       expect(localStorage.getItem(key)).toBeNull();
-      expect(retired).toHaveBeenCalledTimes(remembered ? 0 : 1);
-      if (remembered) {
-        expect(screen.getByRole("alert")).toHaveTextContent(
-          "Could not save this draft",
-        );
-        expect(
-          screen.getByRole("button", { name: "Send message" }),
-        ).toBeEnabled();
-        // Keep the actual inline recipient while appending new work.
-        await h.user.keyboard("Second message");
-      } else h.fill("Second message");
+      // Remembered agents are in memory, not a draft, so the failed
+      // absence-only cleanup is tolerated either way.
+      expect(retired).toHaveBeenCalledTimes(1);
+      // Keep the actual inline recipient while appending new work.
+      if (remembered) await h.user.keyboard("Second message");
+      else h.fill("Second message");
       await h.user.click(screen.getByRole("button", { name: "Send message" }));
       expect(h.messages.send).toHaveBeenCalledTimes(2);
       expect(h.messages.send.mock.calls[1]?.[1]).toContain("Second message");
@@ -7573,7 +8446,7 @@ it.each([false, true])(
         remembered ? [first.pubkey] : [],
       );
       expect(localStorage.getItem(key)).toBeNull();
-      expect(retired).toHaveBeenCalledTimes(remembered ? 0 : 2);
+      expect(retired).toHaveBeenCalledTimes(2);
       // Failed absence-only cleanup must not leave a Solo draft recovery lock.
       h.retarget({ channelId: "other" });
       h.retarget({ channelId: "channel" });
@@ -7614,8 +8487,9 @@ it.each([false, true])(
       });
       await h.user.click(screen.getByRole("button", { name: "Send message" }));
       expect(readView("scope", "draft:channel", "missing")).toMatchObject({
-        text: remembered ? "@Honey " : "",
+        text: "",
       });
+      expect(h.input()).toHaveValue(remembered ? "@Honey " : "");
       expect(retired).toHaveBeenCalledExactlyOnceWith();
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     } finally {
@@ -7837,7 +8711,7 @@ it("rechecks the saved revision after held Solo chat admission before submitting
   );
 });
 
-it("locks a nonempty remembered-agent follow-up until accepted draft cleanup succeeds", async () => {
+it("locks the composer until the sent draft's cleanup succeeds, keeping the remembered agents in memory", async () => {
   const retired = vi.fn();
   const h = mount({ onDraftSaved: retired });
   vi.spyOn(h.session.profiles, "snapshot").mockReturnValue(
@@ -7860,9 +8734,8 @@ it("locks a nonempty remembered-agent follow-up until accepted draft cleanup suc
   await h.user.click(
     screen.getByRole("button", { name: "Retry draft cleanup" }),
   );
-  expect(readView("scope", "draft:channel", "")).toMatchObject({
-    text: "@Honey ",
-  });
+  expect(readView("scope", "draft:channel", "")).toEqual(emptied);
+  expect(h.input()).toHaveValue("@Honey ");
   expect(retired).toHaveBeenCalledOnce();
   expect(h.messages.send).toHaveBeenCalledOnce();
 });
@@ -8259,6 +9132,123 @@ it("edits the last message from an untouched automatic tag and restores that tag
   expect(h.input()).not.toHaveAccessibleName("Edit message");
 });
 
+it("tags the agents the viewer's latest Solo message tagged whenever an empty composer is shown", () => {
+  const viewer = "e".repeat(64);
+  const h = mount({}, undefined, viewer);
+  h.setLibrary([first, second]);
+  h.setProfiles(
+    new Map([
+      [first.pubkey, { name: "Ada", isAgent: true }],
+      [second.pubkey, { name: "Bea", isAgent: true }],
+    ]),
+  );
+  h.retarget({
+    ownSoloConversation: true,
+    requireMention: true,
+    session: {
+      ...h.session,
+      channels: { ...h.session.channels, list: () => soloList },
+    } as unknown as RelaySession,
+  });
+  expect(h.input()).toHaveValue("");
+  h.setRows([
+    editableMessage({
+      id: "1".repeat(64),
+      authorId: viewer,
+      mentions: [first.pubkey],
+    }),
+    editableMessage({
+      id: "2".repeat(64),
+      authorId: viewer,
+      mentions: [second.pubkey],
+    }),
+    // Neither an agent's message nor a thread reply chooses the agent.
+    editableMessage({
+      id: "3".repeat(64),
+      authorId: second.pubkey,
+      mentions: [first.pubkey],
+    }),
+    editableMessage({
+      id: "4".repeat(64),
+      authorId: viewer,
+      mentions: [first.pubkey],
+      threadRootId: "1".repeat(64),
+    }),
+  ]);
+  expect(h.input()).toHaveValue("@Bea ");
+  expect(h.commands().recipients).toEqual([
+    { pubkey: second.pubkey, name: "Bea" },
+  ]);
+  // A removed tag stays removed while the chat is shown.
+  act(() => h.input().removeRecipient(second.pubkey));
+  h.fill("");
+  expect(h.input()).toHaveValue("");
+  // Coming back to the chat tags the agent again, whether the conversation or
+  // its retained tab is shown again.
+  h.present(false);
+  h.present(true);
+  expect(h.input()).toHaveValue("@Bea ");
+  act(() => h.input().removeRecipient(second.pubkey));
+  h.fill("");
+  h.retarget({ shown: false });
+  expect(h.input()).toHaveValue("");
+  h.retarget({ shown: true });
+  expect(h.input()).toHaveValue("@Bea ");
+  // Text without a tag is left as written.
+  act(() => h.input().removeRecipient(second.pubkey));
+  h.fill("for people");
+  h.present(false);
+  h.present(true);
+  expect(h.input()).toHaveValue("for people");
+  // Off with remembered agents.
+  h.fill("");
+  setRememberAgentsPreference(false);
+  h.present(false);
+  h.present(true);
+  expect(h.input()).toHaveValue("");
+  setRememberAgentsPreference(true);
+});
+
+it("waits for the inventory to classify the agent the viewer's latest Solo message tagged", () => {
+  const viewer = "e".repeat(64);
+  // The local agent is usable before the library holding the latest agent loads.
+  const control = localAgentsFixture([
+    { ...localAgent, pubkey: first.pubkey, name: "Ada" },
+  ]);
+  const h = mount(
+    { scope: `https://relay.example.test:${"d".repeat(64)}` },
+    control,
+    viewer,
+  );
+  h.setLibrary([], "loading");
+  h.retarget({
+    ownSoloConversation: true,
+    requireMention: true,
+    session: {
+      ...h.session,
+      channels: { ...h.session.channels, list: () => soloList },
+    } as unknown as RelaySession,
+  });
+  h.setRows([
+    editableMessage({
+      id: "1".repeat(64),
+      authorId: viewer,
+      mentions: [first.pubkey],
+    }),
+    editableMessage({
+      id: "2".repeat(64),
+      authorId: viewer,
+      mentions: [second.pubkey],
+    }),
+  ]);
+  expect(h.input()).toHaveValue("");
+  h.setLibrary([{ pubkey: second.pubkey, name: "Bea" }]);
+  expect(h.input()).toHaveValue("@Bea ");
+  expect(h.commands().recipients).toEqual([
+    { pubkey: second.pubkey, name: "Bea" },
+  ]);
+});
+
 it("keeps remembered agents while typing during upload without taking focus when publication finishes", async () => {
   const key = keypair();
   const agent = { pubkey: key.pubkey, name: "Honey" };
@@ -8347,7 +9337,8 @@ it.each(["thread", "solo"])(
     await waitFor(() => expect(send).toHaveBeenCalledOnce());
     await waitFor(() => expect(h.input()).toHaveValue("@Honey @Honey "));
     if (personal) {
-      h.setRows([editableMessage()]);
+      // The sent message lands with the agents it notified.
+      h.setRows([editableMessage({ mentions: [first.pubkey, second.pubkey] })]);
       fireEvent.keyDown(h.input(), { key: "ArrowUp" });
       expect(h.input()).toHaveAccessibleName("Edit message");
       fireEvent.keyDown(h.input(), { key: "Escape" });
@@ -8542,7 +9533,9 @@ it.each([
       expect(h.messages.send).not.toHaveBeenCalled();
       expect(
         screen.getByRole("region", { name: "Queued follow-ups" }),
-      ).toContainElement(screen.getByText("@Honey Follow up"));
+      ).toContainElement(
+        screen.getByRole("button", { name: "@Honey Follow up" }),
+      );
       if (mode === "compacting") {
         act(() => agents?.setSessionState("idle"));
         fireEvent.click(screen.getByRole("button", { name: "Send" }));
@@ -8809,6 +9802,87 @@ it("keeps automatic recipient replacements out of recent mention ranking", () =>
   act(() => expect(h.commands().replaceRecipients([second])).toBe(true));
   expect([...(mentionHistory(h.session, "channel") ?? [])]).toEqual(before);
 });
+
+it("previews a picked GIF while preserving its source through undo and send", async () => {
+  const { h, enable } = await mountGifComposer();
+  const source = "![Party](https://emoji.test/party.gif)";
+  h.fill(source);
+  expect(within(h.input()).getByRole("img", { name: "Party" })).toHaveAttribute(
+    "src",
+    "https://emoji.test/party.gif",
+  );
+  expect(h.input()).toHaveValue(source);
+  expect(h.input()).not.toHaveTextContent(source);
+  await h.user.keyboard("{Control>}z{/Control}");
+  expect(h.input()).toHaveValue("");
+  await h.user.keyboard("{Control>}{Shift>}z{/Shift}{/Control}");
+  expect(within(h.input()).getByRole("img", { name: "Party" })).toBeVisible();
+  await enable(false);
+  expect(h.input().querySelector("[data-gif-preview]")).toBeNull();
+  expect(h.input()).toHaveTextContent(source);
+  expect(h.input().querySelector('[contenteditable="false"]')).toBeNull();
+  expect(h.input()).toHaveValue(source);
+  await enable(true);
+  expect(within(h.input()).getByRole("img", { name: "Party" })).toBeVisible();
+  h.submit();
+  expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+    "channel",
+    source,
+    [],
+    [],
+  );
+});
+
+it("preserves source when a GIF preview adopts a custom emoji token", async () => {
+  const { h } = await mountGifComposer();
+  h.setEmoji([{ shortcode: "party", url: "https://emoji.test/party.png" }]);
+  const source = "![:party:](https://emoji.test/party.gif)";
+  h.fill(source.slice(0, -1));
+  expect(within(h.input()).getByRole("img", { name: ":party:" })).toBeVisible();
+  await h.user.keyboard(")");
+  expect(h.input()).toHaveValue(source);
+  expect(h.input().querySelector("[data-gif-preview]")).not.toBeNull();
+});
+
+it.each([
+  "`![Party](https://emoji.test/party.gif)`",
+  "```\n![Party](https://emoji.test/party.gif)\n```",
+  "![Party](javascript:party.gif)",
+])("keeps literal or unsafe GIF source as text: %s", async (source) => {
+  const { h } = await mountGifComposer();
+  h.fill(source);
+  expect(h.input().querySelector("[data-gif-preview]")).toBeNull();
+});
+
+async function mountGifComposer() {
+  const root = new Context();
+  const runtime = new PluginRuntime(root, async () => emojiPlugin);
+  const service = new ConversationService(root);
+  onTestFinished(async () => {
+    await runtime.dispose();
+    await root.fiber.dispose();
+  });
+  const plugin = {
+    manifest: { id: "buzz.emoji", name: "Emoji", apiVersion: 1 as const },
+    enabled: true,
+    source: "external" as const,
+    revision: "one",
+    previous: null,
+    reloadable: true,
+    error: null,
+  };
+  const enable = async (enabled: boolean) => {
+    await act(async () => {
+      runtime.reconcile(enabled ? [plugin] : []);
+      await vi.waitFor(() =>
+        expect(service.tools.snapshot()).toHaveLength(enabled ? 1 : 0),
+      );
+    });
+  };
+  await enable(true);
+  const h = mount({ extensions: service });
+  return { h, enable };
+}
 
 it("guards automatic recipient changes using the current draft prose", () => {
   const h = mount();

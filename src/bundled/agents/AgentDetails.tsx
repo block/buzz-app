@@ -6,6 +6,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type ReactNode,
 } from "react";
 import {
@@ -20,10 +21,13 @@ import type {
   Agents,
   AgentConversation,
   RegisteredAgentType,
+  TranscriptRequest,
 } from "../../features/agents/service";
 import {
   AgentArchiveRetry,
   AgentDelete,
+  AgentRemoveHere,
+  inSeveral,
 } from "../../features/agents/AgentManage";
 import {
   CopyIcon,
@@ -31,6 +35,15 @@ import {
   XIcon,
 } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
+import { Avatar } from "../../shared/design-system/ui/Avatar";
+import { AvatarStack } from "../../shared/design-system/ui/AvatarStack";
+import {
+  PopoverRoot,
+  PopoverTrigger,
+  PopoverPopup,
+} from "../../shared/design-system/ui/Popover";
+import type { CommunityReader } from "../../features/communities/service";
+import { communityPresentation } from "../../features/communities/community-icon";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   MenuRoot,
@@ -66,6 +79,9 @@ export function AgentDetails({
   messageAction,
   conversation,
   initialActivity,
+  initialTranscript,
+  close,
+  communities,
 }: {
   agents: Agents;
   agent: Agent;
@@ -77,6 +93,10 @@ export function AgentDetails({
   messageAction: (variant: "glass" | "subtle") => ReactNode;
   conversation?: AgentConversation | undefined;
   initialActivity?: boolean;
+  initialTranscript?: TranscriptRequest | undefined;
+  /** Closes the panel showing the agent. */
+  close?: () => void;
+  communities?: CommunityReader | undefined;
 }) {
   const { pack, src: backdrop } = useAgentPortraitSource(agent, agent.relay);
   const tabbed = !!usePanelTabHost();
@@ -146,7 +166,7 @@ export function AgentDetails({
     setNamePending(true);
     setNameError("");
     try {
-      await agents.save(agent.pubkey, { name: name.trim() });
+      await agents.save(agent.key, { name: name.trim() });
       finishName();
     } catch (reason) {
       setNameError(reason instanceof Error ? reason.message : String(reason));
@@ -172,7 +192,18 @@ export function AgentDetails({
     return () => clearTimeout(timer);
   }, [copied]);
   return (
-    <AgentSaveFooter value={saveFooter}>
+    <AgentSaveFooter
+      value={{
+        target: saveFooter,
+        notice: (
+          <SharedSettingsNotice
+            agents={agents}
+            agent={agent}
+            communities={communities}
+          />
+        ),
+      }}
+    >
       <div className={styles.build}>
         <div ref={content} className={styles.detailsScroll}>
           {!tabbed && (
@@ -326,8 +357,8 @@ export function AgentDetails({
               <AgentIdentityDialog
                 agent={agent}
                 agents={agents}
+                communities={communities}
                 finalFocus={identityMenu}
-                initialAvatarPicker
                 onClose={() => setEditingIdentity(false)}
               />
             )}
@@ -349,8 +380,12 @@ export function AgentDetails({
               channels={channels}
               conversation={conversation}
               initialActivity={initialActivity}
+              initialTranscript={initialTranscript}
+              close={close}
               settingsHost={settings.settingsHost}
+              onDiscard={settings.discard}
               memories={memories}
+              communities={communities}
               settingsContent={
                 <div>
                   <InlineHeader title="Agent details" level={4} />
@@ -384,10 +419,48 @@ export function AgentDetails({
                       }
                     />
                     <AgentArchiveRetry agents={agents} agent={agent} />
+                    {inSeveral(agents, agent) && (
+                      <PreferenceRow
+                        title="Remove from this community"
+                        subtitle={
+                          agent.deleting
+                            ? "Its Remove didn't finish, so it stays stopped here. Remove it again to finish."
+                            : `Also in ${agents
+                                .memberships(agent.pubkey)
+                                .filter(
+                                  (membership) =>
+                                    membership.key !== agent.key &&
+                                    !membership.deleting,
+                                )
+                                .map(({ origin }) =>
+                                  origin.replace(/^https:\/\//, ""),
+                                )
+                                .join(", ")}, where it stays.`
+                        }
+                        trailing={
+                          <AgentRemoveHere
+                            agents={agents}
+                            agent={agent}
+                            onRemoved={onRemoved}
+                            trigger={(open) => (
+                              <Button
+                                size="compact"
+                                variant="outline"
+                                aria-label="Remove from this community"
+                                onClick={open}
+                              >
+                                Remove
+                              </Button>
+                            )}
+                          />
+                        }
+                      />
+                    )}
                     <PreferenceRow
                       title="Delete agent"
                       subtitle={
                         agent.deleting &&
+                        !inSeveral(agents, agent) &&
                         "Its Delete didn't finish, so it stays stopped. Delete it again to finish."
                       }
                       trailing={
@@ -418,9 +491,85 @@ export function AgentDetails({
               }
             />
           </section>
+          <div ref={setSaveFooter} className={styles.saveFooter} />
         </div>
-        <div ref={setSaveFooter} className={styles.saveFooter} />
       </div>
     </AgentSaveFooter>
+  );
+}
+
+const noSubscribe = () => () => {};
+
+/** Shared configuration edits affect every remaining membership, including offline ones. */
+function SharedSettingsNotice({
+  agents,
+  agent,
+  communities,
+}: {
+  agents: Agents;
+  agent: Agent;
+  communities: CommunityReader | undefined;
+}) {
+  const known = useSyncExternalStore(
+    communities?.subscribe ?? noSubscribe,
+    () => communities?.snapshot(),
+  );
+  const memberships = agents
+    .memberships(agent.pubkey)
+    .filter((membership) => !membership.deleting)
+    .sort((a, b) => Number(b.key === agent.key) - Number(a.key === agent.key));
+  if (memberships.length < 2) return null;
+  const items = memberships.map(({ origin }) => ({
+    ...communityPresentation(origin, known?.memberships),
+    shape: "squircle" as const,
+  }));
+  const names = items.map((item) => item.name).join(", ");
+  return (
+    <div className={styles.sharedSettingsNotice}>
+      <PopoverRoot>
+        <PopoverTrigger
+          openOnHover="preview"
+          render={
+            <Button variant="plain" size="inline" style={{ maxWidth: "100%" }}>
+              <span className="flex min-w-0 flex-wrap items-center justify-center gap-1 whitespace-normal text-subtle">
+                Shared across
+                <AvatarStack items={items} size="mini" />
+                <span className="sr-only">{names}</span>
+              </span>
+            </Button>
+          }
+        />
+        <PopoverPopup
+          side="top"
+          align="center"
+          aria-label={`${agent.name}’s shared settings`}
+        >
+          <p className="m-0 text-body-sm text-subtle">
+            {agent.name}’s name, instructions, and settings are shared across
+            these communities:
+          </p>
+          <ul
+            aria-label="Communities"
+            className="m-0 mt-2 grid list-none gap-2 p-0"
+          >
+            {items.map((item) => (
+              <li
+                key={item.id}
+                className="flex min-w-0 items-center gap-2 text-body-sm"
+              >
+                <Avatar
+                  src={item.src}
+                  alt=""
+                  fallback={item.name}
+                  shape={item.shape}
+                  size="small"
+                />
+                <span className="min-w-0 break-words">{item.name}</span>
+              </li>
+            ))}
+          </ul>
+        </PopoverPopup>
+      </PopoverRoot>
+    </div>
   );
 }

@@ -530,6 +530,7 @@ function ReviewShell({
       ) : attachment.kind === "video" && source ? (
         <VideoPlayer
           key={source}
+          downloadName={attachment.name ?? ""}
           videoRef={video}
           source={source}
           poster={
@@ -611,7 +612,8 @@ function ReviewComments({
         .ensure(authors.split(":"), "background")
         .catch(() => {});
   }, [session.profiles, authors]);
-  // Comment links stay inert: no host tab opener reaches them behind the review.
+  // Comment links stay inert: no host tab opener reaches them behind the review,
+  // so mentions render as static names.
   return (
     <LinkThreadTabContext value={undefined}>
       <section

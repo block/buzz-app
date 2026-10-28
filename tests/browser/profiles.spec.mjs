@@ -106,6 +106,8 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
   for (const pointerVisit of ["stationary", "away", "back"]) {
     await page.mouse.move(0, 0);
     await avatar.hover();
+    // Previews open once the pointer rests (DESIGN.md "Hover timing").
+    await page.clock.runFor(600);
     await expect(preview).toBeVisible();
     await avatar.click();
     await expect(key).toHaveText(npubs.viewer);
@@ -161,7 +163,7 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
   await expect(
     page
       .getByRole("region", { name: "Channel message history" })
-      .getByText("Hello @Mic", { exact: true }),
+      .locator('span[data-mention-kind="person"][data-mention-name="Mic"]'),
   ).toBeVisible();
   await page.evaluate(() =>
     window.profilesFixture.change("enable", "buzz.profiles"),

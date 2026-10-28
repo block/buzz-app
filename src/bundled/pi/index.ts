@@ -3,6 +3,7 @@
 // storage; each conversation the agent is in is one continuing, durable Pi
 // conversation. Pi answers with the in-process Buzz tools.
 import { isTauri } from "@tauri-apps/api/core";
+import { pubkeyOf } from "../../features/agents/membership";
 import { ownerReads } from "../../features/agents/reads";
 import { repositoriesContext } from "../../features/communities/repositories";
 import type { PluginModule } from "../../plugins/api";
@@ -23,11 +24,22 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const typeKey = `${ctx.pluginOwner?.id ?? "buzz.pi"}/${TYPE_ID}`;
   const runtime = new PiRuntime(
     host,
-    (pubkey) => ownerReads(agents.relay(pubkey), pubkey),
-    (pubkey, signal) => agents.core(pubkey, signal),
+    (key) => ownerReads(agents.relay(key), pubkeyOf(key)),
+    (key, signal) => agents.core(key, signal),
     () => agents.tools(),
     repositoriesContext,
-    (pubkey) => agents.handle(pubkey),
+    (key) => agents.handle(key),
+    async (agent, session, event, input) => {
+      return (
+        (await agents.dispatchHook(
+          typeKey,
+          event,
+          input,
+          { agent, session },
+          { accepts: (output) => output != null, milliseconds: 25000 },
+        )) ?? null
+      );
+    },
   );
   const { ActivityTab, Create, CreateModel, SettingsTab } = createTabs({
     setup: runtime.setup,
@@ -49,6 +61,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
 
   agents.register<Config>({
     id: TYPE_ID,
+    hooks: { events: ["beforeTool", "afterTool"] },
     title: "Pi",
     icon: PiLogoIcon,
     description:
@@ -56,6 +69,18 @@ export const apply: PluginModule["apply"] = (ctx) => {
     defaults: () => ({ config: DEFAULT_CONFIG }),
     Create,
     CreateModel,
+    importShared: (source) =>
+      source.runtime === "pi"
+        ? {
+            ...DEFAULT_CONFIG,
+            model: source.model,
+            provider: source.provider ?? "",
+          }
+        : undefined,
+    exportShared: (saved) => {
+      const { provider, model } = config(saved);
+      return { runtime: "pi", ...(provider && { provider }), model };
+    },
     adopt: (carry, saved) => ({
       ...saved,
       instructions: carry.instructions ?? saved.instructions,
@@ -74,10 +99,10 @@ export const apply: PluginModule["apply"] = (ctx) => {
     },
     ...(host.spawn && {
       usage: (agent, { since, signal }) =>
-        runtime.usage(agent.pubkey, since, signal),
+        runtime.usage(agent.key, since, signal),
     }),
     sessions: {
-      list: (pubkey) => runtime.sessions(pubkey),
+      list: (key) => runtime.sessions(key),
       subscribe: (listener) => runtime.subscribe(listener),
     },
     tabs: [

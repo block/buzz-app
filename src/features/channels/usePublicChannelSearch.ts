@@ -1,3 +1,4 @@
+import { retryRead } from "../relay/read-retry";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ChannelSummary } from "../relay/contracts";
 import type { ComposerSession } from "../messages/composer-session";
@@ -9,6 +10,8 @@ type Result = {
   owner: { session: ComposerSession };
   channels: readonly ChannelSummary[];
   partial: boolean;
+  /** Matches from the pages read so far; the directory read goes on. */
+  pending?: boolean;
   error?: string;
 };
 
@@ -31,13 +34,30 @@ export function usePublicChannelSearch(
   useEffect(() => {
     if (!query || !ready || !search) return;
     const controller = new AbortController();
+    // The matches already shown while the directory read goes on.
+    let shown = "";
+    let kept = none;
     // Typeahead waits for a brief typing pause; cancellation also owns the delay.
     const timer = setTimeout(() => {
-      search(query, {
-        signal: controller.signal,
-        priority: "foreground",
-        exact,
-      }).then(
+      retryRead(
+        (signal) =>
+          search(query, {
+            signal,
+            priority: "foreground",
+            exact,
+            // An exact lookup names one channel, so it waits for every page.
+            progress: exact
+              ? undefined
+              : ({ channels }) => {
+                  const ids = channels.map(({ id }) => id).join();
+                  if (controller.signal.aborted || ids === shown) return;
+                  shown = ids;
+                  kept = channels;
+                  setResult({ owner, channels, partial: false, pending: true });
+                },
+          }),
+        controller.signal,
+      ).then(
         ({ channels, partial }) => {
           if (!controller.signal.aborted)
             setResult({ owner, channels, partial });
@@ -46,7 +66,8 @@ export function usePublicChannelSearch(
           if (!controller.signal.aborted)
             setResult({
               owner,
-              channels: [],
+              // Matches already shown stay; only the rest of the read failed.
+              channels: kept,
               partial: false,
               error: `Public channel search couldn’t finish${error instanceof Error && error.message ? `: ${error.message.slice(0, 240)}` : "."}`,
             });
@@ -59,7 +80,8 @@ export function usePublicChannelSearch(
     };
   }, [query, ready, search, exact, owner]);
   const current = result?.owner === owner ? result : undefined;
-  const loading = !!query && ready && !!search && !current;
+  const loading =
+    !!query && ready && !!search && (!current || !!current.pending);
   // While the next lookup runs, keep the last answer's rows that still
   // match, so open channels don't vanish and return on every keystroke. The
   // store keeps that answer: the composer remounts this hook per edit.

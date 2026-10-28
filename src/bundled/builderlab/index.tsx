@@ -12,8 +12,11 @@ import { createOAuthSession } from "./oauth/session";
 import { createAgentClient } from "./agents/client";
 import { RemoteAgents } from "./agents/RemoteAgents";
 import { builderlabType } from "./adapter-type";
+import { createKnownCommunitiesClient } from "./known-communities/client";
+import { startKnownCommunitiesSync } from "./known-communities/sync";
 import type { AgentProviderSnapshot } from "../../features/agents/service";
 import { Header, InlineHeader } from "../../shared/design-system/ui/Header";
+import { hostedAgentSettings } from "./service";
 import { applyApps } from "./apps";
 
 export const inject = [
@@ -23,6 +26,7 @@ export const inject = [
   "relay",
   "panels",
   "browser",
+  "knownCommunities",
 ];
 export const apply: PluginModule["apply"] = (ctx) => {
   let unavailable = "";
@@ -57,7 +61,17 @@ export const apply: PluginModule["apply"] = (ctx) => {
       if (nativeIdentityEnabled()) handoffBackupSession("builderlab", null);
     };
   });
-
+  // The account's community list follows this sign-in; see docs/communities.md.
+  // Where no sign-in is possible, no owner runs, so the rail has no sync to
+  // report on.
+  if (browserLoginAvailable() && !unavailable)
+    ctx.effect(() =>
+      startKnownCommunitiesSync({
+        client: createKnownCommunitiesClient(ctx.host, session),
+        session,
+        knownCommunities: ctx.knownCommunities,
+      }),
+    );
   const agents = createAgentClient(ctx.host, session);
   const loginAvailable = browserLoginAvailable() && !unavailable;
   if (!unavailable) {
@@ -116,6 +130,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       },
     });
     ctx.effect(() => () => stopProvider());
+    ctx.provide("builderlab", hostedAgentSettings(session, agents));
   }
   // Link the Buzz key at sign-in. Best effort: activation links again and
   // reports why when it cannot.

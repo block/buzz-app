@@ -240,6 +240,8 @@ test("member identity geometry and separate addition focus", async ({
     await page.goto(url);
     await page.getByRole("button", { name: "Access" }).click();
     const dialog = page.getByRole("dialog", { name: "Manage members" });
+    // Baselines read during the entrance translate capture its easing tail.
+    await opened(dialog);
     const search = dialog.getByRole("searchbox");
     const memberRow = dialog.getByRole("listitem").first();
     await expect(memberRow).toHaveCSS("min-height", "48px");
@@ -275,10 +277,7 @@ test("member identity geometry and separate addition focus", async ({
     expect(field.y - header.y - header.height).toBeCloseTo(12, 0);
     await expect(add).toHaveCSS("font-size", "12px");
     expect((await add.boundingBox()).height).toBe(24);
-    const members = dialog.getByRole("region", {
-      name: "People",
-      exact: true,
-    });
+    const members = dialog.getByRole("region", { name: "People", exact: true });
     const others = dialog.getByRole("region", {
       name: "Not in this channel",
       exact: true,
@@ -288,7 +287,14 @@ test("member identity geometry and separate addition focus", async ({
       exact: true,
     });
     await expect(members).toHaveCount(0);
-    await expect(others.getByRole("heading")).toHaveCSS("position", "sticky");
+    await expect(
+      dialog
+        .getByRole("region", {
+          name: "People not in this channel",
+          exact: true,
+        })
+        .getByRole("heading", { name: "People", exact: true }),
+    ).toHaveCSS("position", "sticky");
     // With no roster matches, search results start at the top without an orphan divider.
     await expect(others).toHaveCSS("border-top-width", "0px");
     expect((await others.boundingBox()).y).toBeCloseTo(
@@ -724,20 +730,69 @@ test("large known-agent searches mount only the first invitation page", async ({
     body: JSON.stringify({ counts, ...sample }),
     contentType: "application/json",
   });
-  expect(counts.slice(0, 3)).toEqual([30, 30, 30]);
+  expect(counts.slice(0, 3)).toEqual([4, 4, 4]);
   // A random npub may contain "hell"; it cannot contain "hello" (no o in bech32).
-  expect(counts[3]).toBeLessThanOrEqual(30);
+  expect(counts[3]).toBeLessThanOrEqual(4);
   expect(counts.slice(4)).toEqual([0, 0]);
   await search.fill("helper");
   await expect(refresh).toHaveAttribute("aria-busy", "false");
-  const more = dialog.getByRole("button", { name: "Show more results" });
-  for (const count of [60, 90, 120, 150, 180, 210, 240]) {
+  const more = dialog
+    .getByRole("region", { name: "Your other agents", exact: true })
+    .getByRole("button", { name: "Show more", exact: true });
+  for (let count = 8; count <= 240; count += 4) {
     await more.click();
     await expect(
       dialog.getByRole("button", { name: /^Add Helper/ }),
     ).toHaveCount(count);
   }
   await expect(more).toHaveCount(0);
+  expect(await page.evaluate(() => window.focusFixture.additions)).toEqual([]);
+  expect(errors).toEqual([]);
+});
+
+// Browser-only: removing a focused button interacts with the native dialog focus
+// trap differently in Chromium and WebKit; jsdom cannot establish the handoff.
+test("final invitation expansion continues keyboard focus at the first new row", async ({
+  page,
+}) => {
+  const { errors } = watchPageErrors(page);
+  for (const activation of ["Enter", "Space", "pointer"]) {
+    await page.goto(`${url}?invitation-focus`);
+    await page.getByRole("button", { name: "Access" }).click();
+    const dialog = page.getByRole("dialog", { name: "Manage members" });
+    await dialog.getByRole("searchbox").fill("Helper");
+    const group = dialog.getByRole("region", {
+      name: "Your other agents",
+      exact: true,
+    });
+    const more = group.getByRole("button", { name: "Show more", exact: true });
+    await expect(
+      group.getByRole("button", { name: /^Add Helper/ }),
+    ).toHaveCount(4);
+    await more.focus();
+    await page.keyboard.press("Enter");
+    await expect(
+      group.getByRole("button", { name: /^Add Helper/ }),
+    ).toHaveCount(8);
+    await expect(more).toBeFocused();
+    if (activation === "pointer") await more.click();
+    else await page.keyboard.press(activation);
+    await expect(
+      group.getByRole("button", { name: /^Add Helper/ }),
+    ).toHaveCount(10);
+    await expect(more).toHaveCount(0);
+    const firstNew = group.getByRole("button", {
+      name: /^Open profile for Helper 009/,
+    });
+    if (activation === "pointer") await expect(firstNew).not.toBeFocused();
+    else {
+      await expect(firstNew).toBeFocused();
+      await page.keyboard.press("Tab");
+      await expect(
+        group.getByRole("button", { name: /^Add Helper 009/ }),
+      ).toBeFocused();
+    }
+  }
   expect(await page.evaluate(() => window.focusFixture.additions)).toEqual([]);
   expect(errors).toEqual([]);
 });

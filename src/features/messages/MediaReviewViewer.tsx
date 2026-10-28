@@ -629,7 +629,6 @@ function ReviewComments({
             className={styles.mediaReviewComment}
           >
             <MessageRow
-              staticMentions
               row={row}
               extensions={extensions}
               session={session}

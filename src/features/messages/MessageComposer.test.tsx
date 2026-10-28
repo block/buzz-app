@@ -6017,6 +6017,45 @@ it("an untouched default tag follows the default agent until the draft is edited
   expect(h.input()).toHaveValue("@Saved hi");
 });
 
+it("an untouched default tag follows the default agent when storage can't be written", async () => {
+  const original = Storage.prototype.setItem;
+  const write = vi
+    .spyOn(Storage.prototype, "setItem")
+    .mockImplementation(function (this: Storage, name, value) {
+      if (name.startsWith("buzz-view.v1:")) throw Error("storage full");
+      return original.call(this, name, value);
+    });
+  try {
+    const h = mount({
+      submission: {
+        draftKey: "new-chat",
+        locked: false,
+        disabled: false,
+        submit: vi.fn(),
+      },
+      ownSoloConversation: true,
+      soloConversation: true,
+      requireMention: true,
+      defaultMention: { pubkey: first.pubkey, name: "Cached" },
+    });
+    h.setLibrary([
+      { pubkey: first.pubkey, name: "Cached" },
+      { pubkey: second.pubkey, name: "Saved" },
+    ]);
+    Object.assign(h.session, {
+      channels: { ...h.session.channels, list: () => soloList },
+    });
+    await waitFor(() => expect(h.input()).toHaveValue("@Cached "));
+    h.retarget({ defaultMention: { pubkey: second.pubkey, name: "Saved" } });
+    await waitFor(() => expect(h.input()).toHaveValue("@Saved "));
+    expect(h.commands().recipients).toEqual([
+      { pubkey: second.pubkey, name: "Saved" },
+    ]);
+  } finally {
+    write.mockRestore();
+  }
+});
+
 it("an untouched default tag still follows the default agent after a remount", async () => {
   const props = (name: string, pubkey: string) => ({
     submission: {

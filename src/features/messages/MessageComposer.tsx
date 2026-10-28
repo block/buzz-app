@@ -1372,14 +1372,25 @@ function Composer({
   const autoTagged = useRef<string | undefined>(undefined);
   // The draft as seeded, saved beside it so an untouched seed is still
   // recognized after navigation or a reload; any edit stops matching it.
+  // The copy kept in memory still recognizes it when storage can't be written.
   const seedView = `${draftKey}:seeded`;
+  const seeded = useRef<string | undefined>(undefined);
   const seedOf = ({ text, recipients }: MentionDraft) =>
     JSON.stringify([
       text,
       recipients.map(({ pubkey, start }) => [pubkey, start]),
     ]);
+  const isSeed = () => {
+    const seed = seedOf(valueRef.current);
+    return (
+      seeded.current === JSON.stringify([seedView, seed]) ||
+      readView<unknown>(scope, seedView, null) === seed
+    );
+  };
   const markSeeded = () => {
-    writeView(scope, seedView, seedOf(valueRef.current));
+    const seed = seedOf(valueRef.current);
+    seeded.current = JSON.stringify([seedView, seed]);
+    writeView(scope, seedView, seed);
     automaticTag.current = JSON.stringify(valueRef.current);
   };
   useEffect(() => {
@@ -1393,7 +1404,7 @@ function Composer({
       return;
     // Until it is edited, a seeded tag follows the agent it stands for, as
     // when the account's main agent arrives or the cached one was deleted.
-    if (readView<unknown>(scope, seedView, null) === seedOf(valueRef.current)) {
+    if (isSeed()) {
       autoTagged.current = draftKey;
       if (
         seedMention &&

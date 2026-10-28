@@ -1517,6 +1517,8 @@ it.each(["Identity", "Settings"])(
     const agents = {
       save,
       configHistory: () => undefined,
+      addedTabs: () => [],
+      registerTab: () => {},
       memberships: () => [],
       subscribe: () => () => {},
     } as unknown as Agents;

@@ -51,6 +51,8 @@ it("puts the device runtime control in Settings without a separate Attention tab
     subscribe: () => () => {},
     memberships: () => [],
     configHistory: () => undefined,
+    addedTabs: () => [],
+    registerTab: () => {},
   } as unknown as Agents;
   const sections = agentSections({
     agents,
@@ -74,6 +76,8 @@ it("supplies the local control once to provider Settings", () => {
       subscribe: () => () => {},
       memberships: () => [],
       configHistory: () => undefined,
+      addedTabs: () => [],
+      registerTab: () => {},
     } as unknown as Agents,
     agent,
     type: {
@@ -120,6 +124,8 @@ it("shows each synced side's History as its own named section", () => {
     classifier: () => "available",
     save: async () => {},
     configHistory: () => history,
+    addedTabs: () => [],
+    registerTab: () => {},
   } as unknown as Agents;
   const section = agentSections({
     agents,
@@ -166,6 +172,8 @@ it("shows Settings Attention scope for the agent relay and follows community upd
       { key: "other", origin: "https://other.example", connected: false },
     ],
     configHistory: () => undefined,
+    addedTabs: () => [],
+    registerTab: () => {},
   } as unknown as Agents;
   const section = agentSections({
     agents,
@@ -222,4 +230,48 @@ it("shows Settings Attention scope for the agent relay and follows community upd
   ).toBeInTheDocument();
   view.unmount();
   expect(listeners.size).toBe(0);
+});
+
+it("adds plugin tabs to local agents only, before History", () => {
+  const added = {
+    id: "watching",
+    key: "buzz.watching/watching",
+    pluginId: "buzz.watching",
+    revision: "1",
+    title: "Watching",
+    component: ({ agent }: { agent: Agent }) => <p>Watching {agent.name}</p>,
+  };
+  const agents = {
+    save: async () => {},
+    subscribe: () => () => {},
+    memberships: () => [],
+    configHistory: () => ({
+      read: async () => [],
+      sides: [],
+      revise: async () => ({ ok: true }),
+    }),
+    addedTabs: () => [added],
+    registerTab: () => {},
+  } as unknown as Agents;
+  const values = (place: Agent["place"]) =>
+    agentSections({
+      agents,
+      agent: { ...agent, place } as Agent,
+      type: undefined,
+      memories: undefined,
+    }).map((tab) => tab.value);
+  expect(values("here")).toEqual([
+    "agent:settings",
+    "agent:added:buzz.watching/watching",
+    "agent:history",
+    "agent:memory",
+  ]);
+  expect(values("hosted")).not.toContain("agent:added:buzz.watching/watching");
+  expect(values("elsewhere")).toEqual([]);
+  render(
+    agentSections({ agents, agent, type: undefined, memories: undefined })
+      .find((tab) => tab.value === "agent:added:buzz.watching/watching")
+      ?.render(),
+  );
+  expect(screen.getByText("Watching Ada")).toBeInTheDocument();
 });

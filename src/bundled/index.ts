@@ -24,6 +24,8 @@ import profilesManifest from "./profiles/manifest.json";
 import * as profiles from "./profiles";
 import agentsManifest from "./agents/manifest.json";
 import * as agents from "./agents";
+import watchingManifest from "./watching/manifest.json";
+import * as watching from "./watching";
 import claudeCodeManifest from "./claude-code/manifest.json";
 import * as claudeCode from "./claude-code";
 import codexManifest from "./codex/manifest.json";
@@ -173,6 +175,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
     manifest: { ...agentsManifest, apiVersion: 1 },
     module: agents,
     enabledByDefault: true,
+  },
+  {
+    manifest: { ...watchingManifest, apiVersion: 1 },
+    module: watching,
+    enabledByDefault: false,
   },
   {
     manifest: { ...claudeCodeManifest, apiVersion: 1 },

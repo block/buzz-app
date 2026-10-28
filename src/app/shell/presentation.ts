@@ -5,7 +5,6 @@ import {
   BrowserIcon,
   ChartBarIcon,
   ChatsCircleIcon,
-  EyeIcon,
   NoteIcon,
   GearIcon,
   LightningIcon,
@@ -25,7 +24,6 @@ export const shellPresentation = {
 const bundledOrder = [
   "buzz.channels/channels",
   "buzz.inbox/inbox",
-  "buzz.agents/attention",
   "buzz.reminders/reminders",
   "buzz.bestie/bestie",
 ];
@@ -50,7 +48,6 @@ const bundledIcons = new Map<string, typeof BrowserIcon>([
   ["buzz.reminders/reminders", AlarmIcon],
   ["buzz.bestie/bestie", BestieIcon],
   ["buzz.agents/agents", RobotIcon],
-  ["buzz.agents/attention", EyeIcon],
   ["buzz.workflows/workflows", LightningIcon],
   ["buzz.relay-notes/notes", NoteIcon],
   ["buzz.usage/usage", ChartBarIcon],

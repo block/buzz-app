@@ -24,12 +24,6 @@ test("shared navigation preserves drafts and history across Solo and header page
     "Agents",
     "Workflows",
   ]);
-  // Watching is a sidebar page, ordered directly below Inbox.
-  const rows = page
-    .getByRole("navigation", { name: "Pages" })
-    .getByRole("button");
-  await expect(rows.nth(0)).toHaveText("Inbox");
-  await expect(rows.nth(1)).toHaveText("Watching");
   const sidebar = page.getByRole("complementary", {
     name: "Sidebar",
     exact: true,

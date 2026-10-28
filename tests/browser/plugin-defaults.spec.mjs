@@ -27,6 +27,7 @@ test("Bestie opts in without changing the other bundled defaults and survives re
   await plugins(page);
   const bestie = pluginAction(page, "Bestie");
   await expect(bestie).toHaveAccessibleName(/^Enable /);
+  await expect(pluginAction(page, "Watching")).toHaveAccessibleName(/^Enable /);
   for (const name of ["GitHub", "Terminal", "Workflows", "Hosted communities"])
     await expect(pluginAction(page, name)).toHaveAccessibleName(/^Disable /);
   await bestie.click();

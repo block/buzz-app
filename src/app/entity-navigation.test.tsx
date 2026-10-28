@@ -38,6 +38,11 @@ vi.mock("../bundled", async () => ({
       module: await import("../bundled/agents"),
     },
     {
+      manifest: { id: "buzz.watching", name: "Watching", apiVersion: 1 },
+      module: await import("../bundled/watching"),
+      enabledByDefault: false,
+    },
+    {
       manifest: { id: "buzz.inbox", name: "Inbox", apiVersion: 1 },
       module: await import("../bundled/inbox"),
     },
@@ -342,7 +347,7 @@ it("lists active primary pages in their sidebar and header placements", async ()
       within(pages)
         .getAllByRole("button")
         .map((row) => row.textContent),
-    ).toEqual(["Inbox", "Watching", "Bestie"]),
+    ).toEqual(["Inbox", "Bestie"]),
   );
 
   expect(
@@ -350,23 +355,25 @@ it("lists active primary pages in their sidebar and header placements", async ()
   ).not.toBeInTheDocument();
   expect(screen.getByRole("tab", { name: "Agents" })).toBeInTheDocument();
 
-  expect(
-    screen.queryByRole("tab", { name: "Watching" }),
-  ).not.toBeInTheDocument();
-  await userEvent.click(
-    within(pages).getByRole("button", { name: "Watching" }),
-  );
-  expect(
-    await screen.findByRole("region", {
-      name: "What your agents are watching",
-    }),
-  ).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "New watch" })).toBeNull();
-
   // The fixture page is active and searchable but never a sidebar row.
   expect(current.pages.snapshot().map((page) => page.key)).toContain(
     "fixture.notes/notes",
   );
+
+  // Watching is off by default, and attention keeps running without it.
+  const providers = () =>
+    current.agents.attentionProviders().map(({ provider }) => provider);
+  expect(current.agents.addedTabs()).toEqual([]);
+  expect(providers()).toContain("attention/command");
+  await act(() => current.plugins.change("enable", "buzz.watching"));
+  await waitFor(() =>
+    expect(current.agents.addedTabs().map((tab) => tab.key)).toEqual([
+      "buzz.watching/watching",
+    ]),
+  );
+  await act(() => current.plugins.change("disable", "buzz.watching"));
+  await waitFor(() => expect(current.agents.addedTabs()).toEqual([]));
+  expect(providers()).toContain("attention/command");
 
   await act(() => current.plugins.change("disable", "buzz.agents"));
   await waitFor(() =>

@@ -34,6 +34,7 @@ const inheritedModel = new URLSearchParams(location.search).get(
   "inheritedModel",
 );
 const saveFooter = new URLSearchParams(location.search).has("saveFooter");
+const watching = new URLSearchParams(location.search).has("watching");
 const instructions = new URLSearchParams(location.search).get("instructions");
 const memoryLabel = new URLSearchParams(location.search).get("memoryLabel");
 
@@ -277,6 +278,19 @@ const agents = {
         ]
       : [],
   configHistory: () => undefined,
+  addedTabs: () =>
+    watching
+      ? [
+          {
+            key: "buzz.watching/watching",
+            title: "Watching",
+            component: ({ agent }: { agent: { name: string } }) => (
+              <p>Watching for {agent.name}</p>
+            ),
+          },
+        ]
+      : [],
+  registerTab: () => {},
   joinable: () => (teamImport ? joining : []),
   join: async (key: string) => {
     joined.push(key);

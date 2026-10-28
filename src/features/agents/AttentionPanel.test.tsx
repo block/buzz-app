@@ -60,12 +60,10 @@ it("names watches by what and where they wake", () => {
   );
 });
 
-it("keeps the device runtime control and directs watch management to Agent Attention", async () => {
+it("keeps the device runtime control and leaves watch management to the Watching plugin", async () => {
   const save = vi.fn(async () => {});
   render(<AttentionPanel agents={agents} agent={agent} save={save} />);
-  expect(
-    screen.getByText(/Manage Interests and watches in Agent Attention/),
-  ).toBeInTheDocument();
+  expect(screen.queryByText(/Manage Interests and watches/)).toBeNull();
   expect(screen.queryByText("Keep releases moving.")).not.toBeInTheDocument();
   await userEvent
     .setup()

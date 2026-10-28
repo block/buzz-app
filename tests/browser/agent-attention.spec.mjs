@@ -4,15 +4,11 @@ const runtimeSwitch = (page) =>
   page.getByRole("switch", { name: "Watching for Ada on this device" });
 
 // Real browser focus and scroll geometry are outside jsdom.
-test("The watching page fits both themes and sizes and manages existing watches by keyboard", async ({
+test("The Watching tab fits both themes and sizes and manages existing watches by keyboard", async ({
   page,
 }) => {
   await page.goto("/tests/fixtures/agent-attention.html");
-  const pane = page.getByRole("region", {
-    name: "What your agents are watching",
-    exact: true,
-  });
-  await expect(page.getByRole("button", { name: "New watch" })).toHaveCount(0);
+  const pane = page.getByRole("region", { name: "Watching", exact: true });
   await expect(pane).toBeVisible();
   await page
     .getByRole("button", { name: "Details for Release discussion" })
@@ -63,15 +59,24 @@ test("The watching page fits both themes and sizes and manages existing watches 
   ).toHaveAttribute("href", "https://github.com/example/project/pull/42");
 });
 
+// The empty tab teaches a new agent's owner what to ask for.
+test("an agent with nothing watched suggests what to ask it", async ({
+  page,
+}) => {
+  await page.goto("/tests/fixtures/agent-attention.html?empty");
+  await expect(
+    page.getByText("Nothing is being watched yet. Try asking Ada:"),
+  ).toBeVisible();
+  await expect(page.getByText(/Watch my PR and tell me/)).toBeVisible();
+  await expect(runtimeSwitch(page)).toHaveAttribute("aria-checked", "true");
+});
+
 // Browser focus after removal, including async writes, cannot be proved by jsdom.
 test("watch and interest deletion restore focus without taking it from another control", async ({
   page,
 }) => {
   await page.goto("/tests/fixtures/agent-attention.html");
-  const pane = page.getByRole("region", {
-    name: "What your agents are watching",
-    exact: true,
-  });
+  const pane = page.getByRole("region", { name: "Watching", exact: true });
   const remove = page.getByRole("button", {
     name: "Delete Release discussion",
   });

@@ -1,12 +1,7 @@
-import { relativeTimestamp } from "../../../shared/relative-timestamp";
-import {
-  attentionOf,
-  sourceCompleted,
-} from "../../../features/agents/attention";
-import { relayOrigin } from "../../../features/communities/destination";
-import { relayPartition } from "../../../features/relay/partition";
-import { avatarMedia } from "../../../shared/avatar-source";
-import { Avatar } from "../../../shared/design-system/ui/Avatar";
+import { relativeTimestamp } from "../../shared/relative-timestamp";
+import { attentionOf, sourceCompleted } from "../../features/agents/attention";
+import { relayOrigin } from "../../features/communities/destination";
+import { relayPartition } from "../../features/relay/partition";
 import {
   ChatCircleIcon,
   LockIcon,
@@ -19,17 +14,12 @@ import {
   CaretDownIcon,
   CaretRightIcon,
   TrashIcon,
-} from "../../../shared/design-system/icons";
+} from "../../shared/design-system/icons";
 import * as React from "react";
-import {
-  PanelHeader,
-  PanelHeaderLabel,
-} from "../../../shared/design-system/ui/PanelHeader";
-import { Button } from "../../../shared/design-system/ui/Button";
-import { IconButton } from "../../../shared/design-system/ui/IconButton";
-import { Switch as SharedSwitch } from "../../../shared/design-system/ui/Switch";
-import { Select } from "../../../shared/design-system/ui/Select";
-import type { Context } from "../../../plugins/author";
+import { Button } from "../../shared/design-system/ui/Button";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
+import { Switch as SharedSwitch } from "../../shared/design-system/ui/Switch";
+import type { Context } from "../../plugins/author";
 import type { Agent, Watch } from "./model";
 import { InstructionsMarkdown } from "./InstructionsMarkdown";
 
@@ -108,7 +98,7 @@ const suggestions = [
 const button = { variant: "ghost" as const, size: "sm" as const };
 
 /** Uses the host’s controls and surface roles. */
-export function createPage({
+export function createTab({
   agents,
   relay,
   navigation,
@@ -665,13 +655,11 @@ export function createPage({
     agent,
     channels,
     scope,
-    picture,
     returnFocus,
   }: {
     agent: Agent;
     channels: readonly Channel[];
     scope?: string | undefined;
-    picture?: string | undefined;
     returnFocus: React.RefObject<HTMLElement | null>;
   }) {
     const action = useAction();
@@ -679,28 +667,23 @@ export function createPage({
     const name = (id: string) => find(id)?.name ?? `Channel ${id.slice(0, 8)}`;
     const { interests, watches, orphans } = attentionOf(agent.attention);
     const skipped = Object.values(agent.skipped ?? {});
+    const empty =
+      !interests.length &&
+      !watches.length &&
+      !orphans.length &&
+      !skipped.length;
     return h(
-      "section",
-      { className: "attention-agent", "aria-label": agent.name },
+      "div",
+      { className: "attention-agent" },
       h(
         "div",
         { className: "attention-agent-head" },
         h(
-          "div",
-          { className: "attention-agent-name" },
-          h(Avatar, {
-            alt: "",
-            fallback: agent.name,
-            src: picture,
-            size: "compact",
-            shape: "squircle",
-          }),
-          h("h3", { className: "text-label" }, agent.name),
-          h(
-            "span",
-            { className: "text-caption text-subtle" },
-            `${interests.length} interest${interests.length === 1 ? "" : "s"} · ${watches.length} watch${watches.length === 1 ? "" : "es"}`,
-          ),
+          "span",
+          { className: "text-caption text-subtle" },
+          empty
+            ? ""
+            : `${interests.length} interest${interests.length === 1 ? "" : "s"} · ${watches.length} watch${watches.length === 1 ? "" : "es"}`,
         ),
         h(
           "label",
@@ -865,14 +848,31 @@ export function createPage({
             ),
           ),
         ),
+      empty &&
+        h(
+          "div",
+          { className: "attention-suggestions" },
+          h(
+            "p",
+            { className: "text-body-sm text-secondary" },
+            `Nothing is being watched yet. Try asking ${agent.name}:`,
+          ),
+          h(
+            "ul",
+            { className: "attention-list" },
+            ...suggestions.map((ask) =>
+              h(
+                "li",
+                { key: ask, className: "attention-card text-body-sm" },
+                `\u201c${ask}\u201d`,
+              ),
+            ),
+          ),
+        ),
     );
   }
-  return function AttentionPage() {
+  return function WatchingTab({ agent: { key } }: { agent: { key: string } }) {
     const page = React.useRef<HTMLElement>(null);
-    const [adding, setAdding] = React.useState(false);
-    const [selected, setSelected] = React.useState("");
-    const [notice, setNotice] = React.useState("");
-    const action = useAction();
     const snapshot = React.useSyncExternalStore(
       agents.subscribe,
       agents.snapshot,
@@ -893,183 +893,72 @@ export function createPage({
       queries?.list ?? emptyChannels,
       queries?.list ?? emptyChannels,
     ).channels;
-    const running = snapshot.running.filter((agent) => {
+    const agent = snapshot.running.find((agent) => agent.key === key);
+    const here = (() => {
       try {
         return (
+          !!agent &&
           relayPartition(relayOrigin(agent.relay), agent.owner) ===
-          connection.scope
+            connection.scope
         );
       } catch {
         return false;
       }
-    });
-    const visible = running.filter(
-      (agent) =>
-        Object.keys(agent.attention).length > 0 ||
-        Object.keys(agent.skipped ?? {}).length > 0,
-    );
-    const enable = () =>
-      action.run(async () => {
-        const agent = running.find((agent) => agent.key === selected);
-        if (!agent) throw new Error("Choose an available agent.");
-        await agents.save(agent.key, { attentionEnabled: true });
-        setNotice(
-          `Watching turned on for ${agent.name} on this device. Watches appear here when the agent creates them.`,
-        );
-        setAdding(false);
-      });
+    })();
     return h(
       "section",
       {
         "data-buzz-ui": "",
         className: "attention-page",
-        "aria-label": "What your agents are watching",
+        "aria-label": "Watching",
         ref: page,
         tabIndex: -1,
       },
-
-      h(PanelHeader, {
-        title: h(PanelHeaderLabel, { title: "What your agents are watching" }),
-      }),
       h(
         "div",
-        { className: "attention-scroll" },
+        { className: "attention-content" },
         h(
-          "div",
-          { className: "attention-content" },
+          "p",
+          { className: "text-body-sm text-subtle" },
+          "Agents can ask to be woken later: when someone posts, at a set time, or when something changes, like CI finishing on a pull request. Each Interest is something an agent is keeping track of, with instructions for what to do. Its watches are what wake it.",
+        ),
+        h(
+          "p",
+          { className: "text-caption text-subtle" },
+          "Watches only run while Buzz is open on this device.",
+        ),
+        agent &&
+          here &&
+          snapshot.classifier !== "available" &&
+          Object.values(agent.attention).some(
+            ({ value }) => value.type === "event" && value.classifier,
+          ) &&
           h(
             "p",
-            { className: "text-body-sm text-subtle" },
-            "Agents can ask to be woken later: when someone posts, at a set time, or when something changes, like CI finishing on a pull request. Each Interest is something an agent is keeping track of, with instructions for what to do. Its watches are what wake it.",
+            { className: "text-body-sm text-secondary" },
+            "This device can't run message filters, so every message in these channels wakes the agent.",
           ),
-          running.length > 0 &&
-            h(
-              "p",
-              { className: "text-caption text-subtle" },
-              "Watches only run while Buzz is open on this device.",
-            ),
-          snapshot.classifier !== "available" &&
-            running.some((agent) =>
-              Object.values(agent.attention).some(
-                ({ value }) => value.type === "event" && value.classifier,
-              ),
-            ) &&
-            h(
-              "p",
-              { className: "text-body-sm text-secondary" },
-              "This device can't run message filters, so every message in these channels wakes the agent.",
-            ),
-          !visible.length &&
-            running.some((agent) => !agent.attentionEnabled) && (
-              <Button
-                {...{
-                  ...button,
-                  type: "button",
-                  "aria-expanded": adding,
-                  onClick: () => setAdding(!adding),
-                }}
-              >
-                {"Turn on watching on this device"}
-              </Button>
-            ),
-          adding &&
-            h(
-              "form",
-              {
-                className: "attention-card attention-details",
-                "aria-label": "Turn on watching",
-                onSubmit: (event: { preventDefault(): void }) => {
-                  event.preventDefault();
-                  void enable();
-                },
-              },
-              h(Select, {
-                label: "Agent",
-                variant: "field",
-                value: selected,
-                disabled: action.pending,
-                onValueChange: setSelected,
-                groups: [
-                  {
-                    label: "Agents",
-                    options: [
-                      { value: "", label: "Choose an agent" },
-                      ...running.map((agent) => ({
-                        value: agent.key,
-                        label: agent.name,
-                      })),
-                    ],
-                  },
-                ],
-              }),
-              <Button
-                {...{
-                  ...button,
-                  type: "submit",
-                  disabled: !selected || action.pending,
-                }}
-              >
-                {"Turn on watching"}
-              </Button>,
-              problem(action.error),
-            ),
-          notice &&
-            h(
-              "p",
-              { role: "status", className: "text-body-sm text-secondary" },
-              notice,
-            ),
-          !visible.length &&
-            running.length > 0 &&
-            h(
-              "section",
-              { "aria-label": "Suggested asks" },
-              h(
-                "p",
-                { className: "text-body-sm text-secondary" },
-                "No watches yet. Try asking an agent:",
-              ),
-              h(
-                "ul",
-                { className: "attention-list" },
-                ...suggestions.map((ask) =>
-                  h(
-                    "li",
-                    { key: ask, className: "attention-card text-body-sm" },
-                    `\u201c${ask}\u201d`,
-                  ),
-                ),
-              ),
-            ),
-          ...visible.map((agent) =>
-            h(AgentPanel, {
-              key: agent.key,
+        agent && here
+          ? h(AgentPanel, {
               agent: agent as Agent,
               returnFocus: page,
               channels,
               scope: connection.scope,
-              picture: avatarMedia(
-                agent.picture,
-                connection.status === "ready"
-                  ? connection.session.media
-                  : undefined,
-              ),
-            }),
-          ),
-          !running.length &&
-            h(
+            })
+          : h(
               "p",
               {
                 className: "text-body-sm text-secondary",
                 role: snapshot.status === "loading" ? "status" : undefined,
               },
               !connection.scope
-                ? "Choose a community to manage its agent watches."
+                ? "Choose a community to manage this agent's watches."
                 : snapshot.status === "loading"
-                  ? "Loading agents…"
-                  : snapshot.error || "No local agents are available.",
+                  ? "Loading watches…"
+                  : agent
+                    ? "This agent belongs to another community. Switch to it to manage its watches."
+                    : "This agent isn't running on this device.",
             ),
-        ),
       ),
     );
   };

@@ -142,6 +142,8 @@ function editingFixture(split: boolean, save = vi.fn(async () => {})) {
       classifier: () => "unavailable",
       memberships: () => [],
       configHistory: () => undefined,
+      addedTabs: () => [],
+      registerTab: () => {},
     } as unknown as Agents,
     agent,
     type,
@@ -385,6 +387,8 @@ it.each(["here", "hosted"] as const)(
             subscribe: () => () => {},
             memberships: () => [],
             configHistory: () => undefined,
+            addedTabs: () => [],
+            registerTab: () => {},
           } as unknown as Agents
         }
         agent={agent}
@@ -478,6 +482,8 @@ it("shows History for an agent whose config syncs", () => {
         {
           save: vi.fn(),
           configHistory: () => history,
+          addedTabs: () => [],
+          registerTab: () => {},
           snapshot: () => ({ agents: [agent] }),
           subscribe: () => () => {},
         } as unknown as Agents
@@ -492,4 +498,49 @@ it("shows History for an agent whose config syncs", () => {
     { wrapper: ToastProvider },
   );
   expect(screen.getByRole("tab", { name: "History" })).toBeInTheDocument();
+});
+
+it("places plugin tabs after Activity and before Settings", () => {
+  const { props } = editingFixture(true);
+  const Page = () => <p />;
+  render(
+    <AgentTabs
+      {...props}
+      type={
+        {
+          tabs: [
+            ...(props.type as unknown as { tabs: unknown[] }).tabs,
+            {
+              id: "activity",
+              title: "Activity",
+              role: "activity",
+              component: Page,
+            },
+          ],
+        } as unknown as RegisteredAgentType
+      }
+      agents={
+        {
+          ...props.agents,
+          addedTabs: () => [
+            {
+              id: "watching",
+              key: "buzz.watching/watching",
+              pluginId: "buzz.watching",
+              revision: "1",
+              title: "Watching",
+              component: Page,
+            },
+          ],
+        } as unknown as Agents
+      }
+    />,
+  );
+  expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
+    "Identity",
+    "Memory",
+    "Activity",
+    "Watching",
+    "Settings",
+  ]);
 });

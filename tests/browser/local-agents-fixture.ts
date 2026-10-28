@@ -90,6 +90,7 @@ export function localAgentsNative(): AgentsNative {
     publishProfile: async () => {},
     claim: async () => true,
     release: async () => {},
+    keepAwake: async () => {},
   };
 }
 export const localAgentPlugin: BundledPlugin = {
@@ -126,7 +127,7 @@ export const localAgentPlugin: BundledPlugin = {
           // Like a harness, the stop ends the turn as it settles.
           delivery.interruptible?.(async () => {
             stopped.push(id);
-            finish({ ok: true });
+            finish({ ok: true, stopped: true });
           });
           pending.push({
             id,

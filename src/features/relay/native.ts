@@ -1,4 +1,3 @@
-import { audienceAuthorityCommunity } from "../sessions/audience-authority";
 import { Channel, convertFileSrc, invoke } from "@tauri-apps/api/core";
 import type { EventTemplate } from "nostr-tools";
 import { communityDestination, relayOrigin } from "../communities/destination";
@@ -339,6 +338,10 @@ export async function connectNativeTransport(
   const searchSort =
     Array.isArray(info.supported_extensions) &&
     info.supported_extensions.includes("buzz-search-sort");
+  const artifacts = info.artifacts as
+    | { sync?: { version?: unknown } }
+    | undefined;
+  const artifactSync = artifacts?.sync?.version === 1;
   const transport = await connectSignedTransport(
     nativeRelaySigner(origin),
     origin,
@@ -395,9 +398,6 @@ export async function connectNativeTransport(
   // Capabilities describe implemented host operations, not everything this key can sign.
   return {
     ...transport,
-    audienceAuthorityCommunity: audienceAuthorityCommunity(
-      info.audience_authority,
-    ),
     workflows: workflowHost(async (route, body, signal) => {
       if (route !== "workflow-runs") throw new Error("Invalid workflow read");
       workflowRunsPath(body);
@@ -778,6 +778,7 @@ export async function connectNativeTransport(
       nativeAttachmentUpload(origin, file, signal, progress),
     ...(channelIdentity ? { channelIdentity: true as const } : {}),
     ...(searchSort ? { searchSort: true as const } : {}),
+    ...(artifactSync ? { artifactSync: true as const } : {}),
     writer: {
       ...writer,
       kinds: creation ? [...nativeWriteKinds, 9007] : nativeWriteKinds,

@@ -34,6 +34,8 @@ it("observes saved conversations with the status of open sessions", () => {
     },
     effect: vi.fn(),
   } as never);
+  // A reload stops its turns, so the owner is asked to resume them.
+  expect(type?.resumes).toBe(true);
   expect(
     type?.importShared?.({
       runtime: "goose",
@@ -44,6 +46,13 @@ it("observes saved conversations with the status of open sessions", () => {
   expect(
     type?.importShared?.({ runtime: "buzz-agent", model: "shared-model" }),
   ).toBeUndefined();
+  expect(
+    type?.exportShared?.({ provider: "databricks_v2", model: "shared-model" }),
+  ).toEqual({
+    runtime: "goose",
+    provider: "databricks_v2",
+    model: "shared-model",
+  });
   expect(type?.sessions?.list("a".repeat(64))).toEqual([
     { channelId: "new", at: 4, status: "Working" },
     { channelId: "room", root: "r", at: 3, status: "Working" },

@@ -148,7 +148,8 @@ export function useMentionDirectory(
   return useMemo(
     () => ({
       /** The current query's page, or the last settled page while it loads. */
-      people: (active && shown?.people) || empty,
+      // An empty page shares one array, so it changes no cached candidates.
+      people: active && shown?.people.length ? shown.people : empty,
       loading: active && !hit && !error,
       error,
       more: !!hit?.more,

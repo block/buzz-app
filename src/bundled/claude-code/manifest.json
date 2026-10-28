@@ -9,6 +9,7 @@
   },
   "host": {
     "networkOrigins": ["https://downloads.claude.ai"],
+    "files": true,
     "processes": [
       {
         "id": "claude-sh",
@@ -27,9 +28,26 @@
       },
       { "id": "workspace", "program": "pwd" },
       {
-        "id": "find",
+        "id": "starts",
         "program": "grep",
-        "args": ["-rlF", "--include=*.jsonl", "-e"]
+        "args": [
+          "-rHEo",
+          "-m1",
+          "--include=*.jsonl",
+          "-e",
+          "Session scope: [a-z ]+",
+          "-e",
+          "Channel: ([^\\\\]|\\\\[^n])*",
+          "-e",
+          "Thread root: [0-9a-f]{64}",
+          "-e",
+          "Agent: [0-9a-f]{64}(@[A-Za-z0-9._~%-]+)?"
+        ]
+      },
+      {
+        "id": "list",
+        "program": "find",
+        "args": [".", "-type", "f", "-name", "*.jsonl"]
       }
     ]
   }

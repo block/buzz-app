@@ -1,17 +1,37 @@
+import { createPage } from "./attention/Page";
 import type { PluginModule } from "../../plugins/api";
+import { registerAttention } from "../../features/agents/attention-command";
+import { registerDiscovery } from "../../features/agents/attention-discovery";
 import { AgentsPage } from "./AgentsPage";
 import { availableAgentProviderRoute } from "./routes";
-import { ClassifierSettings } from "./ClassifierSettings";
+import { developerMode } from "../../features/developer/mode";
+import { withImportScenario } from "../../features/developer/agent-import-scenario";
 
 export const inject = [
   "pages",
   "agents",
   "relay",
   "navigation",
-  "settingsCards",
+  "communityReader",
+  "host",
 ];
 export const apply: PluginModule["apply"] = (ctx) => {
-  const { agents, relay, navigation: navigator } = ctx;
+  registerAttention(ctx);
+  registerDiscovery(ctx.agents);
+  const { relay, navigation: navigator } = ctx;
+  const agents = developerMode ? withImportScenario(ctx.agents) : ctx.agents;
+  ctx.pages.register({
+    id: "attention",
+    title: "Agent Attention",
+    placement: "topbar",
+    layout: "workspace",
+    primary: true,
+    component: createPage({
+      agents,
+      relay,
+      navigation: navigator,
+    }),
+  });
   ctx.pages.register({
     id: "agents",
     title: "Agents",
@@ -25,17 +45,10 @@ export const apply: PluginModule["apply"] = (ctx) => {
       <AgentsPage
         agents={agents}
         relay={relay}
+        communities={ctx.communityReader}
         navigator={navigator}
         {...(navigation ? { navigation } : {})}
       />
-    ),
-  });
-  ctx.settingsCards.register({
-    id: "jev-classifier",
-    title: "Jev classifier",
-    group: "Plugins",
-    component: ({ active }) => (
-      <ClassifierSettings agents={agents} active={active} />
     ),
   });
 };

@@ -12,7 +12,7 @@ import {
 } from "react";
 import {
   HashArrowInIcon,
-  ChatCircleIcon,
+  MessageReplyIcon,
   CopyIcon,
   DotsThreeIcon,
   LinkIcon,
@@ -207,7 +207,7 @@ function MessageActionBarControls({
             }}
           >
             <MenuIcon>
-              <ChatCircleIcon />
+              <MessageReplyIcon />
             </MenuIcon>
             Reply
           </MenuItem>
@@ -300,13 +300,14 @@ function MessageActionBarControls({
             {quickControls}
             {onReply && (
               <IconButton
+                hint={replyDisabled ? "helpful" : "familiar"}
                 aria-label="Reply"
                 title={
                   replyDisabled ? "Reply unavailable for this message" : "Reply"
                 }
                 size="sm"
                 disabled={replyDisabled}
-                icon={<ChatCircleIcon />}
+                icon={<MessageReplyIcon />}
                 onClick={(event) => {
                   event.currentTarget.focus();
                   onReply();
@@ -314,6 +315,7 @@ function MessageActionBarControls({
               />
             )}
             <IconButton
+              hint={link ? "familiar" : "helpful"}
               aria-label="Copy link"
               title={link ? "Copy link" : "Message link unavailable"}
               size="sm"
@@ -350,6 +352,7 @@ function MessageActionBarControls({
               <MenuTrigger
                 render={
                   <IconButton
+                    hint="familiar"
                     ref={menuTriggerRef}
                     aria-label="More message actions"
                     title="More message actions"

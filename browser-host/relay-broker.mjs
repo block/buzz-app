@@ -1,4 +1,3 @@
-import { audienceAuthorityCommunity } from "../src/features/sessions/audience-authority.ts";
 import { isSidebarPreferencesBatch } from "../src/features/relay/sidebar-preferences.ts";
 import {
   isCatalogKind,
@@ -54,6 +53,10 @@ import {
 } from "./direct-messages.mjs";
 import { SocketRequestError } from "../src/features/relay/socket-requests.ts";
 import {
+  ARTIFACT_SYNC_MAX_VIEWS,
+  artifactSyncFilter,
+} from "../src/features/relay/artifact-sync-filter.ts";
+import {
   assertSidebarStarIntent,
   mutateSidebarStar,
   assertSidebarMuteIntent,
@@ -91,8 +94,10 @@ import {
   assertSidebarAssignmentIntent,
   assertSidebarSectionOrderIntent,
   assertSidebarSectionRemovalIntent,
+  assertSidebarSectionRenameIntent,
   mutateSidebarSectionOrder,
   mutateSidebarSectionRemoval,
+  mutateSidebarSectionRename,
   mutateSidebarAssignment,
   SIDEBAR_REQUEST_BYTES,
   SIDEBAR_HEAD_BYTES,
@@ -240,7 +245,7 @@ function loadIdentity(authorizedViewer) {
   }
   if (!expected)
     throw new Error(
-      "Set BUZZ_DEV_VIEWER in .env.local to your existing Buzz public key (hex or npub, never nsec). See README.md#relay-channels.",
+      "Set BUZZ_DEV_VIEWER in .env.local to your existing Buzz public key (hex or npub, never nsec). See docs/contributing.md#live-relay-development.",
     );
   // The installed Buzz desktop keeps its secrets blob in the OS credential
   // store under service `buzz-desktop`, username `secrets`: the macOS Keychain,
@@ -321,13 +326,8 @@ async function relayAuthority(fetch, relay) {
     channelIdentity:
       Array.isArray(nip11.supported_extensions) &&
       nip11.supported_extensions.includes("nip-cl"),
-    ...(audienceAuthorityCommunity(nip11.audience_authority)
-      ? {
-          audienceAuthorityCommunity: audienceAuthorityCommunity(
-            nip11.audience_authority,
-          ),
-        }
-      : {}),
+    // NIP-AR sync: REQ with `"artifact": "current"` keeps a set current.
+    artifactSync: nip11.artifacts?.sync?.version === 1,
     // Bridge search accepts `search_sort: "newest"`.
     searchSort:
       Array.isArray(nip11.supported_extensions) &&
@@ -1158,6 +1158,7 @@ export function relayBrokerPlugin({
               "/api/relay/sidebar-assignment",
               "/api/relay/sidebar-section-removal",
               "/api/relay/sidebar-section-order",
+              "/api/relay/sidebar-section-rename",
               "/api/relay/sidebar-star",
               "/api/relay/sidebar-sort",
               "/api/relay/sidebar-filter",
@@ -1170,6 +1171,11 @@ export function relayBrokerPlugin({
                 "channel-sections",
                 assertSidebarSectionRemovalIntent,
                 mutateSidebarSectionRemoval,
+              ],
+              "/api/relay/sidebar-section-rename": [
+                "channel-sections",
+                assertSidebarSectionRenameIntent,
+                mutateSidebarSectionRename,
               ],
               "/api/relay/sidebar-section-order": [
                 "channel-sections",
@@ -1456,6 +1462,7 @@ export function relayBrokerPlugin({
               sidebarPreferenceWrites: true,
               sidebarSectionRemoval: true,
               sidebarSectionOrder: true,
+              sidebarSectionRename: true,
               sidebarStarWrites: true,
               agentLibrary: true,
               agentLogProof: true,
@@ -1465,6 +1472,76 @@ export function relayBrokerPlugin({
               presence: true,
               agentActivity: true,
             });
+          }
+          if (
+            (route === "/api/relay/stream-artifact-sync" ||
+              route === "/api/relay/stream-artifact-sync-close") &&
+            req.method === "POST"
+          ) {
+            const opening = route === "/api/relay/stream-artifact-sync";
+            let raw = "";
+            req.setEncoding("utf8");
+            for await (const part of req) {
+              raw += part;
+              if (Buffer.byteLength(raw) > 300000)
+                return json(res, 413, { error: "Artifact sync too large" });
+            }
+            let streamId, id, filter;
+            try {
+              const body = JSON.parse(raw);
+              streamId = body.streamId;
+              id = body.id;
+              if (typeof id !== "string" || !/^[0-9a-z-]{1,32}$/.test(id))
+                throw new Error("Invalid sync id");
+              if (opening) filter = artifactSyncFilter(body.filter);
+            } catch {
+              return json(res, 400, { error: "Invalid artifact sync" });
+            }
+            if (
+              typeof streamId !== "string" ||
+              !/^[0-9a-f]{32}$/.test(streamId)
+            )
+              return json(res, 400, { error: "Invalid artifact sync" });
+            const stream = streams.get(streamId);
+            if (!stream || stream.relay !== relay)
+              return json(res, 404, {
+                error: "Live stream no longer available",
+              });
+            const existing = stream.syncs.get(id);
+            if (!opening) {
+              stream.syncs.delete(id);
+              existing?.();
+              // The close can overtake its open: remember it so the late
+              // open cannot take a slot. IDs are never reused on a stream.
+              // A forgotten record would let its open take a slot again, so
+              // a stream with too many unresolved closes ends instead: that
+              // ends every sync on it, and a late open finds no stream.
+              if (!existing) {
+                if (stream.closedSyncs.size >= 64) stream.close();
+                else stream.closedSyncs.add(id);
+              }
+              return json(res, 200, { accepted: true });
+            }
+            if (stream.closedSyncs.delete(id))
+              return json(res, 409, { error: "Artifact sync already closed" });
+            if (existing || stream.syncs.size >= ARTIFACT_SYNC_MAX_VIEWS)
+              return json(res, 429, {
+                error: "Artifact sync capacity reached",
+              });
+            const frame = (value) =>
+              stream.write("artifact-sync", { id, ...value });
+            stream.syncs.set(
+              id,
+              stream.traffic.syncArtifacts(filter, {
+                event: (event) => frame({ type: "event", event }),
+                eose: () => frame({ type: "eose" }),
+                closed: (reason) => {
+                  stream.syncs.delete(id);
+                  frame({ type: "closed", reason });
+                },
+              }),
+            );
+            return json(res, 200, { accepted: true });
           }
           if (
             [
@@ -1708,6 +1785,9 @@ export function relayBrokerPlugin({
               interestRevision,
               traffic: undefined,
               close: undefined,
+              write,
+              syncs: new Map(),
+              closedSyncs: new Set(),
             };
             const traffic = subscribeRelayTraffic(
               relay.replace(/^http/, "ws"),

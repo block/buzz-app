@@ -525,6 +525,15 @@ fn isolated_agent_ipc_probe() {
         .invoke_handler(crate::commands())
         .build(crate::app_context())
         .unwrap();
+    app.manage(crate::app_agents::AppAgentHost::new(
+        Ok(app
+            .path()
+            .app_data_dir()
+            .unwrap()
+            .join("agents/identities.json")),
+        Err("unused".into()),
+        false,
+    ));
     let view = tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::default())
         .build()
         .unwrap();
@@ -726,9 +735,31 @@ fn isolated_agent_ipc_probe() {
             library,
             serde_json::json!({"definitions": [], "identities": []})
         );
+        let path = app
+            .path()
+            .app_data_dir()
+            .unwrap()
+            .join("agents/identities.json");
+        assert!(path.starts_with(std::env::var("HOME").unwrap()));
+        let saved = serde_json::json!([{
+            "pubkey": "a".repeat(64), "relay": "wss://relay.test", "owner": public,
+            "auth": "private attestation", "type": "plugin/agent", "name": "Current agent",
+            "picture": "https://images.example/current.png"
+        }])
+        .to_string();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, &saved).unwrap();
+        assert_eq!(
+            invoke("relay_agent_library", serde_json::json!({})).unwrap(),
+            serde_json::json!({"definitions": [], "identities": [{
+                "pubkey": "a".repeat(64), "name": "Current agent", "avatar": "https://images.example/current.png"
+            }]})
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), saved);
+        std::fs::remove_file(&path).unwrap();
         assert!(app
             .path()
-            .data_dir()
+            .app_data_dir()
             .unwrap()
             .starts_with(std::env::var("HOME").unwrap()));
     }
@@ -1932,6 +1963,64 @@ fn clipboard_bounds_embedded_webp_vp8_frames_before_decode() {
 }
 
 #[test]
+fn file_downloads_need_a_safe_name_and_bounded_raw_bytes() {
+    use tauri::ipc::InvokeBody;
+    use tauri::test::{get_ipc_response, mock_builder, INVOKE_KEY};
+    let app = mock_builder()
+        .manage(IdentityHost::fixture())
+        .invoke_handler(crate::commands())
+        .build(crate::app_context())
+        .unwrap();
+    let view = tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::default())
+        .build()
+        .unwrap();
+    // Each request fails before a file is written.
+    let save = |name: &str, body: InvokeBody| {
+        let mut headers = tauri::http::HeaderMap::new();
+        headers.insert("x-buzz-file-name", name.parse().unwrap());
+        get_ipc_response(
+            &view,
+            tauri::webview::InvokeRequest {
+                cmd: "file_download".into(),
+                callback: tauri::ipc::CallbackFn(0),
+                error: tauri::ipc::CallbackFn(1),
+                url: view.url().unwrap(),
+                body,
+                headers,
+                invoke_key: INVOKE_KEY.into(),
+            },
+        )
+        .map(|_| ())
+        .unwrap_err()
+    };
+    for name in [
+        "",
+        "..%2Fsecret.png",
+        "a%3Ab.png",
+        "CON",
+        "Ada.agent.png%20",
+        "%FF",
+        "report.pdf",
+    ] {
+        assert_eq!(
+            save(name, InvokeBody::Raw(vec![1])),
+            "Invalid file name",
+            "{name}"
+        );
+    }
+    let name = "Ada%20%F0%9F%A4%96.agent.png";
+    assert_eq!(
+        save(name, InvokeBody::Json(serde_json::json!({}))),
+        "File body must be raw bytes"
+    );
+    assert_eq!(save(name, InvokeBody::Raw(Vec::new())), "Invalid file");
+    assert_eq!(
+        save(name, InvokeBody::Raw(vec![0; FILE_DOWNLOAD_MAX + 1])),
+        "Invalid file"
+    );
+}
+
+#[test]
 fn download_names_are_safe_and_collisions_do_not_overwrite() {
     let url = Url::parse(&format!("https://relay.test/media/{}.pdf", "a".repeat(64))).unwrap();
     for invalid in [
@@ -1976,6 +2065,10 @@ fn download_names_are_safe_and_collisions_do_not_overwrite() {
     assert_eq!(second.file_name().unwrap(), "report (1).pdf");
     assert_eq!(std::fs::read(&first).unwrap(), b"first");
     assert_eq!(std::fs::read(&second).unwrap(), b"second");
+    let snapshot = save_download(&dir, "Ada.agent.png", b"first").unwrap();
+    assert_eq!(snapshot.file_name().unwrap(), "Ada.agent.png");
+    let again = save_download(&dir, "Ada.agent.png", b"second").unwrap();
+    assert_eq!(again.file_name().unwrap(), "Ada (1).agent.png");
     #[cfg(target_os = "macos")]
     {
         use std::os::fd::AsRawFd;

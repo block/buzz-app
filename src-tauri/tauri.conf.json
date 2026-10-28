@@ -1,18 +1,18 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Buzz Foundation",
-  "version": "0.0.0",
-  "identifier": "dev.local.buzz.foundation",
+  "productName": "Buzz",
+  "version": "0.7.0",
+  "identifier": "xyz.block.buzz.desktop",
   "build": {
     "beforeDevCommand": "pnpm dev:desktop --port 1430",
     "devUrl": "http://localhost:1430",
-    "beforeBuildCommand": "node scripts/build-goose-acp.mjs && pnpm build",
+    "beforeBuildCommand": "node scripts/build-goose-acp.mjs && node scripts/build-agent-command.mjs && pnpm build",
     "frontendDist": "../dist"
   },
   "app": {
     "windows": [
       {
-        "title": "Buzz Foundation",
+        "title": "Buzz",
         "dragDropEnabled": false,
         "width": 1200,
         "height": 800,
@@ -23,7 +23,8 @@
           "y": 30
         },
         "minWidth": 480,
-        "minHeight": 400
+        "minHeight": 400,
+        "backgroundThrottling": "disabled"
       }
     ],
     "security": {

@@ -23,6 +23,7 @@ import {
 } from "../features/notifications/messages";
 import { AccountActionsService } from "../features/account-actions/service";
 import { ShortcutsService } from "../features/shortcuts/service";
+import { DecisionsService } from "../features/decisions/service";
 import { AgentsService } from "../features/agents/service";
 import { createShortcutBindings } from "../features/shortcuts/preferences";
 import { ConversationService } from "../features/conversation/service";
@@ -35,7 +36,9 @@ import { PanelsService } from "../features/panels/service";
 import { Context } from "@deepseek-ai/cordis";
 import { BrowserService } from "../features/browser/service";
 import { PagesService } from "../features/pages/service";
+import { SidebarSectionsService } from "../features/channel-navigation/sidebar-sections-service";
 import { bundledPlugins } from "../bundled";
+import { conversationFeatures } from "./conversation-features";
 import { createPluginManager } from "../plugins/manager";
 import { withTimeout } from "../plugins/timeout";
 
@@ -47,6 +50,7 @@ export function createServices() {
   new HostService(ctx);
   const plugins = createPluginManager(ctx, {
     bundled: bundledPlugins,
+    builtIn: conversationFeatures,
   });
   const localAgents = createLocalAgents();
   const localActivity = createLocalAgentActivity();
@@ -54,7 +58,9 @@ export function createServices() {
   const navigation = navigationHost.navigation;
   const browser = new BrowserService(ctx);
   const shortcuts = new ShortcutsService(ctx, undefined, shortcutBindings);
+  const decisions = new DecisionsService(ctx);
   const pages = new PagesService(ctx);
+  const sidebarSections = new SidebarSectionsService(ctx);
   const panels = new PanelsService(ctx);
   const accountActions = new AccountActionsService(ctx);
   const conversation = new ConversationService(ctx);
@@ -75,6 +81,12 @@ export function createServices() {
     snapshot: communities.snapshot,
     subscribe: communities.subscribe,
   });
+  ctx.provide("knownCommunities", {
+    snapshot: communities.snapshot,
+    subscribe: communities.subscribe,
+    pending: communities.pendingSync,
+    apply: communities.applySync,
+  });
   const relay = communities.relay;
   const artifactStorage = new ArtifactStorageService(ctx);
   const adminAccess = createAdminAccess(relay, communities, nativeRelayStaff());
@@ -87,6 +99,7 @@ export function createServices() {
     undefined,
     undefined,
     localActivity,
+    decisions,
   );
   ctx.effect(() =>
     localAgents.bind({
@@ -130,6 +143,7 @@ export function createServices() {
     navigation,
     navigationHost,
     shortcuts,
+    decisions,
     agents,
     accountActions,
     shortcutBindings,
@@ -138,6 +152,7 @@ export function createServices() {
     settingsCards,
     adminAccess,
     pages,
+    sidebarSections,
     panels,
     plugins,
     relay,

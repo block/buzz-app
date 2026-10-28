@@ -16,7 +16,7 @@ import {
   PresentationIcon,
   GlobeIcon,
   ChatCircleIcon,
-  ChatsCircleIcon,
+  MessageReplyIcon,
   HashIcon,
   LockIcon,
 } from "../../shared/design-system/icons/index";
@@ -43,6 +43,7 @@ const serviceHosts = {
   zoom: ["zoom.us", "zoom.com"],
   teams: ["teams.microsoft.com", "teams.live.com", "teams.cloud.microsoft"],
 } as const;
+const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
 export function linkKind(href: string) {
   try {
@@ -98,7 +99,7 @@ const icons = {
   buzz: ChatCircleIcon,
   channel: HashIcon,
   message: ChatCircleIcon,
-  thread: ChatsCircleIcon,
+  thread: MessageReplyIcon,
 };
 
 /** Anchor wrapper for the isolated lab; messages use LinkLabel in a host-owned anchor. */
@@ -159,13 +160,11 @@ export function LinkLabel({
   // Shorten only raw destinations; authored labels and resolved channel names stay intact.
   if (rawDestination) {
     const characters = Array.from(label);
-    if (characters.length > 45) label = `${characters.slice(0, 44).join("")}…`;
+    if (characters.length > 45)
+      label = `${characters.slice(0, 34).join("")}…${characters.slice(-10).join("")}`;
   }
-  // Keep the icon with the start of its label.
-  const lead = (label.match(/^(?:https?:\/\/)?[^/\s]+/)?.[0] ?? label).slice(
-    0,
-    24,
-  );
+  // Keep the icon with the first character; the rest wraps within the message.
+  const lead = graphemes.segment(label).containing(0)?.segment ?? "";
   return (
     <span data-link-kind={kind}>
       <span className={styles.lead}>

@@ -103,7 +103,9 @@ export function AppShell({
   const collapsibleSidebar =
     channelsNavigation ||
     selected === "settings" ||
-    pages.some((page) => page.key === selected && page.primary);
+    pages.some(
+      (page) => page.key === selected && (page.primary || !!page.sidebar),
+    );
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [navigationOpen, setNavigationOpen] = useState(false);
   const navigationToggle = useRef<HTMLButtonElement>(null);
@@ -288,6 +290,7 @@ export function AppShell({
         >
           {(collapsibleSidebar || narrow) && (
             <IconButton
+              hint="familiar"
               ref={navigationToggle}
               data-shell-sidebar-toggle=""
               data-highlight-expanded="false"
@@ -319,6 +322,7 @@ export function AppShell({
                 <PopoverTrigger
                   render={
                     <IconButton
+                      hint="familiar"
                       ref={overflowTrigger}
                       data-shell-pages-overflow=""
                       aria-label="More pages"

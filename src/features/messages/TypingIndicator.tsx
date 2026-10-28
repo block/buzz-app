@@ -105,7 +105,10 @@ export function TypingIndicator({
     [session, channelId, needsRows],
   );
   const getRows = useCallback(
-    () => (needsRows ? session.channels.window(channelId).rows : noRows),
+    () =>
+      needsRows
+        ? (session.channels.window?.(channelId).rows ?? noRows)
+        : noRows,
     [session, channelId, needsRows],
   );
   const rows = useSyncExternalStore(subscribeRows, getRows);
@@ -343,9 +346,7 @@ function AgentChooser({
     >
       <PopoverTrigger
         ref={trigger}
-        openOnHover
-        delay={250}
-        closeDelay={150}
+        openOnHover="preview"
         render={
           <Button
             variant="ghost"

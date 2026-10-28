@@ -13,6 +13,8 @@ import { modalWindowDragHandlers } from "./shell/title-bar";
 import { isTauri } from "@tauri-apps/api/core";
 import { Dialog } from "../shared/design-system/ui/Dialog";
 import { UpdateNotice } from "../features/updates/UpdateNotice";
+import { CreationReview } from "../bundled/agents/CreationReview";
+import { UpdateReview } from "../bundled/agents/UpdateReview";
 import { InterruptedNotice } from "../features/agents/InterruptedNotice";
 import {
   useEffect,
@@ -27,6 +29,9 @@ import { Settings } from "./Settings";
 import { SettingsSidebar } from "./SettingsSidebar";
 import { RecoveryScreen } from "./RecoveryScreen";
 import { PageView } from "../features/pages/PageView";
+import { OwnedContribution } from "../plugins/OwnedContribution";
+import { SidebarFrame } from "../features/channel-navigation/SidebarFrame";
+import { SidebarList } from "../features/channel-navigation/SidebarList";
 import { useAppNavigation, type PendingSettingsDeparture } from "./navigation";
 import { NavigationControls } from "./shell/NavigationControls";
 import { registerNavigationShortcuts } from "./shortcuts";
@@ -40,10 +45,13 @@ import { usePanelLauncher } from "./shell/usePanelLauncher";
 import { PanelLaunchers } from "./shell/PanelLaunchers";
 import { PanelCard } from "../features/panels/PanelCard";
 import { communityDestination } from "../features/communities/destination";
+import { CommunityLanding } from "../features/communities/CommunityLanding";
+import { LegacyCommunityImport } from "../features/communities/LegacyCommunityImport";
 import { launchVisible, setLaunchReady, subscribeLaunch } from "./launch";
 
 export function App({ services }: { services: AppServices }) {
   const identity = services.identity;
+  const launching = useSyncExternalStore(subscribeLaunch, launchVisible);
   useEffect(() => {
     if (!identity) return;
     const update = () => {
@@ -63,6 +71,9 @@ export function App({ services }: { services: AppServices }) {
         {services.identity ? (
           <IdentitySetup identity={services.identity}>
             <ConnectedApp services={services} />
+            {!launching && (
+              <LegacyCommunityImport communities={services.communities} />
+            )}
           </IdentitySetup>
         ) : (
           <ConnectedApp services={services} />
@@ -105,6 +116,17 @@ function ConnectedApp({ services }: { services: AppServices }) {
   );
   const restoring = client.status === "loading" || !!connection.restoring;
   const settings = route.target.kind === "settings";
+  // Someone without a community starts by joining one. Having had one this
+  // run keeps the shell; Personal space with memberships is unchanged.
+  const [hadCommunity, setHadCommunity] = useState(false);
+  if (!hadCommunity && client.memberships.length > 0) setHadCommunity(true);
+  const firstRun =
+    !settings &&
+    !hadCommunity &&
+    startup !== "recovery" &&
+    client.status === "ready" &&
+    client.relayAvailable &&
+    client.memberships.length === 0;
   // The prompt is stale once Settings ends another way or nothing is left to
   // discard, such as when a pending save is sent behind it.
   if (confirmSettingsDiscard && (!settings || !settingsUnsaved))
@@ -163,6 +185,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
   const launchReady =
     settings ||
     terminal ||
+    firstRun ||
     (!restoring && startup !== "loading" && !route.waiting);
   useEffect(
     () => setLaunchReady(launchReady, terminal),
@@ -204,6 +227,12 @@ function ConnectedApp({ services }: { services: AppServices }) {
     (settings
       ? !!workspace.request
       : !route.failure && !route.waiting && route.state.status !== "failed");
+  // A registration lookup does not admit the target's parameters and scope.
+  const pageSidebarReady =
+    startup === "ready" &&
+    (settings
+      ? !!workspace.request
+      : !route.failure && !route.waiting && route.state.status !== "failed");
   // Keep the parser launch surface through local bootstrap, not network refresh.
   if (!settings && restoring)
     return document.getElementById("buzz-launch") ? null : (
@@ -217,6 +246,30 @@ function ConnectedApp({ services }: { services: AppServices }) {
           <img src="/buzz-loading-mark.svg" alt="Buzz" width="72" height="72" />
         </picture>
       </div>
+    );
+  const selectCommunity = (id: string | null) => {
+    const recovering =
+      services.navigation.snapshot().ingress &&
+      services.navigation.snapshot().retryable;
+    services.communities.select(id);
+    if (!recovering) select("buzz.channels/channels");
+  };
+  if (firstRun)
+    return (
+      <CommunityLanding
+        communities={services.communities}
+        invite={invite?.viewer === client.viewer ? invite : undefined}
+        onInviteClose={services.invites.clear}
+        settingsCards={services.settingsCards}
+        onJoined={selectCommunity}
+        onCreate={() =>
+          void services.navigation.open({
+            version: 1,
+            kind: "settings",
+            section: "block.hosted-communities/hosted",
+          })
+        }
+      />
     );
   const openSettingsSection = (section: string) => {
     const client = services.communities.snapshot();
@@ -283,27 +336,58 @@ function ConnectedApp({ services }: { services: AppServices }) {
               />
             }
             workspaceRef={setWorkspaceElement}
-            sidebar={(pageNavigation) => (
-              <PrimarySidebar
-                relay={services.relay}
-                navigator={services.navigation}
-                agents={services.agents}
-                chatIcons={services.conversation.chatIcons}
-                target={workspace.target}
-              >
-                {pageNavigation}
-              </PrimarySidebar>
-            )}
+            sidebar={(pageNavigation) =>
+              workspace.page?.sidebar && pageSidebarReady ? (
+                <OwnedContribution
+                  entry={workspace.page}
+                  registry={services.pages}
+                  resetIdentity={workspace.request}
+                  fallback={
+                    <div className="shell-sidebar-default">
+                      <SidebarFrame label={`${workspace.page.title} sidebar`}>
+                        <SidebarList>
+                          <p role="alert">
+                            This page’s sidebar is unavailable.
+                          </p>
+                          {pageNavigation}
+                        </SidebarList>
+                      </SidebarFrame>
+                    </div>
+                  }
+                >
+                  {(entry) => {
+                    const Sidebar = entry.sidebar;
+                    return Sidebar ? (
+                      <Sidebar target={workspace.target}>
+                        {pageNavigation}
+                      </Sidebar>
+                    ) : null;
+                  }}
+                </OwnedContribution>
+              ) : workspace.page?.sidebar ? (
+                <div className="shell-sidebar-default">
+                  <SidebarFrame label="Page navigation">
+                    <SidebarList>{pageNavigation}</SidebarList>
+                  </SidebarFrame>
+                </div>
+              ) : (
+                <PrimarySidebar
+                  relay={services.relay}
+                  navigator={services.navigation}
+                  agents={services.agents}
+                  chatIcons={services.conversation.chatIcons}
+                  chatMenus={services.conversation.chatMenus}
+                  sidebarSections={services.sidebarSections}
+                  target={workspace.target}
+                >
+                  {pageNavigation}
+                </PrimarySidebar>
+              )
+            }
             navigationControls={
               <NavigationControls navigation={services.navigation} />
             }
-            onCommunitySelect={(id) => {
-              const recovering =
-                services.navigation.snapshot().ingress &&
-                services.navigation.snapshot().retryable;
-              services.communities.select(id);
-              if (!recovering) select("buzz.channels/channels");
-            }}
+            onCommunitySelect={selectCommunity}
             // A scoped Settings target selects its community on the way.
             onOpenTarget={(target) => void services.navigation.open(target)}
             communities={services.communities}
@@ -332,6 +416,8 @@ function ConnectedApp({ services }: { services: AppServices }) {
           >
             <UpdateNotice updates={services.updates} />
             <InterruptedNotice agents={services.agents} />
+            <CreationReview agents={services.agents} />
+            <UpdateReview agents={services.agents} />
             {!settings && startup === "recovery" ? (
               <RecoveryScreen plugins={plugins} />
             ) : !settings &&
@@ -410,6 +496,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
               ) : (
                 <Settings
                   agents={services.agents}
+                  decisions={services.decisions}
                   plugins={plugins}
                   cards={services.settingsCards}
                   adminAccess={services.adminAccess}

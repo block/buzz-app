@@ -7,7 +7,7 @@ import {
   settingsDialog,
 } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
-import { open, virtuaIdle } from "./timeline.mjs";
+import { hoverRow, open, virtuaIdle } from "./timeline.mjs";
 
 test.use({
   productionBroker: true,
@@ -55,12 +55,12 @@ test("Buzz channel and message links render, reveal verified targets, and preser
   await expect(row).not.toContainText("<buzz:");
   const link = row.getByRole("link", { name: "Alpha", exact: true });
   await expect(link).toHaveCSS("text-decoration-line", "underline");
-  // Links follow the accent at the default accent level.
+  // Received-bubble links use the message-specific accent role.
   await expect(link).toHaveCSS(
     "color",
     await link.evaluate((node) => {
       const probe = document.createElement("span");
-      probe.style.color = "var(--text-link)";
+      probe.style.color = "var(--text-message-link)";
       node.parentElement?.append(probe);
       const color = getComputedStyle(probe).color;
       probe.remove();
@@ -282,10 +282,10 @@ test("a hovered message preview survives scroll anchoring and closes when its li
   const link = page
     .locator(`[data-channel-timeline] [data-message-id="${message.id}"]`)
     .getByRole("link", { name: "Alpha", exact: true });
-  await expect(link).toBeVisible();
+  await expect(link).toBeInViewport();
   await virtuaIdle(page);
   const preview = page.getByLabel("Message preview", { exact: true });
-  await link.hover();
+  await hoverRow(page, link);
   await expect(
     preview.getByText("Broadcast reply", { exact: true }),
   ).toBeVisible();
@@ -352,10 +352,7 @@ test("a hovered message preview survives the timeline's scroll-time pointer-even
   await expect(link).toBeInViewport();
   await virtuaIdle(page);
   const preview = page.getByLabel("Message preview", { exact: true });
-  // Move the raw pointer: Locator.hover retries by scrolling the timeline,
-  // and each scroll restarts Virtua's pointer-event hold.
-  let box = await link.boundingBox();
-  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await hoverRow(page, link);
   await expect(
     preview.getByText("Broadcast reply", { exact: true }),
   ).toBeVisible();
@@ -365,7 +362,7 @@ test("a hovered message preview survives the timeline's scroll-time pointer-even
   // After the list settles, move onto the link again (1px aside, as WebKit
   // can ignore a move to the unchanged position) and prove it is hovered.
   await virtuaIdle(page);
-  box = await link.boundingBox();
+  const box = await link.boundingBox();
   const point = { x: box.x + box.width / 2 - 1, y: box.y + box.height / 2 };
   await page.mouse.move(point.x, point.y);
   await expect

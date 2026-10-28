@@ -26,10 +26,10 @@ import { useRelayConnection } from "../../features/relay/react";
 import { relayPartition } from "../../features/relay/partition";
 import { targetKey } from "../../features/navigation/targets";
 import { readView, writeView } from "../../shared/view-state";
-import { ownSolo } from "../../features/solo/labels";
 import type { ChannelList } from "../../features/relay/contracts";
 import type { ContributionReader } from "../../features/conversation/contracts";
-import type { ChatIcon } from "../../features/conversation/service";
+import type { ChatIcon, ChatMenu } from "../../features/conversation/service";
+import type { SidebarSections } from "../../features/channel-navigation/sidebar-sections-service";
 
 const noSubscription = () => () => {};
 
@@ -45,6 +45,8 @@ type Props = {
   navigator: Navigation;
   agents?: Agents | undefined;
   chatIcons?: ContributionReader<ChatIcon> | undefined;
+  chatMenus?: ContributionReader<ChatMenu> | undefined;
+  sidebarSections?: SidebarSections | undefined;
   target: OpenTarget;
   children: ReactNode;
 };
@@ -118,11 +120,7 @@ function ScopedSidebar({
     soloPreferences?.status !== "loading";
   const destination = local
     ? target.kind === "conversation"
-      ? conversationDestination(
-          channelList,
-          target.channelId,
-          connection.session?.viewer,
-        )
+      ? conversationDestination(channelList, target.channelId)
       : target.kind === "page" && target.pluginId === "buzz.channels"
         ? soloDraft(target.route?.params)
           ? "solo"
@@ -185,6 +183,7 @@ function ScopedSidebar({
           queries={connection.session}
           scope={scope}
           viewer={connection.viewer}
+          sidebarSections={props.sidebarSections}
           cached={!!connection.cached}
           layoutReady={filter === "team" || soloReady}
           connectionError={connection.error}
@@ -223,6 +222,7 @@ function ScopedSidebar({
                       navigator={props.navigator}
                       target={props.target}
                       chatIcons={props.chatIcons}
+                      chatMenus={props.chatMenus}
                     />
                   </section>
                   <div
@@ -269,12 +269,8 @@ function ScopedSidebar({
 }
 
 /** Unknown until the channel list can say; a channel outside it is Team's. */
-function conversationDestination(
-  list: ChannelList | undefined,
-  id: string,
-  viewer: string | undefined,
-) {
+function conversationDestination(list: ChannelList | undefined, id: string) {
   const channel = list?.channels.find((item) => item.id === id);
   if (!channel && list?.status !== "ready") return undefined;
-  return ownSolo(channel, viewer) ? "solo" : "team";
+  return channel?.channelType === "solo" ? "solo" : "team";
 }

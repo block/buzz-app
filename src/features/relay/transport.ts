@@ -1,4 +1,3 @@
-import { audienceAuthorityCommunity } from "../sessions/audience-authority";
 import type { ReminderHost } from "./reminders";
 import {
   memoryResponseText,
@@ -35,6 +34,7 @@ import {
   projectSidebarPreferences,
   type SidebarAssignmentMutator,
   type SidebarSectionOrderMutator,
+  type SidebarSectionRenameMutator,
   type SidebarSectionRemovalMutator,
   type SidebarStarMutator,
   type SidebarSortMutator,
@@ -64,6 +64,7 @@ import {
 import { subscribeBrokerTraffic } from "./broker-live";
 import { PublishNotSent, PublishRejected } from "./outbox";
 import { httpReadError, ReadError } from "./errors";
+import { ARTIFACT_KIND } from "../agents/agent-config-artifacts";
 import type { EventTemplate, VerifiedEvent } from "nostr-tools";
 import {
   createEventVerifier,
@@ -130,6 +131,9 @@ export interface ReadTransport {
   /** The relay advertises `buzz-search-sort`: bridge search accepts
    * `search_sort: "newest"`. Older relays silently rank by relevance. */
   readonly searchSort?: true;
+  /** The relay advertises NIP-AR sync (`artifacts.sync.version` 1 in NIP-11):
+   * a REQ with `"artifact": "current"` streams a complete set, then live heads. */
+  readonly artifactSync?: true;
   /** Strictly validated atomic writer snapshot; never an ordinary event-array query. */
   readStateSnapshot?(
     signal: AbortSignal,
@@ -154,6 +158,7 @@ export interface ReadTransport {
   readonly writeSidebarAssignment?: SidebarAssignmentMutator;
   readonly removeSidebarSection?: SidebarSectionRemovalMutator;
   readonly writeSidebarSectionOrder?: SidebarSectionOrderMutator;
+  readonly renameSidebarSection?: SidebarSectionRenameMutator;
   readonly writeSidebarStar?: SidebarStarMutator;
   readonly profiling?: RelayProfiler;
   /** Verified incoming traffic. The session owns this subscription and fences late delivery. */
@@ -168,7 +173,6 @@ export interface ReadTransport {
   readonly viewer: string;
   /** Relay authority that signs discovery and window-bounds events. */
   readonly relayAuthor: string;
-  readonly audienceAuthorityCommunity?: string | undefined;
   /** Explicit NIP-11 self from this community, never a contact-key fallback. */
   readonly archiveAuthority?: string;
   /** Purpose-bound authoritative recency, verified and max 128 channel IDs. */
@@ -455,9 +459,11 @@ export async function connectBrokerTransport(
     channelKit?: boolean;
     channelIdentity?: boolean;
     searchSort?: boolean;
+    artifactSync?: boolean;
     sidebarPreferenceWrites?: boolean;
     sidebarSectionRemoval?: boolean;
     sidebarSectionOrder?: boolean;
+    sidebarSectionRename?: boolean;
     sidebarStarWrites?: boolean;
     agentLibrary?: boolean;
     agentMemories?: boolean;
@@ -466,7 +472,6 @@ export async function connectBrokerTransport(
     agentActivity?: boolean;
     readState?: boolean;
     readStateCommunity?: string;
-    audienceAuthorityCommunity?: string;
   };
   if (
     typeof session.viewer !== "string" ||
@@ -498,6 +503,19 @@ export async function connectBrokerTransport(
     });
     recordServerTiming(result, profiling, event.id);
     return acceptPublish(result, event.id);
+  };
+  const sign = async (template: EventTemplate, signal: AbortSignal) => {
+    const result = await fetch(`${endpoint}/sign`, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(template),
+      signal,
+    });
+    if (!result.ok) throw new Error(`Signing failed (${result.status})`);
+    const event = eventDto(await result.json());
+    recordServerTiming(result, profiling, event.id);
+    return event;
   };
   /** Dedicated shape-limited host sign/publish routes, separate from the outbox writer. */
   const routeWriter = (route: string): RelayWriter => ({
@@ -771,6 +789,7 @@ export async function connectBrokerTransport(
       ? { channelIdentity: true as const }
       : {}),
     ...(session.searchSort === true ? { searchSort: true as const } : {}),
+    ...(session.artifactSync === true ? { artifactSync: true as const } : {}),
     ...(session.channelKit
       ? {
           channelKit: {
@@ -855,13 +874,6 @@ export async function connectBrokerTransport(
             },
           },
         }
-      : {}),
-    ...(audienceAuthorityCommunity({
-      version: 1,
-      max_sources: 100,
-      community_id: session.audienceAuthorityCommunity,
-    })
-      ? { audienceAuthorityCommunity: session.audienceAuthorityCommunity }
       : {}),
     ...(session.readStateCommunity
       ? {
@@ -1036,6 +1048,34 @@ export async function connectBrokerTransport(
           },
         }
       : {}),
+    ...(session.sidebarSectionRename
+      ? {
+          async renameSidebarSection(
+            intent: { sectionId: string; name: string },
+            signal: AbortSignal,
+          ) {
+            const response = await fetch(`${endpoint}/sidebar-section-rename`, {
+              method: "POST",
+              credentials: "same-origin",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(intent),
+              signal,
+            });
+            if (!response.ok)
+              throw new Error((await readApiFailure(response)).error);
+            const value = await response.json();
+            const { sections, assignments } = projectSidebarPreferences(
+              {
+                version: 1,
+                sections: value.sections,
+                assignments: value.assignments,
+              },
+              undefined,
+            );
+            return { sections, assignments };
+          },
+        }
+      : {}),
     ...(session.sidebarSectionOrder
       ? {
           async writeSidebarSectionOrder(
@@ -1115,21 +1155,38 @@ export async function connectBrokerTransport(
       ? {
           writer: {
             kinds: session.writeKinds,
+            sign,
+            publish,
+          },
+        }
+      : {}),
+    // Artifact saves are the viewer's own kind 45010 events, signed and
+    // published through the ordinary routes, which admit that kind and leave
+    // write permission to the relay. Unlike the desktop host, which allows
+    // nearly 512 KiB, the broker body and socket frame cap them at 64 KiB.
+    ...(session.writeKinds?.includes(ARTIFACT_KIND)
+      ? {
+          configArtifacts: {
+            kinds: [ARTIFACT_KIND],
             async sign(template: EventTemplate, signal: AbortSignal) {
-              const result = await fetch(`${endpoint}/sign`, {
-                method: "POST",
-                credentials: "same-origin",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(template),
-                signal,
-              });
-              if (!result.ok)
-                throw new Error(`Signing failed (${result.status})`);
-              const event = eventDto(await result.json());
-              recordServerTiming(result, profiling, event.id);
+              if (template.kind !== ARTIFACT_KIND)
+                throw new Error("Not an artifact");
+              const event = await sign(template, signal);
+              if (
+                event.kind !== ARTIFACT_KIND ||
+                event.pubkey !== session.viewer
+              )
+                throw new Error("Invalid artifact signature");
               return event;
             },
-            publish,
+            async publish(event: RelayEvent, signal: AbortSignal) {
+              if (
+                event.kind !== ARTIFACT_KIND ||
+                event.pubkey !== session.viewer
+              )
+                throw new Error("Not this viewer's artifact");
+              return publish(event, signal);
+            },
           },
         }
       : {}),

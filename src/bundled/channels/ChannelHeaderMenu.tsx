@@ -7,11 +7,7 @@ import {
   useChannelMenuActions,
   useChannelNavigation,
 } from "../../features/channel-navigation/ChannelNavigationState";
-import {
-  DotsThreeIcon,
-  FileTextIcon,
-  InfoIcon,
-} from "../../shared/design-system/icons";
+import { DotsThreeIcon, InfoIcon } from "../../shared/design-system/icons";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   MenuRoot,
@@ -32,18 +28,18 @@ export function ChannelHeaderMenu({
   origin: lifetime,
   trigger,
   openDetails,
-  openCanvas,
   menuPanels,
   openMenuPanel,
   finishConversion,
+  startChat,
 }: {
   channel: ChannelSummary | undefined;
   session: RelaySession;
   origin?: AbortSignal | undefined;
   trigger: RefObject<HTMLButtonElement | null>;
   openDetails(): void;
+  startChat?: ReactNode;
   finishConversion?: (() => void) | undefined;
-  openCanvas(trigger: HTMLButtonElement): void;
   menuPanels?: readonly RegisteredPanel[] | undefined;
   openMenuPanel?: ((panel: RegisteredPanel) => void) | undefined;
 }) {
@@ -82,6 +78,7 @@ export function ChannelHeaderMenu({
         finalFocus.current ? finalFocus.current() : (trigger.current ?? false)
       }
     >
+      {startChat}
       {finishConversion && (
         <MenuItem onClick={finishConversion}>
           <MenuIcon>{null}</MenuIcon>
@@ -94,18 +91,6 @@ export function ChannelHeaderMenu({
         </MenuIcon>
         View channel details
       </MenuItem>
-      {channel && !channel.readOnly && (
-        <MenuItem
-          onClick={() => {
-            if (trigger.current) openCanvas(trigger.current);
-          }}
-        >
-          <MenuIcon>
-            <FileTextIcon size={16} />
-          </MenuIcon>
-          View canvas
-        </MenuItem>
-      )}
       {menuPanels?.map((panel) => (
         <MenuItem key={panel.key} onClick={() => openMenuPanel?.(panel)}>
           <MenuIcon>
@@ -138,6 +123,7 @@ export function ChannelHeaderMenu({
       <MenuTrigger
         render={
           <IconButton
+            hint="familiar"
             ref={trigger}
             size="toolbar"
             aria-label="Channel actions"

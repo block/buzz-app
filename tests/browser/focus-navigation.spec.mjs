@@ -1,5 +1,5 @@
 import { test, expect } from "./fixture.mjs";
-import { closeSettings } from "./navigation.mjs";
+import { closeSettings, settleShellToggle } from "./navigation.mjs";
 import { open } from "./timeline.mjs";
 import { openChannelDetails } from "./channel-details.mjs";
 
@@ -45,10 +45,9 @@ test("search, composer and split-pane keyboard focus preserve both drafts", asyn
   });
   await expect(query).toBeFocused();
   await query.fill("Beta");
-  const channels = search.locator(
-    '[aria-label="Channels"] [data-search-result]',
-  );
-  await expect(channels.filter({ hasText: /Beta/ })).toHaveAttribute(
+  // Beta is a Solo chat, so it is in the Chats group.
+  const chats = search.locator('[aria-label="Chats"] [data-search-result]');
+  await expect(chats.filter({ hasText: /Beta/ })).toHaveAttribute(
     "aria-selected",
     "true",
   );
@@ -66,6 +65,9 @@ test("search, composer and split-pane keyboard focus preserve both drafts", asyn
   await page.keyboard.press(`${mod}+k`);
   await expect(query).toBeFocused();
   await query.fill("Alpha");
+  const channels = search.locator(
+    '[aria-label="Channels"] [data-search-result]',
+  );
   await expect(channels.filter({ hasText: /Alpha/ })).toHaveAttribute(
     "aria-selected",
     "true",
@@ -358,11 +360,32 @@ test("covered panes and notifications preserve focus and F6 recovery", async ({
   // The toast can also cover a dock that covers the main composer. Search
   // through that stack: ignoring just the top toast must not expose the main.
   await page.setViewportSize({ width: 600, height: 900 });
+  // The shell compacts its header in a later render. Focusing Search before
+  // then scrolls the shell, moving main's tab offscreen where F8 can pick it.
+  await settleShellToggle(page);
   await expect.poll(toastCoversComposer).toBe(true);
+  // WebKit can retain horizontal shell scroll after resizing. An offscreen
+  // main tab must not make that covered pane eligible for focus recovery.
+  const mainTab = main.getByRole("tab", { name: "Alpha", exact: true });
+  await mainTab.evaluate((tab) => {
+    const bounds = tab.getBoundingClientRect();
+    tab.closest("[data-shell-tone]").scrollLeft +=
+      bounds.x + bounds.width / 2 + 1;
+  });
+  await expect
+    .poll(() =>
+      mainTab.evaluate((tab) => {
+        const bounds = tab.getBoundingClientRect();
+        return bounds.x + bounds.width / 2;
+      }),
+    )
+    .toBeLessThan(0);
   const search = page.getByRole("button", { name: "Search Buzz", exact: true });
   await search.focus();
   await page.keyboard.press(keys.composer);
   await expect(search).toBeFocused();
+  await page.keyboard.press(keys.main);
+  await expect(keys.apple ? search : composer).toBeFocused();
   await page.keyboard.press(keys.side);
   await expect(composer).toBeFocused();
   await expect(

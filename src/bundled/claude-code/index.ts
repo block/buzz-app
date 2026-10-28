@@ -1,8 +1,10 @@
+import { CLAUDE_HOOK_EVENTS } from "./hooks";
 import { repositoriesContext } from "../../features/communities/repositories";
 // Claude agents: an agent type whose agents are Claude sessions on
 // this computer. Each conversation the agent is in is one continuing session;
 // Claude answers with the in-process Buzz tools.
 import { isTauri } from "@tauri-apps/api/core";
+import { pubkeyOf } from "../../features/agents/membership";
 import { ownerReads } from "../../features/agents/reads";
 import type { PluginModule } from "../../plugins/api";
 import { ClaudeLogoIcon } from "../../shared/design-system/icons";
@@ -25,16 +27,32 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const { agents, host } = ctx;
   const typeKey = `${ctx.pluginOwner?.id ?? "buzz.claude-code"}/${TYPE_ID}`;
   const spawn = host.spawn && withScript(host.spawn.bind(host));
+  const readFile = host.readFile?.bind(host);
   const setup = new ClaudeSetup(spawn, (input) => host.request(input));
   const providerDefaults = new ClaudeDefaults(agents.storage);
   const runtime = new ClaudeRuntime(
     spawn ? { spawn } : {},
-    (pubkey) => ownerReads(agents.relay(pubkey), pubkey),
-    (pubkey, signal) => agents.core(pubkey, signal),
+    (key) => ownerReads(agents.relay(key), pubkeyOf(key)),
+    (key, signal) => agents.core(key, signal),
     agents.storage,
     (raw) => providerDefaults.resolve(raw),
     () => agents.tools(),
     repositoriesContext,
+    async (agent, session, event, input) => {
+      return ((await agents.dispatchHook(
+        typeKey,
+        event,
+        input,
+        { agent, session },
+        {
+          accepts: (output) =>
+            !!output &&
+            typeof output === "object" &&
+            Object.keys(output).length > 0,
+          milliseconds: 25000,
+        },
+      )) ?? {}) as Record<string, unknown>;
+    },
   );
   /** A Claude agent is running, so Buzz's copy is needed; unknown until the
    * agents have loaded. */
@@ -84,6 +102,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   });
   agents.register<Config>({
     id: TYPE_ID,
+    hooks: { events: CLAUDE_HOOK_EVENTS },
     title: "Claude",
     icon: ClaudeLogoIcon,
     description:
@@ -91,6 +110,15 @@ export const apply: PluginModule["apply"] = (ctx) => {
     defaults: () => ({ config: DEFAULT_CONFIG }),
     Create,
     CreateModel,
+    importShared: (source) =>
+      source.runtime === "claude" &&
+      (!source.provider || source.provider === "anthropic")
+        ? { ...DEFAULT_CONFIG, model: source.model }
+        : undefined,
+    exportShared: (saved) => ({
+      runtime: "claude",
+      model: config(saved).model,
+    }),
     adopt: (carry, saved) => ({
       ...saved,
       instructions: carry.instructions ?? saved.instructions,
@@ -117,17 +145,18 @@ export const apply: PluginModule["apply"] = (ctx) => {
       ];
     },
     summary: (agent) => config(agent.config).model || "Claude",
-    ...(spawn && {
-      usage: (agent, { since, signal }) =>
-        readUsage(
-          spawn,
-          config(agent.config).workspace,
-          agent.pubkey,
-          runtime.conversations(agent.pubkey).map((saved) => saved.sessionId),
-          since,
-          signal,
-        ),
-    }),
+    ...(spawn &&
+      readFile && {
+        usage: (agent, { since, signal }) =>
+          readUsage(
+            { spawn, readFile },
+            config(agent.config).workspace,
+            agent.key,
+            runtime.conversations(agent.key).map((saved) => saved.sessionId),
+            since,
+            signal,
+          ),
+      }),
     provider: {
       snapshot: setup.providerSnapshot,
       subscribe: setup.subscribe,
@@ -146,12 +175,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
       DefaultControl,
     },
     sessions: {
-      list: (pubkey) => {
+      list: (key) => {
         const busy = new Map(
-          runtime.sessions(pubkey).map((view) => [view.key, view.busy]),
+          runtime.sessions(key).map((view) => [view.key, view.busy]),
         );
         return runtime
-          .conversations(pubkey)
+          .conversations(key)
           .map(({ key, channelId, root, at }) => {
             const working = busy.get(key);
             return {

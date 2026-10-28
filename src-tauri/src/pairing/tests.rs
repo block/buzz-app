@@ -19,7 +19,7 @@ fn raw(keys: &Keys, source: &PairingSession, value: serde_json::Value) -> Event 
         .unwrap()
 }
 // Current phones still request the removed desktop-code-v1 confirmation and
-// fall back to comparing codes when the desktop never answers it.
+// fall back to checking entered digits against their SAS when desktop ignores it.
 fn entry() -> (Exchange, Keys, buzz_pairing::QrPayload, String) {
     let (session, qr) = PairingSession::new_source("wss://relay.test".into());
     let target = Keys::generate();

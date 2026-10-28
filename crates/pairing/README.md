@@ -9,7 +9,8 @@ crate paths in documentation, and format with this repository's pinned tools.
 
 The `desktop-code-v1` code-entry extension from PR #8085 is intentionally removed.
 It released the account once a peer submitted the code shown on the desktop,
-without explicit desktop approval, so a captured QR was enough to race the phone.
+without explicit desktop approval, so an observer who captured the QR and read
+the desktop code could receive the account by connecting before the phone.
 Offers that still advertise the capability are accepted as ordinary SAS offers.
 Do not restore it when syncing upstream.
 

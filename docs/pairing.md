@@ -26,13 +26,17 @@ new plugin security sandbox. The frontend CSP is unchanged.
    connecting, including setup, so the visible lifetime is shorter than two minutes.
    The protocol also expires no later than two minutes after display. Connection
    failures show **Try again** instead of retrying indefinitely.
-3. After the phone scans the QR, both devices show the same six-digit NIP-AB
-   comparison code. The account payload is sent only after the user checks both
-   codes and chooses **Codes match** on the desktop. **Cancel** sends
-   `user_denied` before disposing the session.
+3. After the phone scans the QR, desktop shows the six-digit NIP-AB comparison
+   code. If the phone asks for a code, the user enters these digits and finishes
+   confirming on the phone; the phone checks them locally against its derived
+   comparison code. If the phone displays a code instead, the user checks that
+   the digits match. Only then should the user choose **Codes match** on desktop
+   to send their Buzz identity. The account payload is sent only after this
+   desktop approval. **Cancel** sends `user_denied` before disposing the session.
 4. Desktop does not implement the `desktop-code-v1` code-entry extension. Current
-   phones still advertise it and fall back to comparison when desktop never sends
-   a `desktop-code` challenge. Code entry released the account without a desktop
+   phones still advertise it and fall back to local comparison through their
+   code-entry field when desktop never sends a `desktop-code` challenge.
+   The removed extension released the account without a desktop
    approval, so anyone who captured the QR (for example, from a shared screen)
    could connect before the phone, read the desktop code and receive the account.
 5. **Phone paired** means the phone acknowledged the transfer. Current phone

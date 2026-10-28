@@ -151,6 +151,8 @@ export function PairingSettings({
   );
   const confirmed = ["transferring", "complete"].includes(state.phase);
   const done = state.phase === "complete";
+  const verificationInstructions =
+    "If your phone asks for a code, enter these digits and finish confirming on your phone. If it shows a code, check that the digits match. Then choose Codes match here to send your Buzz identity.";
   const steps = [
     {
       id: "scan",
@@ -161,9 +163,8 @@ export function PairingSettings({
     },
     {
       id: "verify",
-      title: "Confirm mobile code",
-      detail:
-        "After scanning, check that both devices show the same six digits.",
+      title: "Verify the code on your phone",
+      detail: verificationInstructions,
       complete: confirmed,
     },
     {
@@ -191,7 +192,7 @@ export function PairingSettings({
               ? "Couldn’t copy the pairing code."
               : "Pairing code copied."
             : state.phase === "code"
-              ? `Verification code ${state.code.split("").join(" ")}. Confirm the matching code.`
+              ? `Verification code ${state.code.split("").join(" ")}. ${verificationInstructions}`
               : done
                 ? "Your phone is paired."
                 : ""}
@@ -274,7 +275,7 @@ export function PairingSettings({
                   {state.phase === "code" && (
                     <div className="flex min-h-64 w-full flex-col justify-between gap-6">
                       <h3 className="m-0 text-label">
-                        Check the code on your phone
+                        Verify the code on your phone
                       </h3>
                       <fieldset className="m-0 w-full whitespace-nowrap rounded-xl border border-shell-edge bg-surface px-4 py-4">
                         <legend className="sr-only">Pairing code</legend>

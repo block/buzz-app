@@ -263,7 +263,7 @@ it.each(["uncertain", "cancelled"] as const)(
   },
 );
 
-it("copies the pairing code shown in the current QR", async () => {
+it("copies the current QR and explains phone verification", async () => {
   vi.useFakeTimers();
   vi.stubGlobal("matchMedia", () => ({
     matches: false,
@@ -333,6 +333,20 @@ it("copies the pairing code shown in the current QR", async () => {
     await vi.advanceTimersByTimeAsync(400);
   });
   expect(screen.queryByRole("button", { name: /cop/i })).toBeNull();
+  const instructions = screen.getByRole("list", { name: "Pairing steps" });
+  const announcement = screen.getByText(/^Verification code 1 2 3 4 5 6\./);
+  expect(announcement.getAttribute("aria-live")).toBe("polite");
+  for (const surface of [instructions, announcement]) {
+    expect(surface.textContent).toContain(
+      "If your phone asks for a code, enter these digits and finish confirming on your phone.",
+    );
+    expect(surface.textContent).toContain(
+      "If it shows a code, check that the digits match.",
+    );
+    expect(surface.textContent).toContain(
+      "Then choose Codes match here to send your Buzz identity.",
+    );
+  }
 });
 
 it("rejects a mismatch and requires explicit retry", async () => {

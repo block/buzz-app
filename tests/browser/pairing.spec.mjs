@@ -28,7 +28,7 @@ test("comparison code replaces QR, preserves leading zeros, and waits for phone 
   ).toBeVisible();
   await phone(page, { phase: "code", code: "001234" });
   await expect(
-    page.getByRole("heading", { name: "Check the code on your phone" }),
+    page.getByRole("heading", { name: "Verify the code on your phone" }),
   ).toBeVisible();
   await expect(page.getByText("001 234", { exact: true })).toBeVisible();
   await expect(

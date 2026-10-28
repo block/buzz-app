@@ -167,6 +167,37 @@ export const composerSchema = new Schema<
 export type SourceToken = { start: number; end: number; editAsText?: boolean };
 export type SourceRange = { start: number; end: number };
 
+/** Lossless version-1 authored/view adapter. Renderer-owned atoms are derived
+ * native editing surfaces, never persisted authority. Legacy snapshots expand
+ * them back to the same UTF-16 source and marks; recipient/resource atoms stay
+ * semantic and round-trip through the existing schema without a migration. */
+export function authoredComposerDocument(doc: EditorNode): EditorNode {
+  if (
+    doc.type === composerSchema.nodes.token &&
+    !doc.attrs.recipient &&
+    !doc.attrs.resource
+  )
+    return composerSchema.text(doc.attrs.source, doc.marks);
+  if (doc.isLeaf) return doc;
+  const children: EditorNode[] = [];
+  let changed = false;
+  doc.forEach((child) => {
+    if (
+      child.type === composerSchema.nodes.token &&
+      child.attrs.source === "" &&
+      !child.attrs.recipient &&
+      !child.attrs.resource
+    ) {
+      changed = true;
+      return;
+    }
+    const next = authoredComposerDocument(child);
+    changed ||= next !== child;
+    children.push(next);
+  });
+  return changed ? doc.copy(Fragment.fromArray(children)) : doc;
+}
+
 /** Source ranges the editor must not format: existing Markdown code, images,
  * definitions and HTML stay literal text. */
 export function markdownRanges(text: string) {

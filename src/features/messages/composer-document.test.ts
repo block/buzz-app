@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   composerSchema as schema,
+  authoredComposerDocument,
   projectComposerDocument,
   readComposerDocument,
   readComposerSnapshot,
@@ -24,6 +25,52 @@ const serialize = (...children: ReturnType<typeof schema.text>[]) =>
   composerMarkdown(projectComposerDocument(doc(paragraph(...children))).draft);
 
 describe("composer document boundary", () => {
+  it("round-trips legacy presentation leaves without changing authored UTF-16 source, marks or authority", () => {
+    const key = "a".repeat(64);
+    const resource = { uri: "https://example.test/item", label: "Item" };
+    const original = doc(
+      paragraph(
+        // Valid version-1 snapshots can contain an empty presentation leaf.
+        schema.nodes.token.create({ source: "" }),
+        schema.text("😀 "),
+        schema.nodes.token.create({ source: ":party:" }, null, [
+          schema.marks.bold.create(),
+        ]),
+        schema.text(" "),
+        schema.nodes.token.create({
+          source: "@Mic",
+          recipient: { pubkey: key, name: "Mic" },
+        }),
+        schema.text(" "),
+        schema.nodes.token.create({
+          source: "[Item](https://example.test/item)",
+          resource,
+        }),
+      ),
+    );
+    const legacy = mentionDraft(
+      JSON.parse(JSON.stringify(projectComposerDocument(original).draft)),
+    );
+    const canonical = authoredComposerDocument(
+      readComposerDocument(legacy, []),
+    );
+    const saved = mentionDraft(
+      JSON.parse(JSON.stringify(projectComposerDocument(canonical).draft)),
+    );
+    expect(saved.text).toBe(legacy.text);
+    expect(saved.recipients).toEqual(legacy.recipients);
+    expect(composerMarkdown(saved)).toBe(composerMarkdown(legacy));
+    const restored = projectComposerDocument(readComposerDocument(saved, []));
+    expect(
+      restored.tokens.map(
+        (token) =>
+          token.node.attrs.recipient?.pubkey ?? token.node.attrs.resource?.uri,
+      ),
+    ).toEqual([key, resource.uri]);
+    const end = restored.position(saved.text.length);
+    expect(restored.source(end)).toBe(saved.text.length);
+  });
+
   it("preserves distinct block and hard-break structures through persisted drafts", () => {
     const blocks = doc(paragraph(bold("a")), paragraph(schema.text("b")));
     const inline = doc(

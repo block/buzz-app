@@ -1,13 +1,12 @@
 import {
+  useCallback,
   useLayoutEffect,
   useRef,
   useState,
-  type ReactNode,
   type KeyboardEvent,
   type RefObject,
   type HTMLAttributes,
 } from "react";
-import { createPortal } from "react-dom";
 import {
   EditorState,
   Plugin,
@@ -35,6 +34,7 @@ import { sinkListItem, liftListItem } from "prosemirror-schema-list";
 import { Fragment } from "prosemirror-model";
 import {
   composerSchema,
+  authoredComposerDocument,
   readComposerDocument,
   projectComposerDocument,
   composerMarkdownContext,
@@ -68,7 +68,6 @@ import {
 } from "./composer-clipboard";
 import {
   mentionBoundary,
-  mentionDraft,
   type MentionDraft,
   type MentionRecipient,
 } from "./mention-draft";
@@ -88,12 +87,13 @@ import { updatePlainLinks, type PlainLink } from "./composer-link-edit";
 import "prosemirror-view/style/prosemirror.css";
 import styles from "./EditableInput.module.css";
 
-export type EditorDecoration = {
-  start: number;
-  end: number;
-  content: ReactNode;
-  editAsText?: boolean;
-};
+import {
+  ComposerPresentationGraph,
+  ComposerTokenPortals,
+  type ComposerAnalysis,
+  type EditorDecoration,
+} from "./composer-presentation";
+export type { EditorDecoration } from "./composer-presentation";
 /** Characters a caret or function key leaves in the document when the host's
  * native text-input path commits the key as if typed. In the desktop build a
  * Right Arrow press can reach WebKit as a key event whose text is the key's raw
@@ -172,7 +172,7 @@ export type EditableInputProps = Omit<
 export function EditableInput({
   ref,
   draft,
-  decorationsFor,
+  presentationFor,
   value: _value,
   disabled,
   placeholder,
@@ -184,13 +184,12 @@ export function EditableInput({
   ...events
 }: EditableInputProps & {
   draft: MentionDraft;
-  decorationsFor(draft: MentionDraft): readonly EditorDecoration[];
+  presentationFor(draft: ComposerAnalysis): readonly EditorDecoration[];
 }) {
   const mount = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
   const current = useRef({
     draft,
-    decorationsFor,
     maxLength,
     onDraftChange,
     onFormatsChange,
@@ -201,7 +200,6 @@ export function EditableInput({
   });
   current.current = {
     draft,
-    decorationsFor,
     maxLength,
     onDraftChange,
     onFormatsChange,
@@ -213,17 +211,9 @@ export function EditableInput({
   const tokenClassName = styles.token ?? "";
   const tokenClass = useRef(tokenClassName);
   tokenClass.current = tokenClassName;
-  const hosts = useRef(
-    new Map<
-      HTMLElement,
-      {
-        source: string;
-        resource: ComposerResource | null;
-        position(): number | undefined;
-      }
-    >(),
+  const [presentation] = useState(
+    () => new ComposerPresentationGraph(presentationFor),
   );
-  const [, refresh] = useState(0);
   const scrollAfterTokens = useRef(false);
   const composing = useRef(false);
   const pointing = useRef(false);
@@ -233,6 +223,7 @@ export function EditableInput({
   const emitted = useRef(draft);
   const api = useRef<{
     sync(draft: MentionDraft, reset?: boolean): void;
+    flushPresentation(): void;
   } | null>(null);
 
   useLayoutEffect(() => {
@@ -256,10 +247,11 @@ export function EditableInput({
     if (!mount.current) return;
     const initial = readComposerDocument(
       current.current.draft,
-      current.current.decorationsFor(current.current.draft),
+      current.current.draft.recipients,
     );
     let editor: EditorView;
     let separateHistory = false;
+    let pendingPresentation = false;
     const editable = () => !current.current.disabled && !locked.current;
     // A projection depends only on the immutable document, but selection events
     // and completion read value/selection several times per keystroke.
@@ -275,7 +267,10 @@ export function EditableInput({
         projected = { doc, value: projectComposerDocument(doc) };
       return projected.value;
     };
-    const tokenViews = () => refresh((revision) => revision + 1);
+    const tokenViews = () => {
+      presentation.read(editor.state.doc, projection());
+      presentation.refreshHosts();
+    };
     const selected = () => {
       const { from, to, empty, $from } = editor.state.selection;
       const active = inlineFormats
@@ -297,6 +292,114 @@ export function EditableInput({
       ]);
       editor.dom.dispatchEvent(new Event("select"));
     };
+    const reconcilePresentation = (
+      state: EditorState,
+      root?: Transaction,
+    ): EditorState => {
+      const next = projectComposerDocument(state.doc);
+      presentation.read(state.doc, next);
+      const safe = presentation.draft;
+      const decorations = presentation.ranges.filter((item) => {
+        const from = next.position(item.start),
+          to = next.position(item.end, -1);
+        if (
+          next.blocks.some(
+            (block) => block.code && from >= block.from && to <= block.to,
+          )
+        )
+          return false;
+        return (
+          (safe.recipients.some(
+            (recipient) =>
+              recipient.start === item.start && recipient.end === item.end,
+          ) ||
+            !state.doc.rangeHasMark(from, to, composerSchema.marks.literal)) &&
+          !state.doc.rangeHasMark(from, to, composerSchema.marks.code) &&
+          !state.doc.rangeHasMark(from, to, composerSchema.marks.link) &&
+          !plain.current.some(
+            (range) => item.start < range.end && item.end > range.start,
+          )
+        );
+      });
+      const tr = state.tr;
+      // Only adopt newly recognized tokens. Never rebuild editable text from
+      // Markdown here: that would discard stored marks/whitespace on each key.
+      for (const item of [...decorations].reverse()) {
+        if (
+          next.tokens.some(
+            (token) => token.start === item.start && token.end === item.end,
+          )
+        )
+          continue;
+        const from = next.position(item.start),
+          to = next.position(item.end, -1);
+        if (next.source(from) !== item.start || next.source(to) !== item.end)
+          continue;
+        tr.replaceWith(
+          from,
+          to,
+          composerSchema.nodes.token.create(
+            {
+              source: safe.text.slice(item.start, item.end),
+              editAsText: !!item.editAsText,
+              recipient:
+                safe.recipients.find(
+                  (recipient) =>
+                    recipient.start === item.start &&
+                    recipient.end === item.end,
+                ) ?? null,
+            },
+            null,
+            state.doc.resolve(from).marks(),
+          ),
+        );
+      }
+      // Keep semantic recipient/resource atoms, but demote presentation-only
+      // tokens when their renderer disappears so the source is editable again.
+      // Mention-boundary edits also remove invalidated recipient provenance.
+      for (const token of next.tokens) {
+        if (
+          token.node.attrs.recipient
+            ? safe.recipients.some(
+                (item) => item.start === token.start && item.end === token.end,
+              )
+            : token.node.attrs.resource ||
+              decorations.some(
+                // A larger decoration has already adopted any tokens inside it.
+                (item) => item.start <= token.start && item.end >= token.end,
+              )
+        )
+          continue;
+        const from = tr.mapping.map(token.from),
+          to = tr.mapping.map(token.to);
+        tr.replaceWith(
+          from,
+          to,
+          token.node.attrs.source
+            ? composerSchema.text(token.node.attrs.source, token.node.marks)
+            : Fragment.empty,
+        );
+      }
+      // Adjacent edits (a leading `!`, surrounding backticks) can change what
+      // a resource sends. Demote it to that text, in the same history event.
+      for (const token of (next.tokens.some(
+        (token) => token.node.attrs.resource,
+      )
+        ? brokenResources(tr.doc)
+        : []
+      ).reverse())
+        tr.replaceWith(
+          token.from,
+          token.to,
+          composerSchema.text(token.node.attrs.source, token.node.marks),
+        );
+      if (!tr.docChanged) return state;
+      if (state.storedMarks) tr.setStoredMarks(state.storedMarks);
+      tr.setMeta("composer-normalized", true);
+      if (root) tr.setMeta("appendedTransaction", root);
+      else tr.setMeta("addToHistory", false);
+      return state.applyTransaction(tr).state;
+    };
     const normalize = new Plugin({
       filterTransaction(tr) {
         return (
@@ -304,124 +407,6 @@ export function EditableInput({
           composerMarkdown(projectComposerDocument(tr.doc).draft).length <=
             current.current.maxLength
         );
-      },
-      appendTransaction(transactions, old, state) {
-        if (
-          !transactions.some(
-            (tr) => tr.docChanged || tr.getMeta("composer-decorations"),
-          ) ||
-          transactions.some((tr) => tr.getMeta("composer-normalized"))
-        )
-          return;
-        const before = projectComposerDocument(old.doc);
-        const next = projectComposerDocument(state.doc);
-        plain.current = updatePlainLinks(
-          before.draft.text,
-          next.draft.text,
-          before.tokens.filter((token) => token.editAsText),
-          plain.current,
-          transactions
-            .find((tr) => tr.getMeta("composer-edit"))
-            ?.getMeta("composer-edit"),
-        );
-        const safe = mentionDraft(next.draft);
-        const decorations = current.current
-          .decorationsFor(safe)
-          .filter((item) => {
-            const from = next.position(item.start),
-              to = next.position(item.end, -1);
-            if (
-              next.blocks.some(
-                (block) => block.code && from >= block.from && to <= block.to,
-              )
-            )
-              return false;
-            return (
-              (safe.recipients.some(
-                (recipient) =>
-                  recipient.start === item.start && recipient.end === item.end,
-              ) ||
-                !state.doc.rangeHasMark(
-                  from,
-                  to,
-                  composerSchema.marks.literal,
-                )) &&
-              !state.doc.rangeHasMark(from, to, composerSchema.marks.code) &&
-              !state.doc.rangeHasMark(from, to, composerSchema.marks.link) &&
-              !plain.current.some(
-                (range) => item.start < range.end && item.end > range.start,
-              )
-            );
-          });
-        const tr = state.tr;
-        // Only adopt newly recognized tokens. Never rebuild editable text from
-        // Markdown here: that would discard stored marks/whitespace on each key.
-        for (const item of [...decorations].reverse()) {
-          if (
-            next.tokens.some(
-              (token) => token.start === item.start && token.end === item.end,
-            )
-          )
-            continue;
-          const from = next.position(item.start),
-            to = next.position(item.end, -1);
-          if (next.source(from) !== item.start || next.source(to) !== item.end)
-            continue;
-          tr.replaceWith(
-            from,
-            to,
-            composerSchema.nodes.token.create(
-              {
-                source: safe.text.slice(item.start, item.end),
-                editAsText: !!item.editAsText,
-                recipient:
-                  safe.recipients.find(
-                    (recipient) =>
-                      recipient.start === item.start &&
-                      recipient.end === item.end,
-                  ) ?? null,
-              },
-              null,
-              state.doc.resolve(from).marks(),
-            ),
-          );
-        }
-        // Keep semantic recipient/resource atoms, but demote presentation-only
-        // tokens when their renderer disappears so the source is editable again.
-        // Mention-boundary edits also remove invalidated recipient provenance.
-        for (const token of next.tokens) {
-          if (
-            token.node.attrs.recipient
-              ? safe.recipients.some(
-                  (item) =>
-                    item.start === token.start && item.end === token.end,
-                )
-              : token.node.attrs.resource ||
-                decorations.some(
-                  // A larger decoration has already adopted any tokens inside it.
-                  (item) => item.start <= token.start && item.end >= token.end,
-                )
-          )
-            continue;
-          const from = tr.mapping.map(token.from),
-            to = tr.mapping.map(token.to);
-          tr.replaceWith(
-            from,
-            to,
-            composerSchema.text(token.node.attrs.source, token.node.marks),
-          );
-        }
-        // Adjacent edits (a leading `!`, surrounding backticks) can change what
-        // a resource sends. Demote it to that text, in the same history event.
-        for (const token of brokenResources(tr.doc).reverse())
-          tr.replaceWith(
-            token.from,
-            token.to,
-            composerSchema.text(token.node.attrs.source, token.node.marks),
-          );
-        if (!tr.docChanged) return;
-        if (state.storedMarks) tr.setStoredMarks(state.storedMarks);
-        return tr.setMeta("composer-normalized", true);
       },
       props: {
         decorations(state) {
@@ -1065,8 +1050,8 @@ export function EditableInput({
       )
         return;
       const position = (node: Node, offset: number) => {
-        for (const [element, host] of hosts.current) {
-          if (element.contains(node)) {
+        for (const host of presentation.hostSnapshot()) {
+          if (host.element.contains(node)) {
             const pos = host.position();
             if (pos !== undefined) return pos + 1;
           }
@@ -1216,7 +1201,7 @@ export function EditableInput({
     editor = new EditorView(
       { mount: mount.current },
       {
-        state: state(),
+        state: reconcilePresentation(state()),
         editable,
         attributes: {
           role: "textbox",
@@ -1262,7 +1247,35 @@ export function EditableInput({
             )
               tr.addStoredMark(code.create());
           }
-          const next = previous.applyTransaction(tr).state;
+          const applied = previous.applyTransaction(tr).state;
+          if (
+            previous.doc !== applied.doc &&
+            !tr.getMeta("composer-normalized")
+          ) {
+            const before = projection();
+            const after = projectComposerDocument(applied.doc);
+            plain.current = updatePlainLinks(
+              before.draft.text,
+              after.draft.text,
+              before.tokens.filter((token) => token.editAsText),
+              plain.current,
+              tr.getMeta("composer-edit"),
+            );
+          }
+          const changed = applied.doc !== previous.doc;
+          const blocked = composing.current || editor.composing;
+          pendingPresentation ||= changed && blocked;
+          const next =
+            blocked || (!changed && !pendingPresentation)
+              ? applied
+              : reconcilePresentation(applied, tr);
+          if (!blocked) pendingPresentation = false;
+          presentation.read(
+            next.doc,
+            next.doc === previous.doc
+              ? projection()
+              : projectComposerDocument(next.doc),
+          );
           if (previous === next) {
             editor.updateState(previous);
             return;
@@ -1270,11 +1283,11 @@ export function EditableInput({
           editor.updateState(next);
           if (tr.docChanged) {
             scrollAfterTokens.current ||=
-              tr.scrolledIntoView && hosts.current.size > 0;
-            emitted.current = projection().draft;
+              tr.scrolledIntoView && presentation.hasNativeHosts();
+            emitted.current = presentation.draft;
             current.current.onDraftChange(emitted.current);
-            tokenViews();
           }
+          tokenViews();
           selected();
         },
         nodeViews: {
@@ -1283,17 +1296,17 @@ export function EditableInput({
             dom.className = tokenClass.current;
             dom.contentEditable = "false";
             dom.dataset.source = node.attrs.source;
-            hosts.current.set(dom, {
-              source: node.attrs.source,
-              resource: node.attrs.resource,
-              position: getPos,
-            });
+            const host = presentation.attach(dom, node, getPos);
             return {
               dom,
               ignoreMutation: () => true,
-              destroy() {
-                hosts.current.delete(dom);
+              update(next) {
+                if (next.type !== composerSchema.nodes.token) return false;
+                dom.dataset.source = next.attrs.source;
+                host.update(next);
+                return true;
               },
+              destroy: host.destroy,
             };
           },
         },
@@ -1772,19 +1785,18 @@ export function EditableInput({
     });
     api.current = {
       sync(next, reset = false) {
+        const doc = readComposerDocument(next, next.recipients);
         if (
           !reset &&
-          JSON.stringify(next) === JSON.stringify(projection().draft)
+          authoredComposerDocument(doc).eq(
+            authoredComposerDocument(editor.state.doc),
+          )
         )
           return;
         plain.current = [];
-        const doc = readComposerDocument(
-          next,
-          current.current.decorationsFor(next),
-        );
         if (reset) {
           separateHistory = false;
-          editor.updateState(state(doc));
+          editor.updateState(reconcilePresentation(state(doc)));
         } else
           editor.dispatch(
             closeHistory(
@@ -1799,7 +1811,20 @@ export function EditableInput({
         tokenViews();
         selected();
       },
+      flushPresentation() {
+        if (!pendingPresentation || composing.current || editor.composing)
+          return;
+        pendingPresentation = false;
+        const next = reconcilePresentation(editor.state);
+        presentation.read(next.doc, projectComposerDocument(next.doc));
+        if (next !== editor.state) editor.updateState(next);
+        tokenViews();
+      },
     };
+    const disconnectPresentation = presentation.connect(() => {
+      pendingPresentation = true;
+      api.current?.flushPresentation();
+    });
     ref.current = root;
     tokenViews();
     selected();
@@ -1807,9 +1832,11 @@ export function EditableInput({
       ref.current = null;
       view.current = null;
       api.current = null;
+      disconnectPresentation();
       editor.destroy();
+      presentation.releaseHosts();
     };
-  }, [ref]);
+  }, [ref, presentation]);
 
   useLayoutEffect(() => {
     const editor = view.current;
@@ -1821,36 +1848,21 @@ export function EditableInput({
     editor.setProps({ editable: () => !disabled && !locked.current });
   }, [draft, disabled, placeholder]);
 
-  const projection =
-    view.current && projectComposerDocument(view.current.state.doc);
-  const decorations = projection ? decorationsFor(projection.draft) : [];
-  const decorationRanges = JSON.stringify(
-    decorations.map(({ start, end, editAsText }) => [start, end, editAsText]),
-  );
   useLayoutEffect(() => {
-    // Palette/directory arrivals can make existing prose renderable without a
-    // keystroke. Reconcile via the same token normalizer, outside undo history.
-    const editor = view.current;
-    if (editor)
-      editor.dispatch(
-        editor.state.tr
-          .setMeta("composer-decorations", decorationRanges)
-          .setMeta("addToHistory", false),
-      );
-  }, [decorationRanges]);
+    presentation.present(presentationFor);
+  });
   useLayoutEffect(() => {
     // Node views survive CSS-module hot updates; keep their imperative hosts
     // on the current class just like React-owned editor elements.
-    for (const host of hosts.current.keys()) host.className = tokenClassName;
-  }, [tokenClassName]);
-  useLayoutEffect(() => {
-    // Token portals acquire their real geometry at React commit, after the
-    // transaction's first scroll. Keep the same editor-owned caret visible.
+    for (const host of presentation.hostSnapshot())
+      host.element.className = tokenClassName;
+  }, [tokenClassName, presentation]);
+  const tokensCommitted = useCallback(() => {
     if (!scrollAfterTokens.current) return;
     scrollAfterTokens.current = false;
     const editor = view.current;
     if (editor?.hasFocus()) editor.dispatch(editor.state.tr.scrollIntoView());
-  });
+  }, []);
   return (
     <>
       {/* biome-ignore lint/a11y/useSemanticElements: ProseMirror owns this native editing surface. */}
@@ -1909,30 +1921,16 @@ export function EditableInput({
         onCompositionEnd={(event) => {
           composing.current = false;
           events.onCompositionEnd?.(event as never);
+          // ProseMirror queues its final DOM-observer flush before this React
+          // handler. Reconcile after that flush, even for a cancelled IME with
+          // no final document transaction. Never replace the composing DOM.
+          const owner = api.current;
+          queueMicrotask(() => {
+            if (api.current === owner) owner?.flushPresentation();
+          });
         }}
       />
-      {[...hosts.current].map(([element, host]) => {
-        const position = host.position();
-        const source =
-          position === undefined ? undefined : projection?.source(position);
-        const decoration = decorations.find(
-          (item) =>
-            item.start === source &&
-            item.end === (source ?? 0) + host.source.length,
-        );
-        return createPortal(
-          host.resource ? (
-            // Host-owned artwork: restore never depends on the providing plugin.
-            <>
-              <span className="sr-only">Resource: </span>
-              <span className={styles.resource}>{host.resource.label}</span>
-            </>
-          ) : (
-            (decoration?.content ?? host.source)
-          ),
-          element,
-        );
-      })}
+      <ComposerTokenPortals graph={presentation} committed={tokensCommitted} />
     </>
   );
 }

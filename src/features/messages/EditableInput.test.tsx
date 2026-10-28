@@ -39,6 +39,7 @@ import { profileMentionParts } from "./profile-mentions";
 import { serializeNode, serializeSelection } from "./selection-copy";
 import { profileKey, profileTarget } from "../profiles/target";
 import { scanMarkdown } from "../relay/message-content";
+import { composerSchema } from "./composer-document";
 
 composerDOMFixture();
 afterEach(cleanup);
@@ -105,7 +106,7 @@ function mount(
         placeholder="Draft"
         maxLength={options.maxLength ?? 16000}
         // Explicit recipients render as mention tokens, as in RichComposerInput.
-        decorationsFor={(current) =>
+        presentationFor={(current) =>
           [
             ...current.recipients.map(({ start, end, name }) => ({
               start,
@@ -144,6 +145,134 @@ function mount(
     formats: () => formats,
   };
 }
+
+it("commits resource-only token hosts without a draft or format parent update", async () => {
+  const ref = createRef<ComposerInputElement>();
+  const draft = mentionDraft("😀 :late:");
+  const changed = vi.fn();
+  const formats = vi.fn();
+  function Editor({ available }: { available: boolean }) {
+    return (
+      <EditableInput
+        ref={ref}
+        draft={draft}
+        value={draft.text}
+        disabled={false}
+        placeholder="Draft"
+        maxLength={16000}
+        onDraftChange={changed}
+        onFormatsChange={formats}
+        presentationFor={() =>
+          available
+            ? [
+                {
+                  start: 3,
+                  end: 9,
+                  content: <span data-late-artwork>Resolved</span>,
+                  facts: ["late"],
+                },
+              ]
+            : []
+        }
+      />
+    );
+  }
+  const view = render(<Editor available={false} />);
+  const input = ref.current;
+  if (!input) throw new Error("Editor did not mount");
+  act(() => input.setSelectionRange(9, 9));
+  const beforeFormats = formats.mock.calls.length;
+  for (const available of [true, false, true]) {
+    view.rerender(<Editor available={available} />);
+    await waitFor(() =>
+      expect(input.querySelectorAll("[data-late-artwork]")).toHaveLength(
+        available ? 1 : 0,
+      ),
+    );
+    const hosts = input.querySelectorAll<HTMLElement>("[data-source]");
+    expect(hosts).toHaveLength(available ? 1 : 0);
+    if (available) expect(hosts[0]?.contentEditable).toBe("false");
+    expect(input).toHaveValue("😀 :late:");
+    expect([input.selectionStart, input.selectionEnd]).toEqual([9, 9]);
+    expect(changed).not.toHaveBeenCalled();
+    expect(formats).toHaveBeenCalledTimes(beforeFormats);
+  }
+  // An unchanged/cancelled composition has no later document transaction to
+  // rescue a resource update. Native reconciliation must wait for its end.
+  for (const available of [false, true]) {
+    act(() => fireEvent.compositionStart(input));
+    view.rerender(<Editor available={available} />);
+    expect(input.querySelectorAll("[data-source]")).toHaveLength(
+      available ? 0 : 1,
+    );
+    act(() => fireEvent.compositionEnd(input));
+    await waitFor(() =>
+      expect(input.querySelectorAll("[data-source]")).toHaveLength(
+        available ? 1 : 0,
+      ),
+    );
+    expect(input).toHaveValue("😀 :late:");
+    expect([input.selectionStart, input.selectionEnd]).toEqual([9, 9]);
+    expect(changed).not.toHaveBeenCalled();
+    expect(formats).toHaveBeenCalledTimes(beforeFormats);
+  }
+});
+
+it("keeps selection and history for an equivalent legacy presentation snapshot", () => {
+  const ref = createRef<ComposerInputElement>();
+  const changed = vi.fn();
+  const token = composerSchema.nodes.token.create({ source: ":late:" });
+  const doc = composerSchema.nodes.doc.create(null, [
+    composerSchema.nodes.paragraph.create(null, [
+      composerSchema.nodes.token.create({ source: "" }),
+      composerSchema.text("😀 ", [composerSchema.marks.bold.create()]),
+      token,
+      composerSchema.text(" tail"),
+    ]),
+  ]);
+  const initial: MentionDraft = {
+    text: "😀 :late: tail",
+    recipients: [],
+    document: { version: 1, content: doc.toJSON() },
+  };
+  function Editor({ draft }: { draft: MentionDraft }) {
+    return (
+      <EditableInput
+        ref={ref}
+        draft={draft}
+        value={draft.text}
+        disabled={false}
+        placeholder="Draft"
+        maxLength={16000}
+        onDraftChange={changed}
+        presentationFor={() => []}
+        onFormatsChange={() => {}}
+      />
+    );
+  }
+  const view = render(<Editor draft={initial} />);
+  const input = ref.current;
+  if (!input) throw new Error("Editor did not mount");
+  act(() => input.setSelectionRange(1, 3));
+  view.rerender(<Editor draft={structuredClone(initial)} />);
+  expect([input.selectionStart, input.selectionEnd]).toEqual([1, 3]);
+  expect(changed).not.toHaveBeenCalled();
+  act(() => input.undo(false));
+  expect([input.selectionStart, input.selectionEnd]).toEqual([1, 3]);
+  expect(changed).not.toHaveBeenCalled();
+  // Equality includes authored marks: a genuine external format edit applies.
+  const plain = composerSchema.nodes.doc.create(null, [
+    composerSchema.nodes.paragraph.create(null, [
+      composerSchema.text(initial.text),
+    ]),
+  ]);
+  view.rerender(
+    <Editor
+      draft={{ ...initial, document: { version: 1, content: plain.toJSON() } }}
+    />,
+  );
+  expect(input.querySelector("strong")).toBeNull();
+});
 
 it("refuses a closing-colon conversion when its literal undo source exceeds the limit", () => {
   const h = mount(":-1", { maxLength: 3 });

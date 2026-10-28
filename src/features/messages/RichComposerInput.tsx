@@ -10,16 +10,13 @@ import { InlineChip } from "../../shared/design-system/ui/InlineChip";
 import type { ConversationExtensions } from "../conversation/contracts";
 import type { CustomEmoji } from "../relay/emoji";
 import type { ComposerSession } from "./composer-session";
-import { profileKey } from "../profiles/target";
-import { scanMarkdown } from "../relay/message-content";
 import { MessageMarkdown } from "./MessageMarkdown";
 import type { MentionDraft } from "./mention-draft";
 import { useReferenceDirectory } from "./ReferenceText";
-import {
-  readComposerSnapshot,
-  composerMarkdownContext,
-} from "./composer-document";
-import { messageLinkParts } from "./message-link-parts";
+import type {
+  ComposerAnalysis,
+  EditorDecoration,
+} from "./composer-presentation";
 import { messageReferences } from "./message-references";
 import { EditableInput, type EditableInputProps } from "./EditableInput";
 
@@ -113,47 +110,35 @@ export function RichComposerInput({
     for (const [key, suffix] of qualifiers)
       if (suffix) revealed.current.add(key);
   });
-  function decorationsFor(draft: MentionDraft) {
-    const doc = readComposerSnapshot(draft.document);
-    const context = doc
-      ? composerMarkdownContext(doc)
-      : { text: draft.text, protected: [] };
-    const { tree, links, tooDeep } = scanMarkdown(context.text);
-    const literals: { start: number; end: number }[] = [...context.protected];
-    const gifPreviews = new Map<number, { end: number; content: ReactNode }>();
-    const pending = [tree];
-    while (pending.length) {
-      const node = pending.pop();
-      if (!node) continue;
-      if (node.type === "image" && !tooDeep) {
-        const start = node.position?.start.offset;
-        const end = node.position?.end.offset;
-        const content = gifDraftPreview?.(node.url, node.alt, session.media);
-        if (
-          content &&
-          start !== undefined &&
-          end !== undefined &&
-          !context.protected.some(
-            (range) => start < range.end && end > range.start,
-          )
-        )
-          gifPreviews.set(start, { end, content });
-      }
+  function presentationFor(
+    draft: ComposerAnalysis,
+  ): readonly EditorDecoration[] {
+    const context = { text: draft.context, protected: draft.protected };
+    const literals = draft.literals;
+    const tooDeep = draft.tooDeep;
+    const gifPreviews = new Map<
+      number,
+      { end: number; content: ReactNode; facts: readonly unknown[] }
+    >();
+    for (const image of draft.images) {
+      const content =
+        !tooDeep && gifDraftPreview?.(image.url, image.alt, session.media);
       if (
-        [
-          "code",
-          "inlineCode",
-          "image",
-          "imageReference",
-          "definition",
-          "html",
-        ].includes(node.type)
-      ) {
-        const start = node.position?.start.offset,
-          end = node.position?.end.offset;
-        if (start !== undefined && end !== undefined)
-          literals.push({ start, end });
-      } else pending.push(...(node.children ?? []));
+        content &&
+        !context.protected.some(
+          (range) => image.start < range.end && image.end > range.start,
+        )
+      )
+        gifPreviews.set(image.start, {
+          end: image.end,
+          content,
+          facts: [
+            "gif",
+            image.url,
+            image.alt,
+            image.url && session.media(image.url),
+          ],
+        });
     }
     const ranges: {
       start: number;
@@ -187,25 +172,10 @@ export function RichComposerInput({
       add(recipient.start, recipient.end, recipient.pubkey);
     // Identity links are display references, not new notification recipients.
     // Keep their exact source token so editing surrounding prose preserves it.
-    const profileLinks = new Map<number, { pubkey: string; label: string }>();
-    for (const link of links) {
-      const pubkey = link.url && profileKey(link.url);
-      const start = link.position?.start.offset;
-      const end = link.position?.end.offset;
-      if (!pubkey || start === undefined || end === undefined) continue;
-      let label = "";
-      const pending = [...(link.children ?? [])].reverse();
-      while (pending.length) {
-        const node = pending.pop();
-        if (node?.value) label += node.value;
-        else pending.push(...(node?.children ?? []).slice().reverse());
-      }
-      profileLinks.set(start, { pubkey, label: label.replace(/^@/, "") });
+    const profileLinks = draft.profiles;
+    for (const [start, { end }] of profileLinks)
       add(start, end, undefined, true);
-    }
-    messageLinkParts(context.text, undefined, (start, end) =>
-      add(start, end, undefined, true),
-    );
+    for (const { start, end } of draft.links) add(start, end, undefined, true);
     for (const reference of messageReferences(
       context.text,
       [],
@@ -224,12 +194,31 @@ export function RichComposerInput({
     for (const [start, { end }] of gifPreviews)
       if (!ranges.some((range) => start < range.end && end > range.start))
         ranges.push({ start, end });
+    const resourceFacts = [
+      directory,
+      extensions,
+      session,
+      scope,
+      channelId,
+      ...draft.recipients.flatMap((person) => [person.pubkey, person.name]),
+      ...renderableEmoji.flatMap((entry) => [
+        entry.shortcode,
+        entry.url,
+        session.media(entry.url),
+      ]),
+    ];
     const decorations = ranges
       .sort((a, b) => a.start - b.start)
       .map(({ start, end, mention, editAsText }) => {
         const preview = gifPreviews.get(start);
         if (preview && preview.end === end && !mention)
-          return { start, end, editAsText: false, content: preview.content };
+          return {
+            start,
+            end,
+            editAsText: false,
+            content: preview.content,
+            facts: preview.facts,
+          };
         const profile = mention ? undefined : profileLinks.get(start);
         const identity = mention ?? profile?.pubkey;
         const label = profile?.label ?? draft.text.slice(start + 1, end);
@@ -242,6 +231,17 @@ export function RichComposerInput({
           start,
           end,
           editAsText: !!editAsText,
+          facts: identity
+            ? [
+                "identity",
+                identity,
+                faceLabel,
+                qualifier,
+                !!mention && reveal.has(mention),
+                directory.profiles.get(identity)?.isAgent,
+                directory.agents.some((agent) => agent.pubkey === identity),
+              ]
+            : [draft.text.slice(start, end), ...resourceFacts],
           content: identity ? (
             <InlineChip
               address={{
@@ -298,6 +298,6 @@ export function RichComposerInput({
     return decorations;
   }
   return (
-    <EditableInput {...input} draft={draft} decorationsFor={decorationsFor} />
+    <EditableInput {...input} draft={draft} presentationFor={presentationFor} />
   );
 }

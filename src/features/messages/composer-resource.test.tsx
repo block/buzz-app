@@ -42,7 +42,7 @@ function mount(initial: MentionDraft | string = "", maxLength = 16000) {
         disabled={false}
         placeholder="Draft"
         maxLength={maxLength}
-        decorationsFor={() => []}
+        presentationFor={() => []}
         onFormatsChange={() => {}}
         onDraftChange={(next) => {
           draft = next;

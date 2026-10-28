@@ -389,7 +389,8 @@ It covers only those two: message renderers (`registerMessage`, rendered by
 `order` is optional and defaults to `0`; lower wins, and equal orders fall to
 ascending contribution key (`pluginId/contributionId`), so activation, load
 latency and disable/re-enable never decide the winner. `matches` stays boolean,
-so `canOpen` is unchanged. Three bands by convention:
+so `canOpen` is unchanged. It must depend only on the target: hosts cache its
+answer until the active panels change. Three bands by convention:
 
 | Band | Meaning |
 | --- | --- |

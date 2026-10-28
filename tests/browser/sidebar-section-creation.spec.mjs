@@ -82,7 +82,12 @@ test("Channels offers empty-section creation with keyboard focus and confirmed p
   });
   const loseCreationResponse = async (route) => {
     creations.push(route.request().postDataJSON());
-    const response = await route.fetch();
+    // API forwarding pools sockets across the reload. Close each response so
+    // the next mutation cannot reuse one as the fixture broker expires it.
+    const response = await route.fetch({
+      headers: { ...(await route.request().allHeaders()), connection: "close" },
+    });
+    expect(response.headers()["connection"]).toBe("close");
     if (!lostResponse && response.ok()) {
       // The real broker accepts and persists the write, but its response never
       // reaches the dialog. The retry must reconcile that exact creation.

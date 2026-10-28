@@ -58,15 +58,6 @@ const Replies = defineDoc({
   scope: "session",
   initial: () => ({}),
 });
-/** Each Pi conversation's session, by conversation id: `epoch` counts the
- * resets since it was first kept, and `fresh` holds until its first turn is
- * submitted. A conversation from before it was kept has none. */
-const Epochs = defineDoc({
-  kind: "buzz.epochs",
-  version: 1,
-  scope: "session",
-  initial: () => ({}),
-});
 /** Messages that arrive while Pi works join its run at the next boundary. */
 const SETTINGS = { steeringMode: "all" };
 /** Pi's own default thinking level, for a model that thinks. */
@@ -741,6 +732,26 @@ export function serve({
     }
   }
 
+  /** The session `conversation` is in at entry `at`, or now: the id of the
+   * reset that began it, or 0 before any reset. Read from Pi's own head
+   * markers, so it always agrees with the history: a compaction's marker
+   * leads back to the one before it. */
+  async function sessionOf(conversation, at) {
+    let { head } = await conversation.context(context, at ? { at } : {});
+    while (head && head.kind !== "pi.reset")
+      ({ head } = await conversation.context(context, { at: head.head }));
+    return head?.id ?? 0;
+  }
+  /** Whether the next turn is its session's first: no prompt in the active
+   * context, none queued, and no compaction since the session began. */
+  async function firstTurn(harness, conversation) {
+    const { head, entries } = await conversation.context(context);
+    if (head && head.kind !== "pi.reset") return false;
+    if (entries.some((entry) => entry.kind === "pi.user")) return false;
+    const { submissions } = await harness.inspect(context);
+    return !submissions.some((s) => s.conversationId === conversation.id);
+  }
+
   /** Starts a request in a conversation configured for this turn. One that
    * steers a run working in it, `busy`, changes only what its owner picked,
    * as in Claude. The agent's `core` memory read for it is the
@@ -881,10 +892,10 @@ export function serve({
       const found = await harness.conversation(conversation, context);
       if (!found) return { entries: [] };
       const page = await found.entries({}, PAGE, cursor, context);
-      const session = (await harness.snapshot(Epochs, context))?.[conversation];
+      const oldest = page.items.at(-1);
       return {
-        // The current session's, however old the reset that began it.
-        ...(session ? { epoch: session.epoch } : {}),
+        // The session the page's oldest entry is in, however old its reset.
+        ...(oldest ? { session: await sessionOf(found, oldest.id) } : {}),
         entries: page.items.map(({ id, kind, model, data }) => ({
           id,
           kind,
@@ -944,11 +955,15 @@ export function serve({
               context: tools,
               seen: 0,
             };
-            (await tx.doc(Epochs))[conversation.id] = { epoch: 0, fresh: true };
           }, context);
         }
         opened.contexts.set(conversation.id, tools);
         const { busy } = await watch(opened, conversation.id);
+        // Read before the turn is submitted: what Pi then holds decides it.
+        const session =
+          !busy && (await firstTurn(harness, conversation))
+            ? await sessionOf(conversation)
+            : undefined;
         if (reply)
           await harness.commit(async (tx) => {
             (await tx.doc(Replies))[turn.request] = reply;
@@ -963,7 +978,7 @@ export function serve({
             : undefined,
         );
         if (!submitted) return false;
-        let session;
+        if (session !== undefined) Object.assign(submitted, { session });
         // Recorded once Pi has the turn: one that could not start leaves the
         // messages it would have been shown for the next.
         await harness.commit(async (tx) => {
@@ -973,14 +988,8 @@ export function serve({
             context: tools,
             seen: Math.max(at, places[key]?.seen ?? 0),
           };
-          // A steer is not configured with this turn's instructions.
-          const epochs = await tx.doc(Epochs);
-          session = epochs[conversation.id];
-          if (session?.fresh && !(busy && turn.steer))
-            epochs[conversation.id] = { epoch: session.epoch, fresh: false };
-          else if (session) session = { ...session, fresh: false };
         }, context);
-        return session ? { ...submitted, ...session } : submitted;
+        return submitted;
       })();
       opened.queues.set(key, delivered);
       const done = () => {
@@ -1092,11 +1101,6 @@ export function serve({
         await harness.commit(async (tx) => {
           const places = await tx.doc(Places);
           if (places[key]) places[key] = { ...places[key], seen: 0 };
-          const epochs = await tx.doc(Epochs);
-          epochs[conversation.id] = {
-            epoch: (epochs[conversation.id]?.epoch ?? 0) + 1,
-            fresh: true,
-          };
         }, context);
         return;
       }

@@ -173,13 +173,12 @@ type Entry = {
   closed: boolean;
 };
 
-/** A turn Pi took: in which conversation, and its session there with
- * whether this is the session's first turn, when the host keeps it. */
+/** A turn Pi took, in which conversation, and the session it starts there
+ * when it is that session's first turn. */
 type Delivered = {
   submission: number;
   conversation: number;
-  epoch?: number;
-  fresh?: boolean;
+  session?: number;
 };
 
 export class PiRuntime {
@@ -373,7 +372,8 @@ export class PiRuntime {
       }),
     );
   }
-  /** What each of the agent's sessions started with, by `conversation:epoch`. */
+  /** What each of the agent's sessions started with, by
+   * `conversation:session`. */
   private prompts(agent: AgentKey) {
     return sessionPrompts(this.storage, "pi", agent);
   }
@@ -605,9 +605,9 @@ export class PiRuntime {
         () => !interrupted && (!wake || !current || current()),
       );
       if (!submitted) return;
-      if (submitted.fresh)
+      if (submitted.session !== undefined)
         void this.prompts(agent.key).save(
-          `${submitted.conversation}:${submitted.epoch}`,
+          `${submitted.conversation}:${submitted.session}`,
           [
             { label: "instructions", text: picked.instructions },
             { label: "core memory", text: picked.core?.text ?? "" },

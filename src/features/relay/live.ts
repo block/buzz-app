@@ -29,6 +29,45 @@ export const SETUP_TIMEOUT_MS = 10_000;
 const MAX_QUOTA_RETRIES = 3;
 const BASE_RECONNECT_DELAY = 500;
 const MAX_RECONNECT_DELAY = 30_000;
+/** The relay rejects an event whose created_at is further than this from its own
+ * clock (block/buzz `crates/buzz-relay/src/handlers/ingest.rs`,
+ * `MAX_TIMESTAMP_DRIFT_SECS`), so an event stored at time T can carry any
+ * created_at in [T - 900, T + 900]. */
+export const RELAY_TIMESTAMP_DRIFT_SECS = 900;
+/** A route that reached EOSE was delivered live until its connection last heard
+ * the relay. An event stored just after that can be backdated by the full drift,
+ * so resume this far before it, plus a minute for fan-out still in flight when
+ * the relay closed (a draining pod can trail its peers). */
+export const LIVE_RESUME_LAG = RELAY_TIMESTAMP_DRIFT_SECS + 60;
+/** Close codes for a relay that is going away on purpose (a rolling deploy
+ * sends 1012 to every client at once): 1001 Going Away, 1012 Service Restart. */
+const RESTART_CLOSE_CODES = [1001, 1012];
+/** The first reconnect after such a close waits a uniform random time up to
+ * this, so the fleet's arrival is spread as widely as the relay spread the closes. */
+export const LIVE_RESTART_SPREAD_MS = 10_000;
+/** What a route knew when its authenticated connection ended (unix seconds). */
+export type LiveCursor = Readonly<{ liveUntil: number }>;
+/** Where a route with a cursor resumes: `LIVE_RESUME_LAG` before its connection
+ * last heard the relay, never before `original`, the first window of the session.
+ * The cursor exists only for a route that reached EOSE, so everything stored
+ * before the EOSE was replayed and everything after it was delivered live until
+ * `liveUntil`; the lag keeps the overlap. */
+export function liveResumeSince(original: number, cursor: LiveCursor): number {
+  return Math.max(original, cursor.liveUntil - LIVE_RESUME_LAG);
+}
+/** Delay before the next connection attempt. A restarting relay (1001/1012)
+ * gets full jitter over the spread window, widening once repeated bounces have
+ * grown the backoff past it. Anything else backs off with symmetric +-25% jitter.
+ * `random` is in [0, 1). */
+export function liveReconnectDelay(
+  closeCode: number | undefined,
+  backoff: number,
+  random: () => number,
+): number {
+  return closeCode !== undefined && RESTART_CLOSE_CODES.includes(closeCode)
+    ? random() * Math.max(LIVE_RESTART_SPREAD_MS, backoff)
+    : backoff * (0.75 + random() / 2);
+}
 /** Wait before retrying a refusal that needs someone to act (a rejected AUTH, a
  * route CLOSED as blocked). It can still clear: access changes, a relay restarts,
  * a locked signer unlocks. One recovery tick first, doubling to 10 minutes, so
@@ -233,6 +272,7 @@ export function subscribeRelayTraffic(
   admission: LiveAdmission = createLiveAdmission(),
   setupConcurrency = SETUP_CONCURRENCY,
   setupTimeoutMs = SETUP_TIMEOUT_MS,
+  random: () => number = Math.random,
 ): LiveSubscription {
   const log = getLogger("relay-ws");
   const peer = relayLabel(url);
@@ -250,6 +290,9 @@ export function subscribeRelayTraffic(
   // Whether the relay sent anything since the last recovery tick, the probe
   // that asks it to when it did not, and the current socket's reconnect.
   let heard = false;
+  // When the current socket last proved it reaches the relay (ms). A silent
+  // stall ends at the detecting tick, so this, not the close, bounds liveness.
+  let heardAt = 0;
   let probe: string | undefined;
   let unresponsive: ((reason: string) => void) | undefined;
   let connection: LiveSnapshot["status"] = "connecting";
@@ -267,6 +310,16 @@ export function subscribeRelayTraffic(
     | undefined;
   const routes = new Map<string, Route>();
   const wires = new Map<string, Route>();
+  // What the first connect replayed; a resume never reaches back past it.
+  const original = Math.floor(Date.now() / 1000) - 300;
+  // Per channel (`channel:<id>`) or global route id: when a connection that had
+  // established it last heard the relay. A later connection that never
+  // establishes it leaves the cursor, so flapping does not lose it.
+  const cursors = new Map<string, LiveCursor>();
+  const cursorKeys = (route: Route) =>
+    scope(route).length
+      ? scope(route).map((id) => `channel:${id}`)
+      : [route.id];
   type SyncWire = {
     filter: ArtifactSyncFilter;
     sink: ArtifactSyncSink;
@@ -697,6 +750,13 @@ export function subscribeRelayTraffic(
     }
   }
   function clearSocket() {
+    if (authenticated) {
+      // EOSE on this connection is the only evidence a route was live.
+      const liveUntil = Math.floor(heardAt / 1000);
+      for (const route of routes.values())
+        if (route.status === "live")
+          for (const key of cursorKeys(route)) cursors.set(key, { liveUntil });
+    }
     generation++;
     authenticated = false;
     presenceReceipt?.finish(false);
@@ -723,11 +783,26 @@ export function subscribeRelayTraffic(
     connection = "connecting";
     connectionError = undefined;
     sync();
+    // Rebuilt routes replay the last five minutes; a route that a connection
+    // established resumes from its cursor instead. A batch needs every channel,
+    // so it starts at the earliest.
+    const used = new Set<string>();
+    for (const route of routes.values()) {
+      const keys = cursorKeys(route);
+      for (const key of keys) used.add(key);
+      route.since = Math.min(
+        ...keys.map((key) => {
+          const cursor = cursors.get(key);
+          return cursor ? liveResumeSince(original, cursor) : route.since;
+        }),
+      );
+    }
+    for (const key of cursors.keys()) if (!used.has(key)) cursors.delete(key);
     const current = generation;
     const valid = () => !closed && current === generation;
     heard = false;
     probe = undefined;
-    const reconnect = (reason: string) => {
+    const reconnect = (reason: string, closeCode?: number) => {
       if (!valid()) return;
       log.warn(`${peer} ${reason}`);
       clearSocket();
@@ -736,9 +811,9 @@ export function subscribeRelayTraffic(
       for (const route of routes.values())
         if (route.status !== "limited") route.status = "pending";
       notify();
-      // Transient outages must recover without manual retry. Equal jitter
-      // spreads reconnects while retaining a minimum delay under sustained failure.
-      const delay = reconnectDelay * (0.5 + Math.random() / 2);
+      // Transient outages must recover without manual retry. Jitter spreads
+      // reconnects while retaining a minimum delay under sustained failure.
+      const delay = liveReconnectDelay(closeCode, reconnectDelay, random);
       reconnectDelay = Math.min(MAX_RECONNECT_DELAY, reconnectDelay * 2);
       retryTimer = setTimeout(connect, delay);
     };
@@ -778,6 +853,7 @@ export function subscribeRelayTraffic(
       if (authenticated) {
         // Any frame proves the socket still reaches the relay.
         heard = true;
+        heardAt = Date.now();
         clearTimeout(deadline);
       }
       if (typeof event.data !== "string" || event.data.length > 1024 * 1024) {
@@ -844,6 +920,7 @@ export function subscribeRelayTraffic(
         }
         clearTimeout(deadline);
         authenticated = true;
+        heardAt = Date.now();
         authFailures = 0;
         connection = "connected";
         recoveryTimer = setTimeout(recover, LIVE_RECOVERY_INTERVAL);
@@ -1019,7 +1096,7 @@ export function subscribeRelayTraffic(
       }
     };
     ws.onerror = () => reconnect("Live connection interrupted");
-    ws.onclose = () => reconnect("Live connection closed");
+    ws.onclose = (event) => reconnect("Live connection closed", event?.code);
   }
   connect();
   return {

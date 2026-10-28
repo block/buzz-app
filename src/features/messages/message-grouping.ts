@@ -3,6 +3,8 @@ import type { ChannelMessage } from "../relay/contracts";
 export function continuesMessageGroup(
   previous: ChannelMessage | undefined,
   current: ChannelMessage,
+  /** Callers that already know both rows' local days can skip the conversion. */
+  sameDay?: boolean,
 ): boolean {
   return (
     !!previous &&
@@ -18,7 +20,8 @@ export function continuesMessageGroup(
     previous.audience === current.audience &&
     current.createdAt >= previous.createdAt &&
     current.createdAt - previous.createdAt <= 5 * 60 &&
-    new Date(previous.createdAt * 1000).toDateString() ===
-      new Date(current.createdAt * 1000).toDateString()
+    (sameDay ??
+      new Date(previous.createdAt * 1000).toDateString() ===
+        new Date(current.createdAt * 1000).toDateString())
   );
 }

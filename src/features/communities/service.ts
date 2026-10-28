@@ -30,6 +30,8 @@ export const PROFILE_ABOUT_MAX_LENGTH = 500;
 export type PersonalProfile = { name: string; picture: string; about?: string };
 export type Membership = {
   id: string;
+  /** One local join lifetime. Older records have no generation. */
+  generation?: string;
   /** Last-known default from joining; never inferred to be a personal override. */
   name: string;
   icon?: string;
@@ -124,6 +126,76 @@ export function createCommunities(
     scopes.push(scope);
     return scope;
   }
+  let savedRecord: string | null | undefined;
+  function readSaved(stored: string | null): Saved {
+    let saved = empty();
+    const raw = JSON.parse(stored ?? "null");
+    unresolvedMemberships.length = 0;
+    unresolvedSelection = null;
+    if (raw)
+      saved = {
+        profile: {
+          name: typeof raw.profile?.name === "string" ? raw.profile.name : "",
+          picture:
+            typeof raw.profile?.picture === "string" ? raw.profile.picture : "",
+          about:
+            typeof raw.profile?.about === "string" ? raw.profile.about : "",
+        },
+        memberships: Array.isArray(raw.memberships)
+          ? raw.memberships
+              .flatMap((m: unknown): Membership[] => {
+                if (
+                  !m ||
+                  typeof m !== "object" ||
+                  !("id" in m) ||
+                  typeof m.id !== "string" ||
+                  !("name" in m) ||
+                  typeof m.name !== "string"
+                )
+                  return [];
+                const membership = {
+                  id: m.id,
+                  name: m.name,
+                  ...("generation" in m && typeof m.generation === "string"
+                    ? { generation: m.generation }
+                    : {}),
+                  ...("icon" in m &&
+                  typeof m.icon === "string" &&
+                  m.icon.startsWith("https://")
+                    ? { icon: m.icon }
+                    : {}),
+                };
+                try {
+                  return [{ ...membership, id: communityDestination(m.id).id }];
+                } catch {
+                  if (
+                    isCommunityAlias(m.id) &&
+                    !unresolvedMemberships.some((entry) => entry.id === m.id)
+                  )
+                    unresolvedMemberships.push(membership);
+                  return [];
+                }
+              })
+              .filter(
+                (m: Membership, index: number, all: Membership[]) =>
+                  all.findIndex((entry) => entry.id === m.id) === index,
+              )
+          : [],
+        selected: null,
+        sync: parseSync(raw.sync),
+      };
+    if (typeof raw?.selected === "string") {
+      try {
+        saved.selected = communityDestination(raw.selected).id;
+      } catch {
+        if (unresolvedMemberships.some((m) => m.id === raw.selected))
+          unresolvedSelection = raw.selected;
+      }
+    }
+    if (!saved.memberships.some((m) => m.id === saved.selected))
+      saved.selected = null;
+    return saved;
+  }
   const current = () =>
     state.selected
       ? (sessions.get(state.selected) ?? disconnected)
@@ -141,22 +213,23 @@ export function createCommunities(
     const selection =
       persist && Object.hasOwn(patch, "selected") ? null : unresolvedSelection;
     try {
-      if (persist && next.viewer)
-        localStorage.setItem(
-          `buzz-client.v1:${next.viewer}`,
-          JSON.stringify({
-            profile: next.profile,
-            memberships: [...next.memberships, ...unresolvedMemberships].map(
-              ({ id, name, icon }) => ({
-                id,
-                name,
-                ...(icon ? { icon } : {}),
-              }),
-            ),
-            selected: next.selected ?? selection,
-            sync: next.sync,
-          }),
-        );
+      if (persist && next.viewer) {
+        const record = JSON.stringify({
+          profile: next.profile,
+          memberships: [...next.memberships, ...unresolvedMemberships].map(
+            ({ id, name, icon, generation }) => ({
+              id,
+              name,
+              ...(generation ? { generation } : {}),
+              ...(icon ? { icon } : {}),
+            }),
+          ),
+          selected: next.selected ?? selection,
+          sync: next.sync,
+        });
+        localStorage.setItem(`buzz-client.v1:${next.viewer}`, record);
+        savedRecord = record;
+      }
     } catch (error) {
       // The storage error rides along as the cause so a caller can name it: a
       // store that never saves should not read as the same retry every time.
@@ -252,87 +325,16 @@ export function createCommunities(
         let saved = empty();
         let seeded = false;
         try {
-          const stored = localStorage.getItem(`buzz-client.v1:${viewer}`);
-          const raw = JSON.parse(stored ?? "null");
-          if (raw)
-            saved = {
-              profile: {
-                name:
-                  typeof raw.profile?.name === "string" ? raw.profile.name : "",
-                picture:
-                  typeof raw.profile?.picture === "string"
-                    ? raw.profile.picture
-                    : "",
-                about:
-                  typeof raw.profile?.about === "string"
-                    ? raw.profile.about
-                    : "",
-              },
-              memberships: Array.isArray(raw.memberships)
-                ? raw.memberships
-                    .flatMap((m: unknown): Membership[] => {
-                      if (
-                        !m ||
-                        typeof m !== "object" ||
-                        !("id" in m) ||
-                        typeof m.id !== "string" ||
-                        !("name" in m) ||
-                        typeof m.name !== "string"
-                      )
-                        return [];
-                      const membership = {
-                        id: m.id,
-                        name: m.name,
-                        ...("icon" in m &&
-                        typeof m.icon === "string" &&
-                        m.icon.startsWith("https://")
-                          ? { icon: m.icon }
-                          : {}),
-                      };
-                      try {
-                        return [
-                          { ...membership, id: communityDestination(m.id).id },
-                        ];
-                      } catch {
-                        if (
-                          isCommunityAlias(m.id) &&
-                          !unresolvedMemberships.some(
-                            (entry) => entry.id === m.id,
-                          )
-                        )
-                          unresolvedMemberships.push(membership);
-                        return [];
-                      }
-                    })
-                    .filter(
-                      (m: Membership, index: number, all: Membership[]) =>
-                        all.findIndex((entry) => entry.id === m.id) === index,
-                    )
-                : [],
-              selected: null,
-              sync: parseSync(raw.sync),
-            };
-          else if (openRelay && stored === null) {
-            // Development opt-in for a viewer with no saved record on this origin.
-            // Any stored record, including Personal space or one this reader
-            // cannot understand, wins over the seed.
+          savedRecord = localStorage.getItem(`buzz-client.v1:${viewer}`);
+          saved = readSaved(savedRecord);
+          if (openRelay && savedRecord === null) {
             const { id, name } = communityDestination(openRelay);
             saved = { ...saved, memberships: [{ id, name }], selected: id };
             seeded = true;
           }
-          if (typeof raw?.selected === "string") {
-            try {
-              saved.selected = communityDestination(raw.selected).id;
-            } catch {
-              if (unresolvedMemberships.some((m) => m.id === raw.selected))
-                unresolvedSelection = raw.selected;
-            }
-          }
         } catch {
           /* Invalid local preferences do not prevent opening the client. */
         }
-        if (!saved.memberships.some((m) => m.id === saved.selected))
-          saved.selected = null;
         presenceActivity.setViewer(viewer);
         if (saved.selected) acquire(saved.selected, viewer);
         saved.memberships = saved.memberships.map((membership) => ({
@@ -412,11 +414,49 @@ export function createCommunities(
       }),
     );
   }
+  // A command can run before another window's storage event arrives.
+  function syncSaved() {
+    const viewer = state.viewer;
+    if (disposed || state.status !== "ready" || !viewer) return;
+    let saved: Saved;
+    try {
+      const stored = localStorage.getItem(`buzz-client.v1:${viewer}`);
+      if (stored === savedRecord) return;
+      saved = readSaved(stored);
+      savedRecord = stored;
+    } catch {
+      return;
+    }
+    for (const { id, generation } of state.memberships) {
+      if (
+        saved.memberships.some(
+          (entry) => entry.id === id && entry.generation === generation,
+        )
+      )
+        continue;
+      presentations.delete(id);
+      membershipVersions.set(id, (membershipVersions.get(id) ?? 0) + 1);
+      void release(id);
+    }
+    saved.memberships = saved.memberships.map((entry) => ({
+      ...state.memberships.find(
+        (current) =>
+          current.id === entry.id && current.generation === entry.generation,
+      ),
+      ...entry,
+      localName: readLocalCommunityName(entry.id, viewer),
+    }));
+    if (saved.selected) acquire(saved.selected);
+    update(saved, false);
+    refreshPresentation();
+  }
   const syncLocalNames = (event: StorageEvent) => {
     const viewer = state.viewer;
     if (!viewer) return;
     try {
       if (event.storageArea !== localStorage) return;
+      if (event.key === null || event.key === `buzz-client.v1:${viewer}`)
+        syncSaved();
       let changed = false;
       const memberships = state.memberships.map((membership) => {
         if (
@@ -448,7 +488,10 @@ export function createCommunities(
   return {
     presence: presenceActivity,
     relay,
-    snapshot: () => state,
+    snapshot() {
+      syncSaved();
+      return state;
+    },
     subscribe(fn: () => void) {
       listeners.add(fn);
       return () => {
@@ -462,6 +505,7 @@ export function createCommunities(
       };
     },
     setLocalName(id: string, viewer: string, value: string) {
+      syncSaved();
       id = communityDestination(id).id;
       const membership = state.memberships.find((entry) => entry.id === id);
       if (
@@ -485,6 +529,7 @@ export function createCommunities(
       );
     },
     select(id: string | null) {
+      syncSaved();
       if (id) id = communityDestination(id).id;
       if (id && !state.memberships.some((m) => m.id === id))
         throw new Error("Join this community first");
@@ -494,18 +539,25 @@ export function createCommunities(
     /** A joined community's session, connected without selecting it, for
      * background work such as agents; it lives until the community is left. */
     open(id: string): RelayData | undefined {
+      syncSaved();
       id = communityDestination(id).id;
       return state.memberships.some((m) => m.id === id)
         ? acquire(id)
         : undefined;
     },
     saveProfile(profile: PersonalProfile) {
+      syncSaved();
       update({ profile });
     },
     joined(membership: Membership, profile: PersonalProfile) {
+      syncSaved();
+      const id = communityDestination(membership.id).id;
       membership = {
         ...membership,
-        id: communityDestination(membership.id).id,
+        generation:
+          state.memberships.find((entry) => entry.id === id)?.generation ??
+          crypto.randomUUID(),
+        id,
         ...(state.viewer
           ? { localName: readLocalCommunityName(membership.id, state.viewer) }
           : {}),
@@ -552,6 +604,7 @@ export function createCommunities(
       id: string,
       { purge = true }: { purge?: boolean } = {},
     ): Promise<PurgeFailure[]> {
+      syncSaved();
       id = communityDestination(id).id;
       if (!state.memberships.some((m) => m.id === id)) return [];
       const { viewer } = state;
@@ -576,7 +629,10 @@ export function createCommunities(
         failures.push(...(await purgeCommunityDeviceState(origin, viewer)));
       return failures;
     },
-    pendingSync: () => state.sync.outbox,
+    pendingSync() {
+      syncSaved();
+      return state.sync.outbox;
+    },
     /** Writes the sync owner's settled state and, in the same device record,
      * the memberships a server list adds: destinations saved on another
      * device appear here under their host name, or the viewer's local name
@@ -584,6 +640,7 @@ export function createCommunities(
      * Persistence follows `joined`, and that save is the only step that
      * throws, before anything has changed. */
     async applySync(next: SyncState, add: string[] = []) {
+      syncSaved();
       const memberships = [...state.memberships];
       for (const url of add) {
         const { id, name } = communityDestination(url);

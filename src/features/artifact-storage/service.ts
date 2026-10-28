@@ -47,13 +47,19 @@ export class ArtifactStorageService extends Service implements ArtifactStorage {
   open(definition: ArtifactCollectionDefinition): ArtifactCollection {
     const owner = this.ctx.pluginOwner?.id;
     const capture = () => {
-      const { viewer, selected } = this.ctx.communityReader.snapshot();
+      const { viewer, selected, memberships } =
+        this.ctx.communityReader.snapshot();
+      const membership = memberships.find((entry) => entry.id === selected);
       return {
         viewer,
-        origin: selected ? communityDestination(selected).url : undefined,
+        generation: membership?.generation,
+        origin:
+          selected && membership
+            ? communityDestination(selected).url
+            : undefined,
       };
     };
-    const { viewer, origin } = capture();
+    const { viewer, origin, generation } = capture();
     if (!owner || !viewer || !origin)
       throw new Error("Artifact storage needs a plugin, identity and relay");
     const scope = JSON.stringify([viewer, origin]);
@@ -78,13 +84,19 @@ export class ArtifactStorageService extends Service implements ArtifactStorage {
       if (
         controller.signal.aborted ||
         now.viewer !== viewer ||
-        now.origin !== origin
+        now.origin !== origin ||
+        now.generation !== generation
       )
         throw new Error("Artifact storage scope changed");
     };
     unsubscribe = this.ctx.communityReader.subscribe(() => {
       const now = capture();
-      if (now.viewer !== viewer || now.origin !== origin) close();
+      if (
+        now.viewer !== viewer ||
+        now.origin !== origin ||
+        now.generation !== generation
+      )
+        close();
     });
     const checked = async <T>(operation: Promise<T>) => {
       const result = await operation;

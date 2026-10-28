@@ -13,8 +13,6 @@ export type SavedPanel = {
   channelBound?: boolean;
   channelMenu?: boolean;
   keepOpen?: boolean;
-  /** A transient replacement occurred while the provider was unavailable. */
-  replaced?: boolean;
 };
 export const savedPanelId = (entry: SavedPanel) =>
   `${entry.key}:${entry.target}`;
@@ -74,7 +72,6 @@ function savedPanel(value: unknown): SavedPanel | undefined {
       optionalString(value.rootId) &&
       optionalString(value.title) &&
       (value.keepOpen === undefined || typeof value.keepOpen === "boolean") &&
-      (value.replaced === undefined || typeof value.replaced === "boolean") &&
       (value.channelBound === undefined ||
         typeof value.channelBound === "boolean") &&
       (value.channelMenu === undefined ||
@@ -92,7 +89,6 @@ function savedPanel(value: unknown): SavedPanel | undefined {
     rootId: value.rootId as string | undefined,
     ...(typeof value.title === "string" && { title: value.title }),
     ...(typeof value.keepOpen === "boolean" && { keepOpen: value.keepOpen }),
-    ...(typeof value.replaced === "boolean" && { replaced: value.replaced }),
     ...(value.channelMenu === true && { channelMenu: true }),
     ...(typeof value.channelBound === "boolean" && {
       channelBound: value.channelBound,

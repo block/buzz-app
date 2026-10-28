@@ -69,11 +69,9 @@ Background content waits for selection; missing providers stay closeable and
 unreviewed recovery requires Resume.
 New snapshots retain each panel's keep-open policy, so opening a new transient
 detail also replaces known transient placeholders whose provider is unavailable.
-Retained apps and channel tools survive that replacement. Older snapshots without
-this metadata remember replacement intent and are classified when their provider
-returns. Explicit panel pushes do not record replacement intent. An older transient
-does not reappear after a replacement. Replacement preserves history
-addresses; it does not perform an explicit Close.
+Retained apps and channel tools survive that replacement. Explicit panel pushes
+append without replacing pending tabs. Replacement preserves history addresses;
+it does not perform an explicit Close.
 
 Recovery is best-effort when storage is unavailable or full. Quit/relaunch,
 cross-device sync, feature-local inspection sub-tabs, drawer visibility and edit

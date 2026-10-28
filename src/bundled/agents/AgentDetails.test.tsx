@@ -269,16 +269,14 @@ it("shows every affected community with unsaved shared settings and submits the 
     await screen.findByRole("menuitem", { name: "Change avatar" }),
   );
   const editor = await screen.findByRole("dialog", { name: "Change avatar" });
-  await waitFor(() =>
-    expect(within(editor).getByRole("button", { name: "Close" })).toHaveFocus(),
-  );
-  expect(
-    screen.queryByRole("dialog", { name: "Avatar scope" }),
-  ).not.toBeInTheDocument();
   expect(editor).toHaveAccessibleDescription("Only in Current");
   const scope = within(editor).getByRole("button", {
     name: "Only in Current",
   });
+  await waitFor(() => expect(scope).toHaveFocus());
+  expect(
+    screen.queryByRole("dialog", { name: "Avatar scope" }),
+  ).not.toBeInTheDocument();
   expect(scope.querySelector("img")).toHaveAttribute(
     "src",
     "https://images.example/current.png",

@@ -708,6 +708,36 @@ it("a thread view opened while the stream is down keeps its first read for the e
   expect(view.snapshot()).toMatchObject({ status: "ready", limited: false });
 });
 
+it("a thread view opened before the first connection keeps its first read for the establishment refresh to reach", async () => {
+  // Replies the first connection replays before EOSE are newer than any gap
+  // between the pre-connect read and them, not overlap with it.
+  const [one, two, three, four] = [at(1), at(2), at(3), at(4)];
+  let reconnected = false;
+  const h = await setup(reconnectPages(() => reconnected));
+  await h.view.refresh();
+  expect(h.view.snapshot().replies.map((row) => row.id)).toEqual([one.id]);
+  reconnected = true;
+  h.traffic.state({ status: "connected", routes: [] });
+  h.traffic.receive([four]);
+  const before = h.requests.length;
+  h.traffic.established(channel);
+  await vi.waitFor(() =>
+    expect(h.view.snapshot().replies.map((row) => row.id)).toEqual([
+      one.id,
+      two.id,
+      three.id,
+      four.id,
+    ]),
+  );
+  expect(h.requests.slice(before)).toMatchObject([
+    [{ ids: [root.id] }],
+    [{ thread_window: true }],
+    [{ thread_window: true, until: three.created_at, before_id: three.id }],
+    [{ thread_window: true, until: two.created_at, before_id: two.id }],
+  ]);
+  expect(h.view.snapshot()).toMatchObject({ status: "ready", limited: false });
+});
+
 it("revalidates a missing strict root before repair and preserves tombstones on retry", async () => {
   const row = reply(0);
   let missing = false;

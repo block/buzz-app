@@ -223,10 +223,10 @@ export function createChannelStore(
   const controllers = new Set<AbortController>();
   /** Stream drops seen; a catch-up compares it to learn one happened mid-fill. */
   let streamDrops = 0;
-  /** The stream is down: a window reading its head now keeps those rows for
-   * the catch-up to reach, as staleHeads() kept the windows that existed at
-   * the drop. The first catch-up after re-establishment clears it. */
-  let dropped = false;
+  /** The stream is down, or not yet up: a window reading its head now keeps
+   * those rows for the catch-up to reach, as staleHeads() kept the windows
+   * that existed at the drop. Establishing any channel clears it. */
+  let dropped = true;
   const accessVersions = new Map<string, number>();
   const listListeners = new Set<Listener>();
   const windowListeners = new Map<string, Set<Listener>>();
@@ -529,13 +529,14 @@ export function createChannelStore(
   });
   /** Show a head as the window's rows. Read while the stream is down, they
    * are what its catch-up must reach: the replay that precedes it is newer
-   * than any gap, not overlap with it. */
+   * than any gap, not overlap with it. The head replaces the rows, so it
+   * replaces the snapshot too (a cached head adopted on revisit is re-read). */
   function adoptHead(state: WindowState, head: Head) {
     moveCursor(state, head.cursor);
     state.events = head.events;
     state.atHead = true;
     state.restored = head.restored === true;
-    if (dropped) state.kept ??= rowIds(state);
+    if (dropped) state.kept = rowIds(state);
     setWindow(state, patchFromHead(head));
   }
   function save(channelId: string, head: Head, previousProfiles?: string) {
@@ -741,7 +742,7 @@ export function createChannelStore(
       state.atHead = !cursor;
       moveCursor(state, page.cursor);
       state.restored = false;
-      if (dropped && !cursor) state.kept ??= rowIds(state);
+      if (dropped && !cursor) state.kept = rowIds(state);
       setWindow(state, {
         status: "ready",
         rows,
@@ -3030,7 +3031,6 @@ export function createChannelStore(
      * fails or is cancelled, the kept rows go and the window continues from the
      * pages read rather than showing a gap as history. */
     async catchUp(channelId: string) {
-      dropped = false;
       const cached = heads.peek(channelId);
       if (cached) heads.set(channelId, { ...cached, cached: true });
       const retained = windows.get(channelId);
@@ -3161,6 +3161,9 @@ export function createChannelStore(
      * empty window is loading, and an earlier failure is no longer the answer.
      * catchUp settles it again. */
     catchUpQueued(channelId: string) {
+      // The stream is up for this channel, whether or not a window is retained
+      // to catch up: heads read from here on are not snapshotted.
+      dropped = false;
       const head = heads.peek(channelId);
       if (head) heads.set(channelId, { ...head, cached: true });
       const state = windows.get(channelId);

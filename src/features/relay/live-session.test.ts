@@ -431,14 +431,18 @@ function reconnectHarness(options: ChannelStoreOptions = {}) {
   };
   const cursor = (event: ReturnType<typeof message>) =>
     `${event.created_at}:${event.id}`;
-  /** Drop the stream; the later re-establishment replays `replayed` before EOSE. */
-  const dropAndReplay = async (replayed: readonly RelayEvent[]) => {
-    await drop();
+  /** Connect; the establishment replays `replayed` before EOSE. */
+  const connectAndReplay = async (replayed: readonly RelayEvent[]) => {
     live.state({ status: "connected", routes: [] });
     live.receive(replayed);
     await flush();
     live.established("c");
     await flush();
+  };
+  /** Drop the stream; the later re-establishment replays `replayed` before EOSE. */
+  const dropAndReplay = async (replayed: readonly RelayEvent[]) => {
+    await drop();
+    await connectAndReplay(replayed);
   };
   return {
     owner,
@@ -456,6 +460,7 @@ function reconnectHarness(options: ChannelStoreOptions = {}) {
     open,
     reconnect,
     drop,
+    connectAndReplay,
     dropAndReplay,
     cursor,
   };
@@ -555,7 +560,9 @@ it("a reconnect catch-up that never reaches a loaded row drops it and continues 
 });
 
 it("a reconnect catch-up whose head reaches a loaded row verifies the window with that one read", async () => {
-  // The path every renewal takes: a healthy window costs one head read.
+  // The path every renewal takes: a healthy window costs one head read. This
+  // is also the cold start: `reconnect` opens the window before any stream is
+  // up, so the rows read over HTTP then are the first catch-up's snapshot.
   const h = reconnectHarness();
   try {
     const seen = message(h.alice, "c", "seen", 10),
@@ -837,14 +844,18 @@ it("a channel opened while the stream is down keeps the head it read for its cat
   }
 });
 
-it("a window evicted and re-created while the stream is down keeps the head it adopts for its catch-up to reach", async () => {
+it("a window evicted and re-created while the stream is down snapshots the head it re-reads, not the stale cached one", async () => {
+  // The cached head it adopts is replaced by a fresh read before the stream
+  // is back. Were the cached rows the snapshot, the catch-up would page after
+  // rows no longer in the window until the bound, then drop the fresh ones.
   const h = reconnectHarness({ maxWindows: 1 });
   try {
-    const seen = message(h.alice, "c", "seen", 10),
+    const old = message(h.alice, "c", "old", 5),
+      seen = message(h.alice, "c", "seen", 10),
       between = message(h.alice, "c", "between", 20),
       missed = message(h.alice, "c", "missed", 30),
       recent = message(h.alice, "c", "recent", 40);
-    await h.reconnect(seen, ["d"]);
+    await h.reconnect(old, ["d"]);
     await h.drop();
     // Opening d evicts c's window; c's head stays cached.
     h.owner.session.channels.ensure("d");
@@ -854,11 +865,98 @@ it("a window evicted and re-created while the stream is down keeps the head it a
     expect(h.rows()).toEqual([]);
     h.owner.session.channels.ensure("c");
     await flush();
-    expect(h.rows()).toEqual([seen.id]);
+    expect(h.rows()).toEqual([old.id]);
     // The cached head is stale, so the window revalidates it while still down.
     h.read().respond(h.page("head", [seen], seen));
     await flush();
+    expect(h.rows()).toEqual([seen.id]);
     await h.dropAndReplay([recent]);
+    expect(h.rows()).toEqual([seen.id, recent.id]);
+    h.read().respond(h.page("head", [recent, missed], missed));
+    await flush();
+    expect(h.window().freshness).toBe("cached");
+    const older = h.read();
+    expect(older.filters[0]).toMatchObject({
+      until: missed.created_at,
+      before_id: missed.id,
+    });
+    older.respond(h.page(h.cursor(missed), [between, seen], seen));
+    await flush();
+    expect(h.reads()).toHaveLength(0);
+    expect(h.rows()).toEqual([seen.id, between.id, missed.id, recent.id]);
+    expect(h.window()).toMatchObject({
+      status: "ready",
+      freshness: "verified",
+      error: undefined,
+    });
+  } finally {
+    h.owner.dispose();
+  }
+});
+
+it("a window with no rows at the drop snapshots the head it reads while the stream is down", async () => {
+  // An empty drop-time snapshot means contiguous. Were it kept past the head
+  // read while down, that head's rows would never be reached and the gap
+  // between them and the replay would be certified.
+  const h = reconnectHarness();
+  try {
+    const seen = message(h.alice, "c", "seen", 10),
+      between = message(h.alice, "c", "between", 20),
+      missed = message(h.alice, "c", "missed", 30),
+      recent = message(h.alice, "c", "recent", 40);
+    await h.list();
+    h.owner.session.channels.ensure("c");
+    await flush();
+    h.read().respond(h.page("head", [], null));
+    await flush();
+    expect(h.rows()).toEqual([]);
+    await h.connectAndReplay([]);
+    h.read().respond(h.page("head", [], null));
+    await flush();
+    expect(h.window().freshness).toBe("verified");
+    await h.drop();
+    // Revisiting while down revalidates the stale cached head.
+    h.owner.session.channels.ensure("c");
+    await flush();
+    h.read().respond(h.page("head", [seen], seen));
+    await flush();
+    expect(h.rows()).toEqual([seen.id]);
+    await h.dropAndReplay([recent]);
+    expect(h.rows()).toEqual([seen.id, recent.id]);
+    h.read().respond(h.page("head", [recent, missed], missed));
+    await flush();
+    expect(h.window().freshness).toBe("cached");
+    const older = h.read();
+    expect(older.filters[0]).toMatchObject({
+      until: missed.created_at,
+      before_id: missed.id,
+    });
+    older.respond(h.page(h.cursor(missed), [between, seen], seen));
+    await flush();
+    expect(h.reads()).toHaveLength(0);
+    expect(h.rows()).toEqual([seen.id, between.id, missed.id, recent.id]);
+    expect(h.window()).toMatchObject({
+      status: "ready",
+      freshness: "verified",
+      error: undefined,
+    });
+  } finally {
+    h.owner.dispose();
+  }
+});
+
+it("rows read before the first connection are the first catch-up's snapshot, not the rows after replay", async () => {
+  // A first connect that takes longer than the replay covers (the socket
+  // down while HTTP is up) leaves the same gap as a reconnect.
+  const h = reconnectHarness();
+  try {
+    const seen = message(h.alice, "c", "seen", 10),
+      between = message(h.alice, "c", "between", 20),
+      missed = message(h.alice, "c", "missed", 30),
+      recent = message(h.alice, "c", "recent", 40);
+    await h.list();
+    await h.open(seen);
+    await h.connectAndReplay([recent]);
     expect(h.rows()).toEqual([seen.id, recent.id]);
     h.read().respond(h.page("head", [recent, missed], missed));
     await flush();

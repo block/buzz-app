@@ -108,8 +108,8 @@ export function createThreadView({
   admit?:
     | ((events: readonly RelayEvent[]) => readonly RelayEvent[])
     | undefined;
-  /** Opened while the stream was down: the first read is the snapshot its
-   * establishment refresh must reach. */
+  /** Opened while the stream was down, or before it was up: the first read
+   * is the snapshot its establishment refresh must reach. */
   dropped?: boolean;
 }) {
   // These finite thread reads have no session recovery source. Their existing

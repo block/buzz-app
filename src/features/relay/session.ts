@@ -2818,9 +2818,9 @@ export function createRelaySession(
   // the sidebar page to mount and observe them.
   if (options.warm) void sidebarPreferences.queries.ensure();
   let refreshedGeneration = -1;
-  /** The stream dropped and no route has been re-established since: a thread
-   * view opened now reads while it is down. */
-  let streamDropped = false;
+  /** No route has been established since the stream dropped, or ever: a
+   * thread view opened now reads while it is down. */
+  let streamDropped = true;
   const catchupRunning = new Map<string, Catchup>();
   const catchupQueue = new Set<string>();
   const isChannelHead = (filters: readonly ReadFilter[], channelId: string) =>

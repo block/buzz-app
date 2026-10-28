@@ -20,6 +20,7 @@ import {
   useLayoutEffect,
   useMemo,
   useRef,
+  useDeferredValue,
   useState,
   useSyncExternalStore,
 } from "react";
@@ -439,6 +440,9 @@ function OwnedThreadPanel({
     <ThreadLoading />
   );
 }
+const noReplies: readonly ChannelMessage[] = [];
+// Top-level replies an opening mounts before the rest of a loaded thread.
+const replyBatch = 10;
 function ThreadMessages({
   session,
   extensions,
@@ -592,6 +596,17 @@ function ThreadMessages({
         .catch(() => {});
   }, [session.profiles, authors]);
   const profiles = useRowProfiles(session.profiles, rows);
+  // Rows watch their authors' statuses as they mount; start with the page.
+  const statusAuthors = [...new Set(rows.map((row) => row.authorId))]
+    .sort()
+    .join(":");
+  useEffect(
+    () =>
+      statusAuthors
+        ? session.statuses?.watch(statusAuthors.split(":"))
+        : undefined,
+    [session.statuses, statusAuthors],
+  );
   const agentPubkeys = useKnownAgentPubkeys(session, profiles);
   const scroller = useRef<HTMLElement>(null);
   const positioned = useRef(false);
@@ -1189,6 +1204,52 @@ function ThreadMessages({
     positioned.current = true;
     follow.current = false;
   };
+  // An ordinary opening of an already-loaded thread mounts the newest replies
+  // at once and renders the rest in interruptible slices, committed together.
+  // Until then they are empty items above the pinned viewport.
+  const [seededReplies] = useState(() => snapshot.replies.length > replyBatch);
+  const backgroundReplies = useDeferredValue(
+    seededReplies ? snapshot.replies : noReplies,
+    noReplies,
+  );
+  const mountedReplies = useRef<ReadonlySet<string>>(new Set());
+  const [repliesFlushed, setRepliesFlushed] = useState(false);
+  const topLevel = tree.children.get(undefined) ?? [];
+  let pendingReplies: ReadonlySet<string> | undefined;
+  if (
+    seededReplies &&
+    !repliesFlushed &&
+    snapshot.replies.length - backgroundReplies.length > replyBatch &&
+    !revealSelected &&
+    (!navigation || rootTarget)
+  ) {
+    const rendered = new Set(backgroundReplies.map((reply) => reply.id));
+    const waiting = topLevel.filter(
+      (row) => !rendered.has(row.id) && !mountedReplies.current.has(row.id),
+    );
+    if (waiting.length > replyBatch)
+      pendingReplies = new Set(
+        waiting.slice(0, -replyBatch).map((row) => row.id),
+      );
+  }
+  // Every commit records its mounted replies.
+  useLayoutEffect(() => {
+    mountedReplies.current = new Set(
+      topLevel
+        .filter((row) => !pendingReplies?.has(row.id))
+        .map((row) => row.id),
+    );
+    const element = scroller.current;
+    const list = element?.querySelector("[data-thread-rows] > ol");
+    // The newest replies must fill the viewport; otherwise mount the rest now.
+    if (
+      pendingReplies &&
+      element &&
+      list instanceof HTMLElement &&
+      list.offsetTop > element.scrollHeight - element.clientHeight
+    )
+      setRepliesFlushed(true);
+  });
   let previousReply: ChannelMessage | undefined = snapshot.root;
   let previousParent: string | undefined;
   let previousDay = snapshot.root
@@ -1210,6 +1271,15 @@ function ThreadMessages({
       previousReply =
         children?.length && !expanded.has(row.id) ? undefined : row;
       previousParent = parent;
+      // An empty item keeps sibling structure stable until its reply renders.
+      if (!parent && pendingReplies?.has(row.id))
+        return (
+          <li
+            key={row.id}
+            className={styles.replyItem}
+            data-layout={continuation ? "continuation" : "thread"}
+          />
+        );
       const descendants = branchReplies.get(row.id) ?? [];
       const unreadCount = descendants.filter(
         (reply) => session.unread.attention(channelId, reply.id).unread,

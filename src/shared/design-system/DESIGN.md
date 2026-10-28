@@ -524,6 +524,11 @@ guard reports exact accepted light-mode role/color/surface pairs; other pairs
 remain enforced. This exception is not an accessibility pass. Dark Away meets
 3:1 on these opaque surfaces. Offline stays unoutlined. Keep badge footprints, Bézier
 artwork cutouts, presence behavior, and accessible names with the shared Avatar owner.
+For another person's managed agent in a profile or preview, use the `badge` slot
+with the manager's circular Avatar and show “Managed by X” beside the identity.
+This replaces presence and thinking indicators there; the viewer's own agents
+retain their activity treatment. The shared badge slot owns geometry and cutouts;
+the manager's circular portrait uses a circular cutout in the agent artwork.
 
 For a separate trailing action attached to a row, use `IconButton shape="row-end"`
 in a stretched flex slot. It keeps the size-selected width, fills the row height,

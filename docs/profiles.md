@@ -22,9 +22,14 @@ panel.
 
 ## Agent identity
 
-For an identity with an agent hint (below), the Info tab adds a **Managed by**
-row, matching Buzz desktop. It shows only a verified owner and is otherwise
-absent:
+For another person's agent with verified ownership, the full profile and mini
+preview show **Managed by X** and the manager's circular avatar in place of
+activity indicators. The agent artwork has a circular cutout around that avatar.
+The full profile's header attribution opens the manager's profile when the host
+supports it; the Info tab omits a duplicate Managed by row. The viewer's own
+agents retain their activity treatment and existing ownership details.
+
+Attribution shows only a verified owner and is otherwise absent:
 
 - The owner comes from the NIP-OA `auth` tag on the identity's own winning
   signature-verified kind 0 (newest `created_at`, lower id on ties). A
@@ -47,8 +52,8 @@ absent:
   not trusted; reopening the profile retries. The existing `isAgent` shape
   check, avatar shape and this machine's agent list never supply an owner.
 
-Public metadata follows base Buzz's profile order: **Public key**, **Managed by**,
-**NIP-05**. The existing npub copy control keeps its exact value and feedback.
+Public metadata follows base Buzz's profile order: **Public key**, any ownership
+row not already shown in the header, then **NIP-05**. The existing npub copy control keeps its exact value and feedback.
 NIP-05 is a whole-row copy button, with hover/keyboard indicators, a 1.5-second
 success check and base Buzz's copy feedback. It remains self-declared: the row
 matches base Buzz without a verification claim or badge. Display/copy never

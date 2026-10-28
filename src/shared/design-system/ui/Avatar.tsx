@@ -130,6 +130,7 @@ export function Avatar({
   size = "default",
   shape = "circle",
   statusBadge,
+  badge,
   loading,
 }: {
   src?: string | null | undefined;
@@ -139,9 +140,12 @@ export function Avatar({
   size?: AvatarSize;
   shape?: "circle" | "squircle";
   statusBadge?: "online" | "away" | "offline" | undefined;
+  /** Supplemental identity artwork, replacing presence in the shared badge slot. */
+  badge?: ReactNode;
   /** Immediate visible editors may bypass lazy scheduling, never image readiness. */
   loading?: "eager" | "lazy";
 }) {
+  if (badge) statusBadge = undefined;
   const renderArtwork = useContext(AvatarArtworkContext);
   const artwork = src ? renderArtwork?.(src) : undefined;
   const initial = Array.from(fallback.trim())[0]?.toUpperCase() || "?";
@@ -152,6 +156,7 @@ export function Avatar({
       data-size={size}
       data-shape={shape}
       data-status={statusBadge}
+      data-badged={badge ? "" : undefined}
     >
       <BaseAvatar.Root
         data-buzz-ui=""
@@ -179,8 +184,12 @@ export function Avatar({
             </span>
           ))}
       </BaseAvatar.Root>
-      {statusBadge && (
-        <span className="buzz-avatar-status-dot" aria-hidden="true" />
+      {badge ? (
+        <span className="buzz-avatar-badge">{badge}</span>
+      ) : (
+        statusBadge && (
+          <span className="buzz-avatar-status-dot" aria-hidden="true" />
+        )
       )}
     </span>
   );

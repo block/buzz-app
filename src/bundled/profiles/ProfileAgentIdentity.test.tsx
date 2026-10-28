@@ -12,6 +12,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { attestedOwner } from "../../features/agents/owner-attestation";
 import { profileTarget } from "../../features/profiles/target";
 import type { ReadFilter, RelayEvent } from "../../features/relay/events";
+import { eventsDto } from "../../features/relay/events";
 import type { LiveCallbacks } from "../../features/relay/live";
 import type { RelayData } from "../../features/relay/service";
 import {
@@ -34,6 +35,7 @@ import {
 } from "../../features/relay/testing";
 import { formatPublicKey } from "../../shared/identity/public-key";
 import { ProfilePanel } from "./ProfilePanel";
+import { ProfilePeek } from "../../features/profiles/ProfilePeek";
 
 vi.mock("../../features/agents/owner-attestation", async (original) => {
   const actual =
@@ -65,6 +67,7 @@ const owners: { dispose(): void }[] = [];
 afterEach(() => {
   cleanup();
   verify.mockClear();
+  Reflect.deleteProperty(HTMLElement.prototype, "showPopover");
   for (const owner of owners.splice(0)) owner.dispose();
 });
 
@@ -93,10 +96,12 @@ function mount(
     wrap,
     library,
     viewer = keypair().pubkey,
+    preview = false,
   }: {
     wrap?: (session: RelaySession) => RelaySession;
     library?: string;
     viewer?: string;
+    preview?: boolean;
   } = {},
 ) {
   const query = vi.fn(async (filters: readonly ReadFilter[]) =>
@@ -119,6 +124,20 @@ function mount(
     subscribe: () => ({ update() {}, retry() {}, dispose() {} }),
   });
   owners.push(owner);
+  vi.spyOn(owner.session.presence, "status").mockReturnValue("online");
+  if (preview) {
+    void owner.session.profiles.ensure([target.pubkey]);
+    vi.spyOn(document.documentElement, "clientWidth", "get").mockReturnValue(
+      1024,
+    );
+    vi.spyOn(document.documentElement, "clientHeight", "get").mockReturnValue(
+      768,
+    );
+    // jsdom has no native top layer; real placement is a rendered check.
+    HTMLElement.prototype.showPopover = function () {
+      this.style.display = "block";
+    };
+  }
   if (library) void owner.session.agentLibrary.refresh();
   const snapshot = {
     status: "ready" as const,
@@ -135,13 +154,33 @@ function mount(
   };
   const open = vi.fn(() => true);
   render(
-    <ProfilePanel
-      relay={relay}
-      target={profileTarget(target.pubkey) ?? ""}
-      close={() => {}}
-      context={{ channelId: "c", canOpen: () => true, open }}
-    />,
+    preview ? (
+      <ProfilePeek
+        trigger={<button type="button">Agent avatar</button>}
+        name="Helper"
+        picture={undefined}
+        pubkey={target.pubkey}
+        agent
+        session={snapshot.session}
+        viewer={viewer}
+        channelId="c"
+        target={profileTarget(target.pubkey) ?? ""}
+        onOpen={open}
+      />
+    ) : (
+      <ProfilePanel
+        relay={relay}
+        target={profileTarget(target.pubkey) ?? ""}
+        close={() => {}}
+        context={{ channelId: "c", canOpen: () => true, open }}
+      />
+    ),
   );
+  if (preview)
+    vi.spyOn(
+      screen.getByRole("button", { name: "Agent avatar" }),
+      "getBoundingClientRect",
+    ).mockReturnValue(new DOMRect(100, 100, 40, 40));
   return { query, open };
 }
 const kind0 = (filter: ReadFilter) => filter.kinds?.includes(0);
@@ -182,7 +221,48 @@ it("marks the owner as you when the viewer owns the agent", async () => {
     name: "Open owner profile: Owner Olivia (you)",
   });
   expect(identityRegion()).toHaveTextContent("Managed byOwner Olivia (you)");
+  expect(screen.getByText("Active", { exact: true })).toBeVisible();
 });
+
+it.each([false, true])(
+  "replaces another manager's agent activity with manager identity (preview=%s)",
+  async (preview) => {
+    const agent = keypair();
+    const owner = keypair();
+    const { open } = mount(
+      agent,
+      (filter) =>
+        eventsDto(
+          filter.authors?.includes(owner.pubkey)
+            ? [profile(owner, { name: "Owner Olivia" })]
+            : kind0(filter)
+              ? [agentProfile(agent, [auth(agent, owner)])]
+              : [],
+        ),
+      { preview },
+    );
+    if (preview) await userEvent.setup().tab();
+    expect(
+      await screen.findByText("Managed by Owner Olivia", { exact: true }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("img", { name: "Managed by Owner Olivia" }),
+    ).toBeVisible();
+    expect(screen.queryByText("Active", { exact: true })).toBeNull();
+    expect(
+      screen.queryByRole("img", { name: /, (available|online|thinking)$/ }),
+    ).toBeNull();
+    if (!preview) {
+      expect(identityRegion()).toBeNull();
+      await userEvent.setup().click(
+        screen.getByRole("button", {
+          name: "Open owner profile: Owner Olivia",
+        }),
+      );
+      expect(open).toHaveBeenCalledWith(profileTarget(owner.pubkey));
+    }
+  },
+);
 
 it("does not trust a well-formed attestation with an invalid signature", async () => {
   const agent = keypair();

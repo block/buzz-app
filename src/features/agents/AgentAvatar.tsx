@@ -18,7 +18,8 @@ type AgentAvatarProps = ComponentProps<typeof Avatar> & {
   thinkingDescriptionId?: string | undefined;
 };
 export function AgentAvatar(props: AgentAvatarProps) {
-  if (props.shape === "squircle") return <ActiveAgentAvatar {...props} />;
+  if (props.shape === "squircle" && !props.badge)
+    return <ActiveAgentAvatar {...props} />;
   return <Avatar {...props} />;
 }
 const noSubscribe = () => () => {};

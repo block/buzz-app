@@ -21,6 +21,8 @@ import type { RelaySession } from "../relay/session";
 import { UserStatusDisplay } from "../user-status/StatusDisplay";
 import { ProfileBackdrop } from "./ProfileBackdrop";
 import styles from "./ProfilePeek.module.css";
+import { Avatar } from "../../shared/design-system/ui/Avatar";
+import { useProfileManager } from "./useProfileManager";
 
 type ProfilePeekProps = {
   trigger: ReactElement;
@@ -51,6 +53,11 @@ export function ProfilePeek({
   onFocusChange,
 }: ProfilePeekProps) {
   const [open, setOpen] = useState(false);
+  const manager = useProfileManager(
+    session,
+    agent && open ? pubkey : undefined,
+    viewer,
+  );
   const [hoveredAction, setHoveredAction] = useState<"profile" | "message">();
   const profileButton = useRef<HTMLButtonElement>(null);
   const returningFromProfile = useRef<"pending" | "returned" | null>(null);
@@ -205,6 +212,16 @@ export function ProfilePeek({
                 size="fill"
                 shape={agent ? "squircle" : "circle"}
                 statusBadge={presence === "unknown" ? undefined : presence}
+                badge={
+                  manager && (
+                    <Avatar
+                      src={manager.picture}
+                      alt={`Managed by ${manager.name}`}
+                      fallback={manager.name}
+                      size="fill"
+                    />
+                  )
+                }
               />
             </div>
           </div>
@@ -213,6 +230,11 @@ export function ProfilePeek({
               {agent && <RobotIcon aria-label="Agent" size={14} />}
               {name}
             </div>
+            {manager && (
+              <p className="text-caption text-primary">
+                Managed by {manager.name}
+              </p>
+            )}
             {session && (
               <UserStatusDisplay
                 session={session}

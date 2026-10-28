@@ -85,7 +85,33 @@ export function VideoControls({
     publishTime.current = presented;
     // Activation publishes current native state before this pane can paint or
     // accept input. The player itself has stayed live while covered.
-    if (presented && videoRef.current) setTime(videoRef.current.currentTime);
+    const video = videoRef.current;
+    if (!presented || !video) return;
+    let frame = 0;
+    const syncTime = () => setTime(video.currentTime);
+    const tick = () => {
+      syncTime();
+      frame = requestAnimationFrame(tick);
+    };
+    const play = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(tick);
+    };
+    const pause = () => {
+      cancelAnimationFrame(frame);
+      syncTime();
+    };
+    syncTime();
+    video.addEventListener("play", play);
+    video.addEventListener("pause", pause);
+    video.addEventListener("ended", pause);
+    if (!video.paused) play();
+    return () => {
+      cancelAnimationFrame(frame);
+      video.removeEventListener("play", play);
+      video.removeEventListener("pause", pause);
+      video.removeEventListener("ended", pause);
+    };
   }, [presented, videoRef]);
   const [playing, setPlaying] = useState(false);
   const [duration, setDuration] = useState(0);
@@ -99,23 +125,15 @@ export function VideoControls({
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
-    let frame = 0;
     const syncTime = () => {
       if (publishTime.current) setTime(video.currentTime);
-    };
-    const tick = () => {
-      syncTime();
-      frame = requestAnimationFrame(tick);
     };
     const play = () => {
       setPlaying(true);
       setNotice(undefined);
-      cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(tick);
     };
     const pause = () => {
       setPlaying(false);
-      cancelAnimationFrame(frame);
       syncTime();
     };
     const metadata = () => {
@@ -159,7 +177,6 @@ export function VideoControls({
     speed();
     if (!video.paused) play();
     return () => {
-      cancelAnimationFrame(frame);
       window.removeEventListener(speedEvent, receiveSpeed);
       window.removeEventListener("storage", storage);
       for (const [event, listener] of Object.entries(events))

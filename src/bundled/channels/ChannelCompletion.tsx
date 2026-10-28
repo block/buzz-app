@@ -43,13 +43,15 @@ function open(channel: ChannelSummary) {
 }
 
 /** The channel name rule the other channel pickers use (`matchName`), without
- * its fuzzy ranks: Enter and Tab pick the first row while the viewer is
- * writing prose, so a scattered-letter match must not capture a `#word`. A
- * query with a space matches only from the start of a name, as person names
- * do, so ordinary prose after `#name` closes the popup. */
+ * its last, scattered-letter rank: Enter and Tab pick the first row while the
+ * viewer is writing prose, so letters merely in order must not capture a
+ * `#word`. Letter runs that each begin a word (`team-pl`, `tlp`) still
+ * match, as in Command-K. A query with a space matches only from the start
+ * of a name, as person names do, so ordinary prose after `#name` closes the
+ * popup. */
 function rank(name: string, needle: string) {
   const found = matchName(name, needle)?.rank;
-  if (found === undefined || found > 3) return undefined;
+  if (found === undefined || found > 4) return undefined;
   if (/\s/u.test(needle) && found > 1) return undefined;
   return found;
 }

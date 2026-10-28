@@ -241,3 +241,18 @@ it("keeps ambiguity when the trimmed record is an unknown batch child with an in
   expect(f.snapshot().trimmed).toBe(1);
   expect(f.work()[0]?.state).toBe("unknown");
 });
+
+it.each([
+  { kind: "unrecognized", overrides: { seq: "invalid" } },
+  { kind: "turn_started", overrides: { timestamp: "invalid" } },
+])(
+  "keeps ambiguity evicted before lifecycle creation ($kind)",
+  ({ kind, overrides }) => {
+    const f = fixture();
+    f.send(kind, "first", undefined, channel, agent, overrides);
+    f.fill();
+    f.send("turn_started", "first", request);
+    f.send("turn_completed", "first");
+    expect(f.work()[0]?.state).toBe("unknown");
+  },
+);

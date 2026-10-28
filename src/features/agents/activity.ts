@@ -334,7 +334,10 @@ export function createAgentActivity(
       epoch: validTimestamp ? epoch : -1,
     };
     associate(turn);
-    turns.set(key, turn);
+    remember(turn);
+  }
+  function remember(turn: Turn) {
+    turns.set(`${turn.agent}:${turn.turnId}`, turn);
     if (turns.size > ACTIVITY_TURN_LIMIT) {
       const oldest = [...turns].sort(
         (a, b) => a[1].timestamp - b[1].timestamp,
@@ -354,9 +357,32 @@ export function createAgentActivity(
       raw?.kind === "batch" ? object(raw.payload)?.events : undefined;
     for (const value of Array.isArray(children) ? children : [raw]) {
       const item = object(value);
-      if (!text(item?.turnId)) continue;
+      if (
+        !text(item?.turnId) ||
+        !(item.channelId === null || text(item.channelId))
+      )
+        continue;
       const turn = turns.get(`${record.agent}:${item.turnId}`);
-      if (turn && turn.channelId === item.channelId) turn.incomplete = true;
+      if (turn) {
+        if (turn.channelId === item.channelId) turn.incomplete = true;
+        else requestEvidenceLost = true;
+      } else if (!requestEvidenceLost) {
+        // Keep discarded ambiguity even if its real lifecycle arrives later.
+        const triggeringEventIds =
+          item.kind === "turn_started"
+            ? observerTriggerIds(object(item.payload)?.triggeringEventIds)
+            : undefined;
+        remember({
+          agent: record.agent,
+          turnId: item.turnId,
+          channelId: item.channelId,
+          timestamp: record.receivedAt,
+          incomplete: true,
+          ended: false,
+          epoch: -1,
+          ...(triggeringEventIds ? { triggeringEventIds } : {}),
+        });
+      }
     }
   }
   function channelsAllowed(

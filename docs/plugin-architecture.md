@@ -100,7 +100,7 @@ source imports are not a versioned external SDK. See
 
 ## The `buzzodz` CLI
 
-The installed desktop executable also accepts these commands. On macOS, install
+The installed desktop executable accepts `plugin install-git`. On macOS, install
 a published Git plugin without a compiler or a separate tool:
 
 ```sh
@@ -137,8 +137,8 @@ The CLI prints readable results and reports errors with a nonzero exit code.
 existing enabled state. `recover` backs up management settings and resets to
 bundled defaults, preserving artifacts for reinstallation.
 
-`--home ABSOLUTE_PATH` and `--profile NAME` precede `plugin`. The desktop and CLI
-also read `BUZZODZ_HOME` and `BUZZODZ_PROFILE` (default: `default`). Match these to
+In the standalone CLI, `--home ABSOLUTE_PATH` and `--profile NAME` precede `plugin`.
+Both commands read `BUZZODZ_HOME` and `BUZZODZ_PROFILE` (default: `default`). Match these to
 target the same instance. Otherwise, profiles live under the OS application-data
 directory in `dev.local.buzz.foundation/profiles`.
 

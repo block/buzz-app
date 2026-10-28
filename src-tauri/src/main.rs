@@ -2,19 +2,19 @@
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    if args.first().is_some_and(|arg| {
-        matches!(
-            arg.as_str(),
-            "plugin" | "--home" | "--profile" | "--help" | "-h"
-        )
-    }) {
+    if args.first().map(String::as_str) == Some("plugin") {
         #[cfg(all(windows, not(debug_assertions)))]
         unsafe {
             windows_sys::Win32::System::Console::AttachConsole(
                 windows_sys::Win32::System::Console::ATTACH_PARENT_PROCESS,
             );
         }
-        if let Err(message) = buzzodz_plugins::cli::run(args) {
+        let result = match args.get(1).map(String::as_str) {
+            Some("install-git") => buzzodz_plugins::Manager::from_env()
+                .and_then(|manager| buzzodz_plugins::cli::install_git(&manager, &args[2..])),
+            _ => Err("Use plugin install-git REPO REF [PATH] [--enable].".into()),
+        };
+        if let Err(message) = result {
             eprintln!("Error: {message}");
             std::process::exit(1);
         }

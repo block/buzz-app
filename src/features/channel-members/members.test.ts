@@ -7,6 +7,34 @@ import type { RelayEvent } from "../relay/events";
 import { addChannelMember, canAddMembers } from "./members";
 
 const cleanups: (() => void)[] = [];
+it.each([
+  ["guest", "member", false],
+  ["guest", "guest", false],
+  ["member", "guest", true],
+  ["owner", "guest", true],
+  [undefined, "guest", false],
+  [undefined, "member", true],
+] as const)(
+  "keeps invitation eligibility separate from the %s viewer's %s admission default",
+  (viewerRole, joinRole, allowed) => {
+    expect(
+      canAddMembers(
+        { viewer: "viewer", outbox: { supports: () => true } },
+        {
+          id: "channel",
+          name: "Updates",
+          channelType: "stream",
+          joinRole,
+          viewerRole,
+          members: viewerRole ? ["viewer"] : [],
+          ...(viewerRole === "guest" || !viewerRole
+            ? { readOnly: true as const }
+            : {}),
+        },
+      ),
+    ).toBe(allowed);
+  },
+);
 afterEach(() => {
   for (const cleanup of cleanups.splice(0)) cleanup();
 });

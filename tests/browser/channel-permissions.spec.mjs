@@ -54,6 +54,20 @@ test("a joined guest can read and leave without receiving a composer or Join pro
   await expect(
     page.getByRole("button", { name: "Channel actions", exact: true }),
   ).toBeFocused();
+  await page
+    .getByRole("button", { name: "Manage members", exact: true })
+    .click();
+  const members = page.getByRole("dialog", {
+    name: "Manage members",
+    exact: true,
+  });
+  await expect(members.getByRole("searchbox")).toHaveAttribute(
+    "placeholder",
+    "Search members",
+  );
+  await expect(
+    members.getByRole("region", { name: "Not in this channel" }),
+  ).toHaveCount(0);
   expect(app.report.lifecyclePublications ?? []).toEqual([]);
   expect(app.report.unexpected).toEqual([]);
 });

@@ -1035,6 +1035,9 @@ permission. Direct guest writes and uploads are refused, and queued writes are
 checked again before signing and publication, including signed retries. The
 relay's verified agent-owner edit/delete exception is preserved; it does not
 permit ordinary posts or reactions.
+Guests can search the member directory without invitation controls. Public
+previews whose admission default is Guest also omit invitations; existing
+writing members retain them independently of the default.
 
 Current members may also remove their own verified non-owner agents, but cannot
 edit their roles or remove someone else's agent. The service verifies signed

@@ -21,10 +21,11 @@ export function canAddMembers(
     session.viewer &&
     session.outbox?.supports(9000) &&
     channel &&
+    channel.viewerRole !== "guest" &&
     !channel.archived &&
     expandable.has(channel.channelType ?? "") &&
     (channel.members?.includes(session.viewer) ||
-      (channel.readOnly && !channel.private))
+      (channel.readOnly && !channel.private && channel.joinRole !== "guest"))
   );
 }
 

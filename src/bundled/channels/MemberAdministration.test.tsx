@@ -664,13 +664,13 @@ it("confirms removal and removes only the confirmed roster entry", async () => {
   expect(t.session.channels.get?.(id)?.members).not.toContain(t.target.pubkey);
 });
 it.each(["member", "guest"])(
-  "keeps ordinary invitations usable for %s without admin controls",
+  "keeps the %s member directory usable without admin controls",
   async (actor) => {
     const t = await setup(actor);
     await expectProfileOnly(t.user, "Morgan");
     expect(screen.getByRole("searchbox")).toHaveAttribute(
       "placeholder",
-      "Add people and agents",
+      actor === "guest" ? "Search members" : "Add people and agents",
     );
   },
 );

@@ -43,10 +43,14 @@ const byKey = <T extends { recipient: { pubkey: string } }>(
 };
 // Directory people that change the choice set, interned by content: each
 // settled page and each carried merge is a new array with the same people.
+// Their order changes no choice (ranking and naming sort by key), so it is
+// not part of the content.
 const pages = new WeakMap<ComposerSession, Map<string, readonly Person[]>>();
 function page(session: ComposerSession, people: readonly Person[]) {
   const key = JSON.stringify(
-    people.map(({ pubkey, name, isAgent }) => [pubkey, name, !!isAgent]),
+    [...people]
+      .sort((a, b) => (a.pubkey < b.pubkey ? -1 : a.pubkey > b.pubkey ? 1 : 0))
+      .map(({ pubkey, name, isAgent }) => [pubkey, name, !!isAgent]),
   );
   const seen = pages.get(session) ?? new Map<string, readonly Person[]>();
   pages.set(session, seen);

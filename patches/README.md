@@ -47,6 +47,18 @@ DOM-coverage gap frames moved downward while shift mode held an upward direction
 Stock showed 3–96 gap frames per run over ten runs; the patch showed none in six.
 Short main-thread stalls and image decode dips remain.
 
+## Batched rows above a shift
+
+A shift corrects every row that measures above the viewport, one correction per
+observer batch, and on Mac WebKit each correction also holds the scroller at
+`overflow: hidden` for a frame (below), which drops wheel input arriving in that
+frame. Paging upward through prepended history mounts the rows above a few per
+wheel step, so every step paid a correction. While shifted, the range's buffered
+start therefore snaps down to a half-buffer grid: rows above mount and measure
+in batches about half a buffer apart, with up to half a buffer of extra rows
+mounted above. Ending the shift re-renders the range, so the settled range is
+unsnapped. Ranges outside a shift are unchanged.
+
 ## Failure and chosen boundary
 
 In a system WKWebView, native momentum can overwrite an instant programmatic

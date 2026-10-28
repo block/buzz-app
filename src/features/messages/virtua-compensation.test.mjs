@@ -635,16 +635,17 @@ it("keeps the same rows mounted when a page lands before a flushed correction's 
     Array.from({ length: 20 }, (_, index) => [index, 110]),
   );
   c.driver.U();
-  expect(c.store.$(1600)).toEqual([7, 39]);
+  // The shifted buffer starts on the 800px grid: offset 700 snaps to 0.
+  expect(c.store.$(1600)).toEqual([0, 39]);
   // The next page lands first. Its 20 rows go in front of every held row, so
-  // the held range must move with them: [7, 39] would mount the new rows and
+  // the held range must move with them: [0, 39] would mount the new rows and
   // unmount the rows just below the viewport, to be remounted one frame later.
   c.store.h(5, 60, true);
-  expect(c.store.$(1600)).toEqual([27, 59]);
+  expect(c.store.$(1600)).toEqual([20, 59]);
   c.driver.U();
   c.store.h(1, c.viewport.scrollTop); // the scroll event: the range is live again
   // Inside the held range: the rows it kept mounted stay, nothing remounts.
-  expect(c.store.$(1600)).toEqual([29, 59]);
+  expect(c.store.$(1600)).toEqual([23, 59]);
   c.driver.R();
 });
 
@@ -659,7 +660,7 @@ it("holds the top rows when a removal past the held range lands before a flushed
     Array.from({ length: 20 }, (_, index) => [index, 110]),
   );
   c.driver.U(); // the measurement's correction is flushed: the range is held
-  expect(c.store.$(1600)).toEqual([7, 44]);
+  expect(c.store.$(1600)).toEqual([0, 44]); // the 800px grid snaps 700 to 0
   // A head removal past every held row lands first. Moved by its delta the
   // range would name rows above the list, an inverted range that renders no
   // row for a frame; the rows it keeps are the top ones the offset lands on.
@@ -670,6 +671,34 @@ it("holds the top rows when a removal past the held range lands before a flushed
   // the corrected offset to the top and the live range lies in the held one.
   c.store.h(1, 0);
   expect(c.store.$(1600)).toEqual([0, 21]);
+  c.driver.R();
+});
+
+// A shift corrects every observer batch of rows that measure above the
+// viewport, and on Mac WebKit each correction interrupts native scrolling.
+// While shifted, the buffered start snaps to a half-buffer grid so rows above
+// mount and measure in fewer batches; ending the shift re-renders it unsnapped.
+it("snaps a shifted range's buffered start to a half-buffer grid until the shift ends", () => {
+  const c = setup({ offset: 300 });
+  c.store.h(2); // the reader rests, so scroll-end alone will not re-render
+  c.prepend(40); // 20 older rows at the 100px estimate: one 2000px jump
+  c.store.h(1, 2300); // the jump's own scroll event
+  c.store.h(1, 2250);
+  // 2250 - 1600 = 650 snaps to 0: rows 0-5 mount now rather than one by one.
+  expect(c.store.$(1600)).toEqual([0, 39]);
+  c.store.h(1, 2550); // 950 snaps to 800: row 8, not row 9
+  expect(c.store.$(1600)).toEqual([8, 39]);
+  c.store.h(
+    3,
+    Array.from({ length: 20 }, (_, index) => [index, 100]),
+  );
+  const render = vi.fn();
+  c.store.L(1, render);
+  c.store.h(2); // scroll-end with the prepended rows measured ends the shift
+  expect(render).toHaveBeenCalledTimes(1);
+  expect(c.store.$(1600)[0]).toBe(9); // 950 unsnapped: the settled range
+  c.store.h(1, 2250);
+  expect(c.store.$(1600)[0]).toBe(6); // unshifted ranges are not snapped
   c.driver.R();
 });
 

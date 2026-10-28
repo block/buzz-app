@@ -30,8 +30,10 @@ export function useChannelWindow(queries: ChannelQueries, channelId: string) {
   );
   return useSyncExternalStore(subscribe, snapshot, snapshot);
 }
+const emptyProfiles: ReadonlyMap<string, Profile> = new Map();
+const noProfiles = { subscribe: () => () => {}, snapshot: () => emptyProfiles };
 export function useRowProfiles(
-  queries: ProfileQueries,
+  queries: ProfileQueries | undefined,
   rows: readonly ChannelMessage[],
 ) {
   const ids = [...new Set(rows.flatMap(rowProfileIds))].sort().join(":");
@@ -39,7 +41,10 @@ export function useRowProfiles(
   // identity then, so memoized rows do not all re-render for each page.
   const last = useRef<ReadonlyMap<string, Profile>>(undefined);
   const selection = useMemo(
-    () => selectProfiles(queries, ids ? ids.split(":") : [], last.current),
+    () =>
+      queries
+        ? selectProfiles(queries, ids ? ids.split(":") : [], last.current)
+        : noProfiles,
     [queries, ids],
   );
   const profiles = useSyncExternalStore(

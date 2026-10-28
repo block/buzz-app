@@ -12,6 +12,7 @@ import type { ChannelSummary } from "../relay/contracts";
 import {
   ChannelTimeline,
   type ChannelTimelineProps,
+  type ChannelTimelineInput,
 } from "../messages/ChannelTimeline";
 import {
   MessageComposer,
@@ -257,7 +258,10 @@ export function ConversationThread(props: Own<ThreadPanelProps>) {
 }
 
 export function ConversationTimeline(
-  props: Own<Omit<ChannelTimelineProps, "queries">>,
+  props: Own<
+    Omit<ChannelTimelineProps, "queries" | "window" | "presentation">
+  > &
+    ChannelTimelineInput,
 ) {
   const {
     session,

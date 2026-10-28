@@ -156,8 +156,24 @@ export function channelLinkLabel(
     : undefined;
 }
 
-export function ReferenceText({
+export function ReferenceText(
+  props: Omit<Parameters<typeof ReferenceTextContent>[0], "resolveName"> & {
+    resolveName?: ((id: string, fallback: string) => string) | undefined;
+  },
+) {
+  return props.resolveName ? (
+    <ReferenceTextContent {...props} resolveName={props.resolveName} />
+  ) : (
+    <LiveNamedReferenceText {...props} />
+  );
+}
+function LiveNamedReferenceText(props: Parameters<typeof ReferenceText>[0]) {
+  const resolveName = useChannelIdentityNames(props.session, props.channelId);
+  return <ReferenceTextContent {...props} resolveName={resolveName} />;
+}
+function ReferenceTextContent({
   text,
+  resolveName,
   mentions,
   directory,
   renderText,
@@ -165,10 +181,10 @@ export function ReferenceText({
   extensions,
   session,
   scope,
-  channelId,
   interactive = true,
 }: {
   text: string;
+  resolveName: (id: string, fallback: string) => string;
   mentions: readonly string[];
   directory: ReturnType<typeof useReferenceDirectory>;
   renderText(text: string): ReactNode;
@@ -179,7 +195,6 @@ export function ReferenceText({
   channelId?: string | undefined;
   interactive?: boolean;
 }) {
-  const resolveName = useChannelIdentityNames(session, channelId);
   const references = messageReferences(
     text,
     mentions,

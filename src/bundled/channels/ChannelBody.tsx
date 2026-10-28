@@ -4,7 +4,7 @@ import {
   useConversation,
 } from "../../features/conversation/Conversation";
 import type { PageNavigation } from "../../features/navigation/service";
-import { useChannelWindow } from "../../features/relay/react";
+import { useChannelPresentation } from "../../features/messages/channel-presentation-react";
 import { useRecoveryShown } from "../../features/relay/RecoveryNotice";
 import { clientMetrics } from "../../features/developer/client-metrics";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -49,13 +49,18 @@ export const ChannelBody = memo(function ChannelBody({
   } = useConversation();
   // ChannelWorkspace already keys this lifetime by viewer/scope/generation.
   const continuityKey = useId();
-  const window = useChannelWindow(queries.channels, channelId);
+  const { owner, header: window } = useChannelPresentation(
+    queries,
+    channelId,
+    solo,
+    viewer,
+  );
   useLayoutEffect(() => {
     clientMetrics.channelMounted(channelId);
     return () => clientMetrics.channelUnmounted(channelId);
   }, [channelId]);
   const recoveryShown = useRecoveryShown(queries.recovery);
-  const newest = window.rows.at(-1)?.id;
+  const newest = window.newestId;
   const settled = window.status === "ready" || window.status === "error";
   useEffect(() => {
     if (newest || settled) onContentReady?.(channelId);
@@ -88,7 +93,7 @@ export const ChannelBody = memo(function ChannelBody({
   }, [cached, navigation, window.status]);
   // While the recovery notice shows, it owns the one Retry now; an empty
   // failed timeline waits for it instead of offering a second Retry.
-  if (window.status === "error" && !window.rows.length && !recoveryShown)
+  if (window.status === "error" && !window.rowCount && !recoveryShown)
     return (
       <div
         className={`${styles.empty} ${styles.timelinePlaceholder}`}
@@ -103,7 +108,7 @@ export const ChannelBody = memo(function ChannelBody({
         </Button>
       </div>
     );
-  if (holding || (window.status !== "ready" && !window.rows.length))
+  if (holding || (window.status !== "ready" && !window.rowCount))
     return (
       <div
         className={`${styles.empty} ${styles.timelinePlaceholder}`}
@@ -117,7 +122,7 @@ export const ChannelBody = memo(function ChannelBody({
     <ConversationTimeline
       continuityKey={continuityKey}
       viewer={viewer}
-      window={window}
+      presentation={owner}
       launchPending={
         !cached &&
         !window.error &&

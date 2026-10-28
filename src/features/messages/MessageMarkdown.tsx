@@ -433,7 +433,25 @@ function observeTableOverflow(table: HTMLTableElement | null) {
   };
 }
 
-export function MessageMarkdown({
+export function MessageMarkdown(
+  props: Omit<Parameters<typeof MessageMarkdownContent>[0], "resolveName"> & {
+    resolveName?: ((id: string, fallback: string) => string) | undefined;
+  },
+) {
+  return props.resolveName ? (
+    <MessageMarkdownContent {...props} resolveName={props.resolveName} />
+  ) : (
+    <LiveNamedMarkdown {...props} />
+  );
+}
+function LiveNamedMarkdown(props: Parameters<typeof MessageMarkdown>[0]) {
+  const resolveName = useChannelIdentityNames(
+    props.session,
+    props.row.channelId,
+  );
+  return <MessageMarkdownContent {...props} resolveName={resolveName} />;
+}
+function MessageMarkdownContent({
   row,
   directory = emptyReferenceDirectory,
   session,
@@ -446,8 +464,10 @@ export function MessageMarkdown({
   largeEmoji = false,
   interactive = true,
   staticMentions = false,
+  resolveName,
 }: {
   row: ChannelMessage;
+  resolveName: (id: string, fallback: string) => string;
   directory?: typeof emptyReferenceDirectory;
   session?: RelaySession | ComposerSession | undefined;
   scope?: string | undefined;
@@ -461,7 +481,6 @@ export function MessageMarkdown({
   /** Preserve signed mention presentation when this surface cannot open profiles. */
   staticMentions?: boolean | undefined;
 }) {
-  const resolveName = useChannelIdentityNames(session, row.channelId);
   const prepared = useMemo(() => prepareMarkdown(row.content), [row.content]);
   if (prepared.kind === "plain")
     return <div className={styles.plainText}>{prepared.content}</div>;
@@ -545,6 +564,7 @@ function PreparedMessageMarkdown({
         <span key={key}>{renderLink(part.url, part.label)}</span>
       ) : (
         <ReferenceText
+          resolveName={resolveName}
           channelId={row.channelId}
           key={key}
           text={part.text}

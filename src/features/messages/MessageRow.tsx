@@ -1,3 +1,9 @@
+import { useContext } from "react";
+import type { RowDirectory, RowPermissions } from "./channel-presentation";
+import {
+  ChannelRowPresentationContext,
+  usePresentedNames,
+} from "./channel-presentation-react";
 import { Collapsible } from "@base-ui/react/collapsible";
 import { formatItemTimestamp } from "../../shared/datetime";
 import { ProfilePeek } from "../profiles/ProfilePeek";
@@ -166,8 +172,62 @@ const FullMessageRow = memo(function MessageRow(props: MessageContentProps) {
     <MessageRowContent {...props} />
   );
 });
-function MessageRowContent({
+function MessageRowContent(props: MessageContentProps) {
+  const facts = useContext(ChannelRowPresentationContext);
+  return facts?.row === props.row ? (
+    <MessageRowDisplay
+      {...props}
+      directory={facts.directory}
+      permissions={facts.permissions}
+    />
+  ) : (
+    <LiveMessageRowContent {...props} />
+  );
+}
+function LiveMessageRowContent(props: MessageContentProps) {
+  const directory = useReferenceDirectory(
+    props.session,
+    props.participantProfiles,
+  );
+  const resolveName = useChannelIdentityNames(
+    props.session,
+    props.row.channelId,
+  );
+  const channels = props.session?.channels;
+  const listed = useListedChannel(
+    channels,
+    props.row.channelId,
+    (channel) => !!channel,
+  );
+  const cached = useListedChannel(
+    channels,
+    props.row.channelId,
+    (channel) => !!channel?.cached,
+  );
+  const archived = useListedChannel(
+    channels,
+    props.row.channelId,
+    (channel) => !!channel?.archived,
+  );
+  const readOnly = useListedChannel(
+    channels,
+    props.row.channelId,
+    (channel) => !!channel?.readOnly,
+  );
+  return (
+    <MessageRowDisplay
+      {...props}
+      directory={directory}
+      permissions={{ listed, cached, archived, readOnly }}
+      liveResolveName={resolveName}
+    />
+  );
+}
+function MessageRowDisplay({
   row,
+  directory,
+  permissions,
+  liveResolveName,
   staticMentions,
   shownRow,
   renderMessage,
@@ -203,10 +263,12 @@ function MessageRowContent({
   onMediaTime,
   onOpenMediaReview,
   agentPubkeys,
-}: MessageContentProps) {
+}: MessageContentProps & {
+  directory: RowDirectory;
+  permissions: RowPermissions;
+  liveResolveName?: ((id: string, fallback: string) => string) | undefined;
+}) {
   const [avatarFocused, setAvatarFocused] = useState(false);
-  const resolveName = useChannelIdentityNames(session, row.channelId);
-  const directory = useReferenceDirectory(session, participantProfiles);
   const reactions = row.reactions;
   const threadUnread = useThreadUnread(
     row.replyCount > 0 && onOpenThread ? unread : undefined,
@@ -227,27 +289,7 @@ function MessageRowContent({
     (url: string) => onOpenLink(url, { rootId }),
     [onOpenLink, rootId],
   );
-  const channels = session?.channels;
-  const listed = useListedChannel(
-    channels,
-    row.channelId,
-    (channel) => !!channel,
-  );
-  const cached = useListedChannel(
-    channels,
-    row.channelId,
-    (channel) => !!channel?.cached,
-  );
-  const archived = useListedChannel(
-    channels,
-    row.channelId,
-    (channel) => !!channel?.archived,
-  );
-  const readOnly = useListedChannel(
-    channels,
-    row.channelId,
-    (channel) => !!channel?.readOnly,
-  );
+  const { listed, cached, archived, readOnly } = permissions;
   const unreadLabel =
     threadUnread?.manual === "local-only"
       ? "Thread marked unread on this device only"
@@ -256,6 +298,34 @@ function MessageRowContent({
         : (threadUnread?.observedCount ?? 0) > 0
           ? `Observed unread replies${threadUnread?.freshness === "stale" ? "; may be out of date" : ""}. Not an exact total.`
           : undefined;
+  const avatarShape =
+    row.agentEnvelope || agentPubkeys?.has(row.authorId) || profile?.isAgent
+      ? "squircle"
+      : "circle";
+  const presence = usePresenceStatus(
+    !row.workflowOwnerId && avatarShape === "squircle"
+      ? session?.presence
+      : undefined,
+    row.authorId,
+  );
+  const agentAuthor = !row.workflowOwnerId && avatarShape === "squircle";
+  const owner = useProfileOwner(
+    session,
+    agentAuthor && !stackPrevious ? row.authorId : undefined,
+  );
+  const projectedResolveName = usePresentedNames(session, row.channelId, [
+    row.authorId,
+    ...(row.workflowOwnerId ? [row.workflowOwnerId] : []),
+    ...row.mentions,
+    ...(row.mentionReferences ?? []),
+    ...row.participants,
+    ...row.reactions.flatMap((reaction) =>
+      reaction.events.map((event) => event.authorId),
+    ),
+    ...threadAgents.map((agent) => agent.pubkey),
+    ...(owner ? [owner.id] : []),
+  ]);
+  const resolveName = liveResolveName ?? projectedResolveName;
   const workingLabel = threadAgents.length
     ? `${threadAgents
         .map(({ pubkey, name }) => resolveName(pubkey, name))
@@ -302,21 +372,6 @@ function MessageRowContent({
       </MenuIcon>
       View activity
     </MenuItem>
-  );
-  const avatarShape =
-    row.agentEnvelope || agentPubkeys?.has(row.authorId) || profile?.isAgent
-      ? "squircle"
-      : "circle";
-  const presence = usePresenceStatus(
-    !row.workflowOwnerId && avatarShape === "squircle"
-      ? session?.presence
-      : undefined,
-    row.authorId,
-  );
-  const agentAuthor = !row.workflowOwnerId && avatarShape === "squircle";
-  const owner = useProfileOwner(
-    session,
-    agentAuthor && !stackPrevious ? row.authorId : undefined,
   );
   // The viewer's own agents carry only the agent mark.
   const ownerLabel =
@@ -508,6 +563,7 @@ function MessageRowContent({
       onOpenLink={openLink}
       canOpenLink={canOpenLink}
       participantProfiles={participantProfiles}
+      resolveName={resolveName}
       largeEmoji={emojiOnly}
     />
   );
@@ -1304,14 +1360,48 @@ export const MessageRow = memo(function AudienceMessageRow(
 });
 
 function AgentsMessageRow(props: MessageRowProps) {
-  const { row, session, media, participantProfiles, agentPubkeys } = props;
+  const facts = useContext(ChannelRowPresentationContext);
+  return facts?.row === props.row ? (
+    <AgentsMessageRowContent {...props} directory={facts.directory} />
+  ) : (
+    <LiveAgentsMessageRow {...props} />
+  );
+}
+function LiveAgentsMessageRow(props: MessageRowProps) {
+  const resolveName = useChannelIdentityNames(
+    props.session,
+    props.row.channelId,
+  );
+  const directory = useReferenceDirectory(
+    props.session,
+    props.participantProfiles,
+  );
+  return (
+    <AgentsMessageRowContent
+      {...props}
+      directory={directory}
+      liveResolveName={resolveName}
+    />
+  );
+}
+function AgentsMessageRowContent(
+  props: MessageRowProps & {
+    directory: RowDirectory;
+    liveResolveName?: ((id: string, fallback: string) => string) | undefined;
+  },
+) {
+  const { row, session, media, agentPubkeys, directory } = props;
   const [open, setOpen] = useState(false);
   const keepMounted = props.keepMounted;
   useEffect(() => {
     if (open) return keepMounted?.(row.id);
   }, [open, keepMounted, row.id]);
-  const resolveName = useChannelIdentityNames(session, row.channelId);
-  const directory = useReferenceDirectory(session, participantProfiles);
+  const projectedName = usePresentedNames(session, row.channelId, [
+    row.authorId,
+    ...row.mentions,
+    ...(row.mentionReferences ?? []),
+  ]);
+  const resolveName = props.liveResolveName ?? projectedName;
   const { recipients, body } = useMemo(
     () =>
       addressedMessage(

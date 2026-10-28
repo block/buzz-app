@@ -1,4 +1,23 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The history region must support keyboard scrolling.
+import {
+  createContext,
+  useContext,
+  useSyncExternalStore,
+  memo,
+  type ReactElement,
+} from "react";
+import type {
+  ChannelPresentation,
+  ChannelPresentationView,
+  ChannelRowPresentation,
+} from "./channel-presentation";
+import {
+  ChannelPresentationContext,
+  ChannelRowPresentationContext,
+  useChannelRow,
+  usePresentedNames,
+} from "./channel-presentation-react";
+import { knownAgentPubkeys } from "../agents/known";
 import { ActivityExpansion } from "./ActivityExpansion";
 import { useChannelIdentityNames } from "../identity-names/react";
 import { useMessageSelectionCopy } from "./selection-copy";
@@ -36,7 +55,7 @@ import { readingPositioned, useReading } from "./use-reading";
 import { useMessageReveal } from "./use-message-reveal";
 import type { PageNavigation } from "../navigation/service";
 import { messageViewKey } from "./view-key";
-import { useKnownAgentPubkeys } from "../agents/use-known";
+
 import { JumpToLatestButton } from "./JumpToLatestButton";
 
 // Native upward scrolling can start on a focused message link or button.
@@ -124,7 +143,10 @@ function positionAt(
       : {}),
   };
 }
-export type ChannelTimelineProps = {
+export type ChannelTimelineInput =
+  | { window: ChannelWindow; presentation?: never }
+  | { presentation: ChannelPresentation; window?: never };
+export type ChannelTimelineProps = ChannelTimelineInput & {
   extensions?: ConversationExtensions | undefined;
   channelId: string;
   scope: string;
@@ -132,7 +154,7 @@ export type ChannelTimelineProps = {
   queries: RelaySession;
   /** A parent keyed by connection generation can preserve its timeline on cache promotion. */
   continuityKey?: string | undefined;
-  window: ChannelWindow;
+
   launchPending?: boolean | undefined;
   /** Solo chats page history on scroll; retain an explicit button for errors. */
   historyControl?: "button" | "scroll";
@@ -187,7 +209,8 @@ function Timeline({
   scope,
   viewer,
   queries,
-  window,
+  window: suppliedWindow,
+  presentation,
   launchPending,
   historyControl = "button",
   onOpenLink,
@@ -203,6 +226,16 @@ function Timeline({
   startsThreads = true,
   activityLane = false,
 }: ChannelTimelineProps) {
+  const projection = useSyncExternalStore(
+    presentation?.subscribeView ?? noSubscription,
+    presentation?.view ?? noPresentation,
+    presentation?.view ?? noPresentation,
+  );
+  const window = projection?.window ?? suppliedWindow;
+  if (!window)
+    throw new Error(
+      "A channel timeline requires its current window or presentation",
+    );
   useMessageSelectionCopy();
   const [initialPosition] = useState(() =>
     transient
@@ -211,11 +244,24 @@ function Timeline({
   );
   const savedPosition = useRef(initialPosition);
   const restoredAnchor = useRef<ReadingPosition["anchor"]>(undefined);
-  const profiles = useRowProfiles(queries.profiles, window.rows);
-  const agentPubkeys = useKnownAgentPubkeys(queries, profiles);
+  const fallbackProfiles = useRowProfiles(
+    presentation ? undefined : queries.profiles,
+    presentation ? noRows : window.rows,
+  );
+  const profiles = projection?.profiles ?? fallbackProfiles;
+  const library = useSyncExternalStore(
+    presentation ? noSubscription : queries.agentChoices.subscribe,
+    presentation ? noLibrary : queries.agentChoices.snapshot,
+    presentation ? noLibrary : queries.agentChoices.snapshot,
+  );
+  const agentPubkeys = useMemo(
+    () => projection?.agentPubkeys ?? knownAgentPubkeys(profiles, library),
+    [projection?.agentPubkeys, profiles, library],
+  );
   const visibleRows = useMemo(
     () =>
-      chatPresentation
+      projection?.rawRows ??
+      (chatPresentation
         ? withoutStartingAgents(
             window.rows,
             viewer,
@@ -223,8 +269,9 @@ function Timeline({
             // Live trimming can drop the chat's start without restoring hasMore.
             !window.hasMore && !window.historyLimited,
           )
-        : window.rows,
+        : window.rows),
     [
+      projection?.rawRows,
       window.rows,
       window.hasMore,
       window.historyLimited,
@@ -233,13 +280,17 @@ function Timeline({
       agentPubkeys,
     ],
   );
-  const rows = useMemo(() => membershipRows(visibleRows), [visibleRows]);
+  const rows = useMemo(
+    () => projection?.rows ?? membershipRows(visibleRows),
+    [projection?.rows, visibleRows],
+  );
   const [expandedActivity, setExpandedActivity] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
   const activity = useMemo(
-    () => (chatPresentation ? activityGroups(rows) : []),
-    [rows, chatPresentation],
+    () =>
+      projection?.activity ?? (chatPresentation ? activityGroups(rows) : []),
+    [projection?.activity, rows, chatPresentation],
   );
   // Resolve a saved anchor once, before measuring initial geometry. A bottom
   // restore ignores it; absent/visible anchors must not expand on later loads.
@@ -254,21 +305,29 @@ function Timeline({
     if (older?.includes(activityRestore))
       setExpandedActivity((expanded) => new Set([...expanded, ...older]));
   }
-  const disclosures = new Map(
-    activity.map((group) => [
-      group.ids[0],
-      {
-        ...group,
-        expanded: group.ids
-          .slice(0, -RECENT_ACTIVITY_COUNT)
-          .some((id) => expandedActivity.has(id)),
-      },
-    ]),
+  const disclosures = useMemo(
+    () =>
+      new Map(
+        activity.map((group) => [
+          group.ids[0],
+          {
+            ...group,
+            expanded: group.ids
+              .slice(0, -RECENT_ACTIVITY_COUNT)
+              .some((id) => expandedActivity.has(id)),
+          },
+        ]),
+      ),
+    [activity, expandedActivity],
   );
-  const hiddenActivity = new Set(
-    [...disclosures.values()].flatMap((group) =>
-      group.expanded ? [] : group.ids.slice(0, -RECENT_ACTIVITY_COUNT),
-    ),
+  const hiddenActivity = useMemo(
+    () =>
+      new Set(
+        [...disclosures.values()].flatMap((group) =>
+          group.expanded ? [] : group.ids.slice(0, -RECENT_ACTIVITY_COUNT),
+        ),
+      ),
+    [disclosures],
   );
   const resolveName = useChannelIdentityNames(queries, channelId);
   const [geometry] = useState(() => geometryFor(queries.channels));
@@ -291,10 +350,14 @@ function Timeline({
       });
   }, []);
   // Folding, stacking, and cached measurements share the same visibility.
-  const foldedActivity = new Set(
-    [...hiddenActivity].filter(
-      (id) => id !== focusedMessageId && !pinnedIds.has(id),
-    ),
+  const foldedActivity = useMemo(
+    () =>
+      new Set(
+        [...hiddenActivity].filter(
+          (id) => id !== focusedMessageId && !pinnedIds.has(id),
+        ),
+      ),
+    [hiddenActivity, focusedMessageId, pinnedIds],
   );
   const contentSignature = useMemo(
     () => geometrySignature(visibleRows, profiles, resolveName),
@@ -991,6 +1054,109 @@ function Timeline({
     if (scroller.current && scroller.current.scrollTop <= 0)
       loadNearTop(scroller.current);
   };
+  const toggleActivity = useCallback((disclosure: ActivityDisclosure) => {
+    intent.current++;
+    follow.current = false;
+    userScrolled.current = true;
+    restoredAnchor.current = undefined;
+    setExpandedActivity((expanded) => {
+      const next = new Set(expanded);
+      for (const id of disclosure.expanded
+        ? disclosure.ids
+        : disclosure.ids.slice(0, -RECENT_ACTIVITY_COUNT)) {
+        if (disclosure.expanded) next.delete(id);
+        else next.add(id);
+      }
+      return next;
+    });
+  }, []);
+  const environment = useMemo<RowEnvironment>(
+    () => ({
+      queries,
+      scope,
+      viewer,
+      channelId,
+      extensions,
+      onOpenLink,
+      canOpenLink,
+      onOpenThread,
+      onOpenMediaReview,
+      startsThreads,
+      keepRowMounted,
+      disclosures,
+      foldedActivity,
+      toggleActivity,
+    }),
+    [
+      queries,
+      scope,
+      viewer,
+      channelId,
+      extensions,
+      onOpenLink,
+      canOpenLink,
+      onOpenThread,
+      onOpenMediaReview,
+      startsThreads,
+      keepRowMounted,
+      disclosures,
+      foldedActivity,
+      toggleActivity,
+    ],
+  );
+  const committedSlots = useRef<{
+    owner: ChannelPresentation | undefined;
+    slots: ReadonlyMap<string, ReactElement>;
+  }>({ owner: undefined, slots: new Map() });
+  const slots = useMemo(() => {
+    const next = new Map<string, ReactElement>();
+    if (presentation)
+      for (const id of projection?.ids ?? [])
+        next.set(
+          id,
+          (committedSlots.current.owner === presentation &&
+            committedSlots.current.slots.get(id)) || (
+            <KeyedChannelRow key={id} owner={presentation} id={id} />
+          ),
+        );
+    return next;
+  }, [presentation, projection?.ids]);
+  useLayoutEffect(() => {
+    committedSlots.current = { owner: presentation, slots };
+  }, [presentation, slots]);
+  const slotElements = useMemo(() => [...slots.values()], [slots]);
+  const rowElements = presentation
+    ? slotElements
+    : rows.map((row, index) => {
+        const previousRow = rows[index - 1];
+        const nextRow = rows[index + 1];
+        return renderTimelineRow(
+          {
+            row,
+            previousId: previousRow?.id,
+            nextId: nextRow?.id,
+            stackPrevious: continuesMessageGroup(previousRow, row),
+            stackNext: !!nextRow && continuesMessageGroup(row, nextRow),
+            day:
+              !previousRow ||
+              new Date(previousRow.createdAt * 1000).toDateString() !==
+                new Date(row.createdAt * 1000).toDateString(),
+            last: index === rows.length - 1,
+            profiles,
+            agentPubkeys,
+            profileIds: [],
+            directory: { profiles, channels: [], named: [], agents: [] },
+            permissions: {
+              listed: true,
+              cached: false,
+              archived: false,
+              readOnly: false,
+            },
+          },
+          environment,
+          resolveName,
+        );
+      });
   return (
     <section
       ref={scroller}
@@ -1123,129 +1289,26 @@ function Timeline({
         }
       />
       {width > 0 && (
-        <Virtualizer
-          ref={handle}
-          scrollRef={scroller}
-          // Before Virtua measures its viewport there is no reading position
-          // to preserve; shifting then can freeze its initial empty range.
-          shift={prepend && !!handle.current?.viewportSize}
-          bufferSize={1600}
-          // Reflow must not evict the focused control or a row's open report.
-          keepMounted={keptIndices}
-          as="ol"
-          item="li"
-          startMargin={size.edgeHeight}
-          {...(initialCache.current ? { cache: initialCache.current } : {})}
-        >
-          {rows.map((row, index) => {
-            const disclosure = disclosures.get(row.id);
-            const hidden = foldedActivity.has(row.id);
-            const previousRow = rows[index - 1];
-            const nextRow = rows[index + 1];
-            const day =
-              index === 0
-                ? true
-                : new Date(
-                    (rows[index - 1]?.createdAt ?? 0) * 1000,
-                  ).toDateString() !==
-                  new Date(row.createdAt * 1000).toDateString();
-            return (
-              <Fragment key={row.id}>
-                {disclosure && (
-                  <div
-                    className={styles.activityDisclosure}
-                    data-activity-group-id={row.id}
-                  >
-                    {day && <DayDivider createdAt={row.createdAt} />}
-                    <Button
-                      variant="plain"
-                      size="inline"
-                      shape="control"
-                      aria-expanded={disclosure.expanded}
-                      onClick={(event) => {
-                        event.currentTarget.focus({ preventScroll: true });
-                        // Opening history is explicit reading intent, even at
-                        // the bottom: new activity must not pull it away.
-                        intent.current++;
-                        follow.current = false;
-                        userScrolled.current = true;
-                        restoredAnchor.current = undefined;
-                        const next = new Set(expandedActivity);
-                        for (const id of disclosure.expanded
-                          ? disclosure.ids
-                          : disclosure.ids.slice(0, -RECENT_ACTIVITY_COUNT)) {
-                          if (disclosure.expanded) next.delete(id);
-                          else next.add(id);
-                        }
-                        setExpandedActivity(next);
-                      }}
-                    >
-                      {disclosure.expanded
-                        ? "Show fewer"
-                        : `Show ${disclosure.ids.length - RECENT_ACTIVITY_COUNT} previous ${disclosure.ids.length - RECENT_ACTIVITY_COUNT === 1 ? "step" : "steps"}`}
-                      <CaretDownIcon
-                        className={styles.activityChevron}
-                        aria-hidden="true"
-                      />
-                    </Button>
-                  </div>
-                )}
-                <ActivityExpansion
-                  open={!hidden}
-                  enabled={row.audience === "agents"}
-                >
-                  {row.membership ? (
-                    <MembershipRow
-                      resolveName={resolveName}
-                      names={queries.names}
-                      row={row}
-                      profiles={profiles}
-                      viewer={viewer}
-                      media={queries.media}
-                      agentPubkeys={agentPubkeys}
-                      day={day}
-                      onOpenLink={onOpenLink}
-                      canOpenLink={canOpenLink}
-                    />
-                  ) : (
-                    <MessageRow
-                      stackPrevious={
-                        !!previousRow &&
-                        !foldedActivity.has(previousRow.id) &&
-                        continuesMessageGroup(previousRow, row)
-                      }
-                      stackNext={
-                        !!nextRow &&
-                        !foldedActivity.has(nextRow.id) &&
-                        continuesMessageGroup(row, nextRow)
-                      }
-                      session={queries}
-                      scope={scope}
-                      row={row}
-                      unread={queries.unread}
-                      extensions={extensions}
-                      profile={profiles.get(row.authorId)}
-                      participantProfiles={profiles}
-                      agentPubkeys={agentPubkeys}
-                      media={queries.media}
-                      onOpenLink={onOpenLink}
-                      canOpenLink={canOpenLink}
-                      onOpenThread={onOpenThread}
-                      startsThreads={startsThreads}
-                      {...(onOpenMediaReview ? { onOpenMediaReview } : {})}
-                      retry={queries.outbox?.retry}
-                      keepMounted={keepRowMounted}
-                      day={day && !disclosure}
-                    />
-                  )}
-                </ActivityExpansion>
-                {index === rows.length - 1 && (
-                  <div className={styles.timelineEnd} aria-hidden="true" />
-                )}
-              </Fragment>
-            );
-          })}
-        </Virtualizer>
+        <ChannelPresentationContext.Provider value={presentation}>
+          <RowEnvironmentContext.Provider value={environment}>
+            <Virtualizer
+              ref={handle}
+              scrollRef={scroller}
+              // Before Virtua measures its viewport there is no reading position
+              // to preserve; shifting then can freeze its initial empty range.
+              shift={prepend && !!handle.current?.viewportSize}
+              bufferSize={1600}
+              // Reflow must not evict the focused control or a row's open report.
+              keepMounted={keptIndices}
+              as="ol"
+              item="li"
+              startMargin={size.edgeHeight}
+              {...(initialCache.current ? { cache: initialCache.current } : {})}
+            >
+              {rowElements}
+            </Virtualizer>
+          </RowEnvironmentContext.Provider>
+        </ChannelPresentationContext.Provider>
       )}
       {!rows.length &&
         !window.hasMore &&
@@ -1261,5 +1324,152 @@ function Timeline({
           </div>
         )}
     </section>
+  );
+}
+
+const noSubscription = () => () => {};
+const noPresentation = (): ChannelPresentationView | undefined => undefined;
+const noLibrary = () => undefined;
+const noRows: readonly import("../relay/contracts").ChannelMessage[] = [];
+type ActivityDisclosure = { ids: readonly string[]; expanded: boolean };
+type RowEnvironment = Pick<
+  ChannelTimelineProps,
+  | "queries"
+  | "scope"
+  | "viewer"
+  | "channelId"
+  | "extensions"
+  | "onOpenLink"
+  | "canOpenLink"
+  | "startsThreads"
+> & {
+  onOpenThread: ChannelTimelineProps["onOpenThread"] | undefined;
+  onOpenMediaReview: ChannelTimelineProps["onOpenMediaReview"] | undefined;
+  keepRowMounted(id: string): () => void;
+  disclosures: ReadonlyMap<string | undefined, ActivityDisclosure>;
+  startsThreads: boolean;
+  foldedActivity: ReadonlySet<string>;
+  toggleActivity(disclosure: ActivityDisclosure): void;
+};
+const RowEnvironmentContext = createContext<RowEnvironment | undefined>(
+  undefined,
+);
+const KeyedChannelRow = memo(function KeyedChannelRow({
+  owner,
+  id,
+}: {
+  owner: ChannelPresentation;
+  id: string;
+}) {
+  const environment = useContext(RowEnvironmentContext);
+  if (!environment)
+    throw new Error("A keyed row requires its channel environment");
+  const facts = useChannelRow(owner, id);
+  const resolveName = usePresentedNames(
+    environment.queries,
+    environment.channelId,
+    facts?.row.membership ? facts.profileIds : [],
+  );
+  return facts ? (
+    <ChannelRowPresentationContext.Provider value={facts}>
+      {renderTimelineRow(facts, environment, resolveName)}
+    </ChannelRowPresentationContext.Provider>
+  ) : null;
+});
+function renderTimelineRow(
+  facts: ChannelRowPresentation,
+  environment: RowEnvironment,
+  resolveName: (id: string, fallback: string) => string,
+) {
+  const { row, day, profiles, agentPubkeys } = facts;
+  const {
+    queries,
+    scope,
+    viewer,
+    extensions,
+    onOpenLink,
+    canOpenLink,
+    onOpenThread,
+    onOpenMediaReview,
+    startsThreads,
+    keepRowMounted,
+    disclosures,
+    foldedActivity,
+    toggleActivity,
+  } = environment;
+  const disclosure = disclosures.get(row.id);
+  const hidden = foldedActivity.has(row.id);
+  return (
+    <Fragment key={row.id}>
+      {disclosure && (
+        <div
+          className={styles.activityDisclosure}
+          data-activity-group-id={row.id}
+        >
+          {day && <DayDivider createdAt={row.createdAt} />}
+          <Button
+            variant="plain"
+            size="inline"
+            shape="control"
+            aria-expanded={disclosure.expanded}
+            onClick={(event) => {
+              event.currentTarget.focus({ preventScroll: true });
+              toggleActivity(disclosure);
+            }}
+          >
+            {disclosure.expanded
+              ? "Show fewer"
+              : `Show ${disclosure.ids.length - RECENT_ACTIVITY_COUNT} previous ${disclosure.ids.length - RECENT_ACTIVITY_COUNT === 1 ? "step" : "steps"}`}
+            <CaretDownIcon
+              className={styles.activityChevron}
+              aria-hidden="true"
+            />
+          </Button>
+        </div>
+      )}
+      <ActivityExpansion open={!hidden} enabled={row.audience === "agents"}>
+        {row.membership ? (
+          <MembershipRow
+            resolveName={resolveName}
+            names={queries.names}
+            row={row}
+            profiles={profiles}
+            viewer={viewer}
+            media={queries.media}
+            agentPubkeys={agentPubkeys}
+            day={day}
+            onOpenLink={onOpenLink}
+            canOpenLink={canOpenLink}
+          />
+        ) : (
+          <MessageRow
+            stackPrevious={
+              facts.stackPrevious && !foldedActivity.has(facts.previousId ?? "")
+            }
+            stackNext={
+              facts.stackNext && !foldedActivity.has(facts.nextId ?? "")
+            }
+            session={queries}
+            scope={scope}
+            row={row}
+            unread={queries.unread}
+            extensions={extensions}
+            profile={profiles.get(row.authorId)}
+            participantProfiles={profiles}
+            agentPubkeys={agentPubkeys}
+            media={queries.media}
+            onOpenLink={onOpenLink}
+            canOpenLink={canOpenLink}
+            onOpenThread={onOpenThread}
+            startsThreads={startsThreads}
+            {...(onOpenMediaReview ? { onOpenMediaReview } : {})}
+            retry={queries.outbox?.retry}
+            keepMounted={keepRowMounted}
+            day={day && !disclosure}
+          />
+        )}
+      </ActivityExpansion>
+      {facts.last && <div className={styles.timelineEnd} aria-hidden="true" />}
+    </Fragment>
   );
 }

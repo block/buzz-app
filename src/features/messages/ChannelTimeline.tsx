@@ -336,14 +336,20 @@ function Timeline({
     paging: boolean;
   }>({ order: [], ids: new Set(), floor: 0, paging: false });
   // The reader's anchor row and its offset before this render's rows.
-  const reader = useRef<{ id: string | undefined; top: number; y: number }>({
+  const reader = useRef<{
+    id: string | undefined;
+    top: number;
+    y: number;
+    inset: number;
+  }>({
     id: undefined,
     top: 0,
     y: 0,
+    inset: 0,
   });
   const intent = useRef(0);
   const heldReader = useRef<
-    { id: string; y: number; intent: number } | undefined
+    { id: string; y: number; inset: number; intent: number } | undefined
   >(undefined);
   const upwardGesture = useRef<false | "candidate" | "moving">(false);
   const gestureFrame = useRef<number | undefined>(undefined);
@@ -563,6 +569,7 @@ function Timeline({
     id: previous[held],
     top: held < 0 ? 0 : (handle.current?.getItemOffset(held) ?? 0),
     y: retained?.y ?? savedPosition.current?.anchor?.y ?? 0,
+    inset: retained?.inset ?? 0,
   };
   const prepend =
     !!previous.length &&
@@ -613,25 +620,32 @@ function Timeline({
     // A live append must not choose a newly inserted row while the older
     // page is still measuring; keep the reader's original row and offset.
     let y = reader.current.y;
-    const anchor = { id, y, intent: intent.current };
-    heldReader.current = anchor;
     // Virtua unmounts rows the reader leaves, but still places them. Track the
     // row there too, or remounting it would restore where the reader was. The
     // message can sit inside its item (a closed agents-audience row is inset),
-    // so keep the inset it had while mounted.
-    let inset = 0;
+    // so keep the inset it had while mounted, across holds of the same row.
+    const anchor = {
+      id,
+      y,
+      inset: reader.current.inset,
+      intent: intent.current,
+    };
+    heldReader.current = anchor;
     const mounted = () => {
       const row = message();
       if (!row) return undefined;
       const edge = row.getBoundingClientRect().top;
-      inset = edge - (row.closest("li")?.getBoundingClientRect().top ?? edge);
+      anchor.inset =
+        edge - (row.closest("li")?.getBoundingClientRect().top ?? edge);
       return edge;
     };
     mounted();
     const read = () => {
       const row =
         mounted() ??
-        list.getBoundingClientRect().top + virtua.getItemOffset(index) + inset;
+        list.getBoundingClientRect().top +
+          virtua.getItemOffset(index) +
+          anchor.inset;
       anchor.y = y = row - element.getBoundingClientRect().top;
     };
     let height = list.style.height;

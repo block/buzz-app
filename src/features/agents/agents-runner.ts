@@ -4,6 +4,7 @@
 // What it needs from the Manager, the part the screens use, it asks through
 // `RunnerManager`; those facts and requests are what will cross the agents
 // link when the Runner moves to its own page.
+import { bytesToHex } from "nostr-tools/utils";
 import { AgentConfigStore } from "./agent-config";
 import { excerpt, mentionFacts, type ClassifierContext } from "./classifier";
 import { isSynced, resolveStart } from "./agent-start";
@@ -24,7 +25,13 @@ import type { AgentIdentity } from "./native";
 import { ownerReads } from "./reads";
 import { AgentRecords, EMPTY, type Member } from "./records";
 import { AgentRunners, type Connection, type RunnerHost } from "./runner";
-import type { Agent, ConfigBinding, RegisteredAgentType } from "./service";
+import type {
+  Agent,
+  AgentWake,
+  ConfigBinding,
+  HandoffSource,
+  RegisteredAgentType,
+} from "./service";
 import { soloChat } from "./solo-chat";
 import { nameSoloChat } from "./solo-chat-name";
 import type { AgentStore } from "./state";
@@ -43,7 +50,6 @@ export type RunnerManager = Pick<
   | "team"
   | "createAgent"
   | "updateAgent"
-  | "handoff"
   | "templates"
   | "classifier"
   | "keyStatus"
@@ -58,8 +64,6 @@ export type RunnerManager = Pick<
     changed(): void;
     /** The community's relay, while the viewer is in it. */
     open(origin: string): RelayData | undefined;
-    /** The membership of this key, unless it was deleted. */
-    liveMember(key: AgentKey): Member | undefined;
     types(): readonly RegisteredAgentType[];
     /** The settings a new agent of this type starts with. */
     defaults(pubkey: string, type: RegisteredAgentType): AgentRecord;
@@ -83,6 +87,8 @@ export class AgentsRunner {
     running: readonly Agent[];
     interrupted: readonly Agent[];
   }> = { running: [], interrupted: [] };
+  /** The memberships it last decided from. */
+  private identities: readonly Member[] = [];
 
   constructor(
     storage: AgentStore,
@@ -161,13 +167,13 @@ export class AgentsRunner {
       scope: (agent) => this.connections.binding(agent)?.scope,
       saved: (key) => this.records.saved(key),
       record: (key) => {
-        const member = manager.liveMember(key);
+        const member = this.liveMember(key);
         if (!member) throw new Error("No such agent on this device");
         return this.records.recordOf(member);
       },
       change: async (key, apply) => {
         const record = await this.records.change(key, () => {
-          const member = manager.liveMember(key);
+          const member = this.liveMember(key);
           if (!member) throw new Error("No such agent on this device");
           // In turn, so this is the newest saved record.
           return apply(this.records.recordOf(member));
@@ -216,7 +222,8 @@ export class AgentsRunner {
           .map(({ key, title }) => ({ key, title })),
       createAgent: (agent, input) => manager.createAgent(agent, input),
       updateAgent: (agent, input) => manager.updateAgent(agent, input),
-      handoff: (agent, handoff) => manager.handoff(agent, handoff),
+      handoff: (agent, { from, ...wake }) =>
+        this.wake(agent.key, wake, { from }),
       templates: (agent) => manager.templates(agent),
       tabs: (agent) => {
         const session = this.connections.binding(agent)?.session;
@@ -264,6 +271,7 @@ export class AgentsRunner {
    * Delete or Remove stops it, and its types' plugins stop what they keep for
    * it. Then each runner goes on with what it can do now. */
   update(identities: readonly Member[], viewer: string | undefined) {
+    this.identities = identities;
     const live = identities.filter(
       (identity) => !identity.deleted && !identity.deleting,
     );
@@ -342,6 +350,36 @@ export class AgentsRunner {
   ready(key: AgentKey) {
     const agent = this.agent(key);
     return agent && this.connections.binding(agent) ? agent : undefined;
+  }
+  /** The membership of this key, unless it was deleted. */
+  liveMember(key: AgentKey) {
+    return this.identities.find(
+      (identity) => identity.key === key && !identity.deleted,
+    );
+  }
+  /** Queues a plugin's wake, or the agent's own handoff, in the agent's
+   * mention lane. Throws when this copy does not run the agent, or the lane
+   * is full. */
+  wake(
+    key: AgentKey,
+    { channel, root, text }: AgentWake,
+    source: Readonly<{ plugin: string } | { from: HandoffSource }>,
+  ) {
+    if (!channel || !text.trim())
+      throw new Error("A wake needs a channel and text");
+    // Harnesses find the thread from a well-formed id; any other would leave
+    // them answering at the wake's own id.
+    if (root !== undefined && !/^[0-9a-f]{64}$/i.test(root))
+      throw new Error("A wake's root must be the thread's 64-hex event id");
+    this.runners.wakeIn(key, {
+      type: "plugin",
+      ...source,
+      channel,
+      ...(root ? { root: root.toLowerCase() } : {}),
+      text,
+      id: bytesToHex(crypto.getRandomValues(new Uint8Array(32))),
+      at: Date.now(),
+    });
   }
   /** The running agent's community, while the Runner is connected to it. */
   relay(key: AgentKey) {

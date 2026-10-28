@@ -1377,7 +1377,6 @@ export class AgentsService extends Service implements Agents {
       ownershipChanged: () => this.notify(),
       changed: () => this.update(),
       open: (origin) => this.communities.open(origin),
-      liveMember: (key) => this.liveMember(key),
       types: () => this.types(),
       defaults,
       configBinding: this.configBinding,
@@ -1472,8 +1471,6 @@ export class AgentsService extends Service implements Agents {
         this.notify();
         return { requestId: id, saved: false };
       },
-      handoff: (agent, { from, ...wake }) =>
-        this.wakeIn(agent.key, wake, { from }),
       templates: (agent) => {
         // The agents Agents shows for this community, as the create dialog
         // offers a template's.
@@ -1921,28 +1918,7 @@ export class AgentsService extends Service implements Agents {
   wake(key: AgentKey, wake: AgentWake) {
     const plugin = this.ctx.pluginOwner?.id;
     if (!plugin) throw new Error("Only a plugin wakes an agent");
-    this.wakeIn(key, wake, { plugin });
-  }
-  private wakeIn(
-    key: AgentKey,
-    { channel, root, text }: AgentWake,
-    source: Readonly<{ plugin: string } | { from: HandoffSource }>,
-  ) {
-    if (!channel || !text.trim())
-      throw new Error("A wake needs a channel and text");
-    // Harnesses find the thread from a well-formed id; any other would leave
-    // them answering at the wake's own id.
-    if (root !== undefined && !/^[0-9a-f]{64}$/i.test(root))
-      throw new Error("A wake's root must be the thread's 64-hex event id");
-    this.runner.runners.wakeIn(key, {
-      type: "plugin",
-      ...source,
-      channel,
-      ...(root ? { root: root.toLowerCase() } : {}),
-      text,
-      id: bytesToHex(crypto.getRandomValues(new Uint8Array(32))),
-      at: Date.now(),
-    });
+    this.runner.wake(key, wake, { plugin });
   }
   snapshot = () => this.state;
   subscribe = (listener: () => void) => {

@@ -491,11 +491,15 @@ export function Welcome({
     }
   };
   const denied = joinError?.denied;
-  // What Continue on the failed page leaves undone once a key is saved.
-  const skipped =
-    progress.status === "failed" && state.status === "ready"
-      ? SKIPPED[progress.skipsLink ? "link" : "backup"]
-      : undefined;
+  // A failure once a key is saved. A failed link (or the unlink before it)
+  // blocks: nothing links the key later, so letting the user past it would
+  // leave the key on this device only, and the page offers the error and Try
+  // again until Builderlab answers. A failed backup may be skipped: a later
+  // sign-in runs the backup again.
+  const failedAfterKey =
+    progress.status === "failed" && state.status === "ready";
+  const blocked = failedAfterKey && progress.skipsLink;
+  const skipped = failedAfterKey && !blocked ? SKIPPED_BACKUP : undefined;
   /**
    * The pages setup rests on. The first two may be reached before any sign-in,
    * for a community no tenant hosts; the rest only after one. A pause this
@@ -793,10 +797,18 @@ export function Welcome({
         <Failure
           title="Couldn’t finish setup"
           error={progress.error}
-          note={skipped?.note}
+          note={blocked ? UNLINKED_NOTE : skipped?.note}
           backLabel={skipped?.label}
-          onBack={skipped ? () => void setup.start(finish()) : backToLanding}
-          onRetry={progress.retryable ? () => void setup.retry() : undefined}
+          onBack={
+            blocked
+              ? undefined
+              : skipped
+                ? () => void setup.start(finish())
+                : backToLanding
+          }
+          onRetry={
+            blocked || progress.retryable ? () => void setup.retry() : undefined
+          }
         />
       ) : auth.error ? (
         <Failure
@@ -846,20 +858,17 @@ function npubOf(state: ReturnType<Identity["snapshot"]>) {
 }
 
 /**
- * The failed page's way on once a key is saved. A failed link or unlink skips
- * the link too, so the key is not the account's (and, after an unlink, the old
- * key stays bound), and with it the backup, which needs a linked key;
- * otherwise only the backup is skipped.
+ * What a failed link or unlink leaves undone: the key is not the account's
+ * (and, after an unlink, the old key stays bound), and with it the backup,
+ * which needs a linked key. The page has no way past it but Try again.
  */
-const SKIPPED = {
-  link: {
-    label: "Continue without linking",
-    note: "Your key is saved on this device, but it isn’t linked to your account or backed up yet.",
-  },
-  backup: {
-    label: "Continue without backup",
-    note: "Your key is saved on this device, but it isn’t backed up yet.",
-  },
+const UNLINKED_NOTE =
+  "Your key is saved on this device, but it isn’t linked to your account or backed up yet.";
+
+/** The failed page's way on when only the backup is left undone. */
+const SKIPPED_BACKUP = {
+  label: "Continue without backup",
+  note: "Your key is saved on this device, but it isn’t backed up yet.",
 } as const;
 
 function Failure({
@@ -877,7 +886,8 @@ function Failure({
   error: string;
   /** Setup failed after the key was saved: say it is not lost, and what is undone. */
   note?: string | undefined;
-  onBack: () => void;
+  /** The way back or on; absent where the failure blocks and only Try again is offered. */
+  onBack?: (() => void) | undefined;
   backLabel?: string | undefined;
   /** Shown as the user's shareable identity, with Copy, when set. */
   publicKey?: string | undefined;
@@ -914,9 +924,11 @@ function Failure({
       {publicKey && <PublicKeyPanel publicKey={publicKey} />}
       {/* Footer order: secondary first, primary last. */}
       <div className="flex gap-3">
-        <Button onClick={onBack} disabled={!!busy}>
-          {backLabel}
-        </Button>
+        {onBack && (
+          <Button onClick={onBack} disabled={!!busy}>
+            {backLabel}
+          </Button>
+        )}
         {onRetry && (
           <Button variant="prominent" onClick={onRetry} disabled={!!busy}>
             {busy === "read" ? "Trying again…" : "Try again"}

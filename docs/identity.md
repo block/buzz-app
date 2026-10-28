@@ -209,13 +209,13 @@ check, unlink or link, no answer, too many requests (HTTP 429) or a server
 error (HTTP 5xx), and for the link also a link request that expired, was
 already used or could not be found, since Try again asks for a new one; for a
 backup, Builderlab being unreachable or slow to confirm. A lapsed sign-in is
-never retried, since Try again would send the same sign-in. Once a key is on the device, the page also offers **Continue without
-linking** after a failed unlink or link, otherwise **Continue without
-backup**. Either writes nothing and skips the remaining steps for the end of
-the lane below (Finding communities on a linked account, then the restore).
-Continuing after a failed unlink or link leaves the new key unlinked and not
-backed up; after a failed unlink, the old key also stays bound. Before a key
-exists, the page offers **Back** to the welcome screen instead.
+never retried, since Try again would send the same sign-in. A failed unlink or
+link with a key on the device blocks: nothing links the key later, so the page
+offers only **Try again**, whatever the failure, and no way past it. A failed
+backup also offers **Continue without backup**, which writes nothing and skips
+the remaining steps for the end of the lane below (Finding communities on a
+linked account, then the restore); a later sign-in runs the backup again.
+Before a key exists, the page offers **Back** to the welcome screen instead.
 
 Within one first-run session the Join page exits only through a join or a
 restored community; there is no skip. That holds only while the app stays

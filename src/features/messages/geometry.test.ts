@@ -1,5 +1,6 @@
+// @vitest-environment jsdom
 import { expect, it } from "vitest";
-import { geometryFor, geometrySignature } from "./geometry";
+import { geometryFor, geometrySignature, savedGeometry } from "./geometry";
 import { createRelaySession } from "../relay/session";
 import { foldMessages } from "../relay/fold";
 import { keypair, message } from "../relay/testing";
@@ -62,4 +63,35 @@ it("invalidates cached heights when the workflow owner name arrives or changes",
   expect(geometrySignature(rows, before, resolve)).not.toBe(
     geometrySignature(rows, after, resolve),
   );
+});
+
+it("keeps the last open timeline's geometry per viewer scope, gated by exact content and width", () => {
+  localStorage.clear();
+  const cache = [[100, 200], 150] as unknown as Parameters<
+    ReturnType<typeof savedGeometry>["set"]
+  >[3];
+  const saved = savedGeometry("scope-a");
+  saved.set("a", "v1", 900, cache);
+  expect(saved.get("a", "v1", 900)).toEqual(cache);
+  expect(savedGeometry("scope-a").get("a", "v1", 900)).toEqual(cache);
+  expect(saved.get("a", "v2", 900)).toBeUndefined();
+  expect(saved.get("a", "v1x", 900)).toBeUndefined();
+  expect(saved.get("a", "v1", 901)).toBeUndefined();
+  expect(savedGeometry("scope-b").get("a", "v1", 900)).toBeUndefined();
+  // The same text bound as the session cache: long histories measure afresh.
+  const long = "x".repeat(256 * 1024 + 1);
+  saved.set("long", long, 900, cache);
+  expect(saved.get("long", long, 900)).toBeUndefined();
+  saved.set("b", "v1", 900, cache);
+  expect(saved.get("a", "v1", 900)).toBeUndefined();
+  expect(saved.get("b", "v1", 900)).toEqual(cache);
+  saved.set("a", "v1", 900, cache);
+  localStorage.setItem(
+    'buzz-geometry.v1:"scope-a"',
+    JSON.stringify({ channelId: "a", key: "x", width: 900, cache: [["1"]] }),
+  );
+  expect(saved.get("a", "v1", 900)).toBeUndefined();
+  localStorage.setItem('buzz-geometry.v1:"scope-a"', "{");
+  expect(saved.get("a", "v1", 900)).toBeUndefined();
+  localStorage.clear();
 });

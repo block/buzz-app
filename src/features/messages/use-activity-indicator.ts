@@ -14,6 +14,7 @@ export function useActivityIndicator(
   row: ChannelMessage,
   eligible: boolean,
   participants?: readonly string[],
+  requestId?: string,
 ) {
   const typing = useSyncExternalStore(
     session?.typing?.subscribe ?? noSubscribe,
@@ -33,14 +34,19 @@ export function useActivityIndicator(
         row.threadRootId,
       )
     : undefined;
-  const liveAgents = [...(detail ?? [])]
-    .filter(
-      ([agent, value]) =>
-        represented.has(agent) &&
-        value.roots.includes(row.threadRootId ?? null),
-    )
+  // Top-level harness work uses its triggering request as the root, while its
+  // published channel activity has no thread root. Match that known request,
+  // never an arbitrary working thread in the same channel.
+  const matches = (root: string | null | undefined) =>
+    root === (row.threadRootId ?? null) ||
+    (!row.threadRootId && !!requestId && root === requestId);
+  const liveDetails = [...(detail ?? [])].filter(
+    ([agent, value]) => represented.has(agent) && value.roots.some(matches),
+  );
+  const liveAgents = liveDetails
+    .filter(([, value]) => value.roots.every(matches))
     .map(([agent]) => agent);
-  const live = liveAgents.length > 0;
+  const live = liveDetails.length > 0;
   useActivityTypingReplacement(
     session
       ? {

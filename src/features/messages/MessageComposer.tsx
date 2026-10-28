@@ -6,6 +6,7 @@ import { ComposerChatCards } from "./ComposerChatCards";
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import { TypingPresentation } from "../conversation/typing-presentation";
 import { useTypingBroadcast } from "./useTypingBroadcast";
+import { TypingIndicator } from "./TypingIndicator";
 import { useEffectEvent } from "react";
 import { useMessageEditScope } from "./MessageEditScope";
 import { useMessageDeletion } from "./MessageManagement";
@@ -2036,6 +2037,14 @@ function Composer({
   if (attachmentsExiting && editing.target) setAttachmentsExiting(false);
   const context = (
     <div className={styles.composerContext}>
+      {!cached && !submission && (
+        <TypingIndicator
+          audience="humans"
+          session={session}
+          channelId={channelId}
+          threadRootId={threadRootId}
+        />
+      )}
       {host && extensions?.accessories && (
         <ComposerAccessories
           registry={extensions.accessories}

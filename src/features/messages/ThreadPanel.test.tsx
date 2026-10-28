@@ -1692,6 +1692,43 @@ it("a retained reader reveals its exact selected message, again for each new req
   expect(revealedReply()).toBe(false);
 });
 
+it("reopens collapsed activity for a new reveal of the same step", async () => {
+  const h = messagesHarness();
+  const replies = ["d", "e"].map((id, index) => ({
+    ...row,
+    id: id.repeat(64),
+    content: `Agent step ${index}`,
+    audience: "agents" as const,
+    threadRootId: row.id,
+    replyToId: row.id,
+    createdAt: 2 + index,
+  }));
+  h.snapshot.replies = replies;
+  h.snapshot.target = replies[1];
+  h.snapshot.targetStatus = "ready";
+  const props = h.props as ThreadPanelProps;
+  Object.assign(props, {
+    messageId: replies[1].id,
+    retainThread: true,
+    revealSelected: true,
+    revealRequest: 1,
+  });
+  h.render();
+  fireEvent.click(
+    await screen.findByRole("button", { name: /Collapse activity history/ }),
+  );
+  expect(
+    screen.getByRole("button", { name: /Show activity history/ }),
+  ).toHaveAttribute("aria-expanded", "false");
+  props.revealRequest = 2;
+  h.rerenderProps();
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: /Collapse activity history/ }),
+    ).toHaveAttribute("aria-expanded", "true"),
+  );
+});
+
 it("an unrouted retained opening retries allocation locally", () => {
   const h = messagesHarness();
   const navigationRetry = vi.fn();

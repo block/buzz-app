@@ -586,21 +586,22 @@ function ThreadMessages({
   const [expandedActivity, setExpandedActivity] = useState<ReadonlySet<string>>(
     new Set(),
   );
-  const activityVisit = useRef<string | undefined>(undefined);
+  const activityVisit = useRef<unknown[]>([]);
   useLayoutEffect(() => {
+    const request = [messageId, navigation?.signal, revealRequest];
     if (
       !messageId ||
-      activityVisit.current === messageId ||
+      request.every((part, index) => part === activityVisit.current[index]) ||
       !snapshot.replies.some((row) => row.id === messageId)
     )
       return;
-    activityVisit.current = messageId;
+    activityVisit.current = request;
     const group = [...tree.children.values()]
       .flatMap((rows) => activityRuns(rows))
       .find((group) => group.some((row) => row.id === messageId));
     const first = group?.[0]?.id;
     if (first) setExpandedActivity((current) => new Set([...current, first]));
-  }, [messageId, snapshot.replies, tree]);
+  }, [messageId, navigation?.signal, revealRequest, snapshot.replies, tree]);
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   const [replyParent, setReplyParent] = useState<string>();
   const resolveName = useChannelIdentityNames(session, channelId);
@@ -719,7 +720,7 @@ function ThreadMessages({
   // within this commit/layout expansion; a later user expansion must not restore it.
   const selectedBranchRef = useMemo(() => {
     let restore = false;
-    return (branch: HTMLLIElement | null) => {
+    return (branch: HTMLElement | null) => {
       if (!branch) return;
       const row = branch.querySelector<HTMLElement>("[data-message-id]");
       if (
@@ -908,7 +909,7 @@ function ThreadMessages({
     channelId,
     rootId,
   );
-  const lastMessage = rows.at(-1);
+  const lastMessage = publicMessageNeighbor(rows, rows.length, -1);
   const joinsLive =
     !!lastMessage &&
     !lastMessage.membership &&
@@ -1275,6 +1276,9 @@ function ThreadMessages({
     const siblings = activityDisplayRows(chronologicalSiblings, groups);
     const groupsByFirst = new Map(groups.map((group) => [group.ids[0], group]));
     const groupedIds = new Set(groups.flatMap((group) => group.ids));
+    const containedActivity = new Set(
+      groups.filter((group) => !group.done).flatMap((group) => group.ids),
+    );
     const hidden = new Set(
       groups.flatMap((group) =>
         expandedActivity.has(group.ids[0] ?? "") ? [] : group.ids,
@@ -1282,7 +1286,6 @@ function ThreadMessages({
     );
     return siblings.map((row, index) => {
       const group = groupsByFirst.get(row.id);
-      const recordedActivity = presentation.byRow.get(row.id);
       if (hidden.has(row.id) && !group) return null;
       const nextRow =
         row.audience === "agents"
@@ -1313,11 +1316,9 @@ function ThreadMessages({
       const unreadLabel = unreadCount
         ? `${unreadCount} new in available replies`
         : undefined;
-      const message = (
-        <ActivityExpansion
-          open={!hidden.has(row.id)}
-          enabled={row.audience === "agents"}
-        >
+      const renderMessage = (row: ChannelMessage, inside = false) => {
+        const recordedActivity = presentation.byRow.get(row.id);
+        return (
           <MessageRow
             activityFollows={presentation.completedReplies.has(row.id)}
             representedAgents={presentation.representedAgents.get(row.id)}
@@ -1338,8 +1339,9 @@ function ThreadMessages({
             }
             row={row}
             getThreadRoot={getThreadRoot}
-            stackPrevious={continuation}
+            stackPrevious={inside || continuation}
             stackNext={
+              inside ||
               presentation.bubbleAnchors.has(row.id) ||
               (joinsLive && row.id === lastMessage?.id) ||
               (!!nextRow &&
@@ -1352,7 +1354,7 @@ function ThreadMessages({
             media={session.media}
             onOpenLink={onOpenLink}
             canOpenLink={canOpenLink}
-            day={day}
+            day={!inside && day}
             layout={continuation ? "continuation" : "thread"}
             compactAvatar={depth > 0}
             retry={session.messages.retry}
@@ -1361,12 +1363,24 @@ function ThreadMessages({
               ? { onOpenMediaReview: openRootMedia }
               : {})}
           />
+        );
+      };
+      const message = (
+        <ActivityExpansion
+          open={!hidden.has(row.id) && !containedActivity.has(row.id)}
+          enabled={row.audience === "agents"}
+        >
+          {renderMessage(row)}
         </ActivityExpansion>
       );
       return (
         <li
           key={row.id}
-          ref={row.id === messageId ? selectedBranchRef : undefined}
+          ref={
+            row.id === messageId && !containedActivity.has(row.id)
+              ? selectedBranchRef
+              : undefined
+          }
           className={styles.replyItem}
           data-layout={continuation ? "continuation" : "thread"}
         >
@@ -1384,6 +1398,13 @@ function ThreadMessages({
               <ActivityGroupPreview
                 session={session}
                 group={group}
+                renderHistory={(entry) => (
+                  <div
+                    ref={entry.id === messageId ? selectedBranchRef : undefined}
+                  >
+                    {renderMessage(entry, true)}
+                  </div>
+                )}
                 profiles={profiles}
                 media={session.media}
                 layout="thread"
@@ -1657,6 +1678,7 @@ function ThreadMessages({
           )}
         {!positioning && rootId && (
           <TypingIndicator
+            audience="agents"
             inFlow
             session={session}
             channelId={channelId}

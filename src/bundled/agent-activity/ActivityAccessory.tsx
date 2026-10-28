@@ -46,6 +46,7 @@ import {
   useActivityTypingReplacement,
 } from "../../features/conversation/typing-presentation";
 import styles from "./ActivityAccessory.module.css";
+import messageStyles from "../../features/messages/Messages.module.css";
 import { avatarMedia } from "../../shared/avatar-source";
 import { AgentResponsePreview } from "../../features/messages/AgentResponsePreview";
 
@@ -517,17 +518,16 @@ function ActivityBubble({
           }
         }}
         render={
-          <Button
+          <button
             ref={trigger}
             tabIndex={interactive ? undefined : -1}
-            size="inline"
-            variant="plain"
+            type="button"
+            className={messageStyles.activityBubbleTrigger}
             data-activity-summary=""
-            style={{ maxWidth: "100%" }}
             aria-label={`${props.openThread ? "Open thread" : "View agent activity"}: ${entries.map((entry) => `${entry.name}, ${label(entry)}`).join("; ")}`}
           >
             {content}
-          </Button>
+          </button>
         }
       />
       <PopoverPopup

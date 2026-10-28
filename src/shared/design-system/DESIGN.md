@@ -1518,6 +1518,8 @@ need their own values in each mode.
 Received message bubbles use `bubble-received`, slightly stronger than quiet
 control fills. Reply connectors and thread spines use `border-message-thread`
 to remain visible on conversation surfaces in both modes.
+Agent activity bubbles use a transparent fill with a 1px inset `border-standard`
+stroke, keeping their dimensions consistent with filled message bubbles.
 
 ### Accent color
 
@@ -1575,7 +1577,7 @@ that adds no useful information.
 ### Activity dots
 
 `TypingDots` owns the shared decorative activity motion. Use `size="message"`
-for 6px dots with 4px gaps inside a message line; compact indicators retain their existing sizes. `state="waiting"`
+for 4px dots with 4px gaps inside a message line; compact indicators retain their existing sizes. `state="waiting"`
 breathes all three dots together over 2.4 seconds for a received request waiting
 to start. `state="working"` (the default) preserves the 1.4-second staggered fade.
 Switching state keeps the same footprint. These named component rhythms are

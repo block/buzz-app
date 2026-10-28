@@ -1351,7 +1351,13 @@ function AgentsMessageRow(props: MessageRowProps) {
   const activity = props.recordedActivity;
   const bubble =
     activity?.container === "bubble" || activity?.container === "standalone";
-  const live = useActivityIndicator(session, row, activity?.ownsLive ?? false);
+  const live = useActivityIndicator(
+    session,
+    row,
+    activity?.ownsLive ?? false,
+    undefined,
+    activity?.requestId,
+  );
   const active = live || (activity?.active ?? false);
   const keepMounted = props.keepMounted;
   useEffect(() => {
@@ -1399,11 +1405,7 @@ function AgentsMessageRow(props: MessageRowProps) {
       ? `${addressedPreview.slice(0, 279).join("")}…`
       : addressedPreview.join("");
   const avatar = (who: typeof author) => (
-    <span
-      className={styles.audienceAvatar}
-      title={who.name}
-      data-avatar-motion-key={activity?.motionKey}
-    >
+    <span className={styles.audienceAvatar} title={who.name}>
       <AgentAvatar
         session={session}
         agentPubkey={who.pubkey}
@@ -1505,7 +1507,6 @@ function AgentsMessageRow(props: MessageRowProps) {
             id: author.pubkey,
             name: author.name,
             picture: author.picture,
-            motionKey: activity?.motionKey,
           },
         ]}
         stackPrevious={activity?.container !== "standalone"}

@@ -1,10 +1,12 @@
+import type { ReactNode } from "react";
+import { CaretUpIcon } from "../../shared/design-system/icons";
 import { AgentResponsePreview } from "./AgentResponsePreview";
 import { useActivityIndicator } from "./use-activity-indicator";
 import type { RelaySession } from "../relay/session";
 import { ShimmerText } from "../../shared/design-system/ui/ShimmerText";
 import type { ActivityPresentation } from "./activity-presentation";
-import { toggleActivityHistory } from "./activity-avatar-motion";
-import type { Profile } from "../relay/contracts";
+import { Avatar } from "../../shared/design-system/ui/Avatar";
+import type { ChannelMessage, Profile } from "../relay/contracts";
 import { avatarMedia } from "../../shared/avatar-source";
 import { messagePreviewText } from "../conversation/message-preview-text";
 import styles from "./Messages.module.css";
@@ -18,6 +20,7 @@ export function ActivityGroupPreview({
   expanded,
   onToggle,
   layout = "timeline",
+  renderHistory,
 }: {
   group: ActivityPresentation;
   session?: RelaySession | undefined;
@@ -26,6 +29,7 @@ export function ActivityGroupPreview({
   expanded: boolean;
   onToggle: () => void;
   layout?: "timeline" | "thread";
+  renderHistory?: (row: ChannelMessage) => ReactNode;
 }) {
   const { latest: row, history, participants, done, working } = group;
   const live = useActivityIndicator(
@@ -33,10 +37,10 @@ export function ActivityGroupPreview({
     row,
     !done && !group.followingMessage,
     participants,
+    group.requestId,
   );
   const primary = history[0]?.authorId ?? row.authorId;
   const profile = profiles.get(primary);
-  const motionKey = (author: string) => `${history[0]?.id ?? row.id}:${author}`;
   const name = profile?.name ?? primary.slice(0, 10);
   const text = Array.from(messagePreviewText(row.content).replace(/\s+/g, " "));
   const preview = done
@@ -61,14 +65,25 @@ export function ActivityGroupPreview({
           aria-label={`${expanded ? "Collapse" : "Show"} activity history: ${name}: ${preview}`}
           onClick={(event) => {
             event.currentTarget.focus({ preventScroll: true });
-            toggleActivityHistory(
-              event.currentTarget,
-              onToggle,
-              event.detail === 0,
-              history[0]?.id ?? row.id,
-            );
+            onToggle();
           }}
         >
+          {!done && expanded && (
+            <span className={styles.audienceAvatar}>
+              <Avatar
+                alt=""
+                fallback="Collapse"
+                size="fill"
+                shape="squircle"
+                fallbackContent={
+                  <CaretUpIcon
+                    className={styles.activityDisclosureIcon}
+                    aria-hidden="true"
+                  />
+                }
+              />
+            </span>
+          )}
           <span className={styles.audiencePreviewText}>
             {expanded && !done ? (
               "Collapse"
@@ -90,14 +105,25 @@ export function ActivityGroupPreview({
               id,
               name: profiles.get(id)?.name ?? id.slice(0, 10),
               picture: avatarMedia(profiles.get(id)?.picture, media),
-              motionKey: expanded ? undefined : motionKey(id),
             }))
       }
       stackPrevious={!group.standalone}
       picture={avatarMedia(profile?.picture, media)}
       layout={layout}
     >
-      <div className={styles.standaloneActivity}>{content}</div>
+      <div
+        className={styles.standaloneActivity}
+        data-contained-history={!done || undefined}
+      >
+        {content}
+        {!done && expanded && renderHistory && (
+          <div className={styles.containedActivityHistory}>
+            {history.map((entry) => (
+              <div key={entry.id}>{renderHistory(entry)}</div>
+            ))}
+          </div>
+        )}
+      </div>
     </AgentResponsePreview>
   ) : (
     content

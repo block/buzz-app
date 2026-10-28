@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -21,6 +22,7 @@ const viewport = vi.hoisted(() => ({
   size: 0,
   start: 0,
   caches: [] as unknown[],
+  scrollToIndex: vi.fn(),
 }));
 // Control the independent virtualizer's public measurement/shift contract.
 // React itself owns the real timeline's refs, render and effect ordering.
@@ -50,7 +52,7 @@ vi.mock("virtua", async () => {
           findItemIndex: () => viewport.start,
           getItemOffset: () => 0,
           scrollTo: vi.fn(),
-          scrollToIndex: vi.fn(),
+          scrollToIndex: viewport.scrollToIndex,
         }),
         [],
       );
@@ -74,7 +76,11 @@ vi.mock("./MessageRow", () => ({
     stackNext: boolean;
     keepMounted: (id: string) => () => void;
   }) => (
-    <li data-stacked={stackPrevious} data-stack-next={stackNext}>
+    <li
+      data-message-id={row.id}
+      data-stacked={stackPrevious}
+      data-stack-next={stackNext}
+    >
       {row.content}
       <button type="button" onClick={() => keepMounted(row.id)}>
         Retain {row.id}
@@ -129,11 +135,12 @@ function activityFixture() {
     rows: ChannelMessage[],
     inlineTarget?: { messageId: string; signal: AbortSignal },
     chatPresentation = true,
+    queries = owner.session,
   ) => (
     <ChannelTimeline
       channelId="alpha"
       scope="activity-folding"
-      queries={owner.session}
+      queries={queries}
       chatPresentation={chatPresentation}
       inlineTarget={inlineTarget}
       window={{
@@ -317,6 +324,61 @@ it.each([1, 4])(
   },
 );
 
+it("keeps ongoing typing in the reply group after completed history", () => {
+  const { owner, updates, content } = activityFixture();
+  try {
+    const history = updates(2);
+    const last = history.at(-1);
+    if (!last) throw new Error("Missing activity");
+    const { audience: _audience, ...reply } = last;
+    const activity = owner.session.agentActivity.snapshot();
+    const snapshot = {
+      ...activity,
+      local: [
+        {
+          scope: "test",
+          agent: reply.authorId,
+          channelId: "alpha",
+          messageId: "request",
+          threadRootId: "request",
+          state: "working" as const,
+          startedAt: 1,
+        },
+      ],
+    };
+    const queries = {
+      ...owner.session,
+      agentActivity: {
+        ...owner.session.agentActivity,
+        snapshot: () => snapshot,
+      },
+    };
+    const view = render(
+      content(
+        [...history, { ...reply, id: "reply", content: "Main reply" }],
+        undefined,
+        true,
+        queries,
+      ),
+    );
+    expect(screen.getByText("2 completed steps")).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: /Activity: .*working/ }),
+    ).toBeVisible();
+    expect(
+      view.container.querySelector(
+        "[data-conversation-activity] [data-agent-response-preview]",
+      ),
+    ).toHaveAttribute("data-stack-previous", "true");
+    expect(screen.getByText("Main reply").closest("li")).toHaveAttribute(
+      "data-stack-next",
+      "true",
+    );
+  } finally {
+    owner.dispose();
+  }
+});
+
 it.each([
   { anchor: "activity-8", expanded: true },
   { anchor: "activity-0", expanded: true },
@@ -435,6 +497,48 @@ it.each([false, true])(
     }
   },
 );
+
+it("restores a contained activity step at its saved offset rather than the group start", () => {
+  const { owner, updates, content } = activityFixture();
+  const frames: FrameRequestCallback[] = [];
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+    frames.push(callback);
+    return frames.length;
+  });
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+    function () {
+      return {
+        top: this.dataset.messageId === "activity-4" ? 240 : 0,
+        left: 0,
+        right: 800,
+        bottom: 0,
+        width: 800,
+        height: 0,
+        x: 0,
+        y: 0,
+        toJSON() {},
+      };
+    },
+  );
+  writeView("activity-folding", "scroll:alpha", {
+    offset: 220,
+    bottom: false,
+    anchor: { id: "activity-4", y: 20 },
+  });
+  try {
+    render(content(updates(9)));
+    viewport.scrollToIndex.mockClear();
+    act(() => {
+      for (const callback of frames.splice(0)) callback(0);
+    });
+    expect(viewport.scrollToIndex).toHaveBeenCalledWith(0, {
+      align: "start",
+      offset: 220,
+    });
+  } finally {
+    owner.dispose();
+  }
+});
 
 it("waits for the first non-empty window to resolve a hidden saved activity anchor", () => {
   const { owner, updates, content } = activityFixture();

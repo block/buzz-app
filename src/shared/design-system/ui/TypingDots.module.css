@@ -60,6 +60,6 @@
   gap: var(--space-1);
 }
 .dots[data-size="message"] > span {
-  width: var(--space-1h);
-  height: var(--space-1h);
+  width: var(--space-1);
+  height: var(--space-1);
 }

@@ -3467,13 +3467,6 @@ html[data-keyboard-navigation]
   max-width: calc(100% - var(--size-control));
 }
 
-/* Shared-position avatar motion owns this toggle; avoid competing height motion. */
-[data-activity-matching] .activityExpansion {
-  transition: none;
-}
-[data-activity-matching] .activityExpansionContent {
-  overflow: visible;
-}
 html[data-keyboard-navigation] .activityExpansion {
   transition: none;
 }
@@ -3522,8 +3515,16 @@ html[data-keyboard-navigation] .activityExpansion {
 .standaloneActivity .audienceRow .audiencePreviewText {
   display: block;
 }
+.containedActivityHistory .audienceRow .audienceEntry {
+  max-inline-size: 100%;
+  padding-inline-start: 0;
+}
 .standaloneActivity .audienceRow[data-open] .audienceEntry {
   display: flex;
+}
+.containedActivityHistory .audienceRow .audienceLine {
+  margin: 0;
+  padding: 0;
 }
 .standaloneActivity .audienceRow[data-open] .audienceLine {
   order: 1;
@@ -3536,6 +3537,8 @@ html[data-keyboard-navigation] .activityExpansion {
 
 /* The pending response and a recorded step share a normal message line box. */
 .message[data-agent-response-preview] .messageBubble {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--border-standard);
   font-size: var(--text-message);
   line-height: var(--text-message--line-height);
   letter-spacing: var(--text-message--letter-spacing);
@@ -3604,5 +3607,52 @@ html[data-keyboard-navigation] .activityExpansion {
 @media (prefers-reduced-motion: reduce) {
   .agentAvatarGroupItem {
     transition: none;
+  }
+}
+
+.activityDisclosureIcon {
+  flex: none;
+  width: var(--space-4);
+  height: var(--space-4);
+  color: var(--text-subtle);
+}
+.standaloneActivity[data-contained-history]
+  .audienceLine[data-collapse]::after {
+  display: none;
+}
+.containedActivityHistory {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-half);
+  padding-block-start: var(--space-2);
+}
+.containedActivityHistory .audienceRow:has(.audienceBody) .audienceEntry {
+  display: grid;
+  grid-template-columns: calc(var(--space-6) + var(--space-2)) minmax(0, 1fr);
+}
+
+/* A message interaction uses the bubble's type and inset, not control sizing. */
+.activityBubbleTrigger {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+/* Activity interactions paint their shared bubble, never a second pill inside it. */
+.message[data-agent-response-preview] .audienceLine:hover {
+  background: none;
+}
+@media (hover: hover) and (pointer: fine) {
+  .message[data-agent-response-preview] .messageBubble:hover {
+    background: var(--affordance-subtle-hover);
   }
 }

@@ -26,7 +26,6 @@ stubAvatarBrowserApis();
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
-  Reflect.deleteProperty(HTMLElement.prototype, "animate");
 });
 const step: ChannelMessage = {
   id: "step",
@@ -165,39 +164,22 @@ it("shimmers a standalone working step and stops when that request finishes", ()
   }
 });
 
-it("moves the visible team avatars into history and returns them to their clustered positions", async () => {
-  const history = [step, { ...step, id: "helper-step", authorId: "helper" }];
+it("opens contained history and keeps focus on the collapse control", () => {
+  const history = [
+    step,
+    {
+      ...step,
+      id: "helper-step",
+      authorId: "helper",
+      content: "Checking the helper layout",
+    },
+  ];
   const presentation = activityPresentation(
     history,
     undefined,
     new Set(["agent", "helper"]),
   );
   const group = presentation.groups[0];
-  let finish = () => {};
-  const finished = new Promise<void>((resolve) => {
-    finish = resolve;
-  });
-  const animations: { node: HTMLElement; frames: Keyframe[] }[] = [];
-  Object.defineProperty(HTMLElement.prototype, "animate", {
-    configurable: true,
-    value(this: HTMLElement, frames: Keyframe[]) {
-      animations.push({ node: this, frames });
-      return { finished, cancel: () => {} };
-    },
-  });
-  // jsdom has no layout. Supply boxes only for the visible cluster and the
-  // actual history rows, excluding hidden duplicate artwork.
-  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
-    function (this: HTMLElement) {
-      const identity = this.closest('[role="img"]');
-      if (!this.dataset.avatarMotionKey || this.closest("[inert]"))
-        return new DOMRect();
-      if (identity) return new DOMRect(10, 20, 25, 25);
-      return this.closest('[data-audience="agents"]')
-        ? new DOMRect(50, this.title === "helper" ? 120 : 70, 40, 40)
-        : new DOMRect();
-    },
-  );
   function Preview() {
     const [expanded, setExpanded] = useState(false);
     if (!group) throw new Error("Missing activity group");
@@ -207,11 +189,7 @@ it("moves the visible team avatars into history and returns them to their cluste
           group={group}
           profiles={new Map()}
           media={() => undefined}
-          expanded={expanded}
-          onToggle={() => setExpanded((value) => !value)}
-        />
-        {expanded &&
-          history.map((row) => {
+          renderHistory={(row) => {
             const activity = presentation.byRow.get(row.id);
             if (!activity) throw new Error("Missing history presentation");
             return (
@@ -226,58 +204,24 @@ it("moves the visible team avatars into history and returns them to their cluste
                 retry={undefined}
               />
             );
-          })}
+          }}
+          expanded={expanded}
+          onToggle={() => setExpanded((value) => !value)}
+        />
       </div>
     );
   }
-  try {
-    render(<Preview />);
-    const team = screen.getByRole("img", { name: "agent, helper" });
-    const restingTransform = "matrix(0.6, 0, 0, 0.6, 12, 12)";
-    for (const avatar of team.querySelectorAll<HTMLElement>("[title]")) {
-      avatar.style.transform = restingTransform;
-    }
-    fireEvent.click(
-      screen.getByRole("button", { name: /Show activity history/ }),
-      {
-        detail: 1,
-      },
-    );
-    const expanded = animations.filter(
-      ({ node }) => node.dataset.avatarMotionKey,
-    );
-    expect(expanded).toHaveLength(2);
-    expect(
-      expanded.every(
-        ({ node }) =>
-          node.closest('[data-audience="agents"]') &&
-          !node.closest("[data-agent-response-preview]"),
-      ),
-    ).toBe(true);
-    expect(
-      expanded.every(({ frames }) =>
-        frames[0]?.transform?.toString().includes("translate("),
-      ),
-    ).toBe(true);
-    animations.length = 0;
-    fireEvent.click(
-      screen.getByRole("button", { name: /Collapse activity history/ }),
-      {
-        detail: 1,
-      },
-    );
-    const collapsed = animations.filter(
-      ({ node }) => node.dataset.avatarMotionKey,
-    );
-    expect(collapsed).toHaveLength(2);
-    expect(collapsed.every(({ node }) => team.contains(node))).toBe(true);
-    expect(collapsed.map(({ frames }) => frames.at(-1)?.transform)).toEqual([
-      restingTransform,
-      restingTransform,
-    ]);
-  } finally {
-    await act(async () => finish());
-  }
+  render(<Preview />);
+  const toggle = screen.getByRole("button", { name: /Show activity history/ });
+  fireEvent.click(toggle, { detail: 0 });
+  expect(toggle).toHaveAttribute("aria-expanded", "true");
+  expect(toggle).toHaveFocus();
+  expect(screen.getByText("Checking the layout")).toBeVisible();
+  expect(screen.getByText("Checking the helper layout")).toBeVisible();
+  fireEvent.click(toggle, { detail: 0 });
+  expect(toggle).toHaveAttribute("aria-expanded", "false");
+  expect(toggle).toHaveFocus();
+  expect(screen.queryByText("Checking the layout")).toBeNull();
 });
 
 it("keeps the primary avatar on the activity bubble without repeating an anchored byline", () => {

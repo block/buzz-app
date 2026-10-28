@@ -239,6 +239,14 @@ it("shows stable agent ordering, scopes humans exactly, and clears after work st
   expect(
     screen.getByRole("button", { name: "Activity: Agent working" }),
   ).toBeVisible();
+  view.rerender(
+    <TypingIndicator {...props} threadRootId={root} audience="agents" inFlow />,
+  );
+  expect(screen.getByRole("status")).toHaveTextContent(/^Agent is working$/);
+  expect(screen.queryByText("Human is typing")).toBeNull();
+  expect(
+    screen.getByRole("button", { name: "Activity: Agent working" }),
+  ).toBeVisible();
   f.update([]);
   expect(screen.getByRole("status")).toBeEmptyDOMElement();
   expect(screen.queryByRole("dialog")).toBeNull();
@@ -668,9 +676,14 @@ it("Solo chat ArrowDown exposes retained thread navigation without opening Activ
   expect(trigger).toHaveFocus();
 });
 
-it.each([false, true])(
-  "hands live signals to visible activity and restores dots when it leaves (team=%s)",
-  (team) => {
+it.each([
+  { team: false, local: false },
+  { team: true, local: false },
+  { team: false, local: true },
+  { team: true, local: true },
+])(
+  "hands live signals to visible activity and restores dots when it leaves (team=$team, local=$local)",
+  ({ team, local }) => {
     const f = fixture();
     const row: ChannelMessage = {
       id: "step",
@@ -685,8 +698,13 @@ it.each([false, true])(
       participants: [],
       replyCount: 0,
     };
+    const { audience: _audience, ...request } = row;
     const group = activityPresentation(
-      [{ ...row, id: "first", authorId: team ? other : agent }, row],
+      [
+        { ...request, id: root, authorId: human },
+        { ...row, id: "first", authorId: team ? other : agent },
+        row,
+      ],
       undefined,
       new Set([agent]),
     ).groups[0];
@@ -710,7 +728,18 @@ it.each([false, true])(
       { pubkey: agent, channelId: "channel" },
       ...(team ? [{ pubkey: other, channelId: "channel" }] : []),
     ];
-    f.update(pulses);
+    const work: NonNullable<Snapshot["local"]> = local
+      ? pulses.map(({ pubkey }) => ({
+          scope: "test",
+          agent: pubkey,
+          channelId: "channel",
+          messageId: root,
+          threadRootId: root,
+          state: "working",
+          startedAt: 1,
+        }))
+      : [];
+    f.update(pulses, { local: work });
     const view = render(renderFlow(false));
     expect(
       screen.getByRole("button", {
@@ -725,16 +754,35 @@ it.each([false, true])(
       "data-active",
       "true",
     );
-    f.update([
-      { pubkey: agent, channelId: "channel", threadRootId: secondRoot },
-    ]);
+    if (!local) {
+      f.update([...pulses, entry(agent, secondRoot)]);
+      expect(
+        screen.getByRole("button", { name: "Activity: Agent working" }),
+      ).toBeVisible();
+      expect(screen.getByText("Checking the fix")).toHaveAttribute(
+        "data-active",
+        "true",
+      );
+    }
+    f.update(
+      [{ pubkey: agent, channelId: "channel", threadRootId: secondRoot }],
+      {
+        local: work
+          .filter((entry) => entry.agent === agent)
+          .map((entry) => ({
+            ...entry,
+            messageId: secondRoot,
+            threadRootId: secondRoot,
+          })),
+      },
+    );
     expect(
       screen.getByRole("button", { name: "Activity: Agent working" }),
     ).toBeVisible();
     expect(screen.getByText("Checking the fix")).not.toHaveAttribute(
       "data-active",
     );
-    f.update([{ pubkey: agent, channelId: "channel" }]);
+    f.update([{ pubkey: agent, channelId: "channel" }], { local: [] });
     view.rerender(renderFlow(false));
     expect(
       screen.getByRole("button", { name: "Activity: Agent working" }),

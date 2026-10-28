@@ -19,7 +19,6 @@ export function AgentResponsePreview({
     id: string;
     name: string;
     picture?: string | undefined;
-    motionKey?: string | undefined;
   }[];
   layout?: "timeline" | "thread" | "continuation" | undefined;
   children: ReactNode;
@@ -53,7 +52,6 @@ export function AgentResponsePreview({
                   key={agent.id}
                   className={styles.agentAvatarGroupItem}
                   title={agent.name}
-                  data-avatar-motion-key={agent.motionKey}
                 >
                   <Avatar
                     src={agent.picture}

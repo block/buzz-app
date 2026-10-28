@@ -1,3 +1,4 @@
+import messageStyles from "./Messages.module.css";
 import { useReplacedTypers } from "../conversation/typing-presentation";
 import { useChannelIdentityNames } from "../identity-names/react";
 import {
@@ -86,7 +87,9 @@ export function TypingIndicator({
   openActivity,
   previousAuthor,
   inFlow = false,
+  audience = "all",
 }: {
+  audience?: "all" | "humans" | "agents";
   previousAuthor?: string | undefined;
   inFlow?: boolean;
   clickOpensPanel?: boolean | undefined;
@@ -98,15 +101,21 @@ export function TypingIndicator({
     | ((target: string, origin?: MessageLinkOrigin) => boolean)
     | undefined;
 }) {
-  const { details, entries, replaced, agents, knownAgents } =
-    useConversationAgents(session, channelId, threadRootId);
+  const {
+    details,
+    entries,
+    replaced,
+    agents: activeAgents,
+    knownAgents,
+  } = useConversationAgents(session, channelId, threadRootId);
+  const agents = audience === "humans" ? [] : activeAgents;
   const resolveName = useChannelIdentityNames(session, channelId);
   const profiles = useSyncExternalStore(
     session.profiles.subscribe,
     session.profiles.snapshot,
   );
   // Read only the already-loaded channel window to name threads. No ensure/read.
-  const needsRows = details.size > 0 && !threadRootId;
+  const needsRows = agents.length > 0 && !threadRootId;
   const subscribeRows = useCallback(
     (listener: () => void) =>
       needsRows
@@ -126,6 +135,7 @@ export function TypingIndicator({
   const firstAgent = agents[0];
   const humans = entries.filter(
     (entry) =>
+      audience !== "agents" &&
       entry.channelId === channelId &&
       entry.threadRootId === threadRootId &&
       !knownAgents.has(entry.pubkey) &&
@@ -230,6 +240,7 @@ export function TypingIndicator({
       {(agents.length > 0 || humans.length > 0) && (
         <div
           className={styles.typing}
+          data-audience={audience}
           data-in-flow={inFlow || undefined}
           data-layout={threadRootId ? "thread" : "timeline"}
           data-conversation-activity=""
@@ -398,7 +409,7 @@ function AgentChooser({
           <button
             type="button"
             data-buzz-ui=""
-            className={styles.bubbleTrigger}
+            className={messageStyles.activityBubbleTrigger}
             aria-label={label}
             data-agent-activity-trigger=""
             aria-keyshortcuts={directTarget ? "ArrowDown" : undefined}

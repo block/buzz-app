@@ -31,7 +31,11 @@ import {
   continuesMessageGroup,
   publicMessageNeighbor,
 } from "./message-grouping";
-import type { Attachment, ChannelWindow } from "../relay/contracts";
+import type {
+  Attachment,
+  ChannelMessage,
+  ChannelWindow,
+} from "../relay/contracts";
 import { useRowProfiles } from "../relay/react";
 import { geometryFor, geometrySignature } from "./geometry";
 import { readView, writeView } from "../../shared/view-state";
@@ -257,6 +261,7 @@ function Timeline({
     () => activityDisplayRows(chronologicalRows, activity),
     [chronologicalRows, activity],
   );
+  const lastPublicMessage = publicMessageNeighbor(rows, rows.length, -1);
   // Resolve a saved anchor once, before measuring initial geometry. A bottom
   // restore ignores it; absent/visible anchors must not expand on later loads.
   const [activityRestore, setActivityRestore] = useState(
@@ -278,6 +283,20 @@ function Timeline({
         expanded: group.ids.some((id) => expandedActivity.has(id)),
       },
     ]),
+  );
+  const containedOwners = useMemo(
+    () =>
+      new Map(
+        activity
+          .filter(
+            (group) =>
+              !group.done && group.ids.some((id) => expandedActivity.has(id)),
+          )
+          .flatMap((group) =>
+            group.ids.map((id) => [id, group.ids[0]] as const),
+          ),
+      ),
+    [activity, expandedActivity],
   );
   const hiddenActivity = new Set(
     [...disclosures.values()].flatMap((group) =>
@@ -336,7 +355,10 @@ function Timeline({
     row.id === focusedActivityId ||
     (disclosures.get(row.id)?.ids[0] === focusedActivityId &&
       !!focusedActivityId) ||
-    pinnedIds.has(row.id)
+    pinnedIds.has(row.id) ||
+    disclosures
+      .get(row.id)
+      ?.ids.some((id) => pinnedIds.has(id) || id === focusedMessageId)
       ? [index]
       : [],
   );
@@ -506,7 +528,9 @@ function Timeline({
     (navigation?.target.kind === "conversation"
       ? navigation.target.messageId
       : undefined);
-  const targetIndex = rows.findIndex((row) => row.id === targetId);
+  const targetIndex = rows.findIndex(
+    (row) => row.id === (containedOwners.get(targetId ?? "") ?? targetId),
+  );
   // The reveal keeps its row in place through late measurement until any newer
   // intent: reader input, a send or Jump to latest.
   const targetIntent = useRef<number | undefined>(undefined);
@@ -608,7 +632,11 @@ function Timeline({
   useLayoutEffect(() => {
     const element = scroller.current;
     const list = element?.querySelector("ol");
-    const index = rows.findIndex((row) => row.id === reader.current.id);
+    const index = rows.findIndex(
+      (row) =>
+        row.id ===
+        (containedOwners.get(reader.current.id ?? "") ?? reader.current.id),
+    );
     if (index < 0) heldReader.current = undefined;
     if (
       prepend ||
@@ -698,7 +726,7 @@ function Timeline({
     element.ownerDocument.addEventListener("pointerup", done);
     element.ownerDocument.addEventListener("pointercancel", done);
     return () => release(true);
-  }, [rows, prepend]);
+  }, [rows, prepend, containedOwners]);
   useLayoutEffect(() => {
     const element = scroller.current;
     if (!element) return;
@@ -787,7 +815,8 @@ function Timeline({
       revealMessageId && revealed.current !== revealMessageId
         ? rows.findIndex(
             (row) =>
-              row.id === revealMessageId ||
+              row.id ===
+                (containedOwners.get(revealMessageId) ?? revealMessageId) ||
               row.membershipRows?.some(
                 (member) => member.id === revealMessageId,
               ),
@@ -855,16 +884,32 @@ function Timeline({
         const index = anchor
           ? rows.findIndex(
               (row) =>
-                row.id === anchor.id ||
+                row.id === (containedOwners.get(anchor.id) ?? anchor.id) ||
                 row.membershipRows?.some((member) => member.id === anchor.id),
             )
           : -1;
         const row = rows[index];
         if (anchor && row) {
-          restoredAnchor.current = { id: row.id, y: anchor.y };
+          restoredAnchor.current = { id: anchor.id, y: anchor.y };
+          const element = scroller.current;
+          const target = containedOwners.has(anchor.id)
+            ? element?.querySelector<HTMLElement>(
+                `[data-message-id="${CSS.escape(anchor.id)}"]`,
+              )
+            : undefined;
+          // A contained step shares its virtual row with earlier history.
+          // Once mounted, include that inner offset in the saved placement.
+          const innerOffset =
+            target && element
+              ? target.getBoundingClientRect().top -
+                element.getBoundingClientRect().top +
+                element.scrollTop -
+                size.edgeHeight -
+                handle.current.getItemOffset(index)
+              : 0;
           handle.current.scrollToIndex(index, {
             align: "start",
-            offset: -anchor.y,
+            offset: innerOffset - anchor.y,
           });
         } else handle.current.scrollTo(restore.offset);
         follow.current = false;
@@ -900,8 +945,12 @@ function Timeline({
           // this parent height. Observing the parent box would create skipped
           // resize notifications; watch only Virtua's committed height instead.
           let height = list.style.height;
-          observer = new MutationObserver(() => {
-            if (list.style.height === height) return;
+          observer = new MutationObserver((records) => {
+            if (
+              list.style.height === height &&
+              !records.some((record) => record.type === "childList")
+            )
+              return;
             height = list.style.height;
             // Capture a native clamp while its shrink is still observable.
             // Another append can grow the list before the queued scroll event.
@@ -920,6 +969,10 @@ function Timeline({
           observer.observe(list, {
             attributes: true,
             attributeFilter: ["style"],
+            childList:
+              !!restore?.anchor && containedOwners.has(restore.anchor.id),
+            subtree:
+              !!restore?.anchor && containedOwners.has(restore.anchor.id),
           });
         }
       }
@@ -954,6 +1007,7 @@ function Timeline({
     revealedSignal,
     updateJumpToLatest,
     revealMessageId,
+    containedOwners,
   ]);
   // After positioning reads it: a load that ends without rows lands no page.
   useLayoutEffect(() => {
@@ -1168,7 +1222,6 @@ function Timeline({
         >
           {rows.map((row, index) => {
             const disclosure = disclosures.get(row.id);
-            const recordedActivity = presentation.byRow.get(row.id);
             const hidden = foldedActivity.has(row.id);
             const previousRow =
               row.audience === "agents"
@@ -1185,6 +1238,55 @@ function Timeline({
                     (rows[index - 1]?.createdAt ?? 0) * 1000,
                   ).toDateString() !==
                   new Date(row.createdAt * 1000).toDateString();
+            const renderMessage = (row: ChannelMessage, inside = false) => {
+              const recordedActivity = presentation.byRow.get(row.id);
+              return (
+                <MessageRow
+                  activityFollows={presentation.completedReplies.has(row.id)}
+                  representedAgents={presentation.representedAgents.get(row.id)}
+                  recordedActivity={
+                    recordedActivity && {
+                      ...recordedActivity,
+                      container: "history",
+                    }
+                  }
+                  stackPrevious={
+                    inside ||
+                    (!!previousRow &&
+                      !foldedActivity.has(previousRow.id) &&
+                      continuesMessageGroup(previousRow, row))
+                  }
+                  stackNext={
+                    inside ||
+                    presentation.bubbleAnchors.has(row.id) ||
+                    (row.id === lastPublicMessage?.id &&
+                      row.audience !== "agents" &&
+                      !row.membership &&
+                      row.authorId === liveAgents[0]) ||
+                    (!!nextRow &&
+                      !foldedActivity.has(nextRow.id) &&
+                      continuesMessageGroup(row, nextRow))
+                  }
+                  session={queries}
+                  scope={scope}
+                  row={row}
+                  unread={queries.unread}
+                  extensions={extensions}
+                  profile={profiles.get(row.authorId)}
+                  participantProfiles={profiles}
+                  agentPubkeys={agentPubkeys}
+                  media={queries.media}
+                  onOpenLink={onOpenLink}
+                  canOpenLink={canOpenLink}
+                  onOpenThread={onOpenThread}
+                  startsThreads={startsThreads}
+                  {...(onOpenMediaReview ? { onOpenMediaReview } : {})}
+                  retry={queries.outbox?.retry}
+                  keepMounted={keepRowMounted}
+                  day={!inside && day && !disclosure}
+                />
+              );
+            };
             return (
               <Fragment key={row.id}>
                 {disclosure && (
@@ -1211,6 +1313,7 @@ function Timeline({
                     <ActivityGroupPreview
                       session={queries}
                       group={disclosure}
+                      renderHistory={(entry) => renderMessage(entry, true)}
                       profiles={profiles}
                       media={queries.media}
                       expanded={disclosure.expanded}
@@ -1230,7 +1333,7 @@ function Timeline({
                   </div>
                 )}
                 <ActivityExpansion
-                  open={!hidden}
+                  open={!hidden && !containedOwners.has(row.id)}
                   enabled={row.audience === "agents"}
                 >
                   {row.membership ? (
@@ -1247,63 +1350,19 @@ function Timeline({
                       canOpenLink={canOpenLink}
                     />
                   ) : (
-                    <MessageRow
-                      activityFollows={presentation.completedReplies.has(
-                        row.id,
-                      )}
-                      representedAgents={presentation.representedAgents.get(
-                        row.id,
-                      )}
-                      recordedActivity={
-                        recordedActivity && {
-                          ...recordedActivity,
-                          container: "history",
-                        }
-                      }
-                      stackPrevious={
-                        !!previousRow &&
-                        !foldedActivity.has(previousRow.id) &&
-                        continuesMessageGroup(previousRow, row)
-                      }
-                      stackNext={
-                        presentation.bubbleAnchors.has(row.id) ||
-                        (index === rows.length - 1 &&
-                          row.audience !== "agents" &&
-                          !row.membership &&
-                          row.authorId === liveAgents[0]) ||
-                        (!!nextRow &&
-                          !foldedActivity.has(nextRow.id) &&
-                          continuesMessageGroup(row, nextRow))
-                      }
-                      session={queries}
-                      scope={scope}
-                      row={row}
-                      unread={queries.unread}
-                      extensions={extensions}
-                      profile={profiles.get(row.authorId)}
-                      participantProfiles={profiles}
-                      agentPubkeys={agentPubkeys}
-                      media={queries.media}
-                      onOpenLink={onOpenLink}
-                      canOpenLink={canOpenLink}
-                      onOpenThread={onOpenThread}
-                      startsThreads={startsThreads}
-                      {...(onOpenMediaReview ? { onOpenMediaReview } : {})}
-                      retry={queries.outbox?.retry}
-                      keepMounted={keepRowMounted}
-                      day={day && !disclosure}
-                    />
+                    renderMessage(row)
                   )}
                 </ActivityExpansion>
                 {index === rows.length - 1 && (
                   <>
                     <TypingIndicator
+                      audience="agents"
                       inFlow
                       session={queries}
                       channelId={channelId}
                       previousAuthor={
-                        row.audience !== "agents" && !row.membership
-                          ? row.authorId
+                        lastPublicMessage && !lastPublicMessage.membership
+                          ? lastPublicMessage.authorId
                           : undefined
                       }
                       openActivity={onOpenLink}
@@ -1319,6 +1378,7 @@ function Timeline({
       )}
       {!rows.length && (
         <TypingIndicator
+          audience="agents"
           inFlow
           session={queries}
           channelId={channelId}

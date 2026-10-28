@@ -22,10 +22,10 @@ export type ActivityPresentation = ActivityRun & {
   completedReply: ChannelMessage | undefined;
 };
 export type ActivityRowPresentation = {
+  requestId: string | undefined;
   active: boolean;
   ownsLive: boolean;
   container: "history" | "bubble" | "standalone";
-  motionKey: string | undefined;
 };
 const noSubscribe = () => () => {};
 const noActivity = () => undefined;
@@ -148,6 +148,7 @@ export function activityPresentation(
     for (const row of history) {
       const last = lastByAgent.get(row.authorId) === row.id;
       byRow.set(row.id, {
+        requestId: group.requestId,
         active: last && working.has(row.authorId),
         ownsLive: last && !done && !group.followingMessage,
         container:
@@ -156,7 +157,6 @@ export function activityPresentation(
             : !done || standalone
               ? "bubble"
               : "history",
-        motionKey: last ? `${first.id}:${row.authorId}` : undefined,
       });
     }
     groups.push({

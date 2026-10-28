@@ -4,7 +4,7 @@
 //! update keeps its data and still finishes a sign-out the old build committed.
 //! Development builds shared that storage until they became `.dev`; the first
 //! development launch copies the installed app's, leaving it in place.
-use super::{agents_stopped, marker_name, trash, wait_for};
+use super::{agents_stopped, marker_name, trash, wait_for, AGENTS};
 use std::fs::{self, File};
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
@@ -75,6 +75,19 @@ pub(super) fn seeds(identifier: &str) -> Option<Vec<PathBuf>> {
     bases.dedup();
     bases.push(data);
     Some(bases)
+}
+
+/// The Agents folder for the app data at `app_data`. Development builds use the
+/// installed app's, as they did before they became `.dev`, so both share one
+/// agent list, its state and its hosting locks. Until the installed app has
+/// storage they keep their own: creating it beside legacy storage still due to
+/// move would make the next release launch refuse to start.
+pub(crate) fn agents(identifier: &str, app_data: &Path) -> PathBuf {
+    let release = app_data.with_file_name(CURRENT);
+    if identifier == DEV && release.is_dir() {
+        return release.join(AGENTS);
+    }
+    app_data.join(AGENTS)
 }
 
 /// Rename each legacy path that is still due, before this launch takes its

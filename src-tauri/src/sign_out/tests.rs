@@ -1734,6 +1734,27 @@ fn development_launches_copy_the_installed_storage_and_take_only_their_sign_out(
 }
 
 #[test]
+fn development_builds_use_the_installed_agents_once_it_has_storage() {
+    use legacy_identifier::{agents, CURRENT, DEV, LEGACY};
+    let dir = tempfile::tempdir().unwrap();
+    let app_data = |identifier: &str| dir.path().join(identifier);
+    fs::create_dir(app_data(LEGACY)).unwrap();
+    // Before the installed app moves its storage, it is never created.
+    assert_eq!(agents(DEV, &app_data(DEV)), app_data(DEV).join(AGENTS));
+    assert!(!app_data(CURRENT).exists());
+    fs::rename(app_data(LEGACY), app_data(CURRENT)).unwrap();
+    assert_eq!(agents(DEV, &app_data(DEV)), app_data(CURRENT).join(AGENTS));
+    assert_eq!(
+        agents(CURRENT, &app_data(CURRENT)),
+        app_data(CURRENT).join(AGENTS)
+    );
+    assert_eq!(
+        agents("test", &app_data("test")),
+        app_data("test").join(AGENTS)
+    );
+}
+
+#[test]
 fn a_split_release_move_seeds_each_folder_from_where_it_is() {
     use legacy_identifier::{CURRENT, DEV, LEGACY};
     let (dir, paths) = fixture();

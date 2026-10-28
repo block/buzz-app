@@ -3,10 +3,11 @@
 // pin's small one. Tauri names the target it builds for in
 // TAURI_ENV_TARGET_TRIPLE; without it, goose-acp is built for this machine.
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   chmodSync,
   copyFileSync,
-  existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   renameSync,
@@ -31,9 +32,14 @@ const binary = join(destination, name);
 const target = join(root, "target/goose-acp-build");
 // What the staged binary was built from, kept out of the shipped directory.
 const stampPath = join(target, "staged.json");
-const stamp = `${JSON.stringify({ revision: pin.revision, features: pin.features, profile, triple }, null, 2)}\n`;
+const stampInputs = {
+  revision: pin.revision,
+  features: pin.features,
+  profile,
+  triple,
+};
 
-if (existsSync(binary) && read(stampPath) === stamp) {
+if (stagedMatches()) {
   console.log(`goose-acp ready (${pin.revision.slice(0, 9)}, ${profile})`);
   process.exit(0);
 }
@@ -90,15 +96,30 @@ mkdirSync(destination, { recursive: true });
 copyFileSync(built, `${binary}.new`);
 chmodSync(`${binary}.new`, 0o755);
 renameSync(`${binary}.new`, binary);
-writeFileSync(stampPath, stamp);
+writeFileSync(stampPath, stagedStamp());
 console.log(`goose-acp staged at ${binary}`);
 
-function read(path) {
+function stagedMatches() {
   try {
-    return readFileSync(path, "utf8");
+    return readFileSync(stampPath, "utf8") === stagedStamp();
   } catch {
-    return undefined;
+    return false;
   }
+}
+
+function stagedStamp() {
+  const info = lstatSync(binary);
+  if (
+    !info.isFile() ||
+    info.size === 0 ||
+    (!windows && (info.mode & 0o111) === 0)
+  ) {
+    throw new Error("Invalid staged goose-acp executable");
+  }
+  const sha256 = createHash("sha256")
+    .update(readFileSync(binary))
+    .digest("hex");
+  return `${JSON.stringify({ ...stampInputs, sha256 }, null, 2)}\n`;
 }
 
 function run(command, args, env = process.env) {

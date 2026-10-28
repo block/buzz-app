@@ -64,6 +64,9 @@ jobs:
           key: macos-prerelease
           cache-all-crates: true
 
+      - name: Cache built Goose executable
+        uses: ./.github/actions/cache-goose
+
       - name: Set preview version
         id: version
         run: |
@@ -326,6 +329,9 @@ jobs:
         with:
           version: ${{ steps.pins.outputs.pnpm }}
       - run: pnpm install --frozen-lockfile
+      - name: Cache built Goose executable
+        if: github.ref == 'refs/heads/main' && !inputs.candidates
+        uses: ./.github/actions/cache-goose
       - name: Set candidate version
         run: node scripts/candidate-version.mjs
       - name: Build NSIS installer
@@ -391,9 +397,12 @@ jobs:
         with:
           persist-credentials: false
       - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-      # No shared writable release caches. Use existing pins and frozen inputs.
+      # Candidate-only builds do not read or write shared build caches.
       - uses: cashapp/activate-hermit@cea9af7913204a965fd488637a8d1811bba2e616 # v1
       - run: pnpm install --frozen-lockfile
+      - name: Cache built Goose executable
+        if: github.ref == 'refs/heads/main' && !inputs.candidates
+        uses: ./.github/actions/cache-goose
       - name: Install pinned AppImage repacking tools
         run: |
           wget -q -O /tmp/appimagetool https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage

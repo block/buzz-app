@@ -97,6 +97,77 @@ test("Close after same-scope replacement retires earlier profile visits through 
   expect(await view("Viewer")).not.toBe(current);
 });
 
+// Native traversal and the real page close callback must use inherited identity
+// while the successor's exact-message lookup is explicitly held.
+test("Close before successor reply resolution retires the inherited verified thread", async ({
+  page,
+}) => {
+  await page.goto("/tests/fixtures/profiles.html");
+  await page.waitForFunction(() => !!window.profilesFixture);
+  const read = () =>
+    page.evaluate(() => window.profilesFixture.navigation.snapshot());
+  const initial = (await read()).entry.target;
+  await page.evaluate(
+    (target) => window.profilesFixture.navigation.open(target),
+    {
+      ...initial,
+      channelId: "two",
+    },
+  );
+  const before = (await read()).entry;
+  await page.evaluate(
+    (target) => window.profilesFixture.navigation.open(target),
+    initial,
+  );
+  const channel = (await read()).entry;
+  await page
+    .getByRole("button", { name: "View thread: 1 reply", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "View Pinky profile", exact: true }),
+  ).toBeVisible();
+  await page.evaluate(() => {
+    const fixture = window.profilesFixture;
+    const target = fixture.navigation.snapshot().entry.target;
+    return fixture.navigation.open({
+      ...target,
+      messageId: fixture.messages.reply,
+      threadRootId: undefined,
+    });
+  });
+  const tabs = page.locator(
+    '[data-panel-workspace] [role="tab"][data-tab-value^="thread:"]',
+  );
+  const root = await page.evaluate(() => window.profilesFixture.messages.root);
+  await expect(tabs).toHaveCount(1); // The reply reader verified and merged into R.
+  await expect(tabs).toHaveAttribute("data-tab-value", `thread:one:${root}`);
+  await page.evaluate(() => {
+    window.profilesFixture.holdReply();
+    window.profilesFixture.replace();
+  });
+  try {
+    await expect
+      .poll(() => page.evaluate(() => window.profilesFixture.replyPending()))
+      .toBe(true);
+    await expect(tabs).toHaveCount(1);
+    await tabs
+      .locator("..")
+      .getByRole("button", { name: /^Close / })
+      .click();
+    await expect.poll(async () => (await read()).entry).toEqual(channel);
+    await expect(tabs).toHaveCount(0);
+    expect((await read()).canGoBack).toBe(true);
+    expect((await read()).canGoForward).toBe(false);
+    await page.goBack();
+    await expect.poll(async () => (await read()).entry).toEqual(before);
+    await page.goForward();
+    await expect.poll(async () => (await read()).entry).toEqual(channel);
+  } finally {
+    await page.evaluate(() => window.profilesFixture.releaseReply());
+  }
+  await expect(tabs).toHaveCount(0);
+});
+
 // Browser history must restore the selected profile and skip an explicitly
 // dismissed inactive tab; hook tests cannot establish native event traversal.
 test("profile visits survive passive traversal and X retires active and inactive visits", async ({

@@ -1203,7 +1203,13 @@ export class AgentRunners {
           runner,
           next,
           polled,
-          Math.max(now - CATCH_UP_POLL_LAG, ...behind.map(due), since),
+          // One behind reads up to when live began to cover it; any other
+          // stays behind now, for events the relay stores late.
+          (stream) =>
+            Math.max(
+              now - CATCH_UP_POLL_LAG,
+              behind.includes(stream) ? due(stream) : since,
+            ),
         );
         continue;
       }
@@ -1310,7 +1316,8 @@ export class AgentRunners {
       console.warn("Agent turns in progress were not saved", error);
     }
   }
-  /** Reads each stream's missed events through `upper`, a window at a time,
+  /** Reads each stream's missed events through `upper`, or its own `upper`
+   * when that is a function, a window at a time,
    * and delivers them oldest first, in batches, saving its checkpoint after
    * each. A watch's streams are read one after another; once all of them are
    * read, its live events that waited go on. */
@@ -1318,7 +1325,7 @@ export class AgentRunners {
     runner: Runner,
     pass: Pass,
     streams: readonly Stream[],
-    upper: number,
+    upper: number | ((stream: Stream) => number),
   ) {
     const signal = AbortSignal.any([
       pass.controller.signal,
@@ -1348,7 +1355,7 @@ export class AgentRunners {
             const window = await readWindow(
               stream,
               this.checkpoints[stream.key],
-              upper,
+              typeof upper === "number" ? upper : upper(stream),
               read,
             );
             if (!window) break;

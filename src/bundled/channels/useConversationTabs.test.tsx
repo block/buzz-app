@@ -2107,6 +2107,7 @@ it.each([
     return { state, workspace };
   });
   expect(h.result.current.state.pendingEntries).toHaveLength(3);
+  const opener = h.result.current.workspace.open;
   act(() => {
     if (action.endsWith("profile"))
       h.result.current.workspace.open({
@@ -2121,6 +2122,7 @@ it.each([
       );
     else h.result.current.workspace.open(undefined);
   });
+  expect(h.result.current.workspace.open).toBe(opener);
   expect(
     h.result.current.state.pendingEntries?.map((saved) => saved.key),
   ).toEqual(

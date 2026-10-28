@@ -351,6 +351,53 @@ test("a live profile replacement updates the existing focused channel row", asyn
   expect(errors.unexplained()).toEqual([]);
 });
 
+test("projected explicit identities and decoded channel references stay live", async ({
+  page,
+}) => {
+  const errors = watchPageErrors(page);
+  await page.goto("/tests/fixtures/profiles.html?presentation-references");
+  await page.waitForFunction(() => !!window.profilesFixture);
+  const id = await page.evaluate(
+    () => window.profilesFixture.messageIds.references,
+  );
+  const row = page.locator(`[data-message-id="${id}"]`);
+  const explicit = row.getByRole("button", {
+    name: "View Viewer profile",
+    exact: true,
+  });
+  await expect(explicit).toBeVisible();
+  await expect(explicit).toHaveAttribute("data-mention-kind", "person");
+  await expect(
+    row.getByRole("link", { name: "#Two", exact: true }),
+  ).toHaveAttribute("href", "buzz://channel/two");
+  await expect(
+    row.getByRole("link", { name: "Private destination", exact: true }),
+  ).toHaveAttribute("href", "buzz://channel/two");
+  const original = await explicit.elementHandle();
+  await explicit.focus();
+  await page.evaluate(() => window.profilesFixture.replaceViewerProfile());
+  const current = row.getByRole("button", {
+    name: "View Replacement viewer profile",
+    exact: true,
+  });
+  await expect(current).toBeFocused();
+  await expect(current).toHaveAttribute("data-mention-kind", "agent");
+  expect(
+    await current.evaluate((node, original) => node === original, original),
+  ).toBe(true);
+  await current.press("Enter");
+  const details = page.getByRole("region", {
+    name: "Profile details",
+    exact: true,
+  });
+  await expect(
+    details.getByRole("heading", { name: "Replacement viewer", exact: true }),
+  ).toBeVisible();
+  await details.press("Escape");
+  await expect(current).toBeFocused();
+  expect(errors.unexplained()).toEqual([]);
+});
+
 test("contextual panel callbacks retire with opening, channel, contribution and session", async ({
   page,
 }) => {

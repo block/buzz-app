@@ -7,6 +7,8 @@ import type { RelaySession } from "../relay/session";
 import { rowProfileIds } from "../relay/membership";
 import { knownAgentPubkeys } from "../agents/known";
 import type { AgentLibrary } from "../agents/library";
+import { profileKey } from "../profiles/target";
+import { scanMarkdown, MAX_MARKDOWN_LENGTH } from "../relay/message-content";
 import type { ReferenceChannel } from "./ReferenceText";
 import {
   membershipRows,
@@ -90,10 +92,34 @@ function retainReferences(
     ? old
     : next;
 }
+/** Explicit locators are display dependencies, never signed mention intent.
+ * Use the renderer's existing bounded CommonMark scan and exact profile validator.
+ * Plain prose has no link/definition/autolink delimiter and needs no scan. */
+function explicitProfileKeys(row: TimelineRow): readonly string[] {
+  if (
+    row.membership ||
+    row.content.length > MAX_MARKDOWN_LENGTH ||
+    (!row.content.includes("[") && !row.content.includes("<"))
+  )
+    return emptyIds;
+  const scan = scanMarkdown(row.content);
+  if (scan.tooDeep) return emptyIds;
+  return scan.links.flatMap((node) => {
+    const url =
+      node.type === "link"
+        ? node.url
+        : typeof node.identifier === "string"
+          ? scan.definitions.get(node.identifier.toLowerCase())
+          : undefined;
+    const key = url && profileKey(url);
+    return key ? [key] : [];
+  });
+}
 function dependencies(row: TimelineRow): readonly string[] {
   return [
     ...new Set([
       ...(row.membershipRows ?? [row]).flatMap(rowProfileIds),
+      ...explicitProfileKeys(row),
       ...row.reactions.flatMap((reaction) =>
         reaction.events.map((event) => event.authorId),
       ),
@@ -296,11 +322,9 @@ export function createChannelPresentation(
             if (rows[index - 1]) dirty.add(rows[index - 1]?.id ?? "");
             if (rows[index + 1]) dirty.add(rows[index + 1]?.id ?? "");
           }
-          if (
-            permissionsChanged ||
-            (referencesChanged && /[#:\\]/.test(row.content))
-          )
-            dirty.add(row.id);
+          // Markdown may decode entities/escapes into references. The existing
+          // parsed consumer owns text filtering; raw bytes cannot prove absence.
+          if (permissionsChanged || referencesChanged) dirty.add(row.id);
         }
         const changedProfiles = new Set([
           ...previousProfiles.keys(),
@@ -348,15 +372,6 @@ export function createChannelPresentation(
             prior && sameSet(prior.agentPubkeys, keys)
               ? prior.agentPubkeys
               : keys;
-          const referenceChannels = /[:\\]/.test(row.content)
-            ? channels
-            : emptyChannels;
-          const referenceNames = row.content.includes("#")
-            ? named.filter((entry) => row.content.includes(`#${entry.name}`))
-            : emptyChannels;
-          const chosenNames = prior
-            ? retainReferences(referenceNames, prior.directory.named)
-            : referenceNames;
           const referenceAgents = library.identities.filter((entry) =>
             dep.includes(entry.pubkey),
           );
@@ -367,14 +382,14 @@ export function createChannelPresentation(
           const directory =
             prior &&
             prior.directory.profiles === rowProfiles &&
-            prior.directory.channels === referenceChannels &&
-            prior.directory.named === chosenNames &&
+            prior.directory.channels === channels &&
+            prior.directory.named === named &&
             prior.directory.agents === chosenAgents
               ? prior.directory
               : Object.freeze({
                   profiles: rowProfiles,
-                  channels: referenceChannels,
-                  named: chosenNames,
+                  channels,
+                  named,
                   agents: chosenAgents,
                 });
           const previous = rows[index - 1];
@@ -416,6 +431,8 @@ export function createChannelPresentation(
           ...choices.identities.map((entry) => entry.pubkey),
           ...library.identities.map((entry) => entry.pubkey),
         ]);
+        for (const ids of rowDependencies.values())
+          for (const id of ids) wantedNames.add(id);
         for (const selection of selections)
           for (const id of selection.ids) wantedNames.add(id);
         const lookup = session.names?.scope(channel?.members ?? emptyIds);

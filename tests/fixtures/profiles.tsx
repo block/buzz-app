@@ -52,6 +52,9 @@ const viewer = keypair(),
 const fixtureOrigin = "https://relay.example.test";
 // Pinky is one of this machine's own agents in this community.
 const localAgentProbe = new URLSearchParams(location.search).has("local-agent");
+const presentationReferences = new URLSearchParams(location.search).has(
+  "presentation-references",
+);
 const memberMessageProbe = new URLSearchParams(location.search).has(
   "member-message",
 );
@@ -72,7 +75,9 @@ const dmEvents = () => [
 const root = message(viewer, "one", "Hello @Mic", 10, [["p", mic.pubkey]]);
 const unknown = signed(missing, {
   kind: 40002,
-  content: "Unknown author",
+  content: presentationReferences
+    ? `[Authored](${profileTarget(viewer.pubkey)}) &#35;Two and [Private destination](buzz&#58;//channel/two)`
+    : "Unknown author",
   created_at: 11,
   tags: [["h", "one"]],
 });
@@ -207,6 +212,7 @@ function session() {
                   ["d", "two"],
                   ["name", "Two"],
                   ["t", "stream"],
+                  ...(presentationReferences ? [["private"]] : []),
                 ],
               }),
             ];
@@ -369,6 +375,7 @@ const pages = new PagesService(context);
 Object.assign(window, {
   profilesFixture: {
     report,
+    messageIds: { root: root.id, references: unknown.id },
     navigation: context.navigation,
     contexts,
     dmOpens,

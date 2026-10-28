@@ -179,6 +179,7 @@ function MessageRowContent(props: MessageContentProps) {
       {...props}
       directory={facts.directory}
       permissions={facts.permissions}
+      presentedIds={facts.profileIds}
     />
   ) : (
     <LiveMessageRowContent {...props} />
@@ -228,6 +229,7 @@ function MessageRowDisplay({
   directory,
   permissions,
   liveResolveName,
+  presentedIds,
   staticMentions,
   shownRow,
   renderMessage,
@@ -266,6 +268,7 @@ function MessageRowDisplay({
 }: MessageContentProps & {
   directory: RowDirectory;
   permissions: RowPermissions;
+  presentedIds?: readonly string[];
   liveResolveName?: ((id: string, fallback: string) => string) | undefined;
 }) {
   const [avatarFocused, setAvatarFocused] = useState(false);
@@ -314,6 +317,7 @@ function MessageRowDisplay({
     agentAuthor && !stackPrevious ? row.authorId : undefined,
   );
   const projectedResolveName = usePresentedNames(session, row.channelId, [
+    ...(presentedIds ?? []),
     row.authorId,
     ...(row.workflowOwnerId ? [row.workflowOwnerId] : []),
     ...row.mentions,
@@ -1362,7 +1366,11 @@ export const MessageRow = memo(function AudienceMessageRow(
 function AgentsMessageRow(props: MessageRowProps) {
   const facts = useContext(ChannelRowPresentationContext);
   return facts?.row === props.row ? (
-    <AgentsMessageRowContent {...props} directory={facts.directory} />
+    <AgentsMessageRowContent
+      {...props}
+      directory={facts.directory}
+      presentedIds={facts.profileIds}
+    />
   ) : (
     <LiveAgentsMessageRow {...props} />
   );
@@ -1387,6 +1395,7 @@ function LiveAgentsMessageRow(props: MessageRowProps) {
 function AgentsMessageRowContent(
   props: MessageRowProps & {
     directory: RowDirectory;
+    presentedIds?: readonly string[];
     liveResolveName?: ((id: string, fallback: string) => string) | undefined;
   },
 ) {
@@ -1397,6 +1406,7 @@ function AgentsMessageRowContent(
     if (open) return keepMounted?.(row.id);
   }, [open, keepMounted, row.id]);
   const projectedName = usePresentedNames(session, row.channelId, [
+    ...(props.presentedIds ?? []),
     row.authorId,
     ...row.mentions,
     ...(row.mentionReferences ?? []),

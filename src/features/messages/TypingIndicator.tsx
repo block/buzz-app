@@ -10,7 +10,10 @@ import {
   type ComponentProps,
   type ReactNode,
 } from "react";
-import { profileActivityViewTarget } from "../profiles/target";
+import {
+  openProfileTranscript,
+  profileActivityViewTarget,
+} from "../profiles/target";
 import { currentActivity } from "../agents/current-activity";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -252,7 +255,13 @@ export function TypingIndicator({
               }
               avatars={agents.slice(0, 4).map(avatar)}
               overflow={Math.max(0, agents.length - 4)}
-              openTarget={openActivity}
+              openTarget={
+                openActivity &&
+                ((target, origin) =>
+                  openProfileTranscript(target, (next) =>
+                    openActivity(next, origin),
+                  ))
+              }
               directTarget={
                 directTarget && canOpenActivity?.(directTarget)
                   ? directTarget

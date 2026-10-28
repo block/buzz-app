@@ -58,6 +58,38 @@ export function profileActivityViewKey(target: string): string | undefined {
     return undefined;
   }
 }
+/** Transcript destinations an opener has just opened, not yet shown. */
+const transcriptRequests = new Set<string>();
+const transcriptListeners = new Set<() => void>();
+const changed = () => {
+  for (const listener of transcriptListeners) listener();
+};
+export function subscribeProfileTranscripts(listener: () => void) {
+  transcriptListeners.add(listener);
+  return () => void transcriptListeners.delete(listener);
+}
+/** Opens `target` through `open`, asking the profile it opens to show its
+ * transcript once. A target that is only shown again, as when its retained
+ * tab remounts on returning to the channel, asks for nothing. */
+export function openProfileTranscript(
+  target: string,
+  open: (target: string) => boolean,
+): boolean {
+  if (!profileActivityTranscript(target)) return open(target);
+  transcriptRequests.add(target);
+  const opened = open(target);
+  if (!opened) transcriptRequests.delete(target);
+  changed();
+  return opened;
+}
+/** Whether an opener still asks `target`'s profile for its transcript. */
+export function profileTranscriptRequested(target: string): boolean {
+  return transcriptRequests.has(target);
+}
+/** The request has been offered; opening the target again asks anew. */
+export function settleProfileTranscript(target: string): void {
+  if (transcriptRequests.delete(target)) changed();
+}
 /** Whether an Activity destination asks for its conversation's transcript. */
 export function profileActivityTranscript(target: string): boolean {
   const agent = profileActivityViewKey(target);

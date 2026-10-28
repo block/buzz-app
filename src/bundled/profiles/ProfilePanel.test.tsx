@@ -10,6 +10,7 @@ import { createRelaySession } from "../../features/relay/session";
 import type { RelayData } from "../../features/relay/service";
 import { bindNames } from "../../features/identity-names/service";
 import {
+  openProfileTranscript,
   profileTarget,
   profileActivityViewTarget,
 } from "../../features/profiles/target";
@@ -350,7 +351,7 @@ it("exposes thinking through the named profile avatar across tabs", async () => 
 function renderAgentActivity(
   tabs: { title: string; role?: string }[],
   rootId?: string,
-  transcript = false,
+  transcript: "opened" | "shown again" | false = false,
 ) {
   const owner = createRelaySession(null);
   const snapshot = {
@@ -416,11 +417,15 @@ function renderAgentActivity(
     memberships: () => [],
     configHistory: () => undefined,
   } as unknown as Agents;
+  const target =
+    profileActivityViewTarget(key, { transcript: !!transcript }) ?? "";
+  // Like Working now: the opener asks as it opens the target.
+  if (transcript === "opened") openProfileTranscript(target, () => true);
   render(
     <ProfilePanel
       relay={relay}
       agents={agents}
-      target={profileActivityViewTarget(key, { transcript }) ?? ""}
+      target={target}
       context={{
         channelId: "originating-channel",
         ...(rootId && { rootId }),
@@ -474,9 +479,17 @@ it("asks the Activity tab for its transcript only when the opener knows the conv
   } finally {
     dispose();
   }
-  dispose = renderAgentActivity(tabs, "thread-root", true);
+  dispose = renderAgentActivity(tabs, "thread-root", "opened");
   try {
     expect(screen.getByText("Transcript first")).toBeVisible();
+  } finally {
+    dispose();
+  }
+  // Its retained tab remounting, as on returning to the channel, asks nothing.
+  dispose = renderAgentActivity(tabs, "thread-root", "shown again");
+  try {
+    expect(screen.getByText("Echo activity")).toBeVisible();
+    expect(screen.queryByText("Transcript first")).toBeNull();
   } finally {
     dispose();
   }
@@ -489,7 +502,7 @@ it("asks for the transcript once, not again on returning from another section", 
       { title: "Activity", role: "activity" },
     ],
     "thread-root",
-    true,
+    "opened",
   );
   try {
     expect(screen.getByText("Transcript first")).toBeVisible();

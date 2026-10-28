@@ -13,7 +13,11 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import type { RelaySession } from "../relay/session";
 import type { TypingEntry } from "../relay/typing";
-import { profileActivityViewTarget } from "../profiles/target";
+import {
+  profileActivityViewTarget,
+  profileTranscriptRequested,
+  settleProfileTranscript,
+} from "../profiles/target";
 import { TypingIndicator } from "./TypingIndicator";
 
 afterEach(cleanup);
@@ -102,12 +106,13 @@ it("opens one avatar by hover, with separate thread and activity actions and key
   await user.click(
     within(dialog).getByRole("button", { name: "View Agent activity" }),
   );
-  expect(open).toHaveBeenLastCalledWith(
-    profileActivityViewTarget(agent, { transcript: true }),
-    {
-      rootId: root,
-    },
-  );
+  const transcript = profileActivityViewTarget(agent, { transcript: true });
+  expect(open).toHaveBeenLastCalledWith(transcript, {
+    rootId: root,
+  });
+  // The click asks the profile it opens for the transcript, once.
+  expect(profileTranscriptRequested(transcript ?? "")).toBe(true);
+  settleProfileTranscript(transcript ?? "");
   trigger.focus();
   await user.keyboard("{Enter}");
   dialog = await screen.findByRole("dialog", { name: "Working now" });

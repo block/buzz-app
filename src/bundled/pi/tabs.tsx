@@ -690,12 +690,10 @@ export function createTabs({
     agent,
     conversation,
     initialTranscript,
-    close,
   }: {
     agent: AgentViewProps<Config>["agent"];
     conversation?: AgentViewProps<Config>["conversation"];
     initialTranscript?: AgentViewProps<Config>["initialTranscript"];
-    close?: AgentViewProps<Config>["close"];
   }) {
     const working = useSyncExternalStore(
       (listener) => runtime.subscribe(listener),
@@ -708,6 +706,10 @@ export function createTabs({
       agent.key,
     );
     const places = listing.value;
+    // Pi lists its conversations only after the tab shows, so its transcript
+    // would open late, under whatever the reader turned to meanwhile. The
+    // request is settled without opening it.
+    useEffect(() => initialTranscript?.(), [initialTranscript]);
     if (!places)
       return listing.status === "error" ? (
         <div className="grid gap-2">
@@ -729,8 +731,6 @@ export function createTabs({
       <PlaceList
         agent={agent}
         conversation={conversation}
-        initialTranscript={initialTranscript}
-        close={close}
         places={places}
         working={working}
       />
@@ -740,15 +740,11 @@ export function createTabs({
   function PlaceList({
     agent,
     conversation,
-    initialTranscript,
-    close,
     places,
     working,
   }: {
     agent: AgentViewProps<Config>["agent"];
     conversation?: AgentViewProps<Config>["conversation"];
-    initialTranscript?: AgentViewProps<Config>["initialTranscript"];
-    close?: AgentViewProps<Config>["close"];
     places: readonly Place[];
     working: readonly number[];
   }) {
@@ -759,12 +755,7 @@ export function createTabs({
     );
     const status = (place: Place) =>
       working.includes(place.conversation) ? "Working" : undefined;
-    const { open, show, back } = useOpenTranscript(
-      conversation,
-      label,
-      initialTranscript && { initial: here, done: initialTranscript },
-      close,
-    );
+    const { open, show, back } = useOpenTranscript(conversation, label);
     const recent = places
       .filter((place) => place.key !== here?.key)
       .slice(0, CONVERSATION_LIMIT);

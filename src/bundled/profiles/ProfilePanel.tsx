@@ -31,6 +31,9 @@ import type { PanelProps } from "../../features/panels/service";
 import {
   profileActivityTranscript,
   profileActivityViewKey,
+  profileTranscriptRequested,
+  settleProfileTranscript,
+  subscribeProfileTranscripts,
   profileAgentHint,
   profilePanelKey,
   profileTarget,
@@ -76,11 +79,15 @@ export function ProfilePanel({
   const activityKey = profileActivityViewKey(target);
   const transcript = profileActivityTranscript(target);
   const opening = transcript ? "transcript" : activityKey ? "activity" : "info";
-  // Asked once per conversation: changing sections must not reopen it.
-  const place = context ? `${context.channelId}/${context.rootId ?? ""}` : "";
-  const [asked, setAsked] = useState<string>();
-  const initialTranscript =
-    transcript && asked !== place ? () => setAsked(place) : undefined;
+  // Asked once per opening: neither changing sections nor remounting with
+  // the channel reopens it.
+  const requested = useSyncExternalStore(
+    subscribeProfileTranscripts,
+    () => transcript && profileTranscriptRequested(target),
+  );
+  const initialTranscript = requested
+    ? () => settleProfileTranscript(target)
+    : undefined;
   const pubkey = profilePanelKey(target) ?? activityKey;
   const owned = useAgent(agents, pubkey ?? "");
   if (!pubkey) return <p>Unsupported profile.</p>;

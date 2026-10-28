@@ -134,7 +134,7 @@ export function ConversationTab({
     [],
   );
   return (
-    <RetainedWorkspacePresentation target={presentationHost} active={active}>
+    <RetainedWorkspacePresentation target={presentationHost}>
       <ConversationChannel
         session={session}
         scope={scope}

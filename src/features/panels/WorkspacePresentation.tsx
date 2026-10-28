@@ -54,11 +54,9 @@ const noSubscription = () => () => {};
 /** Rebind pure visual publication to the destination without remounting owners. */
 export function RetainedWorkspacePresentation({
   target,
-  active = true,
   children,
 }: {
   target?: HTMLElement | undefined;
-  active?: boolean | undefined;
   children: ReactNode;
 }) {
   const origin = useWorkspacePresentation();
@@ -69,9 +67,7 @@ export function RetainedWorkspacePresentation({
     publication?.snapshot ?? alwaysPresented,
   );
   return (
-    <WorkspacePresentation.Provider
-      value={target ? presented : active && origin}
-    >
+    <WorkspacePresentation.Provider value={target ? presented : origin}>
       {children}
     </WorkspacePresentation.Provider>
   );

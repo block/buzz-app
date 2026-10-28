@@ -5177,9 +5177,11 @@ it("catches a kind 9 watch up on what it missed, oldest first in batches, and no
   vi.useFakeTimers({ toFake: ["Date"] });
   try {
     const start = nowSeconds();
+    // Before setup, so its connection starts at `start` even when the clock
+    // reaches the next second meanwhile.
+    vi.setSystemTime(start * 1000);
     const storage = memoryStorage();
     const first = await setup({ storage, identities: [echo] });
-    vi.setSystemTime(start * 1000);
     // Only this watch: the type's default one reads the channel too.
     await first.service.save(bot, {
       attentionEnabled: true,
@@ -5749,9 +5751,11 @@ it("wakes nothing for what came before a watch was first caught up, as after an 
   vi.useFakeTimers({ toFake: ["Date"] });
   try {
     const start = nowSeconds();
+    // Before setup, so its connection starts at `start` even when the clock
+    // reaches the next second meanwhile.
+    vi.setSystemTime(start * 1000);
     const storage = memoryStorage();
     const first = await setup({ storage, identities: [echo] });
-    vi.setSystemTime(start * 1000);
     await first.service.save(bot, {
       attentionEnabled: true,
       attention: { ...chat, "watch/channel": null },
@@ -5833,9 +5837,11 @@ it("does not catch up after a restart on a message it already heard live", async
   vi.useFakeTimers({ toFake: ["Date"] });
   try {
     const start = nowSeconds();
+    // Before setup, so its connection starts at `start` even when the clock
+    // reaches the next second meanwhile.
+    vi.setSystemTime(start * 1000);
     const storage = memoryStorage();
     const first = await setup({ storage, identities: [echo] });
-    vi.setSystemTime(start * 1000);
     await first.service.save(bot, {
       attentionEnabled: true,
       attention: { ...chat, "watch/channel": null },

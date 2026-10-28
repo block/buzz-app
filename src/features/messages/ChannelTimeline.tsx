@@ -28,7 +28,7 @@ import { MessageRow, type MessageLinkOrigin } from "./MessageRow";
 import { continuesMessageGroup } from "./message-grouping";
 import type { Attachment, ChannelWindow } from "../relay/contracts";
 import { useRowProfiles } from "../relay/react";
-import { geometryFor, geometrySignature } from "./geometry";
+import { geometryFor, geometrySignature, savedGeometry } from "./geometry";
 import { readView, writeView } from "../../shared/view-state";
 import styles from "./Messages.module.css";
 import { correctScrollTop } from "./scroll-correction";
@@ -210,6 +210,14 @@ function Timeline({
       : readView<ReadingPosition | null>(scope, `scroll:${channelId}`, null),
   );
   const savedPosition = useRef(initialPosition);
+  // Saved geometry seeds only a timeline restored to its newest rows. A reading
+  // or target restore keeps estimating which rows mount around its anchor.
+  const [bottomRestore] = useState(
+    () =>
+      (!initialPosition || initialPosition.bottom) &&
+      !revealMessageId &&
+      !inlineTarget,
+  );
   const restoredAnchor = useRef<ReadingPosition["anchor"]>(undefined);
   const profiles = useRowProfiles(queries.profiles, window.rows);
   const agentPubkeys = useKnownAgentPubkeys(queries, profiles);
@@ -672,11 +680,28 @@ function Timeline({
     const element = scroller.current;
     if (!element) return;
     const measured = element.clientWidth;
-    initialCache.current = geometry.get(
-      channelId,
-      latest.current.signature,
-      measured,
-    );
+    const saved = transient ? undefined : savedGeometry(scope);
+    initialCache.current =
+      geometry.get(channelId, latest.current.signature, measured) ??
+      (bottomRestore
+        ? saved?.get(channelId, latest.current.signature, measured)
+        : undefined);
+    // A relaunch reuses the last rendered geometry; page exit has no unmount.
+    const page = element.ownerDocument as Document | undefined;
+    const save = () => {
+      if (handle.current)
+        saved?.set(
+          channelId,
+          latest.current.signature,
+          latest.current.width,
+          handle.current.cache,
+        );
+    };
+    const hidden = () => {
+      if (page?.visibilityState === "hidden") save();
+    };
+    page?.defaultView?.addEventListener("pagehide", save);
+    page?.addEventListener("visibilitychange", hidden);
     let measuredSize = { width: 0, height: 0, edgeHeight: 0 };
     const measure = () => {
       const next = {
@@ -717,16 +742,20 @@ function Timeline({
       if (!transient)
         writeView(scope, `scroll:${channelId}`, savedPosition.current);
       observer.disconnect();
-      if (handle.current)
+      page?.defaultView?.removeEventListener("pagehide", save);
+      page?.removeEventListener("visibilitychange", hidden);
+      if (handle.current) {
         geometry.set(
           channelId,
           latest.current.signature,
           latest.current.width,
           handle.current.cache,
         );
+        save();
+      }
     };
     // Initial signature only; mutations invalidate the saved cache on remount.
-  }, [channelId, geometry, scope, transient]);
+  }, [bottomRestore, channelId, geometry, scope, transient]);
   // A reveal completes when its scroll runs. Until then it stays pending under
   // the intent that scheduled it: a row update that cancels its frame (an echo,
   // an edit, an older-history prepend) reschedules it, while any newer intent

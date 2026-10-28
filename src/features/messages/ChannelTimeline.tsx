@@ -336,20 +336,14 @@ function Timeline({
     paging: boolean;
   }>({ order: [], ids: new Set(), floor: 0, paging: false });
   // The reader's anchor row and its offset before this render's rows.
-  const reader = useRef<{
-    id: string | undefined;
-    top: number;
-    y: number;
-    inset: number;
-  }>({
+  const reader = useRef<{ id: string | undefined; top: number; y: number }>({
     id: undefined,
     top: 0,
     y: 0,
-    inset: 0,
   });
   const intent = useRef(0);
   const heldReader = useRef<
-    { id: string; y: number; inset: number; intent: number } | undefined
+    { id: string; y: number; intent: number } | undefined
   >(undefined);
   const upwardGesture = useRef<false | "candidate" | "moving">(false);
   const gestureFrame = useRef<number | undefined>(undefined);
@@ -569,7 +563,6 @@ function Timeline({
     id: previous[held],
     top: held < 0 ? 0 : (handle.current?.getItemOffset(held) ?? 0),
     y: retained?.y ?? savedPosition.current?.anchor?.y ?? 0,
-    inset: retained?.inset ?? 0,
   };
   const prepend =
     !!previous.length &&
@@ -597,8 +590,7 @@ function Timeline({
       !handle.current
     )
       return;
-    const virtua = handle.current;
-    const moved = virtua.getItemOffset(index) - reader.current.top;
+    const moved = handle.current.getItemOffset(index) - reader.current.top;
     const id = reader.current.id;
     if (
       !id ||
@@ -613,40 +605,21 @@ function Timeline({
     // New rows can leave the initial offset unchanged. Hold through their
     // measurements, but leave ordinary prepend follow-up renders to Virtua.
     correctScrollTop(element, moved);
-    const message = () =>
-      element.querySelector(`[data-message-id="${CSS.escape(id)}"]`);
-    const top = () => message()?.getBoundingClientRect().top;
     // The row's offset from the viewport, as last placed by the reader.
     // A live append must not choose a newly inserted row while the older
     // page is still measuring; keep the reader's original row and offset.
-    let y = reader.current.y;
-    // Virtua unmounts rows the reader leaves, but still places them. Track the
-    // row there too, or remounting it would restore where the reader was. The
-    // message can sit inside its item (a closed agents-audience row is inset),
-    // so keep the inset it had while mounted, across holds of the same row.
-    const anchor = {
-      id,
-      y,
-      inset: reader.current.inset,
-      intent: intent.current,
-    };
+    const anchor = { id, y: reader.current.y, intent: intent.current };
     heldReader.current = anchor;
-    const mounted = () => {
-      const row = message();
-      if (!row) return undefined;
-      const edge = row.getBoundingClientRect().top;
-      anchor.inset =
-        edge - (row.closest("li")?.getBoundingClientRect().top ?? edge);
-      return edge;
-    };
-    mounted();
+    const top = () =>
+      element
+        .querySelector(`[data-message-id="${CSS.escape(anchor.id)}"]`)
+        ?.getBoundingClientRect().top;
+    // A drag can carry the reader away from that row, and Virtua unmounts
+    // rows the reader leaves. Hold the row they read instead, or correcting
+    // for the old one would move the rows in view.
     const read = () => {
-      const row =
-        mounted() ??
-        list.getBoundingClientRect().top +
-          virtua.getItemOffset(index) +
-          anchor.inset;
-      anchor.y = y = row - element.getBoundingClientRect().top;
+      const position = positionAt(element, anchor.id).anchor;
+      if (position) Object.assign(anchor, position);
     };
     let height = list.style.height;
     const since = intent.current;
@@ -665,13 +638,10 @@ function Timeline({
       const row = top();
       if (list.style.height === height) return;
       height = list.style.height;
-      // Rows that measure while the held row is unmounted move it without a
-      // scroll event; follow it there, or its remount would correct for them.
-      if (row === undefined) read();
-      else if (settled.current && !follow.current)
+      if (row !== undefined && settled.current && !follow.current)
         correctScrollTop(
           element,
-          row - element.getBoundingClientRect().top - y,
+          row - element.getBoundingClientRect().top - anchor.y,
         );
     });
     const release = (keepAnchor = false) => {

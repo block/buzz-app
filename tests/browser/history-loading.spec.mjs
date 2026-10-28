@@ -365,25 +365,28 @@ test.describe("pages inside one second", () => {
       // Once idle, Virtua remounts it.
       await expect(row).toHaveCount(1);
       await settle(page);
-      const placed = await history(page).evaluate(
-        (e, id) =>
-          e.querySelector(`[data-message-id="${id}"] p`).getBoundingClientRect()
-            .top - e.getBoundingClientRect().top,
-        held.id,
-      );
-      // The row above it finishes measuring taller (an image loading). The
-      // jump can reach the loaded top, which leaves no row above the viewport.
+      // It remounts below the viewport, where the reader no longer reads.
+      expect(
+        await history(page).evaluate(
+          (e, id) =>
+            e.querySelector(`[data-message-id="${id}"]`).getBoundingClientRect()
+              .top > e.getBoundingClientRect().bottom,
+          held.id,
+        ),
+      ).toBe(true);
+      const before = await anchor(page);
+      // The row above it finishes measuring taller (an image loading). Rows
+      // below the reader grow away from them; nothing in view moves.
       await history(page).evaluate((e, id) => {
-        const row = e.querySelector(`[data-message-id="${id}"]`);
         const extra = document.createElement("div");
         extra.style.height = "300px";
-        row
+        e.querySelector(`[data-message-id="${id}"]`)
           .closest("li")
           .previousElementSibling.querySelector("[data-message-id] p")
           .after(extra);
       }, held.id);
       await settle(page);
-      await expectAnchor(page, { id: held.id, y: placed });
+      await expectAnchor(page, before);
     } finally {
       await page.mouse.up();
     }

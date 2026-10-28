@@ -918,3 +918,85 @@ test("opening a message link reads the channel but not its already-open thread",
   await page.clock.runFor(1000);
   expect(await unread()).toBeGreaterThan(0);
 });
+
+// A thread in the main pane is read only by focus in its own surface: a plain
+// visit's workspace-wide grant belongs to the side pane's selected thread, so a
+// live reply in main-pane X must stay unread while focus rests in side-pane T.
+test("a live reply in a main-pane thread stays unread while focus is in the side-pane thread", async ({
+  page,
+  app,
+}) => {
+  await page.clock.install();
+  await holdReadingFocus(page);
+  await open(page, app);
+  const roots = app.histories
+    .get("primary/alpha")
+    .filter((row) => row.content.startsWith("Thread root"));
+  for (const root of roots.slice(0, 2)) {
+    await page
+      .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
+      .getByRole("button", { name: /^View thread:/ })
+      .click();
+    await expect(
+      page.getByRole("complementary", { name: "Thread", exact: true }),
+    ).toBeVisible();
+  }
+  const x = roots[1];
+  const side = page.locator("[data-panel-workspace]");
+  const main = page.locator("[data-main-workspace]");
+  const tabs = (host) =>
+    host.locator('[role="tab"][data-tab-value^="thread:"]');
+  const unread = (rootId) =>
+    page.evaluate(
+      (rootId) =>
+        window.fixtureRelay.snapshot().session.unread.snapshot({
+          kind: "thread",
+          channelId: "alpha",
+          rootId,
+        }).observedCount,
+      rootId,
+    );
+  // Move X's tab (the second opened) to the main pane, leaving T in the side.
+  const ids = await tabs(side).evaluateAll((all) =>
+    all.map((tab) => tab.dataset.tabValue),
+  );
+  const moving = page.locator(`[role="tab"][data-tab-value="${ids[1]}"]`);
+  const from = await moving.boundingBox();
+  const header = await main.locator("header").first().boundingBox();
+  await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(
+    header.x + header.width / 2,
+    header.y + header.height / 2,
+    { steps: 8 },
+  );
+  await page.mouse.up();
+  await expect(tabs(main)).toHaveCount(1);
+  await expect(tabs(side)).toHaveCount(1);
+  await page.clock.runFor(1000);
+  expect(await unread(x.id)).toBeGreaterThan(0);
+
+  // Leave and return by a plain sidebar click.
+  await page.locator("button[data-channel-id=beta]").click();
+  await expect(
+    page.getByRole("textbox", { name: "Message #Beta", exact: true }),
+  ).toBeVisible();
+  await releaseReadingFocus(page);
+  await page.locator("button[data-channel-id=alpha]").click();
+  await expect(
+    page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
+  ).toBeVisible();
+
+  // Select X (reading its own selected tab is legitimate), then park focus in
+  // T's composer.
+  await tabs(main).click();
+  await expect.poll(() => unread(x.id)).toBe(0);
+  await side
+    .getByRole("textbox", { name: "Reply to thread", exact: true })
+    .focus();
+  app.reply(x.id);
+  await expect(main.getByText("New peer reply", { exact: true })).toBeVisible();
+  await expect.poll(() => unread(x.id)).toBeGreaterThan(0);
+  await page.clock.runFor(1000);
+  expect(await unread(x.id)).toBeGreaterThan(0);
+});

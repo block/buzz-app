@@ -343,11 +343,14 @@ it("only the owning selected tab earns dwell; inactive and restored content does
 it("a panel in a reading-thread workspace reads while focus is elsewhere in that workspace", () => {
   const h = setup({ focus: "outside" });
   const workspace = document.createElement("div");
+  const side = document.createElement("div");
+  side.setAttribute("data-panel-workspace", "");
   const surface = h.element.closest("aside");
   const unrelated = document.createElement("button");
   expect(surface).not.toBeNull();
   document.body.append(workspace, unrelated);
-  if (surface) workspace.append(surface, h.outside);
+  if (surface) side.append(surface);
+  workspace.append(side, h.outside);
   h.retarget("thread-room");
   h.outside.focus();
   vi.advanceTimersByTime(300);
@@ -361,6 +364,14 @@ it("a panel in a reading-thread workspace reads while focus is elsewhere in that
   expect(h.dwelled()?.observe).toHaveBeenCalledExactlyOnceWith(["visible"]);
   const count = h.reading.mock.calls.length;
   unrelated.focus();
+  vi.advanceTimersByTime(300);
+  expect(h.reading).toHaveBeenCalledTimes(count);
+  // A thread in the main pane belongs to no side-pane selection: the same
+  // workspace focus does not read it.
+  side.setAttribute("data-main-workspace", "");
+  side.removeAttribute("data-panel-workspace");
+  h.retarget("thread-room-main");
+  h.outside.focus();
   vi.advanceTimersByTime(300);
   expect(h.reading).toHaveBeenCalledTimes(count);
 });

@@ -20,13 +20,17 @@ export function usePublicChannelSearch(
   query: string,
   ready: boolean,
   exact = false,
+  /** Optional inline native-query visit; Command-K keeps its own query owner. */
+  visit?: number,
 ) {
-  const [attempt, setAttempt] = useState(0);
+  const [recovery, setRecovery] = useState({ visit, attempt: 0 });
+  const attempt = recovery.visit === visit ? recovery.attempt : 0;
+  if (recovery.visit !== visit) setRecovery({ visit, attempt: 0 });
   const [result, setResult] = useState<Result>();
   const search = session.channels.searchPublic;
   const owner = useMemo(
-    () => ({ session, query, exact, attempt }),
-    [session, query, exact, attempt],
+    () => ({ session, query, exact, attempt, visit }),
+    [session, query, exact, attempt, visit],
   );
   useEffect(() => {
     if (!query || !ready || !search) return;
@@ -62,7 +66,7 @@ export function usePublicChannelSearch(
   const loading = !!query && ready && !!search && !current;
   // While the next lookup runs, keep the last answer's rows that still
   // match, so open channels don't vanish and return on every keystroke. The
-  // store keeps that answer: the composer remounts this hook per edit.
+  // store keeps that answer across query visits and chooser remounts.
   const match = session.channels.matchPublic;
   const found = useMemo(() => {
     if (current) return current.channels;
@@ -70,7 +74,15 @@ export function usePublicChannelSearch(
     const kept = match(query, { exact });
     return kept.length ? kept : none;
   }, [current, loading, match, query, exact]);
-  const retry = useCallback(() => setAttempt((value) => value + 1), []);
+  const retry = useCallback(
+    () =>
+      setRecovery((current) =>
+        current.visit === visit
+          ? { ...current, attempt: current.attempt + 1 }
+          : current,
+      ),
+    [visit],
+  );
   return {
     loading,
     // A channel joined or removed since the lookup leaves this result set.

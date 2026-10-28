@@ -65,6 +65,7 @@ const completions: Record<string, ComposerCompletion> = {
     order: 0,
     match: ({ text, start }) => emojiQuery(text, start),
     component: EmojiCompletion,
+    queryUpdates: "props",
   },
   "buzz.mentions/typeahead": {
     id: "typeahead",
@@ -79,6 +80,7 @@ const completions: Record<string, ComposerCompletion> = {
     title: "Channel",
     match: ({ text, start }) => channelQuery(text, start),
     component: ChannelCompletion,
+    queryUpdates: "props",
   },
 };
 export function huddleComposerExtensions(enabled: {

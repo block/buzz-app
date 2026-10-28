@@ -56,6 +56,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     order: 0,
     match: (observation) => emojiQuery(observation.text, observation.start),
     component: EmojiCompletion,
+    queryUpdates: "props",
   });
   ctx.conversation.registerTool({
     id: "picker",

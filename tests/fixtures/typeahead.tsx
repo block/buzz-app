@@ -1,5 +1,11 @@
 import "../../src/shared/styles/globals.css";
-import { StrictMode, useLayoutEffect, useState } from "react";
+import {
+  Profiler,
+  StrictMode,
+  startTransition,
+  useLayoutEffect,
+  useState,
+} from "react";
 import { createRoot } from "react-dom/client";
 import { Context } from "@deepseek-ai/cordis";
 import { createPluginManager } from "../../src/plugins/manager";
@@ -9,6 +15,7 @@ import type {
   CompletionResult,
 } from "../../src/features/conversation/contracts";
 import type { KeyboardEvent } from "react";
+import type { ComposerInputElement } from "../../src/features/messages/composer-dom";
 import { createRelaySession } from "../../src/features/relay/session";
 import {
   keypair,
@@ -26,7 +33,42 @@ const requests: {
   publish: ComposerCompletionProps["publish"];
 }[] = [];
 const disposers = new Map<number, () => void>();
-const keyPublications: unknown[] = [];
+type KeyPublication = {
+  key: string;
+  trusted: boolean;
+  query: string | undefined;
+  text: string;
+  before: (string | null)[];
+  after: (string | null)[];
+  accepted: boolean;
+  commits: { text: string; options: (string | null)[] }[];
+  final?: {
+    text: string;
+    selection: number[];
+    focused: boolean;
+    chips: number;
+    recipients: (string | null)[];
+  };
+};
+const keyPublications: KeyPublication[] = [];
+let activeKey:
+  | { record: KeyPublication; input: ComposerInputElement }
+  | undefined;
+const options = (input: ComposerInputElement) => {
+  const list = document.getElementById(
+    input.getAttribute("aria-controls") ?? "",
+  );
+  return [...(list?.querySelectorAll('[role="option"]') ?? [])].map(
+    (el) => el.textContent,
+  );
+};
+function recordCompletionCommit() {
+  if (activeKey)
+    activeKey.record.commits.push({
+      text: activeKey.input.value,
+      options: options(activeKey.input),
+    });
+}
 let keyPublication:
   | { index: number; key: string; result: CompletionResult | "withdraw" }
   | undefined;
@@ -39,29 +81,34 @@ function publishOnKey(event: KeyboardEvent) {
   const pending = keyPublication;
   if (!pending || event.key !== pending.key) return;
   keyPublication = undefined;
-  const options = () =>
-    [...document.querySelectorAll('[role="option"]')].map(
-      (el) => el.textContent,
-    );
-  const before = options();
-  let accepted = false;
-  if (pending.result === "withdraw") {
-    const withdraw = disposers.get(pending.index);
-    if (withdraw) {
-      withdraw();
-      accepted = true;
-    }
-  } else accepted = publish(pending.index, pending.result);
-  // The external provider publishes during React's native-key capture. This
-  // does not dispatch, cancel, slow, or replace the originating trusted input.
-  keyPublications.push({
+  const input = event.target as ComposerInputElement;
+  const record: KeyPublication = {
     key: event.key,
     trusted: event.nativeEvent.isTrusted,
     query: requests[pending.index]?.query,
-    before,
-    after: options(),
-    accepted,
+    text: input.value,
+    before: options(input),
+    after: [],
+    accepted: false,
+    commits: [],
+  };
+  keyPublications.push(record);
+  activeKey = { record, input };
+  // A real React transition holds only the provider's presentation update.
+  // The publication callback still executes synchronously, before native command
+  // routing, and Profiler verifies that the latest view did not commit first.
+  startTransition(() => {
+    if (pending.result === "withdraw") {
+      const withdraw = disposers.get(pending.index);
+      if (withdraw) {
+        withdraw();
+        record.accepted = true;
+      }
+    } else record.accepted = publish(pending.index, pending.result);
   });
+  // External provider publication observes the actual trusted key, without
+  // dispatching, cancelling, slowing or replacing its native editing operation.
+  record.after = options(input);
 }
 function Provider({ query, publish }: ComposerCompletionProps) {
   useLayoutEffect(() => {
@@ -134,6 +181,23 @@ Object.assign(window, {
     onKey(index: number, key: string, result: CompletionResult | "withdraw") {
       keyPublication = { index, key, result };
     },
+    finishKey() {
+      if (activeKey) {
+        const { input, record } = activeKey;
+        record.final = {
+          text: input.value,
+          selection: [input.selectionStart, input.selectionEnd],
+          focused: document.activeElement === input,
+          chips: input.querySelectorAll(".inline-chip").length,
+          recipients: [
+            ...(input
+              .closest("form")
+              ?.querySelectorAll("[data-mention-recipient]") ?? []),
+          ].map((el) => el.getAttribute("aria-label")),
+        };
+      }
+      activeKey = undefined;
+    },
     keyPublications,
     viewer: viewer.pubkey,
     change: (action: "enable" | "disable") =>
@@ -205,6 +269,8 @@ const root = document.getElementById("root");
 if (!root) throw new Error("Missing fixture root");
 createRoot(root).render(
   <StrictMode>
-    <Fixture />
+    <Profiler id="completion-fixture" onRender={recordCompletionCommit}>
+      <Fixture />
+    </Profiler>
   </StrictMode>,
 );

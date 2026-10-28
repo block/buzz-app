@@ -3,13 +3,14 @@ import {
   useId,
   useLayoutEffect,
   useRef,
-  useSyncExternalStore,
+  useState,
   type RefObject,
 } from "react";
 import type { ComposerInputElement } from "../messages/composer-dom";
 import {
   COMPLETION_RETRY,
   type CompletionGeneration,
+  type CompletionPresentation,
   type CompletionSession,
 } from "./completion-session";
 import { useCompletionPosition } from "./useCompletionPosition";
@@ -25,11 +26,18 @@ export function CompletionMenu({
   generation: CompletionGeneration;
   input: RefObject<ComposerInputElement | null>;
 }) {
-  const snapshot = useSyncExternalStore(
-    session.subscribe,
-    session.snapshot,
+  // Presentation is a React state projection, not the command store. Provider
+  // publication remains synchronous, while ordinary/transition render priority
+  // is preserved instead of forcing every external result into a sync commit.
+  const [snapshot, show] = useState<CompletionPresentation | undefined>(
     session.snapshot,
   );
+  useLayoutEffect(() => {
+    const update = () => show(session.snapshot());
+    const release = session.subscribe(update);
+    update(); // A layout-publishing provider may precede this subscription.
+    return release;
+  }, [session]);
   const presentation =
     snapshot?.generation === generation ? snapshot : undefined;
   const result = presentation?.publication?.result;

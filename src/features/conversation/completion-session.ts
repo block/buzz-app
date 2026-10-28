@@ -68,7 +68,9 @@ export class CompletionSession {
 
   readonly subscribe = (listener: () => void) => {
     this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
   };
   readonly snapshot = () => this.presentation;
 
@@ -92,7 +94,7 @@ export class CompletionSession {
     return Object.freeze(generation);
   }
 
-  configure(owner: Owner) {
+  configure(owner: Owner | undefined) {
     this.owner = owner;
   }
 
@@ -181,7 +183,7 @@ export class CompletionSession {
             result?.items[0]?.id ??
             (result?.retry ? COMPLETION_RETRY : undefined));
     }
-    if (!presentation?.reveal || this.revealed === presentation.revision)
+    if (!presentation?.reveal || this.revealed >= presentation.revision)
       return false;
     this.revealed = presentation.revision;
     return true;
@@ -189,6 +191,13 @@ export class CompletionSession {
 
   select(generation: CompletionGeneration, choice: Choice, reveal = false) {
     if (this.generation !== generation) return;
+    if (!reveal)
+      this.revealed = Math.max(this.revealed, this.presentation?.revision ?? 0);
+    if (!reveal && this.command === choice && this.selected === choice) {
+      // Repeated pointer movement cancels pending scroll intent, without
+      // manufacturing a new presentation for an unchanged hovered identity.
+      return;
+    }
     this.command = choice;
     ++this.commandRevision;
     this.selected = choice;

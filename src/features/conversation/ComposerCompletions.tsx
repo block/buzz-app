@@ -167,13 +167,9 @@ export function ComposerCompletions({
   ]);
   return (
     <>
-      <SessionBinding
-        session={session}
-        generation={generation}
-        editor={editor}
-        replace={replace}
-        renew={renew}
-      />
+      {generation && (
+        <SessionBinding session={session} editor={editor} replace={replace} />
+      )}
       {generation && (
         <ContributionBoundary
           key={JSON.stringify([
@@ -188,25 +184,25 @@ export function ComposerCompletions({
             generation.query.start,
           ])}
           resetIdentity={generation}
-          onFailedChange={(failed) => {
-            if (failed) session.retire(generation);
-          }}
           fallback={
             <span role="status">
               {generation.provider.title} suggestions unavailable
             </span>
           }
         >
+          <GenerationBinding
+            session={session}
+            generation={generation}
+            renew={renew}
+          />
           <ProviderAdapter generation={generation} />
+          <CompletionMenu
+            key={generation.id}
+            session={session}
+            generation={generation}
+            input={input}
+          />
         </ContributionBoundary>
-      )}
-      {generation && (
-        <CompletionMenu
-          key={generation.id}
-          session={session}
-          generation={generation}
-          input={input}
-        />
       )}
     </>
   );
@@ -214,16 +210,12 @@ export function ComposerCompletions({
 
 function SessionBinding({
   session,
-  generation,
   editor,
   replace,
-  renew,
 }: {
   session: CompletionSession;
-  generation: CompletionGeneration | undefined;
   editor: CompletionEditor;
   replace: OwnerProps["replace"];
-  renew(): void;
 }) {
   // This sibling commits before providers, including providers that publish in
   // layout effects. There is no publish-callback state handshake or hook in an
@@ -232,18 +224,32 @@ function SessionBinding({
     session.configure({ editor, replace });
   });
   useLayoutEffect(() => {
-    // StrictMode may replay an effect after its lease was permanently retired.
-    // Issue a fresh capability; never reactivate an old captured publisher.
-    if (!session.activate(generation)) renew();
-    return () => session.retire(generation);
-  }, [session, generation, renew]);
-  useLayoutEffect(() => {
     const keys = editor.keys;
     keys.current = session.handle;
     return () => {
       if (keys.current === session.handle) keys.current = undefined;
+      session.configure(undefined);
     };
   }, [session, editor.keys]);
+  return null;
+}
+
+function GenerationBinding({
+  session,
+  generation,
+  renew,
+}: {
+  session: CompletionSession;
+  generation: CompletionGeneration;
+  renew(): void;
+}) {
+  // A stable logical contribution owner encloses provider AND preview work.
+  // Replay retires a capability, not this owner's React identity. Renewal must
+  // not key this binding by capability ID and restart an endless mount cycle.
+  useLayoutEffect(() => {
+    if (!session.activate(generation)) renew();
+    return () => session.retire(generation);
+  }, [session, generation, renew]);
   return null;
 }
 

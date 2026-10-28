@@ -30,7 +30,8 @@ import {
   waitFor,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { useLayoutEffect } from "react";
+import { startTransition, useLayoutEffect } from "react";
+import { flushSync } from "react-dom";
 import type { Contribution } from "../../plugins/contributions";
 import type {
   ComposerCompletion,
@@ -836,6 +837,103 @@ it("keeps unpublished completions invisible but lets Escape revoke pending work"
   expect(h.publish(h.completionRequests.length - 1)).not.toBe(false);
   expect(screen.getByRole("option", { name: "chosen" })).toBeVisible();
   expect(input).toHaveAttribute("aria-controls");
+});
+
+it("pointer selection cancels a queued completion reveal across an older parent commit", () => {
+  const h = mount();
+  h.replaceCompletionProvider("buzz.mentions");
+  h.fill("!pointer");
+  const publish = h.completionRequests.at(-1);
+  if (!publish) throw new Error("No observed completion request");
+  const items = [{ id: "chosen", label: "Chosen", edit: { text: "chosen" } }];
+  act(() => {
+    publish({ items });
+  });
+  const option = screen.getByRole("option", { name: "Chosen" });
+  fireEvent.keyDown(h.input(), { key: "ArrowDown" });
+  const scroll = vi.mocked(HTMLElement.prototype.scrollIntoView);
+  scroll.mockClear();
+  act(() => {
+    startTransition(() => {
+      publish({ items });
+    });
+    fireEvent.pointerMove(option);
+    // Commit ordinary parent props while the provider's transition is pending.
+    flushSync(() => h.retarget({ channelName: "Renamed" }));
+    expect(scroll).not.toHaveBeenCalled();
+  });
+  expect(scroll).not.toHaveBeenCalled();
+  expect(option).toHaveAttribute("aria-selected", "true");
+  expect(h.input()).toHaveValue("!pointer");
+  expect(h.messages.send).not.toHaveBeenCalled();
+});
+
+it("an older completion disposer cannot withdraw a newer answer or query", () => {
+  const h = mount();
+  h.fill("!first");
+  const publish = h.completionRequests.at(-1);
+  if (!publish) throw new Error("No observed completion request");
+  let firstDispose: ReturnType<typeof publish> = false;
+  let secondDispose: ReturnType<typeof publish> = false;
+  act(() => {
+    firstDispose = publish({
+      items: [{ id: "first", label: "First", edit: { text: "first" } }],
+    });
+    secondDispose = publish({
+      items: [{ id: "second", label: "Second", edit: { text: "second" } }],
+    });
+  });
+  act(() => {
+    if (firstDispose) firstDispose();
+  });
+  expect(screen.getByRole("option", { name: "Second" })).toBeVisible();
+  h.fill("!next");
+  const current = h.completionRequests.length - 1;
+  expect(h.publish(current, "Current")).not.toBe(false);
+  act(() => {
+    if (secondDispose) secondDispose();
+  });
+  expect(screen.getByRole("option", { name: "Current" })).toBeVisible();
+  expect(publish({ items: [] })).toBe(false);
+  expect(h.messages.send).not.toHaveBeenCalled();
+});
+
+it("isolates completion preview failure, revokes its publisher and recovers on the next query", () => {
+  const h = mount();
+  h.fill("!failed-preview");
+  const publish = h.completionRequests.at(-1);
+  if (!publish) throw new Error("No observed completion request");
+  function BrokenPreview(): never {
+    throw new Error("Fixture preview failed");
+  }
+  expect(() =>
+    act(() => {
+      publish({
+        items: [
+          {
+            id: "broken",
+            label: "Broken",
+            preview: <BrokenPreview />,
+            edit: { text: "must not insert" },
+          },
+        ],
+      });
+    }),
+  ).not.toThrow();
+  expect(screen.getByRole("status", { name: "" })).toHaveTextContent(
+    "Delayed suggestions unavailable",
+  );
+  expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  expect(
+    publish({ items: [{ id: "late", label: "Late", edit: { text: "late" } }] }),
+  ).toBe(false);
+  h.fill("!recovered-preview");
+  expect(h.publish(h.completionRequests.length - 1, "Recovered")).not.toBe(
+    false,
+  );
+  fireEvent.keyDown(h.input(), { key: "Tab" });
+  expect(h.input()).toHaveValue("Recovered ");
+  expect(h.messages.send).not.toHaveBeenCalled();
 });
 
 it("shows provider-owned pending and retry states and hides an empty publication", async () => {

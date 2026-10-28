@@ -56,6 +56,7 @@ function rank(name: string, needle: string) {
 
 export function ChannelCompletion({
   session,
+  observation,
   query,
   publish,
 }: ComposerCompletionProps) {
@@ -66,7 +67,13 @@ export function ChannelCompletion({
   );
   // Open channels the viewer hasn't joined. Joined matches still complete
   // when this fails: open-channel search is best effort.
-  const search = usePublicChannelSearch(session, needle, listReady);
+  const search = usePublicChannelSearch(
+    session,
+    needle,
+    listReady,
+    false,
+    observation.revision,
+  );
   const { loading: searching, found: discovered, partial, error } = search;
   const retrySearch = search.retry;
   useLayoutEffect(() => {

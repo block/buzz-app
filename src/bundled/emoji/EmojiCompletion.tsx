@@ -105,6 +105,7 @@ function NativeEmojiPreview({ emoji }: { emoji: string }) {
 
 export function EmojiCompletion({
   session,
+  observation,
   query,
   publish,
 }: ComposerCompletionProps) {
@@ -113,7 +114,14 @@ export function EmojiCompletion({
     session.emoji.snapshot,
     session.emoji.snapshot,
   );
-  const [attempt, retry] = useState(0);
+  const [recovery, retry] = useState({
+    visit: observation.revision,
+    attempt: 0,
+  });
+  const attempt =
+    recovery.visit === observation.revision ? recovery.attempt : 0;
+  if (recovery.visit !== observation.revision)
+    retry({ visit: observation.revision, attempt: 0 });
   useEffect(() => {
     void session.emoji.ensure();
   }, [session]);
@@ -145,7 +153,11 @@ export function EmojiCompletion({
     };
     // Suggestions may be partial; automatic replacement needs both catalogs.
     const retrySearch = () => {
-      retry((value) => value + 1);
+      retry((current) =>
+        current.visit === observation.revision
+          ? { ...current, attempt: current.attempt + 1 }
+          : current,
+      );
       if (catalog.status === "error") void session.emoji.refresh();
     };
     withdraw = publish({
@@ -187,6 +199,6 @@ export function EmojiCompletion({
       unsubscribe();
       if (withdraw) withdraw();
     };
-  }, [session, query.query, publish, catalog, attempt]);
+  }, [session, query.query, publish, catalog, attempt, observation.revision]);
   return null;
 }

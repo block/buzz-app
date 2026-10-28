@@ -28,6 +28,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     title: "Channel",
     match: ({ text, start }) => channelQuery(text, start),
     component: ChannelCompletion,
+    queryUpdates: "props",
   });
   const extensions = ctx.conversation;
   extensions.registerTabs((props) => (

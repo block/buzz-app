@@ -37,12 +37,15 @@ test("current completion publication owns a native key before its latest view co
         window.completionFixture.onKey(index, key, result),
       { index, key, result },
     );
+  const finish = () =>
+    page.evaluate(() => window.completionFixture.finishKey());
   const chosen = { id: "chosen", label: "Chosen", edit: { text: "accepted" } };
   let index = await current("first");
   await expect(page.getByRole("listbox")).toHaveCount(0);
   await arm(index, "Enter", { items: [chosen] });
   await input.press("Enter");
   await expect(input).toHaveJSProperty("value", "accepted ");
+  await finish();
 
   index = await current("empty");
   await page.evaluate(
@@ -53,6 +56,7 @@ test("current completion publication owns a native key before its latest view co
   await arm(index, "Tab", { items: [chosen] });
   await input.press("Tab");
   await expect(input).toHaveJSProperty("value", "accepted ");
+  await finish();
 
   index = await current("withdraw");
   await page.evaluate(
@@ -67,6 +71,7 @@ test("current completion publication owns a native key before its latest view co
   await arm(index, " ", "withdraw");
   await input.press("Space");
   await expect(input).toHaveJSProperty("value", "!withdraw ");
+  await finish();
 
   index = await current("automatic");
   const person = await page.evaluate(() => window.completionFixture.viewer);
@@ -90,6 +95,7 @@ test("current completion publication owns a native key before its latest view co
   await arm(index, " ", { items: [other, exact], spaceId: exact.id });
   await input.press("Space");
   await expect(input).toHaveJSProperty("value", "@Honey ");
+  await finish();
   await expect(input).toHaveJSProperty("selectionStart", 7);
   await expect(input).toHaveJSProperty("selectionEnd", 7);
   await expect(input).toBeFocused();
@@ -102,11 +108,27 @@ test("current completion publication owns a native key before its latest view co
       (el) => el.getAttribute("aria-label"),
     ),
   }));
+  receipt.conditions = {
+    browser: page.context().browser().version(),
+    viewport: page.viewportSize(),
+    publicationControl:
+      "synchronous external publish inside real React transition; native key unchanged",
+  };
+  await testInfo.attach("native-publication-receipt", {
+    body: JSON.stringify(receipt, null, 2),
+    contentType: "application/json",
+  });
   expect(receipt.keys).toHaveLength(4);
   for (const key of receipt.keys) {
     expect(key.trusted).toBe(true);
     expect(key.accepted).toBe(true);
     expect(key.after).toEqual(key.before);
+    // Profiler records actual commits, including any synchronous commit during
+    // capture. A new provider view must not commit before the native command.
+    for (const commit of key.commits.filter(
+      (commit) => commit.text === key.text,
+    ))
+      expect(commit.options).toEqual(key.before);
   }
   expect(receipt.keys.map((key) => key.before)).toEqual([
     [],
@@ -114,12 +136,27 @@ test("current completion publication owns a native key before its latest view co
     ["Chosen"],
     ["Honey", "Honeycomb"],
   ]);
+  expect(
+    receipt.keys.map((key) => [
+      key.final.text,
+      key.final.selection,
+      key.final.focused,
+      key.final.chips,
+    ]),
+  ).toEqual([
+    ["accepted ", [9, 9], true, 0],
+    ["accepted ", [9, 9], true, 0],
+    ["!withdraw ", [10, 10], true, 0],
+    ["@Honey ", [7, 7], true, 1],
+  ]);
+  expect(receipt.keys.map((key) => key.final.recipients)).toEqual([
+    [],
+    [],
+    [],
+    [`Remove mention Honey ${person}`],
+  ]);
   expect(receipt.sends).toEqual([]);
   expect(receipt.recipients).toEqual([`Remove mention Honey ${person}`]);
-  await testInfo.attach("native-publication-receipt", {
-    body: JSON.stringify(receipt, null, 2),
-    contentType: "application/json",
-  });
 });
 // Native keydown/text input and browser undo selection need both real engines;
 // catalog failure/ordering and Markdown permutations live in the composer unit tests.

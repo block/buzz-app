@@ -306,6 +306,110 @@ it("keeps plain agent presence without avatar activity, and omits human presence
   expect(subscribe).not.toHaveBeenCalled();
   cleanup();
 });
+it("re-renders only the avatar when an agent's presence changes", () => {
+  const agentRow = { ...row, authorId: "b".repeat(64) };
+  const listeners = new Set<() => void>();
+  let current: "online" | "unknown" = "unknown";
+  const session = {
+    agentActivity: {
+      snapshot: () => ({ turns: [], typing: [] }),
+      subscribe: () => () => {},
+    },
+    presence: {
+      subscribe: (_key: string, listener: () => void) => {
+        listeners.add(listener);
+        return () => {
+          listeners.delete(listener);
+        };
+      },
+      status: () => current,
+      limited: () => false,
+    },
+    messages: { report: undefined },
+    channels: {
+      subscribeList: () => () => {},
+      list: () => ({ channels: [], status: "ready" }),
+    },
+  } as unknown as RelaySession;
+  // The row asks whether its author's profile opens on every render.
+  const canOpenLink = vi.fn(() => true);
+  renderDom(
+    <MessageRow
+      row={agentRow}
+      agentPubkeys={new Set([agentRow.authorId])}
+      session={session}
+      profile={undefined}
+      media={() => undefined}
+      onOpenLink={() => false}
+      canOpenLink={canOpenLink}
+      day={false}
+      retry={undefined}
+    />,
+  );
+  const avatar = () =>
+    screen.getByRole("button", { name: "View bbbbbbbbbb profile" });
+  expect(avatar()).not.toHaveAccessibleDescription();
+  const rowRenders = canOpenLink.mock.calls.length;
+  expect(rowRenders).toBeGreaterThan(0);
+  act(() => {
+    current = "online";
+    for (const listener of listeners) listener();
+  });
+  expect(avatar()).toHaveAccessibleDescription(/^Presence: online\s*$/);
+  expect(canOpenLink).toHaveBeenCalledTimes(rowRenders);
+  cleanup();
+});
+it("keeps the avatar mounted and focused when a row resolves as an agent", () => {
+  const agentRow = { ...row, authorId: "c".repeat(64) };
+  const session = {
+    agentActivity: {
+      snapshot: () => ({ turns: [], typing: [] }),
+      subscribe: () => () => {},
+    },
+    presence: {
+      subscribe: () => () => {},
+      status: () => "online",
+      limited: () => false,
+    },
+    agentChoices: {
+      snapshot: () => ({ identities: [] }),
+      subscribe: () => () => {},
+    },
+    directMessages: { available: false },
+    messages: { report: undefined },
+    channels: {
+      subscribeList: () => () => {},
+      list: () => ({ channels: [], status: "ready" }),
+    },
+  } as unknown as RelaySession;
+  const props = {
+    row: agentRow,
+    session,
+    profile: undefined,
+    media: () => undefined,
+    onOpenLink: () => false,
+    canOpenLink: () => true,
+    day: false,
+    retry: undefined,
+  };
+  // Profiles and the agent library load after the row mounts.
+  const mounted = renderDom(<MessageRow {...props} />);
+  const avatar = () =>
+    screen.getByRole("button", { name: "View cccccccccc profile" });
+  const before = avatar();
+  act(() => before.focus());
+  expect(before).not.toHaveAccessibleDescription();
+  mounted.rerender(
+    <MessageRow {...props} agentPubkeys={new Set([agentRow.authorId])} />,
+  );
+  expect(avatar()).toBe(before);
+  expect(before).toHaveFocus();
+  expect(before).toHaveAccessibleDescription(/^Presence: online\s*$/);
+  expect(
+    before.querySelector('[data-avatar-shape="squircle"]'),
+  ).toBeInTheDocument();
+  cleanup();
+});
 it.each(["bare", "angle", "markdown", "escaped"] as const)(
   "renders link contributions inside message prose, preserving punctuation and plain-link fallback (%s)",
   (format) => {

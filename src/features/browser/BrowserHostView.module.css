@@ -19,14 +19,6 @@
   border-bottom: 1px solid var(--border-standard);
 }
 
-.status {
-  max-width: 30%;
-  overflow: hidden;
-  color: var(--text-subtle);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .error {
   flex: none;
   padding: var(--space-1) var(--space-2);
@@ -58,5 +50,45 @@
   .toolbar {
     gap: var(--space-half);
     padding-inline: var(--space-1);
+  }
+}
+
+.control {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  max-width: 50%;
+}
+
+.control button {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.controlContent {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.controlName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.controlAction {
+  flex: none;
+  white-space: pre;
+}
+
+@media (max-width: 26.25rem) {
+  .controlName,
+  .controlSeparator {
+    display: none;
   }
 }

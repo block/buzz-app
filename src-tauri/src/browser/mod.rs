@@ -1,5 +1,7 @@
 //! Remote website content embedded in the main window without a Tauri bridge.
 
+#[cfg(all(feature = "experimental-browser-control", target_os = "macos"))]
+pub(crate) mod control;
 mod platform;
 mod policy;
 
@@ -70,6 +72,8 @@ pub struct BrowserSnapshot {
     pub title: String,
     pub loading: bool,
     pub error: Option<String>,
+    pub control_granted: bool,
+    pub control_revision: u64,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]
@@ -88,9 +92,21 @@ struct BrowserSession {
     _permissions: platform::Permissions,
     snapshot: Rc<RefCell<BrowserSnapshot>>,
     policy: NavigationPolicy,
+    visible: std::cell::Cell<bool>,
+    #[cfg(all(feature = "experimental-browser-control", target_os = "macos"))]
+    control: RefCell<Option<String>>,
+    #[cfg(all(feature = "experimental-browser-control", target_os = "macos"))]
+    control_revision: std::cell::Cell<u64>,
 }
 
 impl BrowserSession {
+    #[cfg(all(feature = "experimental-browser-control", target_os = "macos"))]
+    fn revoke_control(&self) {
+        if self.control.borrow_mut().take().is_some() {
+            self.control_revision.set(self.control_revision.get() + 1);
+        }
+    }
+
     fn navigate(&self, target: &str) -> Result<(), String> {
         let url = self.policy.validate(target)?;
         self.guest
@@ -112,6 +128,11 @@ impl BrowserSession {
         {
             snapshot.loading = platform::loading(&self.guest);
         }
+        #[cfg(all(feature = "experimental-browser-control", target_os = "macos"))]
+        {
+            snapshot.control_granted = self.control.borrow().is_some();
+            snapshot.control_revision = self.control_revision.get();
+        }
         Ok(snapshot)
     }
 
@@ -119,13 +140,24 @@ impl BrowserSession {
         self.guest
             .set_visible(false)
             .map_err(|error| error.to_string())?;
+        self.visible.set(false);
         if !visible {
+            #[cfg(all(feature = "experimental-browser-control", target_os = "macos"))]
+            self.revoke_control();
             return Ok(());
         }
-        platform::resize_guest(&self.guest, &self.host, bounds)?;
-        self.guest
-            .set_visible(true)
-            .map_err(|error| error.to_string())
+        let shown = platform::resize_guest(&self.guest, &self.host, bounds).and_then(|()| {
+            self.guest
+                .set_visible(true)
+                .map_err(|error| error.to_string())
+        });
+        #[cfg(all(feature = "experimental-browser-control", target_os = "macos"))]
+        if shown.is_err() {
+            self.revoke_control();
+        }
+        shown?;
+        self.visible.set(true);
+        Ok(())
     }
 }
 
@@ -183,6 +215,9 @@ pub(crate) fn window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
         tauri::WindowEvent::Resized(_) | tauri::WindowEvent::ScaleFactorChanged { .. } => {
             BROWSERS.with(|browsers| {
                 for browser in browsers.borrow().iter() {
+                    browser.visible.set(false);
+                    #[cfg(all(feature = "experimental-browser-control", target_os = "macos"))]
+                    browser.revoke_control();
                     if let Err(error) = browser.guest.set_visible(false) {
                         browser.snapshot.borrow_mut().error = Some(error.to_string());
                     }
@@ -268,6 +303,11 @@ fn build_contents(
         _permissions: permissions,
         snapshot,
         policy,
+        visible: std::cell::Cell::new(false),
+        #[cfg(all(feature = "experimental-browser-control", target_os = "macos"))]
+        control: RefCell::new(None),
+        #[cfg(all(feature = "experimental-browser-control", target_os = "macos"))]
+        control_revision: std::cell::Cell::new(0),
     };
     platform::resize_guest(&browser.guest, &browser.host, bounds)?;
     browser.navigate(target.as_str())?;
@@ -477,4 +517,12 @@ mod lifecycle_tests {
         assert_eq!(session.borrow().len(), 1);
         assert_eq!(drops.borrow().len(), 1);
     }
+}
+
+#[tauri::command]
+pub fn browser_control_available() -> bool {
+    cfg!(all(
+        feature = "experimental-browser-control",
+        target_os = "macos"
+    ))
 }

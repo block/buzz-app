@@ -13,8 +13,8 @@ use oauth_callback::{
 mod browser_permissions_tests;
 mod pairing;
 use browser::{
-    browser_action, browser_attach, browser_detach, browser_navigate, browser_set_bounds,
-    browser_status,
+    browser_action, browser_attach, browser_control_available, browser_detach, browser_navigate,
+    browser_set_bounds, browser_status,
 };
 mod agent_state;
 mod app_agents;
@@ -868,10 +868,17 @@ pub fn run() {
                 browser_detach,
                 browser_navigate,
                 browser_action,
-                browser_status
+                browser_status,
+                browser_control_available
             ];
             // Browser embeds a real native view; existing commands also support MockRuntime.
             move |request: tauri::ipc::Invoke<tauri::Wry>| {
+                #[cfg(all(feature = "experimental-browser-control", target_os = "macos"))]
+                if request.message.command().starts_with("browser_control_")
+                    && request.message.command() != "browser_control_available"
+                {
+                    return browser::control::handle(request);
+                }
                 if request.message.command().starts_with("browser_") {
                     browser_commands(request)
                 } else {

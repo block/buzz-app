@@ -744,7 +744,7 @@ it("keeps Reload keyboard-accessible while the website is loading", async () => 
       pollInterval={50_000}
     />,
   );
-  await screen.findByTitle("Loading page");
+  await waitFor(() => expect(platform.status).toHaveBeenCalled());
   await user.tab();
   expect(screen.getByRole("button", { name: "Back" })).toHaveFocus();
   await user.tab();
@@ -833,6 +833,97 @@ it("ignores status from a replaced session", async () => {
     loading: false,
     error: null,
   });
-  await waitFor(() => expect(screen.getByTitle("New page")).toBeVisible());
+  await waitFor(() =>
+    expect(screen.getByRole("textbox", { name: "Address" })).toHaveValue(
+      "new.example",
+    ),
+  );
   expect(screen.queryByText("Old page")).not.toBeInTheDocument();
+});
+
+it("requires conversation context in the lazy preview controls", async () => {
+  const platform = fakePlatform();
+  const control = {
+    available: vi.fn(async () => true),
+    grant: vi.fn(async () => ({ token: "native-grant", revision: 1 })),
+    revoke: vi.fn(async () => {}),
+    execute: vi.fn(),
+  };
+  platform.control = control;
+  const view = render(
+    <BrowserHostView
+      url="https://example.org"
+      platform={platform}
+      sessions={new BrowserSessions(platform)}
+    />,
+  );
+  expect(
+    await screen.findByRole("button", { name: "Share browser" }),
+  ).toHaveAttribute("aria-disabled", "true");
+  expect(control.grant).not.toHaveBeenCalled();
+  view.unmount();
+  expect(control.revoke).toHaveBeenCalledWith("session-1");
+});
+
+it("shows a readable address and selects the complete URL for editing", async () => {
+  const platform = fakePlatform();
+  const url = "https://example.com/path?q=1#section";
+  vi.mocked(platform.status).mockResolvedValue({
+    url,
+    title: "Example",
+    loading: false,
+    error: null,
+  });
+  const user = userEvent.setup();
+  render(
+    <BrowserHostView
+      url={url}
+      platform={platform}
+      sessions={new BrowserSessions(platform)}
+    />,
+  );
+  const input = screen.getByRole("textbox", {
+    name: "Address",
+  }) as HTMLInputElement;
+  await waitFor(() =>
+    expect(input).toHaveValue("example.com/path?q=1#section"),
+  );
+  await user.click(input);
+  expect(input).toHaveValue(url);
+  expect(input.selectionStart).toBe(0);
+  expect(input.selectionEnd).toBe(url.length);
+  await user.tab();
+  expect(input).toHaveValue("example.com/path?q=1#section");
+});
+
+it("keeps the full URL editable after a rejected navigation without refocusing", async () => {
+  const platform = fakePlatform();
+  vi.mocked(platform.navigate).mockRejectedValueOnce(
+    new Error("Navigation rejected"),
+  );
+  const user = userEvent.setup();
+  render(
+    <BrowserHostView
+      url="https://example.com/"
+      platform={platform}
+      sessions={new BrowserSessions(platform)}
+    />,
+  );
+  await waitFor(() => expect(platform.status).toHaveBeenCalled());
+  const input = screen.getByRole("textbox", { name: "Address" });
+  await user.click(input);
+  await user.clear(input);
+  await user.type(input, "https://bad.example/{Enter}");
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Navigation rejected",
+  );
+  expect(input).toHaveFocus();
+  expect(input).toHaveValue("https://bad.example/");
+  await user.clear(input);
+  await user.type(input, "https://good.example/{Enter}");
+  expect(platform.navigate).toHaveBeenLastCalledWith(
+    "session-1",
+    "https://good.example/",
+  );
+  expect(input).toHaveValue("https://good.example/");
 });

@@ -92,3 +92,13 @@ export function apply(ctx) {
 In Settings → Plugins → Manage plugins → Load from folder, select that folder and enable **Browser example**. Click `https://example.org/` in a message. The website and navigation controls should appear beside the conversation; a default-band panel that also matches the link, such as GitHub for a GitHub URL, wins instead. Other links keep their existing behavior.
 
 Check address entry, Back/Forward/Reload, resizing, opening an account menu, closing/reopening the panel, and disabling the plugin. Web, Windows and Linux keep their existing link handling. The example requires a host that provides `browser`; older hosts cannot activate it.
+
+## Internal agent-control experiment
+
+An optional macOS Cargo feature, `experimental-browser-control`, adds explicit
+per-view grants and a **Take control** action. Default builds do not compile its
+native implementation or register its action handlers. The website guest keeps
+its existing IPC isolation. A manually loaded example plugin registers the agent
+tool; no agent tool can grant itself control. See
+[Browser control preview](../examples/plugins/browser-control/README.md) for setup,
+automatic agent/conversation sharing, limitations, and disposable native acceptance.

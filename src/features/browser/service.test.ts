@@ -27,3 +27,20 @@ it("exposes availability and a host View", () => {
   expect(context.browser.available).toBe(true);
   expect(typeof context.browser.View).toBe("function");
 });
+
+it("exposes execution but keeps grant and revoke in the host UI", () => {
+  const context = new Context();
+  contexts.push(context);
+  const native = platform(true);
+  native.control = {
+    available: vi.fn(async () => true),
+    execute: vi.fn(),
+    grant: vi.fn(),
+    revoke: vi.fn(),
+  };
+  new BrowserService(context, native);
+  expect(Object.keys(context.browser.control ?? {})).toEqual([
+    "available",
+    "execute",
+  ]);
+});

@@ -695,6 +695,9 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
     expect(out.sessions.last).toBeUndefined();
     // Naming the page's session reads no entry beyond the page itself.
     expect(out.sessions.pageRead).toBe(out.sessions.shown);
+    // A later turn's first-turn check stops at the session's first prompt,
+    // well short of the hundreds of entries since the reset.
+    expect(out.sessions.deliverRead).toBeLessThan(50);
     expect(out.renewed).toEqual({
       place: { seen: 0 },
       kinds: ["pi.reset", "pi.compaction"],

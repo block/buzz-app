@@ -1304,12 +1304,14 @@ function ChannelWorkspace({
   const hasPanel = companion || hasChannelPanel;
   const showingChannelPanel = tabState.paneOpen && hasChannelPanel;
   const showingPanel = companion || showingChannelPanel;
-  // An explicit channel opening reads its visible selected thread along with
-  // the conversation that holds focus. Passive restoration and another
-  // channel’s retained tab do not.
+  // A plain channel visit reads its visible selected thread along with the
+  // conversation that holds focus. A link to a message or thread, passive
+  // restoration and another channel’s retained tab do not.
   const readingThread =
     showingChannelPanel &&
     !companion &&
+    !requestedMessage &&
+    !requestedThread &&
     !membersOpen &&
     !showingMediaReview &&
     (navigation?.focus ?? navigator?.snapshot().attempt.focus) !== "preserve" &&

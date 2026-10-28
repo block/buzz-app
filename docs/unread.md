@@ -41,13 +41,14 @@ The list and its own composer share a reading surface; focus anywhere in an open
 thread panel also qualifies, including its selected owning tab header. Explicitly
 returning to a channel reads both its main conversation and its visible selected
 thread tab for that channel: while focus stays anywhere in that channel's
-workspace (normally the main composer), the thread panel qualifies too. A hidden
-or collapsed pane, another channel's tab, a members or media-review view, and a
-passive restoration (`preserve` focus) keep the main conversation as the only
-reading surface. Inactive or hidden tab content does not qualify. Pane motion
-completion restarts observation after unchanged rows enter the viewport. Another
-pane, a dialog, background window, preload, and mounted virtualizer overscan do
-not qualify.
+workspace (normally the main composer), the thread panel qualifies too. A link to
+a message or thread (Activity, a message link) is not a plain visit and reads
+only what holds focus. A hidden or collapsed pane, another channel's tab, a
+members or media-review view, and a passive restoration (`preserve` focus) keep
+the main conversation as the only reading surface. Inactive or hidden tab
+content does not qualify. Pane motion completion restarts observation after
+unchanged rows enter the viewport. Another pane, a dialog, background window,
+preload, and mounted virtualizer overscan do not qualify.
 
 Away from the bottom, observations mark individual fully visible messages. At the
 physical bottom, 300 ms visibility of the newest message's bottom edge also earns

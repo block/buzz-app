@@ -789,3 +789,66 @@ for (const { paneOpen, width } of [
         .getByRole("button", { name: /^View thread:/ }),
     ).toHaveAccessibleName(/Observed unread replies/);
   });
+
+// A link to a message reads only the conversation it focuses: the channel's
+// already-open thread stays unread until the person goes there.
+test("opening a message link reads the channel but not its already-open thread", async ({
+  page,
+  app,
+}) => {
+  await page.clock.install();
+  await holdReadingFocus(page);
+  await open(page, app);
+  const history = app.histories.get("primary/alpha");
+  const root = history.find((row) => row.content === "Thread root 1");
+  const message = history.findLast(
+    (row) => !row.tags.some((tag) => tag[0] === "e"),
+  );
+  const panel = page.getByRole("complementary", {
+    name: "Thread",
+    exact: true,
+  });
+  const observed = (target) =>
+    page.evaluate(
+      (target) =>
+        window.fixtureRelay.snapshot().session.unread.snapshot(target)
+          .observedCount,
+      target,
+    );
+  const unread = () =>
+    observed({ kind: "thread", channelId: "alpha", rootId: root.id });
+  const channel = () => observed({ kind: "channel", channelId: "alpha" });
+  await page
+    .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
+    .getByRole("button", { name: /^View thread:/ })
+    .click();
+  await expect(
+    panel.getByText("Unread reply 1", { exact: true }),
+  ).toBeInViewport();
+  // Setup must stay unread even when opening and switching channels is slow.
+  await page.clock.runFor(1000);
+  await page.locator("button[data-channel-id=beta]").click();
+  await expect(
+    page.getByRole("textbox", { name: "Message #Beta", exact: true }),
+  ).toBeVisible();
+  const before = await channel();
+  expect(await unread()).toBeGreaterThan(0);
+  await releaseReadingFocus(page);
+  await page.evaluate((target) => window.fixtureNavigation.open(target), {
+    version: 1,
+    kind: "conversation",
+    channelId: "alpha",
+    messageId: message.id,
+    scope: { viewer: app.viewer, communityOrigin: "https://primary.example" },
+  });
+  await expect(
+    page.locator(`[data-channel-timeline] [data-message-id="${message.id}"]`),
+  ).toBeInViewport();
+  await expect(
+    panel.getByText("Unread reply 1", { exact: true }),
+  ).toBeInViewport();
+  // The channel earned its dwell; the thread had the same chance.
+  await expect.poll(channel).toBeLessThan(before);
+  await page.clock.runFor(1000);
+  expect(await unread()).toBeGreaterThan(0);
+});

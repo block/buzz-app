@@ -15,7 +15,7 @@ macOS 14 or later, as described in [the browser documentation](../../../docs/bro
 A more specific panel, such as GitHub, still wins link resolution.
 
 1. Open the website beside the conversation with a local agent running in this Buzz instance.
-2. Click **Allow agent control**. If the conversation has several agents, choose one.
+2. Click **Share with <agent>**, or open **Share…** and choose an agent.
 3. Ask that agent to use `browser_control` with `action: "observe"`. There is no token to copy.
 4. Ask it to fill a text field or click an element identified by a unique CSS selector.
 5. Click **Take control**. Further requests must fail until you allow access again.

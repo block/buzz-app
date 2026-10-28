@@ -1,11 +1,47 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { StrictMode } from "react";
+import { StrictMode, useState } from "react";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
-import { BrowserControlBar } from "./BrowserControlBar";
-import type { BrowserControl } from "./platform";
+import { BrowserControlBar as SharingControl } from "./BrowserControlBar";
+import type { BrowserStatus, BrowserControl } from "./platform";
+
+function BrowserControlBar({
+  control,
+  sessionId,
+  status,
+  eligible = false,
+  agentName = "Tester",
+}: {
+  control: BrowserControl;
+  sessionId: string;
+  status?: BrowserStatus;
+  eligible?: boolean;
+  agentName?: string;
+}) {
+  const [error, setError] = useState<string>();
+  return (
+    <>
+      <SharingControl
+        recipients={[
+          {
+            id: "tester",
+            name: agentName,
+            control,
+            eligible,
+            unavailable: "Not running here",
+          },
+        ]}
+        sessionId={sessionId}
+        status={status}
+        prepare={async () => {}}
+        onError={setError}
+      />
+      {error ? <p role="alert">{error}</p> : null}
+    </>
+  );
+}
 
 afterEach(cleanup);
 function control(): BrowserControl {
@@ -31,12 +67,10 @@ it("requires explicit opt-in, names the recipient, and revokes on takeover and u
     </StrictMode>,
   );
   expect(api.grant).not.toHaveBeenCalled();
-  await user.click(screen.getByRole("button", { name: "Allow agent control" }));
-  expect(screen.getByRole("status")).toHaveTextContent(
-    "Browser shared with Tester",
-  );
+  await user.click(screen.getByRole("button", { name: /^Share/ }));
+  expect(screen.getByRole("status")).toHaveTextContent("Tester");
   expect(api.grant).toHaveBeenCalledWith("website");
-  await user.click(screen.getByRole("button", { name: "Take control" }));
+  await user.click(screen.getByRole("button", { name: /^Take control/ }));
   expect(screen.queryByRole("status")).not.toBeInTheDocument();
   expect(api.revoke).toHaveBeenCalledWith("website");
   vi.mocked(api.revoke).mockClear();
@@ -61,11 +95,11 @@ it("keeps takeover available during a pending grant and keeps a late grant hidde
       agentName="Tester"
     />,
   );
-  await user.click(screen.getByRole("button", { name: "Allow agent control" }));
+  await user.click(screen.getByRole("button", { name: /^Share/ }));
   expect(
-    screen.getByRole("button", { name: "Allow agent control" }),
-  ).toBeDisabled();
-  await user.click(screen.getByRole("button", { name: "Take control" }));
+    screen.getByRole("button", { name: "Sharing browser" }),
+  ).toHaveAttribute("aria-busy", "true");
+  await user.click(screen.getByRole("button", { name: /^Take control/ }));
   expect(api.revoke).toHaveBeenCalledTimes(1);
   await act(async () => finish({ token: "late-token", revision: 1 }));
   await waitFor(() => expect(api.revoke).toHaveBeenCalledTimes(1));
@@ -88,9 +122,7 @@ it("revokes a grant that finishes after the panel closes", async () => {
       agentName="Tester"
     />,
   );
-  await userEvent.click(
-    screen.getByRole("button", { name: "Allow agent control" }),
-  );
+  await userEvent.click(screen.getByRole("button", { name: /^Share/ }));
   view.unmount();
   expect(api.revoke).toHaveBeenCalledTimes(1);
   await act(async () => finish({ token: "late-token", revision: 1 }));
@@ -108,16 +140,14 @@ it("shows a revoke failure and keeps sharing visible for another takeover attemp
       agentName="Tester"
     />,
   );
-  await user.click(screen.getByRole("button", { name: "Allow agent control" }));
+  await user.click(screen.getByRole("button", { name: /^Share/ }));
   vi.mocked(api.revoke).mockRejectedValueOnce(
     new Error("Native connection lost"),
   );
-  await user.click(screen.getByRole("button", { name: "Take control" }));
+  await user.click(screen.getByRole("button", { name: /^Take control/ }));
   expect(screen.getByRole("alert")).toHaveTextContent("Native connection lost");
-  expect(screen.getByRole("status")).toHaveTextContent(
-    "Browser shared with Tester",
-  );
-  await user.click(screen.getByRole("button", { name: "Take control" }));
+  expect(screen.getByRole("status")).toHaveTextContent("Tester");
+  await user.click(screen.getByRole("button", { name: /^Take control/ }));
   expect(screen.queryByRole("status")).not.toBeInTheDocument();
 });
 
@@ -140,9 +170,7 @@ it("ignores a stale pre-grant poll and clears sharing after native revocation", 
       status={initial}
     />,
   );
-  await userEvent.click(
-    screen.getByRole("button", { name: "Allow agent control" }),
-  );
+  await userEvent.click(screen.getByRole("button", { name: /^Share/ }));
   view.rerender(
     <BrowserControlBar
       control={api}
@@ -152,9 +180,7 @@ it("ignores a stale pre-grant poll and clears sharing after native revocation", 
       status={{ ...initial }}
     />,
   );
-  expect(screen.getByRole("status")).toHaveTextContent(
-    "Browser shared with Tester",
-  );
+  expect(screen.getByRole("status")).toHaveTextContent("Tester");
   view.rerender(
     <BrowserControlBar
       control={api}
@@ -183,9 +209,7 @@ it("recovers eligibility after takeover invalidates a pending grant", async () =
       agentName="Tester"
     />,
   );
-  await userEvent.click(
-    screen.getByRole("button", { name: "Allow agent control" }),
-  );
+  await userEvent.click(screen.getByRole("button", { name: /^Share/ }));
   view.rerender(
     <BrowserControlBar
       control={api}
@@ -202,9 +226,7 @@ it("recovers eligibility after takeover invalidates a pending grant", async () =
       agentName="Tester"
     />,
   );
-  expect(
-    screen.getByRole("button", { name: "Allow agent control" }),
-  ).toBeEnabled();
+  expect(screen.getByRole("button", { name: /^Share/ })).toBeEnabled();
   await act(async () => finish({ token: "late", revision: 1 }));
   expect(screen.queryByRole("status")).not.toBeInTheDocument();
 });
@@ -229,14 +251,16 @@ it("does not let a pre-grant revocation poll cancel a replacement grant", async 
       status={status}
     />,
   );
-  await user.click(screen.getByRole("button", { name: "Allow agent control" }));
+  await user.click(screen.getByRole("button", { name: /^Share/ }));
+  await user.click(screen.getByRole("button", { name: /^Take control/ }));
+  vi.mocked(api.revoke).mockClear();
   let finish!: (grant: { token: string; revision: number }) => void;
   vi.mocked(api.grant).mockReturnValueOnce(
     new Promise((resolve) => {
       finish = resolve;
     }),
   );
-  await user.click(screen.getByRole("button", { name: "Allow agent control" }));
+  await user.click(screen.getByRole("button", { name: /^Share/ }));
   view.rerender(
     <BrowserControlBar
       control={api}
@@ -248,8 +272,44 @@ it("does not let a pre-grant revocation poll cancel a replacement grant", async 
   );
   expect(api.revoke).not.toHaveBeenCalled();
   await act(async () => finish({ token: "replacement", revision: 3 }));
-  expect(screen.getByRole("status")).toHaveTextContent(
-    "Browser shared with Tester",
-  );
+  expect(screen.getByRole("status")).toHaveTextContent("Tester");
   expect(api.revoke).not.toHaveBeenCalled();
+});
+
+it("cancels a menu selection while the native guest is still being restored", async () => {
+  const api = control();
+  let restore!: () => void;
+  const restored = new Promise<void>((resolve) => {
+    restore = resolve;
+  });
+  const prepare = vi.fn(() => restored);
+  const recipients = ["Alice", "Bob"].map((name) => ({
+    id: name,
+    name,
+    control: api,
+    eligible: true,
+    unavailable: "",
+  }));
+  render(
+    <SharingControl
+      recipients={recipients}
+      sessionId="website"
+      prepare={prepare}
+      onError={() => {}}
+    />,
+  );
+  const user = userEvent.setup();
+  await user.tab();
+  await user.keyboard("{Enter}");
+  await user.click(await screen.findByRole("menuitem", { name: "Alice" }));
+  await waitFor(() => expect(prepare).toHaveBeenCalledTimes(1));
+  expect(api.grant).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Take control" }));
+  await act(async () => {
+    restore();
+    await restored;
+  });
+  expect(api.grant).not.toHaveBeenCalled();
+  expect(api.revoke).toHaveBeenCalledWith("website");
+  expect(screen.getByRole("button", { name: "Share…" })).toBeVisible();
 });

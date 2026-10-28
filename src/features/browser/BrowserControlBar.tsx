@@ -1,5 +1,13 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "../../shared/design-system/ui/Button";
+import {
+  MenuRoot,
+  MenuTrigger,
+  MenuPopup,
+  MenuGroup,
+  MenuGroupLabel,
+  MenuItem,
+} from "../../shared/design-system/ui/Menu";
 import type {
   BrowserControl,
   BrowserControlGrant,
@@ -7,34 +15,49 @@ import type {
 } from "./platform";
 import styles from "./BrowserHostView.module.css";
 
-/** Grants last only for this mounted view, even when its guest is parked. */
+export type BrowserControlRecipient = Readonly<{
+  id: string;
+  name: string;
+  eligible: boolean;
+  unavailable: string;
+  control: BrowserControl;
+}>;
+
+/** The owner picks a recipient; closing the menu never grants access by itself. */
 export function BrowserControlBar({
-  control,
+  recipients,
+  complete = true,
   sessionId,
   status,
-  agentName,
-  eligible = false,
-  unavailable = "Choose a local agent in this conversation.",
-  picker,
+  prepare,
+  onError,
 }: {
-  control: BrowserControl;
+  recipients: readonly BrowserControlRecipient[];
+  complete?: boolean;
   sessionId: string;
-  status?: BrowserStatus;
-  agentName?: string | undefined;
-  eligible?: boolean;
-  unavailable?: string;
-  picker?: ReactNode;
+  status?: BrowserStatus | undefined;
+  prepare(): Promise<void>;
+  onError(error: string | undefined): void;
 }) {
   const [grant, setGrant] = useState<BrowserControlGrant>();
+  const [recipient, setRecipient] = useState<BrowserControlRecipient>();
+  const active = useRef<BrowserControlRecipient | undefined>(undefined);
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string>();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const queued = useRef<BrowserControlRecipient | undefined>(undefined);
   const generation = useRef(0);
-  useEffect(() => {
-    return () => {
+  const report = useRef(onError);
+  report.current = onError;
+  useEffect(
+    () => () => {
       generation.current++;
-      void control.revoke(sessionId).catch(() => undefined);
-    };
-  }, [control, sessionId]);
+      queued.current = undefined;
+      void active.current?.control.revoke(sessionId).catch(() => undefined);
+      active.current = undefined;
+      report.current(undefined);
+    },
+    [sessionId],
+  );
 
   useEffect(() => {
     if (
@@ -44,73 +67,172 @@ export function BrowserControlBar({
       !status?.control_granted
     ) {
       setGrant(undefined);
-      void control.revoke(sessionId).catch(() => undefined);
+      void active.current?.control.revoke(sessionId).catch(() => undefined);
     }
-  }, [grant, pending, status, control, sessionId]);
+  }, [grant, pending, status, sessionId]);
 
   useEffect(() => {
-    if (!eligible) {
+    const current = active.current;
+    if (
+      current &&
+      !recipients.some((item) => item.id === current.id && item.eligible)
+    ) {
       generation.current++;
+      queued.current = undefined;
+      active.current = undefined;
       setGrant(undefined);
       setPending(false);
-      void control.revoke(sessionId).catch(() => undefined);
+      void current.control.revoke(sessionId).catch(() => undefined);
     }
-  }, [eligible, control, sessionId]);
+  }, [recipients, sessionId]);
 
-  async function change(allow: boolean) {
+  async function share(next: BrowserControlRecipient) {
     const current = ++generation.current;
+    active.current = next;
+    setRecipient(next);
     setPending(true);
-    setError(undefined);
+    report.current(undefined);
     try {
-      let next: BrowserControlGrant | undefined;
-      if (allow) next = await control.grant(sessionId);
-      else await control.revoke(sessionId);
-      if (generation.current === current) setGrant(next);
+      await prepare();
+      if (generation.current !== current) return;
+      const granted = await next.control.grant(sessionId);
+      if (generation.current === current) setGrant(granted);
     } catch (failure) {
-      if (generation.current === current) setError(String(failure));
+      if (generation.current === current) report.current(String(failure));
     } finally {
       if (generation.current === current) setPending(false);
     }
   }
 
+  async function takeControl() {
+    const current = ++generation.current;
+    queued.current = undefined;
+    setPending(true);
+    report.current(undefined);
+    try {
+      await active.current?.control.revoke(sessionId);
+      if (generation.current === current) setGrant(undefined);
+    } catch (failure) {
+      if (generation.current === current) report.current(String(failure));
+    } finally {
+      if (generation.current === current) setPending(false);
+    }
+  }
+
+  const eligible = recipients.filter((item) => item.eligible);
+  const direct = complete && eligible.length === 1 ? eligible[0] : undefined;
+  const unavailable =
+    recipients[0]?.unavailable ||
+    "Add a local agent to this conversation to share the browser.";
   return (
-    <section className={styles.control} aria-label="Browser agent control">
-      {picker}
-      <div className={styles.controlActions}>
-        <Button
-          size="sm"
-          variant="subtle"
-          disabled={pending || !eligible}
-          onClick={() => void change(true)}
-        >
-          Allow agent control
-        </Button>
-        <Button size="sm" variant="subtle" onClick={() => void change(false)}>
-          Take control
-        </Button>
+    <MenuRoot
+      open={menuOpen}
+      onOpenChange={setMenuOpen}
+      onOpenChangeComplete={(open) => {
+        if (open) return;
+        const chosen = queued.current;
+        queued.current = undefined;
+        if (
+          chosen &&
+          recipients.some((item) => item.id === chosen.id && item.eligible)
+        )
+          void share(chosen);
+      }}
+    >
+      <div className={styles.control} data-browser-control="">
+        {grant && recipient ? (
+          <Button
+            size="sm"
+            variant="ghost"
+            shape="control"
+            aria-label={`Take control from ${recipient.name}`}
+            title={`${recipient.name} can read and interact with this browser. Click to take control.`}
+            onClick={() => void takeControl()}
+          >
+            <span className={styles.controlContent} role="status">
+              <span className={styles.controlName}>{recipient.name}</span>
+              <span className={styles.controlAction}>
+                <span className={styles.controlSeparator}> · </span>Take control
+              </span>
+            </span>
+          </Button>
+        ) : pending ? (
+          <>
+            <Button
+              size="sm"
+              variant="ghost"
+              shape="control"
+              loading
+              aria-label="Sharing browser"
+            >
+              <span className={styles.controlName}>Sharing…</span>
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              shape="control"
+              onClick={() => void takeControl()}
+            >
+              Take control
+            </Button>
+          </>
+        ) : !menuOpen && (direct || !eligible.length) ? (
+          <Button
+            size="sm"
+            variant="ghost"
+            shape="control"
+            aria-label={direct ? `Share with ${direct.name}` : "Share browser"}
+            title={
+              direct
+                ? `Let ${direct.name} read and use this browser in this conversation`
+                : unavailable
+            }
+            disabled={!direct}
+            focusableWhenDisabled
+            onClick={() => {
+              if (direct) void share(direct);
+            }}
+          >
+            <span className={styles.controlContent}>
+              <span className={styles.controlAction}>
+                Share
+                <span className={styles.controlName}>
+                  {direct ? " with " : ""}
+                </span>
+              </span>
+              {direct ? (
+                <span className={styles.controlName}>{direct.name}</span>
+              ) : null}
+            </span>
+          </Button>
+        ) : (
+          <MenuTrigger
+            render={
+              <Button size="sm" variant="ghost" shape="control">
+                Share…
+              </Button>
+            }
+          />
+        )}
       </div>
-      {grant ? (
-        <>
-          <p className="text-body-sm" role="status">
-            Browser shared with {agentName}
-          </p>
-          <p className="text-body-sm">
-            Take control stops new actions; it cannot undo actions already sent.
-            Allow again after hiding this browser.
-          </p>
-        </>
-      ) : (
-        <p className="text-body-sm">
-          {eligible
-            ? `Allow ${agentName} to read and use this browser in this conversation.`
-            : unavailable}
-        </p>
-      )}
-      {error ? (
-        <p className="text-body-sm" role="alert">
-          {error}
-        </p>
-      ) : null}
-    </section>
+      <MenuPopup align="end" size="compact">
+        <MenuGroup>
+          <MenuGroupLabel>Share browser with</MenuGroupLabel>
+          {recipients.map((item) => (
+            <MenuItem
+              key={item.id}
+              disabled={!item.eligible}
+              title={item.eligible ? undefined : item.unavailable}
+              onClick={() => {
+                queued.current = item;
+                setMenuOpen(false);
+              }}
+            >
+              {item.name}
+            </MenuItem>
+          ))}
+        </MenuGroup>
+      </MenuPopup>
+    </MenuRoot>
   );
 }

@@ -93,14 +93,12 @@ it("shares with the only conversation agent without exposing a token, then revok
       conversation={{ channel: "chat" }}
       sessionId="view"
       status={status}
+      prepare={async () => {}}
+      onError={() => {}}
     />,
   );
-  await userEvent.click(
-    screen.getByRole("button", { name: "Allow agent control" }),
-  );
-  expect(screen.getByRole("status")).toHaveTextContent(
-    "Browser shared with Tester",
-  );
+  await userEvent.click(screen.getByRole("button", { name: /^Share/ }));
+  expect(screen.getByRole("status")).toHaveTextContent("Tester");
   expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
   expect(screen.queryByText("never-display-this")).not.toBeInTheDocument();
   await expect(
@@ -113,9 +111,10 @@ it("shares with the only conversation agent without exposing a token, then revok
   await act(async () => {
     f.stop();
   });
-  expect(
-    screen.getByRole("button", { name: "Allow agent control" }),
-  ).toBeDisabled();
+  expect(screen.getByRole("button", { name: /^Share/ })).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
   await expect(
     f.access.execute("agent", { channel: "chat" }, { action: "observe" }),
   ).rejects.toThrow("No browser");
@@ -129,14 +128,15 @@ it("explains why a conversation agent hosted elsewhere cannot use the browser", 
       conversation={{ channel: "chat" }}
       sessionId="view"
       status={status}
+      prepare={async () => {}}
+      onError={() => {}}
     />,
   );
-  expect(
-    screen.getByText(/Tester isn’t running in this Buzz instance/),
-  ).toBeVisible();
-  expect(
-    screen.getByRole("button", { name: "Allow agent control" }),
-  ).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Share browser" })).toBeVisible();
+  expect(screen.getByRole("button", { name: /^Share/ })).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
   expect(f.native.grant).not.toHaveBeenCalled();
 });
 
@@ -148,17 +148,19 @@ it("forgets a hidden browser's grant before another view is shared", async () =>
       conversation={{ channel: "chat" }}
       sessionId="first"
       status={status}
+      prepare={async () => {}}
+      onError={() => {}}
     />,
   );
-  await userEvent.click(
-    screen.getByRole("button", { name: "Allow agent control" }),
-  );
+  await userEvent.click(screen.getByRole("button", { name: /^Share/ }));
   view.rerender(
     <BrowserAgentControl
       host={f.host}
       conversation={{ channel: "chat" }}
       sessionId="first"
       status={{ ...status, control_revision: 2, control_granted: false }}
+      prepare={async () => {}}
+      onError={() => {}}
     />,
   );
   await f.access

@@ -378,11 +378,14 @@ it("moving the last side app adopts its guest before the dock exit finishes", as
     );
     expect(attached).toHaveBeenCalledTimes(1);
     expect(detached).not.toHaveBeenCalled();
-    await vi.waitFor(() =>
-      expect(
-        within(main).getByRole("textbox", { name: "Address" }),
-      ).toHaveValue("https://app.example/second.html"),
-    );
+    await vi.waitFor(() => {
+      const address = within(main).getByRole("textbox", { name: "Address" });
+      expect(address).toHaveValue("app.example/second.html");
+      expect(address).toHaveAttribute(
+        "title",
+        "https://app.example/second.html",
+      );
+    });
     await act(async () => finishExit());
     expect(main.querySelector("[data-browser-session]")).toHaveAttribute(
       "data-browser-session",

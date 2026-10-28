@@ -26,7 +26,7 @@ const closeProfile = (page) =>
   page.getByRole("button", { name: /^Close (?!Thread).* tab$/ });
 // Render a genuine pre-existing human member through signed roster/profile
 // reads; no client stores are seeded. Shared mounts after opening its access UI.
-async function showSharedMark(page, app, row) {
+async function showSharedMark(page, app, row, channelId = id) {
   const person = app.serveProfile(generateSecretKey(), {
     name: "Shared teammate",
   });
@@ -40,7 +40,7 @@ async function showSharedMark(page, app, row) {
       response,
       json: events.map((event) =>
         event.kind === 39002 &&
-        event.tags.some(([key, value]) => key === "d" && value === id)
+        event.tags.some(([key, value]) => key === "d" && value === channelId)
           ? app.signRelay({
               ...event,
               created_at: event.created_at + 1,
@@ -65,13 +65,56 @@ async function showSharedMark(page, app, row) {
   ).toBeVisible();
   await dialog.getByRole("button", { name: "Done", exact: true }).click();
   await expect(dialog).toHaveCount(0);
-  const outer = page.locator(`[data-solo-menu-id="${id}"]`);
+  const outer = page.locator(`[data-solo-menu-id="${channelId}"]`);
   const shared = outer.locator("[data-solo-shared]");
-  await expect(row).toHaveAccessibleDescription("Shared");
+  await expect(row).toHaveAccessibleDescription(/Shared/);
   // Callers check visibility: a working row hides Shared on pointer devices.
   await expect(shared).toBeAttached();
   return shared;
 }
+
+test.describe("idle Solo activity age", () => {
+  test.use({
+    channelIds: ["alpha", "beta"],
+    channelNames: { alpha: "Alpha", beta: "Beta" },
+    soloChannels: ["alpha", "beta"],
+    ownSoloChannels: ["alpha", "beta"],
+    historyCounts: { alpha: 2, beta: 1 },
+    readState: true,
+    threadUnread: true,
+  });
+
+  test("keeps idle thread and Shared markers with the activity age", async ({
+    page,
+    app,
+  }) => {
+    await page.goto(app.origin);
+    await newChat(page);
+    const sidebar = page.getByRole("navigation", {
+      name: "Solo conversations",
+    });
+    const row = sidebar.locator('[data-solo-channel-id="alpha"]');
+    const threadActivity = row.locator("[data-channel-activity]");
+    await expect(row).toBeVisible();
+    await expect.poll(() => app.relay.hasRoute("primary", "alpha")).toBe(true);
+
+    app.activity({ channel: "alpha", kind: 9, age: 300 });
+    const age = row.locator('time [aria-hidden="true"]');
+    await expect(age).toHaveText("5m");
+    await expect(
+      row.getByRole("img", { name: /working in Alpha$/ }),
+    ).toHaveCount(0);
+    await page.mouse.move(0, 0);
+    await expect(threadActivity).toHaveCSS("opacity", "1");
+
+    const shared = await showSharedMark(page, app, row, "alpha");
+    await row.hover();
+    await expect(shared).toBeVisible();
+    await expect(age).toHaveText("5m");
+    expect(app.report.unexpected).toEqual([]);
+  });
+});
+
 // The row owns status/action geometry. Compare painted centers on desktop;
 // on touch, status flows immediately before the actual actions (Shared or menu).
 async function expectTrailingAlignment(row, status, touch = false) {

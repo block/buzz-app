@@ -306,6 +306,28 @@ it("describes a Solo row as Shared only when its Shared mark renders", () => {
   );
 });
 
+it("shows the last-activity age on a Solo conversation row", () => {
+  const f = fixture(false, false, undefined, {
+    observedCount: 0,
+    attentionCount: 0,
+  });
+  const channel = f.session.channels
+    .list()
+    .channels.find((item) => item.id === id);
+  if (!channel) throw new Error("Missing Planning fixture");
+  const timestamp = Date.now() / 1000;
+  Object.assign(channel, { lastActivityAt: timestamp });
+  f.replaceSession();
+
+  const row = screen.getByRole("button", { name: /^Planning$/ });
+  expect(within(row).getByText("now")).toBeInTheDocument();
+  expect(row).toHaveAccessibleDescription("Last activity: just now.");
+  expect(row.querySelector("time")).toHaveAttribute(
+    "datetime",
+    new Date(timestamp * 1000).toISOString(),
+  );
+});
+
 it("shows plugin actions in the primary sidebar right-click menu", async () => {
   const { MenuItem } = await import("../../shared/design-system/ui/Menu");
   const menus: Contribution<ChatMenu>[] = [

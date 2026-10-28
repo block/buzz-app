@@ -30,6 +30,17 @@ export function AgentDefaults({
     agents.types,
   );
   useEffect(() => {
+    const target = navigation?.target;
+    if (
+      onProvider &&
+      target?.kind === "settings" &&
+      target.provider &&
+      !navigation.signal.aborted &&
+      !types.some((type) => type.key === target.provider && type.provider)
+    )
+      navigation.complete({ status: "failed", reason: "unavailable" });
+  }, [navigation, onProvider, types]);
+  useEffect(() => {
     for (const { provider } of types) {
       if (!provider) continue;
       try {
@@ -95,7 +106,7 @@ function ProviderDefaults({
     provider.snapshot,
   );
   const [localOpen, setLocalOpen] = useState(false);
-  const routed = navigation?.target.kind === "settings" && !!onProvider;
+  const routed = target?.kind === "settings" && !!onProvider;
   const open = routed
     ? navigation.target.kind === "settings" &&
       navigation.target.provider === type.key

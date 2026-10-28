@@ -277,9 +277,7 @@ test("member identity geometry and separate addition focus", async ({
     expect(field.y - header.y - header.height).toBeCloseTo(12, 0);
     await expect(add).toHaveCSS("font-size", "12px");
     expect((await add.boundingBox()).height).toBe(24);
-    const members = dialog.locator(
-      ':scope section[aria-label="Member list"] > section[aria-label="People"]',
-    );
+    const members = dialog.getByRole("region", { name: "People", exact: true });
     const others = dialog.getByRole("region", {
       name: "Not in this channel",
       exact: true,
@@ -290,7 +288,12 @@ test("member identity geometry and separate addition focus", async ({
     });
     await expect(members).toHaveCount(0);
     await expect(
-      others.getByRole("heading", { name: "People", exact: true }),
+      dialog
+        .getByRole("region", {
+          name: "People not in this channel",
+          exact: true,
+        })
+        .getByRole("heading", { name: "People", exact: true }),
     ).toHaveCSS("position", "sticky");
     // With no roster matches, search results start at the top without an orphan divider.
     await expect(others).toHaveCSS("border-top-width", "0px");
@@ -1052,9 +1055,7 @@ for (const rejected of [false, true]) {
     } else {
       await expect(
         members
-          .locator(
-            'section[aria-label="Member list"] > section[aria-label="People"]',
-          )
+          .getByRole("region", { name: "People", exact: true })
           .getByRole("button", { name: /Open profile for Morgan/ }),
       ).toHaveCount(0);
       await expect(page.locator(".buzz-toast")).toHaveCount(0);

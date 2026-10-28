@@ -373,6 +373,34 @@ it("keeps setup guidance behind its information popover", async () => {
   expect(t.publish).not.toHaveBeenCalled();
 });
 
+it("distinguishes invitation and roster People regions while retaining the caption", async () => {
+  const t = await setup();
+  const refresh = screen.getByRole("button", { name: "Refresh member data" });
+  await vi.waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false"));
+  t.confirmRoster();
+  await t.user.click(refresh);
+  await screen.findByText("Morgan");
+  const guest = profile(keypair(), { name: "Morgan Guest" });
+  const query = t.query.getMockImplementation();
+  if (!query) throw new Error("Missing query fixture");
+  t.query.mockImplementation(async (filters) =>
+    filters.some((filter) => filter.search) ? [guest] : query(filters),
+  );
+  await t.user.type(screen.getByRole("searchbox"), "Morgan");
+  const invitations = await screen.findByRole("region", {
+    name: "People not in this channel",
+  });
+  const roster = screen.getByRole("region", { name: "People", exact: true });
+  expect(within(roster).getByText(nameText("Morgan"))).toBeVisible();
+  expect(
+    within(invitations).getByRole("heading", { name: "People", exact: true }),
+  ).toBeVisible();
+  expect(
+    within(invitations).getByRole("button", { name: /^Add Morgan Guest/ }),
+  ).toBeVisible();
+  expect(t.publish).not.toHaveBeenCalled();
+});
+
 it("orders matches by client agents, people, other agents, then your non-client agents", async () => {
   const t = await setup();
   const other = profile(keypair(), { name: "Fixture", is_agent: true });
@@ -401,7 +429,7 @@ it("orders matches by client agents, people, other agents, then your non-client 
   const rows = within(results).getAllByRole("button", { name: /^Add / });
   const sections = [
     "Your agents",
-    "People",
+    "People not in this channel",
     "Other agents",
     "Your other agents",
   ];
@@ -475,7 +503,7 @@ async function relationshipInvitations() {
     within(
       within(
         screen.getByRole("region", { name: "Not in this channel" }),
-      ).getByRole("region", { name: "People" }),
+      ).getByRole("region", { name: "People not in this channel" }),
     )
       .getAllByRole("button", { name: /^Add / })
       .map((row) => row.getAttribute("aria-label"));
@@ -737,7 +765,12 @@ it("starts every invitation group at four and expands only the selected group", 
       ? [...other, ...people]
       : query(filters),
   );
-  const groups = ["Your agents", "People", "Other agents", "Your other agents"];
+  const groups = [
+    "Your agents",
+    "People not in this channel",
+    "Other agents",
+    "Your other agents",
+  ];
   const rows = (name: string) =>
     within(screen.getByRole("region", { name })).getAllByRole("button", {
       name: /^Add /,
@@ -758,20 +791,23 @@ it("starts every invitation group at four and expands only the selected group", 
     screen
       .getByRole("region", { name: "Not in this channel" })
       .querySelector("[data-highlighted]"),
-  ).toContainElement(rows("People")[0] ?? null);
+  ).toContainElement(rows("People not in this channel")[0] ?? null);
   await t.user.click(
-    within(screen.getByRole("region", { name: "People" })).getByRole("button", {
+    within(
+      screen.getByRole("region", { name: "People not in this channel" }),
+    ).getByRole("button", {
       name: "Show more",
     }),
   );
-  expect(rows("People")).toHaveLength(5);
+  expect(rows("People not in this channel")).toHaveLength(5);
   expect(
-    within(screen.getByRole("region", { name: "People" })).queryByRole(
-      "button",
-      { name: "Show more" },
-    ),
+    within(
+      screen.getByRole("region", { name: "People not in this channel" }),
+    ).queryByRole("button", { name: "Show more" }),
   ).toBeNull();
-  for (const name of groups.filter((name) => name !== "People"))
+  for (const name of groups.filter(
+    (name) => name !== "People not in this channel",
+  ))
     expect(rows(name)).toHaveLength(4);
   expect(t.publish).not.toHaveBeenCalled();
 });
@@ -1173,7 +1209,7 @@ it("refresh restarts the current directory query from page one instead of mixing
   await t.user.click(more);
   const people = within(
     screen.getByRole("region", { name: "Not in this channel" }),
-  ).getByRole("region", { name: "People" });
+  ).getByRole("region", { name: "People not in this channel" });
   await screen.findByText(nameText("Morgan stale"));
   expect(within(people).getAllByRole("button", { name: /^Add / })).toHaveLength(
     31,
@@ -1860,11 +1896,12 @@ it("expands local and relay groups independently without losing paged matches", 
       await pagedInvitations(step, 65);
     expect(rows()).toHaveLength(8);
     expect(groupRows("Your agents")).toHaveLength(4);
-    expect(groupRows("People")).toHaveLength(4);
+    expect(groupRows("People not in this channel")).toHaveLength(4);
     for (let index = 0; index < 16; index++) await moreIn("Your agents");
     expect(groupRows("Your agents")).toHaveLength(66);
-    expect(groupRows("People")).toHaveLength(4);
-    for (let index = 0; index < 7; index++) await moreIn("People");
+    expect(groupRows("People not in this channel")).toHaveLength(4);
+    for (let index = 0; index < 7; index++)
+      await moreIn("People not in this channel");
     expect(rows()).toHaveLength(95);
     expect(pages()).toEqual([1]);
     await more();
@@ -1893,11 +1930,11 @@ it("reveals fetched relay pages while local-only rows keep their own limit", asy
     expect(
       screen.getByRole("button", { name: /^Add Helper final/ }),
     ).toBeVisible();
-    expect(groupRows("People")).toHaveLength(30);
+    expect(groupRows("People not in this channel")).toHaveLength(30);
     expect(groupRows("Your agents")).toHaveLength(4);
     await moreIn("Your agents");
     expect(groupRows("Your agents")).toHaveLength(8);
-    expect(groupRows("People")).toHaveLength(30);
+    expect(groupRows("People not in this channel")).toHaveLength(30);
     expect(pages()).toEqual([1, 2]);
     expect(t.publish).not.toHaveBeenCalled();
   });
@@ -1953,7 +1990,8 @@ it("resets every invitation group's expansion on refresh or query change", async
       pages,
     } = await pagedInvitations(step, 31);
     for (let index = 0; index < 7; index++) await moreIn("Your agents");
-    for (let index = 0; index < 7; index++) await moreIn("People");
+    for (let index = 0; index < 7; index++)
+      await moreIn("People not in this channel");
     await more();
     await idle();
     expect(
@@ -1967,7 +2005,7 @@ it("resets every invitation group's expansion on refresh or query change", async
     expect(pages()).toEqual([1, 2, 1]);
     await moreIn("Your agents");
     expect(groupRows("Your agents")).toHaveLength(8);
-    expect(groupRows("People")).toHaveLength(4);
+    expect(groupRows("People not in this channel")).toHaveLength(4);
     await search("Helper local");
     await idle();
     expect(rows()).toHaveLength(8);

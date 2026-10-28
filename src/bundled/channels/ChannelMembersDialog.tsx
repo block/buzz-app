@@ -1781,7 +1781,11 @@ export function ChannelMembersDialog({
                   group.people.length > 0 ? (
                     <section
                       key={group.name}
-                      aria-label={group.name || undefined}
+                      aria-label={
+                        group.name === "People"
+                          ? `People not in this ${place}`
+                          : group.name || undefined
+                      }
                       className={group.name ? "pb-4" : undefined}
                     >
                       {group.name && (

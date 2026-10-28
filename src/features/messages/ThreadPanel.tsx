@@ -14,7 +14,11 @@ import { avatarMedia } from "../../shared/avatar-source";
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
+  cloneElement,
+  type ComponentProps,
+  type ReactElement,
   type ReactNode,
+  type Ref,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -45,6 +49,11 @@ import { messageViewKey } from "./view-key";
 import { useKnownAgentPubkeys } from "../agents/use-known";
 import { JumpToLatestButton } from "./JumpToLatestButton";
 import { correctScrollTop } from "./scroll-correction";
+import {
+  type CustomItemComponentProps,
+  Virtualizer,
+  type VirtualizerHandle,
+} from "virtua";
 
 export type ThreadPanelProps = {
   extensions?: ConversationExtensions | undefined;
@@ -439,6 +448,36 @@ function OwnedThreadPanel({
     <ThreadLoading />
   );
 }
+// Virtua positions and measures each top-level reply through its own <li>, so
+// the list keeps its ordered-list semantics and every reply's attributes.
+function ReplyListItem({ style, children, ref }: CustomItemComponentProps) {
+  const item = children as ReactElement<
+    ComponentProps<"li"> & { ref?: Ref<HTMLLIElement> }
+  >;
+  const own = item.props.ref;
+  // Virtua always passes its measuring ref.
+  const measured = ref as Ref<HTMLLIElement>;
+  const merged = useMemo<Ref<HTMLLIElement>>(
+    () =>
+      typeof own === "function"
+        ? (element) => {
+            assignRef(measured, element);
+            const cleanup = own(element);
+            return () => {
+              assignRef(measured, null);
+              if (cleanup) cleanup();
+              else own(null);
+            };
+          }
+        : measured,
+    [measured, own],
+  );
+  return cloneElement(item, { style, ref: merged });
+}
+function assignRef<T>(ref: Ref<T>, value: T | null) {
+  if (typeof ref === "function") ref(value);
+  else if (ref) ref.current = value;
+}
 function ThreadMessages({
   session,
   extensions,
@@ -594,6 +633,20 @@ function ThreadMessages({
   const profiles = useRowProfiles(session.profiles, rows);
   const agentPubkeys = useKnownAgentPubkeys(session, profiles);
   const scroller = useRef<HTMLElement>(null);
+  // Replies are windowed like the channel timeline. Virtua needs the reply
+  // list's offset below the root, and must keep rows that DOM anchors, focus
+  // and own sends still address mounted.
+  const replyList = useRef<VirtualizerHandle>(null);
+  const [listOffset, setListOffset] = useState(0);
+  const [focusedMessageId, setFocusedMessageId] = useState<string>();
+  const previousTopLevel = useRef<readonly string[]>([]);
+  // Follow the end through Virtua, as the channel timeline does. A direct
+  // scrollTop write reads as downward scrolling, which drops the buffer above
+  // the viewport and remounts those replies once the scroll settles.
+  const followEnd = useCallback((element: HTMLElement) => {
+    if (replyList.current) replyList.current.scrollTo(element.scrollHeight);
+    else element.scrollTop = element.scrollHeight;
+  }, []);
   const positioned = useRef(false);
   const readingSettled = useRef(false);
   const [initialPositioned, setInitialPositioned] = useState(false);
@@ -1027,7 +1080,7 @@ function ThreadMessages({
     }
     // Initial positioning waits for one strict page or the legacy bounded walk.
     // subsequent live changes follow only while the reader is at the bottom.
-    if (follow.current) element.scrollTop = element.scrollHeight;
+    if (follow.current) followEnd(element);
     positioned.current = true;
     setInitialPositioned(true);
     readingPositioned(element);
@@ -1074,11 +1127,28 @@ function ThreadMessages({
       return;
     const observer = new ResizeObserver(() => {
       if (positioned.current && follow.current && !jumpingToLatest.current)
-        element.scrollTop = element.scrollHeight;
+        followEnd(element);
     });
     observer.observe(element);
     observer.observe(content);
     observer.observe(end);
+    return () => observer.disconnect();
+  }, [followEnd]);
+  useLayoutEffect(() => {
+    const element = scroller.current;
+    const content = element?.querySelector("[data-thread-rows]");
+    const list = content?.querySelector(":scope > ol");
+    if (!element || !content || !list) return;
+    const measure = () =>
+      setListOffset(
+        list.getBoundingClientRect().top -
+          element.getBoundingClientRect().top +
+          element.scrollTop,
+      );
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(content);
     return () => observer.disconnect();
   }, []);
   // Main's retained presentation can be usable before the initial history walk
@@ -1132,7 +1202,7 @@ function ThreadMessages({
       )
         return;
       if (follow.current) {
-        element.scrollTop = element.scrollHeight;
+        followEnd(element);
       } else if (previous.anchor && element.contains(previous.anchor.element)) {
         correctScrollTop(element, readingDrift(element, previous.anchor));
       }
@@ -1152,7 +1222,13 @@ function ThreadMessages({
     observer.observe(content);
     observer.observe(end);
     return () => observer.disconnect();
-  }, [active, initialPositioned, captureResizePosition, selectedOffset]);
+  }, [
+    active,
+    initialPositioned,
+    captureResizePosition,
+    selectedOffset,
+    followEnd,
+  ]);
   const jumpToLatest = () => {
     const element = scroller.current;
     if (!element) return;
@@ -1296,6 +1372,32 @@ function ThreadMessages({
       );
     });
   }
+  const showOlderPageStatus =
+    snapshot.direction === "older" &&
+    snapshot.readKind === "older" &&
+    !!snapshot.root;
+  const topLevel = tree.children.get(undefined) ?? [];
+  const topLevelIds = topLevel.map((row) => row.id);
+  const previousIds = previousTopLevel.current;
+  const prepend =
+    !!previousIds.length &&
+    topLevelIds[0] !== previousIds[0] &&
+    previousIds.every(
+      (id, index) =>
+        topLevelIds[topLevelIds.length - previousIds.length + index] === id,
+    );
+  useLayoutEffect(() => {
+    previousTopLevel.current = topLevelIds;
+  });
+  const olderPageStatus = showOlderPageStatus && !!snapshot.error;
+  const keptBranches = new Set(
+    [messageId, sent, focusedMessageId, olderAnchor.current?.id].flatMap(
+      (id) => (id ? [tree.ancestors(id).at(-1) ?? id] : []),
+    ),
+  );
+  const keptIndices = topLevel.flatMap((row, index) =>
+    keptBranches.has(row.id) ? [index + (olderPageStatus ? 1 : 0)] : [],
+  );
   const selectedParent = snapshot.replies.find((row) => row.id === replyParent);
   const captureOlderAnchor = (element: HTMLElement) => {
     follow.current = false;
@@ -1332,10 +1434,6 @@ function ThreadMessages({
   };
   const selectionNotice =
     selectionFailure && !snapshot.error ? selectionFailure : undefined;
-  const showOlderPageStatus =
-    snapshot.direction === "older" &&
-    snapshot.readKind === "older" &&
-    !!snapshot.root;
   // The reply composer, and the activity lane its TypingIndicator needs.
   const composerRoot =
     !preview &&
@@ -1424,6 +1522,16 @@ function ThreadMessages({
           loadOlder();
         }}
         onPointerDown={keepReadingPosition}
+        onFocus={(event) =>
+          setFocusedMessageId(
+            event.target.closest<HTMLElement>("[data-message-id]")?.dataset
+              .messageId,
+          )
+        }
+        onBlur={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget))
+            setFocusedMessageId(undefined);
+        }}
         onKeyDown={(event) => {
           if (
             [
@@ -1488,9 +1596,21 @@ function ThreadMessages({
           ) : snapshot.status !== "loading" ? (
             <p className={styles.empty}>Original message unavailable.</p>
           ) : null}
-          <ol>
-            {showOlderPageStatus && snapshot.error && (
-              <li className={styles.threadHistoryPageStatus}>
+          <Virtualizer
+            ref={replyList}
+            scrollRef={scroller}
+            as="ol"
+            item={ReplyListItem}
+            bufferSize={1600}
+            startMargin={listOffset}
+            shift={prepend}
+            keepMounted={keptIndices}
+          >
+            {olderPageStatus && (
+              <li
+                key="older-page-status"
+                className={styles.threadHistoryPageStatus}
+              >
                 <p role="alert">{snapshot.error}</p>
                 <Button type="button" onClick={retryThread}>
                   Retry thread
@@ -1498,7 +1618,7 @@ function ThreadMessages({
               </li>
             )}
             {renderReplies(undefined)}
-          </ol>
+          </Virtualizer>
         </div>
         {requireReadyRoot &&
           snapshot.root &&

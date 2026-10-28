@@ -178,11 +178,58 @@ it("tags a message for agents, and needs the audience said", async () => {
   ]);
   await expect(
     callTool(client, context, "send", { text: "hi" }),
-  ).rejects.toThrow("audience must be everyone or agents");
+  ).rejects.toThrow("audience must be everyone, details or agents");
   await expect(
     callTool(client, context, "send", { text: "hi", audience: "humans" }),
-  ).rejects.toThrow("audience must be everyone or agents");
+  ).rejects.toThrow("audience must be everyone, details or agents");
   expect(published).toHaveLength(1);
+});
+
+it("tags details for people to open, as written", async () => {
+  const { client, published } = fake(community);
+  const context = { channel: "chan", root };
+  await callTool(client, context, "send", {
+    text: "The sidebar is fixed.\n\n- Keeps its place while channels load",
+    audience: "details",
+  });
+  expect(published[0]?.content).toBe(
+    "The sidebar is fixed.\n\n- Keeps its place while channels load",
+  );
+  expect(published[0]?.tags.at(-1)).toEqual(["audience", "details"]);
+});
+
+it("refuses an everyone message over 128 words, or a brief over 50", async () => {
+  const { client, published } = fake(community);
+  const context = { channel: "chan", root };
+  const long = Array.from({ length: 51 }, () => "word").join(" ");
+  await callTool(client, context, "send", { text: long, audience: "everyone" });
+  published.length = 0;
+  await expect(
+    callTool(client, context, "send", {
+      text: Array.from({ length: 129 }, () => "word").join(" "),
+      audience: "everyone",
+    }),
+  ).rejects.toThrow("This is 129 words, too long for everyone");
+  await expect(
+    callTool(client, context, "send", {
+      text: `${long}\n\nThe rest.`,
+      audience: "details",
+    }),
+  ).rejects.toThrow("The brief, the first paragraph, is 51 words");
+  // A leading heading shows with the block after it, so both count.
+  await expect(
+    callTool(client, context, "send", {
+      text: `# Summary\n\n${long}\n\nThe rest.`,
+      audience: "details",
+    }),
+  ).rejects.toThrow("is 53 words");
+  expect(published).toHaveLength(0);
+  await callTool(client, context, "send", {
+    text: `The sidebar is fixed.\n\n${long}`,
+    audience: "details",
+  });
+  await callTool(client, context, "send", { text: long, audience: "agents" });
+  expect(published).toHaveLength(2);
 });
 
 it("refuses to post a name it cannot resolve unless told who it means", async () => {

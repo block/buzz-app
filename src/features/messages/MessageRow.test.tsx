@@ -1,3 +1,4 @@
+import { registerOverlayComposer } from "./composer-overlay";
 // @vitest-environment jsdom
 import { StrictMode } from "react";
 import { schnorr } from "@noble/curves/secp256k1.js";
@@ -1083,6 +1084,7 @@ it.each([
             attachment,
             { ...attachment, url: "https://fixture.test/second.png" },
           ],
+      { host: null, rootId: threadRootId ?? row.id },
     );
     cleanup();
   },
@@ -1753,6 +1755,7 @@ it.each([true, false])(
           0,
           true,
           attachments,
+          { host: null, rootId: row.id },
         );
       } else {
         expect(screen.queryByText("+3")).toBeNull();
@@ -2840,6 +2843,142 @@ it.each([false, true])(
     }
   },
 );
+
+function detailsRow(
+  content = "The **sidebar** is fixed.\n\n- It keeps its place",
+) {
+  const [details] = foldMessages("channel", keypair().pubkey, [
+    signed(keypair(), {
+      kind: 9,
+      content,
+      created_at: 5,
+      tags: [
+        ["h", "channel"],
+        ["audience", "details"],
+      ],
+    }),
+  ]) as ChannelMessage[];
+  return details as ChannelMessage;
+}
+
+it("shows details as their brief, whose Show more opens them whole", async () => {
+  const details = detailsRow();
+  const release = vi.fn();
+  const keepMounted = vi.fn(() => release);
+  expect(details.audience).toBe("details");
+  try {
+    renderDom(
+      <MessageRow
+        row={details}
+        keepMounted={keepMounted}
+        profile={{ name: "Morgarita" }}
+        media={() => undefined}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+      />,
+    );
+    expect(screen.getByText("sidebar").tagName).toBe("STRONG");
+    const more = screen.getByRole("button", { name: "Show more" });
+    expect(more).toHaveAttribute("aria-haspopup", "dialog");
+    fireEvent.click(more);
+    // The reader is headed by who wrote it, and holds the whole message.
+    expect(keepMounted).toHaveBeenCalledWith(details.id);
+    expect(release).not.toHaveBeenCalled();
+    const dialog = await screen.findByRole("dialog", { name: "Morgarita" });
+    expect(within(dialog).getByText("sidebar").tagName).toBe("STRONG");
+    expect(within(dialog).getByText("It keeps its place")).toBeVisible();
+    expect(within(dialog).queryByText(/^Morgarita · /)).toBeNull();
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Close details" }),
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(release).toHaveBeenCalledTimes(1);
+  } finally {
+    cleanup();
+  }
+});
+
+it("offers Show more for a single brief only when it runs past its lines", () => {
+  const height = Object.getOwnPropertyDescriptor(
+    HTMLElement.prototype,
+    "scrollHeight",
+  );
+  try {
+    const row = (
+      <MessageRow
+        row={detailsRow("The **sidebar** is fixed.")}
+        profile={{ name: "Morgarita" }}
+        media={() => undefined}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+      />
+    );
+    renderDom(row);
+    expect(screen.getByText("sidebar")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Show more" })).toBeNull();
+    cleanup();
+    // jsdom has no layout: report the brief taller than its lines.
+    Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
+      configurable: true,
+      get() {
+        return 200;
+      },
+    });
+    renderDom(row);
+    expect(screen.getByRole("button", { name: "Show more" })).toBeVisible();
+  } finally {
+    if (height)
+      Object.defineProperty(HTMLElement.prototype, "scrollHeight", height);
+    else Reflect.deleteProperty(HTMLElement.prototype, "scrollHeight");
+    cleanup();
+  }
+});
+
+it("opens details out of the conversation's composer, which stays usable", async () => {
+  try {
+    renderDom(
+      <div data-composer-host="">
+        <MessageRow
+          row={detailsRow()}
+          profile={{ name: "Morgarita" }}
+          media={() => undefined}
+          onOpenLink={() => false}
+          day={false}
+          retry={undefined}
+        />
+        <form
+          data-message-composer=""
+          aria-label="Composer"
+          ref={(node) => (node ? registerOverlayComposer(node) : undefined)}
+        >
+          <textarea aria-label="Reply" />
+        </form>
+      </div>,
+    );
+    const more = screen.getByRole("button", { name: "Show more" });
+    fireEvent.click(more);
+    const sheet = await screen.findByRole("dialog", { name: "Morgarita" });
+    const composer = screen.getByRole("form", { name: "Composer" });
+    // The sheet lives in the composer's pane, so the composer can rise above it.
+    expect(composer.parentElement?.contains(sheet)).toBe(true);
+    const reply = within(composer).getByRole("textbox", { name: "Reply" });
+    fireEvent.pointerDown(reply);
+    fireEvent.mouseDown(reply);
+    reply.focus();
+    fireEvent.click(reply);
+    expect(screen.getByRole("dialog", { name: "Morgarita" })).toBe(sheet);
+    // A real press focuses Close before it activates.
+    const close = within(sheet).getByRole("button", { name: "Close details" });
+    close.focus();
+    fireEvent.click(close);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(more).toHaveFocus();
+  } finally {
+    cleanup();
+  }
+});
 
 it("keeps an agents message that opens with prose, or is only a mention, as written", () => {
   const rivet = "b".repeat(64);

@@ -1,4 +1,4 @@
-import { threadPlacementPreference } from "../../features/messages/thread-preferences";
+import { threadTabPane } from "../../features/messages/thread-preferences";
 import {
   useCallback,
   useLayoutEffect,
@@ -291,8 +291,7 @@ export function channelTabs(session: RelaySession) {
         return false;
       store.update(keyOf("messages", channelId), (state) => {
         // Solo chats have no main tab workspace.
-        const pane =
-          channel.channelType === "solo" ? "side" : threadPlacementPreference();
+        const pane = channel.channelType === "solo" ? "side" : threadTabPane();
         const opened = withThread(
           state,
           channelId,
@@ -404,7 +403,7 @@ export function useChannelTabState(
       messageId: string,
       rootId: string,
       intent?: ThreadIntent,
-      pane: TabPane = threadPlacementPreference(),
+      pane: TabPane = threadTabPane(),
     ) =>
       update((state) =>
         withThread(state, channelId, messageId, rootId, intent, pane, true),
@@ -478,7 +477,7 @@ export function useChannelTabState(
             routed.messageId,
             routed.rootId,
             "select",
-            routed.pane ?? threadPlacementPreference(),
+            routed.pane ?? threadTabPane(),
           );
         const saved = visits?.[visit];
         return saved
@@ -703,6 +702,12 @@ export function useChannelTabState(
       update((s) => (!!s.sidePanel === sidePanel ? s : { ...s, sidePanel })),
     [update],
   );
+  // Stable, so a memoized timeline can ask at the moment it opens a thread.
+  const hasThreadTab = useCallback(
+    (channelId: string, rootId: string) =>
+      !!threadTab(snapshot()[key]?.tabs ?? [], channelId, rootId),
+    [key, snapshot],
+  );
   // Workspace callbacks list this object as a dependency; a fresh object per
   // render would recreate them and re-render every memoized message row.
   return useMemo(
@@ -710,6 +715,7 @@ export function useChannelTabState(
       ...state,
       // Synchronous actions need the selection before React rerenders.
       getSelected: () => snapshot()[key]?.selected ?? empty.selected,
+      hasThreadTab,
       setEntries,
       retireMenuEntries,
       setTabs,
@@ -733,6 +739,7 @@ export function useChannelTabState(
       state,
       snapshot,
       key,
+      hasThreadTab,
       setEntries,
       retireMenuEntries,
       setTabs,

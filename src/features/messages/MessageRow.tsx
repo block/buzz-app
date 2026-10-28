@@ -1,3 +1,4 @@
+import { overlayHostFor, type MediaReviewOrigin } from "./composer-overlay";
 import { Collapsible } from "@base-ui/react/collapsible";
 import { formatItemTimestamp } from "../../shared/datetime";
 import { ProfilePeek } from "../profiles/ProfilePeek";
@@ -75,6 +76,7 @@ import { isNativeMediaSource, isProxySource } from "./attachment-source";
 import { FileAttachment } from "./FileAttachment";
 import { useReferenceDirectory } from "./ReferenceText";
 import { MessageMarkdown } from "./MessageMarkdown";
+import { DetailsMessage } from "./DetailsMessage";
 import { safeMessageUrl } from "../relay/message-content";
 import styles from "./Messages.module.css";
 import { usesLargeEmojiPresentation } from "./emoji-size";
@@ -142,6 +144,7 @@ export type MessageRowProps = {
     seconds: number,
     hasComments?: boolean,
     attachments?: ChannelMessage["attachments"],
+    opening?: MediaReviewOrigin,
   ) => void;
 };
 
@@ -472,6 +475,8 @@ function MessageRowContent({
       previous.push(attachment);
     else attachmentGroups.push([attachment]);
   }
+  // Details read as their brief, which opens into their own viewer.
+  const details = row.audience === "details";
   const body = row.diff ? (
     <div>
       <p className="text-label-sm">{row.diff.filePath || "Diff"}</p>
@@ -494,6 +499,48 @@ function MessageRowContent({
         </p>
       )}
     </div>
+  ) : details ? (
+    <DetailsMessage
+      keepMounted={keepRowMounted}
+      author={name}
+      avatar={
+        <Avatar
+          src={picture}
+          alt=""
+          fallback={name}
+          size="small"
+          shape={avatarShape}
+        />
+      }
+      createdAt={row.createdAt}
+      preview={
+        <MessageMarkdown
+          directory={directory}
+          session={session}
+          scope={scope}
+          row={displayRow}
+          staticMentions={staticMentions}
+          extensions={extensions}
+          media={media}
+          onOpenLink={openLink}
+          canOpenLink={canOpenLink}
+          participantProfiles={participantProfiles}
+        />
+      }
+    >
+      <MessageMarkdown
+        directory={directory}
+        session={session}
+        scope={scope}
+        row={displayRow}
+        staticMentions={staticMentions}
+        extensions={extensions}
+        media={media}
+        onOpenLink={openLink}
+        canOpenLink={canOpenLink}
+        participantProfiles={participantProfiles}
+      />
+    </DetailsMessage>
   ) : (
     <MessageMarkdown
       directory={directory}
@@ -1008,6 +1055,7 @@ function MessageRowContent({
                   data-message-action-anchor
                   data-emoji-only={emojiOnly || undefined}
                   data-diff-only={!!row.diff || undefined}
+                  data-details={details || undefined}
                   data-own={ownBubble || undefined}
                 >
                   {timeReply && (
@@ -1157,6 +1205,12 @@ function MessageRowContent({
                                         (!!row.threadRootId &&
                                           row.threadRootId !== row.id),
                                       row.attachments,
+                                      {
+                                        host: overlayHostFor(
+                                          document.activeElement,
+                                        ),
+                                        rootId: row.threadRootId ?? row.id,
+                                      },
                                     ),
                                 }
                               : {})}
@@ -1203,6 +1257,12 @@ function MessageRowContent({
                                       (!!row.threadRootId &&
                                         row.threadRootId !== row.id),
                                     row.attachments,
+                                    {
+                                      host: overlayHostFor(
+                                        document.activeElement,
+                                      ),
+                                      rootId: row.threadRootId ?? row.id,
+                                    },
                                   ),
                               }
                             : {})}

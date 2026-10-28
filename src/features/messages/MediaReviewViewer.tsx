@@ -1,3 +1,9 @@
+import { MessageLoading } from "./MessageLoading";
+import { useMessageArrival } from "./use-message-arrival";
+import type {
+  ComposerOverlayHost,
+  MediaReviewOrigin,
+} from "./composer-overlay";
 import { workflowLabel } from "../relay/workflow-attribution";
 import { MessageEditScope } from "./MessageEditScope";
 import { useReviewSidebarMotion } from "./use-review-sidebar-motion";
@@ -34,7 +40,7 @@ import { compareMessages } from "../relay/message-order";
 import { useRowProfiles } from "../relay/react";
 import { rowProfileIds } from "../relay/membership";
 import { useKnownAgentPubkeys } from "../agents/use-known";
-import { MessageComposer } from "./MessageComposer";
+import { MessageComposer, type MessageComposerProps } from "./MessageComposer";
 import { ImageReviewStage } from "./ImageReviewStage";
 import { MessageRow } from "./MessageRow";
 import { parseMediaTimeReply } from "./media-timecode";
@@ -44,7 +50,12 @@ import { MediaReviewFrame } from "./MediaReviewFrame";
 import { avatarMedia } from "../../shared/avatar-source";
 import { LinkThreadTabContext } from "../conversation/LinkLabelContext";
 
+export type MediaReviewPlacement =
+  | { kind: "sheet"; host: ComposerOverlayHost; rootId: string }
+  | { kind: "fullscreen" };
+
 type MediaReviewViewerProps = {
+  opening?: MediaReviewOrigin | undefined;
   attachment: Attachment;
   initialAttachments?: readonly Attachment[] | undefined;
   extensions?: ConversationExtensions | undefined;
@@ -58,10 +69,29 @@ type MediaReviewViewerProps = {
   restoreFocus?: RefObject<HTMLElement | null>;
   onOpenLink(url: string): boolean;
   close(): void;
+  onPromoted?: (() => void) | undefined;
 };
 
 export function MediaReviewViewer(props: MediaReviewViewerProps) {
   const { session, channelId, messageId } = props;
+  const [placement] = useState<MediaReviewPlacement>(() => {
+    const host = props.opening?.host;
+    // Conversation media opens over its source reader. Standalone previews
+    // without a reader retain the fullscreen host.
+    if (!host?.composer.isConnected || !props.opening)
+      return { kind: "fullscreen" };
+    // Media uses workspace layout and a window-level portal. The source
+    // reader retains its composer, draft, dismissal boundary, and return focus.
+    const workspace =
+      host.pane.closest<HTMLElement>("[data-buzz-surface][data-joined]") ??
+      host.pane.closest<HTMLElement>("[data-buzz-surface]") ??
+      host.viewport;
+    return {
+      kind: "sheet",
+      host: { ...host, viewport: workspace, container: document.body },
+      rootId: props.opening.rootId,
+    };
+  });
   const [origin] = useState(() =>
     readReviewOrigin(
       props.restoreFocus?.current ??
@@ -91,6 +121,7 @@ export function MediaReviewViewer(props: MediaReviewViewerProps) {
   const activeProps = {
     ...props,
     origin,
+    placement,
     attachment: active.attachment,
     initialTime: active.initialTime,
     selectionRequest: active.request,
@@ -107,6 +138,7 @@ export function MediaReviewViewer(props: MediaReviewViewerProps) {
 }
 
 type ActiveReviewProps = MediaReviewViewerProps & {
+  placement: MediaReviewPlacement;
   origin: ReturnType<typeof readReviewOrigin>;
   selectionRequest: number;
   selectAttachment(attachment: Attachment, initialTime: number): void;
@@ -184,7 +216,14 @@ function ResolvedReview({
         retry={view.refresh}
       />
     );
-  if (snapshot.status === "loading" || snapshot.status === "idle")
+  const loading = snapshot.status === "loading" || snapshot.status === "idle";
+  // The exact target/overlay fold verifies the attachment and root before the
+  // bounded reply walk completes. Let that verified composer stay usable while
+  // comments refresh, instead of making the whole footer wait for every page.
+  if (
+    loading &&
+    !(snapshot.root && attachmentAvailable && snapshot.targetStatus === "ready")
+  )
     return <ReviewShell {...pendingProps} loading />;
   if (!snapshot.root)
     return (
@@ -210,6 +249,7 @@ function ResolvedReview({
     <ReviewShell
       {...props}
       rootId={snapshot.root.id}
+      loading={loading}
       editMessages={threadRows}
       replies={replies}
       limited={snapshot.limited}
@@ -229,7 +269,9 @@ function ReviewShell({
   initialTime,
   hasComments = false,
   origin,
+  placement,
   close,
+  onPromoted,
   onOpenLink,
   rootId,
   replies = [],
@@ -269,8 +311,10 @@ function ReviewShell({
   const video = useRef<HTMLVideoElement>(null);
   const [commentsChoice, setCommentsOpen] = useState<boolean>();
   const [selectedImageUrl, setSelectedImageUrl] = useState(attachment.url);
+  const sheet = placement.kind === "sheet";
   const commentsOpen =
-    commentsChoice ?? (loading ? hasComments : replies.length > 0 || !!error);
+    sheet ||
+    (commentsChoice ?? (loading ? hasComments : replies.length > 0 || !!error));
   useEffect(() => {
     if (rootId && !loading)
       setCommentsOpen((choice) => choice ?? replies.length > 0);
@@ -374,6 +418,7 @@ function ReviewShell({
   };
   return (
     <MediaReviewFrame
+      placement={placement}
       title={mediaTitle}
       label={attachment.kind === "video" ? "Video review" : "Image viewer"}
       isVideo={attachment.kind === "video"}
@@ -387,6 +432,7 @@ function ReviewShell({
       commentsMotion={commentsMotion}
       restoreFocus={restoreFocus}
       close={close}
+      onPromoted={onPromoted}
       navigate={mixedGallery ? navigateMedia : undefined}
       actions={
         <>
@@ -411,17 +457,19 @@ function ReviewShell({
               />
             </div>
           )}
-          <IconButton
-            size="compact"
-            aria-label={commentsOpen ? "Hide comments" : "Show comments"}
-            aria-pressed={commentsOpen}
-            onClick={(event) => {
-              prepareSidebarMotion(event.detail > 0);
-              setCommentsMotion(event.detail > 0);
-              setCommentsOpen(!commentsOpen);
-            }}
-            icon={<SidebarIcon size={20} />}
-          />
+          {!sheet && (
+            <IconButton
+              size="compact"
+              aria-label={commentsOpen ? "Hide comments" : "Show comments"}
+              aria-pressed={commentsOpen}
+              onClick={(event) => {
+                prepareSidebarMotion(event.detail > 0);
+                setCommentsMotion(event.detail > 0);
+                setCommentsOpen(!commentsOpen);
+              }}
+              icon={<SidebarIcon size={20} />}
+            />
+          )}
         </>
       }
       sidebar={
@@ -452,20 +500,38 @@ function ReviewShell({
                 }
               />
             </div>
-            {rootId && source ? (
+            {sheet || (rootId && source) ? (
               <MessageEditScope>
-                <ReviewComments
-                  selectedComment={selectedComment}
-                  replies={replies}
-                  limited={limited}
-                  session={session}
-                  scope={scope}
-                  extensions={extensions}
-                  selectAttachment={selectAttachment}
-                  {...(attachment.kind === "video" && timecodesSeekable
-                    ? { seek }
-                    : {})}
-                />
+                {rootId && source ? (
+                  <ReviewComments
+                    loading={loading}
+                    selectedComment={selectedComment}
+                    replies={replies}
+                    limited={limited}
+                    session={session}
+                    scope={scope}
+                    extensions={extensions}
+                    selectAttachment={selectAttachment}
+                    {...(attachment.kind === "video" && timecodesSeekable
+                      ? { seek }
+                      : {})}
+                  />
+                ) : (
+                  <div className={styles.mediaReviewThread}>
+                    {!error ? (
+                      <MessageLoading label="Loading comments…" />
+                    ) : (
+                      <p className={styles.threadNote} role="alert">
+                        {error}
+                        {retry && !unavailable && (
+                          <Button size="sm" type="button" onClick={retryThread}>
+                            Retry
+                          </Button>
+                        )}
+                      </p>
+                    )}
+                  </div>
+                )}
                 {attachment.kind === "video" && (
                   <div className={styles.mediaReviewTimeOption}>
                     <span>{videoTime(currentTime)}</span>
@@ -482,13 +548,15 @@ function ReviewShell({
                     if (attachment.kind === "video") video.current?.pause();
                   }}
                 >
-                  <MessageComposer
+                  <MediaCommentComposer
                     extensions={extensions}
                     session={session}
                     scope={scope}
                     channelId={channelId}
                     channelName={channelName}
-                    threadRootId={rootId}
+                    threadRootId={sheet ? placement.rootId : rootId}
+                    verifiedRootId={rootId}
+                    sendDisabled={!rootId || !source || unavailable}
                     editMessages={editMessages}
                     {...(attachment.kind === "video" && includeTime
                       ? { mediaTimeSeconds: currentTime }
@@ -497,9 +565,11 @@ function ReviewShell({
                   />
                 </div>
               </MessageEditScope>
+            ) : !error ? (
+              <MessageLoading label="Loading comments…" />
             ) : (
-              <p className={styles.empty} role={error ? "alert" : "status"}>
-                {error ?? "Loading comments…"}
+              <p className={styles.empty} role="alert">
+                {error}
                 {retry && !unavailable && (
                   <Button size="sm" type="button" onClick={retryThread}>
                     Retry
@@ -578,6 +648,7 @@ function ReviewShell({
 }
 
 function ReviewComments({
+  loading,
   replies,
   selectedComment,
   limited,
@@ -587,6 +658,7 @@ function ReviewComments({
   seek,
   selectAttachment,
 }: {
+  loading: boolean;
   replies: ReturnType<ThreadView["snapshot"]>["replies"];
   selectedComment?: string | undefined;
   limited: boolean;
@@ -599,6 +671,7 @@ function ReviewComments({
   const profiles = useRowProfiles(session.profiles, replies);
   const agentPubkeys = useKnownAgentPubkeys(session, profiles);
   const comments = useRef<HTMLElement>(null);
+  useMessageArrival(comments, replies);
   useEffect(() => {
     if (selectedComment)
       comments.current
@@ -653,15 +726,46 @@ function ReviewComments({
             />
           </div>
         ))}
-        {!replies.length && (
-          <p className={styles.threadNote}>
-            No comments yet. Add the first below.
-          </p>
-        )}
+        {!replies.length &&
+          (loading ? (
+            <MessageLoading label="Loading comments…" />
+          ) : (
+            <p className={styles.threadNote}>
+              No comments yet. Add the first below.
+            </p>
+          ))}
         {limited && (
           <p className={styles.threadNote}>Thread history limit reached.</p>
         )}
       </section>
     </LinkThreadTabContext>
+  );
+}
+
+/** Keep the draft/attachment owner stable across refreshes and root verification. */
+function MediaCommentComposer({
+  verifiedRootId,
+  ...props
+}: Omit<MessageComposerProps, "threadRootId"> & {
+  threadRootId: string | undefined;
+  verifiedRootId: string | undefined;
+}) {
+  const [draftRootId] = useState(props.threadRootId);
+  const changed = !!verifiedRootId && verifiedRootId !== draftRootId;
+  if (!draftRootId) return null;
+  return (
+    <>
+      {changed && (
+        <p role="alert" className={styles.threadNote}>
+          This attachment resolved to a different thread. Your draft is saved in
+          the original thread. Open the thread to reply.
+        </p>
+      )}
+      <MessageComposer
+        {...props}
+        threadRootId={draftRootId}
+        sendDisabled={props.sendDisabled || changed}
+      />
+    </>
   );
 }

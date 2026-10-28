@@ -6,6 +6,8 @@ import {
   canonicalDetailsName,
   detailsDraftErrors,
 } from "../features/relay/channel-details-protocol";
+import { lengthRefusals } from "../features/developer/length-refusals";
+import { detailsBrief } from "../features/relay/audience";
 import {
   lifecycleChannelId,
   lifecycleTemplate,
@@ -83,9 +85,9 @@ export const TOOLS: readonly Tool[] = [
       mentions: strs,
       audience: {
         type: "string",
-        enum: ["everyone", "agents"],
+        enum: ["everyone", "details", "agents"],
         description:
-          "agents: only other agents need this (delegating, asking or answering an agent)",
+          "everyone: for the people here, a few sentences at most. details: a longer write-up for people, shown as its first paragraph, a brief of at most 50 words, until opened; send it last. agents: delegating to, asking or answering another agent",
       },
       final: {
         type: "boolean",
@@ -394,10 +396,17 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       throw new Error(
         "This chat stays at the top level: send again without reply.",
       );
-    if (args.audience !== "everyone" && args.audience !== "agents")
-      throw new Error("audience must be everyone or agents.");
+    const { audience } = args;
+    if (
+      audience !== "everyone" &&
+      audience !== "details" &&
+      audience !== "agents"
+    )
+      throw new Error("audience must be everyone, details or agents.");
+    const body = await tools.body(args, !list(args.files).length);
+    checkLength(audience, body ?? "");
     const files = await tools.attach(list(args.files));
-    const content = `${(await tools.body(args, !files.links)) ?? ""}${files.links}`;
+    const content = `${body ?? ""}${files.links}`;
     const thread = reply ? await tools.threadTags(reply) : [];
     const mentions = await tools.mentions(
       channel,
@@ -412,7 +421,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
         ...thread,
         ...mentions.map((pubkey) => ["p", pubkey]),
         ...files.tags,
-        ...(args.audience === "agents" ? [["audience", "agents"]] : []),
+        ...(audience === "everyone" ? [] : [["audience", audience]]),
       ],
     });
     return `sent ${event.id}`;
@@ -2033,6 +2042,30 @@ function unixTime(args: Args, key: string) {
 }
 
 /** The checks Buzz makes on a channel's name, description and lifetime. */
+/** The words people see before opening a message: a details message's brief,
+ * its first paragraph, and an `everyone` message, which the prompt asks to
+ * keep to a few sentences and this holds to a looser limit. */
+export const SHOWN_WORDS = { details: 50, everyone: 128 } as const;
+const words = (text: string) => text.split(/\s+/).filter(Boolean).length;
+
+function checkLength(
+  audience: "everyone" | "details" | "agents",
+  body: string,
+) {
+  if (audience === "agents") return;
+  // Count what people see: the brief the chat and notifications show.
+  const shown = audience === "details" ? detailsBrief(body) : body;
+  const count = words(shown);
+  const limit = SHOWN_WORDS[audience];
+  if (count <= limit) return;
+  lengthRefusals.record({ audience, words: count, text: shown });
+  throw new Error(
+    audience === "details"
+      ? `The brief, the first paragraph, is ${count} words: keep it to ${limit} and move the rest into later paragraphs.`
+      : `This is ${count} words, too long for everyone: say it in a few sentences, or send it as details with a short brief.`,
+  );
+}
+
 function checkDetails(name?: string, about?: string, ttl?: number) {
   const errors = detailsDraftErrors({
     name: name ?? "-",

@@ -1,4 +1,5 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The history region must support keyboard scrolling.
+import { useMessageArrival } from "./use-message-arrival";
 import { ActivityExpansion } from "./ActivityExpansion";
 import { useChannelIdentityNames } from "../identity-names/react";
 import { useMessageSelectionCopy } from "./selection-copy";
@@ -154,6 +155,8 @@ export type ChannelTimelineProps = {
   /** False: viewing rows marks nothing read; the owner decides what was read. */
   marksRead?: boolean | undefined;
   navigation?: PageNavigation | undefined;
+  /** After an exact visit reveals and focuses its row. */
+  onRevealed?(messageId: string, signal: AbortSignal): void;
   onOpenThread?(
     messageId: string,
     threadRootId: string,
@@ -197,6 +200,7 @@ function Timeline({
   transient = false,
   marksRead = true,
   navigation,
+  onRevealed,
   onOpenThread,
   onOpenMediaReview,
   chatPresentation = false,
@@ -533,7 +537,8 @@ function Timeline({
       follow.current = false;
     navigation?.complete({ status: "opened" });
     setRevealedSignal(targetSignal);
-  }, [navigation, targetSignal]);
+    if (targetId && targetSignal) onRevealed?.(targetId, targetSignal);
+  }, [navigation, targetSignal, targetId, onRevealed]);
   useMessageReveal({
     scroller,
     focus: !(
@@ -1008,6 +1013,7 @@ function Timeline({
     if (scroller.current && scroller.current.scrollTop <= 0)
       loadNearTop(scroller.current);
   };
+  useMessageArrival(scroller, rows, !!size.width && !!size.height, settled);
   return (
     <section
       ref={scroller}

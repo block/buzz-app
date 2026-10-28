@@ -86,8 +86,31 @@ function spoilerDelimiters(content: string): readonly number[] {
   return Object.freeze(positions);
 }
 
-/** Pure, immutable Markdown work whose lifetime is owned by the mounted body. */
+// Bodies remount whenever a thread reopens or a virtualized row returns. The
+// work is a frozen, pure function of the content, so recently used results are
+// shared. Longer bodies are rare and would dominate the cache's memory.
+const preparedByContent = new Map<string, PreparedMarkdown>();
+const PREPARED_LIMIT = 256;
+export const CACHED_CONTENT_LENGTH = 16_384;
+
+/** Pure, immutable Markdown work, shared by content across mounted bodies. */
 export function prepareMarkdown(content: string): PreparedMarkdown {
+  const cached = preparedByContent.get(content);
+  if (cached) {
+    preparedByContent.delete(content);
+    preparedByContent.set(content, cached);
+    return cached;
+  }
+  const prepared = prepareUncached(content);
+  if (content.length <= CACHED_CONTENT_LENGTH) {
+    if (preparedByContent.size >= PREPARED_LIMIT)
+      preparedByContent.delete(preparedByContent.keys().next().value as string);
+    preparedByContent.set(content, prepared);
+  }
+  return prepared;
+}
+
+function prepareUncached(content: string): PreparedMarkdown {
   if (content.length > MAX_MARKDOWN_LENGTH)
     return Object.freeze({ kind: "plain", content });
 

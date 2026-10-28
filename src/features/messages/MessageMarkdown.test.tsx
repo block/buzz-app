@@ -45,8 +45,7 @@ vi.mock("react-markdown", async (importOriginal) => {
     ...actual,
     default: (properties: ComponentProps<typeof actual.default>) => {
       markdownRenders();
-      const Markdown = actual.default;
-      return <Markdown {...properties} />;
+      return actual.default(properties);
     },
   };
 });
@@ -350,6 +349,76 @@ describe("mounted Markdown preparation", () => {
     expect(markdownRenders).toHaveBeenCalledTimes(initialRenders);
     expect(screen.queryByText("7:second-media")).not.toBeInTheDocument();
     expect(screen.getByText("PLUGIN")).toBeInTheDocument();
+  });
+
+  it("reuses a remounted body's Markdown until its protected prose changes", () => {
+    const content = "**Remounted** body with `code` and @Mic";
+    const first = renderDom(<MessageMarkdown {...props(content)} />);
+    const html = first.container.innerHTML;
+    const renders = markdownRenders.mock.calls.length;
+    first.unmount();
+
+    const second = renderDom(<MessageMarkdown {...props(content)} />);
+    expect(markdownRenders).toHaveBeenCalledTimes(renders);
+    expect(second.container.innerHTML).toBe(html);
+    expect(
+      screen.getByRole("button", { name: "View Mic profile" }),
+    ).toBeInTheDocument();
+    second.unmount();
+
+    renderDom(
+      <MessageMarkdown
+        {...props(content, {
+          participantProfiles: new Map([[mic, { name: "Renamed" }]]),
+        })}
+      />,
+    );
+    expect(markdownRenders).toHaveBeenCalledTimes(renders + 1);
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+    expect(screen.getByText(/@Mic/)).toBeInTheDocument();
+  });
+
+  it("applies each mount's live inputs to a shared Markdown tree", () => {
+    const content = "<buzz://channel/design> with @Mic\n\n```\ncode\n```";
+    const directory = (name: string) => ({
+      profiles: new Map(),
+      agents: [],
+      named: [],
+      channels: [{ id: "design", name, channelType: "forum" as const }],
+    });
+    const first = renderDom(
+      <MessageMarkdown
+        {...props(content, { directory: directory("first") })}
+      />,
+    );
+    expect(screen.getByRole("link", { name: "#first" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "View Mic profile" }),
+    ).toBeInTheDocument();
+    const renders = markdownRenders.mock.calls.length;
+    first.unmount();
+
+    renderDom(
+      <MessageMarkdown
+        {...props(content, {
+          directory: directory("second"),
+          interactive: false,
+          canOpenLink: () => false,
+        })}
+      />,
+    );
+    expect(markdownRenders).toHaveBeenCalledTimes(renders);
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+    expect(screen.getByText("#second")).toBeInTheDocument();
+  });
+
+  it("does not keep the rendered tree of a body too long to cache", () => {
+    const content = `**long** ${"word ".repeat(4_000)}`;
+    renderDom(<MessageMarkdown {...props(content)} />).unmount();
+    const renders = markdownRenders.mock.calls.length;
+    renderDom(<MessageMarkdown {...props(content)} />);
+    expect(markdownRenders).toHaveBeenCalledTimes(renders + 1);
   });
 
   it("invalidates protected prose when live identity and security inputs change", () => {

@@ -9,6 +9,7 @@ import {
   useState,
   useSyncExternalStore,
   type ComponentPropsWithoutRef,
+  type ReactElement,
   type ReactNode,
 } from "react";
 import type { RelaySession } from "../relay/session";
@@ -56,6 +57,7 @@ import { safeLinkUrl, visibleHtmlSource } from "../relay/message-content";
 import styles from "./Messages.module.css";
 import { profileMentionParts } from "./profile-mentions";
 import {
+  CACHED_CONTENT_LENGTH,
   isLiteralMarkdownContext,
   prepareMarkdown,
   type LiteralRange,
@@ -733,27 +735,47 @@ function PreparedMessageMarkdown({
   return largeEmoji ? markdown : <div className={styles.text}>{markdown}</div>;
 }
 
+// Parsing dominates remounting a body (a reopened thread, a returning
+// virtualized row). Every other Markdown input is static and the components
+// read their behavior from context, so the rendered tree depends only on the
+// protected content and recently used trees can be shared between mounts.
+const renderedBodies = new Map<string, ReactElement>();
+const RENDERED_LIMIT = 256;
+
 const MarkdownBody = memo(function MarkdownBody({
   protectedContent,
 }: {
   protectedContent: ProtectedContent;
 }) {
-  return (
-    <Markdown
-      remarkPlugins={[
-        remarkGfm,
-        remarkBreaks,
-        [remarkSpoilers, `<${protectedContent.prefix}spoiler\uE002>`],
-        [remarkInlineContent, protectedContent],
-        remarkLiteralHtml,
-      ]}
-      components={markdownComponents}
-      skipHtml
-      urlTransform={transformUrl}
-    >
-      {protectedContent.content}
-    </Markdown>
-  );
+  const key = JSON.stringify(protectedContent);
+  const cached = renderedBodies.get(key);
+  if (cached) {
+    renderedBodies.delete(key);
+    renderedBodies.set(key, cached);
+    return cached;
+  }
+  // react-markdown 10's default Markdown is a synchronous, hook-free function
+  // of its props (MarkdownHooks is the hook variant), so it may run after the
+  // early return above. Recheck this on upgrade.
+  const rendered = Markdown({
+    remarkPlugins: [
+      remarkGfm,
+      remarkBreaks,
+      [remarkSpoilers, `<${protectedContent.prefix}spoiler\uE002>`],
+      [remarkInlineContent, protectedContent],
+      remarkLiteralHtml,
+    ],
+    components: markdownComponents,
+    skipHtml: true,
+    urlTransform: transformUrl,
+    children: protectedContent.content,
+  });
+  if (protectedContent.content.length <= CACHED_CONTENT_LENGTH) {
+    if (renderedBodies.size >= RENDERED_LIMIT)
+      renderedBodies.delete(renderedBodies.keys().next().value as string);
+    renderedBodies.set(key, rendered);
+  }
+  return rendered;
 });
 
 function MessageSpoiler({

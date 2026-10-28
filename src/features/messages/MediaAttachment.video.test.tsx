@@ -569,3 +569,24 @@ it("lets a later seek capture after an encode fails", async () => {
   await waitFor(() => expect(first.video).toHaveAttribute("poster", FRAME));
   expect(toBlob).toHaveBeenCalledTimes(2);
 });
+
+it("draws the opening frame from a bitmap snapshot where available", async () => {
+  const { drawImage, toBlob } = stubCanvas(true);
+  const frame = { close: vi.fn() };
+  vi.stubGlobal(
+    "createImageBitmap",
+    vi.fn(async () => frame),
+  );
+  try {
+    const first = mountCapturable("https://fixture.test/bitmap.mp4");
+    fireEvent.loadedData(first.video);
+    fireEvent.seeked(first.video);
+    expect(createImageBitmap).toHaveBeenCalledWith(first.video);
+    await waitFor(() => expect(first.video).toHaveAttribute("poster", FRAME));
+    expect(drawImage).toHaveBeenCalledWith(frame, 0, 0, 640, 360);
+    expect(frame.close).toHaveBeenCalled();
+    expect(toBlob).toHaveBeenCalledTimes(1);
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});

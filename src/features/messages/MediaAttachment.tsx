@@ -264,7 +264,6 @@ export function MediaAttachment({
               Math.round(element.videoHeight * scale),
             );
             const context = canvas.getContext("2d");
-            context?.drawImage(element, 0, 0, canvas.width, canvas.height);
             const { videoWidth: width, videoHeight: height } = element;
             // Only a drawn opening frame is shared; an explicit timecode seek
             // or a blank export stays with this mount.
@@ -279,32 +278,56 @@ export function MediaAttachment({
             // encodes inline. The first seek owns the poster until its
             // encode fails.
             encoding.current = true;
-            canvas.toBlob(
-              (blob) => {
-                if (!blob) {
-                  encoding.current = false;
-                  return;
-                }
-                const reader = new FileReader();
-                reader.onloadend = () => {
-                  const poster = reader.result;
-                  if (typeof poster !== "string") {
+            const encode = (frame: CanvasImageSource) => {
+              context?.drawImage(frame, 0, 0, canvas.width, canvas.height);
+              canvas.toBlob(
+                (blob) => {
+                  if (!blob) {
                     encoding.current = false;
                     return;
                   }
-                  if (shared && poster.startsWith("data:image/jpeg;"))
-                    rememberOpeningFrame(
-                      shared.source,
-                      { poster, width, height },
-                      shared.capture,
-                    );
-                  setCapturedPreview(poster);
-                };
-                reader.readAsDataURL(blob);
-              },
-              "image/jpeg",
-              0.8,
-            );
+                  const reader = new FileReader();
+                  reader.onloadend = () => {
+                    const poster = reader.result;
+                    if (typeof poster !== "string") {
+                      encoding.current = false;
+                      return;
+                    }
+                    if (shared && poster.startsWith("data:image/jpeg;"))
+                      rememberOpeningFrame(
+                        shared.source,
+                        { poster, width, height },
+                        shared.capture,
+                      );
+                    setCapturedPreview(poster);
+                  };
+                  reader.readAsDataURL(blob);
+                },
+                "image/jpeg",
+                0.8,
+              );
+            };
+            // A bitmap snapshots this frame without a synchronous readback.
+            if (typeof createImageBitmap === "function")
+              createImageBitmap(element).then(
+                (frame) => {
+                  try {
+                    encode(frame);
+                  } catch {
+                    encoding.current = false;
+                  } finally {
+                    frame.close();
+                  }
+                },
+                () => {
+                  try {
+                    encode(element);
+                  } catch {
+                    encoding.current = false;
+                  }
+                },
+              );
+            else encode(element);
           } catch {
             encoding.current = false;
             // A decoded frame may still paint in the video when canvas export

@@ -33,7 +33,7 @@ export function AgentResponsePreview({
       <span className={styles.messageGutter} />
       <div className={styles.messageBody}>
         <div className={styles.messageContent}>
-          <div className={styles.messageAvatar} title={name}>
+          <div className={styles.messageAvatar}>
             <span
               className={styles.agentAvatarGroup}
               data-count={Math.max(1, Math.min(participants.length, 3))}
@@ -44,7 +44,10 @@ export function AgentResponsePreview({
                   : name
               }
             >
-              <span className={styles.agentAvatarGroupItem}>
+              <span
+                className={styles.agentAvatarGroupItem}
+                title={participants[0]?.name ?? name}
+              >
                 <Avatar
                   src={participants[0]?.picture ?? picture}
                   alt=""
@@ -54,7 +57,11 @@ export function AgentResponsePreview({
                 />
               </span>
               {participants.slice(1, 3).map((agent) => (
-                <span key={agent.id} className={styles.agentAvatarGroupItem}>
+                <span
+                  key={agent.id}
+                  className={styles.agentAvatarGroupItem}
+                  title={agent.name}
+                >
                   <Avatar
                     src={agent.picture}
                     alt=""

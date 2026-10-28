@@ -468,9 +468,9 @@ it("dismisses only that agent's error on this message, without changing other wo
     expect(mixed).toHaveTextContent("1 failed");
     const failedBadge = mixed.querySelector("[data-activity-failure]");
     const workingBadge = mixed.querySelector("[data-thread-working]");
-    expect(screen.getByRole("img", { name: "Blossom" })).toBeInTheDocument();
-    expect(workingBadge?.querySelector('[title="Bubbles"]')).not.toBeNull();
-    expect(workingBadge?.querySelector('[title="Blossom"]')).toBeNull();
+    expect(
+      screen.getByRole("img", { name: "Blossom, Bubbles" }),
+    ).toBeInTheDocument();
     expect(failedBadge?.parentElement).toBe(workingBadge?.parentElement);
     expect(workingBadge).toHaveTextContent("Reading notes.txt");
     fireEvent.click(

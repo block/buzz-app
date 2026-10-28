@@ -1,18 +1,7 @@
-import { appClient } from "../../buzz-mcp/app-client";
-import { respond } from "../../buzz-mcp/rpc";
-import { connectMcp } from "../../buzz-mcp/connection";
-import type {
-  HostMcpServer,
-  HostProcess,
-  HostProcessOptions,
-} from "../host/service";
-import { spawnAgentCommand } from "./command";
-import { sourceCompleted } from "./attention";
 import { createLocalAgentActivity } from "./local-activity";
 import type { SettingsSchema, Subject } from "./agent-config";
 import type { Mode } from "./agent-start";
 import { TIMEOUT_LIMIT_MS } from "./runner";
-import { ownerReads } from "./reads";
 // Agents: agents that are plugins from the start. A plugin registers an agent
 // type (its summary line, peek view, settings tabs and `run`); each agent made
 // from it has its own native-held key, an `agent-attention/v1` configuration the
@@ -96,6 +85,7 @@ import {
 import { agentKey, pubkeyOf, type AgentKey } from "./membership";
 import { EMPTY, type Member } from "./records";
 import { AgentsRunner } from "./agents-runner";
+import { RunnerPlugins } from "./runner-plugins";
 import { originOf } from "./connections";
 import { AgentPresence } from "./presence";
 import {
@@ -111,9 +101,7 @@ import {
   type Team,
   type Unfinished,
 } from "./store";
-import { soloChat } from "./solo-chat";
-import { AttentionSources, type AttentionProducer } from "./attention-sources";
-import { type AddedTool, BUZZ_SESSION } from "../../buzz-mcp/session-tools";
+import type { AddedTool } from "../../buzz-mcp/session-tools";
 import { forgetDefaultAgent } from "../solo/default-agent";
 
 /** Where an agent runs: `here`, with its key on this device; `hosted`, by its
@@ -1104,14 +1092,6 @@ declare module "@deepseek-ai/cordis" {
 }
 
 /** Whether `value` can be sent as JSON, as every session's tool list is. */
-const serializable = (value: unknown) => {
-  try {
-    JSON.stringify(value);
-    return true;
-  } catch {
-    return false;
-  }
-};
 /** Bounds one cleanup attempt, whose relay steps otherwise wait on the outbox. */
 const CLEANUP_TIMEOUT_MS = 60_000;
 const TIMER_TICK_MS = 5_000;
@@ -1264,11 +1244,6 @@ export class AgentsService extends Service implements Agents {
     shown: readonly Contribution<Presentation>[];
     result: readonly RegisteredAgentType[];
   }> = { types: [], shown: [], result: [] };
-  private readonly addedTools;
-  /** Every added tool's name, its plugin active or still starting. */
-  private readonly toolNames = new Set<string>();
-  private readonly attentionSources;
-  private readonly sourceTails = new Map<string, Promise<void>>();
   private readonly listeners = new Set<() => void>();
   private requests: readonly AgentCreationRequest[] = [];
   private updates: readonly AgentUpdateRequest[] = [];
@@ -1282,6 +1257,8 @@ export class AgentsService extends Service implements Agents {
   private bound = new Map<string, Bound>();
   /** Runs the agents, and owns the agent storage they keep. */
   private readonly runner: AgentsRunner;
+  /** The tools and attention sources plugins add for agents: the Runner's. */
+  private readonly plugins: RunnerPlugins;
   /** Counts list requests, so only the latest one is applied. */
   private listed = 0;
   /** Each running cleanup of a deleted membership, by key, how to stop it,
@@ -1371,8 +1348,6 @@ export class AgentsService extends Service implements Agents {
     super(ctx, "agents");
     this.contributions = createContributions<AgentType>(ctx);
     this.presentations = createContributions<Presentation>(ctx);
-    this.addedTools = createContributions<AddedTool & { id: string }>(ctx);
-    this.attentionSources = createContributions<AttentionProducer>(ctx);
     this.runner = new AgentsRunner(storage, native, localActivity, decisions, {
       ownershipChanged: () => this.notify(),
       changed: () => this.update(),
@@ -1497,6 +1472,7 @@ export class AgentsService extends Service implements Agents {
         if (generation === this.keyGeneration) this.setKey(key);
       },
     });
+    this.plugins = new RunnerPlugins(ctx, this.runner);
     this.unfinished = Object.freeze(readUnfinished(storage));
     this.unarchiving = readArchiveUnchecked(storage);
     this.teamList = Object.freeze(readTeams(storage));
@@ -1508,27 +1484,6 @@ export class AgentsService extends Service implements Agents {
       running: [],
       interrupted: [],
       teams: this.teamList,
-    });
-    ctx.effect(() => {
-      const running = new Map<Contribution<AttentionProducer>, () => void>();
-      const reconcile = () => {
-        const active = this.attentionSources.snapshot();
-        for (const [source, stop] of running) {
-          if (active.includes(source)) continue;
-          stop();
-          running.delete(source);
-        }
-        for (const source of active) {
-          if (!running.has(source))
-            running.set(source, this.startAttentionSource(source));
-        }
-      };
-      const unsubscribe = this.attentionSources.subscribe(reconcile);
-      reconcile();
-      return () => {
-        unsubscribe();
-        for (const stop of running.values()) stop();
-      };
     });
     ctx.effect(() => {
       const stops = [
@@ -1674,247 +1629,13 @@ export class AgentsService extends Service implements Agents {
     return result;
   };
   addTool(tool: AddedTool) {
-    if (
-      !/^[a-z][a-z0-9_]{0,63}$/.test(tool.name ?? "") ||
-      BUZZ_SESSION.tools.some((core) => core.name === tool.name) ||
-      !tool.description ||
-      tool.inputSchema?.type !== "object" ||
-      !serializable(tool.inputSchema) ||
-      typeof tool.call !== "function"
-    )
-      throw new Error(
-        "Agent tools need a lowercase name no Buzz tool has, a description, a JSON object inputSchema and call",
-      );
-    // Reserved from registration, not activation: plugins starting together
-    // are not active yet, and the second to take a name must fail.
-    if (this.toolNames.has(tool.name))
-      throw new Error(`Another plugin adds agent tool ${tool.name}`);
-    this.addedTools.register(this.ctx, { ...tool, id: tool.name });
-    this.ctx.effect(() => {
-      this.toolNames.add(tool.name);
-      return () => this.toolNames.delete(tool.name);
-    });
+    this.plugins.addTool(this.ctx, tool);
   }
   addAttentionSource(source: import("./attention-sources").AttentionSource) {
-    const plugin = this.ctx.pluginOwner?.id;
-    if (
-      !plugin ||
-      !/^[a-z0-9][a-z0-9._-]*$/.test(source.id) ||
-      typeof source.run !== "function" ||
-      (source.description !== undefined &&
-        (typeof source.description !== "string" ||
-          !source.description.trim())) ||
-      (source.configExample !== undefined &&
-        (!source.configExample ||
-          typeof source.configExample !== "object" ||
-          Array.isArray(source.configExample) ||
-          !serializable(source.configExample)))
-    )
-      throw new Error(
-        "A plugin source needs an id, run and valid discovery metadata",
-      );
-    const connect = async (
-      key: AgentKey,
-      options: Readonly<{
-        signal: AbortSignal;
-        channel?: string | undefined;
-        root?: string | undefined;
-        cwd?: string;
-      }>,
-    ): Promise<HostMcpServer> => {
-      if (!this.ctx.pluginOwner)
-        throw new Error("Only an installed plugin connects as an agent");
-      options.signal.throwIfAborted();
-      const handle = this.runner.runners.handle(key);
-      if (!handle) throw new Error("This agent is not running here");
-      const host = this.ctx.host;
-      if (!host?.serveMcp)
-        throw new Error("Agent connections require a desktop MCP host");
-      const reads = () => {
-        const source = ownerReads(this.relay(key), pubkeyOf(key));
-        if (!source) throw new Error("The agent's community is not connected");
-        return source;
-      };
-      const source = reads();
-      const topLevel =
-        options.channel !== undefined &&
-        (await soloChat(
-          () => this.relay(key),
-          handle.owner,
-          options.channel,
-          options.signal,
-        ));
-      return connectMcp(
-        host.serveMcp.bind(host),
-        (signal) => {
-          const client = appClient(handle, {
-            signal,
-            relayAuthor: source.relayAuthor?.(),
-            signingAuthority: source.workflowAuthority(),
-            check: () => {
-              handle.attention.enabled();
-              if (reads().connection !== source.connection)
-                throw new Error("The agent's community connection changed");
-            },
-            read: async (path) => {
-              if (!host.readFile)
-                throw new Error("This plugin cannot read local files");
-              return host.readFile(
-                path,
-                options.cwd === undefined ? undefined : { cwd: options.cwd },
-              );
-            },
-            memories: (slug) => reads().memoryListing(signal, slug),
-          });
-          return (message) =>
-            respond(
-              client,
-              {
-                ...(options.channel === undefined
-                  ? {}
-                  : { channel: options.channel }),
-                ...(topLevel
-                  ? { topLevel: true }
-                  : options.root === undefined
-                    ? {}
-                    : { root: options.root }),
-              },
-              message,
-            );
-        },
-        options.signal,
-      );
-    };
-    const spawn = async (
-      key: AgentKey,
-      process: string,
-      options: Omit<HostProcessOptions, "mcp"> & {
-        signal: AbortSignal;
-        channel?: string | undefined;
-        root?: string | undefined;
-      },
-    ): Promise<HostProcess> => {
-      options.signal.throwIfAborted();
-      const host = this.ctx.host;
-      if (!host?.spawn)
-        throw new Error("Agent commands require a desktop process host");
-      const handle = this.runner.runners.handle(key);
-      if (!handle) throw new Error("This agent is not running here");
-      const source = ownerReads(this.relay(key), pubkeyOf(key));
-      if (!source) throw new Error("The agent's community is not connected");
-      const spawn = host.spawn.bind(host);
-      return spawnAgentCommand(
-        {
-          connect: (signal) => connect(key, { ...options, signal }),
-          spawn: (settings) => spawn(process, settings),
-          subscribe: (changed) => {
-            const agent = this.subscribe(changed);
-            const community = this.relay(key)?.subscribe(changed);
-            return () => {
-              agent();
-              community?.();
-            };
-          },
-          check: () => {
-            if (!handle.attention.enabled())
-              throw new Error("Attention is off");
-            if (
-              ownerReads(this.relay(key), pubkeyOf(key))?.connection !==
-              source.connection
-            )
-              throw new Error("The agent's community connection changed");
-          },
-        },
-        options,
-      );
-    };
-    this.attentionSources.register(this.ctx, {
-      ...source,
-      run: async (input) => {
-        const {
-          agent,
-          watch: { channel, root },
-        } = input;
-        const completed = new AbortController();
-        const signal = AbortSignal.any([input.signal, completed.signal]);
-        try {
-          await source.run({
-            ...input,
-            spawn: (process, options) =>
-              spawn(agent, process, {
-                ...options,
-                signal,
-                channel,
-                root,
-              }),
-          });
-        } finally {
-          completed.abort();
-        }
-      },
-      ...(source.configExample === undefined
-        ? {}
-        : { configExample: JSON.parse(JSON.stringify(source.configExample)) }),
-    });
+    this.plugins.addAttentionSource(this.ctx, source);
   }
-  attentionProviders = () =>
-    this.attentionSources
-      .snapshot()
-      .map(({ key: provider, description, configExample }) => ({
-        provider,
-        ...(description === undefined ? {} : { description }),
-        ...(configExample === undefined
-          ? {}
-          : { configExample: JSON.parse(JSON.stringify(configExample)) }),
-      }));
-  private startAttentionSource(source: Contribution<AttentionProducer>) {
-    const sources = new AttentionSources(
-      {
-        completed: (key, object) =>
-          sourceCompleted(this.runner.records.saved(key)?.sourceRuns, object),
-        finish: (key, object) =>
-          this.runner.runners.completeSource(key, object),
-        emit: (key, object, text, current) => {
-          const agent = this.state.running.find((agent) => agent.key === key);
-          if (
-            !agent?.attentionEnabled ||
-            agent.attention[object.slug] !== object ||
-            !object.value.enabled
-          )
-            throw new Error("This source watch is no longer enabled");
-          this.runner.records.history(key, object, text);
-          this.runner.runners.wakeSource(
-            key,
-            {
-              type: "source",
-              slug: object.slug,
-              watch: object.value,
-              plugin: source.pluginId,
-              text,
-            },
-            object,
-            current,
-          );
-        },
-      },
-      this.sourceTails,
-    );
-    const update = () =>
-      sources.reconcile(
-        source.key,
-        source,
-        this.state.running.filter((agent) =>
-          this.runner.runners.runs(agent.key),
-        ),
-      );
-    const unsubscribe = this.subscribe(update);
-    update();
-    return () => {
-      unsubscribe();
-      sources.stop();
-    };
-  }
-  tools = () => this.addedTools.snapshot();
+  attentionProviders = () => this.plugins.attentionProviders();
+  tools = () => this.plugins.tools();
   wake(key: AgentKey, wake: AgentWake) {
     const plugin = this.ctx.pluginOwner?.id;
     if (!plugin) throw new Error("Only a plugin wakes an agent");
@@ -1951,6 +1672,7 @@ export class AgentsService extends Service implements Agents {
   relay = (key: AgentKey) => this.runner.relay(key);
   core = (key: AgentKey, signal?: AbortSignal) =>
     this.runner.coreMemory.core(key, signal);
+
   private localCache:
     | {
         identities: readonly AgentIdentity[];

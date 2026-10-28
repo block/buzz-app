@@ -89,6 +89,7 @@ export class AgentsRunner {
   }> = { running: [], interrupted: [] };
   /** The memberships it last decided from. */
   private identities: readonly Member[] = [];
+  private readonly listeners = new Set<() => void>();
 
   constructor(
     storage: AgentStore,
@@ -130,7 +131,10 @@ export class AgentsRunner {
     /** The catch-up progress this program last read or saved. */
     let savedProgress: Checkpoints = {};
     this.runners = new AgentRunners({
-      ownershipChanged: () => manager.ownershipChanged(),
+      ownershipChanged: () => {
+        this.notify();
+        manager.ownershipChanged();
+      },
       ready: (key) => this.ready(key),
       agent: (key) => this.agent(key),
       member: (agent, event) => this.member(agent, event),
@@ -262,6 +266,16 @@ export class AgentsRunner {
     });
   }
 
+  /** Hears each change to what runs here or who holds it. */
+  subscribe(listener: () => void) {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+  private notify() {
+    for (const listener of [...this.listeners]) listener();
+  }
   /** Connects each community where the viewer has an agent. */
   watch(identities: readonly AgentIdentity[], viewer: string | undefined) {
     this.connections.watch(identities, viewer);
@@ -317,14 +331,16 @@ export class AgentsRunner {
     const interrupted = running.filter(
       (agent) => left.has(agent.key) && this.runners.runs(agent.key),
     );
+    const prior = this.state;
     this.state = {
-      running: same(running, this.state.running)
-        ? this.state.running
+      running: same(running, prior.running)
+        ? prior.running
         : Object.freeze(running),
-      interrupted: same(interrupted, this.state.interrupted)
-        ? this.state.interrupted
+      interrupted: same(interrupted, prior.interrupted)
+        ? prior.interrupted
         : Object.freeze(interrupted),
     };
+    if (this.state.running !== prior.running) this.notify();
     this.runners.resume(
       new Set(
         running

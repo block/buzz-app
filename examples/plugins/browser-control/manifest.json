@@ -1,0 +1,6 @@
+{
+  "id": "example.browser-control",
+  "name": "Browser control preview",
+  "apiVersion": 1,
+  "description": "Internal browser control experiment for an explicitly enabled macOS build"
+}

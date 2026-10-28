@@ -202,6 +202,10 @@ fn main() {
             "browser_navigate",
             "browser_action",
             "browser_status",
+            "browser_control_available",
+            "browser_control_grant",
+            "browser_control_revoke",
+            "browser_control_execute",
         ])),
     )
     .expect("Could not build Tauri resources")

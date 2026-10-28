@@ -1,4 +1,6 @@
 import {
+  lazy,
+  Suspense,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -23,6 +25,13 @@ import type {
 } from "./platform";
 import type { BrowserSessions } from "./sessions";
 import styles from "./BrowserHostView.module.css";
+
+// The preview UI loads only after the native build explicitly enables it.
+const BrowserControlBar = lazy(() =>
+  import("./BrowserControlBar").then(({ BrowserControlBar }) => ({
+    default: BrowserControlBar,
+  })),
+);
 
 const EMPTY_STATUS: BrowserStatus = {
   url: "",
@@ -106,6 +115,20 @@ export function BrowserHostView({
   // reopens there instead of at its starting URL.
   const resumeUrl = useRef(url);
   const editing = useRef(false);
+  const [controlAvailable, setControlAvailable] = useState(false);
+  const [controlSession, setControlSession] = useState<string>();
+  useEffect(() => {
+    let current = true;
+    void platform.control
+      ?.available()
+      .then((value) => {
+        if (current) setControlAvailable(value);
+      })
+      .catch(() => undefined);
+    return () => {
+      current = false;
+    };
+  }, [platform]);
   const [status, setStatus] = useState(EMPTY_STATUS);
   const [draft, setDraft] = useState(url);
   const [localError, setLocalError] = useState<string | null>(null);
@@ -159,6 +182,7 @@ export function BrowserHostView({
         if (!nextVisible) return;
         setLocalError(null);
         session.current = undefined;
+        setControlSession(undefined);
         delete element.dataset.browserSession;
         attachStarted = false;
         lastRequested = undefined;
@@ -249,6 +273,7 @@ export function BrowserHostView({
         .then((sessionId) => {
           if (!sessionId || disposed) return;
           session.current = sessionId;
+          setControlSession(sessionId);
           element.dataset.browserSession = sessionId;
           syncBounds(true);
           void poll();
@@ -338,6 +363,10 @@ export function BrowserHostView({
       document.removeEventListener("transitionend", updatePresentation, true);
       const sessionId = session.current;
       session.current = undefined;
+      setControlSession(undefined);
+      // Revoke before a persistent guest is parked for reuse.
+      if (sessionId)
+        void platform.control?.revoke(sessionId).catch(() => undefined);
       delete element.dataset.browserSession;
       // A guest with kept storage waits a while for this page to come back,
       // say from another channel, so work in progress there survives.
@@ -425,6 +454,16 @@ export function BrowserHostView({
           </span>
         ) : null}
       </div>
+      {controlAvailable && controlSession && platform.control ? (
+        <Suspense fallback={null}>
+          <BrowserControlBar
+            key={controlSession}
+            control={platform.control}
+            sessionId={controlSession}
+            status={status}
+          />
+        </Suspense>
+      ) : null}
       {error ? (
         <div className={styles.error} role="alert">
           {error}

@@ -60,3 +60,23 @@
     padding-inline: var(--space-1);
   }
 }
+
+.control {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--border-standard);
+}
+
+.controlActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.control p {
+  margin: 0;
+  color: var(--text-subtle);
+}

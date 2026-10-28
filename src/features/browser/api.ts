@@ -1,3 +1,4 @@
+import type { BrowserControl } from "./platform";
 import type { ComponentType } from "react";
 
 export type BrowserViewProps = Readonly<{
@@ -14,6 +15,9 @@ export type BrowserViewProps = Readonly<{
 export interface Browser {
   readonly available: boolean;
   readonly View: ComponentType<BrowserViewProps>;
+  /** Internal preview: unavailable without the native Cargo opt-in. A grant
+   * token comes only from the owner's browser toolbar. */
+  readonly control?: Pick<BrowserControl, "available" | "execute"> | undefined;
 }
 
 declare module "@deepseek-ai/cordis" {

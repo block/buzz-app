@@ -220,17 +220,22 @@ it("commits resource-only token hosts without a draft or format parent update", 
   }
 });
 
-it("restores checkpoint semantics through current resources without losing saved history", () => {
+it("restores checkpoint resources and history under the saved caption budget", () => {
   const ref = createRef<ComposerInputElement>();
   const original = mentionDraft("😀 :late: tail");
-  const changed = vi.fn();
+  let authored = original;
+  const changed = vi.fn((next: MentionDraft) => {
+    authored = next;
+  });
   const formats = vi.fn();
   function Editor({
     draft,
     available,
+    maxLength = 20,
   }: {
     draft: MentionDraft;
     available: boolean;
+    maxLength?: number;
   }) {
     return (
       <EditableInput
@@ -239,7 +244,7 @@ it("restores checkpoint semantics through current resources without losing saved
         value={draft.text}
         disabled={false}
         placeholder="Draft"
-        maxLength={16000}
+        maxLength={maxLength}
         onDraftChange={changed}
         onFormatsChange={formats}
         presentationFor={(current) =>
@@ -268,7 +273,14 @@ it("restores checkpoint semantics through current resources without losing saved
     input.setSelectionRange(12, 12);
     restore = input.checkpoint();
   });
-  view.rerender(<Editor draft={mentionDraft("Temporary")} available={false} />);
+  const savedDraft = authored;
+  view.rerender(
+    <Editor
+      draft={mentionDraft("Temporary")}
+      available={false}
+      maxLength={11}
+    />,
+  );
   const beforeRestore = changed.mock.calls.length;
   act(restore);
   expect(changed).toHaveBeenCalledTimes(beforeRestore);
@@ -276,6 +288,12 @@ it("restores checkpoint semantics through current resources without losing saved
   expect([input.selectionStart, input.selectionEnd]).toEqual([12, 12]);
   expect(input.querySelectorAll("[data-source]")).toHaveLength(0);
   expect(input.querySelector("strong")).toHaveTextContent(original.text);
+  // Restore may precede the caller's restored props commit. Ordinary edits
+  // must still obey its current budget, not inherit the checkpoint's limit.
+  act(() => input.insertText("x"));
+  expect(input).toHaveValue(original.text);
+  expect(changed).toHaveBeenCalledTimes(beforeRestore);
+  view.rerender(<Editor draft={savedDraft} available={false} />);
   act(() => input.undo(false));
   expect(input).toHaveValue(original.text);
   expect(input.querySelectorAll("strong")).toHaveLength(0);

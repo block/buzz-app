@@ -298,6 +298,7 @@ export function EditableInput({
     const reconcilePresentation = (
       state: EditorState,
       root?: Transaction,
+      checkpointMaxLength?: number,
     ): EditorState => {
       const next = projectComposerDocument(state.doc);
       presentation.read(state.doc, next);
@@ -401,6 +402,10 @@ export function EditableInput({
       tr.setMeta("composer-normalized", true);
       if (root) tr.setMeta("appendedTransaction", root);
       else tr.setMeta("addToHistory", false);
+      // A checkpoint's derived presentation still belongs to its saved caption,
+      // even before the caller commits restored attachment/budget props.
+      if (checkpointMaxLength !== undefined)
+        tr.setMeta(normalize, checkpointMaxLength);
       const normalized = state.applyTransaction(tr);
       for (const applied of normalized.transactions)
         if (applied.docChanged) presentation.map(applied.mapping, applied.doc);
@@ -410,12 +415,13 @@ export function EditableInput({
       );
       return normalized.state;
     };
-    const normalize = new Plugin({
+    const normalize: Plugin = new Plugin({
       filterTransaction(tr) {
+        const maxLength = tr.getMeta(normalize) ?? current.current.maxLength;
         return (
           !tr.docChanged ||
           composerMarkdown(projectComposerDocument(tr.doc).draft).length <=
-            current.current.maxLength
+            maxLength
         );
       },
       props: {
@@ -1781,6 +1787,7 @@ export function EditableInput({
           const savedDraft = emitted.current;
           const savedPlain = [...plain.current];
           const savedSeparateHistory = separateHistory;
+          const savedMaxLength = current.current.maxLength;
           return () => {
             if (view.current !== editor) return;
             plain.current = savedPlain;
@@ -1788,7 +1795,9 @@ export function EditableInput({
             emitted.current = savedDraft;
             // Restore history/selection through the current presentation before
             // exposing native atoms saved under an older resource catalog.
-            updateNativeView(reconcilePresentation(saved));
+            updateNativeView(
+              reconcilePresentation(saved, undefined, savedMaxLength),
+            );
             tokenViews();
             selected();
           };

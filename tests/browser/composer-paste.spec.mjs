@@ -210,6 +210,96 @@ test("pasting copied messages into the composer restores chips, the recipient an
   );
 });
 
+// Browser integration: a copied timeline message pastes its bare links as the
+// link renderer's chips, and `> ` typed with native keys at the start of each
+// pasted paragraph quotes every one of them, the linked ones included.
+test("typed quote markers quote every pasted paragraph, including linked ones", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const pr = "https://github.com/example/widgets/pull/318";
+  const readme =
+    "https://github.com/example/widgets/blob/fix/meter/docs/README.md";
+  const paragraphs = [
+    `Rebased onto main and pushed. Draft PR: ${pr}`,
+    "Folds in #309, #310 and #311 (not #312), so {theme:compact} keeps the team’s (ACUL) banner.",
+    "The meter reads Weak / Moderate / Strong, and “Didn’t get the code? Resend” stays.",
+    `Rollout notes: ${readme}`,
+    "Totals: 1,163 cases; 1,150 passed; 13 skipped.",
+  ];
+  const message = app.append(
+    "primary",
+    "alpha",
+    paragraphs.join("\n\n"),
+    true,
+    false,
+  );
+  const row = page.locator(
+    `[data-channel-timeline] [data-message-id="${message.id}"]`,
+  );
+  await expect(row.locator(`a[href="${readme}"]`)).toBeVisible();
+  const payload = await row
+    .locator("p")
+    .first()
+    .evaluate((paragraph) => {
+      const content = paragraph.parentElement;
+      const range = document.createRange();
+      range.selectNodeContents(content);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+      const clipboardData = new DataTransfer();
+      content.dispatchEvent(
+        new ClipboardEvent("copy", {
+          bubbles: true,
+          cancelable: true,
+          clipboardData,
+        }),
+      );
+      return {
+        text: clipboardData.getData("text/plain"),
+        html: clipboardData.getData("text/html"),
+      };
+    });
+  expect(payload.text).toBe(paragraphs.join("\n\n"));
+
+  const input = page.getByRole("textbox", {
+    name: "Message #Alpha",
+    exact: true,
+  });
+  await input.click();
+  await pasteInto(input, payload);
+  const chips = [pr, readme].map((url) =>
+    input.locator(`[data-source="${url}"] [data-link-renderer]`),
+  );
+  for (const chip of chips) await expect(chip).toBeVisible();
+  await input.evaluate((element) => element.setSelectionRange(0, 0));
+  await input.pressSequentially("From Pip’s agent:");
+  await input.press("Shift+Enter");
+  for (const paragraph of paragraphs) {
+    await input.evaluate((element, paragraph) => {
+      const start = element.value.indexOf(paragraph);
+      element.setSelectionRange(start, start);
+    }, paragraph);
+    await input.pressSequentially("> ");
+  }
+  const quotes = input.locator(":scope > blockquote");
+  await expect(quotes).toHaveCount(5);
+  await expect(quotes.nth(0).locator(`[data-source="${pr}"]`)).toBeVisible();
+  await expect(
+    quotes.nth(3).locator(`[data-source="${readme}"]`),
+  ).toBeVisible();
+  expect(await input.evaluate((element) => element.value)).not.toContain(">");
+
+  await page.getByRole("button", { name: "Send message", exact: true }).click();
+  await expect.poll(() => app.report.publications.length).toBe(1);
+  expect(app.report.publications[0].event.content.split(/\n+/)).toEqual([
+    "From Pip’s agent:",
+    ...paragraphs.map((paragraph) => `> ${paragraph}`),
+  ]);
+});
+
 // Browser integration: external clipboard HTML paints a labelled link in the
 // actual composer and survives publication through the session.
 test("external linked text stays linked in the composer and sent message", async ({

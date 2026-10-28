@@ -1905,18 +1905,91 @@ it("does not convert an inserted or pasted marker, or one typed inside pasted fe
   expect(split.markdown()).toBe("```\n- item");
 });
 
-it("keeps a marker literal on a line holding a mention chip", async () => {
-  const h = mount();
-  const honey = { pubkey: "a".repeat(64), name: "Honey" };
-  act(() => h.input.insertText("", honey));
-  expect(h.input).toHaveValue("@Honey ");
+it.each([
+  ["- ", "ul > li > p"],
+  ["1. ", "ol > li > p"],
+  ["> ", "blockquote > p"],
+])(
+  "converts %j typed before a mention, link chip, link and code, keeping each in the block",
+  async (marker, selector) => {
+    const h = mount("", { links: true });
+    const honey = { pubkey: "a".repeat(64), name: "Honey" };
+    const url = "https://example.com/a";
+    act(() => h.input.insertText("", honey));
+    paste(h.input, `see ${url} and docs`);
+    await h.user.keyboard(" `x`");
+    act(() => {
+      const at = h.input.value.indexOf("docs");
+      h.input.setSelectionRange(at, at + 4);
+      h.input.editLink()?.save("docs", "https://example.com/docs");
+      h.input.setSelectionRange(0, 0);
+    });
+    const line = `@Honey see ${url} and [docs](https://example.com/docs) \`x\``;
+    expect(h.markdown()).toBe(line);
+    await h.user.keyboard(marker);
+    const block = h.input.querySelector(selector);
+    expect(block).not.toBeNull();
+    expect(block?.querySelector('[data-source="@Honey"]')).not.toBeNull();
+    expect(block?.querySelector(`[data-source="${url}"]`)).not.toBeNull();
+    expect(
+      block?.querySelector('a[href="https://example.com/docs"]'),
+    ).toHaveTextContent("docs");
+    expect(block?.querySelector("code")).toHaveTextContent("x");
+    expect(h.input.value).not.toContain(marker);
+    expect(h.draft().recipients).toEqual([{ ...honey, start: 0, end: 6 }]);
+    expect(h.markdown()).toBe(`${marker}${line}`);
+    act(() => h.input.undo(false));
+    expect(h.input.querySelector("ul, ol, blockquote")).toBeNull();
+    expect(h.input.value.startsWith(`${marker}@Honey see `)).toBe(true);
+    expect(h.draft().recipients).toEqual([
+      { ...honey, start: marker.length, end: marker.length + 6 },
+    ]);
+    expect(h.markdown()).toBe(`${marker}${line}`);
+  },
+);
+
+// The reported flow: a timeline message pastes its bare links as chips, and
+// `> ` typed at the start of each pasted paragraph quotes every one of them.
+it("quotes every pasted paragraph `> ` is typed before, keeping its link chips", async () => {
+  const pr = "https://github.com/example/widgets/pull/318";
+  const readme =
+    "https://github.com/example/widgets/blob/fix/meter/docs/README.md";
+  const paragraphs = [
+    `Rebased onto main and pushed. Draft PR: ${pr}`,
+    "Folds in #309, #310 and #311 (not #312), so {theme:compact} keeps the team’s (ACUL) banner.",
+    "The meter reads Weak / Moderate / Strong, and “Didn’t get the code? Resend” stays.",
+    `Rollout notes: ${readme}`,
+    "Totals: 1,163 cases; 1,150 passed; 13 skipped.",
+  ];
+  const linked = (text: string) =>
+    text.replace(/https:\S+/, (href) => `<a href="${href}">${href}</a>`);
+  const h = mount("", { links: true });
+  paste(
+    h.input,
+    paragraphs.join("\n\n"),
+    `<div data-buzz-copy="timeline">${paragraphs.map((text) => `<p>${linked(text)}</p>`).join("")}</div>`,
+  );
+  expect(h.input.querySelectorAll("[data-link]")).toHaveLength(2);
   act(() => h.input.setSelectionRange(0, 0));
-  await h.user.keyboard("- ");
-  expect(h.input.querySelector("ul")).toBeNull();
-  expect(h.input).toHaveValue("- @Honey ");
-  expect(h.input.querySelector('[data-source="@Honey"]')).not.toBeNull();
-  expect(h.draft().recipients).toEqual([{ ...honey, start: 2, end: 8 }]);
-  expect(h.markdown()).toBe("- @Honey ");
+  await h.user.keyboard("From Pip’s agent:{Shift>}{Enter}{/Shift}");
+  for (const paragraph of paragraphs) {
+    const start = h.input.value.indexOf(paragraph);
+    act(() => h.input.setSelectionRange(start, start));
+    await h.user.keyboard("> ");
+  }
+  const quotes = [...h.input.querySelectorAll(":scope > blockquote")];
+  expect(quotes).toHaveLength(5);
+  expect(quotes[0]?.querySelector(`[data-source="${pr}"]`)).not.toBeNull();
+  expect(quotes[3]?.querySelector(`[data-source="${readme}"]`)).not.toBeNull();
+  expect(h.input.value).not.toContain(">");
+  // The sent text reads as the header and five quotes, each link inside its own.
+  const blocks = scanMarkdown(h.markdown()).tree.children ?? [];
+  expect(blocks.map((node) => node.type)).toEqual([
+    "paragraph",
+    ...paragraphs.map(() => "blockquote"),
+  ]);
+  expect(JSON.stringify(blocks[1])).toContain(pr);
+  expect(JSON.stringify(blocks[4])).toContain(readme);
 });
 
 it("switches a nested bullet to its ordered ancestor's type without outdenting", async () => {

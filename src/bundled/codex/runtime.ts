@@ -1592,19 +1592,17 @@ export class CodexRuntime {
       const resuming =
         existing?.workspace === workspace && (existing.tools ?? "") === tools;
       type Started = { thread: { id: string; cwd: string } };
-      const start = () => {
-        return rpc.request<Started>("thread/start", {
+      const start = () =>
+        rpc.request<Started>("thread/start", {
           ...params,
           dynamicTools: dynamicTools(added),
         });
-      };
-      const resume = (threadId: string) => {
-        return rpc.request<Started>("thread/resume", {
+      const resume = (threadId: string) =>
+        rpc.request<Started>("thread/resume", {
           ...params,
           threadId,
           excludeTurns: true,
         });
-      };
       let started: Started;
       if (resuming) {
         const { threadId } = existing;

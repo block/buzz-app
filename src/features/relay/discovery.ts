@@ -1,4 +1,8 @@
-import { channelTtl, channelVisibility } from "./channel-details-protocol";
+import {
+  channelJoinRole,
+  channelTtl,
+  channelVisibility,
+} from "./channel-details-protocol";
 import { huddleParent } from "../huddle/lifecycle";
 import { soloLabels } from "../solo/labels";
 import { objectBody } from "./body";
@@ -149,7 +153,7 @@ export class DiscoveryState {
   }
   /** A CLOSED preview is unreadable pending fresh evidence, not permanently denied. */
   suspend(id: string): boolean {
-    if (!this.get(id)?.readOnly) return false;
+    if (this.authorized(id) || !this.get(id)?.readOnly) return false;
     this.suspended.add(id);
     this.accessRevision++;
     return true;
@@ -231,6 +235,20 @@ export class DiscoveryState {
         : !this.complete && !this.open(id))
     );
   }
+  canWrite(id: string): boolean {
+    return this.canParticipate(id) && this.viewerRole(id) !== "guest";
+  }
+  private viewerRole(id: string): ChannelSummary["viewerRole"] {
+    const entries = this.rosters
+      .get(id)
+      ?.tags.filter(([key, value]) => key === "p" && value === this.viewer);
+    // A contradictory guest entry cannot restore writing through another role.
+    if (entries?.some((entry) => entry[3] === "guest")) return "guest";
+    const role = entries?.length === 1 ? entries[0]?.[3] : undefined;
+    return ["owner", "admin", "member", "bot"].includes(role ?? "")
+      ? (role as ChannelSummary["viewerRole"])
+      : undefined;
+  }
   authorized(id: string): boolean {
     const roster = this.rosters.get(id);
     return !this.denied.has(id) && !!roster && hasTag(roster, "p", this.viewer);
@@ -271,6 +289,7 @@ export class DiscoveryState {
     // The relay tags a system roster too, so a roster that arrives before its
     // metadata (the full pass reads names later) never lists as a channel.
     const roster = this.rosters.get(id);
+    const viewerRole = this.viewerRole(id);
     const type = this.isSolo(id)
       ? "solo"
       : event
@@ -305,14 +324,16 @@ export class DiscoveryState {
       id,
       ...(huddle || legacyHuddle ? { huddle: true as const } : {}),
       ...(huddle ? { parentChannelId: huddle } : {}),
-      ...(!this.authorized(id) || this.cached.has(id)
+      ...(!this.authorized(id) || this.cached.has(id) || viewerRole === "guest"
         ? { readOnly: true as const }
         : {}),
+      ...(viewerRole ? { viewerRole } : {}),
       ...(this.cached.has(id) ? { cached: true as const } : {}),
       name: this.name(id),
       ...(event
         ? {
             visibility: channelVisibility(event),
+            joinRole: channelJoinRole(event),
             description: tag(event, "about") ?? "",
           }
         : {}),

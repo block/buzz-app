@@ -22,12 +22,16 @@ export type ChannelSummary = Readonly<{
   metadataPending?: boolean | undefined;
   /** Explicit signed visibility; absent means unknown, not public. */
   visibility?: "public" | "private" | undefined;
+  /** Default for future participants; never an existing participant's role. */
+  joinRole?: "member" | "guest" | undefined;
+  /** Viewer role from the relay-signed roster, independent of admission defaults. */
+  viewerRole?: "owner" | "admin" | "member" | "guest" | "bot" | undefined;
   preview?: string | undefined;
   /** Newest verified user-visible activity for sidebar ordering, in Unix seconds. */
   lastActivityAt?: number | undefined;
   /** Activity has been observed or read successfully, including an empty result. */
   activityKnown?: true;
-  /** Readable public nonmember channel; not part of the joined roster. */
+  /** Writing unavailable: public preview, cached membership, or a guest. */
   readOnly?: true;
   /** Downloaded membership is display-only pending current relay confirmation. */
   cached?: true;

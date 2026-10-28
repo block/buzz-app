@@ -123,6 +123,7 @@ export function createChannelDetails({
       details.description !== draft.description ||
       details.visibility !== draft.visibility ||
       details.ttlSeconds !== draft.ttlSeconds ||
+      (draft.joinRole !== undefined && details.joinRole !== draft.joinRole) ||
       (draft.labels !== undefined &&
         JSON.stringify([...new Set(draft.labels)].sort()) !==
           JSON.stringify([...(details.labels ?? [])].sort()))

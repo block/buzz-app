@@ -71,6 +71,60 @@ function harness() {
   };
   return { capability, load, save, check, setAttempt };
 }
+it("edits the new participant role separately, preserving existing participants and canceling drafts", async () => {
+  const h = harness();
+  h.load.mockResolvedValue({ ...base, joinRole: "member" });
+  const user = userEvent.setup();
+  render(
+    <ChannelDetailsEditor
+      scope="community:viewer"
+      capability={h.capability}
+      channel={channel}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Edit details" }));
+  const choice = screen.getByRole("combobox", { name: "New participant role" });
+  expect(choice).toHaveTextContent("Member");
+  expect(choice).toHaveAccessibleDescription(
+    /won’t change existing participants/,
+  );
+  await user.click(choice);
+  await user.click(await screen.findByRole("option", { name: "Guest" }));
+  expect(h.save).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  await user.click(screen.getByRole("button", { name: "Edit details" }));
+  expect(
+    screen.getByRole("combobox", { name: "New participant role" }),
+  ).toHaveTextContent("Member");
+  await user.click(
+    screen.getByRole("combobox", { name: "New participant role" }),
+  );
+  await user.click(await screen.findByRole("option", { name: "Guest" }));
+  await user.click(screen.getByRole("button", { name: "Save changes" }));
+  await waitFor(() => expect(h.save).toHaveBeenCalledOnce());
+  expect(h.save.mock.calls[0]).toEqual([
+    expect.objectContaining({ joinRole: "member" }),
+    expect.objectContaining({ joinRole: "guest" }),
+    expect.any(AbortSignal),
+  ]);
+});
+
+it("does not offer an admission setting when the relay does not publish it", async () => {
+  const h = harness();
+  const user = userEvent.setup();
+  render(
+    <ChannelDetailsEditor
+      scope="community:viewer"
+      capability={h.capability}
+      channel={channel}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Edit details" }));
+  expect(
+    screen.queryByRole("combobox", { name: "New participant role" }),
+  ).not.toBeInTheDocument();
+});
+
 it("edits deliberately, cancels every field, and sends all fields only on Save", async () => {
   const h = harness();
   const user = userEvent.setup();

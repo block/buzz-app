@@ -177,6 +177,17 @@ export function ChannelSettingsPanel({
                         loading={edit?.pending}
                         onOpen={edit?.open}
                       />
+                      {channel.joinRole && (
+                        <SettingsDetail
+                          label="New participant role"
+                          value={
+                            channel.joinRole === "guest" ? "Guest" : "Member"
+                          }
+                          actionLabel="Edit"
+                          loading={edit?.pending}
+                          onOpen={edit?.open}
+                        />
+                      )}
                     </>
                   )}
                 {channel.members && (

@@ -3,6 +3,7 @@ import { finalizeEvent, getPublicKey, type EventTemplate } from "nostr-tools";
 import { createChannelDetails } from "./channel-details";
 import {
   channelVisibility,
+  channelJoinRole,
   canonicalDetailsName,
   detailsSettings,
   detailsTemplate,
@@ -106,6 +107,86 @@ function harness(role = "owner", labels = false) {
     },
   };
 }
+it("changes admission defaults without changing the signed roster, and requires matching readback", async () => {
+  const h = harness();
+  const withRole = (role: string) =>
+    h.record(39000, [...h.metadata().tags.slice(1), ["join_role", role]]);
+  h.set([withRole("member"), ...h.events().slice(1)]);
+  const originalRoster = h.entry(2);
+  const base = await h.owner.capability.load(id);
+  expect(base.joinRole).toBe("member");
+  const next = { ...base, joinRole: "guest" as const };
+  // A relay OK that ignores the new tag must not report success.
+  h.publish.mockImplementationOnce(async () => {});
+  await expect(h.owner.capability.save(base, next)).rejects.toThrow(
+    "may have been saved",
+  );
+  expect(h.sign.mock.calls[0]?.[0].tags).toContainEqual(["join_role", "guest"]);
+  expect(
+    h.sign.mock.calls[0]?.[0].tags.some(
+      ([key]) => key === "p" || key === "role",
+    ),
+  ).toBe(false);
+  h.set([withRole("guest"), ...h.events().slice(1)]);
+  await h.owner.capability.check(id);
+  expect(h.entry(2)).toBe(originalRoster);
+  expect(h.publish).toHaveBeenCalledOnce();
+  expect(h.owner.capability.snapshot(id)).toBeUndefined();
+});
+
+it.each([undefined, "member", "guest"])(
+  "only sends a changed admission role (base %s)",
+  (joinRole) => {
+    const base = { ...draft, joinRole } as typeof draft & {
+      joinRole?: "member" | "guest";
+    };
+    expect(
+      detailsTemplate(id, base, base).tags.some(([key]) => key === "join_role"),
+    ).toBe(false);
+    for (const role of ["member", "guest"] as const) {
+      const event = detailsTemplate(id, { ...base, joinRole: role }, base);
+      expect(() => validateDetailsTemplate(event)).not.toThrow();
+      expect(event.tags.filter(([key]) => key === "join_role")).toEqual(
+        role === joinRole ? [] : [["join_role", role]],
+      );
+    }
+  },
+);
+
+it("rejects malformed or elevated admission defaults at the host boundary", () => {
+  const event = detailsTemplate(id, draft, draft);
+  for (const tags of [
+    [["join_role", "owner"]],
+    [["join_role", "admin"]],
+    [["join_role", "bot"]],
+    [["join_role", ""]],
+    [["join_role"]],
+    [["join_role", "guest", "extra"]],
+    [
+      ["join_role", "member"],
+      ["join_role", "guest"],
+    ],
+    [
+      ["join_role", "guest"],
+      ["ttl", "60"],
+    ],
+  ]) {
+    expect(() =>
+      validateDetailsTemplate({ ...event, tags: [...event.tags, ...tags] }),
+    ).toThrow();
+  }
+  const h = harness();
+  for (const tags of [
+    [],
+    [["join_role", "owner"]],
+    [
+      ["join_role", "member"],
+      ["join_role", "guest"],
+    ],
+  ])
+    expect(channelJoinRole(h.record(39000, tags))).toBeUndefined();
+});
+
 it("saves only after two fresh authority checks and projects confirmed readback", async () => {
   const h = harness();
   const base = await h.owner.capability.load(id);

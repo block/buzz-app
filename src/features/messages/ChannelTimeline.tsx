@@ -1273,7 +1273,11 @@ function Timeline({
             <EmptyState
               icon={<ChatCircleIcon />}
               title="No messages yet."
-              description="Start the conversation below."
+              description={
+                queries.channels.get?.(channelId)?.readOnly
+                  ? undefined
+                  : "Start the conversation below."
+              }
             />
           </div>
         )}

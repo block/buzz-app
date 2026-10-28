@@ -1005,18 +1005,30 @@ another non-owner member:
 
 | Target role | Change role | Remove from this channel |
 | --- | --- | --- |
-| Admin / Member / Guest | Admin / Member, excluding the current role | Yes |
-| Bot | Admin / Member, after explicit confirmation | Yes |
+| Admin / Member / Guest | Admin / Member / Guest, excluding the current role | Yes |
+| Bot | Admin / Member / Guest, after explicit confirmation | Yes |
 | Owner, self, unknown or inconsistent | No | No |
 
 Agent identity is independent of channel role. Explicitly promoting a Bot to Admin grants authority to that agent’s own public key and preserves its verified agent identity; the human owner’s roles do not confer authority.
 
-The menu deliberately omits **Make guest** while Guest's permission contract is
-unsettled: the inspected relay message path does not enforce the role's documented
-read-only meaning, while Git push policy does distinguish Guest from Member.
-Existing Guest roles remain available to the permission/confirmation flow and can be deliberately changed to Member or
-Admin, or removed; they are never automatically converted. This is a menu-only
-restriction, not a change to relay semantics or the broker's supported commands.
+The menu includes **Make guest** through the existing deliberate confirmation
+flow. Member and Guest labels show each participant's verified stored role;
+changing the admission default never changes those roles. Agent Bot roles retain
+their existing Member presentation.
+
+Channel Settings keeps **Visibility** separate from **New participant role**.
+On relays that publish an explicit `join_role` in signed kind:39000 metadata,
+owners/admins can select Member or Guest in Edit details and save through the
+existing kind:9002 command. Unchanged or omitted defaults are not resent, and
+success requires matching fresh signed metadata. A relay that omits or publishes
+an unrecognized default gets no admission-role control.
+
+A Guest's signed roster role makes the channel read-only independently of that
+default. Channel and thread history remain available, with a read-only notice
+instead of a composer or Join button. A public preview of a Guest-default channel
+offers joining with read-only access. Explicit promotion to Member restores the
+composer; changing only `join_role` does not. Guests retain Leave, and the relay
+remains the authority for every write.
 
 Current members may also remove their own verified non-owner agents, but cannot
 edit their roles or remove someone else's agent. The service verifies signed

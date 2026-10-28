@@ -12,6 +12,8 @@ export function ChannelJoinNotice({
   ready = true,
   lifecycle,
   joinable,
+  guest = false,
+  joinRole,
   onJoin,
   onHeightChange,
 }: {
@@ -19,6 +21,8 @@ export function ChannelJoinNotice({
   ready?: boolean;
   lifecycle?: ChannelLifecycleCapability | undefined;
   joinable: boolean;
+  guest?: boolean;
+  joinRole?: "member" | "guest" | undefined;
   onJoin(): void;
   onHeightChange?(height: number): void;
 }) {
@@ -68,11 +72,11 @@ export function ChannelJoinNotice({
       },
     );
   };
-  const canJoin = joinable && !!lifecycle?.available;
+  const canJoin = !guest && joinable && !!lifecycle?.available;
   return (
     <section
       ref={notice}
-      aria-label="Channel preview"
+      aria-label={guest ? "Read-only channel" : "Channel preview"}
       aria-hidden={!visible}
       inert={!visible}
       className="pointer-events-none absolute inset-x-0 bottom-0 z-10 flex justify-center p-3"
@@ -83,9 +87,13 @@ export function ChannelJoinNotice({
         className={`${styles.channelJoinSurface} pointer-events-auto flex w-fit max-w-full flex-wrap items-center justify-center gap-2 p-1.5`}
       >
         <p className="px-2 text-body-sm text-subtle">
-          {canJoin
-            ? "Join channel to send messages"
-            : "You’re previewing this channel."}
+          {guest
+            ? "You have read-only access to this channel."
+            : canJoin
+              ? joinRole === "guest"
+                ? "Join channel with read-only access"
+                : "Join channel to send messages"
+              : "You’re previewing this channel."}
         </p>
         {canJoin && (
           <Button

@@ -168,8 +168,7 @@ export function MemberRow({
           <MenuSeparator />
           {canEdit &&
             editableMemberRoles
-              // Guest assignment is hidden until its permission contract is settled.
-              .filter((next) => next !== role && next !== "guest")
+              .filter((next) => next !== role)
               .map((next) => (
                 <MenuItem key={next} onClick={() => choose(next)}>
                   Make {next}

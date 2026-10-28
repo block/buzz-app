@@ -675,11 +675,11 @@ it.each(["member", "guest"])(
   },
 );
 it.each([
-  ["member", ["Make admin", "Remove from channel"]],
-  ["admin", ["Make member", "Remove from channel"]],
+  ["member", ["Make admin", "Make guest", "Remove from channel"]],
+  ["admin", ["Make member", "Make guest", "Remove from channel"]],
   ["guest", ["Make admin", "Make member", "Remove from channel"]],
 ] as const)(
-  "omits Guest assignment while preserving the verified %s role and supported actions",
+  "offers role changes while preserving the verified %s role until confirmation",
   async (role, actions) => {
     const t = await setup("owner", role);
     const row = required(screen.getByText("Morgan").closest("li"));
@@ -700,6 +700,18 @@ it.each([
     expect(t.publish).not.toHaveBeenCalled();
   },
 );
+it("makes a member a guest only after explicit confirmation", async () => {
+  const t = await setup("owner", "member");
+  const dialog = await t.choose("Make guest");
+  expect(dialog).toHaveTextContent("from member to guest");
+  expect(t.publish).not.toHaveBeenCalled();
+  await t.user.click(
+    within(dialog).getByRole("button", { name: "Make guest" }),
+  );
+  await vi.waitFor(() => expect(t.publish).toHaveBeenCalledOnce());
+  expect(t.publish.mock.calls[0]?.[0].tags).toContainEqual(["role", "guest"]);
+});
+
 it("changes an existing Guest to Member only after explicit confirmation", async () => {
   const t = await setup("owner", "guest");
   const dialog = await t.choose("Make member");
@@ -1307,7 +1319,12 @@ it.each(["ellipsis", "context", "keyboard", "context-key"])(
     }
     expect(
       (await screen.findAllByRole("menuitem")).map((item) => item.textContent),
-    ).toEqual(["View profile", "Make admin", "Remove from channel"]);
+    ).toEqual([
+      "View profile",
+      "Make admin",
+      "Make guest",
+      "Remove from channel",
+    ]);
     expect(t.onOpenLink).not.toHaveBeenCalled();
     expect(t.publish).not.toHaveBeenCalled();
     await t.user.click(screen.getByRole("menuitem", { name: "View profile" }));

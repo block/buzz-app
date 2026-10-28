@@ -26,6 +26,7 @@ import {
 import { ChannelDurationField } from "./ChannelDurationField";
 import { ChannelTextField } from "./ChannelTextField";
 import { Switch } from "../../shared/design-system/ui/Switch";
+import { Select } from "../../shared/design-system/ui/Select";
 import { DEFAULT_TEMPORARY_CHANNEL_TTL_SECONDS } from "../../features/relay/channel-writes";
 import styles from "./Channels.module.css";
 
@@ -137,6 +138,10 @@ export function ChannelDetailsEditor({
                     old.base && old.draft.visibility !== old.base.visibility
                       ? old.draft.visibility
                       : base.visibility,
+                  joinRole:
+                    old.base && old.draft.joinRole !== old.base.joinRole
+                      ? old.draft.joinRole
+                      : base.joinRole,
                   ttlSeconds:
                     old.draft.ttlSeconds === old.baselineTtl
                       ? base.ttlSeconds
@@ -181,6 +186,7 @@ export function ChannelDetailsEditor({
     (normalized.name !== view.base.name ||
       normalized.description !== view.base.description ||
       normalized.visibility !== view.base.visibility ||
+      normalized.joinRole !== view.base.joinRole ||
       normalized.ttlSeconds !== view.base.ttlSeconds);
   const temporaryTtl =
     draft?.ttlSeconds ??
@@ -224,6 +230,7 @@ export function ChannelDetailsEditor({
       draft.name !== view.base.name ||
       draft.description !== view.base.description ||
       draft.visibility !== view.base.visibility ||
+      draft.joinRole !== view.base.joinRole ||
       draft.ttlSeconds !== view.base.ttlSeconds);
   const requestClose = () => {
     if (pending || busy.current) return;
@@ -519,6 +526,29 @@ export function ChannelDetailsEditor({
                     })
                   }
                 />
+                {draft.joinRole !== undefined && (
+                  <Select
+                    variant="field"
+                    label="New participant role"
+                    value={draft.joinRole}
+                    description="Members can post and reply. Guests have read-only access. Changing this setting won’t change existing participants’ roles."
+                    error={errors?.joinRole}
+                    disabled={locked || !canEdit}
+                    groups={[
+                      {
+                        label: "Role",
+                        options: [
+                          { value: "member", label: "Member" },
+                          { value: "guest", label: "Guest" },
+                        ],
+                      },
+                    ]}
+                    onValueChange={(joinRole) => {
+                      if (joinRole === "member" || joinRole === "guest")
+                        patch({ draft: { ...draft, joinRole } });
+                    }}
+                  />
+                )}
               </>
             )}
             {view.editing && status}

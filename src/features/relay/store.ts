@@ -263,6 +263,8 @@ export function createChannelStore(
         old.description === channel.description &&
         old.metadataPending === pending &&
         old.visibility === channel.visibility &&
+        old.joinRole === channel.joinRole &&
+        old.viewerRole === channel.viewerRole &&
         old.preview === preview &&
         old.hidden === channel.hidden &&
         old.private === channel.private &&
@@ -2030,7 +2032,10 @@ export function createChannelStore(
   /** An open channel's current read-only preview, as name search admits it. */
   function previewable(id: string) {
     const channel = discovery?.get(id);
-    return channel?.readOnly && !channel.archived && !channel.cached
+    return channel?.readOnly &&
+      !discovery?.authorized(id) &&
+      !channel.archived &&
+      !channel.cached
       ? channel
       : undefined;
   }
@@ -2970,6 +2975,7 @@ export function createChannelStore(
     restore,
     canAccess: authorized,
     canParticipate: (id: string) => discovery?.canParticipate(id) ?? false,
+    canWrite: (id: string) => discovery?.canWrite(id) ?? false,
     purgeAccess,
     denyChannel,
     suspendPreviews(ids: readonly string[]) {

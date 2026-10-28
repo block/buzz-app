@@ -18,17 +18,20 @@ export function MentionCompletion({
   channelId,
   threadRootId,
   inviteAgents,
+  observation,
   query,
   publish,
 }: ComposerCompletionProps) {
-  // The host remounts this provider on every keystroke. One `@` token in one
-  // composer is the chooser lifetime that keeps the last directory page.
+  // Query visits reset installed evidence; the provider's source subscriptions
+  // stay mounted for one `@` token in one composer.
   const model = useMentionChoices(
     session,
     channelId,
     inviteAgents,
     query.query,
     JSON.stringify(["inline", scope, channelId, threadRootId, query.start]),
+    true,
+    observation.revision,
   );
   const {
     profiles,
@@ -44,6 +47,8 @@ export function MentionCompletion({
     inviteAgents,
     query.query,
     model,
+    true,
+    observation.revision,
   );
   const members = draftRoster?.map((p) => p.pubkey) ?? channel?.members ?? [];
   const memberKey = members.join(":");
@@ -55,8 +60,16 @@ export function MentionCompletion({
     key: string;
     ids: string[];
   }>(undefined);
-  const [attempt, retry] = useState(0);
-  const [error, setError] = useState(false);
+  const [recovery, recover] = useState({
+    visit: observation.revision,
+    attempt: 0,
+    error: false,
+  });
+  const sameVisit = recovery.visit === observation.revision;
+  const attempt = sameVisit ? recovery.attempt : 0;
+  const error = sameVisit && recovery.error;
+  if (!sameVisit)
+    recover({ visit: observation.revision, attempt: 0, error: false });
   useEffect(() => {
     if (draftRoster) return;
     session.channels.ensureList();
@@ -70,12 +83,17 @@ export function MentionCompletion({
     for (const id of ids) requested.add(id);
     let live = true;
     void session.profiles.ensure(ids, "background").catch(() => {
-      if (live) setError(true);
+      if (live)
+        recover((current) =>
+          current.visit === observation.revision
+            ? { ...current, error: true }
+            : current,
+        );
     });
     return () => {
       live = false;
     };
-  }, [session, memberKey, attempt, draftRoster]);
+  }, [session, memberKey, attempt, draftRoster, observation.revision]);
   useEffect(() => {
     const members = memberKey ? memberKey.split(":") : [];
     const admitted =
@@ -162,6 +180,7 @@ export function MentionCompletion({
       inviteAgents,
       query.start,
       query.query,
+      observation.revision,
     ]);
     const ids =
       shown.current?.session === session && shown.current.key === key
@@ -233,8 +252,11 @@ export function MentionCompletion({
                 !!inviteAgents || teams.includeLegacy,
               );
               void session.archives?.refresh();
-              setError(false);
-              retry((value) => value + 1);
+              recover((current) =>
+                current.visit === observation.revision
+                  ? { ...current, error: false, attempt: current.attempt + 1 }
+                  : current,
+              );
               if (membershipMissing || membershipError)
                 session.channels.refreshList?.();
             },
@@ -261,6 +283,7 @@ export function MentionCompletion({
     channel,
     draftRoster,
     inviteAgents,
+    observation.revision,
     parentAdmission,
   ]);
   return null;

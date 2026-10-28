@@ -35,6 +35,8 @@ export function useMentionChoices(
   /** One chooser opening; see useMentionDirectory. */
   lifetime: string,
   open = true,
+  /** Inline native observation visit; pickers retain their existing query owner. */
+  visit?: number,
 ) {
   const roster = useContext(DraftMentionRoster);
   const selected = useContext(SelectedMentionContext);
@@ -59,6 +61,7 @@ export function useMentionChoices(
     query,
     open && !roster && !invite,
     lifetime,
+    visit,
   );
   const archives = useMentionArchives(session, open);
   const resolve = useIdentityNames(session.names);
@@ -69,7 +72,7 @@ export function useMentionChoices(
     /** Directory people behind installed outside rows, kept while later pages load. */
     people: readonly Person[];
   }>();
-  const key = JSON.stringify([channelId, invite, query, open, !!roster]);
+  const key = JSON.stringify([channelId, invite, query, open, !!roster, visit]);
   const same = installed?.session === session && installed.key === key;
   const carried = same ? installed.people : none;
   const people = useMemo(() => {

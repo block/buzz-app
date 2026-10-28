@@ -1138,6 +1138,74 @@ it.each(["click", "Enter", "Tab", " "])(
   },
 );
 
+it("keeps the displayed automatic Space identity through a precommit publication reorder", () => {
+  const h = mount();
+  const input = h.input();
+  h.fill("!Honey");
+  const publish = h.completionRequests.at(-1);
+  if (!publish) throw new Error("No observed completion request");
+  const chosen = {
+    id: first.pubkey,
+    label: "Honey",
+    edit: { mention: first },
+  };
+  const other = {
+    id: second.pubkey,
+    label: "Honeycomb",
+    edit: { mention: { ...second, name: "Honeycomb" } },
+  };
+  act(() => {
+    publish({ items: [chosen, other], spaceId: chosen.id });
+  });
+  const option = screen.getByRole("option", { name: "Honey" });
+  expect(option).toHaveAttribute("aria-selected", "true");
+  act(() => {
+    publish({ items: [other, chosen], spaceId: chosen.id });
+    // Publication has advanced, but the automatic displayed identity is still A.
+    expect(screen.getAllByRole("option")[0]).toBe(option);
+    expect(fireEvent.keyDown(input, { key: " " })).toBe(false);
+  });
+  expect(input).toHaveValue("@Honey ");
+  expect(h.commands().recipients).toEqual([first]);
+  expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  expect(h.messages.send).not.toHaveBeenCalled();
+});
+
+it("leaves Space ordinary after displayed exact evidence is withdrawn or genuinely empty", () => {
+  const h = mount();
+  const input = h.input();
+  h.fill("!Honey");
+  const publish = h.completionRequests.at(-1);
+  if (!publish) throw new Error("No observed completion request");
+  let withdraw: ReturnType<typeof publish> = false;
+  act(() => {
+    withdraw = publish({
+      items: [{ id: first.pubkey, label: "Honey", edit: { mention: first } }],
+      spaceId: first.pubkey,
+    });
+  });
+  const option = screen.getByRole("option", { name: "Honey" });
+  act(() => {
+    if (!withdraw) throw new Error("No current publication to withdraw");
+    withdraw();
+    expect(option).toBeVisible();
+    expect(fireEvent.keyDown(input, { key: " " })).toBe(true);
+  });
+  expect(input).toHaveValue("!Honey");
+  expect(h.commands().recipients).toEqual([]);
+  expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  // Withdrawal does not revoke the provider lifetime. A new genuinely empty
+  // publication also leaves the key to normal editing once it has committed.
+  act(() => {
+    expect(publish({ items: [] })).not.toBe(false);
+  });
+  expect(fireEvent.keyDown(input, { key: " " })).toBe(true);
+  expect(input).toHaveValue("!Honey");
+  expect(h.commands().recipients).toEqual([]);
+  expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  expect(h.messages.send).not.toHaveBeenCalled();
+});
+
 it.each(["click", "Enter", "Tab"])(
   "rejects withdrawn or ineligible refreshed completions via %s without sending",
   (key) => {

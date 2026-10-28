@@ -1587,6 +1587,92 @@ it("ignores a late directory result after the query changes and retries the curr
   );
 });
 
+it.each(["empty", "error"])(
+  "reads an uncached %s query afresh after an intervening query",
+  async (firstOutcome) => {
+    vi.useFakeTimers();
+    const t = setup();
+    const release = new Map<
+      string,
+      (value: {
+        people: { pubkey: string; name: string }[];
+        hasMore: boolean;
+      }) => void
+    >();
+    const people = vi.fn(
+      (query: string) =>
+        new Promise<{
+          people: { pubkey: string; name: string }[];
+          hasMore: boolean;
+        }>((resolve, reject) => {
+          if (query === "New" && !release.has(query)) {
+            release.set(query, resolve);
+            if (firstOutcome === "error") reject(new Error("offline"));
+            else resolve({ people: [], hasMore: false });
+          } else release.set(query, resolve);
+        }),
+    );
+    const session = {
+      ...t.session,
+      directMessages: { ...t.session.directMessages, people },
+    };
+    const publish = vi.fn();
+    let revision = 0;
+    const tree = (query: string) => (
+      <MentionCompletion
+        session={session}
+        scope="test"
+        channelId="parent"
+        publish={publish}
+        query={{ start: 0, end: query.length + 1, query }}
+        observation={{
+          revision: ++revision,
+          text: `@${query}`,
+          start: query.length + 1,
+          end: query.length + 1,
+        }}
+      />
+    );
+    const view = render(tree("New"));
+    const last = () =>
+      publish.mock.lastCall?.[0] as CompletionResult | undefined;
+    try {
+      await act(() => vi.advanceTimersByTimeAsync(MENTION_DIRECTORY_DELAY_MS));
+      expect(people).toHaveBeenCalledTimes(1);
+      expect(last()?.status).toBe(
+        firstOutcome === "error"
+          ? "Could not search community people. Retry to refresh."
+          : undefined,
+      );
+      view.rerender(tree("Other"));
+      await act(() => vi.advanceTimersByTimeAsync(MENTION_DIRECTORY_DELAY_MS));
+      expect(people).toHaveBeenCalledTimes(2);
+      view.rerender(tree("New"));
+      expect(last()?.status).toBe("Searching community…");
+      await act(() => vi.advanceTimersByTimeAsync(MENTION_DIRECTORY_DELAY_MS));
+      expect(people).toHaveBeenCalledTimes(3);
+      expect(people.mock.calls.map(([query]) => query)).toEqual([
+        "New",
+        "Other",
+        "New",
+      ]);
+      await act(async () =>
+        release.get("New")?.({
+          people: [{ pubkey: "e".repeat(64), name: "New person" }],
+          hasMore: false,
+        }),
+      );
+      expect(last()?.items.map((item) => item.label)).toEqual(["New person"]);
+    } finally {
+      await act(async () => {
+        for (const resolve of release.values())
+          resolve({ people: [], hasMore: false });
+      });
+      view.unmount();
+    }
+  },
+);
+
 it("keeps installed rows and fresh authorization through rename, removal, arrivals and archive Retry", async () => {
   const test = setup();
   const a = "a".repeat(64),

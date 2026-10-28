@@ -20,6 +20,7 @@ export function useTeamMentions(
   query: string,
   model: ReturnType<typeof useMentionChoices>,
   open = true,
+  visit?: number,
 ) {
   const roster = model.roster;
   const kit = fullSession(session)?.channelKit;
@@ -46,7 +47,14 @@ export function useTeamMentions(
     session.agentChoices.ensure(true);
     return release;
   }, [session, hasTeams]);
-  const key = JSON.stringify([channelId, inviteAgents, query, open, !!roster]);
+  const key = JSON.stringify([
+    channelId,
+    inviteAgents,
+    query,
+    open,
+    !!roster,
+    visit,
+  ]);
   const [installed, install] = useState<{
     session: ComposerSession;
     key: string;

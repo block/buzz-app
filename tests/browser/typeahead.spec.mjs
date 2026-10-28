@@ -15,6 +15,112 @@ const settled = async (page, query) => {
     .poll(() => page.evaluate(() => window.mentionFixture.reads().pending))
     .toBe(0);
 };
+
+test("current completion publication owns a native key before its latest view commits", async ({
+  page,
+}, testInfo) => {
+  await page.goto("/tests/fixtures/typeahead.html");
+  const input = page.getByRole("textbox", { name: "Message #Test" });
+  const current = async (query) => {
+    await input.fill(`!${query.slice(0, -1)}`);
+    await input.pressSequentially(query.slice(-1));
+    await expect
+      .poll(() =>
+        page.evaluate(() => window.completionFixture.queries().at(-1)),
+      )
+      .toBe(query);
+    return page.evaluate(() => window.completionFixture.queries().length - 1);
+  };
+  const arm = (index, key, result) =>
+    page.evaluate(
+      ({ index, key, result }) =>
+        window.completionFixture.onKey(index, key, result),
+      { index, key, result },
+    );
+  const chosen = { id: "chosen", label: "Chosen", edit: { text: "accepted" } };
+  let index = await current("first");
+  await expect(page.getByRole("listbox")).toHaveCount(0);
+  await arm(index, "Enter", { items: [chosen] });
+  await input.press("Enter");
+  await expect(input).toHaveJSProperty("value", "accepted ");
+
+  index = await current("empty");
+  await page.evaluate(
+    (index) => window.completionFixture.publish(index, { items: [] }),
+    index,
+  );
+  await expect(page.getByRole("listbox")).toHaveCount(0);
+  await arm(index, "Tab", { items: [chosen] });
+  await input.press("Tab");
+  await expect(input).toHaveJSProperty("value", "accepted ");
+
+  index = await current("withdraw");
+  await page.evaluate(
+    ({ index, chosen }) =>
+      window.completionFixture.publish(index, {
+        items: [chosen],
+        spaceId: chosen.id,
+      }),
+    { index, chosen },
+  );
+  await expect(page.getByRole("option", { name: "Chosen" })).toBeVisible();
+  await arm(index, " ", "withdraw");
+  await input.press("Space");
+  await expect(input).toHaveJSProperty("value", "!withdraw ");
+
+  index = await current("automatic");
+  const person = await page.evaluate(() => window.completionFixture.viewer);
+  const exact = {
+    id: person,
+    label: "Honey",
+    edit: { mention: { pubkey: person, name: "Honey" } },
+  };
+  const other = { id: "other", label: "Honeycomb", edit: { text: "wrong" } };
+  await page.evaluate(
+    ({ index, exact, other }) =>
+      window.completionFixture.publish(index, {
+        items: [exact, other],
+        spaceId: exact.id,
+      }),
+    { index, exact, other },
+  );
+  await expect(
+    page.getByRole("option", { name: "Honey", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
+  await arm(index, " ", { items: [other, exact], spaceId: exact.id });
+  await input.press("Space");
+  await expect(input).toHaveJSProperty("value", "@Honey ");
+  await expect(input).toHaveJSProperty("selectionStart", 7);
+  await expect(input).toHaveJSProperty("selectionEnd", 7);
+  await expect(input).toBeFocused();
+  await expect(input.locator(".inline-chip")).toHaveCount(1);
+  await expect(page.getByRole("listbox")).toHaveCount(0);
+  const receipt = await page.evaluate(() => ({
+    keys: window.completionFixture.keyPublications,
+    sends: window.completionFixture.publications,
+    recipients: [...document.querySelectorAll("[data-mention-recipient]")].map(
+      (el) => el.getAttribute("aria-label"),
+    ),
+  }));
+  expect(receipt.keys).toHaveLength(4);
+  for (const key of receipt.keys) {
+    expect(key.trusted).toBe(true);
+    expect(key.accepted).toBe(true);
+    expect(key.after).toEqual(key.before);
+  }
+  expect(receipt.keys.map((key) => key.before)).toEqual([
+    [],
+    [],
+    ["Chosen"],
+    ["Honey", "Honeycomb"],
+  ]);
+  expect(receipt.sends).toEqual([]);
+  expect(receipt.recipients).toEqual([`Remove mention Honey ${person}`]);
+  await testInfo.attach("native-publication-receipt", {
+    body: JSON.stringify(receipt, null, 2),
+    contentType: "application/json",
+  });
+});
 // Native keydown/text input and browser undo selection need both real engines;
 // catalog failure/ordering and Markdown permutations live in the composer unit tests.
 test("closing-colon emoji conversion restores literal source and caret on undo", async ({

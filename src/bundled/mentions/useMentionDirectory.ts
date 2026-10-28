@@ -31,8 +31,8 @@ function remember(session: ComposerSession, query: string, page: Page) {
   if (queries.size > CACHE_LIMIT)
     queries.delete(queries.keys().next().value ?? "");
 }
-// The last settled page per chooser lifetime. Inline completion remounts its
-// provider on every keystroke, so a component-local copy would be lost.
+// The last settled page per chooser lifetime, shared with query-keyed legacy
+// callers. It is retained display, not current complete inference evidence.
 const settled = new WeakMap<ComposerSession, Map<string, Page>>();
 const LIFETIME_LIMIT = 20;
 function settle(session: ComposerSession, lifetime: string, page: Page) {
@@ -65,19 +65,23 @@ export function useMentionDirectory(
   query: string,
   enabled: boolean,
   lifetime: string,
+  visit?: number,
 ) {
   const active =
     enabled &&
     allowsOutsideMentions(channel) &&
     !channel?.archived &&
     !channel?.readOnly;
-  const [attempt, setAttempt] = useState(0);
+  const [recovery, setRecovery] = useState({ visit, attempt: 0 });
+  const attempt = recovery.visit === visit ? recovery.attempt : 0;
+  if (recovery.visit !== visit) setRecovery({ visit, attempt: 0 });
   const [state, setState] = useState<{
     session: ComposerSession;
     query: string;
     attempt: number;
     /** The chooser opening this result belongs to. */
     lifetime: string;
+    visit: number | undefined;
     /** A settled page that is not cached (an empty result), for this opening only. */
     page?: Page;
     error?: string;
@@ -86,7 +90,8 @@ export function useMentionDirectory(
     state?.session === session &&
     state.query === query &&
     state.attempt === attempt &&
-    state.lifetime === lifetime
+    state.lifetime === lifetime &&
+    state.visit === visit
       ? state
       : undefined;
   // An exact key is an author lookup, which name-prefix evidence cannot refute.
@@ -107,7 +112,7 @@ export function useMentionDirectory(
   useEffect(() => {
     if (!searching) return;
     const controller = new AbortController();
-    const current = { session, query, attempt, lifetime };
+    const current = { session, query, attempt, lifetime, visit };
     const timer = setTimeout(() => {
       exhausted.delete(session);
       void session.directMessages.people(query, 1, controller.signal).then(
@@ -137,14 +142,18 @@ export function useMentionDirectory(
       clearTimeout(timer);
       controller.abort();
     };
-  }, [session, query, searching, exactKey, attempt, lifetime]);
+  }, [session, query, searching, exactKey, attempt, lifetime, visit]);
   if (hit) settle(session, lifetime, hit);
   const error = active && !hit ? own?.error : undefined;
   const shown = hit ?? settled.get(session)?.get(lifetime);
   const retry = useCallback(() => {
     pages.get(session)?.delete(query);
-    setAttempt((value) => value + 1);
-  }, [session, query]);
+    setRecovery((current) =>
+      current.visit === visit
+        ? { ...current, attempt: current.attempt + 1 }
+        : current,
+    );
+  }, [session, query, visit]);
   return useMemo(
     () => ({
       /** The current query's page, or the last settled page while it loads. */

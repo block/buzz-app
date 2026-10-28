@@ -8,6 +8,7 @@ import type {
   ComposerCompletionProps,
   CompletionResult,
 } from "../../src/features/conversation/contracts";
+import type { KeyboardEvent } from "react";
 import { createRelaySession } from "../../src/features/relay/session";
 import {
   keypair,
@@ -24,6 +25,44 @@ const requests: {
   query: string;
   publish: ComposerCompletionProps["publish"];
 }[] = [];
+const disposers = new Map<number, () => void>();
+const keyPublications: unknown[] = [];
+let keyPublication:
+  | { index: number; key: string; result: CompletionResult | "withdraw" }
+  | undefined;
+function publish(index: number, result: CompletionResult) {
+  const withdraw = requests[index]?.publish(result);
+  if (withdraw) disposers.set(index, withdraw);
+  return !!withdraw;
+}
+function publishOnKey(event: KeyboardEvent) {
+  const pending = keyPublication;
+  if (!pending || event.key !== pending.key) return;
+  keyPublication = undefined;
+  const options = () =>
+    [...document.querySelectorAll('[role="option"]')].map(
+      (el) => el.textContent,
+    );
+  const before = options();
+  let accepted = false;
+  if (pending.result === "withdraw") {
+    const withdraw = disposers.get(pending.index);
+    if (withdraw) {
+      withdraw();
+      accepted = true;
+    }
+  } else accepted = publish(pending.index, pending.result);
+  // The external provider publishes during React's native-key capture. This
+  // does not dispatch, cancel, slow, or replace the originating trusted input.
+  keyPublications.push({
+    key: event.key,
+    trusted: event.nativeEvent.isTrusted,
+    query: requests[pending.index]?.query,
+    before,
+    after: options(),
+    accepted,
+  });
+}
 function Provider({ query, publish }: ComposerCompletionProps) {
   useLayoutEffect(() => {
     requests.push({ query: query.query, publish });
@@ -50,6 +89,7 @@ const manager = createPluginManager(context, {
                 ? { start: 0, end: start, query: text.slice(1, start) }
                 : null,
             component: Provider,
+            queryUpdates: "props",
           });
         },
       },
@@ -90,8 +130,12 @@ for (const owner of owners) owner.session.channels.ensureList();
 Object.assign(window, {
   completionFixture: {
     queries: () => requests.map((request) => request.query),
-    publish: (index: number, result: CompletionResult) =>
-      !!requests[index]?.publish(result),
+    publish,
+    onKey(index: number, key: string, result: CompletionResult | "withdraw") {
+      keyPublication = { index, key, result };
+    },
+    keyPublications,
+    viewer: viewer.pubkey,
     change: (action: "enable" | "disable") =>
       manager.change(action, "test.completion"),
     publications,
@@ -125,7 +169,10 @@ function Fixture() {
   const owner = owners[selected];
   if (!owner) return null;
   return (
-    <main style={{ padding: 40, marginTop: 300, maxWidth: 800 }}>
+    <main
+      style={{ padding: 40, marginTop: 300, maxWidth: 800 }}
+      onKeyDownCapture={publishOnKey}
+    >
       <nav style={{ position: "fixed", top: 0, left: 0 }}>
         <button type="button" onClick={() => select(1 - selected)}>
           Switch session

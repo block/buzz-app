@@ -72,6 +72,7 @@ const completions: Record<string, ComposerCompletion> = {
     order: -10,
     match: ({ text, start }) => mentionQuery(text, start),
     component: MentionCompletion,
+    queryUpdates: "props",
   },
   "buzz.channels/channel-typeahead": {
     id: "channel-typeahead",

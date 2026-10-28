@@ -289,6 +289,10 @@ export type ComposerCompletion = Readonly<{
     context: CompletionContext,
   ): CompletionQuery | null;
   component: ComponentType<ComposerCompletionProps>;
+  /** Opt into query/observation/publish prop updates within one trigger lifetime.
+   * Clean up each prior query's work; captured publishers stay generation-bound.
+   * Omitted: the host preserves the original component remount per query visit. */
+  queryUpdates?: "props";
 }>;
 
 /** A conversation a page opens in a tab beside its own. `messageId` opens at

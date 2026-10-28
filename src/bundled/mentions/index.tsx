@@ -11,6 +11,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     order: -10,
     match: ({ text, start }) => mentionQuery(text, start),
     component: MentionCompletion,
+    queryUpdates: "props",
   });
   ctx.conversation.registerTool({
     id: "picker",

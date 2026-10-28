@@ -5,34 +5,30 @@ import {
 import type { ComposerSnapshot } from "../messages/mention-draft";
 import { scanMarkdown } from "../relay/message-content";
 import type { ComposerInputElement } from "../messages/composer-dom";
-import { createPortal } from "react-dom";
-import { useCompletionPosition } from "./useCompletionPosition";
 import {
-  useId,
   useCallback,
   useLayoutEffect,
-  useRef,
+  useMemo,
   useState,
   useSyncExternalStore,
   type RefObject,
 } from "react";
-import type { Contribution } from "../../plugins/contributions";
 import type {
   ComposerCompletion,
-  ComposerCompletionProps,
   CompletionContext,
   CompletionEdit,
   CompletionQuery,
-  CompletionResult,
   ComposerObservation,
   ContributionReader,
 } from "./contracts";
 import { ContributionBoundary, contributionKey } from "./ContributionBoundary";
-import { completionResult, matchCompletion } from "./completion";
+import { matchCompletion } from "./completion";
 import type { CompletionEditor } from "./useCompletionEditor";
-import styles from "./Completions.module.css";
-
-const RETRY = Symbol("retry-completion");
+import {
+  CompletionSession,
+  type CompletionGeneration,
+} from "./completion-session";
+import { CompletionMenu } from "./CompletionMenu";
 
 // Channel links belong in prose, not inside existing links or code.
 // Run only after a channel trigger matches; ordinary typing does no extra parsing.
@@ -75,18 +71,10 @@ function channelCompletionInProse(
   return true;
 }
 
-export function ComposerCompletions({
-  registry,
-  editor,
-  input,
-  replace,
-  resolved,
-  ...context
-}: CompletionContext & {
+type OwnerProps = CompletionContext & {
   registry: ContributionReader<ComposerCompletion>;
   editor: CompletionEditor;
   input: RefObject<ComposerInputElement | null>;
-  /** Chip ranges and the draft text they were measured against. */
   resolved: Readonly<{
     text: string;
     document?: ComposerSnapshot;
@@ -98,407 +86,180 @@ export function ComposerCompletions({
     observation: ComposerObservation,
     key?: string,
   ): boolean;
-}) {
+};
+
+export function ComposerCompletions({
+  registry,
+  editor,
+  input,
+  replace,
+  resolved,
+  ...context
+}: OwnerProps) {
   const providers = useSyncExternalStore(
     registry.subscribe,
     registry.snapshot,
     registry.snapshot,
   );
+  const [session] = useState(() => new CompletionSession());
+  const [replay, setReplay] = useState(0);
+  const renew = useCallback(() => setReplay((value) => value + 1), []);
   const observation = editor.observation;
-  // Stale chip ranges cannot classify this caret.
-  const match =
-    observation &&
-    resolved.text === observation.text &&
-    matchCompletion(providers, observation, context, resolved.recipients);
-  if (!match || !observation) return null;
+  let match =
+    observation && resolved.text === observation.text
+      ? matchCompletion(providers, observation, context, resolved.recipients)
+      : null;
   if (
-    match.provider.pluginId === "buzz.channels" &&
+    observation &&
+    match?.provider.pluginId === "buzz.channels" &&
     !channelCompletionInProse(observation.text, resolved.document, match.query)
   )
-    return null;
-  return (
-    <ContributionBoundary
-      key={JSON.stringify([
-        contributionKey(match.provider),
-        observation.revision,
-        match.query.start,
-        match.query.end,
-        match.query.query,
-      ])}
-      fallback={
-        <span role="status">
-          {match.provider.title} suggestions unavailable
-        </span>
-      }
-    >
-      <OwnedCompletion
-        {...context}
-        registry={registry}
-        provider={match.provider}
-        query={match.query}
-        observation={observation}
-        editor={editor}
-        input={input}
-        replace={replace}
-      />
-    </ContributionBoundary>
+    match = null;
+  const provider = match?.provider;
+  const start = match?.query.start;
+  const end = match?.query.end;
+  const needle = match?.query.query;
+  const {
+    session: composerSession,
+    scope,
+    channelId,
+    threadRootId,
+    inviteAgents,
+  } = context;
+  const providerContext = useMemo(
+    () => ({
+      session: composerSession,
+      scope,
+      channelId,
+      threadRootId,
+      inviteAgents,
+    }),
+    [composerSession, scope, channelId, threadRootId, inviteAgents],
   );
-}
-function OwnedCompletion({
-  provider,
-  registry,
-  query,
-  observation,
-  editor,
-  input,
-  replace,
-  ...context
-}: CompletionContext & {
-  provider: Contribution<ComposerCompletion>;
-  registry: ContributionReader<ComposerCompletion>;
-  query: CompletionQuery;
-  observation: ComposerObservation;
-  editor: CompletionEditor;
-  input: RefObject<ComposerInputElement | null>;
-  replace(
-    edit: CompletionEdit,
-    query: CompletionQuery,
-    observation: ComposerObservation,
-    key?: string,
-  ): boolean;
-}) {
-  const id = useId();
-  const compact = provider.pluginId === "buzz.emoji";
-  const mention = provider.pluginId === "buzz.mentions";
-  const channel = provider.pluginId === "buzz.channels";
-  const named = mention || channel;
-  // Typing the terminator accepts the provider-verified exact match (spaceId):
-  // plain Space after a name, the closing colon after an emoji shortcode.
-  const terminator = provider.pluginId === "buzz.emoji" ? ":" : " ";
-  const popup = useCompletionPosition(
+  const generation = useMemo(() => {
+    // Query visits follow context/input identity even when native text is equal.
+    void replay;
+    void input;
+    return provider &&
+      observation &&
+      start !== undefined &&
+      end !== undefined &&
+      needle !== undefined
+      ? session.prepare(
+          provider,
+          registry,
+          observation,
+          Object.freeze({ start, end, query: needle }),
+          providerContext,
+        )
+      : undefined;
+  }, [
+    session,
+    registry,
+    provider,
+    observation,
+    start,
+    end,
+    needle,
+    providerContext,
     input,
-    compact ? 0.375 : 1,
-    named
-      ? { preferAbove: true, gap: 4, maxWidth: channel ? 480 : 380 }
-      : undefined,
-  );
-  const list = useRef<HTMLDivElement>(null);
-  const [result, setResult] = useState<CompletionResult>();
-  const latest = useRef<CompletionResult | undefined>(undefined);
-  // Only user navigation pins an ID; automatic selection follows the first result.
-  const [selected, setSelected] = useState<string | typeof RETRY>();
-  // Commands advance synchronously; React mirrors their stable chosen identity.
-  const commandSelection = useRef<string | typeof RETRY>(undefined);
-  function select(choice: string | typeof RETRY | undefined) {
-    commandSelection.current = choice;
-    setSelected(choice);
-  }
-  const revealSelection = useRef(false);
-  const live = useRef(false);
-  const current = useRef({ editor, replace });
-  useLayoutEffect(() => {
-    current.current = { editor, replace };
-  });
-  const active = useCallback(
-    () =>
-      live.current &&
-      registry.snapshot().includes(provider) &&
-      current.current.editor.valid(observation),
-    [provider, registry, observation],
-  );
-  const [publish, setPublish] = useState<ComposerCompletionProps["publish"]>();
-  useLayoutEffect(() => {
-    live.current = true;
-    let owned = true;
-    setPublish(() => (incoming: CompletionResult) => {
-      if (!owned || !active()) return false;
-      const next = completionResult(incoming);
-      latest.current = next;
-      revealSelection.current = true;
-      setResult(next);
-      setSelected((previous) =>
-        next.items.some((item) => item.id === previous)
-          ? previous
-          : previous === RETRY && next.retry
-            ? RETRY
-            : undefined,
-      );
-      return () => {
-        if (latest.current !== next) return;
-        latest.current = undefined;
-        if (live.current) setResult(undefined);
-      };
-    });
-    return () => {
-      owned = false;
-      live.current = false;
-      latest.current = undefined;
-    };
-  }, [active]);
-  const items = result?.items ?? [];
-  // Matching syntax is not evidence of pending work. Providers publish their
-  // own status when needed; an empty/unpublished result must not flash a portal.
-  const visible = !!(items.length || result?.status || result?.retry);
-  const count = items.length + (result?.retry ? 1 : 0);
-  const index =
-    selected === RETRY && result?.retry
-      ? items.length
-      : items.findIndex((item) => item.id === selected);
-  const selectedIndex = index < 0 ? 0 : index;
-  const status = result?.status;
-  function accept(choice: string | typeof RETRY | undefined, key = "click") {
-    const published = latest.current;
-    if (!active() || !published) return false;
-    if (choice === RETRY) {
-      if (!published.retry) return false;
-      published.retry();
-      return true;
-    }
-    // Publication is synchronous; React may still be displaying the previous
-    // result. Keep the user's chosen ID, but use only its current evidence/edit.
-    const item = published.items.find((item) => item.id === choice);
-    if (key === terminator && item?.id !== published.spaceId) return false;
-    if (!item || item.disabled || item.canSelect?.(key) === false) return false;
-    const accepted = current.current.replace(
-      item.edit,
-      query,
-      observation,
-      key,
-    );
-    if (accepted) current.current.editor.invalidate();
-    return accepted;
-  }
-  useLayoutEffect(() => {
-    // A newer synchronous publication must not be overwritten by an older commit.
-    if (result === latest.current)
-      commandSelection.current =
-        selectedIndex === items.length && result?.retry
-          ? RETRY
-          : items[selectedIndex]?.id;
-    const element = input.current;
-    // Keep dispatch available for publications that arrive before their view.
-    if (!element) return;
-    if (visible) {
-      element.setAttribute("aria-autocomplete", "list");
-      element.setAttribute("aria-haspopup", "listbox");
-      element.setAttribute("aria-controls", id);
-      if (count)
-        element.setAttribute("aria-activedescendant", `${id}-${selectedIndex}`);
-      else element.removeAttribute("aria-activedescendant");
-    }
-    const handle: NonNullable<CompletionEditor["keys"]["current"]> = (
-      event,
-    ) => {
-      if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229)
-        return false;
-      // Only the current committed empty publication releases ordinary keys.
-      // Withdrawal is unpublished work that Escape must still revoke.
-      if (result && !visible && result === latest.current) return false;
-      if (event.key === "Escape") {
-        event.preventDefault();
-        event.stopPropagation();
-        current.current.editor.invalidate();
-        return true;
-      }
-      if (event.altKey || event.ctrlKey || event.metaKey) return false;
-      // Shift types ":" on common layouts; other shifted keys keep editing.
-      if (event.shiftKey && event.key !== ":") return false;
-      const published = latest.current;
-      const choices = published?.items ?? [];
-      const commandCount = choices.length + (published?.retry ? 1 : 0);
-      if (!active()) {
-        // A displayed choice owns plain acceptance even when its final evidence
-        // was revoked. Never turn a rejected edit into an unintended send.
-        if (
-          (event.key === "Enter" || event.key === "Tab") &&
-          (count || commandCount || commandSelection.current !== undefined)
-        ) {
-          event.preventDefault();
-          event.stopPropagation();
-          current.current.editor.invalidate();
-          return true;
-        }
-        return false;
-      }
-      if (event.key === terminator && result?.spaceId) {
-        const exact = items.findIndex((item) => item.id === result.spaceId);
-        if (accept(items[exact]?.id, terminator)) {
-          event.preventDefault();
-          event.stopPropagation();
-          return true;
-        }
-        return false;
-      }
-      if (
-        (event.key === "ArrowDown" || event.key === "ArrowUp") &&
-        commandCount
-      ) {
-        event.preventDefault();
-        event.stopPropagation();
-        const index =
-          commandSelection.current === RETRY && published?.retry
-            ? choices.length
-            : choices.findIndex((item) => item.id === commandSelection.current);
-        const next =
-          (Math.max(0, index) +
-            (event.key === "ArrowDown" ? 1 : commandCount - 1)) %
-          commandCount;
-        revealSelection.current = true;
-        select(next === choices.length ? RETRY : choices[next]?.id);
-        return true;
-      }
-      if (
-        (event.key === "Enter" || event.key === "Tab") &&
-        (count || commandCount || commandSelection.current !== undefined)
-      ) {
-        event.preventDefault();
-        event.stopPropagation();
-        accept(
-          commandSelection.current ??
-            choices[0]?.id ??
-            (published?.retry ? RETRY : undefined),
-          event.key,
-        );
-        return true;
-      }
-      return false;
-    };
-    editor.keys.current = handle;
-    if (revealSelection.current) {
-      list.current
-        ?.querySelector('[aria-selected="true"]')
-        ?.scrollIntoView({ block: "nearest" });
-      revealSelection.current = false;
-    }
-    return () => {
-      if (editor.keys.current === handle) editor.keys.current = undefined;
-      element.removeAttribute("aria-autocomplete");
-      element.removeAttribute("aria-haspopup");
-      element.removeAttribute("aria-controls");
-      element.removeAttribute("aria-activedescendant");
-    };
-  });
-  const Provider = provider.component;
+    replay,
+  ]);
   return (
     <>
-      {publish && (
-        <Provider
-          {...context}
-          observation={observation}
-          query={query}
-          publish={publish}
+      <SessionBinding
+        session={session}
+        generation={generation}
+        editor={editor}
+        replace={replace}
+        renew={renew}
+      />
+      {generation && (
+        <ContributionBoundary
+          key={JSON.stringify([
+            contributionKey(generation.provider),
+            contributionKey(context.session),
+            contributionKey(registry),
+            contributionKey(input),
+            context.scope,
+            context.channelId,
+            context.threadRootId,
+            context.inviteAgents,
+            generation.query.start,
+          ])}
+          resetIdentity={generation}
+          onFailedChange={(failed) => {
+            if (failed) session.retire(generation);
+          }}
+          fallback={
+            <span role="status">
+              {generation.provider.title} suggestions unavailable
+            </span>
+          }
+        >
+          <ProviderAdapter generation={generation} />
+        </ContributionBoundary>
+      )}
+      {generation && (
+        <CompletionMenu
+          key={generation.id}
+          session={session}
+          generation={generation}
+          input={input}
         />
       )}
-      {visible &&
-        input.current &&
-        createPortal(
-          <section
-            ref={popup}
-            className={styles.popup}
-            aria-label={`${provider.title} suggestions`}
-            data-compact={compact || undefined}
-            data-mention={named || undefined}
-            data-channel={channel || undefined}
-          >
-            <div
-              id={id}
-              role="listbox"
-              aria-label={`${provider.title} suggestions`}
-              ref={list}
-              className={styles.list}
-            >
-              {items.map((item, i) => (
-                // The textarea owns keyboard focus/selection via aria-activedescendant.
-                // biome-ignore lint/a11y/useKeyWithClickEvents: Keyboard acceptance belongs to the focused textarea.
-                <div
-                  role="option"
-                  tabIndex={-1}
-                  aria-selected={i === selectedIndex}
-                  aria-disabled={!!item.disabled}
-                  aria-label={
-                    compact && item.detail
-                      ? `${item.label} ${item.detail}`
-                      : undefined
-                  }
-                  id={`${id}-${i}`}
-                  key={item.id}
-                  onPointerDown={(event) => {
-                    if (event.button === 0) event.preventDefault();
-                  }}
-                  onPointerMove={
-                    compact || named
-                      ? () => {
-                          revealSelection.current = false;
-                          select(item.id);
-                        }
-                      : undefined
-                  }
-                  onClick={() => accept(item.id)}
-                  className={styles.option}
-                >
-                  {item.preview && (
-                    <span aria-hidden="true" className={styles.preview}>
-                      {item.preview}
-                    </span>
-                  )}
-                  <span className={styles.label} data-completion-label>
-                    {named ? (
-                      <span className={styles.name}>{item.label}</span>
-                    ) : (
-                      item.label
-                    )}
-                    {item.detail && (
-                      <small
-                        aria-hidden={compact || undefined}
-                        data-recipient-key={
-                          (mention && /^[0-9a-f]{64}$/.test(item.detail)) ||
-                          undefined
-                        }
-                        title={mention ? item.detail : undefined}
-                      >
-                        {item.detail}
-                      </small>
-                    )}
-                  </span>
-                  {channel && i === selectedIndex && (
-                    <span aria-hidden="true" className={styles.acceptKey}>
-                      Enter
-                    </span>
-                  )}
-                </div>
-              ))}
-              {result?.retry && (
-                // biome-ignore lint/a11y/useKeyWithClickEvents: Keyboard acceptance belongs to the focused textarea.
-                <div
-                  role="option"
-                  tabIndex={-1}
-                  id={`${id}-${items.length}`}
-                  aria-selected={selectedIndex === items.length}
-                  className={styles.option}
-                  onPointerDown={(event) => {
-                    if (event.button === 0) event.preventDefault();
-                  }}
-                  onPointerMove={
-                    compact || named
-                      ? () => {
-                          revealSelection.current = false;
-                          select(RETRY);
-                        }
-                      : undefined
-                  }
-                  onClick={() => accept(RETRY)}
-                >
-                  Retry suggestions
-                </div>
-              )}
-            </div>
-            {status && <p role="status">{status}</p>}
-          </section>,
-          // A body sibling would sit behind a fullscreen modal and outside its
-          // accessibility boundary. Ordinary composers keep the body portal.
-          input.current.closest('[role="dialog"][aria-modal="true"]') ??
-            input.current.ownerDocument.body,
-        )}
     </>
+  );
+}
+
+function SessionBinding({
+  session,
+  generation,
+  editor,
+  replace,
+  renew,
+}: {
+  session: CompletionSession;
+  generation: CompletionGeneration | undefined;
+  editor: CompletionEditor;
+  replace: OwnerProps["replace"];
+  renew(): void;
+}) {
+  // This sibling commits before providers, including providers that publish in
+  // layout effects. There is no publish-callback state handshake or hook in an
+  // imperative adapter. Native observation validity already revokes old queries.
+  useLayoutEffect(() => {
+    session.configure({ editor, replace });
+  });
+  useLayoutEffect(() => {
+    // StrictMode may replay an effect after its lease was permanently retired.
+    // Issue a fresh capability; never reactivate an old captured publisher.
+    if (!session.activate(generation)) renew();
+    return () => session.retire(generation);
+  }, [session, generation, renew]);
+  useLayoutEffect(() => {
+    const keys = editor.keys;
+    keys.current = session.handle;
+    return () => {
+      if (keys.current === session.handle) keys.current = undefined;
+    };
+  }, [session, editor.keys]);
+  return null;
+}
+
+function ProviderAdapter({ generation }: { generation: CompletionGeneration }) {
+  const Provider = generation.provider.component;
+  // Existing contributions may rely on mount-only effects. Stable updates are
+  // explicit; every path still receives the immutable query and its own publisher.
+  return (
+    <Provider
+      key={
+        generation.provider.queryUpdates === "props" ? "stable" : generation.id
+      }
+      {...generation.context}
+      observation={generation.observation}
+      query={generation.query}
+      publish={generation.publish}
+    />
   );
 }

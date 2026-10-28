@@ -196,7 +196,15 @@ export function createNavigationController(
   let departureGuard:
     | ((next: NavigationEntry, decide: (proceed: boolean) => void) => boolean)
     | undefined;
-  let departure: { from: string; to: string; proceed: boolean } | undefined;
+  let departure:
+    | {
+        from: string;
+        to: string;
+        proceed: boolean;
+        result: Promise<OpenResult>;
+        settle: (result: OpenResult) => void;
+      }
+    | undefined;
   let resolving: Operation | undefined;
   // Both host drivers publish pushes synchronously; consume this opening only.
   let openingFocus: NavigationFocus | undefined;
@@ -229,13 +237,21 @@ export function createNavigationController(
         }
         const admitted =
           departure?.proceed && departure.to === state.current.id;
+        const admittedDeparture = admitted ? departure : undefined;
         if (admitted) departure = undefined;
         if (
           !admitted &&
           state.current.id !== active.attempt.entry.id &&
           departureGuard
         ) {
+          departure?.settle({ status: "superseded" });
+          let settle: (result: OpenResult) => void = () => {};
+          const result = new Promise<OpenResult>((resolve) => {
+            settle = resolve;
+          });
           const pending = {
+            result,
+            settle,
             from: active.attempt.entry.id,
             to: state.current.id,
             proceed: false,
@@ -245,6 +261,7 @@ export function createNavigationController(
             if (departure !== pending) return;
             if (!proceed) {
               departure = undefined;
+              pending.settle({ status: "cancelled" });
               return;
             }
             pending.proceed = true;
@@ -269,7 +286,8 @@ export function createNavigationController(
         }
         const focus = openingFocus ?? returningFocus;
         openingFocus = returningFocus = undefined;
-        start(focus);
+        const result = start(focus);
+        if (admittedDeparture) void result.then(admittedDeparture.settle);
       }
     });
   });
@@ -337,7 +355,7 @@ export function createNavigationController(
               }
             } else history.push(target);
           }
-          return active.promise;
+          return departure?.result ?? active.promise;
         } catch {
           // Drivers commit atomically and notify only their exclusive controller.
           return Promise.resolve<OpenResult>({
@@ -384,7 +402,11 @@ export function createNavigationController(
     guardDeparture(guard: NonNullable<typeof departureGuard>) {
       departureGuard = guard;
       return () => {
-        if (departureGuard === guard) departureGuard = undefined;
+        if (departureGuard === guard) {
+          departureGuard = undefined;
+          departure?.settle({ status: "cancelled" });
+          departure = undefined;
+        }
       };
     },
     /** Normalize a pending presentation, not a new intent; never reset its deadline. */
@@ -458,6 +480,8 @@ export function createNavigationController(
       transaction(() => {
         if (disposed) return;
         disposed = true;
+        departure?.settle({ status: "cancelled" });
+        departure = undefined;
         ingressRetry = undefined;
         unsubscribe();
         finish(active, { status: "cancelled" });

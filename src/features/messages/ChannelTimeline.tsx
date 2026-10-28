@@ -91,7 +91,7 @@ function positionAt(
   const mounted = Array.from(
     element.querySelectorAll<HTMLElement>("[data-message-id]"),
   );
-  // Each row is measured at most once; the chosen row reuses its bounds.
+  // The chosen row reuses the bounds its scan measured.
   let bounds: DOMRect | undefined;
   // A resize restoration keeps its chosen message even if wrapping makes its
   // paragraph taller than the viewport. Only a new gesture chooses a new anchor.
@@ -104,14 +104,28 @@ function positionAt(
           return bounds.bottom > top && bounds.top < bottom;
         });
   if (!restored) bounds = undefined;
+  // Mounted rows are in timeline order and contain their text, so neither scan
+  // below can match a row that ends above the viewport: skip that overscan.
+  let first = 0;
+  for (let end = mounted.length; first < end; ) {
+    const middle = (first + end) >> 1;
+    if ((mounted[middle]?.getBoundingClientRect().bottom ?? top) < top)
+      first = middle + 1;
+    else end = middle;
+  }
+  const reached = mounted.slice(first);
+  // Text that starts below the viewport is followed only by lower text.
+  let below = false;
   // Otherwise prefer a whole visible message over a partly clipped row.
   const row =
     restored ??
-    mounted.find((row) => {
+    reached.find((row) => {
+      if (below) return false;
       const text = row.querySelector("p")?.getBoundingClientRect();
+      if (text && text.top > bottom) below = true;
       return text && text.top >= top && text.bottom <= bottom;
     }) ??
-    mounted.find((row) => {
+    reached.find((row) => {
       bounds = row.getBoundingClientRect();
       return bounds.bottom > top;
     });

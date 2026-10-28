@@ -540,7 +540,7 @@ export function useChannelTabState(
     [key, store],
   );
   const setEntries = useCallback(
-    (entries: PanelOpening[]) =>
+    (entries: PanelOpening[], replaceTransient = false) =>
       update((s) => {
         // A closed panel tab forgets its pane.
         const ids = new Set([
@@ -557,6 +557,9 @@ export function useChannelTabState(
             .sort((a, b) => a.index - b.index)
             .map((saved, index) => ({
               ...saved,
+              ...(replaceTransient &&
+                !saved.channelBound &&
+                saved.keepOpen !== true && { replaced: true }),
               index:
                 index +
                 s.entries
@@ -594,17 +597,8 @@ export function useChannelTabState(
             ? channelContext?.(saved)
             : undefined;
           if (panel && (!saved.channelBound || context)) {
-            // Older snapshots lack retention metadata; decide once the provider returns.
-            if (
-              !saved.channelBound &&
-              !panel.keepOpen &&
-              entries.some(
-                (entry) =>
-                  !entry.restored &&
-                  !entry.channelContext &&
-                  !entry.panel.keepOpen,
-              )
-            ) {
+            // Classify old snapshots only once the provider returns; explicit pushes stay intact.
+            if (saved.replaced && !saved.channelBound && !panel.keepOpen) {
               replaced++;
               continue;
             }

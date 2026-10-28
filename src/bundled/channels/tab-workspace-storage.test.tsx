@@ -272,6 +272,7 @@ test("only validated fields survive loading and saving a workspace", () => {
               channelId: "alpha",
               index: 0,
               keepOpen: false,
+              replaced: true,
             },
             {
               key: "missing/invalid",
@@ -279,6 +280,13 @@ test("only validated fields survive loading and saving a workspace", () => {
               channelId: "alpha",
               index: 1,
               keepOpen: "yes",
+            },
+            {
+              key: "missing/invalid-intent",
+              target: "app",
+              channelId: "alpha",
+              index: 2,
+              replaced: "yes",
             },
           ],
           visits: { visit: { ...extra, selected: "thread", paneOpen: true } },
@@ -299,7 +307,7 @@ test("only validated fields survive loading and saving a workspace", () => {
   );
   expect(JSON.stringify(readTabWorkspaces(queries))).not.toContain("not-owned");
   expect(readTabWorkspaces(queries)[key]?.pendingEntries).toMatchObject([
-    { key: "missing/panel", keepOpen: false },
+    { key: "missing/panel", keepOpen: false, replaced: true },
   ]);
   expect(readTabWorkspaces(queries)[key]?.pendingEntries).toHaveLength(1);
   const live = mount(queries);

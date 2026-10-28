@@ -70,8 +70,9 @@ unreviewed recovery requires Resume.
 New snapshots retain each panel's keep-open policy, so opening a new transient
 detail also replaces known transient placeholders whose provider is unavailable.
 Retained apps and channel tools survive that replacement. Older snapshots without
-this metadata are classified when their provider returns; an older transient does
-not reappear beside a newer transient detail. Replacement preserves history
+this metadata remember replacement intent and are classified when their provider
+returns. Explicit panel pushes do not record replacement intent. An older transient
+does not reappear after a replacement. Replacement preserves history
 addresses; it does not perform an explicit Close.
 
 Recovery is best-effort when storage is unavailable or full. Quit/relaunch,

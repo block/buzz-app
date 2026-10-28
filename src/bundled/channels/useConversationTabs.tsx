@@ -298,7 +298,7 @@ export function useConversationTabs({
             closePendingEntry(savedPanelId(saved));
       if (selected && historyPanel(selected))
         panelHistory.current.onVisitPanel?.(selected);
-      setEntries(updated);
+      setEntries(updated, !append);
       selectOpening(selected);
     },
     [selectOpening, setEntries, pendingRecords, closePendingEntry],

@@ -1059,8 +1059,10 @@ The port retains the prepared-store implementation and its behavior tests:
   and request-warmed avatars (fetched and decoded, nothing retained; disabled
   under the Save-Data preference). Signature verification yields in batches.
 - Account/relay-scoped IndexedDB: 64 records / 8 MiB global logical disk budget, 24-hour
-  expiry. Schema 3 stores ordered head manifests and shared, scope-local exact
-  signed-wire payloads. Duplicate occurrences still count against the original
+  expiry. Schema 4 stores ordered head manifests and shared, scope-local exact
+  signed-wire list blocks. Nonempty event and profile lists each require one
+  payload read; empty lists require none. This shares repeated exact lists rather
+  than independently deduplicating individual events. Duplicate occurrences still count against the original
   logical byte budget; deduplication does not enlarge retained evidence. Payload
   ownership edges, head replacement, global pruning and last-owner cleanup commit
   atomically. A fresh valid save repairs corrupted shared wire data. One corrupt
@@ -1069,7 +1071,8 @@ The port retains the prepared-store implementation and its behavior tests:
   coordinates, never verification or membership proof. The same database
   stores account/relay-scoped startup discovery and sidebar organization (a separate
   8 MiB global budget). Version-1/2 whole-head records survive the schema upgrade
-  and remain readable until normal replacement/removal. Metadata indexes let the
+  and remain readable until normal replacement/removal. Schema-3 per-event manifests
+  also remain readable and are replaced lazily. Metadata indexes let the
   store select its current destination before reading unrelated event payloads;
   remaining heads still pass the same bounded verification/admission path.
 - A 60-second head freshness lease; warm revisits reuse heads without new reads.

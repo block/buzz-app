@@ -395,8 +395,17 @@ test("native blocked upgrade, versionchange and late close failures preserve leg
     }
     const active = f.createHeadPersistence(viewer.pubkey, "relay");
     const before = (await active.read()).map((h) => h.events[0].content);
+    const currentVersion = await new Promise((yes, no) => {
+      const r = indexedDB.open("buzz-channel-heads-v1");
+      r.onsuccess = () => {
+        const version = r.result.version;
+        r.result.close();
+        yes(version);
+      };
+      r.onerror = () => no(r.error);
+    });
     const upgrade = await new Promise((yes, no) => {
-      const r = indexedDB.open("buzz-channel-heads-v1", 4);
+      const r = indexedDB.open("buzz-channel-heads-v1", currentVersion + 1);
       r.onsuccess = () => yes(r.result);
       r.onerror = () => no(r.error);
     });
@@ -637,4 +646,158 @@ test("retain removes a readable head even when its accounting metadata is damage
     }
   });
   expect(result).toEqual({ before: ["a"], after: [] });
+});
+
+test("schema4 upgrades a real schema3 per-event manifest and replaces it lazily without changing ordered wires", async ({
+  page,
+}) => {
+  const result = await page.evaluate(async () => {
+    const f = window.headPersistence,
+      viewer = f.keypair(),
+      now = Date.now();
+    const events = [
+        f.message(viewer, "a", "second", 11),
+        f.message(viewer, "a", "first", 10),
+      ],
+      profiles = [f.profile(viewer, { name: "Legacy3" })];
+    const scope = `${viewer.pubkey}:relay`,
+      key = `${scope}:a`,
+      encoder = new TextEncoder();
+    // Independent WebCrypto implementation of the documented BIP340 tagged hash
+    // creates an actual old-format fixture, not the new writer's own expected data.
+    const tag = new Uint8Array(
+      await crypto.subtle.digest(
+        "SHA-256",
+        encoder.encode("buzz-head-wire-v1"),
+      ),
+    );
+    const payloads = [];
+    for (const event of [...events, ...profiles]) {
+      const wire = JSON.stringify(event),
+        data = encoder.encode(wire),
+        bytes = new Uint8Array(tag.length * 2 + data.length);
+      bytes.set(tag);
+      bytes.set(tag, tag.length);
+      bytes.set(data, tag.length * 2);
+      const digest = [
+        ...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)),
+      ]
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join("");
+      payloads.push({ key: `${scope}:${digest}`, scope, wire, digest });
+    }
+    const db = await new Promise((yes, no) => {
+      const r = indexedDB.open("buzz-channel-heads-v1", 3);
+      r.onupgradeneeded = () => {
+        const heads = r.result.createObjectStore("heads", { keyPath: "key" });
+        heads.createIndex("scope", "scope");
+        heads.createIndex("recency", [
+          "savedAt",
+          "key",
+          "bytes",
+          "scope",
+          "channelId",
+        ]);
+        r.result
+          .createObjectStore("startup", { keyPath: "key" })
+          .createIndex("recency", ["savedAt", "key", "bytes"]);
+        r.result.createObjectStore("payloads", { keyPath: "key" });
+        const refs = r.result.createObjectStore("references", {
+          keyPath: "key",
+        });
+        refs.createIndex("owner", "owner");
+        refs.createIndex("payload", "payload");
+      };
+      r.onsuccess = () => yes(r.result);
+      r.onerror = () => no(r.error);
+    });
+    const original = {
+      channelId: "a",
+      savedAt: now,
+      events,
+      profiles: [profiles[0], profiles[0]],
+    };
+    await new Promise((yes, no) => {
+      const tx = db.transaction(
+        ["heads", "payloads", "references"],
+        "readwrite",
+      );
+      tx.objectStore("heads").put({
+        key,
+        scope,
+        bytes: encoder.encode(JSON.stringify(original)).length,
+        savedAt: now,
+        channelId: "a",
+        version: 3,
+        eventRefs: payloads.slice(0, 2).map((p) => p.digest),
+        profileRefs: [payloads[2].digest, payloads[2].digest],
+      });
+      for (const payload of payloads) {
+        tx.objectStore("payloads").put({
+          key: payload.key,
+          scope,
+          wire: payload.wire,
+        });
+        tx.objectStore("references").put({
+          key: [`h:${key}`, payload.key],
+          owner: `h:${key}`,
+          payload: payload.key,
+        });
+      }
+      tx.oncomplete = yes;
+      tx.onabort = () => no(tx.error);
+    });
+    db.close();
+    const cache = f.createHeadPersistence(viewer.pubkey, "relay");
+    try {
+      const restored = (await cache.read())[0];
+      const oldExact =
+        JSON.stringify(restored) ===
+        JSON.stringify(JSON.parse(JSON.stringify(original)));
+      await cache.write(restored);
+      const rewritten = (await cache.read())[0];
+      const current = await new Promise((yes, no) => {
+        const r = indexedDB.open("buzz-channel-heads-v1");
+        r.onsuccess = () => yes(r.result);
+        r.onerror = () => no(r.error);
+      });
+      const format = await new Promise((yes, no) => {
+        const tx = current.transaction(["heads", "payloads", "references"]),
+          h = tx.objectStore("heads").get(key),
+          p = tx.objectStore("payloads").count(),
+          r = tx.objectStore("references").count();
+        tx.oncomplete = () =>
+          yes({
+            db: current.version,
+            manifest: h.result.version,
+            payloads: p.result,
+            refs: r.result,
+            eventRefs: h.result.eventRefs.length,
+            profileRefs: h.result.profileRefs.length,
+          });
+        tx.onabort = () => no(tx.error);
+      });
+      current.close();
+      return {
+        oldExact,
+        newExact: JSON.stringify(rewritten) === JSON.stringify(restored),
+        format,
+      };
+    } finally {
+      await cache.clear();
+      cache.close();
+    }
+  });
+  expect(result).toEqual({
+    oldExact: true,
+    newExact: true,
+    format: {
+      db: 4,
+      manifest: 4,
+      payloads: 2,
+      refs: 2,
+      eventRefs: 1,
+      profileRefs: 1,
+    },
+  });
 });

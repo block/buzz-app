@@ -46,7 +46,7 @@ const MAX_HEADS = 64;
 const MAX_AGE = 24 * 60 * 60 * 1000;
 type Record = SavedHead & { key: string; scope: string; bytes: number };
 type Manifest = Omit<Record, "events" | "profiles"> & {
-  version: 3;
+  version: 3 | 4;
   eventRefs: string[];
   profileRefs: string[];
 };
@@ -61,15 +61,15 @@ const encoder = new TextEncoder();
  * never a verification proof; the store still admits every restored event. */
 function encodeHead(head: SavedHead) {
   const wires = new Map<string, string>();
-  const encode = (values: unknown[]) =>
-    values.map((value) => {
-      const wire = JSON.stringify(value) ?? "null";
-      const digest = bytesToHex(
-        schnorr.utils.taggedHash("buzz-head-wire-v1", encoder.encode(wire)),
-      );
-      wires.set(digest, wire);
-      return digest;
-    });
+  const encode = (values: unknown[]) => {
+    if (!values.length) return [];
+    const wire = JSON.stringify(values);
+    const digest = bytesToHex(
+      schnorr.utils.taggedHash("buzz-head-wire-v1", encoder.encode(wire)),
+    );
+    wires.set(digest, wire);
+    return [digest];
+  };
   return {
     eventRefs: encode(head.events),
     profileRefs: encode(head.profiles),
@@ -88,7 +88,7 @@ export function createHeadPersistence(
     if (closed || typeof indexedDB === "undefined")
       return Promise.reject(new Error("Cache unavailable"));
     opening ??= new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open(DB, 3);
+      const request = indexedDB.open(DB, 4);
       let expired = false;
       const timeout = setTimeout(() => {
         expired = true;
@@ -336,11 +336,16 @@ export function createHeadPersistence(
     then: Then,
     done: (head: SavedHead | undefined) => void,
   ) {
-    if (!("version" in row) || row.version !== 3) {
+    if (!("version" in row) || (row.version !== 3 && row.version !== 4)) {
       done(row as Record);
       return;
     }
-    if (!Array.isArray(row.eventRefs) || !Array.isArray(row.profileRefs)) {
+    if (
+      !Array.isArray(row.eventRefs) ||
+      !Array.isArray(row.profileRefs) ||
+      (row.version === 4 &&
+        (row.eventRefs.length > 1 || row.profileRefs.length > 1))
+    ) {
       done(undefined);
       return;
     }
@@ -356,14 +361,18 @@ export function createHeadPersistence(
     }
     const values = new Map<string, unknown>();
     let valid = true;
+    const list = (refs: string[]) =>
+      row.version === 4
+        ? refs.flatMap((key) => values.get(key) as unknown[])
+        : refs.map((key) => values.get(key));
     const finish = () =>
       done(
         valid
           ? {
               channelId: row.channelId,
               savedAt: row.savedAt,
-              events: row.eventRefs.map((key) => values.get(key)),
-              profiles: row.profileRefs.map((key) => values.get(key)),
+              events: list(row.eventRefs),
+              profiles: list(row.profileRefs),
             }
           : undefined,
       );
@@ -383,7 +392,11 @@ export function createHeadPersistence(
               typeof payload.wire !== "string"
             )
               valid = false;
-            else values.set(digest, JSON.parse(payload.wire));
+            else {
+              const value: unknown = JSON.parse(payload.wire);
+              if (row.version === 4 && !Array.isArray(value)) valid = false;
+              else values.set(digest, value);
+            }
           } catch {
             valid = false;
           }
@@ -491,7 +504,7 @@ export function createHeadPersistence(
         const row: Manifest = {
           channelId: head.channelId,
           savedAt: head.savedAt,
-          version: 3,
+          version: 4,
           ...refs,
           scope,
           key: `${scope}:${head.channelId}`,

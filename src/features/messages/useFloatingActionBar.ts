@@ -260,23 +260,31 @@ export function useFloatingActionBar(
       bar.style.visibility = "";
       bar.style.clipPath = "";
     };
-    // A narrow side pane covers, but does not unmount, the channel. Only a
-    // second workspace can cover this one, so skip the hit test without it.
+    // A narrow side pane covers, but does not unmount, the channel. Only
+    // another workspace whose box contains the point can cover it, since
+    // workspace content stays inside its workspace and overlays portal to the
+    // body. Hit-test only then; it is expensive on every positioning frame.
     const covered = (anchor: DOMRect) => {
       if (!workspace) return false;
+      const x = Math.max(
+        0,
+        Math.min(
+          anchor.x + anchor.width / 2,
+          document.documentElement.clientWidth - 1,
+        ),
+      );
+      const y = Math.max(0, Math.min(anchor.top + 1, window.innerHeight - 1));
       const workspaces = document.querySelectorAll(workspaceSelector);
-      if (workspaces.length < 2) return false;
+      const overlapped = [...workspaces].some((other) => {
+        if (other === workspace) return false;
+        const box = other.getBoundingClientRect();
+        return (
+          x >= box.left && x <= box.right && y >= box.top && y <= box.bottom
+        );
+      });
+      if (!overlapped) return false;
       const front = document
-        .elementsFromPoint(
-          Math.max(
-            0,
-            Math.min(
-              anchor.x + anchor.width / 2,
-              document.documentElement.clientWidth - 1,
-            ),
-          ),
-          Math.max(0, Math.min(anchor.top + 1, window.innerHeight - 1)),
-        )
+        .elementsFromPoint(x, y)
         .find(
           (element) =>
             !bar.contains(element) && element.closest(workspaceSelector),

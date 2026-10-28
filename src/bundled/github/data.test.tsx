@@ -1,5 +1,7 @@
 import { assert, afterEach, expect, it, vi } from "vitest";
 import { loadGitHubDetails } from "./data";
+import { GitHubError } from "./gh";
+import { loadGitHubObject } from "./object";
 import { parseGitHubReference } from "./references";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -213,5 +215,36 @@ it.each([null, "bad", undefined])(
     expect(data.state).toBe("Merged");
     expect(data.mergedAt).toBeUndefined();
     expect(data.mergedByUrl).toBeUndefined();
+  },
+);
+
+it.each(["public", "gh"])(
+  "recovers a transient %s GitHub read quietly",
+  async (source) => {
+    vi.useFakeTimers();
+    try {
+      const request = vi
+        .fn()
+        .mockResolvedValueOnce(new Response(null, { status: 502 }))
+        .mockImplementation(async () => Response.json({ title: "Recovered" }));
+      vi.stubGlobal("fetch", request);
+      const gh = vi
+        .fn()
+        .mockRejectedValueOnce(new GitHubError("down", "SERVICE_UNAVAILABLE"))
+        .mockRejectedValue(new Error("stop"));
+      const pending = loadGitHubObject(
+        reference,
+        new AbortController().signal,
+        source === "gh" ? gh : undefined,
+      );
+      const settled = pending.catch((error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(1000);
+      if (source === "public")
+        expect((await pending).details.title).toBe("Recovered");
+      else expect(await settled).toMatchObject({ message: "stop" });
+      expect(source === "gh" ? gh : request).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   },
 );

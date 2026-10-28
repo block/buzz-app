@@ -1,4 +1,6 @@
 mod archive;
+#[cfg(test)]
+mod build_resources;
 use archive::relay_archive;
 mod browser;
 #[cfg(target_os = "macos")]
@@ -50,6 +52,7 @@ use nsec_backup_choice::{nsec_backup_choice, nsec_backup_set_choice};
 mod image_clipboard;
 mod jev;
 mod keep_awake;
+mod legacy_communities;
 #[cfg(any(not(target_os = "macos"), test))]
 mod microphone;
 
@@ -59,6 +62,7 @@ mod repositories_folder;
 mod window_controls;
 mod window_state;
 mod workspace_folder;
+use legacy_communities::legacy_communities;
 use os_idle::get_os_idle_seconds;
 use repositories_folder::repositories_folder_validate;
 mod relay;
@@ -550,6 +554,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         get_os_idle_seconds,
         workspace_pick_folder,
         repositories_folder_validate,
+        legacy_communities,
         plugin_import_folder,
         plugin_update_check,
         plugin_update_preview,
@@ -758,37 +763,37 @@ pub fn run() {
                 }
                 Err(error) => eprintln!("Could not start the media listener: {error}"),
             }
-            // Only app-owned storage is created. Preview uses the OS-resolved legacy
-            // parent, never a browser-supplied path or a different environment source.
+            // Only app-owned storage is created; a development build keeps its agents
+            // in the installed app's (`legacy_identifier::agents`). Preview uses the
+            // OS-resolved legacy parent, never a browser-supplied path or a
+            // different environment source.
             let paths = (|| {
-                let root = app
+                let app_data = app
                     .path()
                     .app_data_dir()
-                    .map_err(|_| "Could not resolve local agent storage")?
-                    .join("agent-controller");
+                    .map_err(|_| "Could not resolve local agent storage")?;
+                let agents =
+                    sign_out::legacy_identifier::agents(&app.config().identifier, &app_data);
                 let legacy = app
                     .path()
                     .data_dir()
                     .map_err(|_| "Could not resolve legacy library directory")?;
-                Ok((root, legacy))
+                Ok((app_data.join("agent-controller"), agents, legacy))
             })();
             app.manage(agent_state::AgentState::new(
                 paths
                     .as_ref()
-                    .map(|(root, _)| root.with_file_name(sign_out::AGENTS).join("state"))
+                    .map(|(_, agents, _)| agents.join("state"))
                     .map_err(Clone::clone),
             ));
             app.manage(app_agents::AppAgentHost::new(
                 paths
                     .as_ref()
-                    .map(|(root, _)| {
-                        root.with_file_name(sign_out::AGENTS)
-                            .join("identities.json")
-                    })
+                    .map(|(_, agents, _)| agents.join("identities.json"))
                     .map_err(Clone::clone),
                 paths
                     .as_ref()
-                    .map(|(root, legacy)| buzz_agent_controller::OldStores {
+                    .map(|(root, _, legacy)| buzz_agent_controller::OldStores {
                         harness: root.join("agents.json"),
                         data_dir: legacy.clone(),
                     })

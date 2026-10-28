@@ -383,6 +383,8 @@ function setup(
     updateRequests: () => [],
     dismissUpdate: vi.fn(),
     approveUpdate: vi.fn(),
+    registerHook: vi.fn(),
+    dispatchHook: vi.fn(async () => undefined),
     configHistory: () => undefined,
   } satisfies Agents;
   const disconnected = { status: "disconnected", generation: 0 };
@@ -2902,17 +2904,15 @@ it("opens avatar and name editing from the profile menu", async () => {
     await screen.findByRole("menuitem", { name: "Change avatar" }),
   );
   const dialog = await screen.findByRole("dialog", { name: "Change avatar" });
-  expect(dialog).toHaveAttribute("data-height", "stable-tall");
-  expect(
-    within(dialog).getByRole("button", { name: "Use custom" }),
-  ).toBeVisible();
+  expect(dialog).toHaveAttribute("data-height", "content");
+  expect(within(dialog).getByRole("tab", { name: "Emoji" })).toBeVisible();
   expect(
     within(dialog).queryByRole("button", { name: "Back" }),
   ).not.toBeInTheDocument();
   expect(
     within(dialog).getByRole("button", { name: "Save changes" }),
   ).toBeDisabled();
-  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  await user.click(within(dialog).getByRole("button", { name: "Close" }));
   await waitFor(() => expect(menu).toHaveFocus());
   await user.click(menu);
   await user.click(
@@ -2925,16 +2925,7 @@ it("opens avatar and name editing from the profile menu", async () => {
   expect(agents.save).not.toHaveBeenCalled();
 });
 
-it("leaves an open avatar picker by Back, Escape or Cancel without saving", async () => {
-  for (const name of ["ResizeObserver", "IntersectionObserver"])
-    vi.stubGlobal(
-      name,
-      class {
-        observe() {}
-        unobserve() {}
-        disconnect() {}
-      },
-    );
+it("keeps avatar changes as a draft until Save and closes without saving", async () => {
   const user = userEvent.setup();
   const { agents } = setup([agent("Ada", 1)]);
   await user.click(screen.getByRole("gridcell", { name: /Ada/ }));
@@ -2945,24 +2936,17 @@ it("leaves an open avatar picker by Back, Escape or Cancel without saving", asyn
     await screen.findByRole("menuitem", { name: "Change avatar" }),
   );
   const dialog = await screen.findByRole("dialog", { name: "Change avatar" });
-  await user.click(within(dialog).getByRole("button", { name: "Use custom" }));
   await user.click(within(dialog).getByRole("tab", { name: "Emoji" }));
-  // Let Mart finish mounting so it cannot outlive the test.
-  await waitFor(() =>
-    expect(
-      dialog
-        .querySelector("em-emoji-picker")
-        ?.shadowRoot?.querySelector("input"),
-    ).toBeTruthy(),
-  );
-  await user.click(within(dialog).getByRole("button", { name: "Back" }));
-  await user.click(within(dialog).getByRole("button", { name: "Use custom" }));
-  await user.keyboard("{Escape}");
   expect(
-    await within(dialog).findByRole("button", { name: "Use custom" }),
+    within(dialog).getByRole("button", { name: "Choose emoji" }),
   ).toBeVisible();
-  await user.click(within(dialog).getByRole("button", { name: "Use custom" }));
-  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  expect(
+    within(dialog).getByRole("group", { name: "Avatar background" }),
+  ).toBeVisible();
+  expect(agents.save).not.toHaveBeenCalled();
+  await user.keyboard("{Escape}");
+  expect(dialog).toBeVisible();
+  await user.click(within(dialog).getByRole("button", { name: "Close" }));
   await waitFor(() =>
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
   );
@@ -3007,47 +2991,32 @@ it("shares the editable owner profile with chat profile targets", async () => {
   }
 });
 
-it("saves an avatar directly from its choices and cancels a changed draft", async () => {
+it("saves an avatar directly from the creation picker", async () => {
   const user = userEvent.setup();
   const { agents } = setup([agent("Ada", 1)]);
+  vi.mocked(agents.save).mockRejectedValueOnce(
+    new Error("Could not save avatar"),
+  );
   await user.click(screen.getByRole("gridcell", { name: /Ada/ }));
-  const open = async () => {
-    await user.click(
-      screen.getByRole("button", { name: "Agent profile actions" }),
-    );
-    await user.click(
-      await screen.findByRole("menuitem", { name: "Change avatar" }),
-    );
-    return screen.findByRole("dialog", { name: "Change avatar" });
-  };
-  let dialog = await open();
-  await user.click(within(dialog).getByRole("button", { name: "Gloopies" }));
+  await user.click(
+    screen.getByRole("button", { name: "Agent profile actions" }),
+  );
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Change avatar" }),
+  );
+  const dialog = await screen.findByRole("dialog", { name: "Change avatar" });
   await user.click(within(dialog).getByRole("button", { name: "Gloopies 1" }));
-  expect(
-    within(dialog).getByRole("button", { name: "Gloopies 1" }),
-  ).toHaveAttribute("aria-pressed", "true");
   expect(
     within(dialog).queryByRole("textbox", { name: "Agent name" }),
   ).not.toBeInTheDocument();
-  expect(
-    within(dialog).queryByRole("button", { name: "Back" }),
-  ).not.toBeInTheDocument();
   expect(agents.save).not.toHaveBeenCalled();
-  await user.keyboard("{Escape}");
-  expect(
-    within(dialog).getByRole("button", { name: /^Gloopies$/ }),
-  ).toBeVisible();
-  await user.keyboard("{Escape}");
+  await user.click(
+    within(dialog).getByRole("button", { name: "Save changes" }),
+  );
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+    "Could not save avatar",
+  );
   expect(dialog).toBeVisible();
-  await user.click(within(dialog).getByRole("button", { name: /^Gloopies$/ }));
-  expect(
-    within(dialog).getByRole("button", { name: "Gloopies 1" }),
-  ).toHaveAttribute("aria-pressed", "true");
-  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
-  expect(agents.save).not.toHaveBeenCalled();
-  dialog = await open();
-  await user.click(within(dialog).getByRole("button", { name: "Gloopies" }));
-  await user.click(within(dialog).getByRole("button", { name: "Gloopies 1" }));
   await user.click(
     within(dialog).getByRole("button", { name: "Save changes" }),
   );
@@ -3166,10 +3135,9 @@ it("removes an existing avatar through the image editor and explicit Save", asyn
     await screen.findByRole("menuitem", { name: "Change avatar" }),
   );
   const dialog = await screen.findByRole("dialog", { name: "Change avatar" });
-  await user.click(within(dialog).getByRole("button", { name: "Use custom" }));
-  const url = within(dialog).getByRole("textbox", { name: /url/i });
-  await user.clear(url);
-  await user.click(within(dialog).getByRole("button", { name: "Done" }));
+  await user.click(
+    within(dialog).getByRole("button", { name: "Remove avatar" }),
+  );
   expect(agents.save).not.toHaveBeenCalled();
   await user.click(
     within(dialog).getByRole("button", { name: "Save changes" }),

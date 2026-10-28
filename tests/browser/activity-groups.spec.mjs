@@ -279,7 +279,9 @@ test("Solo activity folds, stays expanded on append/prepend, and reveals exact v
       "transition-duration",
       "0s",
     );
-    await history.getByRole("button", { name: "Show fewer" }).click();
+    // Virtua can start a pointer hold between press and release after the
+    // detail resize. Reduced-motion behavior does not depend on hit testing.
+    await activate(history.getByRole("button", { name: "Show fewer" }));
     const reducedToggle = history.getByRole("button", {
       name: "Show 14 previous steps",
     });

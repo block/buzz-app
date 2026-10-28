@@ -16,6 +16,7 @@ import { gfmTable } from "micromark-extension-gfm-table";
 import type { ReactElement } from "react";
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
 import { takeScannedMarkdown } from "./markdown-preparation";
+import { takeMarkdownTree } from "./markdown-worker";
 
 export type { Components, ExtraProps };
 export type MarkdownTransform = (tree: Root) => void;
@@ -100,8 +101,10 @@ export function renderMarkdown(
   }: { components: Components; urlTransform: UrlTransform },
 ): ReactElement {
   const syntax = gfmSyntaxFor(content);
-  // Without any GFM syntax this is the CommonMark parse prepareMarkdown made.
+  // The preparation worker's GFM parse of this exact content, if it made one;
+  // without any GFM syntax, the CommonMark parse prepareMarkdown made.
   const tree =
+    takeMarkdownTree(content) ||
     (syntax === gfmSubsets[0] &&
       (takeScannedMarkdown(content) as Root | undefined)) ||
     fromMarkdown(content, syntax);

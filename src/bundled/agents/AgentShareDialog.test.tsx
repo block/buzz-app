@@ -561,3 +561,46 @@ it("updates a listing older than the agent, keeping it listed", async () => {
     screen.getByRole("button", { name: "Remove Ada from the Marketplace" }),
   ).toBeInTheDocument();
 });
+
+it("says an update failed when the listed head is not what it sent", async () => {
+  const user = userEvent.setup();
+  const { session, heads, outbox, lose } = community();
+  heads.push({
+    id: "9".repeat(64),
+    pubkey: owner,
+    created_at: 0,
+    kind: 30175,
+    tags: [
+      ["d", agent.pubkey],
+      ["shared", "true"],
+    ],
+    content: JSON.stringify({ display_name: "Ada", system_prompt: "Old." }),
+  });
+  share(session);
+  await user.click(await listingAction("Update Ada in the Marketplace"));
+  await user.click(screen.getByRole("button", { name: "Update" }));
+  await vi.waitFor(() => expect(outbox.send).toHaveBeenCalledTimes(1));
+  // It never landed, and the old listing is still shared.
+  lose(false);
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Couldn’t publish Ada. Try again.",
+  );
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(
+    screen.getByText("Your latest changes aren’t in the Marketplace yet."),
+  ).toBeInTheDocument();
+  // Back on the row, focus returns to the button that opened the step.
+  expect(
+    screen.getByRole("button", { name: "Update Ada in the Marketplace" }),
+  ).toHaveFocus();
+  await user.click(
+    screen.getByRole("button", { name: "Remove Ada from the Marketplace" }),
+  );
+  expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
+  // Escape in a step goes back rather than closing the window.
+  await user.keyboard("{Escape}");
+  expect(screen.getByRole("dialog", { name: "Share Ada" })).toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: "Remove Ada from the Marketplace" }),
+  ).toHaveFocus();
+});

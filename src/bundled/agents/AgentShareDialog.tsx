@@ -144,19 +144,43 @@ export function AgentShareDialog({
     );
     return () => controller.abort();
   }, [session, agent.owner, agent.pubkey, unread]);
-  // A step starts on its Cancel; returning lands on the Marketplace row's
-  // action, which may have changed with what the step did.
+  // A step starts on its Cancel; returning lands on the button that opened
+  // it, or the row's action that replaced it.
   const cancel = useRef<HTMLButtonElement>(null);
   const actions = useRef<HTMLDivElement>(null);
+  const opener = useRef<string>(undefined);
   const previousView = useRef(view);
   useLayoutEffect(() => {
     if (view !== previousView.current)
       (view === "share"
-        ? actions.current?.querySelector("button")
+        ? (() => {
+            const buttons = [
+              ...(actions.current?.querySelectorAll("button") ?? []),
+            ];
+            return (
+              buttons.find(
+                (button) =>
+                  button.getAttribute("aria-label") === opener.current,
+              ) ?? buttons[0]
+            );
+          })()
         : cancel.current
       )?.focus();
     previousView.current = view;
   }, [view]);
+  // The row's status region mounts with the returning step; the outcome
+  // follows it, so screen readers announce it as a change.
+  const [announce, setAnnounce] = useState<Outcome>();
+  useEffect(() => {
+    if (view === "share" && announce) {
+      setListing(announce);
+      setAnnounce(undefined);
+    }
+  }, [view, announce]);
+  const open = (next: "publish" | "remove", label: string) => {
+    opener.current = label;
+    setView(next);
+  };
   // A share is a copy: edits reach the Marketplace only when it is updated.
   let definition: ReturnType<typeof shareable> | undefined;
   let refused = "";
@@ -175,10 +199,11 @@ export function AgentShareDialog({
     setListing(undefined);
     setFailure("");
     let reason = "Try again.";
+    let content: string | undefined;
     try {
       // Removing keeps what was shared, so it never depends on the agent
       // still being shareable.
-      const content =
+      content =
         !shared && head ? head.content : catalogContent(shareable(agent, type));
       await publishShare(session, agent.pubkey, content, shared, head, signal);
     } catch (error) {
@@ -193,11 +218,15 @@ export function AgentShareDialog({
       agent.pubkey,
       signal,
     ).catch(() => head);
+    setPending(undefined);
     if (signal.aborted) return;
     setHead(next);
-    setPending(undefined);
-    if (isShared(next) === shared) {
-      setListing({
+    // An update to a listed agent leaves it listed whatever happened, so a
+    // publish has landed only when the winning head is what it sent.
+    if (
+      shared ? isShared(next) && next?.content === content : !isShared(next)
+    ) {
+      setAnnounce({
         text: shared
           ? "Published to the Marketplace."
           : "Removed from the Marketplace.",
@@ -289,9 +318,9 @@ export function AgentShareDialog({
                 </p>
               </div>
             )}
-            {failure && (
+            {(failure || (publishing && refused)) && (
               <p role="alert" className="m-0 text-body-sm text-danger">
-                {failure}
+                {failure || `${agent.name} can’t be shared. ${refused}`}
               </p>
             )}
           </div>
@@ -359,7 +388,12 @@ export function AgentShareDialog({
                         size="sm"
                         disabled={busy || !definition}
                         aria-label={`Update ${agent.name} in the Marketplace`}
-                        onClick={() => setView("publish")}
+                        onClick={() =>
+                          open(
+                            "publish",
+                            `Update ${agent.name} in the Marketplace`,
+                          )
+                        }
                       >
                         Update…
                       </Button>
@@ -368,7 +402,12 @@ export function AgentShareDialog({
                       size="sm"
                       disabled={busy}
                       aria-label={`Remove ${agent.name} from the Marketplace`}
-                      onClick={() => setView("remove")}
+                      onClick={() =>
+                        open(
+                          "remove",
+                          `Remove ${agent.name} from the Marketplace`,
+                        )
+                      }
                     >
                       Remove…
                     </Button>
@@ -378,7 +417,12 @@ export function AgentShareDialog({
                     size="sm"
                     disabled={head === null || busy || !definition}
                     aria-label={`Publish ${agent.name} to the Marketplace`}
-                    onClick={() => setView("publish")}
+                    onClick={() =>
+                      open(
+                        "publish",
+                        `Publish ${agent.name} to the Marketplace`,
+                      )
+                    }
                   >
                     Publish…
                   </Button>

@@ -18,6 +18,11 @@ import { Tabs, type TabAction } from "../../shared/design-system/ui/Tabs";
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import styles from "./Panels.module.css";
 import type { TabDragHost } from "./useTabDrag";
+import {
+  WorkspacePresentation,
+  RetainedWorkspacePresentation,
+  publishWorkspacePresentation,
+} from "./WorkspacePresentation";
 
 type Item = {
   id: string;
@@ -480,7 +485,9 @@ export function PanelWorkspace({
               inert={selected !== item.id}
               aria-hidden={selected !== item.id || undefined}
             >
-              {item.content}
+              <WorkspacePresentation.Provider value={selected === item.id}>
+                {item.content}
+              </WorkspacePresentation.Provider>
             </div>
           </TabScope>
         ))}
@@ -522,10 +529,19 @@ function LocalSlot({
   selected: boolean;
   setSlot(id: string, element: HTMLDivElement | null): void;
 }) {
+  const node = useRef<HTMLDivElement | null>(null);
   const ref = useCallback(
-    (element: HTMLDivElement | null) => setSlot(id, element),
+    (element: HTMLDivElement | null) => {
+      if (node.current && node.current !== element)
+        publishWorkspacePresentation(node.current, false);
+      node.current = element;
+      setSlot(id, element);
+    },
     [id, setSlot],
   );
+  useLayoutEffect(() => {
+    if (node.current) publishWorkspacePresentation(node.current, selected);
+  }, [selected]);
   return (
     <div
       ref={ref}
@@ -566,9 +582,11 @@ export function PanelLocalTab({
   const slot = host?.slots.get(id);
   return slot
     ? createPortal(
-        <section className={styles.tabDetail} aria-label={title}>
-          {children}
-        </section>,
+        <RetainedWorkspacePresentation target={slot}>
+          <section className={styles.tabDetail} aria-label={title}>
+            {children}
+          </section>
+        </RetainedWorkspacePresentation>,
         slot,
       )
     : null;

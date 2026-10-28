@@ -933,6 +933,7 @@ export function useConversationTabs({
             }}
           >
             <ConversationTab
+              presentationHost={node}
               focusOnMount={continuingVisit}
               restored={visitTab.entered.get(tab.id)}
               active={active}

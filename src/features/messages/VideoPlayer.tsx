@@ -3,6 +3,7 @@ import { useMediaControls } from "./use-media-controls";
 import { useMediaCorners } from "./use-media-corners";
 import {
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type CSSProperties,
@@ -36,6 +37,7 @@ import { formatMediaTime } from "./media-timecode";
 import styles from "./VideoPlayer.module.css";
 import { useMediaElementSource } from "./use-media-element-source";
 import { MediaDownloadAction } from "./MediaDownloadAction";
+import { useWorkspacePresentation } from "../panels/WorkspacePresentation";
 
 export type VideoMarker = {
   id: string;
@@ -73,6 +75,14 @@ export function VideoControls({
   onMarker?(id: string, seconds: number): void;
 }) {
   const corners = useMediaCorners();
+  const presented = useWorkspacePresentation();
+  const publishTime = useRef(true);
+  useLayoutEffect(() => {
+    publishTime.current = presented;
+    // Activation publishes current native state before this pane can paint or
+    // accept input. The player itself has stayed live while covered.
+    if (presented && videoRef.current) setTime(videoRef.current.currentTime);
+  }, [presented, videoRef]);
   const [playing, setPlaying] = useState(false);
   const [time, setTime] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -87,7 +97,9 @@ export function VideoControls({
     const video = videoRef.current;
     if (!video) return;
     let frame = 0;
-    const syncTime = () => setTime(video.currentTime);
+    const syncTime = () => {
+      if (publishTime.current) setTime(video.currentTime);
+    };
     const tick = () => {
       syncTime();
       frame = requestAnimationFrame(tick);

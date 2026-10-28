@@ -23,8 +23,11 @@ import { SoloColumn } from "../../features/solo/SoloPresentation";
 import type { ConversationTab as Tab } from "./useChannelTabState";
 import type { PageNavigation } from "../../features/navigation/service";
 import styles from "./ChannelTabs.module.css";
+import { RetainedWorkspacePresentation } from "../../features/panels/WorkspacePresentation";
 
 type ConversationTabProps = {
+  /** Destination of this retained portal, including local-detail coverage. */
+  presentationHost?: HTMLElement | undefined;
   tab: Tab;
   active: boolean;
   /** Showing the tab visits its conversation, as Channels does. */
@@ -48,6 +51,7 @@ type ConversationTabProps = {
 };
 /** Each secondary conversation retains its own editing and media-review scope. */
 export function ConversationTab({
+  presentationHost,
   tab,
   active,
   visit = true,
@@ -130,81 +134,83 @@ export function ConversationTab({
     [],
   );
   return (
-    <ConversationChannel
-      session={session}
-      scope={scope}
-      extensions={extensions}
-      channel={channel}
-      active={active && visit}
-      interactions={{
-        onOpenLink,
-        canOpenLink,
-        onOpenMediaReview: media.open,
-      }}
-      mediaReview={media.review}
-    >
-      <section
-        data-attachment-drop-zone=""
-        className={styles.conversation}
-        aria-label={`Conversation in ${channel.name}`}
+    <RetainedWorkspacePresentation target={presentationHost} active={active}>
+      <ConversationChannel
+        session={session}
+        scope={scope}
+        extensions={extensions}
+        channel={channel}
+        active={active && visit}
+        interactions={{
+          onOpenLink,
+          canOpenLink,
+          onOpenMediaReview: media.open,
+        }}
+        mediaReview={media.review}
       >
-        <MessageManagementStatus />
-        {tab.kind === "thread" ? (
-          <ConversationThread
-            active={active}
-            messageId={tab.messageId}
-            navigation={navigation}
-            retainThread
-            tabbed
-            onRetryNavigation={onRetryNavigation}
-            onResolvedRoot={onResolvedRoot}
-            onDifferentThread={onDifferentThread}
-            replyRequest={reply === restoredReply.current ? undefined : reply}
-            focusRequest={focusRequest}
-            revealSelected={threadReveal !== undefined}
-            revealRequest={threadReveal}
-            close={close}
-          />
-        ) : target && inTimeline === false ? (
-          <ConversationThread
-            active={active}
-            messageId={target}
-            retainThread
-            tabbed
-            revealSelected
-            revealRequest={revealRequest}
-            close={close}
-          />
-        ) : (
-          <SoloColumn enabled={soloConversation}>
-            <ChannelBody
-              viewer={session.viewer}
-              cached={!!channel.cached}
-              // The composer below mounts TypingIndicator for a live channel.
-              activityLane={!channel.cached}
-              onOpenThread={onOpenThread}
-              revealMessageId={sent}
-              // Mount the list once, at the message, not while it is sought.
-              holding={!!target && inTimeline === undefined}
-              inlineTarget={
-                target &&
-                reveal &&
-                reveal.key === revealKey &&
-                !reveal.signal.aborted
-                  ? { messageId: target, signal: reveal.signal }
-                  : undefined
-              }
-              marksRead={opening?.markRead !== false}
+        <section
+          data-attachment-drop-zone=""
+          className={styles.conversation}
+          aria-label={`Conversation in ${channel.name}`}
+        >
+          <MessageManagementStatus />
+          {tab.kind === "thread" ? (
+            <ConversationThread
+              active={active}
+              messageId={tab.messageId}
+              navigation={navigation}
+              retainThread
+              tabbed
+              onRetryNavigation={onRetryNavigation}
+              onResolvedRoot={onResolvedRoot}
+              onDifferentThread={onDifferentThread}
+              replyRequest={reply === restoredReply.current ? undefined : reply}
+              focusRequest={focusRequest}
+              revealSelected={threadReveal !== undefined}
+              revealRequest={threadReveal}
+              close={close}
             />
-            <ConversationComposer
-              // Shown follows the tab, not whether showing it visits the chat.
-              shown={active}
-              onSend={setSent}
-              {...(focusRequest ? { focusRequest } : {})}
+          ) : target && inTimeline === false ? (
+            <ConversationThread
+              active={active}
+              messageId={target}
+              retainThread
+              tabbed
+              revealSelected
+              revealRequest={revealRequest}
+              close={close}
             />
-          </SoloColumn>
-        )}
-      </section>
-    </ConversationChannel>
+          ) : (
+            <SoloColumn enabled={soloConversation}>
+              <ChannelBody
+                viewer={session.viewer}
+                cached={!!channel.cached}
+                // The composer below mounts TypingIndicator for a live channel.
+                activityLane={!channel.cached}
+                onOpenThread={onOpenThread}
+                revealMessageId={sent}
+                // Mount the list once, at the message, not while it is sought.
+                holding={!!target && inTimeline === undefined}
+                inlineTarget={
+                  target &&
+                  reveal &&
+                  reveal.key === revealKey &&
+                  !reveal.signal.aborted
+                    ? { messageId: target, signal: reveal.signal }
+                    : undefined
+                }
+                marksRead={opening?.markRead !== false}
+              />
+              <ConversationComposer
+                // Shown follows the tab, not whether showing it visits the chat.
+                shown={active}
+                onSend={setSent}
+                {...(focusRequest ? { focusRequest } : {})}
+              />
+            </SoloColumn>
+          )}
+        </section>
+      </ConversationChannel>
+    </RetainedWorkspacePresentation>
   );
 }

@@ -1,5 +1,9 @@
 import { useLayoutEffect, useRef } from "react";
 import styles from "./ChannelTabs.module.css";
+import {
+  publishWorkspacePresentation,
+  useWorkspacePresentation,
+} from "../../features/panels/WorkspacePresentation";
 
 // Moving a DOM node between panes resets descendant scroll offsets. Remember
 // them while detached and restore after the node is attached again.
@@ -11,6 +15,7 @@ const scrollers = (node: HTMLElement) => [
 /** Attaches a tab's retained content node; the content itself never remounts. */
 export function TabSlot({ node }: { node: HTMLElement }) {
   const slot = useRef<HTMLDivElement>(null);
+  const presented = useWorkspacePresentation();
   useLayoutEffect(() => {
     const parent = slot.current;
     if (!parent) return;
@@ -28,6 +33,7 @@ export function TabSlot({ node }: { node: HTMLElement }) {
       // The closing dock can retire its old slot after the destination has
       // claimed this node. Only its current parent may detach or save it.
       if (node.parentElement !== parent) return;
+      publishWorkspacePresentation(node, false);
       offsets.set(
         node,
         scrollers(node).map((element) => element.scrollTop),
@@ -35,6 +41,10 @@ export function TabSlot({ node }: { node: HTMLElement }) {
       node.remove();
     };
   }, [node]);
+  useLayoutEffect(() => {
+    if (node.parentElement === slot.current)
+      publishWorkspacePresentation(node, presented);
+  }, [node, presented]);
   return <div ref={slot} data-tab-slot="" className={styles.tabSlot} />;
 }
 

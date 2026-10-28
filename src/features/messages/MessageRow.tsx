@@ -175,7 +175,6 @@ const FullMessageRow = memo(function MessageRow(props: MessageContentProps) {
 });
 function MessageRowContent({
   row,
-  staticMentions,
   shownRow,
   renderMessage,
   getThreadRoot,
@@ -522,7 +521,6 @@ function MessageRowContent({
       session={session}
       scope={scope}
       row={displayRow}
-      staticMentions={staticMentions}
       extensions={extensions}
       media={media}
       onOpenLink={openLink}

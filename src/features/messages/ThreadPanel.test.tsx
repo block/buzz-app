@@ -93,10 +93,12 @@ vi.mock("./MessageComposer", () => ({
     disabled,
     placeholder,
     focusRequest,
+    threadSeed,
   }: MessageComposerProps) => (
     <section
       aria-label="Composer"
       data-root={threadRootId}
+      data-seed={threadSeed?.mentions.join(",")}
       data-channel={channelId}
       data-scope={scope}
       data-own-solo={ownSoloConversation}
@@ -959,6 +961,69 @@ it.each([
     );
   },
 );
+const composerSeed = () =>
+  screen.getByRole("region", { name: "Composer" }).getAttribute("data-seed");
+it("passes the viewer's latest message in the thread as the composer seed", () => {
+  const h = messagesHarness();
+  h.snapshot.root = { ...row, authorId: viewer, mentions: ["d".repeat(64)] };
+  h.snapshot.replies = [
+    { ...row, id: "r1", createdAt: 2, mentions: ["e".repeat(64)] },
+    {
+      ...row,
+      id: "r2",
+      createdAt: 3,
+      authorId: viewer,
+      mentions: ["f".repeat(64)],
+    },
+    { ...row, id: "r3", createdAt: 4, mentions: ["g".repeat(64)] },
+  ];
+  h.render();
+  expect(composerSeed()).toBe("f".repeat(64));
+});
+it("seeds from the viewer's reply in someone else's thread", () => {
+  const h = messagesHarness();
+  h.snapshot.root = { ...row, mentions: ["d".repeat(64)] };
+  h.snapshot.replies = [
+    {
+      ...row,
+      id: "r1",
+      createdAt: 2,
+      authorId: viewer,
+      mentions: ["e".repeat(64)],
+    },
+  ];
+  h.render();
+  expect(composerSeed()).toBe("e".repeat(64));
+});
+it.each([
+  {
+    author: "a workflow the viewer owns",
+    root: { ...row, workflowOwnerId: viewer },
+  },
+  { author: "another user", root: row },
+])(
+  "passes no seed for a thread the viewer never wrote in, rooted by $author",
+  ({ root }) => {
+    const h = messagesHarness();
+    h.snapshot.root = { ...root, mentions: ["d".repeat(64)] };
+    h.snapshot.replies = [
+      { ...row, id: "r1", createdAt: 2, mentions: ["e".repeat(64)] },
+    ];
+    h.render();
+    expect(composerSeed()).toBeNull();
+  },
+);
+it("passes no seed until the first page lands", () => {
+  const h = messagesHarness();
+  h.snapshot.status = "loading";
+  h.snapshot.root = { ...row, authorId: viewer, mentions: ["d".repeat(64)] };
+  h.render();
+  expect(screen.getByRole("region", { name: "Composer" })).toBeVisible();
+  expect(composerSeed()).toBeNull();
+  h.snapshot.status = "ready";
+  h.render();
+  expect(composerSeed()).toBe("d".repeat(64));
+});
 it.each([
   { gap: 79, follows: true },
   { gap: 80, follows: false },
@@ -1293,6 +1358,21 @@ it("inline Inbox reveal opts into exact reader and composes origin action withou
   expect(
     within(thread).getByRole("region", { name: "Thread messages" }),
   ).not.toHaveAttribute("data-positioning");
+});
+
+it("names the conversation a thread lives in as a link, only when its host can open it there", () => {
+  const h = messagesHarness();
+  const open = vi.fn();
+  const view = render(
+    <ThreadPanel {...h.props} parent={{ label: "#Alpha", open }} />,
+  );
+  const thread = screen.getByRole("complementary", { name: "Thread" });
+  const link = within(thread).getByRole("button", { name: "#Alpha" });
+  expect(link.closest("p")).toHaveTextContent("In #Alpha");
+  fireEvent.click(link);
+  expect(open).toHaveBeenCalledOnce();
+  view.rerender(<ThreadPanel {...h.props} />);
+  expect(within(thread).queryByText("#Alpha")).toBeNull();
 });
 
 it("passes readiness and direct Activity through to thread composition, and gives a Solo thread none", () => {

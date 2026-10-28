@@ -29,7 +29,10 @@ import {
   AgentBrowse,
   SharedAgentPanel,
   type SharedAgentSelection,
+  SharedImportDialog,
 } from "./AgentBrowse";
+import { AgentShareDialog } from "./AgentShareDialog";
+import type { SharedAgent } from "../../features/agents/shared-agents";
 import { AgentCard, AgentPortrait, TeamCard } from "./AgentCard";
 import { AgentCreateDialog, TypeIcon } from "./AgentCreateDialog";
 import { NewAgentTile } from "./NewAgentTile";
@@ -54,6 +57,10 @@ import type {
 import { useRelayConnection } from "../../features/relay/react";
 import { useAgentChoices } from "../../features/agents/use-choices";
 import type { RelaySession } from "../../features/relay/session";
+import {
+  readSnapshot,
+  type SharedDefinition,
+} from "../../features/agents/agent-share";
 import {
   setDefaultAgent,
   useChosenAgent,
@@ -80,6 +87,7 @@ import { ChoiceRow } from "../../shared/design-system/ui/ChoiceRow";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { Field } from "../../shared/design-system/ui/Field";
+import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { Panel } from "../../shared/design-system/ui/Panel";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Input } from "../../shared/design-system/ui/Input";
@@ -102,7 +110,7 @@ import { Textarea } from "../../shared/design-system/ui/Textarea";
 import { Tooltip } from "../../shared/design-system/ui/Tooltip";
 import { publicKeyLabels } from "../../shared/identity/public-key";
 import { readView, writeView } from "../../shared/view-state";
-import { agentProviderRoute, agentProviderTarget } from "./routes";
+import { agentProviderRoute, agentProviderTarget, agentRoute } from "./routes";
 
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
@@ -209,7 +217,6 @@ export function AgentsPage({
   const joinable = agents.joinable();
   const agentImports = [...joinable, ...(legacy?.agents ?? [])];
   const discoveryIncomplete = !legacy || legacy.warnings.length > 0;
-  const canImportAgent = discoveryIncomplete || agentImports.length > 0;
   const canImportTeam =
     discoveryIncomplete ||
     legacy.teams.length + teamsToJoin(snapshot.teams, joinable).length > 0;
@@ -269,6 +276,19 @@ export function AgentsPage({
     if (next !== "marketplace") setSharedSelection(undefined);
     setTab(next);
   };
+  // Opened for one of your agents, such as from a card sent in chat.
+  const routedAgent =
+    routed && navigation.target.kind === "page"
+      ? agentRoute(navigation.target.route?.params)
+      : undefined;
+  const routedEntry = navigation?.entryId;
+  useEffect(() => {
+    if (!routedAgent || !routedEntry) return;
+    setEditingTeam(undefined);
+    setSharedSelection(undefined);
+    setTab("yours");
+    setSelectedKey(routedAgent);
+  }, [routedAgent, routedEntry]);
   const returnTo = (next: Tab) => () => {
     setFlow(undefined);
     changeTab(next);
@@ -300,11 +320,10 @@ export function AgentsPage({
         >
           <PlusIcon size={16} aria-hidden="true" /> Create a new agent
         </MenuItem>
-        {canImportAgent && (
-          <MenuItem onClick={openImport}>
-            <DownloadIcon size={16} aria-hidden="true" /> Import an agent
-          </MenuItem>
-        )}
+        {/* Even when discovery finds nothing, a file can be imported. */}
+        <MenuItem onClick={openImport}>
+          <DownloadIcon size={16} aria-hidden="true" /> Import an agent
+        </MenuItem>
       </MenuPopup>
     </MenuRoot>
   );
@@ -346,6 +365,13 @@ export function AgentsPage({
         secondary={canImport}
         onClick={openMarketplace}
       />
+      {firstAgent && !canImport && (
+        <NewAgentTile
+          label="Import from a file"
+          secondary
+          onClick={openImport}
+        />
+      )}
     </div>
   );
   // Teams have no marketplace, so New team offers only making and importing.
@@ -413,6 +439,17 @@ export function AgentsPage({
       onSelect: browse,
       onBuild: build,
       newAgent: !toolbarAction && starts,
+      // A published agent's toast opens it where everyone else finds it.
+      onViewListing: (agent: SharedAgent) => {
+        if (connection.status !== "ready") return;
+        sharedTrigger.current = null;
+        changeTab("marketplace");
+        setSharedSelection({
+          agent,
+          session: connection.session,
+          community: connection.origin,
+        });
+      },
     };
     return connection.status === "ready" ? (
       <DefaultAgentInventory
@@ -573,6 +610,11 @@ export function AgentsPage({
                           });
                           document.getElementById("agents-yours-tab")?.focus();
                         }}
+                        onOpen={(agent) => {
+                          setSharedSelection(undefined);
+                          returnToAgents();
+                          browse(agent.pubkey);
+                        }}
                       />
                     ),
                   },
@@ -670,6 +712,9 @@ type InventoryProps = {
   defaultPinned?: boolean;
   onMakeDefault?: ((pubkey: string) => void) | undefined;
   defaultChoices?: ReadonlySet<string>;
+  /** The community connection Share publishes through, while it is ready. */
+  session?: RelaySession;
+  onViewListing?: ((agent: SharedAgent) => void) | undefined;
 };
 
 /** The inventory with this community's default agent marked and settable. */
@@ -686,6 +731,7 @@ function DefaultAgentInventory({
     <>
       <Inventory
         {...props}
+        session={session}
         defaultAgent={current?.pubkey}
         defaultPinned={!!current && current.pubkey === chosen}
         defaultChoices={
@@ -771,6 +817,8 @@ function Inventory({
   defaultPinned,
   defaultChoices,
   onMakeDefault,
+  session,
+  onViewListing,
 }: InventoryProps) {
   const grid = useRef<HTMLDivElement>(null);
   const index = agents.findIndex((agent) => agent.pubkey === selected);
@@ -856,7 +904,9 @@ function Inventory({
                       : undefined
                   }
                   service={service}
+                  session={session}
                   type={type}
+                  onViewListing={onViewListing}
                   onBuild={() => onBuild(agent.pubkey)}
                   onRemoved={() => onSelect()}
                   role="gridcell"
@@ -900,17 +950,21 @@ function Inventory({
 /** Card edits use the same type-owned field and service as creation/settings. */
 function InventoryCard({
   service,
+  session,
   type,
   onBuild,
   onRemoved,
   main,
+  onViewListing,
   ...props
 }: Omit<React.ComponentProps<typeof AgentCard>, "agent"> & {
   agent: Agent;
   service: Agents;
+  session: RelaySession | undefined;
   type: RegisteredAgentType | undefined;
   onBuild(): void;
   onRemoved(): void;
+  onViewListing?: ((agent: SharedAgent) => void) | undefined;
   /** Whether it is the community's main agent and can be made it. */
   main?:
     | { isMain: boolean; pinned: boolean; available: boolean; onMake(): void }
@@ -919,6 +973,7 @@ function InventoryCard({
   const agent = props.agent;
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [sharing, setSharing] = useState(false);
   const editable = agent.place !== "elsewhere" && !agent.unfinished;
   const Model = editable ? type?.CreateModel : undefined;
   const save = async (config: unknown) => {
@@ -949,6 +1004,9 @@ function InventoryCard({
         ))}
       {main && <MenuSeparator />}
       {editable && <MenuItem onClick={onBuild}>Open settings</MenuItem>}
+      {editable && session && type?.exportShared && (
+        <MenuItem onClick={() => setSharing(true)}>Share</MenuItem>
+      )}
       <MenuItem
         onClick={() => {
           void navigator.clipboard
@@ -1020,26 +1078,39 @@ function InventoryCard({
       {actions(remove, leave)}
     </CardContextMenu>
   );
-  return agent.place === "elsewhere" ? (
-    card()
-  ) : (
-    <AgentDelete
-      agents={service}
-      agent={agent}
-      onRemoved={onRemoved}
-      trigger={(remove) =>
-        inSeveral(service, agent) ? (
-          <AgentRemoveHere
-            agents={service}
-            agent={agent}
-            onRemoved={onRemoved}
-            trigger={(leave) => card(remove, leave)}
-          />
-        ) : (
-          card(remove)
-        )
-      }
-    />
+  return (
+    <>
+      {agent.place === "elsewhere" ? (
+        card()
+      ) : (
+        <AgentDelete
+          agents={service}
+          agent={agent}
+          onRemoved={onRemoved}
+          trigger={(remove) =>
+            inSeveral(service, agent) ? (
+              <AgentRemoveHere
+                agents={service}
+                agent={agent}
+                onRemoved={onRemoved}
+                trigger={(leave) => card(remove, leave)}
+              />
+            ) : (
+              card(remove)
+            )
+          }
+        />
+      )}
+      {sharing && session && (
+        <AgentShareDialog
+          agent={agent}
+          type={type}
+          session={session}
+          onViewListing={onViewListing}
+          onClose={() => setSharing(false)}
+        />
+      )}
+    </>
   );
 }
 
@@ -1643,6 +1714,9 @@ function ImportAgents({
           }}
         />
       )}
+      {only === "agents" && (
+        <FileImport agents={agents} types={types} onImported={onImported} />
+      )}
     </div>
   );
 }
@@ -1885,6 +1959,79 @@ function ImportRow({
   );
 }
 
+/** An exported `.agent.json` or `.agent.png`, imported as a new agent. */
+function FileImport({
+  agents,
+  types,
+  onImported,
+}: {
+  agents: Agents;
+  types: readonly RegisteredAgentType[];
+  onImported(): void;
+}) {
+  const input = useRef<HTMLInputElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const [shared, setShared] = useState<SharedDefinition>();
+  const [error, setError] = useState("");
+  const read = async (file: File) => {
+    setError("");
+    try {
+      setShared(await readSnapshot(file));
+    } catch (reason) {
+      setError(`Failed to read agent snapshot file. ${message(reason)}`);
+    }
+  };
+  return (
+    <section
+      aria-label="Import snapshot"
+      className="flex flex-col items-start gap-2"
+    >
+      <InlineHeader
+        title="Import snapshot"
+        subtitle="A new agent will be created with a fresh keypair. The imported agent is independent of the source — identity never travels."
+      />
+      <Button
+        ref={trigger}
+        size="compact"
+        variant="outline"
+        onClick={() => input.current?.click()}
+      >
+        Choose file
+      </Button>
+      <input
+        ref={input}
+        type="file"
+        accept=".json,.png"
+        aria-label="Choose file"
+        hidden
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          event.target.value = "";
+          if (file) void read(file);
+        }}
+      />
+      {error && (
+        <p role="alert" className="m-0 text-body-sm text-danger">
+          {error}
+        </p>
+      )}
+      {shared && (
+        <SharedImportDialog
+          shared={shared}
+          agents={agents}
+          types={types}
+          onImported={() => {
+            setShared(undefined);
+            onImported();
+          }}
+          onClose={() => setShared(undefined)}
+          finalFocus={trigger}
+        />
+      )}
+    </section>
+  );
+}
+
 /** The owner's teams: each a name, instructions and members, given to every
  * member's prompt with a roster. Agents record nothing about their teams. */
 function Teams({
@@ -1961,6 +2108,9 @@ function TeamEditor({
   );
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
+  // What a synced Save revises, and a new team's id for every retry.
+  const [opened] = useState(team);
+  const [draft] = useState(() => crypto.randomUUID());
   // Members not in this community, which it doesn't list but keeps.
   const away = members.filter(
     (pubkey) =>
@@ -1982,7 +2132,7 @@ function TeamEditor({
   const save = () =>
     act(() =>
       agents.saveTeam({
-        ...(team ? { id: team.id } : {}),
+        ...(opened ? { id: opened.id, opened } : { draft }),
         name: name.trim(),
         instructions,
         members,

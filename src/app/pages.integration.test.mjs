@@ -228,9 +228,18 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
     await vi.waitFor(() =>
       assert.equal(services.conversation.tools.snapshot().length, 4),
     );
-    assert.equal(services.conversation.attachments.snapshot().length, 1);
+    assert.deepEqual(
+      services.conversation.attachments
+        .snapshot()
+        .map((item) => item.pluginId)
+        .sort(),
+      ["buzz.agents", "buzz.voice-notes"],
+    );
     await services.plugins.change("disable", "buzz.voice-notes");
-    assert.equal(services.conversation.attachments.snapshot().length, 0);
+    assert.deepEqual(
+      services.conversation.attachments.snapshot().map((item) => item.pluginId),
+      ["buzz.agents"],
+    );
     assert.equal(services.conversation.inline.snapshot().length, 1);
     await vi.waitFor(() =>
       assert.equal(services.conversation.links.snapshot().length, 1),
@@ -321,7 +330,7 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
     assert.equal(bestiePage.primary, true);
     assert.match(
       renderToStaticMarkup(createElement(bestiePage.component)),
-      /isn’t connected yet/,
+      /Meet your Bestie/,
     );
     await services.plugins.change("disable", "buzz.bestie");
     assert.equal(

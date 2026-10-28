@@ -445,7 +445,6 @@ export function MessageMarkdown({
   participantProfiles,
   largeEmoji = false,
   interactive = true,
-  staticMentions = false,
 }: {
   row: ChannelMessage;
   directory?: typeof emptyReferenceDirectory;
@@ -458,8 +457,6 @@ export function MessageMarkdown({
   participantProfiles?: ReadonlyMap<string, Profile> | undefined;
   largeEmoji?: boolean | undefined;
   interactive?: boolean;
-  /** Preserve signed mention presentation when this surface cannot open profiles. */
-  staticMentions?: boolean | undefined;
 }) {
   const resolveName = useChannelIdentityNames(session, row.channelId);
   const prepared = useMemo(() => prepareMarkdown(row.content), [row.content]);
@@ -480,7 +477,6 @@ export function MessageMarkdown({
       resolveName={resolveName}
       largeEmoji={largeEmoji}
       interactive={interactive}
-      staticMentions={staticMentions}
     />
   );
 }
@@ -499,7 +495,6 @@ function PreparedMessageMarkdown({
   resolveName,
   largeEmoji = false,
   interactive = true,
-  staticMentions = false,
 }: Parameters<typeof MessageMarkdown>[0] & {
   prepared: Extract<ReturnType<typeof prepareMarkdown>, { kind: "markdown" }>;
   resolveName: (pubkey: string, fallback: string) => string;
@@ -609,11 +604,7 @@ function PreparedMessageMarkdown({
         (participantProfiles ?? directory.profiles).get(key)?.isAgent);
     const clickable =
       interactive && typeof target === "string" && !!canOpenLink?.(target);
-    if (
-      typeof text === "string" &&
-      typeof target === "string" &&
-      (!interactive || clickable || agent || staticMentions)
-    ) {
+    if (typeof text === "string" && typeof target === "string") {
       const label = key ? resolveName(key, text.slice(1)) : text.slice(1);
       const Icon = agent ? RobotIcon : AtIcon;
       const Mention = clickable ? "button" : "span";

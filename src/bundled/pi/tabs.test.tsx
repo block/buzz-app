@@ -413,7 +413,14 @@ it("guards an invalid Pi provider draft through an agent tab switch", async () =
   } as unknown as RegisteredAgentType;
   render(
     <AgentTabs
-      agents={{ save, configHistory: () => undefined } as unknown as Agents}
+      agents={
+        {
+          save,
+          subscribe: () => () => {},
+          memberships: () => [],
+          configHistory: () => undefined,
+        } as unknown as Agents
+      }
       agent={agent}
       type={type}
       channels={[]}
@@ -511,6 +518,26 @@ it("saves a key on Enter without saving the agent's settings", async () => {
     key: "sk-test",
   });
   expect(save).not.toHaveBeenCalled();
+});
+
+it("settles a transcript request without opening it once Pi's late listing arrives", async () => {
+  const runtime = fakeRuntime();
+  const { ActivityTab } = createTabs({ setup: new PiSetup(fakePi()), runtime });
+  const done = vi.fn();
+  render(
+    <ActivityTab
+      agent={AGENT}
+      conversation={{ channelId: "chan", rootId: "root" }}
+      initialTranscript={{ opening: 1, done }}
+    />,
+  );
+  expect(done).toHaveBeenCalled();
+  const here = await screen.findByRole("region", { name: "This thread" });
+  expect(
+    within(here).getByRole("button", { name: /^View transcript/ }),
+  ).toBeVisible();
+  expect(runtime.transcript).not.toHaveBeenCalled();
+  expect(screen.queryByText("Hello from chan/root")).toBeNull();
 });
 
 it("lists Pi's conversations in the Activity tab, and shows a transcript", async () => {

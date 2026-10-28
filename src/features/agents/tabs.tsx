@@ -12,6 +12,7 @@ import type {
   AgentSettingsHost,
   Agents,
   RegisteredAgentType,
+  TranscriptRequest,
 } from "./service";
 import { AgentSaveButton, useAgentSaveState } from "./AgentSaveButton";
 import { AgentConfigHistory } from "./AgentConfigHistory";
@@ -29,6 +30,8 @@ export function agentSections({
   agent,
   type,
   conversation,
+  initialTranscript,
+  close,
   settingsHost,
   memories,
   communities,
@@ -39,6 +42,10 @@ export function agentSections({
   agent: Agent;
   type: RegisteredAgentType | undefined;
   conversation?: AgentConversation | undefined;
+  /** Asks to show the conversation's transcript first; see AgentViewProps. */
+  initialTranscript?: TranscriptRequest | undefined;
+  /** Closes the panel the sections are shown in. */
+  close?: (() => void) | undefined;
   settingsHost?: AgentSettingsHost;
   settingsSection?: "identity" | "runtime";
   settingsContent?: ReactNode;
@@ -49,7 +56,11 @@ export function agentSections({
   if (agent.place === "elsewhere") return [];
   const attention =
     settingsContent === undefined && agent.place === "here" ? (
-      <AttentionSection agents={agents} agent={agent} />
+      <AttentionSection
+        agents={agents}
+        agent={agent}
+        communities={communities}
+      />
     ) : null;
   const content = attention || settingsContent;
   const typeTabs = type?.tabs ?? [];
@@ -73,6 +84,10 @@ export function agentSections({
               ? { settingsContent: content }
               : {})}
             {...(conversation && { conversation })}
+            {...(role === "activity" &&
+              conversation &&
+              initialTranscript && { initialTranscript })}
+            {...(role === "activity" && close && { close })}
             save={(config) =>
               settingsHost?.pendingSave
                 ? settingsHost.pendingSave(config)
@@ -108,6 +123,7 @@ export function agentSections({
       label: "Memory",
       render: () => (
         <MemoryPanel
+          agents={agents}
           agent={agent}
           memories={memories}
           communities={communities}
@@ -161,15 +177,19 @@ function HostSettings({ host }: { host: AgentSettingsHost }) {
 export function AttentionSection({
   agents,
   agent,
+  communities,
 }: {
-  agents: Pick<Agents, "save">;
+  agents: Pick<Agents, "save" | "subscribe" | "memberships">;
   agent: Agent;
+  communities?: CommunityReader | undefined;
 }) {
   const [pending, setPending] = useState(0);
   useAgentSaveState(false, pending > 0);
   return (
     <AttentionPanel
+      agents={agents}
       agent={agent}
+      communities={communities}
       save={async (change) => {
         setPending((count) => count + 1);
         try {

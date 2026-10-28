@@ -704,9 +704,13 @@ export function createTabs({
   function ActivityTab({
     agent,
     conversation,
+    initialTranscript,
+    close,
   }: {
     agent: AgentViewProps<Config>["agent"];
     conversation?: AgentViewProps<Config>["conversation"];
+    initialTranscript?: AgentViewProps<Config>["initialTranscript"];
+    close?: AgentViewProps<Config>["close"];
   }) {
     const sessions = useSyncExternalStore(
       (listener) => runtime.subscribe(listener),
@@ -731,7 +735,12 @@ export function createTabs({
       const running = busy.get(key);
       return running === undefined ? undefined : running ? "Working" : "Idle";
     };
-    const { open, show, back } = useOpenTranscript(conversation, label);
+    const { open, show, back } = useOpenTranscript(
+      conversation,
+      label,
+      initialTranscript && { initial: here, ...initialTranscript },
+      close,
+    );
     return (
       <div className={activityStyles.activity}>
         {conversation && (
@@ -803,6 +812,7 @@ export function createTabs({
             onBack={back}
           >
             <TranscriptView
+              key={open.key}
               agent={agent}
               conversation={open}
               working={busy.get(open.key) ?? false}

@@ -383,6 +383,8 @@ function setup(
     updateRequests: () => [],
     dismissUpdate: vi.fn(),
     approveUpdate: vi.fn(),
+    registerHook: vi.fn(),
+    dispatchHook: vi.fn(async () => undefined),
     configHistory: () => undefined,
   } satisfies Agents;
   const disconnected = { status: "disconnected", generation: 0 };
@@ -695,6 +697,36 @@ it("restores legacy provider links and writes close visits", async () => {
   await vi.waitFor(() =>
     expect(open).toHaveBeenLastCalledWith(base, { replace: true }),
   );
+});
+
+it("opens the agent a link names, on Your agents", async () => {
+  const target = {
+    version: 1,
+    kind: "page",
+    pluginId: "buzz.agents",
+    pageId: "agents",
+    scope: null,
+    route: { version: 1, params: { agent: "2".repeat(64) } },
+  } as const;
+  const navigator = {
+    snapshot: () => ({ entry: { id: "agent", target } }),
+    open: vi.fn(async () => ({ status: "opened" as const })),
+  } as unknown as Navigation;
+  const navigation: PageNavigation = {
+    entryId: "agent",
+    target,
+    signal: new AbortController().signal,
+    focus: "content",
+    forSession: () => navigation,
+    resolve: () => true,
+    complete: () => true,
+  };
+  setup([agent("Ada", 1), agent("Bea", 2)], {
+    page: { navigator, navigation },
+  });
+  const profile = await screen.findByRole("region", { name: "Agent profile" });
+  expect(within(profile).getAllByText("Bea").length).toBeGreaterThan(0);
+  expect(within(profile).queryByText("Ada")).toBeNull();
 });
 
 it("shows an agent's picture in the grid and side panel", async () => {
@@ -1391,6 +1423,71 @@ it("shows the matching community images and follows their presentation updates",
   expect(agents.join).not.toHaveBeenCalled();
 });
 
+it("imports an exported agent file as a new agent of the type that runs it", async () => {
+  const user = userEvent.setup();
+  const scout = {
+    key: "test/scout",
+    title: "Scout",
+    defaults: () => ({ config: { model: "" } }),
+    importShared: (source: { runtime?: string; model: string }) =>
+      source.runtime === "scout" ? { model: source.model } : undefined,
+  } as unknown as RegisteredAgentType;
+  const { agents } = setup([agent("Ada", 1)], { more: [scout] });
+  await user.click(screen.getByRole("button", { name: "New agent" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Import an agent" }),
+  );
+  const dialog = screen.getByRole("dialog", { name: "Import an agent" });
+  const file = (text: string) =>
+    new File([text], "Scout.agent.json", { type: "application/json" });
+  await user.upload(within(dialog).getByLabelText("Choose file"), file("{"));
+  expect(within(dialog).getByRole("alert")).toHaveTextContent(
+    "Failed to read agent snapshot file. Invalid snapshot JSON.",
+  );
+  await user.upload(
+    within(dialog).getByLabelText("Choose file"),
+    file(
+      JSON.stringify({
+        format: "buzz-agent-snapshot",
+        version: 1,
+        definition: {
+          name: "Scout",
+          systemPrompt: "Scout ahead.",
+          runtime: "scout",
+          model: "scout-1",
+        },
+        profile: { displayName: "Scout" },
+        memory: { level: "none", entries: [] },
+      }),
+    ),
+  );
+  const confirmation = await screen.findByRole("dialog", {
+    name: "Scout",
+  });
+  // What the new agent will follow is shown before it is accepted.
+  expect(
+    within(confirmation).getByRole("textbox", { name: "Instructions" }),
+  ).toHaveValue("Scout ahead.");
+  await user.click(
+    within(confirmation).getByRole("button", { name: "Import" }),
+  );
+  expect(agents.port).toHaveBeenCalledWith({
+    source: "shared",
+    type: "test/scout",
+    name: "Scout",
+    instructions: "Scout ahead.",
+    config: { model: "scout-1" },
+  });
+  await vi.waitFor(() =>
+    expect(
+      screen.queryByRole("dialog", { name: "Import Scout" }),
+    ).not.toBeInTheDocument(),
+  );
+  expect(
+    screen.getByRole("dialog", { name: "Import an agent" }),
+  ).toBeInTheDocument();
+});
+
 it("queues several imports in a row and keeps the dialog open until they finish", async () => {
   const user = userEvent.setup();
   const { agents } = setup([]);
@@ -1839,17 +1936,12 @@ it("offers New team on Your teams with create and import, but no marketplace", a
   expect(screen.getByRole("form", { name: "New team" })).toBeInTheDocument();
 });
 
-it("hides Import an agent and Import a team when there is nothing to import", async () => {
+it("hides Import a team when there is nothing to import, and keeps Import an agent for files", async () => {
   const user = userEvent.setup();
-  setup([agent("Ada", 1)], { found: [] });
-  await user.click(screen.getByRole("button", { name: "New agent" }));
-  expect(
-    await screen.findByRole("menuitem", { name: "Create a new agent" }),
-  ).toBeInTheDocument();
-  expect(
-    screen.queryByRole("menuitem", { name: "Import an agent" }),
-  ).not.toBeInTheDocument();
-  await user.keyboard("{Escape}");
+  const { agents } = setup([agent("Ada", 1)], { found: [] });
+  await act(async () => {
+    await agents.portable.mock.results[0]?.value;
+  });
   await user.click(screen.getByRole("tab", { name: "Your teams" }));
   await user.click(screen.getByRole("button", { name: "New team" }));
   expect(
@@ -1858,6 +1950,28 @@ it("hides Import an agent and Import a team when there is nothing to import", as
   expect(
     screen.queryByRole("menuitem", { name: "Import a team" }),
   ).not.toBeInTheDocument();
+  await user.keyboard("{Escape}");
+  await user.click(screen.getByRole("tab", { name: "Your agents" }));
+  await user.click(screen.getByRole("button", { name: "New agent" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Import an agent" }),
+  );
+  const dialog = screen.getByRole("dialog", { name: "Import an agent" });
+  expect(within(dialog).getByLabelText("Choose file")).toBeInTheDocument();
+});
+
+it("offers a first agent from a file when discovery finds nothing", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([], { found: [] });
+  await act(async () => {
+    await agents.portable.mock.results[0]?.value;
+  });
+  expect(
+    screen.queryByRole("button", { name: /Check for agents to import/ }),
+  ).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Import from a file" }));
+  const dialog = screen.getByRole("dialog", { name: "Import an agent" });
+  expect(within(dialog).getByLabelText("Choose file")).toBeInTheDocument();
 });
 
 it.each([
@@ -2307,6 +2421,7 @@ it("makes a team of chosen agents and lists it with its members", async () => {
   await user.click(screen.getByRole("button", { name: "Create team" }));
 
   expect(agents.saveTeam).toHaveBeenCalledWith({
+    draft: expect.any(String),
     name: "Crew",
     instructions: "Ada leads.",
     members: [ada.pubkey, agent("Cy", 3).pubkey],
@@ -2797,18 +2912,16 @@ it("opens avatar and name editing from the profile menu", async () => {
   await user.click(
     await screen.findByRole("menuitem", { name: "Change avatar" }),
   );
-  const dialog = await screen.findByRole("dialog", { name: "Edit agent" });
-  expect(dialog).toHaveAttribute("data-height", "stable-tall");
-  expect(
-    within(dialog).getByRole("button", { name: "Use custom" }),
-  ).toBeVisible();
+  const dialog = await screen.findByRole("dialog", { name: "Change avatar" });
+  expect(dialog).toHaveAttribute("data-height", "content");
+  expect(within(dialog).getByRole("tab", { name: "Emoji" })).toBeVisible();
   expect(
     within(dialog).queryByRole("button", { name: "Back" }),
   ).not.toBeInTheDocument();
   expect(
     within(dialog).getByRole("button", { name: "Save changes" }),
   ).toBeDisabled();
-  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  await user.click(within(dialog).getByRole("button", { name: "Close" }));
   await waitFor(() => expect(menu).toHaveFocus());
   await user.click(menu);
   await user.click(
@@ -2821,16 +2934,7 @@ it("opens avatar and name editing from the profile menu", async () => {
   expect(agents.save).not.toHaveBeenCalled();
 });
 
-it("leaves an open avatar picker by Back, Escape or Cancel without saving", async () => {
-  for (const name of ["ResizeObserver", "IntersectionObserver"])
-    vi.stubGlobal(
-      name,
-      class {
-        observe() {}
-        unobserve() {}
-        disconnect() {}
-      },
-    );
+it("keeps avatar changes as a draft until Save and closes without saving", async () => {
   const user = userEvent.setup();
   const { agents } = setup([agent("Ada", 1)]);
   await user.click(screen.getByRole("gridcell", { name: /Ada/ }));
@@ -2840,25 +2944,18 @@ it("leaves an open avatar picker by Back, Escape or Cancel without saving", asyn
   await user.click(
     await screen.findByRole("menuitem", { name: "Change avatar" }),
   );
-  const dialog = await screen.findByRole("dialog", { name: "Edit agent" });
-  await user.click(within(dialog).getByRole("button", { name: "Use custom" }));
+  const dialog = await screen.findByRole("dialog", { name: "Change avatar" });
   await user.click(within(dialog).getByRole("tab", { name: "Emoji" }));
-  // Let Mart finish mounting so it cannot outlive the test.
-  await waitFor(() =>
-    expect(
-      dialog
-        .querySelector("em-emoji-picker")
-        ?.shadowRoot?.querySelector("input"),
-    ).toBeTruthy(),
-  );
-  await user.click(within(dialog).getByRole("button", { name: "Back" }));
-  await user.click(within(dialog).getByRole("button", { name: "Use custom" }));
-  await user.keyboard("{Escape}");
   expect(
-    await within(dialog).findByRole("button", { name: "Use custom" }),
+    within(dialog).getByRole("button", { name: "Choose emoji" }),
   ).toBeVisible();
-  await user.click(within(dialog).getByRole("button", { name: "Use custom" }));
-  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  expect(
+    within(dialog).getByRole("group", { name: "Avatar background" }),
+  ).toBeVisible();
+  expect(agents.save).not.toHaveBeenCalled();
+  await user.keyboard("{Escape}");
+  expect(dialog).toBeVisible();
+  await user.click(within(dialog).getByRole("button", { name: "Close" }));
   await waitFor(() =>
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
   );
@@ -2903,47 +3000,32 @@ it("shares the editable owner profile with chat profile targets", async () => {
   }
 });
 
-it("saves an avatar directly from its choices and cancels a changed draft", async () => {
+it("saves an avatar directly from the creation picker", async () => {
   const user = userEvent.setup();
   const { agents } = setup([agent("Ada", 1)]);
+  vi.mocked(agents.save).mockRejectedValueOnce(
+    new Error("Could not save avatar"),
+  );
   await user.click(screen.getByRole("gridcell", { name: /Ada/ }));
-  const open = async () => {
-    await user.click(
-      screen.getByRole("button", { name: "Agent profile actions" }),
-    );
-    await user.click(
-      await screen.findByRole("menuitem", { name: "Change avatar" }),
-    );
-    return screen.findByRole("dialog", { name: "Edit agent" });
-  };
-  let dialog = await open();
-  await user.click(within(dialog).getByRole("button", { name: "Gloopies" }));
+  await user.click(
+    screen.getByRole("button", { name: "Agent profile actions" }),
+  );
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Change avatar" }),
+  );
+  const dialog = await screen.findByRole("dialog", { name: "Change avatar" });
   await user.click(within(dialog).getByRole("button", { name: "Gloopies 1" }));
-  expect(
-    within(dialog).getByRole("button", { name: "Gloopies 1" }),
-  ).toHaveAttribute("aria-pressed", "true");
   expect(
     within(dialog).queryByRole("textbox", { name: "Agent name" }),
   ).not.toBeInTheDocument();
-  expect(
-    within(dialog).queryByRole("button", { name: "Back" }),
-  ).not.toBeInTheDocument();
   expect(agents.save).not.toHaveBeenCalled();
-  await user.keyboard("{Escape}");
-  expect(
-    within(dialog).getByRole("button", { name: /^Gloopies$/ }),
-  ).toBeVisible();
-  await user.keyboard("{Escape}");
+  await user.click(
+    within(dialog).getByRole("button", { name: "Save changes" }),
+  );
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+    "Could not save avatar",
+  );
   expect(dialog).toBeVisible();
-  await user.click(within(dialog).getByRole("button", { name: /^Gloopies$/ }));
-  expect(
-    within(dialog).getByRole("button", { name: "Gloopies 1" }),
-  ).toHaveAttribute("aria-pressed", "true");
-  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
-  expect(agents.save).not.toHaveBeenCalled();
-  dialog = await open();
-  await user.click(within(dialog).getByRole("button", { name: "Gloopies" }));
-  await user.click(within(dialog).getByRole("button", { name: "Gloopies 1" }));
   await user.click(
     within(dialog).getByRole("button", { name: "Save changes" }),
   );
@@ -3061,11 +3143,10 @@ it("removes an existing avatar through the image editor and explicit Save", asyn
   await user.click(
     await screen.findByRole("menuitem", { name: "Change avatar" }),
   );
-  const dialog = await screen.findByRole("dialog", { name: "Edit agent" });
-  await user.click(within(dialog).getByRole("button", { name: "Use custom" }));
-  const url = within(dialog).getByRole("textbox", { name: /url/i });
-  await user.clear(url);
-  await user.click(within(dialog).getByRole("button", { name: "Done" }));
+  const dialog = await screen.findByRole("dialog", { name: "Change avatar" });
+  await user.click(
+    within(dialog).getByRole("button", { name: "Remove avatar" }),
+  );
   expect(agents.save).not.toHaveBeenCalled();
   await user.click(
     within(dialog).getByRole("button", { name: "Save changes" }),
@@ -3266,7 +3347,7 @@ it("opens a Marketplace tile in the profile pane and returns focus on close and 
     await user.click(tile);
     await user.click(screen.getByRole("button", { name: "Import" }));
     const dialog = screen.getByRole("dialog", {
-      name: "Import Marketplace helper",
+      name: "Marketplace helper",
     });
     await user.click(within(dialog).getByRole("button", { name: "Import" }));
     await vi.waitFor(() =>

@@ -352,6 +352,55 @@ it("lists saved conversations and shows one's transcript, or that it is gone", a
   expect(save).not.toHaveBeenCalled();
 });
 
+it("opens the conversation's transcript when opened from its activity, once", async () => {
+  const root = "e".repeat(64);
+  localStorage.setItem(
+    "buzz.claude-code.sessions.v1",
+    JSON.stringify({
+      [agent().key]: { [`channel/${root}`]: { id: "kept", seen: 0, at: 2 } },
+    }),
+  );
+  const transcript = JSON.stringify({
+    type: "assistant",
+    uuid: "u1",
+    timestamp: "2026-10-09T10:00:05Z",
+    message: { content: [{ type: "text", text: "Two files." }] },
+  });
+  const Activity = tab(
+    installed({ files: { "./-Users-me--buzz/kept.jsonl": transcript } }).type,
+    1,
+  );
+  const conversation = { channelId: "channel", rootId: root };
+  const { unmount } = render(
+    <Activity
+      agent={agent()}
+      save={vi.fn()}
+      conversation={conversation}
+      initialTranscript={{ opening: 1, done: () => undefined }}
+    />,
+  );
+  const user = userEvent.setup();
+  expect(await screen.findByText("Two files.")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Back to profile" }));
+  expect(
+    screen.getByRole("button", {
+      name: "View transcript: channel",
+    }),
+  ).toBeVisible();
+  expect(screen.queryByText("Two files.")).toBeNull();
+  unmount();
+  // Opened from the profile itself, it lists conversations instead.
+  render(
+    <Activity agent={agent()} save={vi.fn()} conversation={conversation} />,
+  );
+  expect(
+    screen.getByRole("button", {
+      name: "View transcript: channel",
+    }),
+  ).toBeVisible();
+  expect(screen.queryByText("Two files.")).toBeNull();
+});
+
 it("shows the transcript and that sessions may be missing when some history cannot be read", async () => {
   localStorage.setItem(
     "buzz.claude-code.sessions.v1",
@@ -1123,6 +1172,8 @@ it.each(["Identity", "Settings"])(
     const agents = {
       save,
       configHistory: () => undefined,
+      memberships: () => [],
+      subscribe: () => () => {},
     } as unknown as Agents;
     const type = {
       tabs: [

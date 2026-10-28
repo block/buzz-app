@@ -47,6 +47,7 @@ import { ConvertToChannel } from "../../features/solo/ConvertToChannel";
 import { UnreadOptions } from "./UnreadBadge";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
 import { LinkThreadTabContext } from "../../features/conversation/LinkLabelContext";
+import { placeExactOpening } from "../../features/conversation/exact-opening";
 import { flushSync } from "react-dom";
 import {
   useCallback,
@@ -90,6 +91,7 @@ import { useChannelLabels } from "./useChannelLabels";
 import { useComposerSent } from "./useComposerSent";
 import { useSidebarPreferences } from "./useSidebarPreferences";
 import styles from "./Channels.module.css";
+import type { CommunityReader } from "../../features/communities/service";
 import { avatarMedia } from "../../shared/avatar-source";
 
 /** The open Solo conversation's Archive, published for the shortcut while its visit is live. */
@@ -105,11 +107,13 @@ export function ChannelsPage({
   navigation,
   navigator,
   agents,
+  communities,
   archive,
 }: {
   extensions?: ConversationExtensions | undefined;
   /** For adding a whole team of the owner's agents from the members dialog. */
   agents?: Agents | undefined;
+  communities?: CommunityReader | undefined;
   relay: RelayData;
   navigation?: PageNavigation | undefined;
   navigator: Navigation;
@@ -158,6 +162,7 @@ export function ChannelsPage({
           archive={archive}
           companion={companion}
           agents={agents}
+          communities={communities}
         />
       )}
     </section>
@@ -176,11 +181,13 @@ function ChannelWorkspace({
   navigator,
   viewer,
   agents,
+  communities,
   archive,
 }: {
   extensions?: ConversationExtensions | undefined;
   agents?: Agents | undefined;
   companion?: ReactNode;
+  communities?: CommunityReader | undefined;
   scope: string;
   navigation?: PageNavigation | undefined;
   navigator: Navigation;
@@ -685,6 +692,7 @@ function ChannelWorkspace({
   const [exactOpening, setExactOpening] = useState<{
     request: PageNavigation;
     inTimeline: boolean;
+    rootId?: string;
   }>();
   useEffect(() => {
     if (
@@ -707,13 +715,7 @@ function ChannelWorkspace({
       // live event must not move an already-opened thread into the timeline.
       setExactOpening({
         request: navigation,
-        inTimeline:
-          requestedThread !== requestedMessage &&
-          window.status === "ready" &&
-          window.freshness !== "cached" &&
-          window.rows.some(
-            (row) => row.id === requestedMessage && !row.threadRootId,
-          ),
+        ...placeExactOpening(window, requestedMessage),
       });
     };
     const stop = queries.channels.subscribeWindow(currentId, choose);
@@ -751,7 +753,7 @@ function ChannelWorkspace({
         ? {
             channelId: current.id,
             messageId: requestedMessage,
-            rootId: requestedThread ?? requestedMessage,
+            rootId: exact.rootId ?? requestedThread ?? requestedMessage,
             pane: threadPane,
             navigation,
           }
@@ -789,6 +791,7 @@ function ChannelWorkspace({
     current,
     scope,
     channels,
+    profiles,
     conversationIcon,
     // A Solo chat beside another conversation keeps its own header actions.
     conversationToolbar: (channel, open) =>
@@ -1543,6 +1546,7 @@ function ChannelWorkspace({
           key={current.id}
           session={queries}
           channelId={current.id}
+          communities={communities}
           close={() => setMembersOpen(false)}
           trigger={
             membersTrigger.current?.isConnected

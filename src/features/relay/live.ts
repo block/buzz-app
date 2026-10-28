@@ -29,6 +29,12 @@ export const SETUP_TIMEOUT_MS = 10_000;
 const MAX_QUOTA_RETRIES = 3;
 const BASE_RECONNECT_DELAY = 500;
 const MAX_RECONNECT_DELAY = 30_000;
+/** Wait before retrying a refusal that needs someone to act (a rejected AUTH, a
+ * route CLOSED as blocked). It can still clear: access changes, a relay restarts,
+ * a locked signer unlocks. One recovery tick first, doubling to 10 minutes, so
+ * a relay that keeps refusing sees at most 6 attempts an hour per route. */
+export const liveSlowRetryDelay = (failures: number) =>
+  Math.min(LIVE_RECOVERY_INTERVAL * 2 ** (failures - 1), 600_000);
 /** Host-owned server cooldown survives socket/POST replacement.
  * Healthy traffic has no inter-request delay; outstanding work is bounded below. */
 export function createLiveAdmission() {
@@ -207,6 +213,9 @@ type Route = {
   previous?: Route;
   retryRenewal?: boolean;
   quotaRetries: number;
+  /** Consecutive refusals that need action, and when the recover tick may retry. */
+  refusals?: number;
+  retryAt?: number;
   deadline?: ReturnType<typeof setTimeout>;
 };
 export const CHANNEL_KINDS = [
@@ -234,6 +243,7 @@ export function subscribeRelayTraffic(
   let dispatchTimer: ReturnType<typeof setTimeout> | undefined;
   let recoveryTimer: ReturnType<typeof setTimeout> | undefined;
   let reconnectDelay = BASE_RECONNECT_DELAY;
+  let authFailures = 0;
   let generation = 0,
     serial = 0;
   let authenticated = false;
@@ -377,12 +387,24 @@ export function subscribeRelayTraffic(
       ) {
         route.status = "pending";
         delete route.retryRenewal;
+      } else if (
+        route.status === "error" &&
+        route.retryAt !== undefined &&
+        route.retryAt <= Date.now()
+      ) {
+        route.status = "pending";
+        delete route.retryAt;
       }
     }
     pump();
     notify();
     if (closed || generation !== current) return;
-    callbacks.recover?.();
+    try {
+      callbacks.recover?.();
+    } catch (error) {
+      // The chain must outlive a failing hook: log it and keep recovering.
+      log.error(`${peer} live recovery hook failed`, error);
+    }
     if (!closed && authenticated && generation === current)
       recoveryTimer = setTimeout(recover, LIVE_RECOVERY_INTERVAL);
   }
@@ -472,10 +494,17 @@ export function subscribeRelayTraffic(
     pump();
     notify();
   }
+  /** A stop waits for manual Retry, so an earlier refusal's deadline must not revive it. */
+  function stop(route: Route, reason: string) {
+    route.status = "error";
+    route.error = reason;
+    delete route.retryAt;
+  }
   function fail(route: Route, reason: string, transient = false) {
+    const denial = reason === "restricted: not a channel member";
     const previous = route.previous;
     // Only an established, unchanged scope may outlive a failed renewal. Never
-    // restore a retired channel lifetime or bypass denial/invalid-traffic cleanup.
+    // restore a retired channel lifetime or bypass denial cleanup.
     const retain =
       transient &&
       previous?.status === "live" &&
@@ -485,6 +514,7 @@ export function subscribeRelayTraffic(
     if (retain) delete route.previous;
     closeWire(route);
     delete route.retryRenewal;
+    delete route.retryAt;
     if (retain) {
       route.previous = previous;
       // Quota owns its existing bounded retries; the minute timer cannot reset it.
@@ -492,6 +522,12 @@ export function subscribeRelayTraffic(
     }
     route.status = "error";
     route.error = reason;
+    // A denial belongs to the session's membership flow. Any other refusal can
+    // still clear, so the recover tick retries it with backoff.
+    if (!transient && !denial) {
+      route.refusals = (route.refusals ?? 0) + 1;
+      route.retryAt = Date.now() + liveSlowRetryDelay(route.refusals);
+    }
     if (reason.startsWith("rate-limited:")) {
       const hint = /^rate-limited: quota exceeded; retry in (\d+)s$/.exec(
         reason,
@@ -499,10 +535,8 @@ export function subscribeRelayTraffic(
       const seconds = hint ? Number(hint[1]) : 5;
       if (!Number.isSafeInteger(seconds) || seconds > 60) {
         for (const queued of routes.values())
-          if (queued.status === "pending" && !queued.wire) {
-            queued.status = "error";
-            queued.error = "Unsupported live cooldown; automatic setup stopped";
-          }
+          if (queued.status === "pending" && !queued.wire)
+            stop(queued, "Unsupported live cooldown; automatic setup stopped");
         // Conservative shared pause survives replacement; never overflow a timer.
         admission.pause(
           Number.isSafeInteger(seconds) && seconds <= 86400 ? seconds : 86400,
@@ -513,15 +547,15 @@ export function subscribeRelayTraffic(
         else {
           // Stop the unsent queue too: rejection must never drain it into an exhausted budget.
           for (const queued of routes.values())
-            if (queued.status === "pending" && !queued.wire) {
-              queued.status = "error";
-              queued.error =
-                "Live request cooldown retries exhausted; retry available";
-            }
+            if (queued.status === "pending" && !queued.wire)
+              stop(
+                queued,
+                "Live request cooldown retries exhausted; retry available",
+              );
         }
       }
     }
-    if (reason === "restricted: not a channel member") {
+    if (denial) {
       const current = generation;
       const denied = new Set(scope(route));
       denying = denied;
@@ -709,13 +743,17 @@ export function subscribeRelayTraffic(
       retryTimer = setTimeout(connect, delay);
     };
     unresponsive = reconnect;
-    const terminal = (reason: string) => {
+    // The error stays in state. Recovery treats it as settled, so only this
+    // slow timer retries it; a signer/viewer mismatch cannot clear and never does.
+    const terminal = (reason: string, retryable = true) => {
       if (!valid()) return;
       log.error(`${peer} ${reason}`);
       clearSocket();
       connection = "error";
       connectionError = reason;
       notify();
+      if (retryable)
+        retryTimer = setTimeout(connect, liveSlowRetryDelay(++authFailures));
     };
     let ws: WebSocket;
     try {
@@ -789,7 +827,7 @@ export function subscribeRelayTraffic(
           });
           if (!valid()) return;
           if (auth.pubkey !== viewer) {
-            terminal("Live signer does not match viewer");
+            terminal("Live signer does not match viewer", false);
             return;
           }
           authId = auth.id;
@@ -806,6 +844,7 @@ export function subscribeRelayTraffic(
         }
         clearTimeout(deadline);
         authenticated = true;
+        authFailures = 0;
         connection = "connected";
         recoveryTimer = setTimeout(recover, LIVE_RECOVERY_INTERVAL);
         pump();
@@ -890,7 +929,8 @@ export function subscribeRelayTraffic(
         try {
           incoming = eventDto(data[2]);
         } catch {
-          fail(currentRoute ?? route, "Relay supplied invalid live traffic");
+          // One undecodable event must not take the route (or its batch) down.
+          log.warn(`${peer} dropped an undecodable live event`);
           return;
         }
         const ids = scope(route);
@@ -959,6 +999,7 @@ export function subscribeRelayTraffic(
         delete route.previous;
         route.status = "live";
         delete route.error;
+        delete route.refusals;
         route.replay = route.count >= LIVE_REPLAY_LIMIT ? "limited" : "unknown";
         notify();
         if (!valid() || wires.get(route.wire ?? "") !== route) return;

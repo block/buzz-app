@@ -6,8 +6,10 @@ Agents (`src/bundled/agents`, `src/features/agents`) is the app's only agent
 system: it creates, runs and deletes the viewer's agents. This document covers
 what the rest of the app knows about agents: shared selection, mentions, archive
 display, activity, names, inventory and usage. The v1 Agents page, Profiles plugin,
-Channel templates plugin, agent snapshots, team bundles, community catalog are gone, as are the native `agent_control_*`,
-model-discovery and harness-install commands behind them.
+Channel templates plugin and team bundles are gone, as are the native `agent_control_*`,
+model-discovery and harness-install commands behind them. Agents keeps sharing
+agents to the community catalog and exporting them; see
+[Sharing and exporting agents](#sharing-and-exporting-agents).
 
 Agents was called Agents2 while v1 still shipped. Startup now moves its identity
 folder to `agents/identities.json` and its browser settings to `buzz.agents.v1`
@@ -481,11 +483,17 @@ send entry. The next draft keeps only agents that the sent message notified. Thi
 changes during enrollment, dispatch or retry are intentionally not covered. The
 existing relay membership/send/retry validator is unchanged.
 
-After an accepted send, the next draft starts with the exact selected agent-name
-mentions, deduplicated by key. Agent classification uses already-cached profile hints
-or the shared agent-choice projection (library and local agents), not a new lookup or
-permission grant. Human recipients and
-plain typed names are not carried forward. The prefill is an ordinary scoped draft:
+After an accepted send, the composer keeps the exact selected agent-name mentions,
+deduplicated by key, as its next prefill. That prefill is not a draft: an empty
+composer derives it from the agents your latest message in that conversation
+notified, so a channel, the thread a message started, a DM or a Solo chat shows
+the same prefill on every device, and nothing is saved until you type there.
+Sending without the agent ends it. Removing the prefilled mention lasts until the
+composer is shown again or your latest message there changes; a draft you have
+typed is left as written.
+Agent classification uses already-cached profile hints or the shared agent-choice
+projection (library and local agents), not a new lookup or permission grant. Human recipients and
+plain typed names are not carried forward. Once typed, the draft is an ordinary scoped draft:
 channel/thread/account isolation, edits, removal, undo and delivery checks still apply.
 **Settings → Buzz → Agent setup → Agent behavior → Remember mentioned agents** defaults on and is saved on this
 device. Turning it off stops future prefills without changing the current draft;
@@ -670,9 +678,22 @@ in its home record and applies everywhere.
   community, which only Delete leaves. The membership's harness sessions and the
   agent's memory in that community stay, so they come back if it is added again;
   its attention there does not.
-- **Teams** are shared by every community. A community shows a team with a member
-  there, or with none anywhere. A member's team roster lists only teammates in the
-  same community, and the editor keeps members that are only elsewhere.
+- **Teams** work like agents: a team shows in every community where it has a
+  member (or in all of them while it has none), but has one home community. A
+  local team is shared by every community; a member's roster lists only teammates
+  in the same community, and the editor keeps members that are only elsewhere.
+  Where the community's relay supports config channels, a new team, or one
+  imported from old Buzz, is synced: its NIP-AP config channel (name and
+  instructions) is created only in the community it was made in, and its members
+  are the owner's agents in that channel. Until the relay's support is known,
+  New team and Import are refused rather than made local. Adding an agent with
+  no membership there is refused with "Add <agent> to <community> first"; the
+  agent is never added to that community for you. A member running in any
+  community takes the team's section from the home
+  channel's last confirmed copy, and with none its start waits rather than use
+  local fields. Changes and Delete (which archives the home channel) run online,
+  one at a time per team, and report anything left part way. Existing local
+  teams are not migrated.
 - **Hosted agents** stay in one community, as their provider holds the key.
 
 `removeRelayAgent` applies the same steps to a relay-only agent: archive when
@@ -846,6 +867,56 @@ new notifications consume this view. Mention parsing still uses signed identity
 evidence before resolving its visible label. The portable policy is specified in
 `src/bundled/identity-naming/README.md`.
 
+## Sharing and exporting agents
+
+An agent's card menu offers **Share** when its type has `exportShared`, the
+inverse of `importShared`: the catalog `runtime` (`claude`, `codex`, `goose`,
+`pi`), `provider` and `model` of its config. Instructions come from the type's
+`carry`. `src/features/agents/agent-share.ts` builds one allowlisted definition
+for both paths: name, instructions, runtime, provider, model and an HTTPS
+picture without a query or fragment. Workspace, keys, environment, memory and
+every other setting stay behind, and text that looks like a credential refuses
+the share or export, as does a `configProblem`, which leaves the synced settings
+and instructions out of `config`. Names and instructions must pass block/buzz's
+`validate_agent_definition_text` rules (128-character names, 64 KiB
+instructions, no control or invisible characters but those in emoji) on export
+and on import.
+
+**Share to catalog** publishes the owner's kind 30175 head with `d` set to the
+agent's pubkey and `["shared","true"]`, replacing the head a strong read found
+(`supersedes`). Its body names stock transport, `"acp_command": "buzz-acp"`, as
+NIP-AP requires of shared heads. Turning it off republishes that head's content without the tag;
+the relay then shows it only to its author, and Marketplace lists only shared
+heads. An accepted publish can still lose to a newer head, and an unanswered one
+may still land, so the dialog reads the head again before it reports success or
+failure. The native signer and the development broker admit only this owner
+envelope (`src-tauri/src/relay/catalog.rs`, `catalog-envelope.ts`). Delete,
+and Remove from one community, unshare a shared head in each community the
+agent leaves, before its kind 30177 record goes, and go on only once a fresh
+read no longer finds it shared: nothing there lists the agent to unshare it
+from afterwards, and a deleted agent can't be adopted. The outbox dates the
+replacement past the head, so one dated ahead of this clock is replaced too.
+While shared, **Update share** appears once the catalog body differs from what
+the agent would share now, and publishes that, still shared.
+
+**Export agent** saves `{name}.agent.png` or, by **File format**,
+`{name}.agent.json` in the `buzz-agent-snapshot` version 1 format that block/buzz
+and earlier Buzz write, without memory. The PNG is the picture redrawn at
+512×512, or a transparent pixel when it is missing or takes over 5 seconds to
+load, with the manifest in a `buzz_agent_snapshot` tEXt chunk. Desktop saves it
+to Downloads through `file_download` (`src-tauri/src/relay.rs`), as media is
+saved, since WKWebView cannot save a `blob:` link cleanly, and returns the
+saved path, which the dialog shows. It takes only
+`.agent.png` and `.agent.json` names, and a repeat export is saved as
+`{name} (1).agent.png`.
+**Import an agent** → **Choose file** reads `.agent.json` and `.agent.png`
+(base64 manifest in a `buzz_agent_snapshot` tEXt chunk) from any of them,
+refusing files over 5 MiB (JSON) or 10 MiB (PNG) before reading them, and opens
+the Marketplace import dialog, which shows the instructions, so the copy is a
+new agent with a new key.
+Memory, an inline avatar, respond-to, parallelism and timeouts in an imported
+file stay behind. Teams have no catalog or file export.
+
 ## Community inventory
 
 `agentLibrary` is the display inventory behind `agentChoices`. Each session reads
@@ -998,3 +1069,5 @@ Subscription runtime history stays on this device, outside configuration: the la
 An Attention source run receives `spawn(processId, { args, cwd, env, onStdout, onStderr })`. Buzz binds it to the watch's owning agent, destination and lifetime. There is no public agent connection or caller-selected agent identity. The process must be declared in the calling plugin's `host.processes`, and the plugin must declare `host.mcp` (and `host.files` when its tools read local paths). The host retains process permission checks and signing keys. The bundled command helper initializes one MCP session, adds an agent-scoped `buzz` to PATH and passes that session to the command and its children. `buzz tools` lists tools; `buzz <tool> --field value` and `buzz call <tool> '<JSON object>'` invoke them. There is no owner-identity fallback.
 
 Source return or failure, cancellation, Attention off, agent stop, plugin unload, command exit or closing the MCP transport revokes command access. Successful queued output remains valid after the source returns. Killing a command uses the existing host process group/job cleanup for descendants. OS access is the same as the app user's. Buzz owns batching, queue retries and final output draining for its built-in command sources. Other source plugins retain their own producer policies. See the [executable scheduled-source example](../tests/fixtures/agent-command/README.md), including the scope of its fixture-based custody evidence.
+
+Native agent hook callbacks are described in [Agent hook callbacks](agent-tool-hooks.md).

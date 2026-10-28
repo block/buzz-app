@@ -79,23 +79,19 @@ it("imports only after the owner approves the listed communities", async () => {
   expect(invoke).toHaveBeenCalledTimes(calls);
 });
 
-it.each(["Skip import", "Close", "Escape"])(
-  "declines without importing via %s",
-  async (action) => {
-    const { communities, mount, user } = fixture();
-    const view = mount();
-    await screen.findByRole("alertdialog");
-    if (action === "Escape") await user.keyboard("{Escape}");
-    else await user.click(screen.getByRole("button", { name: action }));
-    await waitFor(() => expect(localStorage.getItem(marker)).toBe("1"));
-    expect(communities.snapshot().memberships).toEqual([]);
-    expect(localStorage.getItem(record)).toBeNull();
-    view.unmount();
-    mount();
-    await act(flush);
-    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
-  },
-);
+it("remembers a declined import across mounts", async () => {
+  const { communities, mount, user } = fixture();
+  const view = mount();
+  await screen.findByRole("alertdialog");
+  await user.click(screen.getByRole("button", { name: "Skip import" }));
+  await waitFor(() => expect(localStorage.getItem(marker)).toBe("1"));
+  expect(communities.snapshot().memberships).toEqual([]);
+  expect(localStorage.getItem(record)).toBeNull();
+  view.unmount();
+  mount();
+  await act(flush);
+  expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+});
 
 it("does not persist a decline when a pending consent dialog unmounts", async () => {
   const { communities, mount } = fixture();

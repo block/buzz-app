@@ -41,7 +41,9 @@ visit beneath the new destination.
 
 Settings Close retires its known section visits for the same account/community
 scope and returns to the covered workspace. Back/Forward between sections remains
-reversible until Close. Profile discard confirmation still precedes dismissal.
+reversible until Close. Profile discard confirmation precedes dismissal and Back/Forward departure.
+Keep editing preserves the mounted draft and current visit; Discard changes
+continues the requested traversal without retiring the Settings visit.
 Agents-page provider controls retire that provider's known visits on the same
 scoped Agents page, preserving other providers and page visits. Their pending-work
 close protection remains in the shared Dialog. Settings → Agent setup provider

@@ -469,3 +469,25 @@ it("a late hashchange cannot release the next dismissal's pending traversal", ()
   expect(driver.snapshot().canGoForward).toBe(false);
   driver.dispose();
 });
+
+it("guards asynchronous native traversal without losing the presentation or its return path", () => {
+  const fixture = browser("", true);
+  const host = createNavigationController(createBrowserHistory(fixture.host));
+  const nav = host.navigation;
+  void nav.open(settings);
+  const original = nav.snapshot().attempt;
+  let decide: ((proceed: boolean) => void) | undefined;
+  host.guardDeparture((_next, decision) => {
+    decide = decision;
+    return true;
+  });
+  fixture.host.history.back();
+  expect(nav.snapshot().attempt).toBe(original);
+  expect(original.signal.aborted).toBe(false);
+  decide?.(true); // Even before the bounce has reached Settings again.
+  fixture.flush();
+  fixture.flush();
+  expect(nav.snapshot().entry.target).toEqual(homeTarget);
+  expect(original.signal.aborted).toBe(true);
+  host.dispose();
+});

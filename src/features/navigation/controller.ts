@@ -191,6 +191,10 @@ export function createNavigationController(
     emit();
     return promise;
   }
+  let departureGuard:
+    | ((next: NavigationEntry, decide: (proceed: boolean) => void) => boolean)
+    | undefined;
+  let departure: { from: string; to: string; proceed: boolean } | undefined;
   let resolving: Operation | undefined;
   // Both host drivers publish pushes synchronously; consume this opening only.
   let openingFocus: NavigationFocus | undefined;
@@ -216,6 +220,40 @@ export function createNavigationController(
         emit();
       } else {
         const state = history.snapshot();
+        if (departure?.from === state.current.id) {
+          if (departure.proceed) history.returnTo(departure.to);
+          return;
+        }
+        const admitted =
+          departure?.proceed && departure.to === state.current.id;
+        if (admitted) departure = undefined;
+        if (
+          !admitted &&
+          state.current.id !== active.attempt.entry.id &&
+          departureGuard
+        ) {
+          const pending = {
+            from: active.attempt.entry.id,
+            to: state.current.id,
+            proceed: false,
+          };
+          departure = pending;
+          const blocked = departureGuard(state.current, (proceed) => {
+            if (departure !== pending) return;
+            if (!proceed) {
+              departure = undefined;
+              return;
+            }
+            pending.proceed = true;
+            if (history.snapshot().current.id === pending.from)
+              history.returnTo(pending.to);
+          });
+          if (blocked) {
+            history.returnTo(pending.from);
+            return;
+          }
+          departure = undefined;
+        }
         if (state.current === active.attempt.entry) {
           snapshot = Object.freeze({
             ...snapshot,
@@ -338,6 +376,13 @@ export function createNavigationController(
   });
   return {
     navigation,
+    /** Shell-owned draft guard; native traversal bounces before presentation unmounts. */
+    guardDeparture(guard: NonNullable<typeof departureGuard>) {
+      departureGuard = guard;
+      return () => {
+        if (departureGuard === guard) departureGuard = undefined;
+      };
+    },
     /** Normalize a pending presentation, not a new intent; never reset its deadline. */
     resolve(attempt: OpenAttempt, input: OpenTarget) {
       return transaction(() => {

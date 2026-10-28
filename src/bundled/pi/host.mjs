@@ -58,6 +58,15 @@ const Replies = defineDoc({
   scope: "session",
   initial: () => ({}),
 });
+/** Each Pi conversation's session, by conversation id: `epoch` counts the
+ * resets since it was first kept, and `fresh` holds until its first turn is
+ * submitted. A conversation from before it was kept has none. */
+const Epochs = defineDoc({
+  kind: "buzz.epochs",
+  version: 1,
+  scope: "session",
+  initial: () => ({}),
+});
 /** Messages that arrive while Pi works join its run at the next boundary. */
 const SETTINGS = { steeringMode: "all" };
 /** Pi's own default thinking level, for a model that thinks. */
@@ -872,7 +881,10 @@ export function serve({
       const found = await harness.conversation(conversation, context);
       if (!found) return { entries: [] };
       const page = await found.entries({}, PAGE, cursor, context);
+      const session = (await harness.snapshot(Epochs, context))?.[conversation];
       return {
+        // The current session's, however old the reset that began it.
+        ...(session ? { epoch: session.epoch } : {}),
         entries: page.items.map(({ id, kind, model, data }) => ({
           id,
           kind,
@@ -932,6 +944,7 @@ export function serve({
               context: tools,
               seen: 0,
             };
+            (await tx.doc(Epochs))[conversation.id] = { epoch: 0, fresh: true };
           }, context);
         }
         opened.contexts.set(conversation.id, tools);
@@ -950,6 +963,7 @@ export function serve({
             : undefined,
         );
         if (!submitted) return false;
+        let session;
         // Recorded once Pi has the turn: one that could not start leaves the
         // messages it would have been shown for the next.
         await harness.commit(async (tx) => {
@@ -959,8 +973,14 @@ export function serve({
             context: tools,
             seen: Math.max(at, places[key]?.seen ?? 0),
           };
+          // A steer is not configured with this turn's instructions.
+          const epochs = await tx.doc(Epochs);
+          session = epochs[conversation.id];
+          if (session?.fresh && !(busy && turn.steer))
+            epochs[conversation.id] = { epoch: session.epoch, fresh: false };
+          else if (session) session = { ...session, fresh: false };
         }, context);
-        return submitted;
+        return session ? { ...submitted, ...session } : submitted;
       })();
       opened.queues.set(key, delivered);
       const done = () => {
@@ -1072,6 +1092,11 @@ export function serve({
         await harness.commit(async (tx) => {
           const places = await tx.doc(Places);
           if (places[key]) places[key] = { ...places[key], seen: 0 };
+          const epochs = await tx.doc(Epochs);
+          epochs[conversation.id] = {
+            epoch: (epochs[conversation.id]?.epoch ?? 0) + 1,
+            fresh: true,
+          };
         }, context);
         return;
       }

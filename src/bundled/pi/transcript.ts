@@ -59,6 +59,9 @@ type Conversation = Readonly<{
   channelId: string;
   root?: string;
 }>;
+/** Where the read entries sit in the conversation: its current session's
+ * epoch, when the host keeps one, and whether they reach its start. */
+type Span = Readonly<{ epoch?: number | undefined; start: boolean }>;
 type PiTranscript = Transcript & { more: boolean };
 
 const text = (content: Message["content"]) =>
@@ -103,7 +106,15 @@ export function piTurns(
   entries: readonly PiEntry[],
   conversation: Conversation,
   working: boolean,
+  span: Span = { start: false },
 ): TranscriptTurn[] {
+  // Each reset starts a session, so those before the last are numbered back
+  // from the current one.
+  let epoch =
+    span.epoch === undefined
+      ? undefined
+      : span.epoch - entries.filter(({ kind }) => kind === "pi.reset").length;
+  let starts = span.start;
   const turns: TranscriptTurn[] = [];
   const tools = new Map<string, ToolItem>();
   /** Messages sent with send, until their result says whether they were posted. */
@@ -122,17 +133,26 @@ export function piTurns(
       channelId: conversation.channelId,
       threadRootId: conversation.root ?? null,
       triggeringEventIds: [],
-      sessionId: String(conversation.conversation),
-      newSession: false,
+      sessionId:
+        epoch === undefined
+          ? String(conversation.conversation)
+          : `${conversation.conversation}:${epoch}`,
+      newSession: starts && !partial,
       config: [],
       startedAt: at,
       partial,
       items: [],
     };
     turns.push(next);
+    starts = false;
     return next;
   };
-  for (const entry of entries)
+  for (const entry of entries) {
+    if (entry.kind === "pi.reset") {
+      if (epoch !== undefined) epoch++;
+      starts = true;
+      continue;
+    }
     (entry.model ?? []).forEach((message, position) => {
       const id = `${entry.id}:${position}`;
       const at = message.timestamp ?? last;
@@ -256,6 +276,7 @@ export function piTurns(
         }
       });
     });
+  }
   const current = turns.at(-1);
   if (current && !working) current.endedAt = Math.max(last, current.startedAt);
   return turns;
@@ -273,22 +294,28 @@ export async function readTranscript(
   const entries: PiEntry[] = [];
   let turns = 0;
   let cursor: unknown;
+  let epoch: number | undefined;
   do {
-    const page = await pi.request<{ entries: PiEntry[]; next?: unknown }>(
-      "entries",
-      {
-        agent,
-        conversation: conversation.conversation,
-        ...(cursor ? { cursor } : {}),
-      },
-    );
+    const page = await pi.request<{
+      entries: PiEntry[];
+      next?: unknown;
+      epoch?: number;
+    }>("entries", {
+      agent,
+      conversation: conversation.conversation,
+      ...(cursor ? { cursor } : {}),
+    });
     signal.throwIfAborted();
     entries.push(...page.entries);
+    epoch ??= page.epoch;
     turns += page.entries.filter(opens).length;
     cursor = page.next;
     // One more than shown, so the oldest shown turn starts with its prompt.
   } while (cursor && turns <= TURN_LIMIT);
-  const all = piTurns(entries.reverse(), conversation, working);
+  const all = piTurns(entries.reverse(), conversation, working, {
+    epoch,
+    start: !cursor,
+  });
   return {
     turns: all.slice(-TURN_LIMIT),
     more: all.length > TURN_LIMIT,

@@ -311,3 +311,53 @@ it("reads pages, newest first, until one turn more than it shows", async () => {
     conversation: 2,
   });
 });
+
+it("numbers sessions back from the host's epoch, however old its resets", async () => {
+  // Earlier resets are outside the read window; one is inside it.
+  const entries = [
+    user(1, event("older")),
+    assistant(2, [{ type: "text", text: "a" }]),
+    { id: 3, kind: "pi.reset" },
+    user(4, event("newer")),
+    assistant(5, [{ type: "text", text: "b" }]),
+  ];
+  // The host keeps the epoch, so a restarted host gives the same one.
+  const request = vi.fn(async () => ({
+    entries: [...entries].reverse(),
+    epoch: 1,
+  }));
+  const read = await readTranscript(
+    { request } as never,
+    "agent",
+    PLACE,
+    false,
+    new AbortController().signal,
+  );
+  expect(read.turns.map((turn) => [turn.sessionId, turn.newSession])).toEqual([
+    ["2:0", true],
+    ["2:1", true],
+  ]);
+  // Two resets older than the window: its first session is the second.
+  expect(
+    piTurns(entries, PLACE, false, { epoch: 3, start: false }).map((turn) => [
+      turn.sessionId,
+      turn.newSession,
+    ]),
+  ).toEqual([
+    ["2:2", false],
+    ["2:3", true],
+  ]);
+});
+
+it("starts a session at the conversation's first entry", () => {
+  const turns = piTurns([user(1, event("hi"))], PLACE, false, {
+    epoch: 0,
+    start: true,
+  });
+  expect(turns[0]).toMatchObject({ sessionId: "2:0", newSession: true });
+  // A conversation the host keeps no epoch for keeps its own id.
+  expect(piTurns([user(1, event("hi"))], PLACE, false)[0]).toMatchObject({
+    sessionId: "2",
+    newSession: false,
+  });
+});

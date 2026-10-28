@@ -60,6 +60,8 @@ export type TranscriptTurn = {
   triggeringEventIds: string[];
   sessionId?: string;
   newSession: boolean;
+  /** The first shown turn of a session that began before the shown ones. */
+  continued?: boolean;
   /** Selected ACP session config values, e.g. model and thinking level. */
   config: string[];
   startedAt: number;

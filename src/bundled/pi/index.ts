@@ -40,6 +40,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         )) ?? null
       );
     },
+    agents.storage,
   );
   const { ActivityTab, Create, CreateModel, SettingsTab } = createTabs({
     setup: runtime.setup,

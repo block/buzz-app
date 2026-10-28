@@ -1,4 +1,10 @@
-import { useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
+import {
+  Fragment,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  type ReactNode,
+} from "react";
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type {
@@ -146,12 +152,20 @@ export function ActivityTranscript({
         </p>
       )}
       {transcript.turns.map((turn) => (
-        <Turn
-          key={turn.turnId}
-          turn={turn}
-          state={turn.endedAt ? "ended" : (state(turn.turnId) ?? "unknown")}
-          agentName={agentName}
-        />
+        <Fragment key={turn.turnId}>
+          {(turn.newSession || turn.continued) && (
+            <p className={`text-body-sm ${styles.session}`}>
+              {turn.newSession
+                ? "New session"
+                : "Session continued; earlier turns not shown"}
+            </p>
+          )}
+          <Turn
+            turn={turn}
+            state={turn.endedAt ? "ended" : (state(turn.turnId) ?? "unknown")}
+            agentName={agentName}
+          />
+        </Fragment>
       ))}
     </div>
   );
@@ -178,7 +192,6 @@ function Turn({
     thread(turn),
     ...turn.config,
     turn.source === "heartbeat" ? "heartbeat" : "",
-    turn.newSession ? "new session" : "",
     turn.stopReason ?? "",
     turn.context
       ? `context ${Math.round(turn.context.used / 1000)}k/${Math.round(turn.context.size / 1000)}k`

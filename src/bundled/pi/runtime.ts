@@ -30,6 +30,8 @@ import {
 import { readProject } from "../../features/agent-harness/project";
 import { fromOwner, workflowOf } from "../../features/agents/owner-attestation";
 import { type AgentKey, pubkeyOf } from "../../features/agents/membership";
+import { sessionPrompts } from "../../features/agents/session-prompts";
+import { localStore, type AgentStore } from "../../features/agents/store";
 import type { AgentReads } from "../../features/agents/reads";
 import type {
   Agent,
@@ -171,6 +173,14 @@ type Entry = {
   closed: boolean;
 };
 
+/** A turn Pi took, in which conversation, and the session it starts there
+ * when it is that session's first turn. */
+type Delivered = {
+  submission: number;
+  conversation: number;
+  session?: number;
+};
+
 export class PiRuntime {
   private readonly agents = new Map<AgentKey, Entry>();
   private readonly memoryReads = new MemoryReads();
@@ -211,6 +221,8 @@ export class PiRuntime {
       event: string,
       input: unknown,
     ) => Promise<unknown>,
+    /** Agent storage, where what each session started with is kept. */
+    private readonly storage: AgentStore = localStore(),
   ) {
     this.pi = new Pi(() => this.spawn, {
       tool: (call) => this.tool(call),
@@ -353,7 +365,17 @@ export class PiRuntime {
     working: boolean,
     signal: AbortSignal,
   ) {
-    return readTranscript(this.pi, agent, place, working, signal);
+    return readTranscript(this.pi, agent, place, working, signal).then(
+      (transcript) => ({
+        ...transcript,
+        turns: this.prompts(agent).shown(transcript.turns),
+      }),
+    );
+  }
+  /** What each of the agent's sessions started with, by
+   * `conversation:session`. */
+  private prompts(agent: AgentKey) {
+    return sessionPrompts(this.storage, "pi", agent);
   }
   subscribe(listener: () => void) {
     this.listeners.add(listener);
@@ -491,10 +513,7 @@ export class PiRuntime {
     const same = prior?.topLevel === topLevel;
     const wait = prior && (same ? prior.handed : prior.settled);
     const request = wake?.type === "plugin" ? `${WAKE}${wake.id}` : event.id;
-    let submitted:
-      | { submission: number; conversation: number }
-      | false
-      | undefined;
+    let submitted: Delivered | false | undefined;
     // A delivery during a session action waits for it, past its handover.
     const control = `${agent.key}/${key}`;
     let interrupted = false;
@@ -586,6 +605,14 @@ export class PiRuntime {
         () => !interrupted && (!wake || !current || current()),
       );
       if (!submitted) return;
+      if (submitted.session !== undefined)
+        void this.prompts(agent.key).save(
+          `${submitted.conversation}:${submitted.session}`,
+          [
+            { label: "instructions", text: picked.instructions },
+            { label: "core memory", text: picked.core?.text ?? "" },
+          ],
+        );
       if (
         this.remember(agent.key, key, submitted.conversation, event.created_at)
       )
@@ -820,7 +847,7 @@ export class PiRuntime {
     agent: AgentKey,
     params: object,
     current: () => boolean,
-  ): Promise<{ submission: number; conversation: number } | false | undefined> {
+  ): Promise<Delivered | false | undefined> {
     try {
       return await this.pi.request("deliver", params);
     } catch (error) {

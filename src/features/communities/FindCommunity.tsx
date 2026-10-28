@@ -36,9 +36,9 @@ const FAILURES: Record<FindFailure, { message: string; retry: boolean }> = {
 
 /**
  * Looks up a community at a canonical secure origin before any identity or
- * session exists. Owns nothing beyond the lookup: the caller decides what Join
- * does, and leaving it out keeps Join a disabled placeholder. While `onJoin` is
- * pending the page holds still; what its failure means is the caller's to show.
+ * session exists. Owns nothing beyond the lookup: the caller either takes the
+ * found community or decides what Join does. While `onJoin` is pending the page
+ * holds still; what its failure means is the caller's to show.
  */
 export function FindCommunity({
   url,
@@ -50,15 +50,22 @@ export function FindCommunity({
 }: {
   url: string;
   onCancel: () => void;
-  /** Takes over a found community instead of showing Join Community; the lookup page stays until the caller moves on. */
-  onFound?: (found: FoundCommunity) => void;
-  onJoin?: (
-    found: FoundCommunity,
-    consent: JoinConsent,
-  ) => Promise<void> | void;
   request?: RelayFetch;
   titleId?: string;
-}) {
+} & (
+  | {
+      /** Takes over a found community instead of showing Join Community; the lookup page stays until the caller moves on. */
+      onFound: (found: FoundCommunity) => void;
+      onJoin?: never;
+    }
+  | {
+      onJoin: (
+        found: FoundCommunity,
+        consent: JoinConsent,
+      ) => Promise<void> | void;
+      onFound?: never;
+    }
+)) {
   const host = new URL(url).host;
   const [state, setState] = useState<State>({ status: "finding" });
   const [adult, setAdult] = useState(false);
@@ -144,10 +151,9 @@ export function FindCommunity({
   );
   const consented = (!needsAge || adult) && (!needsAgreement || agreed);
   const join = async () => {
-    if (!onJoin) return;
     setJoining(true);
     try {
-      await onJoin(found, { adult, agreed });
+      await onJoin?.(found, { adult, agreed });
     } catch {
       // The caller shows what a failed join means; here it only ends the wait.
     } finally {
@@ -216,10 +222,10 @@ export function FindCommunity({
         </Button>
         <Button
           variant="prominent"
-          disabled={!onJoin || !consented || joining}
+          disabled={!consented || joining}
           onClick={() => void join()}
         >
-          {onJoin ? "Join" : "Join — Coming soon"}
+          Join
         </Button>
       </div>
     </>

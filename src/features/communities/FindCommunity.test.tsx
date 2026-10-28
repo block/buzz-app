@@ -138,22 +138,11 @@ it("shows the host while finding, then only published facts, gating Join on ever
   ]);
 });
 
-it("without a policy Join needs no consent, and without onJoin it stays a placeholder", async () => {
+it("without a policy Join needs no consent", async () => {
   const request = relay(() => ({
     "/": Response.json({ ...buzz, icon: undefined, version: undefined }),
     "/api/join-policy": new Response("missing", { status: 404 }),
   }));
-  const view = render(
-    <FindCommunity url={url} onCancel={vi.fn()} request={request} />,
-  );
-  expect(
-    await screen.findByRole("heading", { name: "Join Community" }),
-  ).toBeVisible();
-  expect(screen.queryByRole("checkbox")).toBeNull();
-  expect(document.querySelector("img")).toBeNull();
-  expect(join()).toHaveTextContent("Join — Coming soon");
-  expect(join()).toBeDisabled();
-  view.unmount();
   render(
     <FindCommunity
       url={url}
@@ -162,7 +151,12 @@ it("without a policy Join needs no consent, and without onJoin it stays a placeh
       request={request}
     />,
   );
-  expect(await screen.findByRole("button", { name: "Join" })).toBeEnabled();
+  expect(
+    await screen.findByRole("heading", { name: "Join Community" }),
+  ).toBeVisible();
+  expect(screen.queryByRole("checkbox")).toBeNull();
+  expect(document.querySelector("img")).toBeNull();
+  expect(screen.getByRole("button", { name: "Join" })).toBeEnabled();
 });
 
 it("with onFound a found community is handed over while the lookup page stays", async () => {
@@ -178,7 +172,6 @@ it("with onFound a found community is handed over while the lookup page stays", 
       url={url}
       onCancel={onCancel}
       onFound={onFound}
-      onJoin={vi.fn()}
       request={request}
     />,
   );
@@ -249,7 +242,14 @@ it("announces the lookup only after a second, and again a second after Retry", a
         ? info.promise
         : Promise.resolve(new Response(null, { status: 404 })),
     );
-    render(<FindCommunity url={url} onCancel={vi.fn()} request={request} />);
+    render(
+      <FindCommunity
+        url={url}
+        onCancel={vi.fn()}
+        onJoin={vi.fn()}
+        request={request}
+      />,
+    );
     const region = screen.getByText(host).closest("[aria-busy]");
     expect(region).toHaveAttribute("aria-busy", "true");
     expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
@@ -294,7 +294,14 @@ it("Cancel while finding leaves at once and discards the late answer", async () 
   });
   const onCancel = vi.fn();
   const user = userEvent.setup();
-  render(<FindCommunity url={url} onCancel={onCancel} request={request} />);
+  render(
+    <FindCommunity
+      url={url}
+      onCancel={onCancel}
+      onJoin={vi.fn()}
+      request={request}
+    />,
+  );
   await user.click(screen.getByRole("button", { name: "Cancel" }));
   expect(onCancel).toHaveBeenCalledTimes(1);
   expect(signal?.aborted).toBe(true);
@@ -312,7 +319,14 @@ it("an unreachable relay offers Retry, which looks again", async () => {
   };
   const request = relay(() => answers);
   const user = userEvent.setup();
-  render(<FindCommunity url={url} onCancel={vi.fn()} request={request} />);
+  render(
+    <FindCommunity
+      url={url}
+      onCancel={vi.fn()}
+      onJoin={vi.fn()}
+      request={request}
+    />,
+  );
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Could not reach the relay. Check your connection and try again.",
   );
@@ -355,7 +369,14 @@ it.each([
   }));
   const onCancel = vi.fn();
   const user = userEvent.setup();
-  render(<FindCommunity url={url} onCancel={onCancel} request={request} />);
+  render(
+    <FindCommunity
+      url={url}
+      onCancel={onCancel}
+      onJoin={vi.fn()}
+      request={request}
+    />,
+  );
   expect(await screen.findByRole("alert")).toHaveTextContent(message);
   expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
   await user.click(screen.getByRole("button", { name: "Cancel" }));

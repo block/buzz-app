@@ -1488,6 +1488,26 @@ it.each([
   },
 );
 
+it.each(["bold", "italic"] as const)(
+  "absorbs a pasted `>` that carries %s when `> ` is typed before it",
+  async (format) => {
+    const h = mount();
+    paste(h.input, "> text");
+    act(() => h.input.setSelectionRange(0, 1));
+    act(() => h.input.toggleFormat(format));
+    expect(h.input.querySelector("strong, em")).toHaveTextContent(">");
+    act(() => h.input.setSelectionRange(0, 0));
+    await h.user.keyboard("> ");
+    expect(h.input.querySelectorAll("blockquote")).toHaveLength(1);
+    expect(h.input.querySelector(":scope > blockquote > p")).toHaveTextContent(
+      "text",
+    );
+    expect(h.input.querySelector("strong, em")).toBeNull();
+    expect(h.input).toHaveValue("text");
+    expect(h.markdown()).toBe("> text");
+  },
+);
+
 it("opens a list inside a quote but keeps a quote marker typed inside a list item literal, where the sent text still nests", async () => {
   const h = mount();
   await h.user.keyboard("> quote{Shift>}{Enter}{/Shift}- item");

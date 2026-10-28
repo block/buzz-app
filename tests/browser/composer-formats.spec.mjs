@@ -147,8 +147,10 @@ test("typed lists use Enter to split and exit, preserve mentions and send by but
 });
 
 // Native ArrowDown keeps the caret's goal column, so from a converted quote's
-// indent it lands just after the next pasted paragraph's literal `> `. Typing
-// `> ` there, or before the marker, must quote that paragraph once.
+// indent it lands on the next pasted paragraph at that column. Which side of
+// the literal `> ` that is depends on the quote's indent against the rendered
+// width of `> `; with today's tokens it is just after the marker, as in the
+// reported bug. Typing `> ` on either side must quote that paragraph once.
 test("typing `> ` on each pasted quote paragraph quotes it once, wherever ArrowDown leaves the caret", async ({
   page,
 }) => {
@@ -177,11 +179,13 @@ test("typing `> ` on each pasted quote paragraph quotes it once, wherever ArrowD
     const current = await value();
     const marker = current.indexOf(`> ${name} note`);
     // One press per line break between the caret and the next marker. The
-    // composer reports the caret after the async selectionchange.
+    // composer reports the caret after the async selectionchange, so wait for
+    // it to reach the marker's line.
     const lines = current.slice(await caret(), marker).split("\n").length - 1;
     for (let line = 0; line < lines; line++)
       await page.keyboard.press("ArrowDown");
-    await expect.poll(caret).toBe(marker + 2);
+    await expect.poll(caret).toBeGreaterThanOrEqual(marker);
+    expect([marker, marker + 2]).toContain(await caret());
     await page.keyboard.type("> ");
     await expect(input.locator("blockquote")).toHaveText(
       names.slice(0, index + 1).map((name) => `${name} note`),

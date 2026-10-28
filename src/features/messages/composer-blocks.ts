@@ -485,10 +485,14 @@ export function composerBlockPrefix(
   });
   if (!plain) return;
   // A lone `> ` typed before a literal marker absorbs it, as `> > ` does above.
-  // The line is plain text, so its characters map one to one to positions.
   const absorbed =
     match[0] === "> "
-      ? (/^> ?/.exec(text.slice(caret, caret + 2))?.[0].length ?? 0)
+      ? (/^> ?/.exec(
+          $from.parent.textBetween(
+            offset,
+            Math.min(offset + 2, $from.parent.content.size),
+          ),
+        )?.[0].length ?? 0)
       : 0;
   const marks = $from.marks();
   const tr = state.tr.delete(from, to + absorbed);

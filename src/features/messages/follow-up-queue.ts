@@ -222,14 +222,20 @@ function createQueue(session: RelaySession) {
     };
     activating = false;
   }
-  function sent(entry: Omit<Entry, "id">, recovery?: OutboxRecovery) {
-    const id = entry.publish(recovery);
+  function waitForMessage(
+    entry: Pick<Entry, "channelId" | "recipients">,
+    id: string,
+  ) {
     // Include the gap between publication and the first working signal.
     waits.set(entry.channelId, [
       ...(waits.get(entry.channelId) ?? []),
       ...entry.recipients.map((agent) => ({ agent, message: id })),
     ]);
     watch();
+  }
+  function sent(entry: Omit<Entry, "id">, recovery?: OutboxRecovery) {
+    const id = entry.publish(recovery);
+    waitForMessage(entry, id);
     return id;
   }
   // Recovery metadata bridges the durable queue to the durable Outbox. Keep it
@@ -295,6 +301,7 @@ function createQueue(session: RelaySession) {
             (item) => item.recovery?.key === followUpRecovery(entry.id).key,
           );
         if (previous) {
+          waitForMessage(entry, previous.event.id);
           await session.outbox.recover(
             previous.event.id,
             followUpRecovery(entry.id),

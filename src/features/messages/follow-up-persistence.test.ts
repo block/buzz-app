@@ -328,6 +328,48 @@ it("does not create another message after restart between Outbox save and queue 
   expect(followUpStorage(scope).load()).toEqual([]);
 });
 
+it("waits for a recovered unknown receipt before releasing the next resumed row", async () => {
+  const first = fixture();
+  const id = first.enqueue();
+  first.enqueue({ ...message, text: "Second" });
+  const event = finalizeEvent(
+    {
+      kind: 9,
+      created_at: 1,
+      content: message.text,
+      tags: [
+        ["h", "chat"],
+        ["p", agent],
+      ],
+    },
+    secret,
+  );
+  followUpStorage(scope).sending(id, true);
+  const restarted = fixture(scope, [
+    {
+      event,
+      signed: event,
+      recovery: followUpRecovery(id),
+      delivery: "unknown",
+    },
+  ]);
+  await restarted.owner.ready;
+  restarted.finish();
+  restarted.queue.resumeAfter(agent, { original: "chat" });
+  restarted.work("original", "done");
+  // Wait for recovery, queue cleanup, and the finally-scheduled pump to settle.
+  await vi.waitFor(() => expect(followUpStorage(scope).has(id)).toBe(false));
+  expect(restarted.queue.snapshot().map((row) => row.text)).toEqual(["Second"]);
+  expect(restarted.send).not.toHaveBeenCalled();
+  expect(restarted.owner.outbox.snapshot()[0]?.delivery).toBe("unknown");
+  restarted.work(event.id, "working");
+  expect(restarted.send).not.toHaveBeenCalled();
+  restarted.work(event.id, "done");
+  await vi.waitFor(() => expect(restarted.queue.snapshot()).toEqual([]));
+  expect(restarted.send).toHaveBeenCalledOnce();
+  expect(restarted.send.mock.calls[0]?.[1]).toBe("Second");
+});
+
 it("serializes competing releases from two windows", async () => {
   const h = fixture();
   const id = h.enqueue();

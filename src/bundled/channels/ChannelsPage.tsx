@@ -1175,7 +1175,7 @@ function ChannelWorkspace({
           detail.target,
           detail.rootId,
         );
-        if (entry && historyPanel(entry)) open(entry, true);
+        if (entry && historyPanel(entry)) open(entry);
         else navigation.complete({ status: "failed", reason: "unavailable" });
       }
       if (kept && navigation.entryId !== kept.from) {

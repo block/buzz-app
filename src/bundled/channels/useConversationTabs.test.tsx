@@ -388,7 +388,7 @@ it.each([
 );
 
 it.each(["buzz.profiles/profile", "buzz.github/object"])(
-  "%s keeps content tabs, records deliberate selection, and reports X without visiting its neighbour",
+  "%s replaces transient details, preserves explicit pushes, and reports X without visiting its neighbour",
   (key) => {
     const channels = [{ id: "alpha", name: "Alpha" }];
     const session = {
@@ -430,12 +430,16 @@ it.each(["buzz.profiles/profile", "buzz.github/object"])(
     const second = { ...first, target: "content:second" };
     act(() => h.result.current.open(first));
     act(() => h.result.current.open(second));
+    expect(h.result.current.items).toHaveLength(1);
+    expect(onClosePanel).not.toHaveBeenCalled();
+    act(() => h.result.current.open(first, true));
     expect(h.result.current.items).toHaveLength(2);
     expect(onVisitPanel.mock.calls.map(([entry]) => entry.target)).toEqual([
       first.target,
       second.target,
+      first.target,
     ]);
-    const firstTab = h.result.current.items[0];
+    const firstTab = h.result.current.items[1];
     if (!firstTab?.close) throw new Error("Missing content tab");
     act(() => h.result.current.selectPanelTab(firstTab.id));
     expect(onVisitPanel).toHaveBeenLastCalledWith(first);

@@ -1,7 +1,7 @@
 import { test, expect } from "./source-fixture.mjs";
 import { watchPageErrors } from "./page-errors.mjs";
 
-test("profile bulk closes retire only the closed profiles' native return paths", async ({
+test("transient profiles replace without retiring Back/Forward return paths", async ({
   page,
 }) => {
   await page.goto("/tests/fixtures/profiles.html");
@@ -9,37 +9,49 @@ test("profile bulk closes retire only the closed profiles' native return paths",
   const read = () =>
     page.evaluate(() => window.profilesFixture.navigation.snapshot());
   const channel = (await read()).entry.id;
-  await page
-    .getByRole("button", { name: "View Viewer profile", exact: true })
-    .click();
-  const viewer = (await read()).entry.id;
-  await page
-    .getByRole("button", { name: "View Mic profile", exact: true })
-    .click();
+  const view = async (name) => {
+    await page
+      .getByRole("button", { name: `View ${name} profile`, exact: true })
+      .click();
+    await expect(
+      page
+        .getByRole("complementary", { name: "Profile", exact: true })
+        .getByRole("heading", { name, exact: true }),
+    ).toBeVisible();
+    return (await read()).entry.id;
+  };
+  const viewer = await view("Viewer");
+  const mic = await view("Mic");
   const tabs = page.getByRole("tablist", { name: "Panel tabs" });
-  const kept = tabs.getByRole("tab", { name: "Viewer", exact: true });
-  await kept.click({ button: "right" });
-  await page
-    .getByRole("menuitem", { name: "Close other tabs", exact: true })
-    .click();
-  await expect.poll(async () => (await read()).entry.id).toBe(viewer);
-  await expect(kept).toHaveAttribute("aria-selected", "true");
   await expect(tabs.getByRole("tab")).toHaveCount(1);
+  await page.goBack();
+  await expect.poll(async () => (await read()).entry.id).toBe(viewer);
+  await expect(
+    tabs.getByRole("tab", { name: "Viewer", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
+  await expect(tabs.getByRole("tab")).toHaveCount(1);
+  await page.goForward();
+  await expect.poll(async () => (await read()).entry.id).toBe(mic);
+  await expect(tabs.getByRole("tab")).toHaveCount(1);
+  await tabs
+    .getByRole("tab", { name: "Mic", exact: true })
+    .click({ button: "right" });
+  await page
+    .getByRole("menuitem", { name: "Close all tabs", exact: true })
+    .click();
+  await expect
+    .poll(async () => (await read()).entry.target.detail)
+    .toBeUndefined();
+  const closed = (await read()).entry.id;
+  await page.goBack();
+  await expect.poll(async () => (await read()).entry.id).toBe(viewer);
   await page.goBack();
   await expect.poll(async () => (await read()).entry.id).toBe(channel);
   await page.goForward();
   await expect.poll(async () => (await read()).entry.id).toBe(viewer);
-  await expect(tabs.getByRole("tab")).toHaveCount(1);
+  await page.goForward();
+  await expect.poll(async () => (await read()).entry.id).toBe(closed);
   expect((await read()).canGoForward).toBe(false);
-  await kept.click({ button: "right" });
-  await page
-    .getByRole("menuitem", { name: "Close all tabs", exact: true })
-    .click();
-  await expect.poll(async () => (await read()).entry.id).toBe(channel);
-  expect((await read()).canGoForward).toBe(false);
-  await expect(
-    page.getByRole("complementary", { name: "Profile", exact: true }),
-  ).toBeHidden();
 });
 
 // Real relay-session replacement and native history traversal exercise the
@@ -85,6 +97,11 @@ test("Close after same-scope replacement retires earlier profile visits through 
     .locator("..")
     .getByRole("button", { name: /^Close / })
     .click();
+  await expect
+    .poll(async () => (await read()).entry.target.detail)
+    .toBeUndefined();
+  const closed = (await read()).entry.id;
+  await page.goBack();
   await expect.poll(async () => (await read()).entry.id).toBe(other);
   await page.goBack();
   await expect.poll(async () => (await read()).entry.id).toBe(channel);
@@ -92,6 +109,8 @@ test("Close after same-scope replacement retires earlier profile visits through 
   await page.goForward();
   await expect.poll(async () => (await read()).entry.id).toBe(other);
   await expect(viewer).toHaveCount(0);
+  await page.goForward();
+  await expect.poll(async () => (await read()).entry.id).toBe(closed);
   expect((await read()).canGoForward).toBe(false);
   // A deliberate reopening gets a fresh visit and remains possible.
   expect(await view("Viewer")).not.toBe(current);
@@ -208,26 +227,29 @@ test("profile visits survive passive traversal and X retires active and inactive
   ).toBeVisible();
   const mic = (await read()).entry.id;
   const tabs = page.getByRole("tablist", { name: "Panel tabs" });
-  await tabs
-    .getByRole("tab", { name: "Viewer", exact: true })
-    .locator("..")
-    .getByRole("button", { name: /^Close / })
-    .click();
-  expect((await read()).entry.id).toBe(mic);
-  await page.goBack();
-  await expect.poll(async () => (await read()).entry.id).toBe(channel);
-  await page.goForward();
-  await expect.poll(async () => (await read()).entry.id).toBe(mic);
   await expect(
     tabs.getByRole("tab", { name: "Viewer", exact: true }),
   ).toHaveCount(0);
+  await page.goBack();
+  await expect.poll(async () => (await read()).entry.id).toBe(viewer);
+  await page.goForward();
+  await expect.poll(async () => (await read()).entry.id).toBe(mic);
   await tabs
     .getByRole("tab", { name: "Mic", exact: true })
     .locator("..")
     .getByRole("button", { name: /^Close / })
     .click();
+  await expect
+    .poll(async () => (await read()).entry.target.detail)
+    .toBeUndefined();
+  await page.goBack();
+  await expect.poll(async () => (await read()).entry.id).toBe(viewer);
+  await tabs
+    .getByRole("tab", { name: "Viewer", exact: true })
+    .locator("..")
+    .getByRole("button", { name: /^Close / })
+    .click();
   await expect.poll(async () => (await read()).entry.id).toBe(channel);
-  expect((await read()).canGoForward).toBe(false);
   await avatar.click();
   await expect(
     panel.getByRole("heading", { name: "Viewer", exact: true }),

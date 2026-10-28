@@ -164,15 +164,18 @@ export type SetupState = Readonly<{
 }>;
 const OUTPUT_LIMIT = 20_000;
 
+/** Setup before anything is known. */
+export const SETUP_START: SetupState = Object.freeze({
+  status: undefined,
+  checking: false,
+  running: undefined,
+  output: "",
+  notice: undefined,
+});
+
 /** The plugin's one view of Codex on this computer. */
 export class CodexSetup {
-  private state: SetupState = {
-    status: undefined,
-    checking: false,
-    running: undefined,
-    output: "",
-    notice: undefined,
-  };
+  private state: SetupState = SETUP_START;
   private readonly listeners = new Set<() => void>();
   private process: HostProcess | undefined;
   /** Cancel was asked for before the running step's process was returned. */

@@ -86,7 +86,12 @@ import { agentKey, pubkeyOf, type AgentKey } from "./membership";
 import { EMPTY, type Member } from "./records";
 import { AgentsRunner, type RunnerStatus } from "./agents-runner";
 import { RunnerPlugins } from "./runner-plugins";
-import { managerSide, runnerSide } from "./runner-link";
+import { managerSide, runnerSide, type TypeInfo } from "./runner-link";
+import type { RuntimeLink } from "./exposed";
+import type { Served } from "./link";
+import { PRESENTED, shownType } from "./shown-types";
+
+type ManagerSide = ReturnType<typeof managerSide>;
 import { originOf } from "./connections";
 import { AgentPresence } from "./presence";
 import {
@@ -633,7 +638,8 @@ export type AgentType<Config = unknown> = {
    * `thread` it starts a thread of its own, with no session to act on. A DM or
    * Solo chat is one session either way. */
   sessionControls?: {
-    scope(agent: Agent<Config>): "thread" | "channel";
+    /** From the type's `present`. */
+    scope?(agent: Agent<Config>): "thread" | "channel";
     state(agent: Agent<Config>, place: SessionPlace): SessionState;
     run(
       agent: Agent<Config>,
@@ -675,46 +681,36 @@ export type AgentType<Config = unknown> = {
   /** Makes the type hosted: its provider runs each agent, so it has no `run`,
    * `models` or `timeoutMs`, and its agents have no attention. */
   remote?: RemoteAgentType;
-  /** Handles for the type's own UI, given to its plugin's `present`. Each is
-   * JSON, a store (`snapshot` and `subscribe`) or a call returning a promise,
-   * so that agents can later run in another page than their UI. */
-  expose?: unknown;
+  /** The topics and commands the type's own UI reaches of its runtime, over
+   * the link its plugin's `present` is given. Only JSON crosses, as agents
+   * may run in another page than their UI. */
+  expose?: Served;
 };
-/** What an agent type shows, from its plugin's UI entry (`present`); the
- * rest of the type comes from its agent entry (`register`). */
+/** What an agent type shows and how its owner manages its agents, from its
+ * plugin's UI entry (`present`). A type that runs here gives the rest from
+ * its agent entry (`register`); a hosted type gives it all to `register`. */
 export type AgentPresentation<Config = unknown> = Pick<
   AgentType<Config>,
-  "icon" | "Peek" | "Create" | "CreateModel" | "tabs"
+  | "icon"
+  | "Peek"
+  | "Create"
+  | "CreateModel"
+  | "tabs"
+  | "adopt"
+  | "importShared"
+  | "carry"
+  | "describeMigration"
+  | "migrationWarning"
+  | "summary"
 > &
   Readonly<{
     provider?: Pick<AgentProvider, "DialogBody" | "DefaultControl">;
+    /** The agent's session scope, for its session controls. */
+    sessionScope?: NonNullable<
+      NonNullable<AgentType<Config>["sessionControls"]>["scope"]
+    >;
   }>;
-const PRESENTED = ["icon", "Peek", "Create", "CreateModel", "tabs"] as const;
-/** The type as its readers see it: `type` with what `present` shows. */
-export function presented<Config>(
-  type: AgentType<Config>,
-  shown: AgentPresentation<Config>,
-): AgentType<Config> {
-  const merged: AgentType<Config> = { ...type };
-  for (const field of PRESENTED)
-    if (shown[field] !== undefined)
-      Object.assign(merged, { [field]: shown[field] });
-  if (type.provider) {
-    // Keep getters, such as `attentionAction`, live.
-    const provider = Object.defineProperties(
-      {},
-      Object.getOwnPropertyDescriptors(type.provider),
-    ) as AgentProvider;
-    if (shown.provider?.DialogBody)
-      Object.assign(provider, { DialogBody: shown.provider.DialogBody });
-    if (shown.provider?.DefaultControl)
-      Object.assign(provider, {
-        DefaultControl: shown.provider.DefaultControl,
-      });
-    merged.provider = provider;
-  }
-  return merged;
-}
+
 /** A hosted type's provider: it holds each agent's key and runs it. The app
  * calls these in order to create one (`provision`, then `activate`) and owns
  * the owner's agent list; every step is asked again after a failure, so each
@@ -775,7 +771,7 @@ export type RemoteAgentType = Readonly<{
 export type RegisteredAgentType = Contribution<AgentType>;
 type Presentation = Readonly<{
   id: string;
-  present(exposed: unknown): AgentPresentation;
+  present(runtime: RuntimeLink): AgentPresentation;
 }>;
 export type RetypePreview = Readonly<{
   /** Destination settings after applying the target type's migration policy. */
@@ -911,11 +907,12 @@ export type Agents = {
     configExample?: Readonly<Record<string, unknown>>;
   }>[];
   register<Config>(type: AgentType<Config>): void;
-  /** Supplies what this plugin's type `typeId` shows, from its UI entry.
-   * `present` gets the type's `expose`. */
-  present<Exposed = unknown, Config = unknown>(
+  /** Supplies what this plugin's type `typeId` shows and how its agents are
+   * managed, from its UI entry. `present` gets the link to the type's
+   * runtime, which serves its `expose`. */
+  present<Config = unknown>(
     typeId: string,
-    present: (exposed: Exposed) => AgentPresentation<Config>,
+    present: (runtime: RuntimeLink) => AgentPresentation<Config>,
   ): void;
   types(): readonly RegisteredAgentType[];
   /** Adds a tool to every agent session in the app, beside the Buzz tools.
@@ -1235,16 +1232,22 @@ export class AgentsService extends Service implements Agents {
   private keyGeneration = 0;
   private readonly contributions;
   private readonly presentations;
-  /** Each registered type with what it shows, worked out once per pair. */
-  private readonly presentedTypes = new WeakMap<
-    RegisteredAgentType,
-    Readonly<{ from: Presentation; type: RegisteredAgentType }>
+  /** Each type that runs here as shown, with the presentation and link to
+   * its runtime it was shown with. */
+  private readonly presentedTypes = new Map<
+    TypeInfo,
+    Readonly<{
+      from: Contribution<Presentation> | undefined;
+      runtime: ReturnType<ManagerSide["runtime"]> | undefined;
+      shown: ReturnType<typeof shownType>;
+    }>
   >();
   private merged: Readonly<{
-    types: readonly RegisteredAgentType[];
+    infos: readonly TypeInfo[];
+    registered: readonly RegisteredAgentType[];
     shown: readonly Contribution<Presentation>[];
     result: readonly RegisteredAgentType[];
-  }> = { types: [], shown: [], result: [] };
+  }> = { infos: [], registered: [], shown: [], result: [] };
   private readonly listeners = new Set<() => void>();
   private requests: readonly AgentCreationRequest[] = [];
   private updates: readonly AgentUpdateRequest[] = [];
@@ -1264,13 +1267,15 @@ export class AgentsService extends Service implements Agents {
   private readonly runnerLink: ReturnType<typeof runnerSide>;
   /** The Manager's side: what it sends the Runner, and what the Runner
    * decided, as the link last sent it. */
-  private readonly decided: ReturnType<typeof managerSide>;
+  private readonly decided: ManagerSide;
   /** Counts list requests, so only the latest one is applied. */
   private listed = 0;
   /** Native's agent list was read, so `identities` is every membership. */
   private loaded = false;
-  /** Who holds each membership, as the screens last heard. */
+  /** Who holds each membership, and the agent types, as the screens last
+   * heard. */
   private held: RunnerStatus | undefined;
+  private shownTypes: readonly RegisteredAgentType[] | undefined;
   /** Each running cleanup of a deleted membership, by key, how to stop it,
    * and whether it finished. */
   private cleaning = new Map<
@@ -1357,7 +1362,7 @@ export class AgentsService extends Service implements Agents {
     this.runner = new AgentsRunner(storage, native, localActivity, decisions, {
       changed: () => this.update(),
       open: (origin) => this.communities.open(origin),
-      types: () => this.types(),
+      types: () => this.contributions.snapshot(),
       defaults,
       configBinding: this.configBinding,
       team: (key) => {
@@ -1629,11 +1634,22 @@ export class AgentsService extends Service implements Agents {
       throw new Error(
         "A hosted agent type has provision, activate, profile and remove, and no run, models or timeoutMs",
       );
+    // A type that runs here may run in another page than its UI.
+    const shown = remote
+      ? undefined
+      : (PRESENTED.find((field) => type[field] !== undefined) ??
+        (type.sessionControls?.scope && "sessionControls.scope") ??
+        (type.provider?.DialogBody && "provider.DialogBody") ??
+        (type.provider?.DefaultControl && "provider.DefaultControl"));
+    if (shown)
+      throw new Error(
+        `An agent type that runs here gives ${shown} from its plugin's present`,
+      );
     this.contributions.register(this.ctx, type as unknown as AgentType);
   }
-  present<Exposed, Config>(
+  present<Config>(
     typeId: string,
-    present: (exposed: Exposed) => AgentPresentation<Config>,
+    present: (runtime: RuntimeLink) => AgentPresentation<Config>,
   ) {
     if (typeof present !== "function")
       throw new Error("present needs a function");
@@ -1642,31 +1658,50 @@ export class AgentsService extends Service implements Agents {
       present: present as Presentation["present"],
     });
   }
+  /** The agent types as the screens and management see them: each that runs
+   * here as the Runner says, with what its plugin presents, then each hosted
+   * type as registered. */
   types = () => {
-    const types = this.contributions.snapshot();
+    const infos = this.decided.types();
+    const registered = this.contributions.snapshot();
     const shown = this.presentations.snapshot();
-    if (types === this.merged.types && shown === this.merged.shown)
+    if (
+      infos === this.merged.infos &&
+      registered === this.merged.registered &&
+      shown === this.merged.shown
+    )
       return this.merged.result;
-    const result = Object.freeze(
-      types.map((type) => {
-        const from = shown.find((entry) => entry.key === type.key);
-        if (!from) return type;
-        const known = this.presentedTypes.get(type);
-        if (known?.from === from) return known.type;
-        let merged = type;
-        try {
-          merged = Object.freeze(
-            presented(type, from.present(type.expose)),
-          ) as RegisteredAgentType;
-        } catch (error) {
-          // Its agents still run; only what the type shows is missing.
-          console.error(`Agent type ${type.key} could not be shown`, error);
-        }
-        this.presentedTypes.set(type, { from, type: merged });
-        return merged;
-      }),
-    );
-    this.merged = { types, shown, result };
+    const kept = new Set<TypeInfo>();
+    const local = infos.map((info) => {
+      const from = shown.find((entry) => entry.key === info.key);
+      const known = this.presentedTypes.get(info);
+      kept.add(info);
+      if (known && known.from === from) return known.shown.type;
+      known?.shown.close();
+      known?.runtime?.close();
+      const runtime = from && this.decided.runtime(info);
+      let presentation: AgentPresentation | undefined;
+      try {
+        presentation = runtime && from?.present(runtime);
+      } catch (error) {
+        // Its agents still run; only what the type shows is missing.
+        console.error(`Agent type ${info.key} could not be shown`, error);
+      }
+      const made = shownType(info, this.decided, presentation);
+      this.presentedTypes.set(info, { from, runtime, shown: made });
+      return made.type;
+    });
+    for (const [info, known] of this.presentedTypes)
+      if (!kept.has(info)) {
+        known.shown.close();
+        known.runtime?.close();
+        this.presentedTypes.delete(info);
+      }
+    const result = Object.freeze([
+      ...local,
+      ...registered.filter((type) => type.remote),
+    ]);
+    this.merged = { infos, registered, shown, result };
     return result;
   };
   addTool(tool: AddedTool) {
@@ -3490,6 +3525,7 @@ export class AgentsService extends Service implements Agents {
     const running = this.decided.running();
     const interrupted = this.decided.interrupted();
     const held = this.decided.status();
+    const types = this.types();
     if (
       !same(agents, this.state.agents) ||
       running !== this.state.running ||
@@ -3502,8 +3538,9 @@ export class AgentsService extends Service implements Agents {
         interrupted,
       });
       this.notify();
-    } else if (held !== this.held) this.notify();
+    } else if (held !== this.held || types !== this.shownTypes) this.notify();
     this.held = held;
+    this.shownTypes = types;
     this.presence.announce();
   }
 

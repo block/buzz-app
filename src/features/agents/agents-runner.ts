@@ -104,6 +104,7 @@ export class AgentsRunner {
   private list: string | undefined;
   private readonly listeners = new Set<() => void>();
   private readonly recordListeners = new Set<() => void>();
+  private readonly typeListeners = new Set<() => void>();
 
   constructor(
     storage: AgentStore,
@@ -350,6 +351,18 @@ export class AgentsRunner {
   /** Agent types were loaded or unloaded. */
   typesChanged() {
     this.update();
+    for (const listener of [...this.typeListeners]) listener();
+  }
+  /** The agent types registered here. */
+  types() {
+    return this.manager.types();
+  }
+  /** Hears each change to the agent types. */
+  subscribeTypes(listener: () => void) {
+    this.typeListeners.add(listener);
+    return () => {
+      this.typeListeners.delete(listener);
+    };
   }
   /** The viewer joined or left a community: connects or lets go of it. A
    * new viewer waits for the memberships the Manager sends with it. */

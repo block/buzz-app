@@ -66,8 +66,12 @@ type SetupHandle = Pick<
 type DefaultsHandle = Pick<ClaudeDefaults, "snapshot" | "subscribe" | "save">;
 type ActivityHandle = Pick<
   ClaudeRuntime,
-  "subscribe" | "sessions" | "conversations" | "find" | "transcript"
->;
+  "subscribe" | "sessions" | "find" | "transcript"
+> &
+  Readonly<{
+    /** The same list until `subscribe` tells of a change. */
+    conversations(agent: string): readonly SavedConversation[];
+  }>;
 import { TURN_LIMIT } from "./transcript";
 
 const message = (error: unknown) =>
@@ -720,7 +724,9 @@ export function createTabs({
       (listener) => runtime.subscribe(listener),
       () => runtime.sessions(agent.key),
     );
-    const conversations = runtime.conversations(agent.key);
+    const conversations = useSyncExternalStore(runtime.subscribe, () =>
+      runtime.conversations(agent.key),
+    );
     const busy = new Map(
       sessions.map((session) => [session.key, session.busy]),
     );

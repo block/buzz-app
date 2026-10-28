@@ -9,20 +9,18 @@ import { GooseLogoIcon } from "../../shared/design-system/icons";
 import { type Config, config, DEFAULT_CONFIG, GooseRuntime } from "./runtime";
 import { gooseRun } from "./run";
 import { GooseSetup } from "./setup";
+import { linkGoose, serveGoose } from "./exposed";
 import { createTabs } from "./tabs";
 import { GooseHistory } from "./transcript";
 import { readUsage } from "./usage";
 
 export const TYPE_ID = "goose";
 
-/** What the type's UI reaches of its runtime. */
-type GooseExposed = Parameters<typeof createTabs>[0];
-
 export const inject = ["agents"];
 export const apply: PluginModule["apply"] = (ctx) => {
   // Only the desktop app can start `goose-acp`; no unusable type elsewhere.
   if (!isTauri()) return;
-  ctx.agents.present<GooseExposed, Config>(TYPE_ID, (exposed) => {
+  ctx.agents.present<Config>(TYPE_ID, (runtime) => {
     const {
       Create,
       CreateModel,
@@ -30,7 +28,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       ActivityTab,
       DefaultControl,
       ProviderDialogBody,
-    } = createTabs(exposed);
+    } = createTabs(linkGoose(runtime));
     return {
       icon: GooseLogoIcon,
       Create,
@@ -51,6 +49,31 @@ export const apply: PluginModule["apply"] = (ctx) => {
           component: ActivityTab,
         },
       ],
+      importShared: (source) =>
+        source.runtime === "goose" || source.runtime === "goose-ai"
+          ? {
+              ...DEFAULT_CONFIG,
+              model: source.model,
+              provider: source.provider ?? "",
+            }
+          : undefined,
+      adopt: (carry, saved) => ({
+        ...saved,
+        instructions: carry.instructions ?? saved.instructions,
+        workspace: carry.workspace ?? saved.workspace,
+      }),
+      carry: (saved) => {
+        const { instructions, workspace } = config(saved);
+        return {
+          ...(instructions.trim() && { instructions }),
+          ...(workspace !== DEFAULT_CONFIG.workspace && { workspace }),
+        };
+      },
+      summary: (agent) => {
+        const { model, provider } = config(agent.config);
+        return [provider, model].filter(Boolean).join(" · ") || "Goose";
+      },
+      sessionScope: (agent) => config(agent.config).scope,
     };
   });
 };
@@ -101,35 +124,11 @@ function applyAgent(ctx: Parameters<PluginModule["apply"]>[0]) {
     description:
       "goose on this computer, with any provider goose supports. Each thread it is mentioned in is one continuing session.",
     defaults: () => ({ config: DEFAULT_CONFIG }),
-    importShared: (source) =>
-      source.runtime === "goose" || source.runtime === "goose-ai"
-        ? {
-            ...DEFAULT_CONFIG,
-            model: source.model,
-            provider: source.provider ?? "",
-          }
-        : undefined,
-    expose: { setup, runtime, history } satisfies GooseExposed,
+    expose: serveGoose(setup, runtime, history),
     provider: {
       snapshot: setup.snapshot,
       subscribe: setup.subscribe,
       check: setup.check,
-    },
-    adopt: (carry, saved) => ({
-      ...saved,
-      instructions: carry.instructions ?? saved.instructions,
-      workspace: carry.workspace ?? saved.workspace,
-    }),
-    carry: (saved) => {
-      const { instructions, workspace } = config(saved);
-      return {
-        ...(instructions.trim() && { instructions }),
-        ...(workspace !== DEFAULT_CONFIG.workspace && { workspace }),
-      };
-    },
-    summary: (agent) => {
-      const { model, provider } = config(agent.config);
-      return [provider, model].filter(Boolean).join(" · ") || "Goose";
     },
     sessions: {
       list: (key) => {

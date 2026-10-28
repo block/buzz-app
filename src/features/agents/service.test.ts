@@ -21,6 +21,7 @@ import type { RelaySession } from "../relay/session";
 import type { AgentIdentity } from "./native";
 import {
   type Agent,
+  type Agents,
   AgentsService,
   type AgentType,
   type ConfigBinding,
@@ -40,6 +41,7 @@ import { fileStore, type AgentStore } from "./state";
 import { readInterrupted, writeInterrupted } from "./interrupted";
 import { memoryStorage } from "./test-fakes";
 import { STANDALONE_DEADLINE_MS } from "../agent-harness/standalone";
+import type { RuntimeLink } from "./exposed";
 import { readTeams, writeTeams } from "./store";
 import {
   bot,
@@ -197,7 +199,6 @@ async function setup({
     ...(sessionControls
       ? {
           sessionControls: {
-            scope: () => "thread" as const,
             subscribe: () => () => {},
             ...sessionControls,
           },
@@ -205,8 +206,10 @@ async function setup({
       : {}),
     ...(resumes ? { resumes } : {}),
   };
-  plugin.agents.register(type);
+  register(plugin.agents, type, sessionControls && (() => "thread" as const));
   await vi.waitFor(() => expect(service.snapshot().status).toBe("ready"));
+  // An inactive plugin's type is shown once it is active.
+  if (pluginActive()) await typeShown(service, "example/echo");
   return {
     activity,
     service,
@@ -237,6 +240,33 @@ async function setup({
   };
 }
 
+/** Registers `type` as a harness plugin does: how it runs from its agent
+ * entry, and how it is managed (with `scope` for its session controls) from
+ * its UI entry. */
+function register<Config>(
+  agents: Pick<Agents, "register" | "present">,
+  type: AgentType<Config>,
+  scope?: (agent: Agent<Config>) => "thread" | "channel",
+) {
+  const { adopt, carry, describeMigration, ...runs } = type;
+  agents.register(runs);
+  agents.present<Config>(type.id, () => ({
+    ...(adopt && { adopt }),
+    ...(carry && { carry }),
+    ...(describeMigration && { describeMigration }),
+    ...(scope && { sessionScope: scope }),
+  }));
+}
+
+/** Waits until the screens show the type `key`, which the Runner tells of
+ * over the link. */
+const typeShown = (service: AgentsService, key: string) =>
+  vi.waitFor(() => {
+    const type = service.types().find((type) => type.key === key);
+    if (!type) throw new Error(`${key} is not shown yet`);
+    return type;
+  });
+
 /** Lets every pending promise chain finish: a macrotask runs only after the
  * microtask queue is empty, so this does not depend on how fast runners are. */
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -263,49 +293,96 @@ beforeEach(() => {
 });
 afterEach(() => vi.useRealTimers());
 
-it("shows a type with what its plugin presents, from the handles the type exposes", async () => {
+it("shows a type with what its plugin presents, its UI reaching what the type exposes over the link", async () => {
   const { service, plugin } = await setup();
   const ready = { readiness: "ready" as const };
   let attention: (() => void) | undefined;
-  const handles = { count: 1 };
-  const shown = vi.fn((exposed: typeof handles) => ({
+  let providerChanged = () => {};
+  let count = 1;
+  let countChanged = () => {};
+  const shown = vi.fn((runtime: RuntimeLink) => ({
     icon: () => null,
     tabs: [{ id: "t", title: "T", component: () => null }],
     provider: { DialogBody: () => null },
     // Only what a type shows is taken from `present`.
     run: () => {},
     title: "Wrong",
-    exposed,
+    runtime,
   }));
   plugin.agents.register({
     id: "shown",
     title: "Shown",
     defaults: () => ({ config: {} }),
-    expose: handles,
+    expose: {
+      topics: {
+        count: () => ({
+          get: () => count,
+          subscribe: (listener) => {
+            countChanged = listener;
+            return () => {};
+          },
+        }),
+      },
+      commands: {
+        add: (more) => {
+          count += more as number;
+          countChanged();
+          return count;
+        },
+      },
+    },
     provider: {
       snapshot: () => ready,
-      subscribe: () => () => {},
+      subscribe: (listener) => {
+        providerChanged = listener;
+        return () => {};
+      },
       check: () => {},
       get attentionAction() {
         return attention;
       },
     },
   });
-  const runtimeOnly = service.types().find((t) => t.key === "example/shown");
-  expect(runtimeOnly?.tabs).toBeUndefined();
+  const runtimeOnly = await typeShown(service, "example/shown");
+  expect(runtimeOnly.tabs).toBeUndefined();
   plugin.agents.present("shown", shown as never);
   const type = service.types().find((t) => t.key === "example/shown");
-  expect(shown).toHaveBeenCalledExactlyOnceWith(handles);
+  expect(shown).toHaveBeenCalledOnce();
   expect(type).toMatchObject({ title: "Shown", tabs: [{ id: "t" }] });
   expect(type?.run).toBeUndefined();
   expect(type?.icon).toBeTypeOf("function");
   expect(type?.provider?.DialogBody).toBeTypeOf("function");
-  // The runtime's provider stays live, and readers see one stable type.
+  // The UI reads and changes the runtime over the link, never directly.
+  const runtime = shown.mock.calls[0]?.[0] as RuntimeLink;
+  runtime.watch("count", null, () => {});
+  await vi.waitFor(() => expect(runtime.read("count")).toBe(1));
+  await expect(runtime.call("add", 2)).resolves.toBe(3);
+  expect(runtime.read("count")).toBe(3);
+  // The provider's state, and its attention action, come from the Runner.
+  await vi.waitFor(() => expect(type?.provider?.snapshot()).toEqual(ready));
   expect(type?.provider?.attentionAction).toBeUndefined();
-  attention = () => {};
-  expect(type?.provider?.attentionAction).toBe(attention);
+  attention = vi.fn();
+  providerChanged();
+  await vi.waitFor(() =>
+    expect(type?.provider?.attentionAction).toBeTypeOf("function"),
+  );
+  type?.provider?.attentionAction?.();
+  await vi.waitFor(() => expect(attention).toHaveBeenCalledOnce());
+  // Readers see one stable type.
   expect(service.types().find((t) => t.key === "example/shown")).toBe(type);
   expect(shown).toHaveBeenCalledOnce();
+});
+
+it("refuses a type that runs here and gives what only its UI presents", async () => {
+  const { plugin } = await setup();
+  expect(() =>
+    plugin.agents.register({
+      id: "mixed",
+      title: "Mixed",
+      defaults: () => ({ config: {} }),
+      summary: () => "Mixed",
+    }),
+  ).toThrow("gives summary from its plugin's present");
 });
 
 it("still runs a type whose present throws", async () => {
@@ -319,9 +396,9 @@ it("still runs a type whose present throws", async () => {
   plugin.agents.present("broken", () => {
     throw new Error("no UI");
   });
-  expect(service.types().find((t) => t.key === "example/broken")).toMatchObject(
-    { title: "Broken" },
-  );
+  expect(await typeShown(service, "example/broken")).toMatchObject({
+    title: "Broken",
+  });
   expect(error).toHaveBeenCalledOnce();
   error.mockRestore();
 });
@@ -1950,6 +2027,7 @@ it("hands out an agent's handle only to its new type's plugin once a change of t
     defaults: () => ({ config: {} }),
     run: vi.fn(),
   });
+  await typeShown(service, "other/relay");
   await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
   const kept = plugin.agents.handle(bot);
   let continueType = () => {};
@@ -2597,9 +2675,10 @@ it("changes an agent's type between turns, carrying what the new type adopts", a
   const attention = service.find(bot)?.attention;
   await service.save(bot, { config: { reply: "Triage." } });
   const other = vi.fn<(delivery: Delivery<{ prompt: string }>) => void>();
-  ctx
-    .extend({ pluginOwner: Object.freeze({ id: "other", revision: "one" }) })
-    .agents.register<{ prompt: string; model: string }>({
+  register<{ prompt: string; model: string }>(
+    ctx.extend({ pluginOwner: Object.freeze({ id: "other", revision: "one" }) })
+      .agents,
+    {
       id: "relay",
       title: "Relay",
       defaults: () => ({ config: { prompt: "", model: "small" } }),
@@ -2625,7 +2704,8 @@ it("changes an agent's type between turns, carrying what the new type adopts", a
         { id: "destination", label: "Destination only", isOverride: false },
       ],
       run: other,
-    });
+    },
+  );
   // Not while a turn, or the work it handed off, is still going.
   let finish = () => {};
   run.mockImplementationOnce(async ({ workingUntil }) =>
@@ -2650,6 +2730,7 @@ it("changes an agent's type between turns, carrying what the new type adopts", a
       { id: "sessions", label: "Sessions", outcome: "reset" },
     ],
   });
+  await typeShown(service, "other/relay");
   expect(native.setType).not.toHaveBeenCalled();
   await expect(service.retype(bot, "other/relay")).rejects.toThrow(
     "Echo is answering",
@@ -3612,6 +3693,7 @@ it("keeps an agent created while identities are still loading", async () => {
       defaults: () => ({ config: { reply: "ok" } }),
     });
   await vi.waitFor(() => expect(native.list).toHaveBeenCalled());
+  await typeShown(service, "example/echo");
   await service.create({ type: "example/echo", name: "Echo" });
   release([]);
   await vi.waitFor(() => expect(service.snapshot().status).toBe("ready"));
@@ -7637,15 +7719,18 @@ it("refuses drafts through a delivery handle its replaced type kept", async () =
   const f = await setup();
   await f.service.create({ type: "example/echo", name: "Echo" });
   await f.service.create({ type: "example/echo", name: "Child" });
-  f.ctx
-    .extend({ pluginOwner: Object.freeze({ id: "other", revision: "one" }) })
-    .agents.register<{ prompt: string }>({
+  register<{ prompt: string }>(
+    f.ctx.extend({
+      pluginOwner: Object.freeze({ id: "other", revision: "one" }),
+    }).agents,
+    {
       id: "relay",
       title: "Relay",
       defaults: () => ({ config: { prompt: "" } }),
       adopt: (carry, saved) => ({ prompt: carry.instructions ?? saved.prompt }),
       run: vi.fn(),
-    });
+    },
+  );
   let delivery!: Delivery<Config>;
   const delivered = new Promise<void>((resolve) =>
     f.run.mockImplementationOnce((accepted) => {
@@ -7663,6 +7748,7 @@ it("refuses drafts through a delivery handle its replaced type kept", async () =
       }),
     ],
   });
+  await typeShown(f.service, "other/relay");
   try {
     await delivered;
     await vi.waitFor(() =>
@@ -8196,6 +8282,7 @@ describe("Attention plugin sources", () => {
     expect(produce).not.toHaveBeenCalled();
     active = true;
     for (const listener of listeners) listener();
+    await typeShown(service, "example/echo");
     await service.create({ type: "example/echo", name: "Echo" });
     await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
     await service.save(bot, { attentionEnabled: true, attention: watches });
@@ -8845,9 +8932,10 @@ it("submits an unsaved change draft and applies only the owner's reviewed change
   const { service, native, plugin, ctx } = await setup();
   await service.create({ type: "example/echo", name: "Parent" });
   await service.create({ type: "example/echo", name: "Child" });
-  ctx
-    .extend({ pluginOwner: Object.freeze({ id: "other", revision: "one" }) })
-    .agents.register<{ prompt: string; model: string }>({
+  register<{ prompt: string; model: string }>(
+    ctx.extend({ pluginOwner: Object.freeze({ id: "other", revision: "one" }) })
+      .agents,
+    {
       id: "relay",
       title: "Relay",
       defaults: () => ({ config: { prompt: "", model: "small" } }),
@@ -8857,7 +8945,8 @@ it("submits an unsaved change draft and applies only the owner's reviewed change
       }),
       carry: ({ prompt }) => ({ instructions: prompt }),
       run: vi.fn(),
-    });
+    },
+  );
   await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
   const handle = plugin.agents.handle(bot);
   if (!handle) throw new Error("Missing handle");
@@ -8865,6 +8954,7 @@ it("submits an unsaved change draft and applies only the owner's reviewed change
     read: vi.fn(),
     memories: async () => ({ entries: [], partial: false }),
   });
+  await typeShown(service, "other/relay");
   const result = JSON.parse(
     (await callTool(client, {}, "agent_update", {
       agent: "Child",
@@ -9591,17 +9681,19 @@ it.each(["before", "during"])(
   "withholds connection memory when its agent type changes %s the read",
   async (phase) => {
     const { service, plugin, ctx, session } = await setup();
-    ctx
-      .extend({
+    register(
+      ctx.extend({
         pluginOwner: Object.freeze({ id: "replacement", revision: "one" }),
-      })
-      .agents.register({
+      }).agents,
+      {
         id: "echo",
         title: "Replacement",
         defaults: () => ({ config: {} }),
         adopt: () => ({}),
         run: vi.fn(),
-      });
+      },
+    );
+    await typeShown(service, "replacement/echo");
     await service.create({ type: "example/echo", name: "Echo" });
     await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
     let request!: import("../host/service").McpHandler;

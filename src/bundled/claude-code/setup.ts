@@ -215,18 +215,21 @@ export type SetupState = Readonly<{
 }>;
 const OUTPUT_LIMIT = 20_000;
 
+/** What setup knows before its first check. */
+export const SETUP_START: SetupState = Object.freeze({
+  status: undefined,
+  models: [],
+  modelsChecking: false,
+  modelsError: "",
+  checking: false,
+  running: undefined,
+  output: "",
+  notice: undefined,
+});
+
 /** The plugin's one view of Claude on this computer. */
 export class ClaudeSetup {
-  private state: SetupState = {
-    status: undefined,
-    models: [],
-    modelsChecking: false,
-    modelsError: "",
-    checking: false,
-    running: undefined,
-    output: "",
-    notice: undefined,
-  };
+  private state: SetupState = SETUP_START;
   private readonly listeners = new Set<() => void>();
   private health: AgentProviderSnapshot = { readiness: "checking" };
   private process: HostProcess | undefined;

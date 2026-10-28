@@ -104,6 +104,10 @@ export type { VoiceRecording } from "../features/relay/voice-media";
 export type {
   Agents,
   AgentType,
+  AgentPresentation,
   AgentSession,
   AgentSessions,
 } from "../features/agents/service";
+
+export type { RuntimeLink } from "../features/agents/exposed";
+export type { Json, Served, Topic, Command } from "../features/agents/link";

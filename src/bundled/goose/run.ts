@@ -1,6 +1,6 @@
 // The part of the goose agent type that runs agents, without its views.
 import type { AgentType } from "../../features/agents/service";
-import { type Config, config, type GooseRuntime } from "./runtime";
+import type { Config, GooseRuntime } from "./runtime";
 import { syncedSettingsSchema, withSyncedSettings } from "./settings";
 
 /** A turn's run returns once goose has it, so this bounds only the hand-over. */
@@ -19,7 +19,6 @@ export const gooseRun = (
   | "resumes"
 > => ({
   sessionControls: {
-    scope: (agent) => config(agent.config).scope,
     state: (agent, place) => runtime.sessionState(agent, place),
     run: (agent, place, action) => runtime.session(agent, place, action),
     subscribe: (listener) => runtime.subscribe(listener),

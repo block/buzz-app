@@ -69,8 +69,8 @@ type Read =
 type Catalog = {
   models: Model[];
 };
-type ProviderDefaults = Readonly<{ model: string; effort: string }>;
-type ProviderState = AgentProviderSnapshot &
+export type ProviderDefaults = Readonly<{ model: string; effort: string }>;
+export type ProviderState = AgentProviderSnapshot &
   Readonly<{
     checking: boolean;
     data: Catalog | undefined;
@@ -98,6 +98,32 @@ async function catalog(spawn: Spawn, signal: AbortSignal) {
     signal.removeEventListener("abort", abort);
     await rpc.close();
   }
+}
+
+/** `raw` with the provider's defaults for what it leaves unset. */
+export function resolveConfig(
+  state: Pick<ProviderState, "defaults" | "data">,
+  raw: unknown,
+): Config {
+  const explicit = readConfig(raw);
+  const inheritedModel = state.defaults.model;
+  const unavailable = Boolean(
+    inheritedModel && state.data && !catalogModel(inheritedModel, state.data),
+  );
+  const model = explicit.model || (unavailable ? "" : inheritedModel);
+  if (explicit.effort) return { ...explicit, model };
+  const selected = catalogModel(model, state.data);
+  const preferred = unavailable && !explicit.model ? "" : state.defaults.effort;
+  const effort = !preferred
+    ? ""
+    : !state.data
+      ? preferred
+      : selected?.supportedReasoningEfforts.some(
+            (choice) => choice.reasoningEffort === preferred,
+          )
+        ? preferred
+        : (selected?.defaultReasoningEffort ?? "");
+  return { ...explicit, model, effort };
 }
 
 /** Codex's one device-wide health/catalog view and versioned default store. */
@@ -214,26 +240,7 @@ export class CodexProvider {
     this.set({ defaults });
   }
   resolve(raw: unknown): Config {
-    const explicit = readConfig(raw);
-    const inheritedModel = this.state.defaults.model;
-    const unavailable = Boolean(
-      inheritedModel && this.state.data && !this.model(inheritedModel),
-    );
-    const model = explicit.model || (unavailable ? "" : inheritedModel);
-    if (explicit.effort) return { ...explicit, model };
-    const selected = this.model(model);
-    const preferred =
-      unavailable && !explicit.model ? "" : this.state.defaults.effort;
-    const effort = !preferred
-      ? ""
-      : !this.state.data
-        ? preferred
-        : selected?.supportedReasoningEfforts.some(
-              (choice) => choice.reasoningEffort === preferred,
-            )
-          ? preferred
-          : (selected?.defaultReasoningEffort ?? "");
-    return { ...explicit, model, effort };
+    return resolveConfig(this.state, raw);
   }
   dispose() {
     this.offSetup?.();
@@ -423,10 +430,11 @@ type ProviderHandle = Pick<
   CodexProvider,
   "snapshot" | "subscribe" | "check" | "resolve" | "saveDefaults"
 >;
-type ActivityHandle = Pick<
-  CodexRuntime,
-  "subscribe" | "sessions" | "conversations" | "find"
->;
+type ActivityHandle = Pick<CodexRuntime, "subscribe" | "sessions" | "find"> &
+  Readonly<{
+    /** The same list until `subscribe` tells of a change. */
+    conversations(agent: string): readonly SavedConversation[];
+  }>;
 type SetupHandle = Pick<
   CodexSetup,
   "snapshot" | "subscribe" | "run" | "cancel"
@@ -853,7 +861,9 @@ export function createTabs(
     const sessions = useSyncExternalStore(runtime.subscribe, () =>
       runtime.sessions(agent.key),
     );
-    const conversations = runtime.conversations(agent.key);
+    const conversations = useSyncExternalStore(runtime.subscribe, () =>
+      runtime.conversations(agent.key),
+    );
     const {
       session: here,
       searching,

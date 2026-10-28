@@ -9,6 +9,7 @@ import { repositoriesContext } from "../../features/communities/repositories";
 import type { PluginModule } from "../../plugins/api";
 import { PiLogoIcon } from "../../shared/design-system/icons";
 import { type Config, config, DEFAULT_CONFIG, PiRuntime } from "./runtime";
+import { linkPi, servePi } from "./exposed";
 import { createTabs } from "./tabs";
 
 export const TYPE_ID = "pi";
@@ -16,16 +17,14 @@ export const TYPE_ID = "pi";
  * which includes the first install of Pi's packages. */
 const HANDOVER_MS = 2 * 60_000;
 
-/** What the type's UI reaches of its runtime. */
-type PiExposed = Parameters<typeof createTabs>[0];
-
 export const inject = ["agents"];
 export const apply: PluginModule["apply"] = (ctx) => {
   // Only the desktop app can start the Pi host; no unusable type elsewhere.
   if (!isTauri()) return;
-  ctx.agents.present<PiExposed, Config>(TYPE_ID, (exposed) => {
-    const { ActivityTab, Create, CreateModel, SettingsTab } =
-      createTabs(exposed);
+  ctx.agents.present<Config>(TYPE_ID, (runtime) => {
+    const { ActivityTab, Create, CreateModel, SettingsTab } = createTabs(
+      linkPi(runtime),
+    );
     return {
       icon: PiLogoIcon,
       Create,
@@ -45,6 +44,23 @@ export const apply: PluginModule["apply"] = (ctx) => {
           component: ActivityTab,
         },
       ],
+      adopt: (carry, saved) => ({
+        ...saved,
+        instructions: carry.instructions ?? saved.instructions,
+        workspace: carry.workspace ?? saved.workspace,
+      }),
+      carry: (saved) => {
+        const { instructions, workspace } = config(saved);
+        return {
+          ...(instructions.trim() && { instructions }),
+          ...(workspace !== DEFAULT_CONFIG.workspace && { workspace }),
+        };
+      },
+      summary: (agent) => {
+        const { model, provider } = config(agent.config);
+        return [provider, model].filter(Boolean).join(" · ") || "Pi";
+      },
+      sessionScope: (agent) => config(agent.config).scope,
     };
   });
 };
@@ -86,23 +102,7 @@ function applyAgent(ctx: Parameters<PluginModule["apply"]>[0]) {
     description:
       "Pi on this computer, with any provider Pi supports. Each thread it is mentioned in is one continuing conversation.",
     defaults: () => ({ config: DEFAULT_CONFIG }),
-    expose: { setup: runtime.setup, runtime } satisfies PiExposed,
-    adopt: (carry, saved) => ({
-      ...saved,
-      instructions: carry.instructions ?? saved.instructions,
-      workspace: carry.workspace ?? saved.workspace,
-    }),
-    carry: (saved) => {
-      const { instructions, workspace } = config(saved);
-      return {
-        ...(instructions.trim() && { instructions }),
-        ...(workspace !== DEFAULT_CONFIG.workspace && { workspace }),
-      };
-    },
-    summary: (agent) => {
-      const { model, provider } = config(agent.config);
-      return [provider, model].filter(Boolean).join(" · ") || "Pi";
-    },
+    expose: servePi(runtime.setup, runtime),
     ...(host.spawn && {
       usage: (agent, { since, signal }) =>
         runtime.usage(agent.key, since, signal),
@@ -112,7 +112,6 @@ function applyAgent(ctx: Parameters<PluginModule["apply"]>[0]) {
       subscribe: (listener) => runtime.subscribe(listener),
     },
     sessionControls: {
-      scope: (agent) => config(agent.config).scope,
       state: (agent, place) => runtime.sessionState(agent, place),
       run: (agent, place, action) => runtime.session(agent, place, action),
       subscribe: (listener) => runtime.subscribe(listener),

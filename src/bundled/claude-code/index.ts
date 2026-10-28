@@ -11,6 +11,7 @@ import { claudeRun, TYPE_ID } from "./run";
 import { ClaudeDefaults } from "./defaults";
 import { ClaudeRuntime, type Config, config, DEFAULT_CONFIG } from "./runtime";
 import { ClaudeSetup, withScript } from "./setup";
+import { linkClaude, serveClaude } from "./exposed";
 import { createTabs } from "./tabs";
 import { readUsage } from "./usage";
 
@@ -22,13 +23,10 @@ const UPDATE_MS = 6 * 60 * 60_000;
 // `bash` and `base64`, which stock Windows lacks; no unusable type elsewhere.
 const supported = () => isTauri() && /Mac|Linux/i.test(navigator.platform);
 
-/** What the type's UI reaches of its runtime. */
-export type ClaudeExposed = Parameters<typeof createTabs>[0];
-
 export const inject = ["agents"];
 export const apply: PluginModule["apply"] = (ctx) => {
   if (!supported()) return;
-  ctx.agents.present<ClaudeExposed, Config>(TYPE_ID, (exposed) => {
+  ctx.agents.present<Config>(TYPE_ID, (runtime) => {
     const {
       Create,
       CreateModel,
@@ -36,7 +34,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       ProviderDialogBody,
       SettingsTab,
       ActivityTab,
-    } = createTabs(exposed);
+    } = createTabs(linkClaude(runtime));
     return {
       icon: ClaudeLogoIcon,
       Create,
@@ -57,6 +55,33 @@ export const apply: PluginModule["apply"] = (ctx) => {
           component: ActivityTab,
         },
       ],
+      adopt: (carry, saved) => ({
+        ...saved,
+        instructions: carry.instructions ?? saved.instructions,
+        workspace: carry.workspace ?? saved.workspace,
+      }),
+      carry: (saved) => {
+        const { instructions, workspace } = config(saved);
+        return {
+          ...(instructions.trim() && { instructions }),
+          ...(workspace !== DEFAULT_CONFIG.workspace && { workspace }),
+        };
+      },
+      describeMigration: (saved) => {
+        const { model, effort, scope } = config(saved);
+        return [
+          { id: "model", label: "Model", isOverride: Boolean(model.trim()) },
+          { id: "thinking", label: "Thinking", isOverride: Boolean(effort) },
+          {
+            id: "sessions",
+            label: "Sessions",
+            isOverride: scope !== DEFAULT_CONFIG.scope,
+            unchangedKey: scope,
+          },
+        ];
+      },
+      summary: (agent) => config(agent.config).model || "Claude",
+      sessionScope: (agent) => config(agent.config).scope,
     };
   });
 };
@@ -123,37 +148,7 @@ function applyAgent(ctx: Parameters<PluginModule["apply"]>[0]) {
     description:
       "Claude on this computer. Each thread it is mentioned in is one continuing session.",
     defaults: () => ({ config: DEFAULT_CONFIG }),
-    expose: {
-      setup,
-      defaults: providerDefaults,
-      runtime,
-    } satisfies ClaudeExposed,
-    adopt: (carry, saved) => ({
-      ...saved,
-      instructions: carry.instructions ?? saved.instructions,
-      workspace: carry.workspace ?? saved.workspace,
-    }),
-    carry: (saved) => {
-      const { instructions, workspace } = config(saved);
-      return {
-        ...(instructions.trim() && { instructions }),
-        ...(workspace !== DEFAULT_CONFIG.workspace && { workspace }),
-      };
-    },
-    describeMigration: (saved) => {
-      const { model, effort, scope } = config(saved);
-      return [
-        { id: "model", label: "Model", isOverride: Boolean(model.trim()) },
-        { id: "thinking", label: "Thinking", isOverride: Boolean(effort) },
-        {
-          id: "sessions",
-          label: "Sessions",
-          isOverride: scope !== DEFAULT_CONFIG.scope,
-          unchangedKey: scope,
-        },
-      ];
-    },
-    summary: (agent) => config(agent.config).model || "Claude",
+    expose: serveClaude(setup, providerDefaults, runtime),
     ...(spawn &&
       readFile && {
         usage: (agent, { since, signal }) =>

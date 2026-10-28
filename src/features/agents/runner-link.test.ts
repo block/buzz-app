@@ -10,7 +10,13 @@ import {
   runnerSide,
   serveActivity,
 } from "./runner-link";
-import type { Agent, SessionControlAction, SessionPlace } from "./service";
+import type {
+  Agent,
+  RegisteredAgentType,
+  SessionControlAction,
+  SessionPlace,
+  SessionState,
+} from "./service";
 import type { AgentRecord } from "./store";
 
 const open: Link[] = [];
@@ -118,6 +124,8 @@ function fakeRunner() {
   let saved: Record<string, AgentRecord> = {};
   let status: RunnerStatus = { runs: [], yielded: [], transitioning: [] };
   let types: Record<string, string> = {};
+  let kinds: readonly RegisteredAgentType[] = [];
+  const typeListeners = new Set<() => void>();
   const runner = {
     members: vi.fn(
       (identities: readonly Member[], _viewer?: string, _loaded?: boolean) => {
@@ -160,6 +168,18 @@ function fakeRunner() {
       for (const listener of [...recordListeners]) listener();
     }),
     retypes: () => types,
+    types: () => kinds,
+    /** The types that run here change, as when a plugin reloads. */
+    setTypes(next: readonly RegisteredAgentType[]) {
+      kinds = next;
+      for (const listener of [...typeListeners]) listener();
+    },
+    subscribeTypes(listener: () => void) {
+      typeListeners.add(listener);
+      return () => {
+        typeListeners.delete(listener);
+      };
+    },
     subscribe(listener: () => void) {
       listeners.add(listener);
       return () => {
@@ -457,4 +477,144 @@ it("asks the Runner to run a session control", async () => {
     place,
     "compact",
   );
+});
+
+/** An agent type that runs here, as its plugin's agent entry registers it. */
+function echoType(revision = "one") {
+  let count = 1;
+  let state: SessionState = "idle";
+  let readiness: "checking" | "ready" = "checking";
+  const listeners = new Set<() => void>();
+  const notify = () => {
+    for (const listener of [...listeners]) listener();
+  };
+  const subscribe = (listener: () => void) => {
+    listeners.add(listener);
+    return () => {
+      listeners.delete(listener);
+    };
+  };
+  const attend = vi.fn();
+  const type: RegisteredAgentType = {
+    key: "example/echo",
+    id: "echo",
+    pluginId: "example",
+    revision,
+    title: "Echo",
+    defaults: () => ({ config: { reply: "ok", unset: undefined } }),
+    expose: {
+      topics: { count: () => ({ get: () => count, subscribe }) },
+      commands: {
+        add: (more) => {
+          count += more as number;
+          notify();
+          return count;
+        },
+      },
+    },
+    models: async (agent) => ({ current: agent.name, models: [] }),
+    sessionControls: {
+      state: () => state,
+      run: async () => {},
+      subscribe,
+    },
+    provider: {
+      snapshot: () => ({ readiness }),
+      subscribe,
+      check: () => {
+        readiness = "ready";
+        notify();
+      },
+      get attentionAction() {
+        return readiness === "ready" ? attend : undefined;
+      },
+    },
+  };
+  return {
+    type,
+    attend,
+    compact() {
+      state = "compacting";
+      notify();
+    },
+  };
+}
+const hosted: RegisteredAgentType = {
+  key: "hosted/remote",
+  id: "remote",
+  pluginId: "hosted",
+  revision: "one",
+  title: "Hosted",
+  defaults: () => ({ config: {} }),
+  remote: {} as NonNullable<RegisteredAgentType["remote"]>,
+};
+
+it("tells the Manager only the types that run here, as JSON, and serves what each UI reaches", async () => {
+  const { runner, manager } = split();
+  const echo = echoType();
+  runner.setTypes([echo.type, hosted]);
+  await vi.waitFor(() => expect(manager.types()).toHaveLength(1));
+  const [info] = manager.types();
+  if (!info) throw new Error("no type");
+  expect(info).toMatchObject({
+    key: "example/echo",
+    revision: "one",
+    title: "Echo",
+    // A field the type left undefined does not cross.
+    defaults: { config: { reply: "ok" } },
+    has: { models: true, usage: false, sessionControls: true, provider: true },
+  });
+  expect(info.defaults).toEqual({ config: { reply: "ok" } });
+  const runtime = manager.runtime(info);
+  runtime.watch("count", null, () => {});
+  await vi.waitFor(() => expect(runtime.read("count")).toBe(1));
+  // A command answers after the values it changed.
+  await expect(runtime.call("add", 2)).resolves.toBe(3);
+  expect(runtime.read("count")).toBe(3);
+  await expect(runtime.call("missing")).rejects.toThrow("no command missing");
+  await expect(
+    manager.models(info, agentOf(member("a".repeat(64), "Ada"))),
+  ).resolves.toEqual({ current: "Ada", models: [] });
+  // A type that went away, or is now another revision, answers nothing.
+  runner.setTypes([echoType("two").type]);
+  await vi.waitFor(() => expect(manager.types()[0]?.revision).toBe("two"));
+  await expect(runtime.call("add", 1)).rejects.toThrow(
+    "That agent type is not available",
+  );
+  runtime.close();
+});
+
+it("shows a type's session state and provider from the Runner, and asks it to act", async () => {
+  const { runner, manager } = split();
+  const echo = echoType();
+  runner.setTypes([echo.type]);
+  await vi.waitFor(() => expect(manager.types()).toHaveLength(1));
+  const [info] = manager.types();
+  if (!info) throw new Error("no type");
+  const ada = agentOf(member("a".repeat(64), "Ada"));
+  const place = { channelId: "channel" };
+  const sessions = vi.fn();
+  manager.watchSession(info, ada, place, sessions);
+  await vi.waitFor(() =>
+    expect(manager.sessionState(info, ada, place)).toBe("idle"),
+  );
+  echo.compact();
+  await vi.waitFor(() =>
+    expect(manager.sessionState(info, ada, place)).toBe("compacting"),
+  );
+  expect(sessions).toHaveBeenCalled();
+  manager.watchProvider(info, () => {});
+  await vi.waitFor(() =>
+    expect(manager.provider(info)).toEqual({
+      snapshot: { readiness: "checking" },
+      attend: false,
+    }),
+  );
+  await manager.check(info);
+  expect(manager.provider(info)).toEqual({
+    snapshot: { readiness: "ready" },
+    attend: true,
+  });
+  await manager.attend(info);
+  expect(echo.attend).toHaveBeenCalledOnce();
 });

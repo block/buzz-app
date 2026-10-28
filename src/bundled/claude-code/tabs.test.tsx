@@ -311,7 +311,8 @@ it("lists saved conversations and shows one's transcript, or that it is gone", a
   const save = vi.fn();
   render(<Activity agent={agent()} save={save} />);
   const user = userEvent.setup();
-  const rows = screen.getAllByRole("listitem");
+  // The saved conversations come from the runtime, over the link.
+  const rows = await screen.findAllByRole("listitem");
   expect(
     within(rows[0] as HTMLElement).getByRole("button", {
       name: "View transcript: channel · thread eeeeeeee",
@@ -345,7 +346,7 @@ it("lists saved conversations and shows one's transcript, or that it is gone", a
   expect(save).not.toHaveBeenCalled();
 });
 
-it("sets the conversation the profile was opened from apart from recent conversations", () => {
+it("sets the conversation the profile was opened from apart from recent conversations", async () => {
   const root = "e".repeat(64);
   localStorage.setItem(
     "buzz.claude-code.sessions.v1",
@@ -364,9 +365,9 @@ it("sets the conversation the profile was opened from apart from recent conversa
       conversation={{ channelId: "channel", rootId: root }}
     />,
   );
-  const opened = screen.getByRole("region", { name: "This thread" });
+  const opened = await screen.findByRole("region", { name: "This thread" });
   expect(
-    within(opened).getByRole("button", { name: /^View transcript/ }),
+    await within(opened).findByRole("button", { name: /^View transcript/ }),
   ).toBeVisible();
   expect(screen.getAllByRole("listitem")).toHaveLength(1);
   expect(
@@ -619,8 +620,10 @@ it("replaces generic installation copy with the latest installer state", async (
   const installedType = installed({ available: false }).type;
   const Setup = providerSetup(installedType);
   render(<Setup onClose={vi.fn()} />);
-  expect(await screen.findByRole("status")).toHaveTextContent(
-    "Claude is not installed.",
+  await waitFor(() =>
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Claude is not installed.",
+    ),
   );
   await userEvent
     .setup()
@@ -937,15 +940,16 @@ it("does not open a competing Claude sign-in or let it cancel the owner", async 
   if (!buttons[0] || !buttons[1]) throw new Error("Missing sign-in");
   fireEvent.click(buttons[0]);
   fireEvent.click(buttons[1]);
-  expect(
+  const logins = () =>
     spawn.mock.calls.filter(
       ([, options]) => options?.args?.slice(-2).join(" ") === "auth login",
-    ),
-  ).toHaveLength(1);
+    );
+  await waitFor(() => expect(logins()).toHaveLength(1));
+  await waitFor(() => expect(buttons[1]).toBeDisabled());
+  expect(logins()).toHaveLength(1);
   expect(
     screen.getAllByRole("dialog", { name: "Sign in to Claude" }),
   ).toHaveLength(1);
-  expect(buttons[1]).toBeDisabled();
 });
 
 it("offers an update before discovering models on a pre-safe-mode Claude copy", async () => {
@@ -1149,7 +1153,9 @@ it("saves model-specific default effort from the nested menu and inherits it", a
   fireEvent.click(
     await screen.findByRole("menuitem", { name: "Use Claude default" }),
   );
-  expect(new ClaudeDefaults(localStore()).snapshot().model).toBe("");
+  await waitFor(() =>
+    expect(new ClaudeDefaults(localStore()).snapshot().model).toBe(""),
+  );
 });
 
 it("retries failed model discovery from the defaults row", async () => {
@@ -1182,10 +1188,12 @@ it("keeps the model inherited when changing the default model's effort", async (
     await screen.findByRole("menuitemradio", { name: "Opus 5.5" }),
   );
   fireEvent.click(await screen.findByRole("menuitemradio", { name: "High" }));
-  expect(new ClaudeDefaults(localStore()).snapshot()).toMatchObject({
-    model: "",
-    effort: "high",
-  });
+  await waitFor(() =>
+    expect(new ClaudeDefaults(localStore()).snapshot()).toMatchObject({
+      model: "",
+      effort: "high",
+    }),
+  );
   expect(control).toHaveTextContent("· Default");
 });
 
@@ -1239,7 +1247,7 @@ it("keeps keyboard focus through Claude defaults discovery retries", async () =>
   ).toHaveFocus();
 });
 
-it("keeps same-channel recent threads visibly distinguishable", () => {
+it("keeps same-channel recent threads visibly distinguishable", async () => {
   localStorage.setItem(
     "buzz.claude-code.sessions.v1",
     JSON.stringify({
@@ -1253,7 +1261,7 @@ it("keeps same-channel recent threads visibly distinguishable", () => {
   );
   const Activity = tab(installed().type, 1);
   render(<Activity agent={agent()} save={vi.fn()} />);
-  const rows = screen.getAllByRole("listitem");
+  const rows = await screen.findAllByRole("listitem");
   expect(rows).toHaveLength(2);
   expect(rows.map((row) => row.textContent)).toEqual(
     expect.arrayContaining([

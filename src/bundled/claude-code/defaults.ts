@@ -5,7 +5,9 @@ export type ClaudeProviderDefaults = Readonly<{
   model: string;
   effort?: string;
 }>;
-const NATIVE_DEFAULTS: ClaudeProviderDefaults = Object.freeze({ model: "" });
+export const NATIVE_DEFAULTS: ClaudeProviderDefaults = Object.freeze({
+  model: "",
+});
 const STORAGE_KEY = "buzz.claude-code.provider-defaults.v1";
 
 /** Device-wide defaults are separate from agent records; a blank agent value

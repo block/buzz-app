@@ -246,12 +246,24 @@ plugin identity; the plugin is active once both are, and fails if either does.
 This separation lets agents later run apart from the UI page.
 
 A harness plugin registers its type from its `agent` entry and presents it
-from `apply`: `ctx.agents.present(typeId, (exposed) => ({ icon, Peek, Create,
-CreateModel, tabs, provider: { DialogBody, DefaultControl } }))`. The type's
-readers see one type with both halves. `exposed` is the type's `expose`: the
-handles its UI reaches of the runtime. Each is JSON, a store (`snapshot` and
-`subscribe`) or a call returning a promise, so it can later cross to another
-page. Claude is the first harness split this way.
+from `apply`. The `agent` entry registers what runs: `defaults`, `run`,
+`models`, `usage`, session state and actions, and the provider's state and
+checks, setup included. `present(typeId, (runtime) => ({ ... }))` gives what
+the screens show and how agents are managed: `icon`, `Peek`, `Create`,
+`CreateModel`, `tabs`, `provider: { DialogBody, DefaultControl }`, `adopt`,
+`importShared`, `carry`, `describeMigration`, `migrationWarning`, `summary` and
+`sessionScope`. A type that runs here and registers one of those fails.
+
+Only JSON passes between the two entries. The type's `expose` is
+`{ topics, commands }`, served to its UI: a topic is a value the UI watches,
+and a command is a call that answers when done, after the values it changed.
+`runtime` is the UI's link to them, with `read(topic, args)`,
+`watch(topic, args, listener)` and `call(command, args)`. The screens read the
+type itself, its models, usage, session state and provider state, over the
+same kind of link. What arrives is a copy: a field that is `undefined` is
+missing, and a call that stops waiting does not stop the runtime's work.
+Hosted types, such as Builderlab's, register a whole type from the UI entry
+and are unchanged.
 
 A plugin, bundled or installed, can add a tool to every agent session in the
 app with `ctx.agents.addTool({ name, description, inputSchema, call })`. `call`

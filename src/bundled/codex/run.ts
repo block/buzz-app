@@ -2,7 +2,7 @@
 // desktop app registers it with its tabs, and a standalone host runs it alone.
 import { syncedSettingsSchema, withSyncedSettings } from "./settings";
 import type { AgentType } from "../../features/agents/service";
-import { type Config, config } from "./config";
+import type { Config } from "./config";
 import type { CodexRuntime } from "./runtime";
 
 export const TYPE_ID = "codex";
@@ -27,7 +27,6 @@ export const codexRun = (
 > => ({
   models: (agent) => runtime.preview(agent),
   sessionControls: {
-    scope: (agent) => config(agent.config).scope,
     state: (agent, place) => runtime.sessionState(agent, place),
     run: (agent, place, action) => runtime.session(agent, place, action),
     subscribe: (listener) => runtime.subscribe(listener),

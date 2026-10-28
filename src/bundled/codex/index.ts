@@ -8,6 +8,7 @@ import { type Config, config, defaults, validWorkspace } from "./config";
 import { codexRun, TYPE_ID } from "./run";
 import { CodexRuntime } from "./runtime";
 import { CodexSetup, withScript } from "./setup";
+import { linkCodex, serveCodex } from "./exposed";
 import { CodexProvider, createTabs, transcripts } from "./tabs";
 import { readUsage } from "./usage";
 /** How often Buzz's copy of Codex looks for a new release. */
@@ -16,51 +17,82 @@ const UPDATE_MS = 6 * 60 * 60_000;
 // `bash` and `base64`, which stock Windows lacks; no unusable type elsewhere.
 const supported = () => isTauri() && /Mac|Linux/i.test(navigator.platform);
 
-/** What the type's UI reaches of its runtime. */
-type CodexExposed = Readonly<{
-  provider: Parameters<typeof createTabs>[0];
-  runtime: Parameters<typeof createTabs>[1];
-  transcript: Parameters<typeof createTabs>[2];
-  setup: Parameters<typeof createTabs>[3];
-}>;
-
 export const inject = ["agents"];
 export const apply: PluginModule["apply"] = (ctx) => {
   if (!supported()) return;
-  ctx.agents.present<CodexExposed, Config>(
-    TYPE_ID,
-    ({ provider, runtime, transcript, setup }) => {
-      const {
-        Create,
-        CreateModel,
-        DefaultControl,
-        ProviderDialogBody,
-        SettingsTab,
-        ActivityTab,
-      } = createTabs(provider, runtime, transcript, setup);
-      return {
-        icon: CodexLogoIcon,
-        Create,
-        CreateModel,
-        provider: { DialogBody: ProviderDialogBody, DefaultControl },
-        tabs: [
+  ctx.agents.present<Config>(TYPE_ID, (link) => {
+    const { provider, runtime, transcript, setup } = linkCodex(link);
+    const {
+      Create,
+      CreateModel,
+      DefaultControl,
+      ProviderDialogBody,
+      SettingsTab,
+      ActivityTab,
+    } = createTabs(provider, runtime, transcript, setup);
+    return {
+      icon: CodexLogoIcon,
+      Create,
+      CreateModel,
+      provider: { DialogBody: ProviderDialogBody, DefaultControl },
+      tabs: [
+        {
+          id: "settings",
+          title: "Settings",
+          role: "settings",
+          splitSettings: true,
+          component: SettingsTab,
+        },
+        {
+          id: "activity",
+          title: "Activity",
+          role: "activity",
+          component: ActivityTab,
+        },
+      ],
+      importShared: (source) =>
+        source.runtime === "codex" &&
+        (!source.provider || source.provider === "openai")
+          ? { ...defaults, model: source.model }
+          : undefined,
+      adopt: (carry, saved) => ({
+        ...saved,
+        instructions: carry.instructions ?? saved.instructions,
+        // Codex runs only in an absolute or home workspace.
+        workspace:
+          carry.workspace && validWorkspace(carry.workspace)
+            ? carry.workspace
+            : saved.workspace,
+      }),
+      carry: (saved) => {
+        const { instructions, workspace } = config(saved);
+        return {
+          ...(instructions.trim() && { instructions }),
+          ...(workspace !== defaults.workspace && { workspace }),
+        };
+      },
+      describeMigration: (saved) => {
+        const { model, effort, scope } = config(saved);
+        return [
+          { id: "model", label: "Model", isOverride: Boolean(model.trim()) },
           {
-            id: "settings",
-            title: "Settings",
-            role: "settings",
-            splitSettings: true,
-            component: SettingsTab,
+            id: "thinking",
+            label: "Thinking",
+            isOverride: Boolean(effort),
           },
           {
-            id: "activity",
-            title: "Activity",
-            role: "activity",
-            component: ActivityTab,
+            id: "sessions",
+            label: "Sessions",
+            isOverride: scope !== defaults.scope,
+            unchangedKey: scope,
           },
-        ],
-      };
-    },
-  );
+        ];
+      },
+      migrationWarning: "Any commands Codex left running will stop.",
+      summary: (agent) => config(agent.config).model || "Codex",
+      sessionScope: (agent) => config(agent.config).scope,
+    };
+  });
 };
 
 // The runtime, which runs where the agents do.
@@ -148,52 +180,12 @@ function applyAgent(ctx: Parameters<PluginModule["apply"]>[0]) {
     description:
       "Codex on this computer, using its native coding tools and your account.",
     defaults: () => ({ config: { ...defaults } }),
-    expose: {
-      provider: providerController,
-      runtime,
-      transcript: transcripts(start, runtime),
+    expose: serveCodex(
+      providerController,
       setup,
-    } satisfies CodexExposed,
-    importShared: (source) =>
-      source.runtime === "codex" &&
-      (!source.provider || source.provider === "openai")
-        ? { ...defaults, model: source.model }
-        : undefined,
-    adopt: (carry, saved) => ({
-      ...saved,
-      instructions: carry.instructions ?? saved.instructions,
-      // Codex runs only in an absolute or home workspace.
-      workspace:
-        carry.workspace && validWorkspace(carry.workspace)
-          ? carry.workspace
-          : saved.workspace,
-    }),
-    carry: (saved) => {
-      const { instructions, workspace } = config(saved);
-      return {
-        ...(instructions.trim() && { instructions }),
-        ...(workspace !== defaults.workspace && { workspace }),
-      };
-    },
-    describeMigration: (saved) => {
-      const { model, effort, scope } = config(saved);
-      return [
-        { id: "model", label: "Model", isOverride: Boolean(model.trim()) },
-        {
-          id: "thinking",
-          label: "Thinking",
-          isOverride: Boolean(effort),
-        },
-        {
-          id: "sessions",
-          label: "Sessions",
-          isOverride: scope !== defaults.scope,
-          unchangedKey: scope,
-        },
-      ];
-    },
-    migrationWarning: "Any commands Codex left running will stop.",
-    summary: (agent) => config(agent.config).model || "Codex",
+      runtime,
+      transcripts(start, runtime),
+    ),
     ...(spawn &&
       readFile && {
         usage: (agent, { since, signal }) =>

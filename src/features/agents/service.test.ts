@@ -3422,8 +3422,7 @@ it("wakes on an unmentioned message only in a one-to-one DM it is in", async () 
   emit({
     events: [
       // Not conversation with it: a stream message, an unmentioned group DM,
-      // DMs it is not known to be in, an edit, a reaction, its own message and
-      // a sibling agent's.
+      // DMs it is not known to be in, an edit, a reaction and its own message.
       event("stream"),
       event("group", { tags: [["h", groupDm]] }),
       event("others", { tags: [["h", "dm-others"]] }),
@@ -3431,7 +3430,6 @@ it("wakes on an unmentioned message only in a one-to-one DM it is in", async () 
       inDm("edit", { kind: 40003 }),
       inDm("like", { kind: 7, tags: [["e", "x".repeat(64)]] }),
       inDm("own", { pubkey: bot }),
-      inDm("sibling", { pubkey: sibling, tags: [auth] }),
     ],
   });
   await settle();
@@ -3455,20 +3453,24 @@ it("wakes on an unmentioned message only in a one-to-one DM it is in", async () 
   });
   // The runner keys on the channel, not the author: someone outside the roster
   // is queued too, and the runtime's `fromOwner` is what turns them away.
+  // Another of the owner's agents is heard like anyone else.
   emit({ events: [inDm("stranger", { pubkey: other })] });
-  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(5));
+  emit({ events: [inDm("sibling", { pubkey: sibling, tags: [auth] })] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(6));
   expect(run.mock.calls.map(([{ trigger }]) => trigger)).toMatchObject([
     { type: "mention", event: { id: "hello".padEnd(64, "0") } },
     { type: "mention", event: { id: "more".padEnd(64, "0") } },
     { type: "mention", event: { id: "about".padEnd(64, "0") } },
     { type: "mention", event: { id: "asked".padEnd(64, "0") } },
     { type: "mention", event: { id: "stranger".padEnd(64, "0") } },
+    { type: "mention", event: { id: "sibling".padEnd(64, "0") } },
   ]);
 });
 
-it("wakes on another of the owner's agents only when it names the agent", async () => {
+it("hears another of the owner's agents like anyone else", async () => {
   const { service, run, emit, native } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
   await service.create({ type: "example/echo", name: "Sibling" });
   run.mockImplementation(async ({ agent, trigger }) => {
     if (trigger.type === "timer") return;
@@ -3488,8 +3490,7 @@ it("wakes on another of the owner's agents only when it names the agent", async 
   const echoMessage = (await published(native, 9))[0]?.id;
   const auth = ["auth", viewer, "", "f".repeat(128)];
   // The sibling replies to Echo's message without naming it, and says "deploy",
-  // which Echo's watch matches. Neither wakes Echo: two agents replying to each
-  // other would otherwise never stop.
+  // which Echo's watch matches: the watch wakes Echo.
   emit({
     events: [
       event("reply", {
@@ -3499,8 +3500,11 @@ it("wakes on another of the owner's agents only when it names the agent", async 
       }),
     ],
   });
-  await settle();
-  expect(run).toHaveBeenCalledTimes(1);
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+  expect(run.mock.calls[1]?.[0].trigger).toMatchObject({
+    type: "watch",
+    event: { pubkey: sibling },
+  });
   // Naming Echo wakes it, even in reply to Echo's own message.
   emit({
     events: [
@@ -3510,8 +3514,8 @@ it("wakes on another of the owner's agents only when it names the agent", async 
       }),
     ],
   });
-  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
-  expect(run.mock.calls[1]?.[0].trigger).toMatchObject({
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(3));
+  expect(run.mock.calls[2]?.[0].trigger).toMatchObject({
     type: "mention",
     event: { pubkey: sibling },
   });

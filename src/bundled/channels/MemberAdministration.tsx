@@ -12,7 +12,6 @@ import {
   editableMemberRoles,
   type MemberChange,
 } from "../../features/channel-members/administration-protocol";
-import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   ContextMenuRoot,
@@ -25,7 +24,7 @@ import {
   MenuRadioGroup,
   MenuRadioItem,
 } from "../../shared/design-system/ui/Menu";
-import { CaretDownIcon, DotsThreeIcon } from "../../shared/design-system/icons";
+import { DotsThreeIcon } from "../../shared/design-system/icons";
 import styles from "./ChannelMembersDialog.module.css";
 
 export function useMemberAdministration(
@@ -256,6 +255,11 @@ export function MemberRow({
         {invitationAction}
         {!invitationAction && (
           <span className={styles.memberActions}>
+            {roleCaption && (
+              <span className="self-center px-2 text-body-sm text-subtle">
+                {roleCaption}
+              </span>
+            )}
             {/* A regular trigger needs its own root: registering it on the
                   context root replaces Base UI's context-menu interaction owner. */}
             <MenuRoot
@@ -276,25 +280,13 @@ export function MemberRow({
             >
               <MenuTrigger
                 render={
-                  canEdit ? (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      aria-label={`Access for ${name}`}
-                      aria-description={roleCaption}
-                    >
-                      {roleCaption}
-                      <CaretDownIcon size={14} aria-hidden="true" />
-                    </Button>
-                  ) : (
-                    <IconButton
-                      variant="bare"
-                      size="sm"
-                      shape="row-end"
-                      aria-label={`Actions for ${name}`}
-                      icon={<DotsThreeIcon size={18} aria-hidden="true" />}
-                    />
-                  )
+                  <IconButton
+                    variant="bare"
+                    size="sm"
+                    shape="row-end"
+                    aria-label={`Actions for ${name}`}
+                    icon={<DotsThreeIcon size={18} aria-hidden="true" />}
+                  />
                 }
               />
               <MenuPopup
@@ -305,11 +297,6 @@ export function MemberRow({
                 {menuItems}
               </MenuPopup>
             </MenuRoot>
-            {!canEdit && roleCaption && (
-              <span className="self-center px-2 text-body-sm text-subtle">
-                {roleCaption}
-              </span>
-            )}
           </span>
         )}
       </ContextMenuTrigger>

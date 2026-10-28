@@ -724,11 +724,11 @@ confirmation. The device-local opt-out applies to that Create warning; Continue
 only stages the choice and Create channel performs the write.
 
 Access management lives in the members dialog. **People with access** retains the
-existing member list, row menus and confirmed role changes. Member and Guest are
-shown as **Contribute** and **Read**. Editable roles are trailing dropdowns,
-with the verified selection checked; immutable roles (including Owner and self)
-remain plain text. Profile/removal actions and the existing role confirmation
-stay available through the same menu owner.
+existing member list, row menus and confirmed role changes. Roles appear as muted
+text before each row’s ellipsis button; Member and Guest are shown as **Contribute**
+and **Read**. The ellipsis menu contains permitted role choices with the verified
+selection checked, alongside profile/removal actions and the existing role
+confirmation. Immutable roles such as Owner and self remain protected.
 **General access** sits below the list as one sentence-like row: a community/lock
 icon, a compact audience Select (**Who can read**), a short result description,
 and the trailing **New people can** Select (Contribute / Only read). Both Selects

@@ -747,8 +747,9 @@ channels with a Guest default remain intact when changing unrelated details.
 
 Readers see General access as plain text from verified channel discovery metadata,
 without calling the editing capability. Its audience description is followed by
-“Read-only for you. Ask an owner or admin to contribute.” The timeline notice also
-explains reading messages and threads. Guest-default previews never suggest
+“Read-only for you. Ask an owner or admin to contribute.” The compact timeline
+label says “Contributions by invitation” for Guest-default channels; a Guest in a
+Member-default channel sees “Read-only access.” Guest-default previews never suggest
 joining to add people or agents.
 
 In Edit, visibility is sent only when changed (`private` or `open`);

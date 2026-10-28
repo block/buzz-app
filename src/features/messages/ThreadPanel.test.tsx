@@ -1515,7 +1515,7 @@ it("keeps guest threads readable without a reply composer or Join action across 
   h.render();
   expect(
     screen.getByRole("region", { name: "Read-only channel" }),
-  ).toHaveTextContent("You have read-only access to this channel.");
+  ).toHaveTextContent("Contributions by invitation");
   expect(
     screen.getByRole("region", { name: "Thread messages" }),
   ).toBeInTheDocument();
@@ -1525,6 +1525,9 @@ it("keeps guest threads readable without a reply composer or Join action across 
     list = { ...list, channels: [{ ...channel, joinRole: "member" }] };
     for (const listener of listeners) listener();
   });
+  expect(
+    screen.getByRole("region", { name: "Read-only channel" }),
+  ).toHaveTextContent("Read-only access");
   expect(screen.queryByRole("region", { name: "Composer" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Join" })).toBeNull();
   act(() => {

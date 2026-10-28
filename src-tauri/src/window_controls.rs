@@ -46,9 +46,67 @@ pub fn init<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
         .build()
 }
 
+/// Preserve the main webview and its running agents until explicit Quit.
+pub(crate) fn close_requested<R: tauri::Runtime>(
+    window: &tauri::Window<R>,
+    event: &tauri::WindowEvent,
+) -> bool {
+    let tauri::WindowEvent::CloseRequested { api, .. } = event else {
+        return false;
+    };
+    if window.label() != "main" {
+        return false;
+    }
+    api.prevent_close();
+    // Linux may have no system tray. Keep a taskbar/window-switcher entry,
+    // and leave the window visible when its compositor cannot minimize.
+    #[cfg(target_os = "linux")]
+    let result = window.minimize();
+    #[cfg(not(target_os = "linux"))]
+    let result = window.hide();
+    if let Err(error) = result {
+        eprintln!("Could not close Buzz window: {error}");
+    }
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn closing_main_keeps_the_event_loop_alive_until_destroyed() {
+        use std::sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc,
+        };
+        use tauri::{Manager, RunEvent, WebviewUrl, WebviewWindowBuilder};
+        let observed = Arc::new(AtomicBool::new(false));
+        let app = tauri::test::mock_builder()
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .unwrap();
+        let window = WebviewWindowBuilder::new(&app, "main", WebviewUrl::default())
+            .build()
+            .unwrap();
+        let check = observed.clone();
+        app.run_return(move |app, event| match event {
+            RunEvent::Ready => window.close().unwrap(),
+            RunEvent::WindowEvent { label, event, .. } => {
+                // MockRuntime delivers window events through this callback,
+                // without the native runtime's window-listener dispatch.
+                close_requested(&app.get_window(&label).unwrap(), &event);
+            }
+            RunEvent::MainEventsCleared if !check.swap(true, Ordering::SeqCst) => {
+                // This boundary runs only after the close request was processed.
+                app.get_webview_window("main").unwrap().destroy().unwrap();
+            }
+            _ => {}
+        });
+        assert!(
+            observed.load(Ordering::SeqCst),
+            "Close exited before the queued work ran"
+        );
+    }
 
     #[test]
     fn limits_policy_to_the_matching_desktop_session() {

@@ -72,6 +72,7 @@ fn native_command_permissions_isolate_webviews() {
         .unwrap();
 
     let application_commands = [
+        "quit_app",
         "identity_restore",
         "identity_import",
         "identity_legacy_available",

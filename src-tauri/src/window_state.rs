@@ -5,7 +5,7 @@ use tauri_plugin_window_state::{AppHandleExt, Builder, StateFlags, WindowExt};
 
 pub(crate) fn builder() -> Builder {
     Builder::default()
-        // Closing on macOS hides the window. Never persist that hidden state or
+        // Closing hides the window. Never persist that hidden state or
         // platform-owned decorations; a fresh launch must remain reachable.
         .with_state_flags(
             StateFlags::SIZE

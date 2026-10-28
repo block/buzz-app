@@ -227,8 +227,8 @@ position, maximized and fullscreen state on normal app exit and restore them on
 launch on macOS, Windows and Linux. State is local to the app's OS configuration
 directory (`.window-state.json`); missing or unreadable state falls back to the
 configured 1200×800 window. Visibility and decorations are not restored, so a
-macOS window hidden by Close reopens visibly after Quit/relaunch and platform
-chrome stays configuration-owned. Close/reopen without quitting on macOS still
+window hidden by Close reopens visibly after Quit/relaunch and platform
+chrome stays configuration-owned. Close/reopen without quitting still
 uses the existing window. Before requesting placement or restoring maximized/fullscreen
 mode, Buzz reads the plugin's saved geometry and checks that both ends of the 48px
 client header are inside connected monitor work areas,
@@ -419,22 +419,25 @@ Settings → Shortcuts lists Focus message box and the platform's pane focus act
 and reset. F6 retains notification focus.
 Browser builds may reserve Cmd/Ctrl+L for the address bar; choose another binding
 in Settings when using Buzz in a browser. Native key delivery is a separate host check.
-On desktop, Cmd+W on macOS or Ctrl+W on Windows/Linux closes the selected
-closable tab in the focused pane. If focus is in the permanent main conversation,
-it closes the selected tab in the visible side pane instead. A selected closable
-main-pane tab takes priority over that fallback. Hidden tabs remain untouched;
-with nothing to close the shortcut does nothing and never closes the window.
-The macOS native Close menu uses the same action, including when an embedded
-browser owns focus (embedded browsing is currently macOS-only). On macOS,
-Cmd+Shift+W and the native **Close All Tabs** menu item close all tabs in the current channel,
+On desktop, Cmd+W on macOS or Ctrl+W on Windows/Linux closes the main window
+without closing tabs or stopping agents. The macOS native **Close Window** menu
+uses the same native close request, including when an embedded browser owns focus
+(embedded browsing is currently macOS-only). On macOS, Cmd+Shift+W and the native
+**Close All Tabs** menu item still close all tabs in the current channel,
 including hidden side-pane tabs, just like the tab's right-click action.
-A terminal tab closes its presentation, not its shell; Ctrl+W while typing in a
-terminal remains shell word deletion on Windows/Linux. While a modal is open,
-close shortcuts do nothing rather than closing content behind it.
-Windows/Linux consume held-key repeats without closing further tabs or the window.
-Window buttons and Alt+F4 always retain their window-only behavior. The bottom
-terminal drawer keeps its existing Cmd/Ctrl+J/Hide behavior. Browser-build
-shortcuts are unchanged.
+Ctrl+W while typing in a terminal remains shell word deletion on Windows/Linux.
+Windows/Linux consume held-key repeats without issuing another close request.
+Window buttons and Alt+F4 use the same main-window behavior as the shortcut.
+On macOS and Windows, closing hides the main window and retains its webview.
+Reopen from the Dock on macOS or the tray's **Show Buzz** action on Windows.
+On Linux, closing requests minimize so the window remains reachable even without
+a system tray. Window switching or the taskbar restores it. Compositors that do
+not support minimize, such as Hyprland, may leave it visible; agents keep running.
+Launching the packaged app again also reopens its existing window.
+**Quit Buzz** in the Windows tray, Cmd+Q on macOS, or Ctrl+Q on Windows/Linux
+explicitly exits the app and stops agents. Close and Quit work from modal inputs;
+Ctrl+Q also works from the terminal. The bottom terminal drawer keeps its
+existing Cmd/Ctrl+J/Hide behavior. Browser-build shortcuts are unchanged.
 Feature-local details such as harness logs remain tied to their owning profile;
 closing that profile or losing authorization also removes its log tab.
 Right-click any channel tab and choose **Close all tabs** to close this channel's

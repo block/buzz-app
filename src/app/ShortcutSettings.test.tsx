@@ -824,7 +824,7 @@ it("refuses close and quit chords only in the desktop build", async () => {
     for (const key of ["q", "w"]) {
       fireEvent.keyDown(capture(title), { key, metaKey: true });
       expect(screen.getByRole("alert")).toHaveTextContent(
-        `⌘${key.toUpperCase()} is reserved for switching or closing tabs and quitting Buzz. Try another.`,
+        `⌘${key.toUpperCase()} is reserved for switching tabs, closing the window and quitting Buzz. Try another.`,
       );
     }
     expect(h.bindings.snapshot().overrides).toEqual({});
@@ -997,10 +997,13 @@ it("shows desktop Close as reserved and read-only while other actions remain edi
         plugins={catalog([])}
       />,
     );
-    const closeRow = within(row("Close tab"));
+    const closeRow = within(row("Close window"));
     expect(closeRow.getByText("Reserved by Buzz")).toBeVisible();
     expect(closeRow.getByText("Control W")).toBeInTheDocument();
     expect(closeRow.queryByRole("button")).not.toBeInTheDocument();
+    expect(
+      within(row("Quit Buzz")).queryByRole("button"),
+    ).not.toBeInTheDocument();
     expect(change("Open Settings")).toBeEnabled();
     fireEvent.click(change("Open Settings"));
     fireEvent.keyDown(capture("Open Settings"), { key: "w", ctrlKey: true });

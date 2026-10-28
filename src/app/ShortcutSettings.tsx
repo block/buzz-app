@@ -70,7 +70,7 @@ const CLIPBOARD_CHORDS: readonly KeyBinding[] = [
   { key: "x", mod: true },
   { key: "a", mod: true },
 ];
-/** Switch tab, close tab and quit: the desktop shell owns these, so they stay fixed. */
+/** Switch tabs, close the window and quit: the desktop shell owns these. */
 const DESKTOP_CHORDS: readonly KeyBinding[] = [
   { key: "q", mod: true },
   { key: "w", mod: true },
@@ -235,7 +235,7 @@ export function ShortcutSettings({
       );
     if (desktop && includes(DESKTOP_CHORDS, binding))
       return refuse(
-        `${chord} is reserved for switching or closing tabs and quitting Buzz. Try another.`,
+        `${chord} is reserved for switching tabs, closing the window and quitting Buzz. Try another.`,
       );
     const conflict = rows.find(
       (row) =>

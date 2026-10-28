@@ -51,9 +51,13 @@ import { afterFirstView } from "../plugins/startup";
 import linksManifest from "./links/manifest.json";
 import * as links from "./links";
 import hostedManifest from "./hosted-communities/manifest.json";
+// The first-run landing offers Create a community once hosting registers.
+import * as hosted from "./hosted-communities";
 import moderationManifest from "./moderation/manifest.json";
 import relayStaffManifest from "./relay-staff/manifest.json";
 import typesafeManifest from "./typesafe/manifest.json";
+// Agent events are classified from the start, so the provider is ready first.
+import * as typesafe from "./typesafe";
 
 import relayNotesManifest from "./relay-notes/manifest.json";
 import * as relayNotes from "./relay-notes";
@@ -196,7 +200,7 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   },
   {
     manifest: { ...hostedManifest, apiVersion: 1 },
-    module: afterFirstView(() => import("./hosted-communities")),
+    module: hosted,
     enabledByDefault: true,
   },
   {
@@ -211,7 +215,7 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   },
   {
     manifest: { ...typesafeManifest, apiVersion: 1 },
-    module: afterFirstView(() => import("./typesafe")),
+    module: typesafe,
     enabledByDefault: true,
   },
 ];

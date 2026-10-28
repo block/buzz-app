@@ -386,7 +386,7 @@ it("brings an open transcript's tab back, and closes it when the profile moves",
 
 describe("opened from activity", () => {
   const root = "e".repeat(64);
-  const transcript = "#general · thread eeeeeeee";
+  const transcript = "general · thread eeeeeeee";
   const opened = () => {
     const f = fixture({
       saved: {

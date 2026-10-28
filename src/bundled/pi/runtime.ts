@@ -214,6 +214,12 @@ export class PiRuntime {
       event: string,
       input: unknown,
     ) => Promise<unknown>,
+    /** Tells when the owner's connection to the agent's community may have
+     * changed, so `reads` may answer with another (`Agents.relay(key)?.subscribe`). */
+    private readonly subscribeRelay: (
+      key: AgentKey,
+      listener: () => void,
+    ) => () => void = () => () => {},
   ) {
     this.pi = new Pi(() => this.spawn, {
       tool: (call) => this.tool(call),
@@ -309,8 +315,25 @@ export class PiRuntime {
   channelLabel(agent: AgentKey, channelId: string) {
     return this.reads(agent)?.channelLabel(channelId);
   }
+  /** Tells `listener` when `channelLabel` may answer differently: the
+   * community's channel list changed, or the connection it is read through
+   * did, which brings another list. The listener follows that connection as
+   * it comes, goes and is replaced. */
   subscribeChannels(agent: AgentKey, listener: () => void) {
-    return this.reads(agent)?.subscribeChannels(listener) ?? (() => {});
+    let reads = this.reads(agent);
+    let stop = reads?.subscribeChannels(listener);
+    const stopFollowing = this.subscribeRelay(agent, () => {
+      const current = this.reads(agent);
+      if (current?.connection === reads?.connection) return;
+      stop?.();
+      reads = current;
+      stop = current?.subscribeChannels(listener);
+      listener();
+    });
+    return () => {
+      stop?.();
+      stopFollowing();
+    };
   }
   /** The agent's conversations, most recently active first, with whether
    * each is working while it runs here. The first call reads them from Pi's

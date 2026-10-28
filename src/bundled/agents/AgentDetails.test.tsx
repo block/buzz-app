@@ -321,7 +321,7 @@ it("shows every affected community with unsaved shared settings and submits the 
   expect(scope).toHaveFocus();
   await user.keyboard("{Escape}");
   await waitFor(() => expect(editor).not.toBeInTheDocument());
-  // Preserve initial focus when reopening with the scope label already present.
+  // Default focus follows the scope label when reopening with it already present.
   await user.click(
     screen.getByRole("button", { name: "Agent profile actions" }),
   );
@@ -331,7 +331,7 @@ it("shows every affected community with unsaved shared settings and submits the 
   const reopened = await screen.findByRole("dialog", { name: "Change avatar" });
   await waitFor(() =>
     expect(
-      within(reopened).getByRole("button", { name: "Close" }),
+      within(reopened).getByRole("button", { name: "Only in Current" }),
     ).toHaveFocus(),
   );
   expect(reopened).toHaveAccessibleDescription("Only in Current");

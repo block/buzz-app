@@ -324,8 +324,8 @@ function Timeline({
   const handle = useRef<VirtualizerHandle>(null);
   const [size, setSize] = useState({ width: 0, height: 0, edgeHeight: 0 });
   const width = size.width;
-  const latest = useRef({ signature, width });
-  latest.current = { signature, width };
+  const latest = useRef({ signature, width, edgeHeight: size.edgeHeight });
+  latest.current = { signature, width, edgeHeight: size.edgeHeight };
   const initialCache = useRef<VirtualizerHandle["cache"] | undefined>(
     undefined,
   );
@@ -491,6 +491,20 @@ function Timeline({
     settled.current = false;
     handle.current.scrollToIndex(targetIndex, { align: "center" });
   }, [targetIndex]);
+  const targetPlaced = useCallback(() => {
+    const list = handle.current;
+    const element = scroller.current;
+    if (!list || !element) return;
+    // Replace the mounting request with the reveal's exact position. Retain
+    // that same item-relative offset through Virtua's late measurements.
+    list.scrollToIndex(targetIndex, {
+      align: "start",
+      offset:
+        element.scrollTop -
+        latest.current.edgeHeight -
+        list.getItemOffset(targetIndex),
+    });
+  }, [targetIndex]);
   const targetSignal = inlineSignal ?? navigation?.signal;
   const activityReveal = useRef<AbortSignal | string | undefined>(undefined);
   useLayoutEffect(() => {
@@ -531,6 +545,7 @@ function Timeline({
     signal: targetSignal,
     ready: !!size.width && !!size.height && targetIndex >= 0,
     prepare: prepareTarget,
+    placed: targetPlaced,
     complete: completeTarget,
     hold: holdTarget,
   });

@@ -2,6 +2,9 @@
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { Context } from "@deepseek-ai/cordis";
+import * as headPersistence from "../../features/relay/persistence";
+import { ReadError } from "../../features/relay/errors";
+import { keypair, metadata, roster } from "../../features/relay/testing";
 import { provideRelay } from "../../features/relay/service";
 import type { ReadTransport } from "../../features/relay/transport";
 import type { RelaySession } from "../../features/relay/session";
@@ -557,6 +560,93 @@ test("a reset successor recovers descriptors even before the old workspace unmou
     act(() => recovered.result.current.restoreEntries(() => profile));
     expect(recovered.result.current.entries[0]).not.toBe(liveEntry);
     expect(recovered.result.current.entries[0]?.restored).toBe(true);
+  } finally {
+    cleanup();
+    await ctx.fiber.dispose();
+  }
+});
+
+test("a denied cached session cannot hand live entries to a later accepted successor", async () => {
+  const viewer = keypair(),
+    authority = keypair();
+  const scope = "https://denied-order.example";
+  let cached = true;
+  const disk: headPersistence.HeadPersistence = {
+    readStartup: async () =>
+      cached
+        ? {
+            discovery: {
+              savedAt: Date.now(),
+              relayAuthor: authority.pubkey,
+              events: [
+                roster(authority, "alpha", [viewer.pubkey]),
+                metadata(authority, "alpha", "Alpha"),
+              ],
+            },
+          }
+        : undefined,
+    read: async () => [],
+    write: async () => {},
+    remove: async () => {},
+    retain: async () => {},
+    clear: async () => {
+      cached = false;
+    },
+    close() {},
+  };
+  vi.spyOn(headPersistence, "createHeadPersistence").mockImplementation(
+    () => disk,
+  );
+  const connections: {
+    resolve: (value: ReadTransport) => void;
+    reject: (error: unknown) => void;
+  }[] = [];
+  const ctx = new Context();
+  const relay = provideRelay(
+    ctx,
+    () =>
+      new Promise<ReadTransport>((resolve, reject) => {
+        connections.push({ resolve, reject });
+      }),
+    undefined,
+    undefined,
+    undefined,
+    { viewer: viewer.pubkey, scope },
+  );
+  try {
+    await vi.waitFor(() => expect(relay.snapshot().cached).toBe(true));
+    const before = relay.snapshot();
+    const old = mount(before.session);
+    const liveEntry = opening();
+    act(() => old.result.current.setEntries([liveEntry]));
+    connections[0]?.reject(new ReadError("denied", "Removed"));
+    await vi.waitFor(() => {
+      expect(relay.snapshot().status).toBe("error");
+      expect(relay.snapshot().cached).toBeUndefined();
+    });
+    expect(cached).toBe(false);
+    relay.retry();
+    await vi.waitFor(() => expect(connections).toHaveLength(2));
+    connections[1]?.resolve({
+      viewer: viewer.pubkey,
+      relayAuthor: authority.pubkey,
+      scope,
+      media: () => undefined,
+      query: async () => [],
+    });
+    await vi.waitFor(() => expect(relay.snapshot().status).toBe("ready"));
+    const successor = relay.snapshot();
+    expect(successor.scope).toBe(before.scope);
+    channelTabs(successor.session).list("alpha");
+    expect(old.result.current.entries[0]).toBe(liveEntry);
+    const recovered = mount(successor.session);
+    expect(recovered.result.current.entries).toEqual([]);
+    expect(recovered.result.current.pendingEntries).toMatchObject([
+      { key: profile.key },
+    ]);
+    act(() => recovered.result.current.restoreEntries(() => profile));
+    expect(recovered.result.current.entries[0]?.restored).toBe(true);
+    expect(recovered.result.current.entries[0]).not.toBe(liveEntry);
   } finally {
     cleanup();
     await ctx.fiber.dispose();

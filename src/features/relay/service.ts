@@ -307,6 +307,7 @@ export function provideRelay(
               signal !== controller?.signal
             )
               return;
+            releaseTabWorkspace(store.session.scope);
             store.dispose();
             store = createRelaySession(null, { identityNames });
             transientFailure = false;

@@ -522,6 +522,26 @@ export function ChannelMembersDialog({
   const focusedAdd = useRef<{ key: string; button: HTMLButtonElement } | null>(
     null,
   );
+  const expandedFocus = useRef<{
+    rowId: string;
+    button: HTMLButtonElement;
+  } | null>(null);
+  // Keyboard expansion can remove its focused control. Hand off after the rows
+  // mount, without overriding a surviving button or an intentional focus move.
+  useLayoutEffect(() => {
+    const previous = expandedFocus.current;
+    expandedFocus.current = null;
+    if (
+      previous &&
+      !previous.button.isConnected &&
+      (document.activeElement === previous.button ||
+        document.activeElement === document.body)
+    )
+      document
+        .getElementById(previous.rowId)
+        ?.querySelector<HTMLButtonElement>("button:not(:disabled)")
+        ?.focus();
+  });
   const lifetime = useRef<AbortController>(undefined);
   const [query, setQuery] = useState("");
   const [selectedRole, setSelectedRole] = useState("All");
@@ -962,6 +982,7 @@ export function ChannelMembersDialog({
       name,
       people: ordered.slice(0, size),
       more: ordered.length > size,
+      next: ordered[size]?.pubkey,
     };
   });
   const visibleCandidates = solo
@@ -1779,7 +1800,14 @@ export function ChannelMembersDialog({
                   </ul>
                 )}
                 {(solo
-                  ? [{ name: "", people: visibleCandidates, more: false }]
+                  ? [
+                      {
+                        name: "",
+                        people: visibleCandidates,
+                        more: false,
+                        next: undefined,
+                      },
+                    ]
                   : invitationGroups
                 ).map((group) =>
                   group.people.length > 0 ? (
@@ -1847,7 +1875,17 @@ export function ChannelMembersDialog({
                           <Button
                             variant="subtle"
                             size="xs"
-                            onClick={() =>
+                            onClick={(event) => {
+                              if (
+                                event.detail === 0 &&
+                                document.activeElement ===
+                                  event.currentTarget &&
+                                group.next
+                              )
+                                expandedFocus.current = {
+                                  rowId: highlight.rowId(group.next),
+                                  button: event.currentTarget,
+                                };
                               setInvitationPage((old) => ({
                                 ...old,
                                 groupSizes: {
@@ -1859,8 +1897,8 @@ export function ChannelMembersDialog({
                                       group.people.length,
                                     ) + INVITATION_GROUP_SIZE,
                                 },
-                              }))
-                            }
+                              }));
+                            }}
                           >
                             Show more
                           </Button>

@@ -750,6 +750,53 @@ test("large known-agent searches mount only the first invitation page", async ({
   expect(errors).toEqual([]);
 });
 
+// Browser-only: removing a focused button interacts with the native dialog focus
+// trap differently in Chromium and WebKit; jsdom cannot establish the handoff.
+test("final invitation expansion continues keyboard focus at the first new row", async ({
+  page,
+}) => {
+  const { errors } = watchPageErrors(page);
+  for (const activation of ["Enter", "Space", "pointer"]) {
+    await page.goto(`${url}?invitation-focus`);
+    await page.getByRole("button", { name: "Access" }).click();
+    const dialog = page.getByRole("dialog", { name: "Manage members" });
+    await dialog.getByRole("searchbox").fill("Helper");
+    const group = dialog.getByRole("region", {
+      name: "Your other agents",
+      exact: true,
+    });
+    const more = group.getByRole("button", { name: "Show more", exact: true });
+    await expect(
+      group.getByRole("button", { name: /^Add Helper/ }),
+    ).toHaveCount(4);
+    await more.focus();
+    await page.keyboard.press("Enter");
+    await expect(
+      group.getByRole("button", { name: /^Add Helper/ }),
+    ).toHaveCount(8);
+    await expect(more).toBeFocused();
+    if (activation === "pointer") await more.click();
+    else await page.keyboard.press(activation);
+    await expect(
+      group.getByRole("button", { name: /^Add Helper/ }),
+    ).toHaveCount(10);
+    await expect(more).toHaveCount(0);
+    const firstNew = group.getByRole("button", {
+      name: /^Open profile for Helper 009/,
+    });
+    if (activation === "pointer") await expect(firstNew).not.toBeFocused();
+    else {
+      await expect(firstNew).toBeFocused();
+      await page.keyboard.press("Tab");
+      await expect(
+        group.getByRole("button", { name: /^Add Helper 009/ }),
+      ).toBeFocused();
+    }
+  }
+  expect(await page.evaluate(() => window.focusFixture.additions)).toEqual([]);
+  expect(errors).toEqual([]);
+});
+
 // Browser-only: shared Select/modal focus, animated search geometry and native
 // full-height row action hit testing cannot be established by jsdom.
 test("member identity dropdown fits beside search and preserves modal focus", async ({

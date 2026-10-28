@@ -26,7 +26,7 @@ import { emojiMatches } from "../relay/emoji";
 import { profileTarget } from "../profiles/target";
 import styles from "./Messages.module.css";
 import { LinkLabel } from "../../bundled/links/InlineLink";
-import { MessageMarkdown } from "./MessageMarkdown";
+import { createMarkdownPrecompiler, MessageMarkdown } from "./MessageMarkdown";
 import { serializeSelection } from "./selection-copy";
 import { createRelaySession } from "../relay/session";
 import { createAgentDirectory } from "../identity-names/testing";
@@ -39,14 +39,15 @@ import {
 import type { ChannelMessage } from "../relay/contracts";
 
 const markdownRenders = vi.hoisted(() => vi.fn());
+// Bodies render react-markdown once per protected source and share the element.
+const markdownCompiles = markdownRenders;
 vi.mock("react-markdown", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react-markdown")>();
   return {
     ...actual,
     default: (properties: ComponentProps<typeof actual.default>) => {
       markdownRenders();
-      const Markdown = actual.default;
-      return <Markdown {...properties} />;
+      return actual.default(properties);
     },
   };
 });
@@ -350,6 +351,49 @@ describe("mounted Markdown preparation", () => {
     expect(markdownRenders).toHaveBeenCalledTimes(initialRenders);
     expect(screen.queryByText("7:second-media")).not.toBeInTheDocument();
     expect(screen.getByText("PLUGIN")).toBeInTheDocument();
+  });
+
+  it("compiles a body once across mounts and again when a bound name changes", () => {
+    const content = "Hi @Mic, see **compiled** `once`";
+    const initial = props(content, { patch: { mentions: [mic] } });
+    const first = renderDom(<MessageMarkdown {...initial} />);
+    const html = first.container.innerHTML;
+    first.unmount();
+    const compiles = markdownCompiles.mock.calls.length;
+
+    const second = renderDom(<MessageMarkdown {...initial} />);
+    expect(second.container.innerHTML).toBe(html);
+    expect(markdownCompiles).toHaveBeenCalledTimes(compiles);
+    second.unmount();
+
+    const renamed = renderDom(
+      <MessageMarkdown
+        {...initial}
+        participantProfiles={new Map([[mic, { name: "Micah" }]])}
+      />,
+    );
+    expect(markdownCompiles).toHaveBeenCalledTimes(compiles + 1);
+    renamed.unmount();
+  });
+
+  it("precompiles added rows while idle so they mount from the shared tree", () => {
+    vi.useFakeTimers();
+    try {
+      const precompiler = createMarkdownPrecompiler(() => []);
+      const page = props("A precompiled **older** row for @Mic", {
+        patch: { mentions: [mic] },
+      });
+      precompiler.add([page.row], page.participantProfiles);
+      const compiles = markdownCompiles.mock.calls.length;
+      vi.runAllTimers();
+      expect(markdownCompiles).toHaveBeenCalledTimes(compiles + 1);
+
+      renderDom(<MessageMarkdown {...page} />);
+      expect(markdownCompiles).toHaveBeenCalledTimes(compiles + 1);
+      expect(screen.getByText("older")).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("invalidates protected prose when live identity and security inputs change", () => {

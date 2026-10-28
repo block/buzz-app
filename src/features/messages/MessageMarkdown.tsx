@@ -3,12 +3,12 @@ import {
   Children,
   createContext,
   isValidElement,
-  memo,
   useContext,
   useMemo,
   useState,
   useSyncExternalStore,
   type ComponentPropsWithoutRef,
+  type ReactElement,
   type ReactNode,
 } from "react";
 import type { RelaySession } from "../relay/session";
@@ -37,7 +37,7 @@ import Markdown, {
   type UrlTransform,
 } from "react-markdown";
 import remarkBreaks from "remark-breaks";
-import remarkGfm from "remark-gfm";
+import { remarkMessageGfm } from "./remark-message-gfm";
 import { remarkSpoilers } from "./remark-spoilers";
 import type {
   CodeBlockRenderer,
@@ -59,6 +59,7 @@ import {
   isLiteralMarkdownContext,
   prepareMarkdown,
   type LiteralRange,
+  type PreparedMarkdown,
 } from "./markdown-preparation";
 
 type MarkdownNode = {
@@ -77,6 +78,15 @@ type MarkdownNode = {
   };
 };
 
+type MarkdownSource = Pick<
+  ChannelMessage,
+  | "content"
+  | "edited"
+  | "attachmentSeams"
+  | "mentions"
+  | "mentionReferences"
+  | "emoji"
+>;
 type InlinePart = {
   text: string;
   target?: string | undefined;
@@ -90,28 +100,18 @@ type ProtectedContent = {
 /** Bind exact names on the FULL signed body, before Markdown decodes escapes or
  * divides emphasis. Reference labels must also survive unchanged for resolution. */
 function protectInlineContent(
-  row: Pick<
-    ChannelMessage,
-    | "content"
-    | "edited"
-    | "attachmentSeams"
-    | "mentions"
-    | "mentionReferences"
-    | "emoji"
-  >,
+  row: MarkdownSource,
   profiles: ReadonlyMap<string, Profile> | undefined,
-  literalRanges: readonly LiteralRange[],
+  literalRanges: () => readonly LiteralRange[],
   agents: typeof emptyReferenceDirectory.agents,
   spoilerDelimiters: readonly number[],
 ): ProtectedContent {
   let rangeIndex = 0;
   const isLiteral = (start: number, end: number) => {
-    while (
-      literalRanges[rangeIndex] &&
-      (literalRanges[rangeIndex]?.end ?? 0) <= start
-    )
+    const ranges = literalRanges();
+    while (ranges[rangeIndex] && (ranges[rangeIndex]?.end ?? 0) <= start)
       rangeIndex++;
-    return (literalRanges[rangeIndex]?.start ?? Infinity) < end;
+    return (ranges[rangeIndex]?.start ?? Infinity) < end;
   };
 
   // Numeric entities can manufacture private-use characters during parsing too.
@@ -232,7 +232,7 @@ const placeholderPattern = (protectedContent: ProtectedContent) =>
   );
 
 function inlineProtectionKey(
-  row: ChannelMessage,
+  row: MarkdownSource,
   profiles: ReadonlyMap<string, Profile> | undefined,
   agents: typeof emptyReferenceDirectory.agents,
 ) {
@@ -462,7 +462,10 @@ export function MessageMarkdown({
   staticMentions?: boolean | undefined;
 }) {
   const resolveName = useChannelIdentityNames(session, row.channelId);
-  const prepared = useMemo(() => prepareMarkdown(row.content), [row.content]);
+  const prepared = useMemo(
+    () => preparedMarkdown(row.content, () => prepareMarkdown(row.content)),
+    [row.content],
+  );
   if (prepared.kind === "plain")
     return <div className={styles.plainText}>{prepared.content}</div>;
   return (
@@ -570,34 +573,16 @@ function PreparedMessageMarkdown({
   // The key contains every row/profile/agent/emoji value consumed below. It
   // avoids reparsing for equivalent folded rows without hiding live inputs.
   // biome-ignore lint/correctness/useExhaustiveDependencies: semantic key
-  const protectedContent = useMemo(
+  const body = useMemo(
     () =>
-      protectInlineContent(
-        {
-          content: prepared.content,
-          // Seams index the folded body. Leave link-repaired prose unbound, as edits are.
-          ...(sourceRow.edited ||
-          (sourceRow.attachmentSeams && prepared.content !== sourceRow.content)
-            ? { edited: true as const }
-            : {}),
-          ...(sourceRow.attachmentSeams
-            ? { attachmentSeams: sourceRow.attachmentSeams }
-            : {}),
-          mentions: sourceRow.mentions,
-          mentionReferences: sourceRow.mentionReferences ?? [],
-          ...(sourceRow.emoji ? { emoji: sourceRow.emoji } : {}),
-        },
+      messageMarkdownElement(
+        sourceRow,
+        prepared,
         profiles,
-        prepared.literalRanges,
         directory.agents,
-        prepared.spoilerDelimiters,
+        protectionKey,
       ),
-    [
-      prepared.content,
-      prepared.literalRanges,
-      prepared.spoilerDelimiters,
-      protectionKey,
-    ],
+    [sourceRow.content, protectionKey],
   );
   // Explicit profile links are identity locators, not signed notification intent.
   // Reuse the same control and availability gate as bound prose mentions.
@@ -727,34 +712,155 @@ function PreparedMessageMarkdown({
 
   const markdown = (
     <MessageComponentsContext value={components}>
-      <MarkdownBody protectedContent={protectedContent} />
+      {body}
     </MessageComponentsContext>
   );
   return largeEmoji ? markdown : <div className={styles.text}>{markdown}</div>;
 }
 
-const MarkdownBody = memo(function MarkdownBody({
-  protectedContent,
-}: {
-  protectedContent: ProtectedContent;
-}) {
-  return (
-    <Markdown
-      remarkPlugins={[
-        remarkGfm,
-        remarkBreaks,
-        [remarkSpoilers, `<${protectedContent.prefix}spoiler\uE002>`],
-        [remarkInlineContent, protectedContent],
-        remarkLiteralHtml,
-      ]}
-      components={markdownComponents}
-      skipHtml
-      urlTransform={transformUrl}
-    >
-      {protectedContent.content}
-    </Markdown>
+/** Least-recently-used, bounded by entries and by source characters. */
+function boundedCache<Value>(maxEntries: number, maxCharacters: number) {
+  const entries = new Map<string, Value>();
+  let characters = 0;
+  return (key: string, create: () => Value): Value => {
+    const cached = entries.get(key);
+    if (cached !== undefined) {
+      entries.delete(key);
+      entries.set(key, cached);
+      return cached;
+    }
+    const value = create();
+    entries.set(key, value);
+    characters += key.length;
+    for (const [oldest] of entries) {
+      if (entries.size <= maxEntries && characters <= maxCharacters) break;
+      entries.delete(oldest);
+      characters -= oldest.length;
+    }
+    return value;
+  };
+}
+
+// Bodies are immutable for a given source and protection key, so remounts
+// (virtualized rows, reopened threads, revisited channels) reuse the work.
+const preparedMarkdown = boundedCache<PreparedMarkdown>(2_000, 4_000_000);
+const renderedMarkdown = boundedCache<ReactElement>(2_000, 4_000_000);
+
+/** A row's rendered body. The key holds every row, profile and agent value
+ * that protection reads, so equal keys render equal trees. Components read
+ * their live behavior from context, so the element can be shared. */
+function messageMarkdownElement(
+  sourceRow: MarkdownSource,
+  prepared: Extract<PreparedMarkdown, { kind: "markdown" }>,
+  profiles: ReadonlyMap<string, Profile> | undefined,
+  agents: typeof emptyReferenceDirectory.agents,
+  protectionKey = inlineProtectionKey(sourceRow, profiles, agents),
+): ReactElement {
+  return renderedMarkdown(`${protectionKey}\u0000${sourceRow.content}`, () =>
+    renderProtectedMarkdown(
+      protectInlineContent(
+        {
+          content: prepared.content,
+          // Seams index the folded body. Leave link-repaired prose unbound, as edits are.
+          ...(sourceRow.edited ||
+          (sourceRow.attachmentSeams && prepared.content !== sourceRow.content)
+            ? { edited: true as const }
+            : {}),
+          ...(sourceRow.attachmentSeams
+            ? { attachmentSeams: sourceRow.attachmentSeams }
+            : {}),
+          mentions: sourceRow.mentions,
+          mentionReferences: sourceRow.mentionReferences ?? [],
+          ...(sourceRow.emoji ? { emoji: sourceRow.emoji } : {}),
+        },
+        profiles,
+        () => prepared.literalRanges,
+        agents,
+        prepared.spoilerDelimiters,
+      ),
+    ),
   );
-});
+}
+
+// WebKit has no requestIdleCallback; there a short timer stands in.
+type IdleHandle = number | ReturnType<typeof setTimeout>;
+// Markdown is a synchronous, hook-free function of its props.
+const renderProtectedMarkdown = (protectedContent: ProtectedContent) =>
+  Markdown({
+    remarkPlugins: [
+      remarkMessageGfm(protectedContent.content),
+      remarkBreaks,
+      [remarkSpoilers, `<${protectedContent.prefix}spoiler\uE002>`],
+      [remarkInlineContent, protectedContent],
+      remarkLiteralHtml,
+    ],
+    components: markdownComponents,
+    skipHtml: true,
+    urlTransform: transformUrl,
+    children: protectedContent.content,
+  });
+
+const requestIdle = (
+  callback: (deadline?: IdleDeadline) => void,
+): IdleHandle =>
+  typeof requestIdleCallback === "function"
+    ? requestIdleCallback(callback)
+    : setTimeout(callback, 16);
+const cancelIdle = (handle: IdleHandle) =>
+  typeof handle === "number" && typeof cancelIdleCallback === "function"
+    ? cancelIdleCallback(handle)
+    : clearTimeout(handle);
+
+/** Compiles bodies before they mount, while the page is idle, so rows that
+ * scroll in render from the shared tree. Pages compile in the order they are
+ * added, each newest first. */
+export function createMarkdownPrecompiler(
+  agents: () => typeof emptyReferenceDirectory.agents,
+) {
+  let pending: Array<{
+    row: MarkdownSource;
+    profiles: ReadonlyMap<string, Profile> | undefined;
+  }> = [];
+  let next = 0;
+  let handle: IdleHandle | undefined;
+  const compile = (deadline?: IdleDeadline) => {
+    const end = performance.now() + (deadline?.timeRemaining() ?? 4);
+    while (next < pending.length && performance.now() < end) {
+      const item = pending[next++];
+      if (!item) continue;
+      const { row, profiles } = item;
+      const prepared = preparedMarkdown(row.content, () =>
+        prepareMarkdown(row.content),
+      );
+      if (prepared.kind === "markdown")
+        messageMarkdownElement(row, prepared, profiles, agents());
+    }
+    if (next < pending.length) handle = requestIdle(compile);
+    else {
+      pending = [];
+      next = 0;
+      handle = undefined;
+    }
+  };
+  return {
+    add(
+      rows: readonly MarkdownSource[],
+      profiles: ReadonlyMap<string, Profile> | undefined,
+    ) {
+      for (let index = rows.length - 1; index >= 0; index--) {
+        const row = rows[index];
+        if (row) pending.push({ row, profiles });
+      }
+      handle ??= requestIdle(compile);
+    },
+    cancel() {
+      if (handle !== undefined) cancelIdle(handle);
+      pending = [];
+      next = 0;
+      handle = undefined;
+    },
+  };
+}
 
 function MessageSpoiler({
   children,

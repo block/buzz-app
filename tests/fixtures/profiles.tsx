@@ -15,6 +15,8 @@ import {
 import { PagesService } from "../../src/features/pages/service";
 import { ChannelWorkspaceFixture } from "./channel-workspace";
 import { createRelaySession } from "../../src/features/relay/session";
+import type { LiveCallbacks } from "../../src/features/relay/live";
+import { eventDto } from "../../src/features/relay/events";
 import { localAgentsFixture } from "../../src/features/agents/local-testing";
 import { AgentsService } from "../../src/features/agents/service";
 import { provideNavigation } from "../../src/features/navigation/service";
@@ -121,6 +123,7 @@ async function attestAgentProfile() {
       : head,
   );
 }
+let incoming: LiveCallbacks | undefined;
 function session() {
   return createRelaySession(
     {
@@ -145,8 +148,15 @@ function session() {
         : {}),
       relayAuthor: authority.pubkey,
       subscribe(callbacks) {
+        incoming = callbacks;
         callbacks.state({ status: "connected", routes: [] });
-        return { update() {}, retry() {}, dispose() {} };
+        return {
+          update() {},
+          retry() {},
+          dispose() {
+            if (incoming === callbacks) incoming = undefined;
+          },
+        };
       },
       media: (url, size) => {
         report.media.push([url, size]);
@@ -388,6 +398,26 @@ Object.assign(window, {
       data.push(
         profile(missing, { name: "Recovered", about: "Recovered biography" }),
       );
+    },
+    replaceViewerProfile() {
+      const prior = data.find((event) => event.pubkey === viewer.pubkey);
+      if (!prior || !incoming) throw new Error("Profile owner is not live");
+      const next = eventDto(
+        profile(
+          viewer,
+          {
+            ...JSON.parse(prior.content),
+            name: "Replacement viewer",
+            is_agent: true,
+          },
+          prior.created_at + 1,
+        ),
+      );
+      data = data.map((event) =>
+        event.pubkey === viewer.pubkey ? next : event,
+      );
+      incoming.receive([next]);
+      return next.id;
     },
     replace() {
       owner.dispose();

@@ -310,6 +310,47 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
   expect(errors.unexplained()).toEqual([]);
 });
 
+// Browser boundary: a signed replacement must reach the actual channel row,
+// retain the focused keyed trigger, and update its current profile destination.
+// Directory/selector unit tests cannot prove native focus or ref composition.
+test("a live profile replacement updates the existing focused channel row", async ({
+  page,
+}) => {
+  const errors = watchPageErrors(page);
+  await page.goto("/tests/fixtures/profiles.html");
+  const avatar = page.getByRole("button", {
+    name: "View Viewer profile",
+    exact: true,
+  });
+  await expect(avatar).toBeVisible();
+  await avatar.focus();
+  const original = await avatar.elementHandle();
+  await page.evaluate(() => window.profilesFixture.replaceViewerProfile());
+  const replaced = page.getByRole("button", {
+    name: "View Replacement viewer profile",
+    exact: true,
+  });
+  await expect(replaced).toBeFocused();
+  await expect(replaced.locator("[data-avatar-shape]")).toHaveAttribute(
+    "data-avatar-shape",
+    "squircle",
+  );
+  expect(
+    await replaced.evaluate((node, original) => node === original, original),
+  ).toBe(true);
+  await replaced.press("Enter");
+  const details = page.getByRole("region", {
+    name: "Profile details",
+    exact: true,
+  });
+  await expect(
+    details.getByRole("heading", { name: "Replacement viewer", exact: true }),
+  ).toBeVisible();
+  await details.press("Escape");
+  await expect(replaced).toBeFocused();
+  expect(errors.unexplained()).toEqual([]);
+});
+
 test("contextual panel callbacks retire with opening, channel, contribution and session", async ({
   page,
 }) => {

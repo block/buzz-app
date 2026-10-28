@@ -40,7 +40,16 @@ export function CompletionMenu({
   }, [session]);
   const presentation =
     snapshot?.generation === generation ? snapshot : undefined;
-  const result = presentation?.publication?.result;
+  const committed = useRef<CompletionPresentation>(undefined);
+  // A new visit revokes commands immediately. Keep only its predecessor's
+  // committed resources during the unpublished handoff; they are hidden and
+  // supply neither displayed evidence nor input ARIA. Exact empty/withdrawal
+  // within the current visit clears resources instead of becoming a cache.
+  const handoff =
+    !presentation?.publication && committed.current?.generation !== generation
+      ? committed.current
+      : undefined;
+  const result = (presentation?.publication ?? handoff?.publication)?.result;
   const provider = generation.provider;
   const compact = provider.pluginId === "buzz.emoji";
   const mention = provider.pluginId === "buzz.mentions";
@@ -53,11 +62,11 @@ export function CompletionMenu({
       ? { preferAbove: true, gap: 4, maxWidth: channel ? 480 : 380 }
       : undefined,
   );
-  const id = useId();
+  const id = `${useId()}-${generation.id}`;
   const list = useRef<HTMLDivElement>(null);
   const items = result?.items ?? [];
   const count = items.length + (result?.retry ? 1 : 0);
-  const visible = !!(count || result?.status);
+  const visible = !handoff && !!(count || result?.status);
   const status = result?.status;
   const index =
     presentation?.selected === COMPLETION_RETRY && result?.retry
@@ -65,6 +74,10 @@ export function CompletionMenu({
       : items.findIndex((item) => item.id === presentation?.selected);
   const selectedIndex = index < 0 ? 0 : index;
   useLayoutEffect(() => {
+    if (presentation?.publication)
+      committed.current = visible ? presentation : undefined;
+    else if (committed.current?.generation === generation)
+      committed.current = undefined;
     const reveal = session.committed(generation, presentation);
     const element = input.current;
     if (!element) return;
@@ -87,11 +100,14 @@ export function CompletionMenu({
       element.removeAttribute("aria-activedescendant");
     };
   });
-  return visible && input.current
+  return (visible || handoff) && input.current
     ? createPortal(
         <section
           ref={popup}
           className={styles.popup}
+          hidden={!visible}
+          inert={!visible}
+          aria-hidden={!visible || undefined}
           aria-label={`${provider.title} suggestions`}
           data-compact={compact || undefined}
           data-mention={named || undefined}
@@ -125,11 +141,11 @@ export function CompletionMenu({
                 onPointerMove={
                   compact || named
                     ? () => {
-                        session.select(generation, item.id);
+                        if (visible) session.select(generation, item.id);
                       }
                     : undefined
                 }
-                onClick={() => session.accept(generation, item.id)}
+                onClick={() => visible && session.accept(generation, item.id)}
                 className={styles.option}
               >
                 {item.preview && (
@@ -177,11 +193,14 @@ export function CompletionMenu({
                 onPointerMove={
                   compact || named
                     ? () => {
-                        session.select(generation, COMPLETION_RETRY);
+                        if (visible)
+                          session.select(generation, COMPLETION_RETRY);
                       }
                     : undefined
                 }
-                onClick={() => session.accept(generation, COMPLETION_RETRY)}
+                onClick={() =>
+                  visible && session.accept(generation, COMPLETION_RETRY)
+                }
               >
                 Retry suggestions
               </div>

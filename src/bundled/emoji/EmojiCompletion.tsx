@@ -52,9 +52,18 @@ function emojiInkCenter(text: string, font: string) {
   return center;
 }
 
-function NativeEmojiPreview({ emoji }: { emoji: string }) {
+function NativeEmojiPreview({
+  emoji,
+  visit,
+}: {
+  emoji: string;
+  visit: number;
+}) {
   const element = useRef<HTMLSpanElement>(null);
   useLayoutEffect(() => {
+    // The semantic option may survive a query. Preserve its previous per-visit
+    // font/optical recalculation when enlarged text or fonts changed meanwhile.
+    void visit;
     const node = element.current;
     if (!node) return;
     const center = () => {
@@ -95,7 +104,7 @@ function NativeEmojiPreview({ emoji }: { emoji: string }) {
     );
     observer.observe(node);
     return () => observer.disconnect();
-  }, [emoji]);
+  }, [emoji, visit]);
   return (
     <span ref={element} data-native-emoji="">
       {emoji}
@@ -142,11 +151,12 @@ export function EmojiCompletion({
           : {}),
         preview: item.url ? (
           <CustomEmoji
+            key={observation.revision}
             emoji={{ shortcode: item.shortcode, url: item.url }}
             media={session.media}
           />
         ) : (
-          <NativeEmojiPreview emoji={item.text} />
+          <NativeEmojiPreview emoji={item.text} visit={observation.revision} />
         ),
         edit: { text: item.text },
       }));

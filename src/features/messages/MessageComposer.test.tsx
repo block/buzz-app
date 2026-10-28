@@ -423,9 +423,15 @@ function mount(
       });
       return published;
     },
-    replaceCompletionProvider(pluginId = "test") {
+    replaceCompletionProvider(pluginId = "test", queryUpdates?: "props") {
       act(() => {
-        completions = [{ ...completion("2"), pluginId }];
+        completions = [
+          {
+            ...completion("2"),
+            pluginId,
+            ...(queryUpdates ? { queryUpdates } : {}),
+          },
+        ];
         for (const listener of completionListeners) listener();
       });
     },
@@ -896,6 +902,83 @@ it("an older completion disposer cannot withdraw a newer answer or query", () =>
   expect(screen.getByRole("option", { name: "Current" })).toBeVisible();
   expect(publish({ items: [] })).toBe(false);
   expect(h.messages.send).not.toHaveBeenCalled();
+});
+
+it("keeps opted-in semantic rows through a hidden query handoff, then clears exact empty and withdrawal", () => {
+  const h = mount();
+  h.replaceCompletionProvider("buzz.mentions", "props");
+  const items = Array.from({ length: 50 }, (_, i) => ({
+    id: i.toString(16).padStart(64, "0"),
+    label: `Choice ${i}`,
+    detail: i.toString(16).padStart(64, "0"),
+    edit: { text: `accepted ${i}` },
+  }));
+  h.fill("!first");
+  const first = h.completionRequests.at(-1);
+  if (!first) throw new Error("No first completion request");
+  act(() => {
+    first({ items });
+  });
+  const rows = screen.getAllByRole("option");
+  expect(rows).toHaveLength(50);
+
+  h.fill("!next");
+  expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  expect(h.input()).not.toHaveAttribute("aria-controls");
+  // These are resource shells, not an installed or selectable current answer.
+  expect(rows[0]).not.toBeVisible();
+  expect(rows[0]).toBeInTheDocument();
+  expect(first({ items })).toBe(false);
+  const next = h.completionRequests.at(-1);
+  if (!next) throw new Error("No next completion request");
+  let withdraw: ReturnType<typeof next> = false;
+  act(() => {
+    withdraw = next({
+      items: items.map((item, i) => ({
+        ...item,
+        label: `Current ${i}`,
+        disabled: i === 0 ? "Unavailable" : undefined,
+      })),
+    });
+  });
+  const current = screen.getAllByRole("option");
+  expect(current).toHaveLength(50);
+  current.forEach((row, i) => {
+    const expected = items[i];
+    if (!expected) throw new Error("Unexpected extra completion row");
+    expect(row).toBe(rows[i]);
+    expect(
+      row.querySelector("[data-completion-label] > span"),
+    ).toHaveTextContent(`Current ${i}`);
+    expect(row.querySelector("[data-recipient-key]")).toHaveTextContent(
+      expected.detail,
+    );
+  });
+  const disabled = current[0];
+  if (!disabled) throw new Error("Missing disabled completion row");
+  expect(disabled).toHaveAttribute("aria-disabled", "true");
+  fireEvent.click(disabled);
+  expect(h.input()).toHaveValue("!next");
+  act(() => {
+    if (withdraw) withdraw();
+  });
+  expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  expect(rows[0]).not.toBeInTheDocument();
+
+  act(() => {
+    next({ items });
+  });
+  h.fill("!empty");
+  expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  const empty = h.completionRequests.at(-1);
+  if (!empty) throw new Error("No empty completion request");
+  act(() => {
+    empty({ items: [] });
+  });
+  expect(document.querySelector('[role="option"]')).not.toBeInTheDocument();
+  expect(h.input()).not.toHaveAttribute("aria-controls");
+  fireEvent.keyDown(h.input(), { key: "Enter" });
+  expect(h.messages.send).toHaveBeenCalledTimes(1);
 });
 
 it("isolates completion preview failure, revokes its publisher and recovers on the next query", () => {

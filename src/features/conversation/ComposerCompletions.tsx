@@ -197,7 +197,11 @@ export function ComposerCompletions({
           />
           <ProviderAdapter generation={generation} />
           <CompletionMenu
-            key={generation.id}
+            key={
+              generation.provider.queryUpdates === "props"
+                ? "stable"
+                : generation.id
+            }
             session={session}
             generation={generation}
             input={input}

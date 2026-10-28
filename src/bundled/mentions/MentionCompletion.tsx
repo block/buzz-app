@@ -124,43 +124,49 @@ export function MentionCompletion({
       };
     }
     const available = [
-      ...matching.map(({ recipient, label, elsewhere, disabled }) => ({
-        disabled,
-        canSelect: (key: string) =>
-          (key !== " " || !teams.blocksSpace) &&
-          model.canSelect(recipient.pubkey, key === " "),
-        id: recipient.pubkey,
-        label,
-        detail:
-          disabled ??
-          (members.includes(recipient.pubkey)
-            ? recipient.pubkey
-            : inviteAgents
-              ? `${parentAdmission ? "Adds to channel" : "Adds to chat"} · ${recipient.pubkey}`
-              : outsideMentionDetail(channel, elsewhere)),
-        preview: (
-          <Avatar
-            alt=""
-            fallback={label}
-            src={avatarMedia(
-              profiles.get(recipient.pubkey)?.picture ??
-                model.directory.people.find(
-                  (person) => person.pubkey === recipient.pubkey,
-                )?.picture,
-              session.media,
-            )}
-            size="default"
-            shape={
-              model.candidates.some(
-                (c) => c.recipient.pubkey === recipient.pubkey && c.agent,
-              )
-                ? "squircle"
-                : "circle"
-            }
-          />
-        ),
-        edit: { mention: recipient },
-      })),
+      ...matching.map(({ recipient, label, elsewhere, disabled }) => {
+        const picture = avatarMedia(
+          profiles.get(recipient.pubkey)?.picture ??
+            model.directory.people.find(
+              (person) => person.pubkey === recipient.pubkey,
+            )?.picture,
+          session.media,
+        );
+        return {
+          disabled,
+          canSelect: (key: string) =>
+            (key !== " " || !teams.blocksSpace) &&
+            model.canSelect(recipient.pubkey, key === " "),
+          id: recipient.pubkey,
+          label,
+          detail:
+            disabled ??
+            (members.includes(recipient.pubkey)
+              ? recipient.pubkey
+              : inviteAgents
+                ? `${parentAdmission ? "Adds to channel" : "Adds to chat"} · ${recipient.pubkey}`
+                : outsideMentionDetail(channel, elsewhere)),
+          preview: (
+            <Avatar
+              // Image owners retry on a new visit as before. Initial-only
+              // previews have no failed-image state and can keep their resources.
+              key={picture ? observation.revision : undefined}
+              alt=""
+              fallback={label}
+              src={picture}
+              size="default"
+              shape={
+                model.candidates.some(
+                  (c) => c.recipient.pubkey === recipient.pubkey && c.agent,
+                )
+                  ? "squircle"
+                  : "circle"
+              }
+            />
+          ),
+          edit: { mention: recipient },
+        };
+      }),
       ...matchingTeams.map((team) => ({
         id: team.id,
         label: team.name,
@@ -168,7 +174,11 @@ export function MentionCompletion({
         disabled: team.disabled,
         canSelect: team.canSelect,
         preview: (
-          <TeamMentionAvatars session={session} recipients={team.recipients} />
+          <TeamMentionAvatars
+            key={observation.revision}
+            session={session}
+            recipients={team.recipients}
+          />
         ),
         edit: team.disabled
           ? { text: `@${team.name}` }

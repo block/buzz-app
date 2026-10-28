@@ -291,6 +291,7 @@ export type ComposerCompletion = Readonly<{
   component: ComponentType<ComposerCompletionProps>;
   /** Opt into query/observation/publish prop updates within one trigger lifetime.
    * Clean up each prior query's work; captured publishers stay generation-bound.
+   * Keyed decorative previews can stay mounted and must follow current props.
    * Omitted: the host preserves the original component remount per query visit. */
   queryUpdates?: "props";
 }>;

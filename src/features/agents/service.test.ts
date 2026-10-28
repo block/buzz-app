@@ -888,6 +888,8 @@ it("keeps each account's import of the same old team apart on one device", async
   const other = "f".repeat(64);
   const importAs = async (owner: string, member: string) => {
     signIn(owner);
+    // The new account's relay support check settles first.
+    await settle();
     listsTeam(native, nightShift([member]));
     const { team } = await importTeam(service);
     if (!team) throw new Error("The team was not saved");
@@ -11565,6 +11567,27 @@ describe("synced teams", () => {
     await vi.waitFor(() => expect(channels.made.has(home)).toBe(true));
     await f.service.saveTeam(crew([alder]));
     expect(channels.saveTeam).toHaveBeenCalledOnce();
+  });
+
+  it("refuses Import until a failed support check succeeds again", async () => {
+    coordinators.make = () => Promise.reject(new Error("discovery failed"));
+    const f = await setup({ identities: [here(alder)] });
+    await settle();
+    listsTeam(f.native, nightShift([alder]));
+    await expect(importTeam(f.service)).rejects.toThrow(
+      "Can't tell yet whether relay.example.test syncs teams",
+    );
+    expect(f.storage.get("buzz.agents.teams.v1")).toBeFalsy();
+  });
+
+  it("notifies subscribers when a synced team arrives from elsewhere", async () => {
+    const team = stored(viewer, [alder]);
+    const f = await ready([here(alder)], team.storage);
+    const changed = vi.fn();
+    f.service.subscribe(changed);
+    team.confirm(f.stores.get(home));
+    expect(f.service.snapshot().teams.map((t) => t.id)).toEqual([draft]);
+    expect(changed).toHaveBeenCalled();
   });
 
   it("creates a new team in its home community with the agents there", async () => {

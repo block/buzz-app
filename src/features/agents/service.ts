@@ -1772,10 +1772,7 @@ export class AgentsService extends Service implements Agents {
           }
           this.watch();
           // Synced teams are the signed-in account's.
-          if (viewer !== this.teamsFor) {
-            this.teamsChanged();
-            this.notify();
-          }
+          if (viewer !== this.teamsFor) this.teamsChanged();
           this.update();
         }),
         // Another provider, or its setup, can make classifiers available.
@@ -2667,8 +2664,7 @@ export class AgentsService extends Service implements Agents {
     const listed = new Set(found.agents.map((agent) => agent.pubkey));
     // Synced where this community syncs config, so every device imports the
     // same team.
-    const home =
-      origin && this.communityConfigs.has(origin) ? origin : undefined;
+    const home = this.newTeamHome(origin);
     const localId = await importedTeamId(old, binding.scope);
     const teamId = home
       ? await syncedTeamId({
@@ -3761,7 +3757,29 @@ export class AgentsService extends Service implements Agents {
   }
   private teamsChanged() {
     this.teamsFor = this.communities.snapshot().viewer;
-    this.state = Object.freeze({ ...this.state, teams: this.allTeams() });
+    const prior = this.state.teams;
+    // Reuse each unchanged team, so config churn notifies nobody.
+    const teams = this.allTeams().map(
+      (team) =>
+        prior.find(
+          (old) =>
+            old.id === team.id &&
+            old.revision === team.revision &&
+            old.name === team.name &&
+            old.instructions === team.instructions &&
+            old.members.length === team.members.length &&
+            old.members.every(
+              (member, index) => member === team.members[index],
+            ),
+        ) ?? team,
+    );
+    if (
+      teams.length === prior.length &&
+      teams.every((team, index) => team === prior[index])
+    )
+      return;
+    this.state = Object.freeze({ ...this.state, teams });
+    this.notify();
   }
 
   /** Makes `team` so in its home community, online: only its owner's agents
@@ -3808,7 +3826,6 @@ export class AgentsService extends Service implements Agents {
   private showTeams(teams: readonly Team[]) {
     this.teamList = Object.freeze(teams);
     this.teamsChanged();
-    this.notify();
     return this.teamList;
   }
 

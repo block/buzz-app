@@ -680,10 +680,10 @@ in its home record and applies everywhere.
   imported from old Buzz, is synced: its NIP-AP config channel (name and
   instructions) is created only in the community it was made in, and its members
   are the owner's agents in that channel. Until the relay's support is known,
-  New team is refused rather than made local. Adding an agent with no
-  membership there is refused with "Add <agent> to <community> first"; the
-  agent is never added to that community for you. A
-  member running in any community takes the team's section from the home
+  New team and Import are refused rather than made local. Adding an agent with
+  no membership there is refused with "Add <agent> to <community> first"; the
+  agent is never added to that community for you. A member running in any
+  community takes the team's section from the home
   channel's last confirmed copy, and with none its start waits rather than use
   local fields. Changes and Delete (which archives the home channel) run online,
   one at a time per team, and report anything left part way. Existing local

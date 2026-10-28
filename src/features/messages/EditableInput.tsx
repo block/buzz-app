@@ -15,7 +15,7 @@ import {
   TextSelection,
   type Transaction,
 } from "prosemirror-state";
-import { EditorView, Decoration, DecorationSet } from "prosemirror-view";
+import { EditorView, Decoration } from "prosemirror-view";
 import {
   history,
   undo,
@@ -267,10 +267,13 @@ export function EditableInput({
         projected = { doc, value: projectComposerDocument(doc) };
       return projected.value;
     };
-    const tokenViews = () => {
-      presentation.read(editor.state.doc, projection());
-      presentation.refreshHosts();
+    // Every native-view entry point (including checkpoint/reset) publishes its
+    // mapped presentation bindings before ProseMirror asks node views to update.
+    const updateNativeView = (state: EditorState) => {
+      presentation.prepare(state.doc);
+      editor.updateState(state);
     };
+    const tokenViews = () => presentation.refreshHosts();
     const selected = () => {
       const { from, to, empty, $from } = editor.state.selection;
       const active = inlineFormats
@@ -398,7 +401,14 @@ export function EditableInput({
       tr.setMeta("composer-normalized", true);
       if (root) tr.setMeta("appendedTransaction", root);
       else tr.setMeta("addToHistory", false);
-      return state.applyTransaction(tr).state;
+      const normalized = state.applyTransaction(tr);
+      for (const applied of normalized.transactions)
+        if (applied.docChanged) presentation.map(applied.mapping, applied.doc);
+      presentation.read(
+        normalized.state.doc,
+        projectComposerDocument(normalized.state.doc),
+      );
+      return normalized.state;
     };
     const normalize = new Plugin({
       filterTransaction(tr) {
@@ -437,7 +447,7 @@ export function EditableInput({
                 }),
               );
           });
-          return DecorationSet.create(state.doc, ranges);
+          return presentation.decorations(state.doc).add(state.doc, ranges);
         },
       },
     });
@@ -1247,7 +1257,11 @@ export function EditableInput({
             )
               tr.addStoredMark(code.create());
           }
-          const applied = previous.applyTransaction(tr).state;
+          const result = previous.applyTransaction(tr);
+          for (const applied of result.transactions)
+            if (applied.docChanged)
+              presentation.map(applied.mapping, applied.doc);
+          const applied = result.state;
           if (
             previous.doc !== applied.doc &&
             !tr.getMeta("composer-normalized")
@@ -1277,10 +1291,10 @@ export function EditableInput({
               : projectComposerDocument(next.doc),
           );
           if (previous === next) {
-            editor.updateState(previous);
+            updateNativeView(previous);
             return;
           }
-          editor.updateState(next);
+          updateNativeView(next);
           if (tr.docChanged) {
             scrollAfterTokens.current ||=
               tr.scrolledIntoView && presentation.hasNativeHosts();
@@ -1291,19 +1305,19 @@ export function EditableInput({
           selected();
         },
         nodeViews: {
-          token(node, _view, getPos) {
+          token(node, _view, getPos, decorations) {
             const dom = document.createElement("span");
             dom.className = tokenClass.current;
             dom.contentEditable = "false";
             dom.dataset.source = node.attrs.source;
-            const host = presentation.attach(dom, node, getPos);
+            const host = presentation.attach(dom, node, getPos, decorations);
             return {
               dom,
               ignoreMutation: () => true,
-              update(next) {
+              update(next, decorations) {
                 if (next.type !== composerSchema.nodes.token) return false;
                 dom.dataset.source = next.attrs.source;
-                host.update(next);
+                host.update(next, decorations);
                 return true;
               },
               destroy: host.destroy,
@@ -1772,7 +1786,7 @@ export function EditableInput({
             plain.current = savedPlain;
             separateHistory = savedSeparateHistory;
             emitted.current = savedDraft;
-            editor.updateState(saved);
+            updateNativeView(saved);
             tokenViews();
             selected();
           };
@@ -1796,7 +1810,7 @@ export function EditableInput({
         plain.current = [];
         if (reset) {
           separateHistory = false;
-          editor.updateState(reconcilePresentation(state(doc)));
+          updateNativeView(reconcilePresentation(state(doc)));
         } else
           editor.dispatch(
             closeHistory(
@@ -1817,7 +1831,7 @@ export function EditableInput({
         pendingPresentation = false;
         const next = reconcilePresentation(editor.state);
         presentation.read(next.doc, projectComposerDocument(next.doc));
-        if (next !== editor.state) editor.updateState(next);
+        if (next !== editor.state) updateNativeView(next);
         tokenViews();
       },
     };

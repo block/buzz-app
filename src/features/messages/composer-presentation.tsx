@@ -6,6 +6,8 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import type { Node as EditorNode } from "prosemirror-model";
+import { Decoration, DecorationSet } from "prosemirror-view";
+import type { Transaction } from "prosemirror-state";
 import {
   authoredComposerDocument,
   composerMarkdownContext,
@@ -43,6 +45,11 @@ export type ComposerAnalysis = MentionDraft & {
 type Projection = ReturnType<typeof projectComposerDocument>;
 type Presenter = (analysis: ComposerAnalysis) => readonly EditorDecoration[];
 type HostContent = { content: ReactNode; facts: readonly unknown[] };
+type PresentationEntry = {
+  source: string;
+  snapshot: HostContent;
+  hosts: Set<ComposerTokenHost>;
+};
 export type ComposerTokenHost = {
   id: number;
   element: HTMLElement;
@@ -50,6 +57,7 @@ export type ComposerTokenHost = {
   resource: ComposerResource | null;
   position(): number | undefined;
   snapshot: HostContent;
+  entry: PresentationEntry | undefined;
   listeners: Set<() => void>;
 };
 
@@ -130,7 +138,8 @@ export class ComposerPresentationGraph {
   private authored: EditorNode | undefined;
   private viewDocument: EditorNode | undefined;
   private analysis: ComposerAnalysis | undefined;
-  private source: Projection | undefined;
+  private mapped = DecorationSet.empty;
+  private mappedDocument: EditorNode | undefined;
   private presenter: Presenter;
   private reconcile: (() => void) | undefined;
   private hosts: readonly ComposerTokenHost[] = [];
@@ -155,7 +164,6 @@ export class ComposerPresentationGraph {
   }
 
   read(doc: EditorNode, source: Projection) {
-    this.source = source;
     if (this.viewDocument === doc) return;
     this.viewDocument = doc;
     const authored = authoredComposerDocument(doc);
@@ -164,6 +172,21 @@ export class ComposerPresentationGraph {
       this.analysis = analyze(authored, projectComposerDocument(authored));
       this.ranges = this.presenter(this.analysis);
     }
+    this.bind(doc, source);
+  }
+
+  prepare(doc: EditorNode) {
+    if (this.viewDocument !== doc) this.read(doc, projectComposerDocument(doc));
+  }
+
+  /** Map the native presentation bindings after each committed root/derived step. */
+  map(mapping: Transaction["mapping"], doc: EditorNode) {
+    this.mapped = this.mapped.map(mapping, doc);
+    this.mappedDocument = doc;
+  }
+
+  decorations(doc: EditorNode) {
+    return this.mappedDocument === doc ? this.mapped : DecorationSet.empty;
   }
 
   connect(reconcile: () => void) {
@@ -179,7 +202,7 @@ export class ComposerPresentationGraph {
     if (!this.analysis) return;
     const before = this.ranges;
     this.ranges = presenter(this.analysis);
-    if (
+    const shapeChanged =
       before.length !== this.ranges.length ||
       before.some((item, index) => {
         const next = this.ranges[index];
@@ -189,9 +212,19 @@ export class ComposerPresentationGraph {
           item.end !== next.end ||
           !!item.editAsText !== !!next.editAsText
         );
-      })
-    )
-      this.reconcile?.();
+      });
+    const artworkChanged =
+      shapeChanged ||
+      before.some((item, index) => {
+        const next = this.ranges[index];
+        return (
+          !next ||
+          !sameFacts(item.facts ?? [item.content], next.facts ?? [next.content])
+        );
+      });
+    if (artworkChanged && this.viewDocument)
+      this.bind(this.viewDocument, projectComposerDocument(this.viewDocument));
+    if (shapeChanged) this.reconcile?.();
     this.refreshHosts();
   }
 
@@ -209,6 +242,7 @@ export class ComposerPresentationGraph {
     element: HTMLElement,
     node: EditorNode,
     position: () => number | undefined,
+    decorations: readonly Decoration[],
   ) {
     const host: ComposerTokenHost = {
       id: ++this.nextHost,
@@ -217,19 +251,21 @@ export class ComposerPresentationGraph {
       resource: node.attrs.resource,
       position,
       snapshot: { content: node.attrs.source, facts: [node.attrs.source] },
+      entry: undefined,
       listeners: new Set(),
     };
     this.hosts = [...this.hosts, host];
-    this.refresh(host);
+    this.refresh(host, decorations);
     return {
       host,
-      update: (next: EditorNode) => {
+      update: (next: EditorNode, decorations: readonly Decoration[]) => {
         host.source = next.attrs.source;
         host.resource = next.attrs.resource;
-        this.refresh(host);
+        this.refresh(host, decorations);
       },
       destroy: () => {
         this.hosts = this.hosts.filter((item) => item !== host);
+        host.entry?.hosts.delete(host);
         host.listeners.clear();
       },
     };
@@ -237,7 +273,6 @@ export class ComposerPresentationGraph {
 
   /** Native updateState finishes before any React observer sees new hosts. */
   refreshHosts() {
-    for (const host of this.hosts) this.refresh(host);
     if (this.publishedHosts !== this.hosts) {
       this.publishedHosts = this.hosts;
       for (const listener of this.hostListeners) listener();
@@ -253,17 +288,62 @@ export class ComposerPresentationGraph {
     this.refreshHosts();
   }
 
-  private refresh(host: ComposerTokenHost) {
-    const position = host.position();
-    const start =
-      position === undefined ? undefined : this.source?.source(position);
-    const range = this.ranges.find(
-      (item) =>
-        item.start === start && item.end === (start ?? 0) + host.source.length,
-    );
+  private bind(doc: EditorNode, source: Projection) {
+    const decorations: Decoration[] = [];
+    for (const token of source.tokens) {
+      if (token.node.attrs.resource) continue;
+      const range = this.ranges.find(
+        (item) => item.start === token.start && item.end === token.end,
+      );
+      const old = this.mapped
+        .find(token.from, token.to)
+        .find(
+          (item) =>
+            item.from === token.from &&
+            item.to === token.to &&
+            item.spec.composerPresentation?.source === token.node.attrs.source,
+        );
+      const entry: PresentationEntry = old?.spec.composerPresentation ?? {
+        source: token.node.attrs.source,
+        snapshot: {
+          content: range?.content ?? token.node.attrs.source,
+          facts: [],
+        },
+        hosts: new Set(),
+      };
+      const content = range?.content ?? token.node.attrs.source;
+      const facts = range?.facts ?? [content];
+      if (!sameFacts(entry.snapshot.facts, facts)) {
+        entry.snapshot = { facts, content };
+        for (const host of entry.hosts) {
+          host.snapshot = entry.snapshot;
+          this.changedHosts.add(host);
+        }
+      }
+      decorations.push(
+        Decoration.node(
+          token.from,
+          token.to,
+          {},
+          { composerPresentation: entry },
+        ),
+      );
+    }
+    this.mapped = DecorationSet.create(doc, decorations);
+    this.mappedDocument = doc;
+  }
+
+  private refresh(host: ComposerTokenHost, decorations: readonly Decoration[]) {
+    const entry = decorations.find((item) => item.spec.composerPresentation)
+      ?.spec.composerPresentation as PresentationEntry | undefined;
+    if (host.entry !== entry) {
+      host.entry?.hosts.delete(host);
+      host.entry = entry;
+      entry?.hosts.add(host);
+    }
     const facts = host.resource
       ? ["resource", host.resource.uri, host.resource.label]
-      : (range?.facts ?? [range?.content ?? host.source]);
+      : (entry?.snapshot.facts ?? [host.source]);
     if (sameFacts(host.snapshot.facts, facts)) return;
     host.snapshot = {
       facts,
@@ -273,7 +353,7 @@ export class ComposerPresentationGraph {
           <span className={styles.resource}>{host.resource.label}</span>
         </>
       ) : (
-        (range?.content ?? host.source)
+        (entry?.snapshot.content ?? host.source)
       ),
     };
     this.changedHosts.add(host);

@@ -205,6 +205,8 @@ it("commits resource-only token hosts without a draft or format parent update", 
     expect(input.querySelectorAll("[data-source]")).toHaveLength(
       available ? 0 : 1,
     );
+    if (!available)
+      expect(input.querySelectorAll("[data-late-artwork]")).toHaveLength(0);
     act(() => fireEvent.compositionEnd(input));
     await waitFor(() =>
       expect(input.querySelectorAll("[data-source]")).toHaveLength(

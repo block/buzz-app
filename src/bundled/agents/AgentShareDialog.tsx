@@ -111,16 +111,21 @@ async function saveFile(file: Blob, name: string): Promise<string | undefined> {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-const pendingSends = new Map<
-  string,
-  Map<string, { channel: string; id: string }>
->();
-/** Messages sent from Share and not yet confirmed, per community and viewer:
- * the outbox keeps them there across reconnects, which replace the session. */
-function unconfirmed(session: RelaySession) {
-  const sent = pendingSends.get(session.scope) ?? new Map();
-  pendingSends.set(session.scope, sent);
-  return sent;
+/** The outbox's durable name for one copy of an agent sent to one person or
+ * channel, so a retry, even after a reload, finds that message again rather
+ * than sending another. An edited agent is a different copy. */
+async function shareRecovery(agent: Agent, target: ShareTarget, copy: string) {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(copy),
+  );
+  const hex = Array.from(new Uint8Array(digest), (byte) =>
+    byte.toString(16).padStart(2, "0"),
+  ).join("");
+  return {
+    key: `agent-share:${agent.pubkey}:${target.id}:${hex.slice(0, 40)}`,
+    value: "1",
+  };
 }
 
 /** Names in a sentence: "Ana", "Ana and #design", "Ana, Ben and Cy". */
@@ -265,12 +270,6 @@ export function AgentShareDialog({
       setPending(undefined);
     }
   };
-  // Each unconfirmed message, kept past closing the window, so a retry
-  // confirms it (delivery retries it in the outbox) rather than sending
-  // another. An edited agent is a different copy, so it sends anew.
-  const sent = unconfirmed(session);
-  const key = (target: ShareTarget) =>
-    `${agent.pubkey}:${target.id}:${current}`;
   const primary = useRef<HTMLButtonElement>(null);
   const upload = useRef<{ content: string; file: UploadedAttachment }>(
     undefined,
@@ -280,7 +279,8 @@ export function AgentShareDialog({
   const send = async () => {
     if (pending || !definition || !targets.length) return;
     const uploads = session.attachments;
-    if (!uploads) {
+    const outbox = session.outbox;
+    if (!uploads || !outbox) {
       setError("This community can’t send agents in messages.");
       return;
     }
@@ -293,7 +293,18 @@ export function AgentShareDialog({
     const reasons = new Set<string>();
     for (const target of targets) {
       try {
-        let message = sent.get(key(target));
+        const recovery = await shareRecovery(agent, target, current ?? "");
+        await outbox.ready();
+        signal.throwIfAborted();
+        // A message the outbox still holds for this copy is confirmed, and
+        // retried there if need be, rather than sent again.
+        const earlier = outbox
+          .snapshot()
+          .find((item) => item.recovery?.key === recovery.key)?.event;
+        let message = earlier && {
+          id: earlier.id,
+          channel: earlier.tags.find(([name]) => name === "h")?.[1] ?? "",
+        };
         if (!message) {
           if (target.kind === "person" && !session.directMessages.available)
             throw new Error("Direct messages aren’t available here.");
@@ -325,15 +336,17 @@ export function AgentShareDialog({
               `Here’s a copy of my agent, ${agent.name}. Choose the card to add it to your agents.`,
               [],
               [copy.file],
+              recovery,
             ),
           };
-          sent.set(key(target), message);
         }
         await session.directMessages.delivered(
           message.id,
           message.channel,
           signal,
         );
+        // Delivered: the outbox may let the message go.
+        await outbox.acknowledge(message.id);
       } catch (error) {
         if (signal.aborted) return;
         failed.push(target);
@@ -343,7 +356,6 @@ export function AgentShareDialog({
     if (signal.aborted) return;
     setPending(undefined);
     const delivered = targets.filter((target) => !failed.includes(target));
-    for (const target of delivered) sent.delete(key(target));
     if (delivered.length)
       notify(`Sent ${agent.name} to ${names(delivered)}.`, "success");
     // What it couldn't reach stays chosen, to try again.

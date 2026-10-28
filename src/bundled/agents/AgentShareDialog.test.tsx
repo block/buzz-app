@@ -70,6 +70,12 @@ function community() {
   const heads: EventData[] = [];
   const listeners = new Set<() => void>();
   let pending: { event: EventData; delivery: string } | undefined;
+  // Messages the outbox holds, kept across reloads as the journal is.
+  const journal: {
+    event: EventData;
+    delivery: string;
+    recovery?: { key: string; value: string } | undefined;
+  }[] = [];
   const outbox = {
     supports: (kind: number) => kind === 30175,
     ready: async () => {},
@@ -83,12 +89,19 @@ function community() {
       pending = { event, delivery: "sending" };
       return event.id;
     }),
-    snapshot: () => (pending ? [pending] : []),
+    snapshot: () => [...journal, ...(pending ? [pending] : [])],
     subscribe: (listener: () => void) => {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
-    dismiss: vi.fn(async () => {}),
+    acknowledge: vi.fn(async (id: string) => {
+      const at = journal.findIndex((item) => item.event.id === id);
+      if (at >= 0) journal.splice(at, 1);
+    }),
+    dismiss: vi.fn(async (id: string) => {
+      const at = journal.findIndex((item) => item.event.id === id);
+      if (at >= 0) journal.splice(at, 1);
+    }),
   };
   /** The relay accepts what was sent. */
   const accept = () => {
@@ -129,7 +142,26 @@ function community() {
     })),
   };
   const messages = {
-    send: vi.fn((channel: string, _content: string) => `sent-${channel}`),
+    send: vi.fn(
+      (
+        channel: string,
+        _content: string,
+        _mentions: string[],
+        _attachments: unknown[],
+        recovery?: { key: string; value: string },
+      ) => {
+        const again = journal.filter((item) =>
+          item.event.id.startsWith(`sent-${channel}`),
+        ).length;
+        const id = `sent-${channel}${again ? `-${again}` : ""}`;
+        journal.push({
+          event: { id, kind: 9, tags: [["h", channel]] } as EventData,
+          delivery: "unknown",
+          recovery,
+        });
+        return id;
+      },
+    ),
   };
   return {
     session: {
@@ -149,6 +181,7 @@ function community() {
     } as unknown as RelaySession,
     heads,
     outbox,
+    journal,
     accept,
     lose,
     read,
@@ -681,7 +714,8 @@ it("says an update failed when the listed head is not what it sent", async () =>
 
 it("sends each person a message with one uploaded copy of the agent", async () => {
   const user = userEvent.setup();
-  const { session, directMessages, attachments, messages } = community();
+  const { session, directMessages, attachments, messages, outbox, journal } =
+    community();
   share(session);
   // With nobody chosen, the window just closes.
   expect(screen.getByRole("button", { name: "Done" })).toBeInTheDocument();
@@ -717,6 +751,12 @@ it("sends each person a message with one uploaded copy of the agent", async () =
     "dm-c",
     expect.any(AbortSignal),
   );
+  // Delivered, each message leaves the outbox.
+  expect(outbox.acknowledge.mock.calls.map(([id]) => id)).toEqual([
+    "sent-dm-b",
+    "sent-dm-c",
+  ]);
+  expect(journal).toEqual([]);
   // Everyone was reached, so the window is ready to close.
   expect(screen.getByRole("button", { name: "Done" })).toBeInTheDocument();
   expect(
@@ -772,9 +812,10 @@ it("sends to the rest when one upload fails, and reuses the next upload", async 
   );
 });
 
-it("remembers an unconfirmed message after the window closes and a reconnect", async () => {
+it("confirms an unconfirmed message after a reload rather than sending it again", async () => {
   const user = userEvent.setup();
-  const { session, directMessages, messages } = community();
+  const { session, directMessages, messages, attachments, outbox } =
+    community();
   directMessages.delivered.mockRejectedValueOnce(new Error("Offline"));
   share(session);
   await user.click(await choice("Bea"));
@@ -783,13 +824,55 @@ it("remembers an unconfirmed message after the window closes and a reconnect", a
     "Couldn’t send to Bea. Offline.",
   );
   cleanup();
-  // Reconnecting replaces the session; the outbox keeps the message.
-  share({ ...session } as RelaySession);
+  // A reload keeps only what the outbox saved, under a new session.
+  share({ ...session, scope: "reloaded" } as RelaySession);
   await user.click(await choice("Bea"));
   await user.click(screen.getByRole("button", { name: "Send" }));
   expect(await screen.findByText("Sent Ada to Bea.")).toBeInTheDocument();
   expect(messages.send).toHaveBeenCalledOnce();
-  expect(directMessages.delivered).toHaveBeenCalledTimes(2);
+  expect(attachments.upload).toHaveBeenCalledOnce();
+  expect(directMessages.delivered).toHaveBeenLastCalledWith(
+    "sent-dm-b",
+    "dm-b",
+    expect.any(AbortSignal),
+  );
+  expect(outbox.acknowledge).toHaveBeenCalledWith("sent-dm-b");
+});
+
+it("sends anew once an unconfirmed message is removed from the outbox", async () => {
+  const user = userEvent.setup();
+  const { session, directMessages, messages, outbox } = community();
+  directMessages.delivered.mockRejectedValueOnce(new Error("Offline"));
+  share(session);
+  await user.click(await choice("Bea"));
+  await user.click(screen.getByRole("button", { name: "Send" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Couldn’t send to Bea. Offline.",
+  );
+  await outbox.dismiss("sent-dm-b");
+  await user.click(screen.getByRole("button", { name: "Send" }));
+  expect(await screen.findByText("Sent Ada to Bea.")).toBeInTheDocument();
+  expect(messages.send).toHaveBeenCalledTimes(2);
+  expect(directMessages.delivered).toHaveBeenLastCalledWith(
+    "sent-dm-b",
+    "dm-b",
+    expect.any(AbortSignal),
+  );
+});
+
+it("keeps a delivered message for confirming when the outbox can't let it go", async () => {
+  const user = userEvent.setup();
+  const { session, messages, outbox } = community();
+  outbox.acknowledge.mockRejectedValueOnce(new Error("Storage is full"));
+  share(session);
+  await user.click(await choice("Bea"));
+  await user.click(screen.getByRole("button", { name: "Send" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Couldn’t send to Bea. Storage is full.",
+  );
+  await user.click(screen.getByRole("button", { name: "Send" }));
+  expect(await screen.findByText("Sent Ada to Bea.")).toBeInTheDocument();
+  expect(messages.send).toHaveBeenCalledOnce();
 });
 
 it("sends an edited agent anew rather than confirming an earlier copy", async () => {

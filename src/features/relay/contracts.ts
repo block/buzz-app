@@ -227,10 +227,15 @@ export interface ChannelQueries {
     options?: ChannelReadOptions,
   ): Promise<void>;
   /** Name lookup for active public channels the viewer has not joined. Matches
-   * become readable through `get`; they never enter list(). */
+   * become readable through `get`; they never enter list(). `progress`
+   * receives the matches so far each time another metadata page lands. */
   searchPublic?(
     query: string,
-    options?: ReadOptions & { limit?: number; exact?: boolean },
+    options?: ReadOptions & {
+      limit?: number;
+      exact?: boolean;
+      progress?: ((found: PublicChannelSearch) => void) | undefined;
+    },
   ): Promise<PublicChannelSearch>;
   /** NIP-CL lookup of the channels `creator` made with `label`, oldest first.
    * Includes the system channels the viewer can read, since `#P` asks for them.
@@ -239,13 +244,22 @@ export interface ChannelQueries {
     query: Readonly<{ creator: string; label: string }>,
     options?: ChannelReadOptions,
   ): Promise<readonly ChannelSummary[]>;
-  /** Synchronous: the last `searchPublic` answer's channels that still match
-   * `query` and are still open previews. Keeps rows while the next search
-   * runs, even across a remount. */
+  /** Synchronous: the last `searchPublic` answer's channels, or its latest
+   * `progress` rows while its read goes on, that still match `query` and are
+   * still open previews. Keeps rows while the next search runs, even across
+   * a remount. */
   matchPublic?(
     query: string,
     options?: { exact?: boolean },
   ): readonly ChannelSummary[];
+  /** Every open channel the last completed public directory read named, for
+   * display-only name references (`#name` in prose) until a later read or a
+   * cache clear replaces it. Never reads and never grants access: a match
+   * resolves through `refer`. Empty while the directory is cold or in flight. */
+  openDirectory?(): readonly Pick<
+    ChannelSummary,
+    "id" | "name" | "channelType" | "archived"
+  >[];
   /** Current reference state from local evidence; never reads. */
   describe?(channelId: string): ChannelReference;
   /** Demand a background lookup for a reference that isn't `found`, until the

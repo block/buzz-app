@@ -1687,9 +1687,44 @@ export function createChannelStore(
         generation: number;
         /** When the read finished; a pending read is always reused. */
         at?: number;
-        read: Promise<{ events: readonly RelayEvent[]; partial: boolean }>;
+        /** The pages read so far, newest first. */
+        events: RelayEvent[];
+        /** Settles when the next page lands or the read ends. */
+        page: Promise<void>;
+        read: Promise<{ partial: boolean }>;
+        /** The finished read's open channels, newest metadata per channel. */
+        open?: ReturnType<NonNullable<ChannelQueries["openDirectory"]>>;
       }
     | undefined;
+  const noOpenDirectory: ReturnType<
+    NonNullable<ChannelQueries["openDirectory"]>
+  > = Object.freeze([]);
+  function openDirectoryChannels(events: readonly RelayEvent[]) {
+    const latest = new Map<string, RelayEvent>();
+    for (const event of events) {
+      const id = tag(event, "d");
+      if (id) latest.set(id, newer(latest.get(id), event));
+    }
+    return Object.freeze(
+      [...latest.entries()].flatMap(([id, event]) => {
+        const name = openMetadata(event) && metadataName(event);
+        if (!name) return [];
+        const type = tag(event, "t");
+        return [
+          Object.freeze({
+            id,
+            name,
+            ...(type === "stream" || type === "forum"
+              ? { channelType: type }
+              : {}),
+            ...(hasTag(event, "archived", "true")
+              ? { archived: true as const }
+              : {}),
+          }),
+        ];
+      }),
+    );
+  }
   /** All open channels' metadata, newest first, through the relay's
    * `(until, before_id)` cursor. One read serves every keystroke: a caller
    * that stops waiting leaves it running for the next one. */
@@ -1697,8 +1732,9 @@ export function createChannelStore(
     relay: RelayReader & { relayAuthor: string },
     generation: number,
     signal: AbortSignal,
+    events: RelayEvent[],
+    landed: () => void,
   ) {
-    const events: RelayEvent[] = [];
     let cursor: { until: number; before_id: string } | undefined;
     for (;;) {
       const page = await relay.read(
@@ -1720,9 +1756,9 @@ export function createChannelStore(
           (event) => event.kind === 39000 && event.pubkey === relay.relayAuthor,
         ),
       );
-      if (page.length < PUBLIC_CHANNEL_PAGE) return { events, partial: false };
-      if (events.length >= PUBLIC_CHANNEL_DIRECTORY)
-        return { events, partial: true };
+      if (page.length < PUBLIC_CHANNEL_PAGE) return { partial: false };
+      if (events.length >= PUBLIC_CHANNEL_DIRECTORY) return { partial: true };
+      landed();
       // Relay query order is time descending, then ID ascending (also at ties).
       const last = [...page]
         .sort((a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id))
@@ -1739,7 +1775,11 @@ export function createChannelStore(
   }
   async function searchPublic(
     query: string,
-    settings?: ReadOptions & { limit?: number; exact?: boolean },
+    settings?: ReadOptions & {
+      limit?: number;
+      exact?: boolean;
+      progress?: ((found: PublicChannelSearch) => void) | undefined;
+    },
   ): Promise<PublicChannelSearch> {
     if (disposed || !transport || !discovery || options.cachedOnly)
       throw new Error("Relay is unavailable");
@@ -1757,79 +1797,157 @@ export function createChannelStore(
     ) {
       const controller = new AbortController();
       controllers.add(controller);
+      // A refresh keeps naming the prior read's channels until it completes;
+      // mounted `#name` links do not blink off while the pages are in flight.
+      const prior =
+        publicDirectory?.generation === generation
+          ? publicDirectory
+          : undefined;
+      const events: RelayEvent[] = [];
+      let land = () => {};
+      const next = () => new Promise<void>((settle) => (land = settle));
       const entry: NonNullable<typeof publicDirectory> = {
         generation,
-        read: readPublicDirectory(transport, generation, controller.signal),
+        events,
+        page: next(),
+        read: readPublicDirectory(
+          transport,
+          generation,
+          controller.signal,
+          events,
+          () => {
+            const landed = land;
+            entry.page = next();
+            landed();
+          },
+        ),
+        ...(prior?.open ? { open: prior.open } : {}),
       };
       publicDirectory = entry;
-      // A failed read is not reused; the next keystroke starts again.
+      // A failed read is not reused: the expired prior entry comes back, so
+      // its names survive and the next keystroke starts again.
       void entry.read.then(
         () => {
           controllers.delete(controller);
           entry.at = now();
+          // Name references in mounted rows read the directory through the
+          // list subscription; the list itself is unchanged.
+          entry.open = openDirectoryChannels(entry.events);
+          notify(listListeners);
+          land();
         },
         () => {
           controllers.delete(controller);
-          if (publicDirectory === entry) publicDirectory = undefined;
+          if (publicDirectory === entry) publicDirectory = prior;
+          land();
         },
       );
     }
-    const { read } = publicDirectory;
+    const entry = publicDirectory;
     const signal = settings?.signal;
+    const limit = settings?.limit ?? 8;
+    const resolved = new Set<string>();
+    // Ranks the pages read so far. Exact resolution, not a page, owns access:
+    // it re-reads the signed metadata and the viewer roster for each match
+    // before granting a preview. The final answer re-reads every match; pages
+    // in flight resolve at most `limit` channels in all and leave every
+    // search in flight, and one that joins later (`in:team data` runs two),
+    // `limit` free discovery slots for its final answer, so a long read
+    // cannot fill discovery or crowd out a better match on a later page.
+    const answer = async (final: boolean) => {
+      const latest = new Map<string, RelayEvent>();
+      for (const event of entry.events) {
+        const id = tag(event, "d");
+        if (id) latest.set(id, newer(latest.get(id), event));
+      }
+      const candidates = [...latest.entries()]
+        .flatMap(([id, event]) => {
+          const name = metadataName(event);
+          return openMetadata(event) &&
+            !event.tags.some(
+              ([key, value]) => key === "archived" && value === "true",
+            ) &&
+            !discovery.authorized(id) &&
+            name &&
+            (settings?.exact
+              ? name.toLowerCase() === needle
+              : name.toLowerCase().includes(needle))
+            ? [{ id, name, rank: matchRank(name, needle) ?? 3 }]
+            : [];
+        })
+        // Best match first before the cut, so an exact name is never dropped.
+        .sort(
+          (a, b) =>
+            a.rank - b.rank ||
+            a.name.localeCompare(b.name) ||
+            a.id.localeCompare(b.id),
+        );
+      const ids = candidates.slice(0, limit).map(({ id }) => id);
+      const unresolved = final
+        ? ids
+        : ids
+            .filter((id) => !resolved.has(id))
+            .slice(
+              0,
+              Math.max(
+                0,
+                Math.min(
+                  limit - resolved.size,
+                  discovery.headroom() - publicSearchReserve - limit,
+                ),
+              ),
+            );
+      if (unresolved.length) {
+        await resolve(unresolved, settings);
+        for (const id of unresolved) resolved.add(id);
+      }
+      // A better match past the budget does not hide the rows already shown.
+      return (final ? ids : candidates.map(({ id }) => id))
+        .flatMap((id) => {
+          const channel = resolved.has(id) && previewable(id);
+          return channel ? [channel] : [];
+        })
+        .slice(0, limit);
+    };
     signal?.throwIfAborted();
-    const directory = await new Promise<Awaited<typeof read>>(
-      (resolve, reject) => {
-        signal?.addEventListener("abort", () => reject(signal.reason), {
-          once: true,
-        });
-        read.then(resolve, reject);
-      },
+    const aborted = new Promise<never>((_, reject) =>
+      signal?.addEventListener("abort", () => reject(signal.reason), {
+        once: true,
+      }),
     );
-    if (disposed || generation !== epoch)
-      throw new DOMException("Stale channel search", "AbortError");
-    const metadata = directory.events;
-    const latest = new Map<string, RelayEvent>();
-    for (const event of metadata) {
-      const id = tag(event, "d");
-      if (id) latest.set(id, newer(latest.get(id), event));
+    // A search that joins a read in flight ranks its landed pages at once.
+    let page = entry.events.length ? Promise.resolve() : entry.page;
+    publicSearchReserve += limit;
+    try {
+      for (;;) {
+        const result = await Promise.race([
+          entry.read,
+          page.then(() => undefined),
+          aborted,
+        ]);
+        if (disposed || generation !== epoch)
+          throw new DOMException("Stale channel search", "AbortError");
+        if (result) {
+          const channels = await answer(true);
+          if (generation === epoch)
+            recentPublic = { generation, ids: channels.map(({ id }) => id) };
+          return { channels, partial: result.partial };
+        }
+        // A page that lands while this one is ranked wakes the next turn at once.
+        page = entry.page;
+        if (settings?.progress) {
+          const channels = await answer(false);
+          // Kept for the next keystroke too: its fallback would otherwise lose
+          // these rows until its own first page resolves.
+          if (generation === epoch)
+            recentPublic = { generation, ids: channels.map(({ id }) => id) };
+          signal?.throwIfAborted();
+          settings.progress({ channels, partial: false });
+        }
+      }
+    } finally {
+      publicSearchReserve -= limit;
     }
-    const candidates = [...latest.entries()]
-      .flatMap(([id, event]) => {
-        const name = metadataName(event);
-        return openMetadata(event) &&
-          !event.tags.some(
-            ([key, value]) => key === "archived" && value === "true",
-          ) &&
-          !discovery.authorized(id) &&
-          name &&
-          (settings?.exact
-            ? name.toLowerCase() === needle
-            : name.toLowerCase().includes(needle))
-          ? [{ id, name, rank: matchRank(name, needle) ?? 3 }]
-          : [];
-      })
-      // Best match first before the cut, so an exact name is never dropped.
-      .sort(
-        (a, b) =>
-          a.rank - b.rank ||
-          a.name.localeCompare(b.name) ||
-          a.id.localeCompare(b.id),
-      )
-      .slice(0, settings?.limit ?? 8);
-    // Exact resolution, not this page, owns access: it re-reads the signed
-    // metadata and the viewer roster for each match before granting a preview.
-    if (candidates.length)
-      await resolve(
-        candidates.map(({ id }) => id),
-        settings,
-      );
-    const channels = candidates.flatMap(({ id }) => {
-      const channel = previewable(id);
-      return channel ? [channel] : [];
-    });
-    if (generation === epoch)
-      recentPublic = { generation, ids: channels.map(({ id }) => id) };
-    return { channels, partial: directory.partial };
   }
   /** NIP-CL lookup: the channels `creator` made with `label`, oldest first.
    * The page only names candidates; `resolve` re-reads each one before it
@@ -1902,9 +2020,14 @@ export function createChannelStore(
       ? channel
       : undefined;
   }
-  /** The last search's channels that still match `query`, in search order.
-   * Callers remount per keystroke, so the store, not a component, keeps the
-   * previous answer while the next `searchPublic` runs. */
+  /** Metadata slots the final answers of the public searches in flight may
+   * still need, `limit` each; pages ranked while they run admit only beyond
+   * it and one more `limit`, for a search that joins the read later. */
+  let publicSearchReserve = 0;
+  /** The last search's channels (its answer, or the matches of the pages it
+   * has read so far) that still match `query`, in search order. Callers
+   * remount per keystroke, so the store, not a component, keeps the previous
+   * answer while the next `searchPublic` runs. */
   let recentPublic: { generation: number; ids: readonly string[] } | undefined;
   function matchPublic(
     query: string,
@@ -2315,6 +2438,10 @@ export function createChannelStore(
     searchPublic,
     findLabeled,
     matchPublic,
+    openDirectory: () =>
+      publicDirectory?.generation === epoch
+        ? (publicDirectory.open ?? noOpenDirectory)
+        : noOpenDirectory,
     describe: describeReference,
     refer: referChannel,
     refreshRoster,

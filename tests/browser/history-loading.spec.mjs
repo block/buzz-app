@@ -330,6 +330,68 @@ test.describe("pages inside one second", () => {
     }
   });
 
+  test("a held pointer keeps its place after the page's reader row unmounts", async ({
+    page,
+    app,
+  }) => {
+    const pending = await reading(page, app, 1400);
+    const box = await history(page).boundingBox();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    try {
+      // The row the page lands around, which the timeline holds while pressed.
+      const held = await anchor(page);
+      const height = await history(page).evaluate((e) => e.scrollHeight);
+      pending.release();
+      await expect
+        .poll(() => history(page).evaluate((e) => e.scrollHeight))
+        .toBeGreaterThan(height);
+      await settle(page);
+      await expectAnchor(page, held);
+      // Over a viewport at once, Virtua renders upward synchronously: the held
+      // row is gone from the scroll event until Virtua's idle timer buffers
+      // below again, too briefly for polling, so record its removal in page.
+      const row = history(page).locator(`[data-message-id="${held.id}"]`);
+      const seen = await history(page).evaluateHandle((e, id) => {
+        const seen = { unmounted: false };
+        new MutationObserver(() => {
+          if (!e.querySelector(`[data-message-id="${id}"]`))
+            seen.unmounted = true;
+        }).observe(e, { childList: true, subtree: true });
+        e.scrollTop -= e.clientHeight + 150;
+        return seen;
+      }, held.id);
+      await expect.poll(() => seen.evaluate((s) => s.unmounted)).toBe(true);
+      // Once idle, Virtua remounts it.
+      await expect(row).toHaveCount(1);
+      await settle(page);
+      // It remounts below the viewport, where the reader no longer reads.
+      expect(
+        await history(page).evaluate(
+          (e, id) =>
+            e.querySelector(`[data-message-id="${id}"]`).getBoundingClientRect()
+              .top > e.getBoundingClientRect().bottom,
+          held.id,
+        ),
+      ).toBe(true);
+      const before = await anchor(page);
+      // The row above it finishes measuring taller (an image loading). Rows
+      // below the reader grow away from them; nothing in view moves.
+      await history(page).evaluate((e, id) => {
+        const extra = document.createElement("div");
+        extra.style.height = "300px";
+        e.querySelector(`[data-message-id="${id}"]`)
+          .closest("li")
+          .previousElementSibling.querySelector("[data-message-id] p")
+          .after(extra);
+      }, held.id);
+      await settle(page);
+      await expectAnchor(page, before);
+    } finally {
+      await page.mouse.up();
+    }
+  });
+
   // Release the held page, read `distance` px further up, then grow the row
   // in view: it grows downward from the reader.
   async function grows(page, pending, distance) {
@@ -494,11 +556,34 @@ test.describe("pages inside one second", () => {
       page,
       app,
     }) => {
-      const pending = await reading(page, app, 1400);
+      // Recreate the sparse same-second head from CI. The page fills gaps
+      // below the reader without changing their initial item offset.
+      const events = app.histories.get("primary/alpha");
+      const second = events.at(-20).created_at;
+      const sameSecond = events.filter((event) => event.created_at === second);
+      for (const [index, event] of sameSecond.entries()) {
+        let nonce = 0;
+        let signed;
+        do {
+          signed = app.sign({
+            ...event,
+            tags: [...event.tags, ["fixture-order", String(nonce++)]],
+          });
+        } while (
+          Number.parseInt(signed.id[0], 16) < 8 !==
+          [0, 1, 2, 3, 12, 16, 18, 19, 25, 27].includes(index)
+        );
+        events[events.indexOf(event)] = signed;
+      }
+      const pending = await reading(page, app, 1550);
       const before = await anchor(page);
       publish(app, pending.filter.until, ms);
       await expect(latest(page)).toHaveText("1 new message");
+      const height = await history(page).evaluate((e) => e.scrollHeight);
       pending.release();
+      await expect
+        .poll(() => history(page).evaluate((e) => e.scrollHeight))
+        .toBeGreaterThan(height);
       await settle(page);
       await expectAnchor(page, before);
       await expect(latest(page)).toHaveText("1 new message");

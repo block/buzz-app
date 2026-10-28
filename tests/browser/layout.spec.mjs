@@ -620,6 +620,7 @@ readingTest(
             );
             const newest = mounted.at(-1);
             if (!above || !newest || above === newest) return null;
+            above.style.paddingBottom = "100px";
             return {
               above: above.dataset.messageId,
               newest: newest.dataset.messageId,
@@ -628,11 +629,6 @@ readingTest(
         { message: "an offscreen row is mounted above the bottom viewport" },
       )
       .not.toBeNull();
-    await history.evaluate((element, id) => {
-      element.querySelector(
-        `[data-message-id="${CSS.escape(id)}"]`,
-      ).style.paddingBottom = "100px";
-    }, rows.above);
     await virtuaIdle(page);
     await expectBottom();
     await history.evaluate((element, ids) => {

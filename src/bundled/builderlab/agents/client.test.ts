@@ -120,6 +120,21 @@ it.each([
   },
 );
 it.each([
+  ["AGENT_TYPE_BESTIE", "AGENT_TYPE_BESTIE"],
+  [1, "AGENT_TYPE_BESTIE"],
+  ["AGENT_TYPE_GENERIC", undefined],
+  [2, undefined],
+  ["AGENT_TYPE_UNSPECIFIED", undefined],
+  [0, undefined],
+  [undefined, undefined],
+])("maps list agent_type %j to %j", async (agent_type, expected) => {
+  const h = await fixture();
+  vi.mocked(h.host.request).mockResolvedValue(
+    response({ status: 1, agents: [{ ...row, agent_type }] }),
+  );
+  expect((await h.client.list(h.signal))[0]?.agentType).toBe(expected);
+});
+it.each([
   null,
   { status: 2 },
   { status: 1, agents: {} },
@@ -355,6 +370,60 @@ it.each([
   if (error) await expect(deleting).rejects.toThrow(error);
   else await expect(deleting).resolves.toBeUndefined();
 });
+it("turns a Bestie's check-in on and off through the authenticated host", async () => {
+  const h = await fixture();
+  vi.mocked(h.host.request).mockResolvedValue(
+    response({ status: "succeeded" }),
+  );
+  const community = "wss://community.example";
+  await h.client.enableCheckIn(
+    { id: "agent-1" },
+    community,
+    "channel-1",
+    h.signal,
+  );
+  expect(h.host.request).toHaveBeenLastCalledWith({
+    url: "https://builderlab.example/api/goose/v3/beekeeper/enable-bestie",
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      "X-BB-Session-Credential": "secret",
+    },
+    body: JSON.stringify({
+      agent_id: "agent-1",
+      community_url: community,
+      channel_id: "channel-1",
+    }),
+  });
+  await h.client.disableCheckIn({ id: "agent-1" }, community, h.signal);
+  expect(h.host.request).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      url: "https://builderlab.example/api/goose/v3/beekeeper/disable-bestie",
+      body: JSON.stringify({ agent_id: "agent-1", community_url: community }),
+    }),
+  );
+  // Beekeeper's reason when it has one, else a generic one.
+  vi.mocked(h.host.request).mockResolvedValue(
+    response({ status: "failed", error_message: "No active Buzz agent" }),
+  );
+  await expect(
+    h.client.enableCheckIn({ id: "agent-1" }, community, "c", h.signal),
+  ).rejects.toThrow("No active Buzz agent");
+  vi.mocked(h.host.request).mockResolvedValue(response({ status: "failed" }));
+  await expect(
+    h.client.disableCheckIn({ id: "agent-1" }, community, h.signal),
+  ).rejects.toThrow("could not turn off");
+  vi.mocked(h.host.request).mockResolvedValue(response({}, 404));
+  await expect(
+    h.client.enableCheckIn({ id: "agent-1" }, community, "c", h.signal),
+  ).rejects.toThrow("HTTP 404");
+  vi.mocked(h.host.request).mockClear();
+  await expect(
+    h.client.enableCheckIn({ id: " " }, community, "c", h.signal),
+  ).rejects.toThrow("Agent ID is unavailable.");
+  expect(h.host.request).not.toHaveBeenCalled();
+});
 const turn = {
   community: "wss://agent.example:4443",
   channelId: "channel-1",
@@ -440,6 +509,74 @@ it("registers with a saved UUID and submits the supplied owner proof", async () 
     }),
   );
 });
+it("requests the hosted Bestie kind only when asked", async () => {
+  const h = await fixture();
+  vi.mocked(h.host.request).mockResolvedValueOnce(
+    response({
+      status: 1,
+      agent_id: row.agent_id,
+      agent_pubkey: row.agent_pubkey,
+    }),
+  );
+  await h.client.register(
+    "Helper",
+    h.signal,
+    h.retain,
+    undefined,
+    "AGENT_TYPE_BESTIE",
+  );
+  const body = JSON.parse(
+    vi.mocked(h.host.request).mock.calls[0]?.[0].body ?? "{}",
+  );
+  expect(body.agent_type).toBe("AGENT_TYPE_BESTIE");
+  vi.mocked(h.host.request).mockResolvedValueOnce(
+    response({
+      status: 1,
+      agent_id: "id-2",
+      agent_pubkey: "ef".repeat(32),
+    }),
+  );
+  await h.client.register("Other", h.signal, h.retain);
+  const plainBody = JSON.parse(
+    vi.mocked(h.host.request).mock.calls[1]?.[0].body ?? "{}",
+  );
+  expect(plainBody.agent_type).toBeUndefined();
+});
+it.each([6, "REGISTER_AGENT_STATUS_BESTIE_ALREADY_EXISTS"])(
+  "refuses a second Bestie for status %s and clears the registration for a fresh retry",
+  async (status) => {
+    const h = await fixture();
+    vi.mocked(h.host.request).mockResolvedValueOnce(response({ status }));
+    await expect(
+      h.client.register(
+        "Bestie",
+        h.signal,
+        h.retain,
+        undefined,
+        "AGENT_TYPE_BESTIE",
+      ),
+    ).rejects.toThrow("already has a Bestie that hasn't finished");
+    expect(h.retain).not.toHaveBeenCalled();
+    vi.mocked(h.host.request).mockResolvedValueOnce(
+      response({
+        status: 1,
+        agent_id: row.agent_id,
+        agent_pubkey: row.agent_pubkey,
+      }),
+    );
+    await h.client.register(
+      "Bestie",
+      h.signal,
+      h.retain,
+      undefined,
+      "AGENT_TYPE_BESTIE",
+    );
+    const bodies = vi
+      .mocked(h.host.request)
+      .mock.calls.map(([input]) => JSON.parse(input.body ?? "{}"));
+    expect(bodies[1].idempotency_key).not.toBe(bodies[0].idempotency_key);
+  },
+);
 it("registers with a picture and replays it unchanged", async () => {
   const h = await fixture();
   const registered = response({

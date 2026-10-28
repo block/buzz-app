@@ -114,12 +114,13 @@ export function builderlabType(
     ],
     remote: {
       async provision({ name, picture, config, signal }) {
-        await validateCreation(config, signal);
+        const draft = await validateCreation(config, signal);
         const agent = await client.register(
           name,
           signal,
           ({ pubkey, id }, intent) => remember(pubkey, id, intent),
           picture,
+          draft.agentType,
         );
         return {
           pubkey: agent.pubkey,

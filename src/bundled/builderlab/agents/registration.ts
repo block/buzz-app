@@ -11,14 +11,22 @@ export type RegistrationIntent = Readonly<{
   picture?: string;
 }>;
 
-/** Persist only the intent, never the credential or owner proof. */
+/** Persist only the intent, never the credential or owner proof. Beekeeper's
+ * idempotency digest includes the agent type, so a typed request gets its own
+ * key. A generic one keeps the key it had before agent types existed, so an
+ * upgrade still replays its pending registration. */
 export function registrationIntent(
   target: string,
   subject: string,
   name: string,
   picture?: string,
+  agentType?: string,
 ): RegistrationIntent {
-  const storageKey = PREFIX + JSON.stringify([target, subject, name]);
+  const storageKey =
+    PREFIX +
+    JSON.stringify(
+      agentType ? [target, subject, name, agentType] : [target, subject, name],
+    );
   let saved: { key: string; createdAt: number; picture?: unknown } | null;
   try {
     saved = JSON.parse(localStorage.getItem(storageKey) ?? "null");

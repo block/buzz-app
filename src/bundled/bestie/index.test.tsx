@@ -79,6 +79,15 @@ const chooseModel = async () => {
   await user.click(screen.getByRole("combobox", { name: "Reasoning effort" }));
   await user.click(await screen.findByRole("option", { name: "high" }));
 };
+const setUpOnPage = async (h: Awaited<ReturnType<typeof bestieFixture>>) => {
+  renderPage(h);
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Set up Bestie" }),
+  );
+  await chooseModel();
+  await userEvent.click(screen.getByRole("button", { name: "Continue setup" }));
+  await screen.findByRole("region", { name: "Bestie conversation" });
+};
 const composer = () => screen.getByRole("textbox", { name: "Message #Bestie" });
 
 it("sets up Bestie on the model the owner chose and hands focus to its conversation", async () => {
@@ -187,6 +196,68 @@ it("keeps a retry on the page after updating Bestie's instructions fails", async
   expect(
     screen.queryByRole("button", { name: /Bestie's instructions/ }),
   ).not.toBeInTheDocument();
+});
+
+it("turns Bestie's check-in off and back on through the switch", async () => {
+  const h = await bestieFixture(native.invoke);
+  await setUpOnPage(h);
+  const toggle = await screen.findByRole("switch", {
+    name: "Hourly check-in",
+  });
+  expect(toggle).toBeChecked();
+  expect(h.requests("enable-bestie")).toHaveLength(1);
+  await userEvent.click(toggle);
+  await vi.waitFor(() => expect(toggle).not.toBeChecked());
+  expect(h.requests("disable-bestie")).toHaveLength(1);
+  await userEvent.click(toggle);
+  await vi.waitFor(() => expect(toggle).toBeChecked());
+  expect(h.requests("enable-bestie")).toHaveLength(2);
+});
+
+it("shows the check-in error under the switch and leaves it off", async () => {
+  const h = await bestieFixture(native.invoke);
+  await setUpOnPage(h);
+  const toggle = await screen.findByRole("switch", {
+    name: "Hourly check-in",
+  });
+  await userEvent.click(toggle);
+  await vi.waitFor(() => expect(toggle).not.toBeChecked());
+  h.reply("enable-bestie", 200, {
+    status: "failed",
+    error_message: "No active Buzz agent",
+  });
+  await userEvent.click(toggle);
+  await screen.findByText("No active Buzz agent");
+  expect(toggle).not.toBeChecked();
+});
+
+it("holds the switch while its change is in flight, without holding the instruction update", async () => {
+  const h = await bestieFixture(native.invoke);
+  await setUpOnPage(h);
+  const key = Object.keys(localStorage).find((name) =>
+    name.startsWith("buzz.remote-bestie.v2:"),
+  );
+  if (!key) throw new Error("Missing Bestie record");
+  localStorage.setItem(
+    key,
+    JSON.stringify({
+      ...JSON.parse(localStorage.getItem(key) ?? "{}"),
+      promptVersion: "remote-bestie-1",
+    }),
+  );
+  await h.agents.refresh();
+  const update = await screen.findByRole("button", {
+    name: "Update Bestie's instructions",
+  });
+  const toggle = screen.getByRole("switch", { name: "Hourly check-in" });
+  await waitFor(() => expect(toggle).toBeChecked());
+  const checkIn = h.holdRequest("disable-bestie");
+  await userEvent.click(toggle);
+  await waitFor(() => expect(toggle).toHaveAttribute("aria-disabled", "true"));
+  expect(update).toBeEnabled();
+  checkIn.resolve();
+  await waitFor(() => expect(toggle).not.toBeChecked());
+  expect(toggle).not.toHaveAttribute("aria-disabled");
 });
 
 it("focuses the Model field when setup asks for a model", async () => {

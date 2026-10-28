@@ -30,6 +30,49 @@ it("isolates server and name and stores only the creation intent", () => {
     Object.keys(JSON.parse(localStorage.getItem(a.storageKey) ?? "{}")),
   ).toEqual(["key", "createdAt"]);
 });
+it("isolates a Bestie request from a generic request for the same name", () => {
+  const generic = registrationIntent(target, "account-a", "Helper");
+  const bestie = registrationIntent(
+    target,
+    "account-a",
+    "Helper",
+    undefined,
+    "AGENT_TYPE_BESTIE",
+  );
+  expect(bestie.key).not.toBe(generic.key);
+  expect(bestie.storageKey).not.toBe(generic.storageKey);
+});
+it("replays a generic intent saved before agent types existed", () => {
+  // The key the generic flow wrote before Bestie registrations were typed.
+  const storageKey = `buzz.builderlab.registration.v1:${JSON.stringify([
+    target,
+    "account-a",
+    "Helper",
+  ])}`;
+  const key = crypto.randomUUID();
+  localStorage.setItem(
+    storageKey,
+    JSON.stringify({ key, createdAt: Date.now() - 60_000 }),
+  );
+  expect(registrationIntent(target, "account-a", "Helper")).toEqual({
+    storageKey,
+    key,
+  });
+  // Its expiry guard still applies after the upgrade.
+  vi.advanceTimersByTime(7 * 24 * 60 * 60 * 1000);
+  expect(() => registrationIntent(target, "account-a", "Helper")).toThrow(
+    "cannot be retried safely",
+  );
+  expect(
+    registrationIntent(
+      target,
+      "account-a",
+      "Helper",
+      undefined,
+      "AGENT_TYPE_BESTIE",
+    ).key,
+  ).not.toBe(key);
+});
 it("rejects an expired key instead of silently generating another", () => {
   registrationIntent(target, "account", "Helper");
   vi.advanceTimersByTime(7 * 24 * 60 * 60 * 1000);

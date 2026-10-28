@@ -26,6 +26,8 @@ it("shares hosted-agent settings without the credential or the Beekeeper client"
   } as unknown as AgentClient);
   expect(Object.keys(service).sort()).toEqual([
     "account",
+    "disableCheckIn",
+    "enableCheckIn",
     "ensureSignedIn",
     "list",
     "modelCatalog",

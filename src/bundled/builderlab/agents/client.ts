@@ -19,6 +19,8 @@ export type RemoteAgent = Readonly<{
   pubkey: string;
   status: "Active" | "Unattested" | "Revoked" | "Unknown";
   instructions?: string;
+  /** Beekeeper's `AgentType`; absent for a plain agent. */
+  agentType?: AgentType;
   modelId?: string;
   reasoningEffort?: string;
   modelSelectionStatus?:
@@ -28,6 +30,10 @@ export type RemoteAgent = Readonly<{
     | "effort-unsupported"
     | "unknown";
 }>;
+
+/** Beekeeper's `AgentType` values other than a plain agent's, as sent in
+ * `agent_type`. */
+export type AgentType = "AGENT_TYPE_BESTIE";
 
 export type RemoteAgentModel = Readonly<{
   id: string;
@@ -85,6 +91,23 @@ function agentStatus(value: unknown): RemoteAgent["status"] {
   if (status === "1" || status === "UNATTESTED") return "Unattested";
   if (status === "3" || status === "REVOKED") return "Revoked";
   return "Unknown";
+}
+
+/** Protobuf JSON may carry the enum by name or number; a plain agent is
+ * `AGENT_TYPE_GENERIC`, `AGENT_TYPE_UNSPECIFIED` or absent. */
+function rowAgentType(value: unknown): RemoteAgent["agentType"] {
+  return value === "AGENT_TYPE_BESTIE" || value === 1 || value === "1"
+    ? "AGENT_TYPE_BESTIE"
+    : undefined;
+}
+
+function checkInConfirmed(result: Record<string, unknown>, fallback: string) {
+  if (result.status === "succeeded") return;
+  throw new Error(
+    typeof result.error_message === "string" && result.error_message
+      ? result.error_message
+      : fallback,
+  );
 }
 
 /** Native owner identity: the viewer key and the Builderlab-binding-only signer. */
@@ -451,6 +474,43 @@ export function createAgentClient(
         signal,
       );
     },
+    /** Turns on a Bestie's hourly check-in in `channelId`, a relay workflow
+     * Beekeeper signs with Bestie's key. Always deletes and re-saves the
+     * workflow, so calling it again is the retry. */
+    async enableCheckIn(
+      agent: Pick<RemoteAgent, "id">,
+      community: string,
+      channelId: string,
+      signal: AbortSignal,
+    ): Promise<void> {
+      if (!agent.id.trim()) throw new Error("Agent ID is unavailable.");
+      const result = await request(
+        "enable-bestie",
+        { agent_id: agent.id, community_url: community, channel_id: channelId },
+        signal,
+      );
+      checkInConfirmed(
+        result,
+        "Builderlab could not turn on Bestie's check-in.",
+      );
+    },
+    /** Turns off a Bestie's hourly check-in. Succeeds when there was none. */
+    async disableCheckIn(
+      agent: Pick<RemoteAgent, "id">,
+      community: string,
+      signal: AbortSignal,
+    ): Promise<void> {
+      if (!agent.id.trim()) throw new Error("Agent ID is unavailable.");
+      const result = await request(
+        "disable-bestie",
+        { agent_id: agent.id, community_url: community },
+        signal,
+      );
+      checkInConfirmed(
+        result,
+        "Builderlab could not turn off Bestie's check-in.",
+      );
+    },
     async delete(
       agent: Pick<RemoteAgent, "id">,
       signal: AbortSignal,
@@ -511,6 +571,9 @@ export function createAgentClient(
         intent: RegistrationIntent,
       ) => void,
       picture?: string,
+      /** Beekeeper's `AgentType` value, sent as `agent_type` unchanged;
+       * omitted for a plain agent. */
+      agentType?: string,
     ): Promise<RemoteAgent & Readonly<{ picture?: string }>> {
       signal.throwIfAborted();
       const agentName = name.trim();
@@ -522,6 +585,7 @@ export function createAgentClient(
         account.subject,
         agentName,
         picture,
+        agentType,
       );
       let result: Record<string, unknown>;
       try {
@@ -531,6 +595,7 @@ export function createAgentClient(
             agent_name: agentName,
             ...(intent.picture ? { agent_picture_url: intent.picture } : {}),
             idempotency_key: intent.key,
+            ...(agentType ? { agent_type: agentType } : {}),
           },
           signal,
         );
@@ -552,6 +617,17 @@ export function createAgentClient(
       const rejected = new Map<string | number, string>([
         [2, "Agent creation is disabled on this server."],
         ["DISABLED", "Agent creation is disabled on this server."],
+        // Beekeeper allows one live (unattested or active) Bestie per owner.
+        // Setup resumes an active one it lists, so this one is unfinished, or
+        // another setup made it just now.
+        [
+          6,
+          "Your Builderlab account already has a Bestie that hasn't finished setting up yet. Finish its setup where it was started, then retry.",
+        ],
+        [
+          "EXISTS",
+          "Your Builderlab account already has a Bestie that hasn't finished setting up yet. Finish its setup where it was started, then retry.",
+        ],
         [3, "Finish setup for an existing agent before creating another."],
         [
           "REGISTRATIONS",
@@ -619,24 +695,30 @@ export function createAgentClient(
         )
       )
         throw new Error("Builderlab returned an invalid agent list.");
-      return agents.map((row) => ({
-        id: row.agent_id,
-        name: row.agent_name,
-        pubkey: row.agent_pubkey,
-        status: agentStatus(row.status),
-        instructions: row.agent_instructions ?? "",
-        ...(typeof row.model_id === "string" ? { modelId: row.model_id } : {}),
-        ...(typeof row.reasoning_effort === "string"
-          ? { reasoningEffort: row.reasoning_effort }
-          : {}),
-        ...(row.model_selection_status !== undefined
-          ? {
-              modelSelectionStatus: modelSelectionStatus(
-                row.model_selection_status,
-              ),
-            }
-          : {}),
-      }));
+      return agents.map((row) => {
+        const agentType = rowAgentType(row.agent_type);
+        return {
+          id: row.agent_id,
+          name: row.agent_name,
+          pubkey: row.agent_pubkey,
+          status: agentStatus(row.status),
+          instructions: row.agent_instructions ?? "",
+          ...(agentType ? { agentType } : {}),
+          ...(typeof row.model_id === "string"
+            ? { modelId: row.model_id }
+            : {}),
+          ...(typeof row.reasoning_effort === "string"
+            ? { reasoningEffort: row.reasoning_effort }
+            : {}),
+          ...(row.model_selection_status !== undefined
+            ? {
+                modelSelectionStatus: modelSelectionStatus(
+                  row.model_selection_status,
+                ),
+              }
+            : {}),
+        };
+      });
     },
   };
 }

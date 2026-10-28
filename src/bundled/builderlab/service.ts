@@ -13,6 +13,8 @@ export type Builderlab = Readonly<{
   modelCatalog: AgentClient["modelCatalog"];
   updateModel: AgentClient["updateModel"];
   updateInstructions: AgentClient["updateInstructions"];
+  enableCheckIn: AgentClient["enableCheckIn"];
+  disableCheckIn: AgentClient["disableCheckIn"];
 }>;
 
 export function hostedAgentSettings(
@@ -20,7 +22,7 @@ export function hostedAgentSettings(
   agents: AgentClient,
 ): Builderlab {
   const accounts = new WeakMap<object, Readonly<{ subject: string }>>();
-  return Object.freeze({
+  return {
     ensureSignedIn: (signal: AbortSignal) => session.ensureSignedIn(signal),
     account() {
       const credential = session.credential();
@@ -36,7 +38,11 @@ export function hostedAgentSettings(
       agents.updateModel(agent, modelId, reasoningEffort, signal),
     updateInstructions: (agent, instructions, signal) =>
       agents.updateInstructions(agent, instructions, signal),
-  });
+    enableCheckIn: (agent, community, channelId, signal) =>
+      agents.enableCheckIn(agent, community, channelId, signal),
+    disableCheckIn: (agent, community, signal) =>
+      agents.disableCheckIn(agent, community, signal),
+  };
 }
 
 declare module "@deepseek-ai/cordis" {

@@ -14,7 +14,10 @@ import { avatarMedia } from "../../shared/avatar-source";
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
+  type ReactElement,
   type ReactNode,
+  type RefObject,
+  startTransition,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -439,6 +442,68 @@ function OwnedThreadPanel({
     <ThreadLoading />
   );
 }
+type ReplyItemProps = { className?: string; "data-layout"?: string };
+// Top-level replies a bottom-following open mounts per commit.
+const replyBatch = 10;
+/** A bottom-following open mounts at most a batch of new top-level replies per
+ * commit, newest first, so a long thread never blocks input in one task. Older
+ * replies stream in above the pinned viewport as their empty items fill; the
+ * reader's first gesture mounts the rest. */
+function StreamedReplies({
+  scroller,
+  streaming,
+  children: replies,
+}: {
+  scroller: RefObject<HTMLElement | null>;
+  streaming: boolean;
+  children: ReactElement<ReplyItemProps>[];
+}) {
+  const mounted = useRef<ReadonlySet<unknown>>(new Set());
+  const [, stream] = useState(0);
+  let deferred: ReadonlySet<unknown> | undefined;
+  if (streaming) {
+    const fresh = replies.filter((reply) => !mounted.current.has(reply.key));
+    if (fresh.length > replyBatch)
+      deferred = new Set(fresh.slice(0, -replyBatch).map((reply) => reply.key));
+  }
+  // Every commit records its mounted replies.
+  useLayoutEffect(() => {
+    mounted.current = new Set(
+      replies
+        .filter((reply) => !deferred?.has(reply.key))
+        .map((reply) => reply.key),
+    );
+    if (!deferred) return;
+    const element = scroller.current;
+    const list = element?.querySelector("[data-thread-rows] > ol");
+    // Fill the viewport before paint while the root still shows above the
+    // newest replies; only offscreen history waits.
+    if (
+      element &&
+      list instanceof HTMLElement &&
+      list.offsetTop > element.scrollHeight - element.clientHeight
+    ) {
+      stream((count) => count + 1);
+      return;
+    }
+    const timer = setTimeout(() =>
+      startTransition(() => stream((count) => count + 1)),
+    );
+    return () => clearTimeout(timer);
+  });
+  return replies.map((reply) =>
+    deferred?.has(reply.key) ? (
+      // An empty item keeps sibling structure stable while content streams in.
+      <li
+        key={reply.key}
+        className={reply.props.className}
+        data-layout={reply.props["data-layout"]}
+      />
+    ) : (
+      reply
+    ),
+  );
+}
 function ThreadMessages({
   session,
   extensions,
@@ -643,6 +708,7 @@ function ThreadMessages({
     complete: snapshot.status === "ready" && !snapshot.canLoadMore,
   });
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
+  const [repliesFlushed, setRepliesFlushed] = useState(false);
   const [newMessageCount, setNewMessageCount] = useState(0);
   useEffect(
     () => () => {
@@ -1183,6 +1249,7 @@ function ThreadMessages({
     olderDemand.current = true;
     targetAnchor.current = undefined;
     setInitialPositioned(true);
+    setRepliesFlushed(true);
     // A new reader gesture supersedes any queued resize restoration.
     captureResizePosition();
     if (positioned.current) return;
@@ -1194,7 +1261,10 @@ function ThreadMessages({
   let previousDay = snapshot.root
     ? new Date(snapshot.root.createdAt * 1000).toDateString()
     : undefined;
-  function renderReplies(parent: string | undefined, depth = 0): ReactNode {
+  function renderReplies(
+    parent: string | undefined,
+    depth = 0,
+  ): ReactElement<ReplyItemProps>[] {
     const siblings = tree.children.get(parent) ?? [];
     return siblings.map((row, index) => {
       const nextRow = siblings[index + 1];
@@ -1497,7 +1567,17 @@ function ThreadMessages({
                 </Button>
               </li>
             )}
-            {renderReplies(undefined)}
+            <StreamedReplies
+              scroller={scroller}
+              streaming={
+                !repliesFlushed &&
+                follow.current &&
+                !revealSelected &&
+                (!navigation || rootTarget)
+              }
+            >
+              {renderReplies(undefined)}
+            </StreamedReplies>
           </ol>
         </div>
         {requireReadyRoot &&

@@ -13,7 +13,7 @@ vi.mock("./ActivityAccessory", () => ({
   },
   ActivityTypingReplacement: () => null,
 }));
-import * as plugin from "./index";
+import { apply, inject } from "./index";
 
 class FakeAgents extends Service {
   constructor(ctx: Context) {
@@ -38,7 +38,7 @@ it("gives every activity row the same agents service", async () => {
     },
   });
   const service = new FakeAgents(root);
-  root.plugin(plugin as never);
+  root.plugin({ inject, apply });
   await flush();
   const Activity = accessories.find(
     (entry) => entry.id === "activity",
@@ -48,7 +48,7 @@ it("gives every activity row the same agents service", async () => {
   view.rerender(<Activity />);
   render(<Activity />);
   expect(seen).toHaveLength(3);
-  const [agents] = seen as FakeAgents[];
+  const agents = seen[0] as FakeAgents;
   // Cordis returns a fresh traceable per lookup; rows share one.
   expect(seen.every((value) => value === agents)).toBe(true);
   expect(agents).not.toBe(service);

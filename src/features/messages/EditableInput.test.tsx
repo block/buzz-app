@@ -1505,6 +1505,10 @@ it.each(["bold", "italic"] as const)(
     expect(h.input.querySelector("strong, em")).toBeNull();
     expect(h.input).toHaveValue("text");
     expect(h.markdown()).toBe("> text");
+    // The absorbed marker's mark leaves with it, not into the next character.
+    await h.user.keyboard("x");
+    expect(h.input.querySelector("strong, em")).toBeNull();
+    expect(h.markdown()).toBe("> xtext");
   },
 );
 

@@ -403,9 +403,11 @@ const PREFIX_WINDOW = 12;
  * code/link/literal text stays literal. A pasted or restored marker stays
  * literal until a typed `> ` meets a literal quote marker starting the line:
  * typed just before it or just after it, the line becomes one quote and both
- * markers go, so the sent text keeps the quote it already read as rather than
- * nesting a second one. The caller closes history around the transaction, so
- * one undo restores the typed prefix. */
+ * markers go, so a pasted `> text` sends as it read rather than nesting a
+ * second quote. The typed `>` is not told apart from a literal one, so a space
+ * typed inside a literal `>>` or `> >` run converts too, one level shallower.
+ * The caller closes history around the transaction, so one undo restores the
+ * typed prefix. */
 export function composerBlockPrefix(
   state: EditorState,
   typed: string,
@@ -494,8 +496,12 @@ export function composerBlockPrefix(
           ),
         )?.[0].length ?? 0)
       : 0;
-  const marks = $from.marks();
   const tr = state.tr.delete(from, to + absorbed);
+  // The marker's own marks (an explicit Bold typing mode) continue into the
+  // block, as the typed prose already carried them. A typed `> ` before a
+  // literal marker took that marker's marks, which leave with both markers:
+  // typing continues in the marks of the text left on the line.
+  const marks = absorbed ? tr.doc.resolve(from).marks() : $from.marks();
   if (sink) {
     if (!apply(tr, sinkListItem(schema.nodes.list_item))) return;
     // A sunk item joins the previous item's nested list when there is one, as
@@ -518,8 +524,6 @@ export function composerBlockPrefix(
           );
     if (!apply(tr, command)) return;
   }
-  // The marker's own marks (an explicit Bold typing mode) continue into the
-  // block, as the typed prose already carried them.
   return marks.length ? tr.setStoredMarks(marks) : tr;
 }
 

@@ -1,11 +1,5 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The history region must support keyboard scrolling.
-import {
-  createContext,
-  useContext,
-  useSyncExternalStore,
-  memo,
-  type ReactElement,
-} from "react";
+import { createContext, useContext, useSyncExternalStore, memo } from "react";
 import type {
   ChannelPresentation,
   ChannelPresentationView,
@@ -1104,29 +1098,17 @@ function Timeline({
       toggleActivity,
     ],
   );
-  const committedSlots = useRef<{
-    owner: ChannelPresentation | undefined;
-    slots: ReadonlyMap<string, ReactElement>;
-  }>({ owner: undefined, slots: new Map() });
-  const slots = useMemo(() => {
-    const next = new Map<string, ReactElement>();
-    if (presentation)
-      for (const id of projection?.ids ?? [])
-        next.set(
-          id,
-          (committedSlots.current.owner === presentation &&
-            committedSlots.current.slots.get(id)) || (
+  const keyedElements = useMemo(
+    () =>
+      presentation
+        ? (projection?.ids ?? []).map((id) => (
             <KeyedChannelRow key={id} owner={presentation} id={id} />
-          ),
-        );
-    return next;
-  }, [presentation, projection?.ids]);
-  useLayoutEffect(() => {
-    committedSlots.current = { owner: presentation, slots };
-  }, [presentation, slots]);
-  const slotElements = useMemo(() => [...slots.values()], [slots]);
+          ))
+        : [],
+    [presentation, projection?.ids],
+  );
   const rowElements = presentation
-    ? slotElements
+    ? keyedElements
     : rows.map((row, index) => {
         const previousRow = rows[index - 1];
         const nextRow = rows[index + 1];

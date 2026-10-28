@@ -11,6 +11,44 @@ import type { ChannelDetails } from "../../features/relay/channel-details-protoc
 import { ChannelGeneralAccess } from "./ChannelGeneralAccess";
 
 afterEach(cleanup);
+
+it.each(["public", "private"] as const)(
+  "shows verified %s access to readers without invoking the editing capability",
+  (visibility) => {
+    const h = harness();
+    h.load.mockRejectedValue(
+      new Error("Channel access changed. Reopen channel settings."),
+    );
+    render(
+      <ChannelGeneralAccess
+        capability={h.capability}
+        channelId="alpha"
+        channel={{
+          id: "alpha",
+          name: "Alpha",
+          readOnly: true,
+          visibility,
+          joinRole: "guest",
+        }}
+      />,
+    );
+    expect(
+      screen.getByRole("region", { name: "General access" }),
+    ).toHaveTextContent(
+      visibility === "public"
+        ? "Anyone in the community can read."
+        : "Only invited people can read.",
+    );
+    expect(screen.getByText(/New people can only read/)).toHaveTextContent(
+      "People already in the channel keep their access.",
+    );
+    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(h.load).not.toHaveBeenCalled();
+    expect(h.save).not.toHaveBeenCalled();
+  },
+);
+
 const base: ChannelDetails = {
   channelId: "alpha",
   version: "v1",

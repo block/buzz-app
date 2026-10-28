@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ChannelLifecycleCapability } from "../relay/channel-lifecycle";
 import { ChannelLifecycleUnconfirmed } from "../relay/channel-lifecycle";
 import { Button } from "../../shared/design-system/ui/Button";
+import { ReadOnlyAccessNotice } from "../channel-members/ReadOnlyAccessNotice";
 import styles from "./Messages.module.css";
 
 /** Member-default public previews offer Join; the roster alone enables the composer.
@@ -87,13 +88,17 @@ export function ChannelJoinNotice({
         data-ready={visible}
         className={`${styles.channelJoinSurface} pointer-events-auto flex w-fit max-w-full flex-wrap items-center justify-center gap-2 p-1.5`}
       >
-        <p className="px-2 text-body-sm text-subtle">
-          {readOnly
-            ? "You have read-only access to this channel."
-            : canJoin
+        {readOnly ? (
+          <div className="max-w-md p-2 text-center">
+            <ReadOnlyAccessNotice />
+          </div>
+        ) : (
+          <p className="px-2 text-body-sm text-subtle">
+            {canJoin
               ? "Join channel to send messages"
               : "You’re previewing this channel."}
-        </p>
+          </p>
+        )}
         {canJoin && (
           <Button
             size="sm"

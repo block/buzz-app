@@ -6,6 +6,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import type { ChannelDetailsCapability } from "../../features/relay/channel-details";
+import type { ChannelSummary } from "../../features/relay/contracts";
 import type {
   ChannelDetails,
   ChannelDetailsDraft,
@@ -20,6 +21,53 @@ import { privacyConsequence } from "./ChannelPrivacyConfirmation";
 /** General access uses the same signed save/readback owner as channel details.
  * Choices are confirmed individually, like the member rows above this section. */
 export function ChannelGeneralAccess({
+  capability,
+  channelId,
+  channel,
+}: {
+  capability: ChannelDetailsCapability;
+  channelId: string;
+  channel?: ChannelSummary;
+}) {
+  // Public previews and Guests can inspect signed discovery metadata without
+  // calling the membership/write-gated channel-details capability.
+  if (channel?.readOnly)
+    return (
+      <section aria-label="General access" className={styles.generalAccess}>
+        <h3 className="text-label-sm">General access</h3>
+        <div className="flex items-start gap-3">
+          <span className="text-subtle" aria-hidden="true">
+            {channel.visibility === "public" ? (
+              <UsersIcon size={24} />
+            ) : (
+              <LockIcon size={24} />
+            )}
+          </span>
+          <div className="min-w-0 space-y-1">
+            <p className="text-body-sm">
+              {channel.visibility === "public"
+                ? "Anyone in the community can read."
+                : channel.visibility === "private"
+                  ? "Only invited people can read."
+                  : "Reading access could not be confirmed."}
+            </p>
+            <p className="text-caption text-subtle">
+              {channel.joinRole === "guest"
+                ? "New people can only read. People already in the channel keep their access."
+                : channel.joinRole === "member"
+                  ? "New people can contribute. People already in the channel keep their access."
+                  : "New people’s access could not be confirmed."}
+            </p>
+          </div>
+        </div>
+      </section>
+    );
+  return (
+    <ChannelGeneralAccessEditor capability={capability} channelId={channelId} />
+  );
+}
+
+function ChannelGeneralAccessEditor({
   capability,
   channelId,
 }: {

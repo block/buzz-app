@@ -2472,3 +2472,110 @@ it("shows personal contribution roles and General access in the members dialog",
   ).toBeVisible();
   expect(save).not.toHaveBeenCalled();
 });
+
+it.each([false, true])(
+  "explains reading and contribution access without joining or editing as a Guest %s",
+  async (guest) => {
+    const id = "11111111-1111-4111-8111-111111111111";
+    const viewer = keypair(),
+      relay = keypair(),
+      owner = keypair();
+    const events = [
+      signed(relay, {
+        kind: 39000,
+        content: "",
+        tags: [
+          ["d", id],
+          ["t", "stream"],
+          ["public"],
+          ["name", "Reading room"],
+          ["join_role", "guest"],
+        ],
+      }),
+      signed(relay, {
+        kind: 39001,
+        content: "",
+        tags: [
+          ["d", id],
+          ["p", owner.pubkey, "owner"],
+        ],
+      }),
+      signed(relay, {
+        kind: 39002,
+        content: "",
+        tags: [
+          ["d", id],
+          ["p", owner.pubkey, "", "owner"],
+          ...(guest ? [["p", viewer.pubkey, "", "guest"]] : []),
+        ],
+      }),
+      profile(owner, { name: "Channel owner" }),
+    ];
+    const publish = vi.fn(async () => {});
+    const sign = async (template: Parameters<typeof signed>[1]) =>
+      signed(viewer, template);
+    const connection = createRelaySession(
+      {
+        viewer: viewer.pubkey,
+        relayAuthor: relay.pubkey,
+        media: () => undefined,
+        query: async (filters) =>
+          events.filter((event) =>
+            filters.some((filter) => matchesEvent(event, filter)),
+          ),
+        writer: { kinds: [9, 9000], sign, publish },
+        channelDetails: { sign, publish },
+        readAgentLibrary: async () => ({ definitions: [], identities: [] }),
+      },
+      {
+        outboxStorage: { load: () => [], save: () => {} },
+        agentChoices: localAgentsFixture([]),
+      },
+    );
+    stops.push(connection.dispose);
+    const session = connection.session;
+    session.channels.ensureList();
+    await vi.waitFor(() =>
+      expect(session.channels.list().status).toBe("ready"),
+    );
+    await session.channels.resolve?.([id]);
+    expect(session.channels.get?.(id)?.readOnly).toBe(true);
+    const load = vi.fn(session.channelDetails.load);
+    const user = userEvent.setup();
+    render(
+      <ToastProvider>
+        <ChannelMembersButton
+          session={{
+            ...session,
+            channelDetails: { ...session.channelDetails, load },
+          }}
+          channelId={id}
+        />
+      </ToastProvider>,
+    );
+    await user.click(screen.getByRole("button", { name: "Access" }));
+    expect(
+      await screen.findByText("You have read-only access to this channel."),
+    ).toBeVisible();
+    expect(screen.getByText(/To contribute or add people/)).toBeVisible();
+    expect(screen.queryByText(/Join this channel/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Reload access" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("region", { name: "General access" }),
+    ).toHaveTextContent("Anyone in the community can read.");
+    // Finish the roster read before checking that the dialog cannot invite or mutate.
+    await vi.waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Refresh member data" }),
+      ).toBeEnabled(),
+    );
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("searchbox", { name: "Search people and agents" }),
+    ).toHaveAttribute("placeholder", "Search members");
+    expect(load).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+  },
+);

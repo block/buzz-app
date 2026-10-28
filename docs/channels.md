@@ -745,6 +745,12 @@ Uncertain results survive closing the dialog and offer **Check save status**,
 which reads without republishing. Opening or checking never writes. Private
 channels with a Guest default remain intact when changing unrelated details.
 
+Readers see General access as plain text from verified channel discovery metadata,
+without calling the editing capability. The timeline and members dialog explain
+that they can read messages and threads, and can ask a channel owner or admin for
+contribution or invitation access. Guest-default previews never suggest joining
+to add people or agents.
+
 In Edit, visibility is sent only when changed (`private` or `open`);
 text-only edits omit it so they do not reopen the channel in the remaining write race.
 The relay remains the final authority.

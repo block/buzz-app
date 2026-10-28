@@ -83,6 +83,7 @@ import { useMemberSearch } from "./useMemberSearch";
 import { useMemberOwners } from "./useMemberOwners";
 import { useSoloShare } from "./useSoloShare";
 import { ChannelGeneralAccess } from "./ChannelGeneralAccess";
+import { ReadOnlyAccessNotice } from "../../features/channel-members/ReadOnlyAccessNotice";
 import { avatarMedia } from "../../shared/avatar-source";
 
 /** How a name matches typed text: the shared person name rule, the same as
@@ -632,12 +633,16 @@ export function ChannelMembersDialog({
     session.channelWrites.available;
   const canAddPeople = solo ? share.eligible : canAddMembers(session, channel);
   const canAdd = canAddPeople || canAddSoloAgents;
+  const readOnlyAccess =
+    !solo &&
+    (channel?.viewerRole === "guest" ||
+      (channel?.readOnly && channel.joinRole === "guest"));
   const generalAccess =
     channel &&
     (channel.channelType === "stream" || channel.channelType === "forum") &&
     !channel.cached &&
     !channel.archived &&
-    session.channelDetails.available;
+    (channel.readOnly || session.channelDetails.available);
   // Solo access is verified by the sharing roster read; channels read 39002.
   const rosterBusy = solo ? share.rosterState === "loading" : rosterReading;
   const rosterError = solo
@@ -1415,7 +1420,12 @@ export function ChannelMembersDialog({
           ? selection.role === "remove"
             ? `Remove ${removalTarget} from ${place}`
             : "Change member role?"
-          : (title ?? (solo ? "Share access" : "Manage members"))
+          : (title ??
+            (solo
+              ? "Share access"
+              : readOnlyAccess
+                ? "Channel access"
+                : "Manage members"))
       }
       height={selection ? "content" : generalAccess ? "stable-tall" : "stable"}
       bodyLayout={selection ? "flow" : "flex"}
@@ -1656,13 +1666,14 @@ export function ChannelMembersDialog({
               {administrationError}
             </p>
           )}
+          {readOnlyAccess && <ReadOnlyAccessNotice />}
           {!solo && <h3 className="text-label-sm">People with access</h3>}
           <section
             ref={scrollport}
             className={`${styles.memberList} buzz-thin-scrollbar`}
             aria-label="Member list"
           >
-            {!canAdd && !(solo && rosterBusy) && (
+            {!canAdd && !readOnlyAccess && !(solo && rosterBusy) && (
               <p className="px-control-inset text-body-sm text-subtle">
                 {channel?.channelType === "dm"
                   ? "DM membership cannot be changed here."
@@ -2073,6 +2084,7 @@ export function ChannelMembersDialog({
               key={channelId}
               capability={session.channelDetails}
               channelId={channelId}
+              channel={channel}
             />
           )}
         </div>

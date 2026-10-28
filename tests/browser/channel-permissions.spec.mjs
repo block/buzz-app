@@ -141,7 +141,9 @@ test("a joined guest can read and leave without receiving a composer or Join pro
   await row.click();
   await expect(
     page.getByRole("region", { name: "Read-only channel" }),
-  ).toHaveText("You have read-only access to this channel.");
+  ).toHaveText(
+    "You have read-only access to this channel.You can read messages and threads. To contribute or add people, ask a channel owner or admin.",
+  );
   await expect(
     page.getByRole("textbox", {
       name: "Message #Lifecycle channel",

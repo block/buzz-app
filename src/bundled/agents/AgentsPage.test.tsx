@@ -282,6 +282,8 @@ function setup(
     register: vi.fn(),
     addTool: vi.fn(),
     present: vi.fn(),
+    share: vi.fn(),
+    shared: vi.fn(),
     tools: () => [],
     create: vi.fn(async () => {
       // `shown: false`: it was made for a community no longer selected.

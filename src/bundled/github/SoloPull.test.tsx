@@ -8,7 +8,9 @@ import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import type { AddedTool } from "../../buzz-mcp/session-tools";
 import type { BuzzClient } from "../../buzz-mcp/client";
-import { apply } from "./index";
+import type { Served } from "../../features/agents/link";
+import { runtimeLink } from "../../features/agents/plugin-testing";
+import { agent, apply } from "./index";
 import type { SoloPull, SoloPulls } from "./solo-pull";
 import { SoloPullIcon, SoloPullLink, SoloPullMenu } from "./SoloPull";
 
@@ -161,19 +163,26 @@ it("gives agents a link_pr tool for the Solo chat they work in", async () => {
     { id: team, channelType: "stream" },
   ]);
   let tool: AddedTool | undefined;
+  let served: Served | undefined;
+  const agents = {
+    addTool: (added: AddedTool) => {
+      if (added.name === "link_pr") tool = added;
+    },
+    relay: () => relay,
+    share: (shared: Served) => {
+      served = shared;
+    },
+    shared: () => runtimeLink(served),
+  };
   apply({
     host: {},
     panels: { register: () => {} },
     conversation: { registerChatIcon: () => {}, registerChatMenu: () => {} },
     relay,
-    agents: {
-      addTool: (added: AddedTool) => {
-        tool = added;
-      },
-      relay: () => relay,
-    },
+    agents,
     inject: () => {},
   } as never);
+  void agent.apply({ host: {}, agents, effect: () => {} } as never);
   const client = {
     key: "a".repeat(64),
     pubkey: "a".repeat(64),

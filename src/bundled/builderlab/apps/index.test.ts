@@ -3,7 +3,11 @@ import type { AddedTool } from "../../../buzz-mcp/session-tools";
 import type { BuzzClient } from "../../../buzz-mcp/client";
 import type { HostResponse, HostRequest } from "../../../features/host/service";
 import { createOAuthSession } from "../oauth/session";
-import { applyApps } from "./index";
+import {
+  delivered,
+  runtimeLink,
+} from "../../../features/agents/plugin-testing";
+import { applyApps, applyAppTools } from "./index";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -55,7 +59,9 @@ async function setup(
     host: { request: respond, upload: respond },
     agents: { addTool: (tool: AddedTool) => tools.set(tool.name, tool) },
   };
-  applyApps(ctx as never, session);
+  // The tools reach the UI's sign-in over a link, as from another page.
+  applyAppTools(ctx as never, runtimeLink(applyApps(ctx as never, session)));
+  await delivered();
   const call = (name: string, args: Record<string, unknown>, context = {}) => {
     const tool = tools.get(name);
     if (!tool) throw new Error(`No tool ${name}`);
@@ -85,6 +91,7 @@ it("preserves an accepted upload after sign-in changes and starts later tools wi
   await uploading;
   session.signOut();
   await session.signIn();
+  await delivered();
   accept(json({ version_id: "v1", deployment_id: "d1", external_url: APP }));
   const result = JSON.parse(String(await pending));
   expect(result).toMatchObject({
@@ -120,8 +127,8 @@ it("adds the app tools only for a tenant with an Apps control plane", async () =
 });
 
 it("returns once the deployed version serves", async () => {
-  vi.useFakeTimers();
   const { call, responses, respond } = await setup();
+  vi.useFakeTimers();
   responses.push(
     json({ ok: true, version_id: "ver-1", external_url: APP }),
     json({ ready: false }),
@@ -201,8 +208,8 @@ it("stops polling on a terminal readiness status", async () => {
 });
 
 it("uses the tenant readiness deadline instead of giving up after 90 seconds", async () => {
-  vi.useFakeTimers();
   const { call, responses, respond } = await setup();
+  vi.useFakeTimers();
   responses.push(
     json({ version_id: "v1" }),
     ...Array.from({ length: 31 }, () => json({ ready: false })),

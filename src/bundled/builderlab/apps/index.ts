@@ -5,6 +5,12 @@ import { createElement } from "react";
 import type { PluginModule } from "../../../plugins/api";
 import type { PanelProps } from "../../../features/panels/service";
 import type { OAuthSession } from "../oauth/session";
+import type { Credential } from "../oauth/browser";
+import {
+  linkedStore,
+  type RuntimeLink,
+} from "../../../features/agents/exposed";
+import type { Json, Served } from "../../../features/agents/link";
 import { createAppsClient, type RuntimeProfile } from "./client";
 import { appName, controlPlane, isAppUrl } from "./environment";
 
@@ -34,7 +40,10 @@ const DEPLOY_RECIPE = `Deploy a Builderlab app. Read apps_contract before choosi
 4. Call this with the archive's absolute path; it must be in your owner's home directory.
 It returns the version/deployment IDs once accepted, even if readiness checking fails. Use apps_status for that exact version; do not redeploy to retry readiness. Redeploy the same app_id after source changes; a validation error names what to fix in the archive.`;
 
-export function applyApps(ctx: Ctx, session: OAuthSession) {
+/** The panel that shows a deployed app, and what the app tools need of the
+ * UI: the sign-in, and opening an app beside a conversation. The plugin
+ * shares what this returns with its agent entry. */
+export function applyApps(ctx: Ctx, session: OAuthSession): Served {
   // Cordis wraps service functions on access; keep React's component identity.
   const View = ctx.browser.View;
   ctx.panels.register({
@@ -52,8 +61,55 @@ export function applyApps(ctx: Ctx, session: OAuthSession) {
         label: appName(target),
       }),
   });
+  // Each new credential counts, so the tools see a sign-in change even when
+  // its value is the same.
+  let held: Credential | undefined;
+  let generation = 0;
+  const signIn = () => {
+    const now =
+      session.snapshot().status === "signed-in"
+        ? session.credential()
+        : undefined;
+    if (now !== held) {
+      held = now;
+      generation += 1;
+    }
+    return { credential: now ?? null, generation };
+  };
+  return {
+    topics: {
+      signIn: () => ({
+        get: () => signIn() as unknown as Json,
+        subscribe: (listener) => session.subscribe(listener),
+      }),
+    },
+    commands: {
+      open: (args) =>
+        ctx.panels.requestOpen(
+          args as unknown as Parameters<Ctx["panels"]["requestOpen"]>[0],
+        ),
+    },
+  };
+}
+
+/** The tools that create, deploy, share and open apps, for the agent entry,
+ * with what the UI shares (`applyApps`). */
+export function applyAppTools(ctx: Ctx, shared: RuntimeLink) {
   const base = controlPlane();
   if (!base) return;
+  const signIn = linkedStore<Readonly<{
+    credential: Credential | null;
+  }> | null>(shared, "signIn", null);
+  const session: Pick<OAuthSession, "snapshot" | "credential"> = {
+    snapshot: () => ({
+      status: signIn.snapshot()?.credential ? "signed-in" : "signed-out",
+    }),
+    credential() {
+      const credential = signIn.snapshot()?.credential;
+      if (!credential) throw new Error("Sign in to Builderlab first.");
+      return credential;
+    },
+  };
   const apps = () => createAppsClient(ctx.host, session, base);
   const reply = (value: unknown) => JSON.stringify(value, null, 2);
   ctx.agents.addTool({
@@ -288,7 +344,7 @@ export function applyApps(ctx: Ctx, session: OAuthSession) {
       if (!isAppUrl(url)) throw new Error("That is not a Builderlab app URL");
       if (!context.channel)
         throw new Error("There is no conversation to open it beside");
-      const opened = ctx.panels.requestOpen({
+      const opened = await shared.call("open", {
         target: url,
         channelId: context.channel,
         ...(context.root ? { rootId: context.root } : {}),

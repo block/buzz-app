@@ -168,6 +168,89 @@ function infoOf(type: RegisteredAgentType): TypeInfo {
 }
 const nothing = { get: () => null, subscribe: () => () => {} };
 
+/** What one side reaches of what the other serves under `route`, for `of`
+ * (a type, or a plugin), until `close`. */
+export function routed(
+  side: Link,
+  route: "type" | "plugin",
+  of: Readonly<Record<string, Json>>,
+): RuntimeLink & Readonly<{ close(): void }> {
+  const stops = new Set<() => void>();
+  return {
+    read: (topic, args = null) =>
+      side.read(`${route}.topic`, { ...of, topic, args }),
+    watch(topic, args, listener) {
+      const stop = side.watch(
+        `${route}.topic`,
+        { ...of, topic, args },
+        listener,
+      );
+      stops.add(stop);
+      return () => {
+        stops.delete(stop);
+        stop();
+      };
+    },
+    call: (command, args = null) =>
+      side.call(`${route}.call`, { ...of, command, args }),
+    close() {
+      for (const stop of stops) stop();
+      stops.clear();
+    },
+  };
+}
+
+type Shared = Readonly<{
+  /** What the plugin's UI entry shares with its agent entry, if it is
+   * active. */
+  shared(plugin: string): Served | undefined;
+  /** Something any plugin shares changed. */
+  subscribeShared(listener: () => void): () => void;
+}>;
+
+/** A plugin's shared topic, followed from one share to the next: a plugin
+ * may share after its agent entry first watches, or start again. */
+function sharedTopic(host: Shared, args: Json) {
+  const {
+    plugin,
+    topic,
+    args: inner,
+  } = args as Readonly<{
+    plugin: string;
+    topic: string;
+    args: Json;
+  }>;
+  let from: Served | undefined;
+  let made: ReturnType<NonNullable<Served["topics"]>[string]> | undefined;
+  const current = () => {
+    const now = host.shared(plugin);
+    if (now !== from) {
+      from = now;
+      made = now?.topics?.[topic]?.(inner);
+    }
+    return made;
+  };
+  return {
+    get: () => current()?.get() ?? null,
+    subscribe(listener: () => void) {
+      let seen = current();
+      let stop = seen?.subscribe(listener);
+      const stopShares = host.subscribeShared(() => {
+        const now = current();
+        if (now === seen) return;
+        stop?.();
+        seen = now;
+        stop = now?.subscribe(listener);
+        listener();
+      });
+      return () => {
+        stopShares();
+        stop?.();
+      };
+    },
+  };
+}
+
 /** The Runner's side: it decides what runs from the memberships the Manager
  * sends, and sends back what it decided. It also serves the agent types that
  * run here: what they are, and what their UIs reach of them. */
@@ -371,7 +454,8 @@ export function managerSide(
     retyped(types: Readonly<Record<string, string>>): void;
     /** What the Runner decided, or a record, changed. */
     changed(): void;
-  }>,
+  }> &
+    Shared,
 ) {
   const { members, changed } = host;
   const from = crypto.randomUUID();
@@ -420,6 +504,23 @@ export function managerSide(
           };
         },
       }),
+      "plugin.topic": (args) => sharedTopic(host, args),
+    },
+    commands: {
+      "plugin.call": async (args) => {
+        const {
+          plugin,
+          command,
+          args: inner,
+        } = args as Readonly<{
+          plugin: string;
+          command: string;
+          args: Json;
+        }>;
+        const call = host.shared(plugin)?.commands?.[command];
+        if (!call) throw new Error(`The plugin's UI has no command ${command}`);
+        return (await call(inner)) ?? null;
+      },
     },
   });
   side.watch("runner.state", null, () => {
@@ -558,32 +659,8 @@ export function managerSide(
     /** The agent types that run here, each kept while unchanged. */
     types: () => types,
     /** What the type's UI reaches of its runtime, until `close`. */
-    runtime(info: TypeInfo): RuntimeLink & Readonly<{ close(): void }> {
-      const of = { type: info.key, revision: info.revision };
-      const stops = new Set<() => void>();
-      return {
-        read: (topic, args = null) =>
-          side.read("type.topic", { ...of, topic, args }),
-        watch(topic, args, listener) {
-          const stop = side.watch(
-            "type.topic",
-            { ...of, topic, args },
-            listener,
-          );
-          stops.add(stop);
-          return () => {
-            stops.delete(stop);
-            stop();
-          };
-        },
-        call: (command, args = null) =>
-          side.call("type.call", { ...of, command, args }),
-        close() {
-          for (const stop of stops) stop();
-          stops.clear();
-        },
-      };
-    },
+    runtime: (info: TypeInfo) =>
+      routed(side, "type", { type: info.key, revision: info.revision }),
     /** What the type's runtime calls on the Runner for an agent. */
     async models(info: TypeInfo, agent: Agent) {
       return (await side.call("type.models", {

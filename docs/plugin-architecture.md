@@ -272,6 +272,15 @@ agent, as the rest of a trusted plugin's code acts as its owner. Names are
 lowercase and cannot be a Buzz tool's. The tool is removed when its plugin's
 scope ends, so safe mode removes installed plugins' tools.
 
+Tools belong in the `agent` entry. A tool that needs something only the
+screens have, such as a sign-in or opening a panel, gets it from what the UI
+entry shares: `ctx.agents.share({ topics, commands })` from `apply`, once per
+plugin, and `ctx.agents.shared()` from the `agent` entry, a link with the same
+`read`, `watch` and `call` as a type's `runtime`. Only JSON crosses. A topic
+reads as `null` while the UI shares nothing, and a call fails. Builderlab
+shares its sign-in with its Apps tools this way, and GitHub's `link_pr` tells
+the sidebar of a link it wrote.
+
 `ctx.agents.wake(pubkey, { channel, root?, text })` wakes an agent this copy of
 the app runs in one of its conversations, as a mention there would, with no
 message. `root` is the thread's root event id (64 hex); leave it out for a Solo

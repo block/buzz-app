@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { link, type Link, type LinkPort } from "./link";
+import { link, type Link, type LinkPort, type Served } from "./link";
 import { createLocalAgentActivity } from "./local-activity";
 import { agentKey } from "./membership";
 import type { RunnerStatus } from "./agents-runner";
@@ -7,6 +7,7 @@ import { blank, type Member, type RecordEdit } from "./records";
 import {
   linkedActivity,
   managerSide,
+  routed,
   runnerSide,
   serveActivity,
 } from "./runner-link";
@@ -224,11 +225,18 @@ function split(identities: Member[] = []) {
   const changed = vi.fn();
   const retyped = vi.fn((_types: Readonly<Record<string, string>>) => {});
   const runnerLink = runnerSide(channel.port1, runner);
+  const shares = new Map<string, Served>();
+  const sharesChanged = new Set<() => void>();
   const manager = managerSide(channel.port2, {
     members: () => ({ loaded: true, identities: shown, viewer: owner }),
     defaults,
     retyped: (types) => retyped(types),
     changed,
+    shared: (plugin) => shares.get(plugin),
+    subscribeShared(listener) {
+      sharesChanged.add(listener);
+      return () => sharesChanged.delete(listener);
+    },
   });
   open.push(runnerLink);
   closing.push(manager);
@@ -236,8 +244,14 @@ function split(identities: Member[] = []) {
     runner,
     left,
     manager,
+    runnerLink,
     changed,
     retyped,
+    share(plugin: string, served: Served | undefined) {
+      if (served) shares.set(plugin, served);
+      else shares.delete(plugin);
+      for (const listener of [...sharesChanged]) listener();
+    },
     show(next: Member[]) {
       shown = next;
       manager.changed();
@@ -349,6 +363,8 @@ it("does not take what the Runner decided for a page that reloaded as an answer"
       defaults: () => undefined,
       retyped: () => {},
       changed: () => {},
+      shared: () => undefined,
+      subscribeShared: () => () => {},
     });
     closing.push(page);
     return page;
@@ -617,4 +633,55 @@ it("shows a type's session state and provider from the Runner, and asks it to ac
   });
   await manager.attend(info);
   expect(echo.attend).toHaveBeenCalledOnce();
+});
+
+it("gives a plugin's agent entry what its UI shares, from when it shares, and follows a new share", async () => {
+  const { share, runnerLink } = split();
+  const reached = routed(runnerLink, "plugin", { plugin: "github" });
+  const other = routed(runnerLink, "plugin", { plugin: "other" });
+  closing.push(reached, other);
+  const changed = vi.fn();
+  reached.watch("signIn", null, changed);
+  other.watch("signIn", null, () => {});
+  // Nothing is shared yet: the topic reads as null, and calls fail.
+  await vi.waitFor(() => expect(reached.read("signIn")).toBeNull());
+  await expect(reached.call("open", { target: "x" })).rejects.toThrow(
+    "The plugin's UI has no command open",
+  );
+  let value = { credential: "one" };
+  const listeners = new Set<() => void>();
+  const opened = vi.fn((args: unknown) => args === null);
+  share("github", {
+    topics: {
+      signIn: () => ({
+        get: () => value,
+        subscribe(listener) {
+          listeners.add(listener);
+          return () => listeners.delete(listener);
+        },
+      }),
+    },
+    commands: { open: opened },
+  });
+  await vi.waitFor(() =>
+    expect(reached.read("signIn")).toEqual({ credential: "one" }),
+  );
+  expect(other.read("signIn")).toBeNull();
+  await expect(reached.call("open")).resolves.toBe(true);
+  value = { credential: "two" };
+  for (const listener of [...listeners]) listener();
+  await vi.waitFor(() =>
+    expect(reached.read("signIn")).toEqual({ credential: "two" }),
+  );
+  // A plugin that starts again shares anew; the old share is not watched.
+  share("github", {
+    topics: {
+      signIn: () => ({ get: () => "again", subscribe: () => () => {} }),
+    },
+  });
+  await vi.waitFor(() => expect(reached.read("signIn")).toBe("again"));
+  expect(listeners.size).toBe(0);
+  share("github", undefined);
+  await vi.waitFor(() => expect(reached.read("signIn")).toBeNull());
+  expect(changed).toHaveBeenCalled();
 });

@@ -86,7 +86,7 @@ import { agentKey, pubkeyOf, type AgentKey } from "./membership";
 import { EMPTY, type Member } from "./records";
 import { AgentsRunner, type RunnerStatus } from "./agents-runner";
 import { RunnerPlugins } from "./runner-plugins";
-import { managerSide, runnerSide, type TypeInfo } from "./runner-link";
+import { managerSide, routed, runnerSide, type TypeInfo } from "./runner-link";
 import type { RuntimeLink } from "./exposed";
 import type { Served } from "./link";
 import { PRESENTED, shownType } from "./shown-types";
@@ -773,6 +773,7 @@ type Presentation = Readonly<{
   id: string;
   present(runtime: RuntimeLink): AgentPresentation;
 }>;
+type Share = Readonly<{ id: string; served: Served }>;
 export type RetypePreview = Readonly<{
   /** Destination settings after applying the target type's migration policy. */
   config: unknown;
@@ -915,6 +916,13 @@ export type Agents = {
     present: (runtime: RuntimeLink) => AgentPresentation<Config>,
   ): void;
   types(): readonly RegisteredAgentType[];
+  /** Shares `served` with this plugin's agent entry, from its UI entry: what
+   * its agents' tools need of the screens, such as a sign-in. Only JSON
+   * crosses, as between pages. A plugin shares once. */
+  share(served: Served): void;
+  /** What this plugin's UI entry shares, reached from its agent entry. A
+   * topic reads as `null` while the UI shares none, and a call fails. */
+  shared(): RuntimeLink;
   /** Adds a tool to every agent session in the app, beside the Buzz tools.
    * The tool acts as the agent, like the rest of a trusted plugin's code
    * acts as its owner. A session lists
@@ -1232,6 +1240,7 @@ export class AgentsService extends Service implements Agents {
   private keyGeneration = 0;
   private readonly contributions;
   private readonly presentations;
+  private readonly shares;
   /** Each type that runs here as shown, with the presentation and link to
    * its runtime it was shown with. */
   private readonly presentedTypes = new Map<
@@ -1359,6 +1368,7 @@ export class AgentsService extends Service implements Agents {
     super(ctx, "agents");
     this.contributions = createContributions<AgentType>(ctx);
     this.presentations = createContributions<Presentation>(ctx);
+    this.shares = createContributions<Share>(ctx);
     this.runner = new AgentsRunner(storage, native, localActivity, decisions, {
       changed: () => this.update(),
       open: (origin) => this.communities.open(origin),
@@ -1513,6 +1523,10 @@ export class AgentsService extends Service implements Agents {
         });
       },
       changed: () => this.update(),
+      shared: (plugin) =>
+        this.shares.snapshot().find((entry) => entry.pluginId === plugin)
+          ?.served,
+      subscribeShared: (listener) => this.shares.subscribe(listener),
     });
     this.unfinished = Object.freeze(readUnfinished(storage));
     this.unarchiving = readArchiveUnchecked(storage);
@@ -1657,6 +1671,18 @@ export class AgentsService extends Service implements Agents {
       id: typeId,
       present: present as Presentation["present"],
     });
+  }
+  share(served: Served) {
+    if (!served || typeof served !== "object")
+      throw new Error("share needs the topics and commands to share");
+    this.shares.register(this.ctx, { id: "shared", served });
+  }
+  shared() {
+    const plugin = this.ctx.pluginOwner?.id;
+    if (!plugin) throw new Error("Only a plugin reaches what its UI shares");
+    const reached = routed(this.runnerLink, "plugin", { plugin });
+    this.ctx.effect(() => () => reached.close());
+    return reached as RuntimeLink;
   }
   /** The agent types as the screens and management see them: each that runs
    * here as the Runner says, with what its plugin presents, then each hosted

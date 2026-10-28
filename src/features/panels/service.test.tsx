@@ -38,6 +38,12 @@ it("independently unloads panels without removing the page or shared data", asyn
     subscribe: () => () => {},
     snapshot: () => undefined,
     addTool: () => {},
+    share: () => {},
+    shared: () => ({
+      read: () => undefined,
+      watch: () => () => {},
+      call: async () => null,
+    }),
   });
   // GitHub reads through gh where the host can run it; here it cannot.
   root.provide("host", {});

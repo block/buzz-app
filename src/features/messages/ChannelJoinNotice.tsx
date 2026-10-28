@@ -4,7 +4,7 @@ import { ChannelLifecycleUnconfirmed } from "../relay/channel-lifecycle";
 import { Button } from "../../shared/design-system/ui/Button";
 import styles from "./Messages.module.css";
 
-/** A public preview offers Join; the membership roster, not this notice, enables the composer.
+/** Member-default public previews offer Join; the roster alone enables the composer.
  * Confirmed membership can unmount this notice before its run settles, so the
  * page records the join intent when the run starts, not when it resolves. */
 export function ChannelJoinNotice({
@@ -72,11 +72,12 @@ export function ChannelJoinNotice({
       },
     );
   };
-  const canJoin = !guest && joinable && !!lifecycle?.available;
+  const readOnly = guest || joinRole === "guest";
+  const canJoin = !readOnly && joinable && !!lifecycle?.available;
   return (
     <section
       ref={notice}
-      aria-label={guest ? "Read-only channel" : "Channel preview"}
+      aria-label={readOnly ? "Read-only channel" : "Channel preview"}
       aria-hidden={!visible}
       inert={!visible}
       className="pointer-events-none absolute inset-x-0 bottom-0 z-10 flex justify-center p-3"
@@ -87,12 +88,10 @@ export function ChannelJoinNotice({
         className={`${styles.channelJoinSurface} pointer-events-auto flex w-fit max-w-full flex-wrap items-center justify-center gap-2 p-1.5`}
       >
         <p className="px-2 text-body-sm text-subtle">
-          {guest
+          {readOnly
             ? "You have read-only access to this channel."
             : canJoin
-              ? joinRole === "guest"
-                ? "Join channel with read-only access"
-                : "Join channel to send messages"
+              ? "Join channel to send messages"
               : "You’re previewing this channel."}
         </p>
         {canJoin && (

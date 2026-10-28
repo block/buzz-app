@@ -1449,6 +1449,11 @@ it("passes readiness and direct Activity through to thread composition, and give
 it.each([
   { channelType: "stream" as const, joinable: true },
   { channelType: "forum" as const, joinable: true },
+  {
+    channelType: "stream" as const,
+    joinRole: "guest" as const,
+    joinable: false,
+  },
   { channelType: "stream" as const, archived: true as const, joinable: false },
   { channelType: "solo" as const, joinable: false },
 ])(
@@ -1472,7 +1477,12 @@ it.each([
     });
     h.render();
     expect(
-      screen.getByRole("region", { name: "Channel preview" }),
+      screen.getByRole("region", {
+        name:
+          metadata.joinRole === "guest"
+            ? "Read-only channel"
+            : "Channel preview",
+      }),
     ).toBeVisible();
     expect(screen.queryByRole("region", { name: "Composer" })).toBeNull();
     expect(!!screen.queryByRole("button", { name: "Join" })).toBe(joinable);

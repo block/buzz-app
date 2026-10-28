@@ -180,11 +180,7 @@ export function ChannelSettingsPanel({
                       <SettingsDetail
                         label="New participant role"
                         value={
-                          channel.joinRole === "guest"
-                            ? "Guest"
-                            : channel.joinRole === "member"
-                              ? "Member"
-                              : "Not available"
+                          channel.joinRole === "guest" ? "Guest" : "Member"
                         }
                         actionLabel="Edit"
                         loading={edit?.pending}

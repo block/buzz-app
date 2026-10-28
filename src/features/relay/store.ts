@@ -1628,7 +1628,16 @@ export function createChannelStore(
               (event.kind === 39002 && hasTag(event, "p", transport.viewer))),
         )
       )
-        resumed = discovery.resume(id) || resumed;
+        resumed =
+          discovery.resume(
+            id,
+            events.find(
+              (event) =>
+                event.kind === 39000 &&
+                event.pubkey === transport.relayAuthor &&
+                tag(event, "d") === id,
+            ),
+          ) || resumed;
     }
     for (const id of ids) checkedMetadata.add(id);
     // A bounded exact roster fills omissions from capped discovery. Apply grants

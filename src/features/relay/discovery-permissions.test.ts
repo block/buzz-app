@@ -84,6 +84,48 @@ it("does not turn a public nonmember or cached guest into a writer", () => {
   expect(state.canWrite(id)).toBe(false);
 });
 
+it.each(["guest", "member"])(
+  "restores only public reading after a %s leaves, requiring fresh metadata without restoring membership",
+  (role) => {
+    const state = new DiscoveryState(viewer.pubkey, relay.pubkey);
+    const publicMetadata = details("guest", 10);
+    const membership = roster(role, 10);
+    state.accept(publicMetadata);
+    state.accept(membership);
+    state.deny(id);
+    expect(state.canAccess(id)).toBe(false);
+    state.resume(id, publicMetadata);
+    expect(state.canAccess(id)).toBe(true);
+    expect(state.canParticipate(id)).toBe(false);
+    expect(state.canWrite(id)).toBe(false);
+    state.accept(membership); // Replaying the retained roster is not a promotion.
+    expect(state.canParticipate(id)).toBe(false);
+    state.accept(
+      metadata(relay, id, "Private", 20, [["private"], ["t", "stream"]]),
+    );
+    expect(state.canAccess(id)).toBe(false);
+    state.resume(id, publicMetadata); // An older public snapshot cannot reopen it.
+    expect(state.canAccess(id)).toBe(false);
+    state.resume(
+      id,
+      metadata(viewer, id, "Forged", 30, [["public"], ["t", "stream"]]),
+    );
+    expect(state.canAccess(id)).toBe(false);
+    const reopened = details("guest", 30);
+    state.accept(reopened);
+    state.resume(id, reopened);
+    expect(state.canAccess(id)).toBe(true);
+    expect(state.canParticipate(id)).toBe(false);
+    state.deny(id);
+    expect(state.canAccess(id)).toBe(false);
+    state.resume(id, reopened);
+    state.denyAll();
+    expect(state.canAccess(id)).toBe(false);
+    state.accept(roster("member", 40));
+    expect(state.canWrite(id)).toBe(true);
+  },
+);
+
 it("does not grant writing through a contradictory duplicate guest entry", () => {
   const state = new DiscoveryState(viewer.pubkey, relay.pubkey);
   state.accept(details("member", 10));

@@ -226,17 +226,13 @@ export function channelTtl(event: RelayEvent): number | undefined {
   }
 }
 
-/** Older channel metadata may omit this field; do not invent its current value. */
-export function channelJoinRole(
-  event: RelayEvent,
-): "member" | "guest" | undefined {
+/** Legacy absence means Member; malformed explicit defaults fail closed to Guest. */
+export function channelJoinRole(event: RelayEvent): "member" | "guest" {
   const tags = event.tags.filter(([key]) => key === "join_role");
-  const value = tags[0]?.[1];
-  return tags.length === 1 &&
-    tags[0]?.length === 2 &&
-    (value === "member" || value === "guest")
-    ? value
-    : undefined;
+  if (tags.length === 0) return "member";
+  return tags.length === 1 && tags[0]?.length === 2 && tags[0]?.[1] === "member"
+    ? "member"
+    : "guest";
 }
 
 /** A relay metadata TTL must be an unambiguous positive i32; only absence is ongoing. */

@@ -518,9 +518,10 @@ navigation, not a new archived-channel directory.
 
 Search also finds active public channels the viewer has not joined, by name,
 labeled **Public channel · not joined** after joined matches. Opening one shows the
-read-only preview. The preview offers **Join channel**; after the relay confirms
+read-only preview. Member-default previews offer **Join channel**; after the relay confirms
 membership, the channel joins the sidebar and the composer becomes available and
-focused. Joining a channel is not available for DMs, private, archived or session
+focused. Guest-default previews omit Join and preserve reading without membership.
+Joining a channel is not available for DMs, private, archived or session
 conversations. See [relay queries](relay-queries.md#public-channel-name-search-and-join).
 Unarchive publishes the existing narrow `9002` command with `archived=false` and
 requires fresh relay metadata with a missing/false archive tag before updating
@@ -1018,16 +1019,17 @@ their existing Member presentation.
 
 Channel Settings keeps **Visibility** separate from **New participant role**.
 Owners/admins can select Member or Guest in Edit details and save through the
-existing kind:9002 command. Older channel metadata may omit `join_role` even on a
-relay that supports it. An absent or unrecognized default displays as unavailable,
-with an unselected role field until the owner explicitly chooses a value.
+existing kind:9002 command. Missing `join_role` means Member, matching legacy relay
+behavior. An unrecognized or malformed explicit default maps to Guest so previews
+fail closed. These defaults never replace a participant's stored role.
 Unchanged or omitted defaults are not resent, and success requires matching fresh
 signed metadata; an older relay that ignores the choice cannot report success.
 
 A Guest's signed roster role makes the channel read-only independently of that
 default. Channel and thread history remain available, with a read-only notice
-instead of a composer or Join button. A public preview of a Guest-default channel
-offers joining with read-only access. Explicit promotion to Member restores the
+instead of a composer or Join button. Nonmembers of a public Guest-default channel
+get the same reading view without Join; opening message or thread links does not
+create membership. Explicit promotion to Member restores the
 composer; changing only `join_role` does not. Guests retain Leave, and the relay
 remains the authority for every write.
 

@@ -109,7 +109,7 @@ it("edits the new participant role separately, preserving existing participants 
   ]);
 });
 
-it("lets owners explicitly set an unpublished default without guessing its current value", async () => {
+it("shows the legacy Member default without resending it until explicitly changed", async () => {
   const h = harness();
   const user = userEvent.setup();
   render(
@@ -121,8 +121,10 @@ it("lets owners explicitly set an unpublished default without guessing its curre
   );
   await user.click(await screen.findByRole("button", { name: "Edit details" }));
   const choice = screen.getByRole("combobox", { name: "New participant role" });
-  expect(choice).toHaveTextContent("Choose a role");
-  expect(choice).toHaveAccessibleDescription(/current default is unavailable/i);
+  expect(choice).toHaveTextContent("Member");
+  expect(choice).toHaveAccessibleDescription(
+    /won’t change existing participants/,
+  );
   expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
   await user.click(choice);
   await user.click(await screen.findByRole("option", { name: "Guest" }));

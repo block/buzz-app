@@ -356,7 +356,14 @@ channel through `refer`, as any channel-only link does. Raw
 list, their label follows the exact reference, so a rename or lost access
 shows at once rather than the directory's older name.
 
-A public preview offers **Join channel**. It sends the NIP-29 `9021` join request
+A Member-default public preview offers **Join channel**. Guest-default previews
+keep history and thread links readable without Join or writing controls, and
+opening a link creates no membership. After Leave, fresh signed public metadata
+can restore preview reading while retained membership stays denied; stale or
+private metadata cannot reopen reading. Missing defaults mean Member; malformed
+explicit defaults mean Guest.
+
+Join sends the NIP-29 `9021` join request
 through the purpose-bound channel-lifecycle sign/publish route; generic signing
 rejects `9021`. Before signing, the lifecycle owner re-reads signed metadata and
 the viewer roster: a current roster entry needs no request, and only active public

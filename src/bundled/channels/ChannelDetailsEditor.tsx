@@ -529,9 +529,8 @@ export function ChannelDetailsEditor({
                 <Select
                   variant="field"
                   label="New participant role"
-                  value={draft.joinRole ?? ""}
-                  placeholder="Choose a role"
-                  description={`${view.base?.joinRole === undefined ? "The current default is unavailable. " : ""}Members can post and reply. Guests have read-only access. Changing this setting won’t change existing participants’ roles.`}
+                  value={draft.joinRole ?? "member"}
+                  description="Members can post and reply. Guests have read-only access. Changing this setting won’t change existing participants’ roles."
                   error={errors?.joinRole}
                   disabled={locked || !canEdit}
                   groups={[

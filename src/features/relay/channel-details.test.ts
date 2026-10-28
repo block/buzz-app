@@ -116,7 +116,7 @@ it.each([undefined, "member"] as const)(
     if (initialRole) h.set([withRole(initialRole), ...h.events().slice(1)]);
     const originalRoster = h.entry(2);
     const base = await h.owner.capability.load(id);
-    expect(base.joinRole).toBe(initialRole);
+    expect(base.joinRole).toBe(initialRole ?? "member");
     const next = { ...base, joinRole: "guest" as const };
     // A relay OK that ignores the new tag must not report success.
     h.publish.mockImplementationOnce(async () => {});
@@ -182,15 +182,15 @@ it("rejects malformed or elevated admission defaults at the host boundary", () =
     ).toThrow();
   }
   const h = harness();
+  expect(channelJoinRole(h.record(39000, []))).toBe("member");
   for (const tags of [
-    [],
     [["join_role", "owner"]],
     [
       ["join_role", "member"],
       ["join_role", "guest"],
     ],
   ])
-    expect(channelJoinRole(h.record(39000, tags))).toBeUndefined();
+    expect(channelJoinRole(h.record(39000, tags))).toBe("guest");
 });
 
 it("saves only after two fresh authority checks and projects confirmed readback", async () => {

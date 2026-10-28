@@ -173,9 +173,19 @@ export function ChannelInventory({
     lifecycle.snapshot,
     lifecycle.snapshot,
   );
+  const visibilityRequest = useRef<AbortController | undefined>(undefined);
+  // Roster commits join an in-flight refresh; only unmount or a new lifecycle
+  // cancels it, so live discovery cannot restart its retry budget.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a new lifecycle retires the previous refresh signal.
+  useEffect(() => {
+    const request = new AbortController();
+    visibilityRequest.current = request;
+    return () => request.abort();
+  }, [lifecycle]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: a completed roster refresh also refreshes per-viewer visibility.
   useEffect(() => {
-    if (list.status === "ready") void lifecycle.refreshVisibility();
+    if (list.status === "ready")
+      void lifecycle.refreshVisibility(visibilityRequest.current?.signal);
   }, [lifecycle, list.asOf, list.status]);
   const lifecycleFocus = useRef<string | undefined>(undefined);
   const lifecycleTrigger = useRef<HTMLElement | undefined>(undefined);
@@ -1091,16 +1101,20 @@ export function ChannelInventory({
             </Button>
           </ToastNotice>
         ))}
-        {!cached &&
-          dmVisibility.status === "error" &&
-          !dmVisibility.transient && (
-            <div role="alert">
-              Hidden conversations could not be refreshed.{" "}
-              <Button onClick={() => void lifecycle.refreshVisibility()}>
-                Retry hidden conversations
-              </Button>
-            </div>
-          )}
+        {!cached && dmVisibility.status === "error" && (
+          <div role="alert">
+            Hidden conversations could not be refreshed.{" "}
+            <Button
+              onClick={() =>
+                void lifecycle.refreshVisibility(
+                  visibilityRequest.current?.signal,
+                )
+              }
+            >
+              Retry hidden conversations
+            </Button>
+          </div>
+        )}
       </>
     ),
     content: (

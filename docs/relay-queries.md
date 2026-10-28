@@ -365,6 +365,25 @@ roster, applied through shared discovery. That makes the channel a sidebar
 member and enables the composer, which then receives focus. An accepted but
 unconfirmed join reports that it may have taken effect and stays retryable.
 
+### Finite read recovery
+
+A finite read that has no session recovery source retries transient failures
+quietly through `read-retry.ts` before its existing Retry action appears. That
+covers public search, directory, thread, older-history, profile, catalog,
+repository, staff and media reads. The budget is one read plus three retries,
+with equal jitter under session recovery's first three ceilings (1/2/4 seconds).
+An admission hint is honored within that ceiling; a longer pause surfaces
+immediately to the existing cooldown. Exhaustion rethrows the last failure.
+Access revocation and cache clears end a session read's backoff under the same
+rule that retires its in-flight requests.
+
+Only one owner retries a given read path. Internal roster, head, catch-up,
+preference and template reads keep the session recovery coordinator. Callers
+keep their cancellation, access-epoch and deadline guards. Denied, invalid and
+deterministic local failures, cancellations and writes never retry. Hidden
+conversations keep the last confirmed IDs while refreshing; after exhaustion
+the error does not opt into indefinite session recovery.
+
 ### Channel links
 
 A channel-only link (`buzz://channel/<id>`) shows what the reader may see about

@@ -1,5 +1,5 @@
 import { test, expect } from "./fixture.mjs";
-import { open } from "./timeline.mjs";
+import { activate, open } from "./timeline.mjs";
 import { openChannelDetails } from "./channel-details.mjs";
 
 // A real reload destroys module/React state while keeping this window's native
@@ -34,12 +34,13 @@ test("refresh restores profile and thread tabs, both panes and selection", async
   );
   await expect(profile).toBeVisible();
   const openThread = async (index) => {
-    await main
-      .locator(
-        `[data-channel-timeline="alpha"] [data-message-id="${roots[index].id}"]`,
-      )
-      .getByRole("button", { name: /^View thread:/ })
-      .click();
+    await activate(
+      main
+        .locator(
+          `[data-channel-timeline="alpha"] [data-message-id="${roots[index].id}"]`,
+        )
+        .getByRole("button", { name: /^View thread:/ }),
+    );
   };
   await openThread(0);
   await thread(side, 0).focus();
@@ -128,10 +129,11 @@ test("dismissal after refresh retires older profile and thread visits", async ({
     .first()
     .click();
   await expect(profile).toHaveAttribute("aria-selected", "true");
-  await main
-    .locator(`[data-channel-timeline="alpha"] [data-message-id="${root.id}"]`)
-    .getByRole("button", { name: /^View thread:/ })
-    .click();
+  await activate(
+    main
+      .locator(`[data-channel-timeline="alpha"] [data-message-id="${root.id}"]`)
+      .getByRole("button", { name: /^View thread:/ }),
+  );
   await expect(thread).toHaveAttribute("aria-selected", "true");
   await profile.click();
   await expect(profile).toHaveAttribute("aria-selected", "true");
@@ -243,10 +245,11 @@ test("refresh restores Canvas lazily and keeps unavailable tabs dismissible", as
   const root = app.histories
     .get("primary/alpha")
     .find((row) => row.content.startsWith("Thread root"));
-  await page
-    .locator(`[data-channel-timeline="alpha"] [data-message-id="${root.id}"]`)
-    .getByRole("button", { name: /^View thread:/ })
-    .click();
+  await activate(
+    page
+      .locator(`[data-channel-timeline="alpha"] [data-message-id="${root.id}"]`)
+      .getByRole("button", { name: /^View thread:/ }),
+  );
   await page.reload();
   const side = page.locator("[data-panel-workspace]");
   const canvasTab = side.getByRole("tab", { name: "Canvas", exact: true });

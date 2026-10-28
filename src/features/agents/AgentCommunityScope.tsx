@@ -27,14 +27,14 @@ const descriptions = {
  * Other agents keep their hints because their full membership set is unknown. */
 export function useAgentScopeCommunity(
   agent: Pick<Agent, "pubkey" | "relay" | "place">,
-  agents: AgentScopeReader | undefined,
+  agents: AgentScopeReader,
   communities: CommunityReader | undefined,
 ) {
   const several = useSyncExternalStore(
-    agents?.subscribe ?? noSubscribe,
+    agents.subscribe,
     () =>
-      (agents?.memberships(agent.pubkey).filter((item) => !item.deleting)
-        .length ?? 0) > 1,
+      agents.memberships(agent.pubkey).filter((item) => !item.deleting).length >
+      1,
   );
   const known = useSyncExternalStore(
     communities?.subscribe ?? noSubscribe,

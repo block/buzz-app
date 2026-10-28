@@ -146,6 +146,14 @@ test("Solo activity folds, stays expanded on append/prepend, and reveals exact v
     // measuring, and each correction restarts Virtua's pointer hold and can
     // move the row between a click's press and release. The disclosure, not
     // hit testing, is under test here; the pointer path is exercised above.
+    // Opened during the fold's transitions, the detail's own transition
+    // shares their frames, which a slow runner can starve below the samples
+    // asserted next. Start it once the fold has finished moving.
+    await expect
+      .poll(() =>
+        history.evaluate((e) => e.getAnimations({ subtree: true }).length),
+      )
+      .toBe(0);
     await activate(detailsToggle);
     await expect(detailsToggle).toHaveAttribute("aria-expanded", "true");
     await expect

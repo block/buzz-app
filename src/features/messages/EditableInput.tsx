@@ -1786,7 +1786,9 @@ export function EditableInput({
             plain.current = savedPlain;
             separateHistory = savedSeparateHistory;
             emitted.current = savedDraft;
-            updateNativeView(saved);
+            // Restore history/selection through the current presentation before
+            // exposing native atoms saved under an older resource catalog.
+            updateNativeView(reconcilePresentation(saved));
             tokenViews();
             selected();
           };

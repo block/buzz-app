@@ -220,6 +220,70 @@ it("commits resource-only token hosts without a draft or format parent update", 
   }
 });
 
+it("restores checkpoint semantics through current resources without losing saved history", () => {
+  const ref = createRef<ComposerInputElement>();
+  const original = mentionDraft("😀 :late: tail");
+  const changed = vi.fn();
+  const formats = vi.fn();
+  function Editor({
+    draft,
+    available,
+  }: {
+    draft: MentionDraft;
+    available: boolean;
+  }) {
+    return (
+      <EditableInput
+        ref={ref}
+        draft={draft}
+        value={draft.text}
+        disabled={false}
+        placeholder="Draft"
+        maxLength={16000}
+        onDraftChange={changed}
+        onFormatsChange={formats}
+        presentationFor={(current) =>
+          available && current.text === original.text
+            ? [
+                {
+                  start: 3,
+                  end: 9,
+                  content: <span>Resolved</span>,
+                  facts: ["late"],
+                },
+              ]
+            : []
+        }
+      />
+    );
+  }
+  const view = render(<Editor draft={original} available />);
+  const input = ref.current;
+  if (!input) throw new Error("Editor did not mount");
+  let restore!: () => void;
+  act(() => {
+    input.focus();
+    input.setSelectionRange(0, original.text.length);
+    input.toggleFormat("bold");
+    input.setSelectionRange(12, 12);
+    restore = input.checkpoint();
+  });
+  view.rerender(<Editor draft={mentionDraft("Temporary")} available={false} />);
+  const beforeRestore = changed.mock.calls.length;
+  act(restore);
+  expect(changed).toHaveBeenCalledTimes(beforeRestore);
+  expect(input).toHaveValue(original.text);
+  expect([input.selectionStart, input.selectionEnd]).toEqual([12, 12]);
+  expect(input.querySelectorAll("[data-source]")).toHaveLength(0);
+  expect(input.querySelector("strong")).toHaveTextContent(original.text);
+  act(() => input.undo(false));
+  expect(input).toHaveValue(original.text);
+  expect(input.querySelectorAll("strong")).toHaveLength(0);
+  expect([input.selectionStart, input.selectionEnd]).toEqual([0, 14]);
+  act(() => input.undo(true));
+  expect(input.querySelector("strong")).toHaveTextContent(original.text);
+});
+
 it("keeps selection and history for an equivalent legacy presentation snapshot", () => {
   const ref = createRef<ComposerInputElement>();
   const changed = vi.fn();

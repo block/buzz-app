@@ -68,7 +68,7 @@ export class ArtifactStorageService extends Service implements ArtifactStorage {
       store = createArtifactStore(viewer, origin);
       this.stores.set(scope, store);
     }
-    const collection = store.collection(owner, definition);
+    const collection = store.collection(owner, definition, valid);
     const controller = new AbortController();
     let unsubscribe: (() => void) | undefined;
     let removeEffect: (() => void) | undefined;
@@ -79,16 +79,18 @@ export class ArtifactStorageService extends Service implements ArtifactStorage {
       collection.close();
       removeEffect?.();
     };
-    const valid = () => {
+    function valid() {
       const now = capture();
       if (
         controller.signal.aborted ||
         now.viewer !== viewer ||
         now.origin !== origin ||
         now.generation !== generation
-      )
+      ) {
+        close();
         throw new Error("Artifact storage scope changed");
-    };
+      }
+    }
     unsubscribe = this.ctx.communityReader.subscribe(() => {
       const now = capture();
       if (

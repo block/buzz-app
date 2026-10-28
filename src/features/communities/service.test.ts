@@ -920,7 +920,11 @@ it("a synced-in community shows the viewer's local name and reads its presentati
     "wss://new.example",
   ]);
   expect(client.snapshot().memberships).toEqual([
-    { id: "https://new.example", name: "new.example", localName: "Mine" },
+    expect.objectContaining({
+      id: "https://new.example",
+      name: "new.example",
+      localName: "Mine",
+    }),
   ]);
   await flush();
   expect(requests).toContain(

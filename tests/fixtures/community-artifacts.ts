@@ -34,6 +34,10 @@ storage.onOpen((entry) => {
 const api = {
   snapshot: communities.snapshot,
   join: () => communities.joined(membership, profile),
+  async syncJoin() {
+    await communities.applySync({ known: [], outbox: [] }, [membership.id]);
+    communities.select(membership.id);
+  },
   leave: (purge: boolean) => communities.leave(membership.id, { purge }),
   open: () => plugin.artifactStorage.open(definition),
   aborted: () => signal?.aborted,

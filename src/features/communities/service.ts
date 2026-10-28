@@ -12,6 +12,7 @@ import {
   relayAddress,
 } from "./destination";
 import { purgeCommunityDeviceState, type PurgeFailure } from "./device-state";
+import { withArtifactPartitionLock } from "../artifact-storage/store";
 import { fetchCommunityPresentation } from "./community-icon";
 import {
   emptySync,
@@ -203,6 +204,11 @@ export function createCommunities(
   const emitRelay = () => {
     for (const fn of relayListeners) fn();
   };
+  const notify = () => {
+    if (disposed) return;
+    for (const fn of listeners) fn();
+    emitRelay();
+  };
   const update = (
     patch: Partial<ClientSnapshot>,
     persist = true,
@@ -242,8 +248,7 @@ export function createCommunities(
     }
     unresolvedSelection = selection;
     state = next;
-    for (const fn of listeners) fn();
-    emitRelay();
+    notify();
   };
   const acquire = (id: string, viewer = state.viewer) => {
     if (!connect) return disconnected;
@@ -427,17 +432,12 @@ export function createCommunities(
     } catch {
       return;
     }
-    for (const { id, generation } of state.memberships) {
-      if (
-        saved.memberships.some(
+    const removed = state.memberships.filter(
+      ({ id, generation }) =>
+        !saved.memberships.some(
           (entry) => entry.id === id && entry.generation === generation,
-        )
-      )
-        continue;
-      presentations.delete(id);
-      membershipVersions.set(id, (membershipVersions.get(id) ?? 0) + 1);
-      void release(id);
-    }
+        ),
+    );
     saved.memberships = saved.memberships.map((entry) => ({
       ...state.memberships.find(
         (current) =>
@@ -446,8 +446,15 @@ export function createCommunities(
       ...entry,
       localName: readLocalCommunityName(entry.id, viewer),
     }));
+    state = { ...state, ...saved };
+    for (const { id } of removed) {
+      presentations.delete(id);
+      membershipVersions.set(id, (membershipVersions.get(id) ?? 0) + 1);
+      void release(id);
+    }
     if (saved.selected) acquire(saved.selected);
-    update(saved, false);
+    // Snapshot readers can hold their own operation guard only after this call returns.
+    queueMicrotask(notify);
     refreshPresentation();
   }
   const syncLocalNames = (event: StorageEvent) => {
@@ -604,30 +611,36 @@ export function createCommunities(
       id: string,
       { purge = true }: { purge?: boolean } = {},
     ): Promise<PurgeFailure[]> {
-      syncSaved();
       id = communityDestination(id).id;
-      if (!state.memberships.some((m) => m.id === id)) return [];
-      const { viewer } = state;
       const origin = communityDestination(id).url;
-      update(
-        {
-          memberships: state.memberships.filter((m) => m.id !== id),
-          ...(state.selected === id ? { selected: null } : {}),
-          sync: enqueue(state.sync, relayAddress(id), true),
-        },
-        true,
-        !!nativeConnect && !live,
-      );
-      // Fence metadata responses for the old membership, including remove/rejoin.
-      presentations.delete(id);
-      membershipVersions.set(id, (membershipVersions.get(id) ?? 0) + 1);
-      refreshPresentation();
-      const failures = await release(id);
-      // The session is gone (or at least detached), so nothing below can
-      // refill the purged stores.
-      if (purge && viewer)
-        failures.push(...(await purgeCommunityDeviceState(origin, viewer)));
-      return failures;
+      const forget = async () => {
+        syncSaved();
+        if (!state.memberships.some((m) => m.id === id)) return [];
+        const { viewer } = state;
+        update(
+          {
+            memberships: state.memberships.filter((m) => m.id !== id),
+            ...(state.selected === id ? { selected: null } : {}),
+            sync: enqueue(state.sync, relayAddress(id), true),
+          },
+          true,
+          !!nativeConnect && !live,
+        );
+        // Fence metadata responses for the old membership, including remove/rejoin.
+        presentations.delete(id);
+        membershipVersions.set(id, (membershipVersions.get(id) ?? 0) + 1);
+        refreshPresentation();
+        const failures = await release(id);
+        // The session is gone (or at least detached), so nothing below can
+        // refill the purged stores.
+        if (purge && viewer)
+          failures.push(...(await purgeCommunityDeviceState(origin, viewer)));
+        return failures;
+      };
+      const viewer = state.viewer;
+      return purge && viewer && typeof indexedDB !== "undefined"
+        ? withArtifactPartitionLock(viewer, origin, "exclusive", forget)
+        : forget();
     },
     pendingSync() {
       syncSaved();
@@ -648,6 +661,7 @@ export function createCommunities(
         memberships.push({
           id,
           name,
+          generation: crypto.randomUUID(),
           ...(state.viewer
             ? { localName: readLocalCommunityName(id, state.viewer) }
             : {}),

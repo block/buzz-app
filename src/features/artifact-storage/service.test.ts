@@ -57,7 +57,11 @@ it("binds collection ownership to the calling plugin and fences scope changes", 
   }
   listener.mockClear();
   const handle = plugin.artifactStorage.open(definition);
-  expect(factory).toHaveBeenCalledWith("test.plugin", definition);
+  expect(factory).toHaveBeenCalledWith(
+    "test.plugin",
+    definition,
+    expect.any(Function),
+  );
   expect(listener.mock.calls[0]?.[0]).toMatchObject({
     owner: "test.plugin",
     viewer: "viewer",

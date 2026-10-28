@@ -203,6 +203,11 @@ To move to a newer goose, change `revision` in the pin. The app's own signature
 covers the binary; nothing else checks it at launch. Each release job checks that
 its package contains it.
 
+Normal `main` release jobs cache the staged binary and its stamp per platform,
+keyed by the Rust version and the pin, build script, Cargo config and release
+workflow. A miss builds it as before. Candidate-only runs skip the cache, and
+signing and package checks run either way.
+
 ## Windows and Linux installers and candidate-only runs
 
 The same **Desktop previews** workflow has a manual `candidates` switch. It builds
@@ -244,7 +249,7 @@ are checksum-pinned. The workflow verifies the app executable in the extracted d
 and the app executable and launch shim in the extracted AppImage after repacking.
 Compatibility guards fail rather than silently omitting a fix.
 AppImage still relies on host desktop/media libraries; this is not a promise of
-universal distro compatibility. Neither candidate job writes shared build caches.
+universal distro compatibility. Candidate-only runs use no shared build caches.
 
 ### Acceptance still required
 

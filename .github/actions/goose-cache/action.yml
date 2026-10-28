@@ -1,0 +1,17 @@
+name: Cache built goose-acp
+description: Reuse the staged goose-acp across release builds with the same build inputs.
+runs:
+  using: composite
+  steps:
+    # Hermit pins name the Rust version only in a file name, which hashFiles cannot see.
+    - name: Read Rust version
+      id: rust
+      shell: bash
+      run: echo "version=$(rustc -V | cut -d' ' -f2)" >> "$GITHUB_OUTPUT"
+    # scripts/build-goose-acp.mjs skips its build when these two files match the pin.
+    - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          src-tauri/resources/bin/goose-acp${{ runner.os == 'Windows' && '.exe' || '' }}
+          target/goose-acp-build/staged.json
+        key: goose-acp-${{ runner.os }}-${{ runner.arch }}-rust-${{ steps.rust.outputs.version }}-${{ hashFiles('runtime/goose-acp.json', 'scripts/build-goose-acp.mjs', '.cargo/config.toml', '.github/workflows/release.yml', '.github/actions/goose-cache/action.yml') }}

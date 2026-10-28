@@ -54,6 +54,8 @@ test("candidate version embeds the updater only when both values are set, never 
   }
 });
 
+const goose = "./.github/actions/goose-cache";
+
 // These job guards use the common Actions/JavaScript boolean-expression subset.
 function selected(
   job,
@@ -163,7 +165,21 @@ test("all-platform releases preserve candidate isolation and read-only installer
       ),
     );
     assert.ok(!JSON.stringify(job).includes("secrets."));
+    // Only normal main releases read or write the shared Goose cache.
+    const cache = job.steps.find((step) => step.uses === goose);
+    assert.equal(selected(cache), true);
+    assert.equal(selected(cache, { candidates: true }), false);
+    assert.equal(
+      selected(cache, { candidates: true }, "refs/heads/feature"),
+      false,
+    );
   }
+  // Post steps run in reverse, so Goose saves before rust-cache prunes target/.
+  const macos = jobs.build.steps;
+  assert.ok(
+    macos.findIndex((step) => step.uses?.startsWith("Swatinem/rust-cache@")) <
+      macos.findIndex((step) => step.uses === goose),
+  );
 });
 
 test("Huddle release provisioning passes microphone entitlements to the actual signer and installs Opus", () => {

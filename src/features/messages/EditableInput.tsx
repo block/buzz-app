@@ -224,6 +224,7 @@ export function EditableInput({
     >(),
   );
   const [, refresh] = useState(0);
+  const portals = useRef(false);
   const scrollAfterTokens = useRef(false);
   const composing = useRef(false);
   const pointing = useRef(false);
@@ -231,6 +232,7 @@ export function EditableInput({
   const plain = useRef<PlainLink[]>([]);
   const locked = useRef(false);
   const emitted = useRef(draft);
+  const adopted = useRef(draft);
   const api = useRef<{
     sync(draft: MentionDraft, reset?: boolean): void;
   } | null>(null);
@@ -1273,8 +1275,14 @@ export function EditableInput({
               tr.scrolledIntoView && hosts.current.size > 0;
             emitted.current = projection().draft;
             current.current.onDraftChange(emitted.current);
-            tokenViews();
           }
+          // Rendering presents only token artwork; each transaction has already
+          // adopted its document's decorations.
+          if (
+            next.doc !== previous.doc &&
+            (hosts.current.size || portals.current)
+          )
+            tokenViews();
           selected();
         },
         nodeViews: {
@@ -1814,8 +1822,12 @@ export function EditableInput({
   useLayoutEffect(() => {
     const editor = view.current;
     if (!editor) return;
-    if (draft !== emitted.current && !composing.current)
-      api.current?.sync(draft);
+    // Adopt each draft the host passes once. A host that renders for other
+    // reasons may still hold a draft from before the editor's latest edits.
+    if (draft !== adopted.current && !composing.current) {
+      adopted.current = draft;
+      if (draft !== emitted.current) api.current?.sync(draft);
+    }
     // setProps recomputes the decorations that read this committed hint.
     current.current.placeholder = placeholder;
     editor.setProps({ editable: () => !disabled && !locked.current });
@@ -1851,6 +1863,7 @@ export function EditableInput({
     const editor = view.current;
     if (editor?.hasFocus()) editor.dispatch(editor.state.tr.scrollIntoView());
   });
+  portals.current = hosts.current.size > 0;
   return (
     <>
       {/* biome-ignore lint/a11y/useSemanticElements: ProseMirror owns this native editing surface. */}

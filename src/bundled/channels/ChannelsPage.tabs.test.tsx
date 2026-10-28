@@ -44,6 +44,8 @@ import { BrowserHostView } from "../../features/browser/BrowserHostView";
 import { BrowserSessions } from "../../features/browser/sessions";
 import type { BrowserPlatform } from "../../features/browser/platform";
 
+vi.mock("virtua", () => import("../../features/messages/virtua-testing"));
+
 composerDOMFixture();
 
 const owners: ReturnType<typeof createRelaySession>[] = [];

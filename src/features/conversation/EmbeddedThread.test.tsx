@@ -26,6 +26,8 @@ import type { ChannelMessage } from "../relay/contracts";
 import type { OutgoingEvent } from "../relay/outbox";
 import type { RelaySession } from "../relay/session";
 
+vi.mock("virtua", () => import("../messages/virtua-testing"));
+
 // The real ThreadPanel and MessageManagement are composed; only leaf UI with
 // its own mounted suites is reduced to the props this owner supplies.
 vi.mock("../relay/react", () => {

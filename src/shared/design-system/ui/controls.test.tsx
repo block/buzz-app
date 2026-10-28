@@ -4,7 +4,7 @@ import { afterEach, expect, test, vi } from "vitest";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createRef, useState } from "react";
-import { Button } from "./Button";
+import { Button, CompositeButtons } from "./Button";
 import { IconButton } from "./IconButton";
 import { PlusIcon } from "../icons";
 import { Field } from "./Field";
@@ -16,6 +16,50 @@ import { SearchField } from "./SearchField";
 import { Composer } from "./Composer";
 
 afterEach(cleanup);
+
+test("an enabled button renders the element Base UI's Button would", async () => {
+  const user = userEvent.setup();
+  const clicks: string[] = [];
+  const ref = createRef<HTMLButtonElement>();
+  const button = (path: string) => (
+    <Button
+      ref={path === "native" ? ref : undefined}
+      variant="ghost"
+      size="sm"
+      shape="icon"
+      aria-label={path}
+      data-path=""
+      onClick={() => clicks.push(path)}
+    >
+      Add
+    </Button>
+  );
+  render(
+    <>
+      <div data-testid="native">{button("native")}</div>
+      <CompositeButtons value>
+        <div data-testid="base">{button("base")}</div>
+      </CompositeButtons>
+    </>,
+  );
+  const element = (path: string) => {
+    const button = screen.getByRole("button", { name: path });
+    return {
+      attributes: Object.fromEntries(
+        [...button.attributes].map(({ name, value }) => [
+          name,
+          name === "aria-label" ? "" : value,
+        ]),
+      ),
+      content: button.innerHTML,
+    };
+  };
+  expect(element("native")).toEqual(element("base"));
+  expect(ref.current).toBe(screen.getByRole("button", { name: "native" }));
+  await user.click(screen.getByRole("button", { name: "native" }));
+  await user.keyboard("{Enter}");
+  expect(clicks).toEqual(["native", "native"]);
+});
 
 test.each([
   ["sm", "sm"],

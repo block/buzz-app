@@ -2,6 +2,7 @@ import { Field as BaseField } from "@base-ui/react/field";
 import { RadioGroup as BaseRadioGroup } from "@base-ui/react/radio-group";
 import { Radio as BaseRadio } from "@base-ui/react/radio";
 import { useId, type ComponentProps, type ReactNode } from "react";
+import { CompositeButtons } from "./Button";
 
 /** Compose inside Field so each Radio has its own labelled Field.Item. */
 export function RadioGroup<Value>({
@@ -16,7 +17,7 @@ export function RadioGroup<Value>({
       data-size={size}
       className="buzz-radio-group"
     >
-      {children}
+      <CompositeButtons value>{children}</CompositeButtons>
     </BaseRadioGroup>
   );
 }

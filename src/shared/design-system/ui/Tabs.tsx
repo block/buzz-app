@@ -1,5 +1,6 @@
 import { Tabs as BaseTabs } from "@base-ui/react/tabs";
 import { NavigationItem } from "./NavigationItem";
+import { CompositeButtons } from "./Button";
 import { IconButton } from "./IconButton";
 import { Input } from "./Input";
 import {
@@ -145,7 +146,7 @@ export function Tabs<Value extends string>({
   const list = useScrollEdges();
   const strip = (
     <>
-      <BaseTabs.List ref={list} className="buzz-tabs-list" aria-label={label}>
+      <TabsList ref={list} className="buzz-tabs-list" aria-label={label}>
         {showSelection && variant !== "navigation" && (
           <BaseTabs.Indicator className="buzz-tabs-indicator" />
         )}
@@ -270,7 +271,7 @@ export function Tabs<Value extends string>({
             )}
           </TabMenu>
         ))}
-      </BaseTabs.List>
+      </TabsList>
       {trailingAction}
     </>
   );
@@ -519,5 +520,14 @@ function TabAttention({ request }: { request: number | undefined }) {
       className="buzz-tabs-attention"
       aria-hidden="true"
     />
+  );
+}
+
+/** Buttons in the list are composite items of Base UI's tab list. */
+function TabsList({ children, ...props }: BaseTabs.List.Props) {
+  return (
+    <BaseTabs.List {...props}>
+      <CompositeButtons value>{children}</CompositeButtons>
+    </BaseTabs.List>
   );
 }

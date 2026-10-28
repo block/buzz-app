@@ -1452,6 +1452,42 @@ it("quotes the rest of the line when the marker is typed before existing prose",
   expect(h.markdown()).toBe("> quoted\n\nplain");
 });
 
+it.each([
+  ["> text", 0, "text", "> text"],
+  [">text", 0, "text", "> text"],
+  ["> text", 2, "text", "> text"],
+  // Only one literal marker goes: a pasted nested quote keeps its inner level.
+  ["> > text", 0, "> text", "> > text"],
+] as const)(
+  "quotes pasted %j once when `> ` is typed at offset %i, so the sent text keeps its quote depth",
+  async (pasted, caret, value, wire) => {
+    const h = mount();
+    paste(h.input, pasted);
+    expect(h.input.querySelector("blockquote")).toBeNull();
+    act(() => h.input.setSelectionRange(caret, caret));
+    await h.user.keyboard("> ");
+    expect(h.input.querySelectorAll("blockquote")).toHaveLength(1);
+    expect(h.input.querySelector(":scope > blockquote > p")).toHaveTextContent(
+      value,
+    );
+    expect(h.input).toHaveValue(value);
+    expect([h.input.selectionStart, h.input.selectionEnd]).toEqual([0, 0]);
+    expect(h.markdown()).toBe(wire);
+    // One undo restores the typed marker beside the literal one.
+    act(() => h.input.undo(false));
+    expect(h.input.querySelector("blockquote")).toBeNull();
+    expect(h.input).toHaveValue(
+      `${pasted.slice(0, caret)}> ${pasted.slice(caret)}`,
+    );
+    act(() => h.input.undo(true));
+    expect(h.input.querySelectorAll("blockquote")).toHaveLength(1);
+    const saved = JSON.parse(JSON.stringify(h.draft()));
+    act(() => h.input.reset(saved));
+    expect(h.input).toHaveValue(value);
+    expect(h.markdown()).toBe(wire);
+  },
+);
+
 it("opens a list inside a quote but keeps a quote marker typed inside a list item literal, where the sent text still nests", async () => {
   const h = mount();
   await h.user.keyboard("> quote{Shift>}{Enter}{/Shift}- item");

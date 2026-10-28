@@ -386,7 +386,8 @@ export const composerPrefixDelimiters: ReadonlySet<string> = new Set([" "]);
 // `+ ` and `1) ` open blocks although the serializer writes each bullet as `- `
 // and each number with a dot; the sent text renders the same either way.
 // A typed Unicode bullet is a convenience alias, serialized as Markdown `- `.
-const PREFIX = /^(?:([-*+•])|(\d{1,9})[.)]|>) $/;
+// A quote marker typed just after a literal one (`> > `) quotes the line once.
+const PREFIX = /^(?:([-*+•])|(\d{1,9})[.)]|(?:> )?>) $/;
 // Positions to read before the caret: the widest prefix and its space, plus the
 // character before them, so the cheap check sees whether the line starts there.
 const PREFIX_WINDOW = 12;
@@ -399,8 +400,12 @@ const PREFIX_WINDOW = 12;
  * the item's own list kind, typed as the only text of an item after the first,
  * nests that item as Tab does. A marker typed after prose, inside a code block,
  * inside pasted fenced source, or on a line holding a token or
- * code/link/literal text stays literal. The caller closes history around the
- * transaction, so one undo restores the typed prefix. */
+ * code/link/literal text stays literal. A pasted or restored marker stays
+ * literal until a typed `> ` meets a literal quote marker starting the line:
+ * typed just before it or just after it, the line becomes one quote and both
+ * markers go, so the sent text keeps the quote it already read as rather than
+ * nesting a second one. The caller closes history around the transaction, so
+ * one undo restores the typed prefix. */
 export function composerBlockPrefix(
   state: EditorState,
   typed: string,
@@ -479,8 +484,14 @@ export function composerBlockPrefix(
       plain = false;
   });
   if (!plain) return;
+  // A lone `> ` typed before a literal marker absorbs it, as `> > ` does above.
+  // The line is plain text, so its characters map one to one to positions.
+  const absorbed =
+    match[0] === "> "
+      ? (/^> ?/.exec(text.slice(caret, caret + 2))?.[0].length ?? 0)
+      : 0;
   const marks = $from.marks();
-  const tr = state.tr.delete(from, to);
+  const tr = state.tr.delete(from, to + absorbed);
   if (sink) {
     if (!apply(tr, sinkListItem(schema.nodes.list_item))) return;
     // A sunk item joins the previous item's nested list when there is one, as

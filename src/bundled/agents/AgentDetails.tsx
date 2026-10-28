@@ -538,8 +538,8 @@ function SharedSettingsNotice({
           aria-label={`${agent.name}’s shared settings`}
         >
           <p className="m-0 text-body-sm text-subtle">
-            {agent.name}’s profile and settings are shared across these
-            communities:
+            {agent.name}’s name, instructions, and settings are shared across
+            these communities:
           </p>
           <ul
             aria-label="Communities"

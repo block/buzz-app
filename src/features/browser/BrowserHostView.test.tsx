@@ -837,7 +837,7 @@ it("ignores status from a replaced session", async () => {
   expect(screen.queryByText("Old page")).not.toBeInTheDocument();
 });
 
-it("grants through the lazy preview controls and revokes when the view closes", async () => {
+it("requires conversation context in the lazy preview controls", async () => {
   const platform = fakePlatform();
   const control = {
     available: vi.fn(async () => true),
@@ -853,13 +853,10 @@ it("grants through the lazy preview controls and revokes when the view closes", 
       sessions={new BrowserSessions(platform)}
     />,
   );
-  await userEvent.click(
-    await screen.findByRole("button", { name: "Allow agent control" }),
-  );
   expect(
-    screen.getByRole("textbox", { name: "Browser control token" }),
-  ).toHaveValue("native-grant");
-  expect(control.grant).toHaveBeenCalledWith("session-1");
+    await screen.findByText(/Open this website from a conversation/),
+  ).toBeVisible();
+  expect(control.grant).not.toHaveBeenCalled();
   view.unmount();
   expect(control.revoke).toHaveBeenCalledWith("session-1");
 });

@@ -1,4 +1,5 @@
-import type { BrowserControl } from "./platform";
+import type { BrowserControlRequest } from "./platform";
+import type { Context as ToolContext } from "../../buzz-mcp/client";
 import type { ComponentType } from "react";
 
 export type BrowserViewProps = Readonly<{
@@ -10,14 +11,26 @@ export type BrowserViewProps = Readonly<{
   /** Names the view's tab until the website has a title, and while a hidden
    * tab has not opened it yet. */
   label?: string | undefined;
+  /** The conversation this website was opened beside. */
+  conversation?:
+    | Readonly<{ channel: string; root?: string | undefined }>
+    | undefined;
 }>;
 
 export interface Browser {
   readonly available: boolean;
   readonly View: ComponentType<BrowserViewProps>;
-  /** Internal preview: unavailable without the native Cargo opt-in. A grant
-   * token comes only from the owner's browser toolbar. */
-  readonly control?: Pick<BrowserControl, "available" | "execute"> | undefined;
+  /** Internal preview. Caller identity/context come from the host's tool call. */
+  readonly control?:
+    | Readonly<{
+        available(): Promise<boolean>;
+        execute(
+          agent: string,
+          context: ToolContext,
+          request: BrowserControlRequest,
+        ): Promise<unknown>;
+      }>
+    | undefined;
 }
 
 declare module "@deepseek-ai/cordis" {

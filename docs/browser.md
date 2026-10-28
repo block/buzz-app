@@ -101,4 +101,4 @@ native implementation or register its action handlers. The website guest keeps
 its existing IPC isolation. A manually loaded example plugin registers the agent
 tool; no agent tool can grant itself control. See
 [Browser control preview](../examples/plugins/browser-control/README.md) for setup,
-capability-token handling, limitations, and disposable native acceptance.
+automatic agent/conversation sharing, limitations, and disposable native acceptance.

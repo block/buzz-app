@@ -14,19 +14,24 @@ The panel uses the existing Browser controls and a dedicated named website store
 macOS 14 or later, as described in [the browser documentation](../../../docs/browser.md).
 A more specific panel, such as GitHub, still wins link resolution.
 
-1. Click **Allow agent control** in the browser toolbar.
-2. Copy **Browser control token** into a private conversation with a local agent.
-3. Ask it to use `browser_control` with that token and `action: "observe"`.
+1. Open the website beside the conversation with a local agent running in this Buzz instance.
+2. Click **Allow agent control**. If the conversation has several agents, choose one.
+3. Ask that agent to use `browser_control` with `action: "observe"`. There is no token to copy.
 4. Ask it to fill a text field or click an element identified by a unique CSS selector.
-5. Click **Take control**. Further requests using that token must fail.
+5. Click **Take control**. Further requests must fail until you allow access again.
 
-The token grants access to that browser session, including signed-in pages, until
-revoked. It is a capability, not an agent identity: any local agent given it can
-use it. Do not post it in a shared channel. Creating another grant replaces the
-previous token. Hiding, covering, closing, or replacing the view revokes control;
-allow it again after returning. Grants do not survive app restarts. Takeover stops
-new requests and suppresses late results; it cannot undo an action already sent
-to WebKit. The UI stays usable while control is allowed.
+The toolbar names the agent the browser is shared with. Grants are bound to the
+host-authenticated agent membership, community and conversation (including its
+thread when applicable). Tokens stay inside the app and are never passed through
+chat or tool arguments. Agent selection uses the session's shared choices and
+requires an agent running here; an agent hosted by another Buzz instance cannot
+use this browser. The toolbar explains this instead of offering a token.
+
+Hiding, covering, closing, or replacing the view revokes control; allow it again
+after returning. Grants do not survive app restarts. Takeover stops new requests
+and suppresses late results; it cannot undo an action already sent to WebKit.
+The UI stays usable while control is allowed. Share only one browser with the
+same agent in the same conversation at a time; ambiguous requests are rejected.
 
 The one tool supports `observe`, `click`, `fill`, and `navigate`. Observe returns
 up to 20,000 characters of page text and 100 visible controls, without input values.

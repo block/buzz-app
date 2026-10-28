@@ -24,12 +24,13 @@ import type {
   BrowserStatus,
 } from "./platform";
 import type { BrowserSessions } from "./sessions";
+import type { BrowserAgentHost } from "./BrowserAgentControl";
 import styles from "./BrowserHostView.module.css";
 
 // The preview UI loads only after the native build explicitly enables it.
-const BrowserControlBar = lazy(() =>
-  import("./BrowserControlBar").then(({ BrowserControlBar }) => ({
-    default: BrowserControlBar,
+const BrowserAgentControl = lazy(() =>
+  import("./BrowserAgentControl").then(({ BrowserAgentControl }) => ({
+    default: BrowserAgentControl,
   })),
 );
 
@@ -103,10 +104,13 @@ export function BrowserHostView({
   platform,
   sessions,
   pollInterval = 300,
+  conversation,
+  agentControl,
 }: BrowserViewProps & {
   platform: BrowserPlatform;
   sessions: BrowserSessions;
   pollInterval?: number;
+  agentControl?: BrowserAgentHost;
 }) {
   const viewport = useRef<HTMLDivElement>(null);
   const session = useRef<string | undefined>(undefined);
@@ -456,9 +460,10 @@ export function BrowserHostView({
       </div>
       {controlAvailable && controlSession && platform.control ? (
         <Suspense fallback={null}>
-          <BrowserControlBar
+          <BrowserAgentControl
             key={controlSession}
-            control={platform.control}
+            host={agentControl}
+            conversation={conversation}
             sessionId={controlSession}
             status={status}
           />

@@ -1,6 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Button } from "../../shared/design-system/ui/Button";
-import { Input } from "../../shared/design-system/ui/Input";
 import type {
   BrowserControl,
   BrowserControlGrant,
@@ -13,10 +12,18 @@ export function BrowserControlBar({
   control,
   sessionId,
   status,
+  agentName,
+  eligible = false,
+  unavailable = "Choose a local agent in this conversation.",
+  picker,
 }: {
   control: BrowserControl;
   sessionId: string;
   status?: BrowserStatus;
+  agentName?: string | undefined;
+  eligible?: boolean;
+  unavailable?: string;
+  picker?: ReactNode;
 }) {
   const [grant, setGrant] = useState<BrowserControlGrant>();
   const [pending, setPending] = useState(false);
@@ -32,11 +39,23 @@ export function BrowserControlBar({
   useEffect(() => {
     if (
       grant &&
+      !pending &&
       (status?.control_revision ?? -1) >= grant.revision &&
       !status?.control_granted
-    )
+    ) {
       setGrant(undefined);
-  }, [grant, status]);
+      void control.revoke(sessionId).catch(() => undefined);
+    }
+  }, [grant, pending, status, control, sessionId]);
+
+  useEffect(() => {
+    if (!eligible) {
+      generation.current++;
+      setGrant(undefined);
+      setPending(false);
+      void control.revoke(sessionId).catch(() => undefined);
+    }
+  }, [eligible, control, sessionId]);
 
   async function change(allow: boolean) {
     const current = ++generation.current;
@@ -47,7 +66,6 @@ export function BrowserControlBar({
       if (allow) next = await control.grant(sessionId);
       else await control.revoke(sessionId);
       if (generation.current === current) setGrant(next);
-      else if (allow) await control.revoke(sessionId);
     } catch (failure) {
       if (generation.current === current) setError(String(failure));
     } finally {
@@ -57,11 +75,12 @@ export function BrowserControlBar({
 
   return (
     <section className={styles.control} aria-label="Browser agent control">
+      {picker}
       <div className={styles.controlActions}>
         <Button
           size="sm"
           variant="subtle"
-          disabled={pending}
+          disabled={pending || !eligible}
           onClick={() => void change(true)}
         >
           Allow agent control
@@ -72,21 +91,19 @@ export function BrowserControlBar({
       </div>
       {grant ? (
         <>
-          <Input
-            aria-label="Browser control token"
-            value={grant.token}
-            readOnly
-          />
+          <p className="text-body-sm" role="status">
+            Browser shared with {agentName}
+          </p>
           <p className="text-body-sm">
-            Share this token with your agent in a private chat. Take control
-            stops new actions; it cannot undo actions already sent. Allow again
-            after hiding this browser.
+            Take control stops new actions; it cannot undo actions already sent.
+            Allow again after hiding this browser.
           </p>
         </>
       ) : (
         <p className="text-body-sm">
-          Agent control is off. Allow it only for a browser you want your agent
-          to read and use.
+          {eligible
+            ? `Allow ${agentName} to read and use this browser in this conversation.`
+            : unavailable}
         </p>
       )}
       {error ? (

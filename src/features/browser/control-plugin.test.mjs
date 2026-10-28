@@ -29,10 +29,11 @@ it("registers no panel or tool without the native build opt-in", async () => {
   expect(test.tool()).toBeUndefined();
 });
 
-it("passes only validated action fields and the owner's token to the native boundary", async () => {
+it("passes only validated action fields and authenticated caller context to the native boundary", async () => {
   const test = fixture(true);
   await apply(test.context);
-  const call = (args) => test.tool().call({}, {}, args);
+  const call = (args) =>
+    test.tool().call({ key: "agent" }, { channel: "chat" }, args);
   expect(
     await call({
       token: "grant",
@@ -42,17 +43,21 @@ it("passes only validated action fields and the owner's token to the native boun
       grant: true,
     }),
   ).toBe('{"ok":true}');
-  expect(test.context.browser.control.execute).toHaveBeenCalledWith("grant", {
-    action: "fill",
-    selector: "#name",
-    text: "quote '\\",
-  });
+  expect(test.context.browser.control.execute).toHaveBeenCalledWith(
+    "agent",
+    { channel: "chat" },
+    {
+      action: "fill",
+      selector: "#name",
+      text: "quote '\\",
+    },
+  );
   await expect(
     call({ token: "grant", action: "eval", script: "evil" }),
   ).rejects.toThrow();
   await expect(
     call({ token: "grant", action: "fill", selector: "input" }),
   ).rejects.toThrow();
-  await expect(call({ action: "observe" })).rejects.toThrow();
+  expect(test.tool().inputSchema.properties.token).toBeUndefined();
   expect(test.context.browser.control.execute).toHaveBeenCalledTimes(1);
 });

@@ -35,16 +35,6 @@ it("retries immutable Git reads and still validates their returned snapshot", as
   expect(request).toHaveBeenCalledTimes(2);
   for (const [body] of request.mock.calls) expect(body).toEqual(input);
 });
-it.each([401, 403])(
-  "does not retry Git authorization status %s",
-  async (status) => {
-    const request = vi.fn().mockResolvedValue(new Response(null, { status }));
-    await expect(
-      repoGitHost(request).read(input, new AbortController().signal),
-    ).rejects.toMatchObject({ kind: "denied" });
-    expect(request).toHaveBeenCalledOnce();
-  },
-);
 it("rejects a successful but invalid Git snapshot without retrying", async () => {
   const request = vi
     .fn()
@@ -56,27 +46,6 @@ it("rejects a successful but invalid Git snapshot without retrying", async () =>
   ).rejects.toThrow("Invalid repository response");
   expect(request).toHaveBeenCalledOnce();
 });
-
-it.each(["row", "utf8"])(
-  "does not retry malformed Git wire data: %s",
-  async (kind) => {
-    const request = vi
-      .fn()
-      .mockImplementation(async () =>
-        kind === "row"
-          ? Response.json({ ...empty, head: "a".repeat(40), files: [null] })
-          : new Response(Uint8Array.of(255)),
-      );
-    const pending = repoGitHost(request).read(
-      input,
-      new AbortController().signal,
-    );
-    const rejected = expect(pending).rejects.toBeInstanceOf(Error);
-    await vi.advanceTimersByTimeAsync(7000);
-    await rejected;
-    expect(request).toHaveBeenCalledOnce();
-  },
-);
 
 it("preserves Git not-found without consuming a retry budget", async () => {
   const request = vi

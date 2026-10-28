@@ -1,4 +1,4 @@
-import { ReadError } from "../relay/errors.ts";
+import { ReadError, transientStatus } from "../relay/errors.ts";
 import { isRetryableRead, retryRead } from "../relay/read-retry.ts";
 import { entityDtag, entityHex, gitHash } from "./routes.ts";
 
@@ -92,23 +92,16 @@ export async function gitReadText(response: Response) {
   if (!response.body) throw new Error("Git response missing");
   const reader = response.body.getReader();
   const decoder = new TextDecoder("utf-8", { fatal: true });
-  const decode = (chunk?: Uint8Array, stream = false) => {
-    try {
-      return decoder.decode(chunk, { stream });
-    } catch {
-      throw new ReadError("invalid-response", "Invalid repository response");
-    }
-  };
   let bytes = 0,
     text = "";
   try {
     while (true) {
       const { value, done } = await reader.read();
-      if (done) return text + decode();
+      if (done) return text + decoder.decode();
       bytes += value.byteLength;
       if (bytes > GIT_READ_BYTES)
         throw new Error("Git response exceeds the size limit");
-      text += decode(value, true);
+      text += decoder.decode(value, { stream: true });
     }
   } finally {
     await reader.cancel().catch(() => {});
@@ -136,68 +129,55 @@ export function repoGitHost(
           return gitReadText(response);
         },
         signal,
-        (error) => {
-          // Git's existing missing/invalid request classification is actionable.
-          // This is endpoint-specific; relay edge errors keep their kind taxonomy.
-          if (
-            error instanceof ReadError &&
-            error.status !== undefined &&
-            error.status >= 400 &&
-            error.status < 500 &&
-            error.status !== 408 &&
-            error.status !== 429
-          )
-            return false;
-          return isRetryableRead(error);
-        },
+        // A missing repository or invalid request stays actionable.
+        (error) =>
+          error instanceof ReadError && error.status !== undefined
+            ? transientStatus(error.status)
+            : isRetryableRead(error),
       );
+      const value = JSON.parse(text) as GitSnapshot;
       signal.throwIfAborted();
-      try {
-        const value = JSON.parse(text) as GitSnapshot;
-        if (
-          !value ||
-          (value.head !== null && !gitHash.test(value.head)) ||
-          (body.commit && value.head !== body.commit) ||
-          !Array.isArray(value.commits) ||
-          value.commits.length > 100 ||
-          value.commits.some(
-            (c) =>
-              !gitHash.test(c.hash) ||
-              typeof c.author !== "string" ||
-              !Number.isSafeInteger(c.date) ||
-              typeof c.subject !== "string",
-          ) ||
-          !Array.isArray(value.files) ||
-          value.files.length > 20000 ||
-          value.files.some(
-            (f) =>
-              typeof f.path !== "string" ||
-              !gitHash.test(f.hash) ||
-              !Number.isSafeInteger(f.size) ||
-              f.size < 0,
-          ) ||
-          (value.head === null &&
-            (value.commits.length > 0 ||
-              value.files.length > 0 ||
-              value.readme !== null ||
-              value.file !== null ||
-              value.diff !== null)) ||
-          (value.readme !== null && typeof value.readme !== "string") ||
-          (value.diff !== null && typeof value.diff !== "string") ||
-          (body.commit && value.diff === null) ||
-          (body.path && value.file?.path !== body.path) ||
-          (value.file !== null &&
-            (typeof value.file.path !== "string" ||
-              !Number.isSafeInteger(value.file.size) ||
-              value.file.size < 0 ||
-              (value.file.content !== null &&
-                typeof value.file.content !== "string")))
-        )
-          throw new Error("Invalid repository response");
-        return value;
-      } catch {
-        throw new ReadError("invalid-response", "Invalid repository response");
-      }
+      if (
+        !value ||
+        (value.head !== null && !gitHash.test(value.head)) ||
+        (body.commit && value.head !== body.commit) ||
+        !Array.isArray(value.commits) ||
+        value.commits.length > 100 ||
+        value.commits.some(
+          (c) =>
+            !gitHash.test(c.hash) ||
+            typeof c.author !== "string" ||
+            !Number.isSafeInteger(c.date) ||
+            typeof c.subject !== "string",
+        ) ||
+        !Array.isArray(value.files) ||
+        value.files.length > 20000 ||
+        value.files.some(
+          (f) =>
+            typeof f.path !== "string" ||
+            !gitHash.test(f.hash) ||
+            !Number.isSafeInteger(f.size) ||
+            f.size < 0,
+        ) ||
+        (value.head === null &&
+          (value.commits.length > 0 ||
+            value.files.length > 0 ||
+            value.readme !== null ||
+            value.file !== null ||
+            value.diff !== null)) ||
+        (value.readme !== null && typeof value.readme !== "string") ||
+        (value.diff !== null && typeof value.diff !== "string") ||
+        (body.commit && value.diff === null) ||
+        (body.path && value.file?.path !== body.path) ||
+        (value.file !== null &&
+          (typeof value.file.path !== "string" ||
+            !Number.isSafeInteger(value.file.size) ||
+            value.file.size < 0 ||
+            (value.file.content !== null &&
+              typeof value.file.content !== "string")))
+      )
+        throw new Error("Invalid repository response");
+      return value;
     },
   };
 }

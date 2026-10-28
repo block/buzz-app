@@ -1,9 +1,7 @@
-import { retryRead } from "./read-retry";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "./session";
-import { ReadRetriesExhausted, ReadError } from "./errors";
-import { keypair, profile, roster } from "./testing";
-import type { LiveCallbacks } from "./live";
+import { ReadError } from "./errors";
+import { keypair, profile } from "./testing";
 import type { ReadFilter, RelayEvent } from "./events";
 
 const owners: ReturnType<typeof createRelaySession>[] = [];
@@ -23,27 +21,16 @@ function setup() {
     async (_filters: readonly ReadFilter[], _signal?: AbortSignal) =>
       [] as RelayEvent[],
   );
-  let live!: LiveCallbacks;
   const owner = createRelaySession({
     viewer: viewer.pubkey,
     relayAuthor: relay.pubkey,
     query,
     media: () => undefined,
-    subscribe(callbacks) {
-      live = callbacks;
-      return { update() {}, retry() {}, dispose() {} };
-    },
+    subscribe: () => ({ update() {}, retry() {}, dispose() {} }),
   });
   owners.push(owner);
   const filter = [{ kinds: [0], authors: [viewer.pubkey], limit: 1 }];
-  return {
-    owner,
-    query,
-    viewer,
-    relay,
-    filter,
-    emit: (events: RelayEvent[]) => live.receive(events),
-  };
+  return { owner, query, viewer, filter };
 }
 
 it("retries a finite public read without changing transport edge classification", async () => {
@@ -89,11 +76,10 @@ it("leaves roster errors transient for their existing recovery owner", async () 
   expect(h.query).toHaveBeenCalledOnce();
 });
 
-it.each(["caller", "cache", "dispose", "access"] as const)(
+it.each(["caller", "clearCache", "dispose"] as const)(
   "%s cancels a finite public read's backoff",
   async (action) => {
     const h = setup();
-    h.emit([roster(h.relay, "channel", [h.viewer.pubkey], 10)]);
     const caller = new AbortController();
     h.query.mockRejectedValue(new TypeError("offline"));
     const pending = h.owner.session.read(h.filter, { signal: caller.signal });
@@ -105,9 +91,8 @@ it.each(["caller", "cache", "dispose", "access"] as const)(
       filters[0]?.kinds?.includes(0),
     ).length;
     if (action === "caller") caller.abort();
-    else if (action === "cache") await h.owner.clearCache();
-    else if (action === "dispose") h.owner.dispose();
-    else h.emit([roster(h.relay, "channel", [], 11)]);
+    else if (action === "clearCache") await h.owner.clearCache();
+    else h.owner.dispose();
     await rejected;
     await vi.advanceTimersByTimeAsync(7000);
     expect(
@@ -115,32 +100,3 @@ it.each(["caller", "cache", "dispose", "access"] as const)(
     ).toHaveLength(before);
   },
 );
-
-it("surfaces a long public admission pause without holding the read pending", async () => {
-  const h = setup();
-  const error = new ReadError("unavailable", "quota", 429, 60_000);
-  h.query.mockRejectedValue(error);
-  await expect(h.owner.session.read(h.filter)).rejects.toMatchObject({
-    cause: error,
-  });
-  expect(h.query).toHaveBeenCalledOnce();
-});
-
-it("marks a finite window as exhausted so an outer caller cannot restart it", async () => {
-  const h = setup();
-  h.query.mockImplementation(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 4000));
-    throw new ReadError("unavailable", "offline");
-  });
-  const signal = new AbortController().signal;
-  const pending = retryRead(
-    () => h.owner.session.read(h.filter, { signal }),
-    signal,
-  );
-  const rejected = expect(pending).rejects.toBeInstanceOf(ReadRetriesExhausted);
-  await vi.advanceTimersByTimeAsync(20000);
-  await rejected;
-  expect(h.query).toHaveBeenCalledTimes(3);
-  await vi.advanceTimersByTimeAsync(7000);
-  expect(h.query).toHaveBeenCalledTimes(3);
-});

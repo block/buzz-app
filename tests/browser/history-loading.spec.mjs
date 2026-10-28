@@ -150,7 +150,8 @@ test.describe("quota retry without threshold-driven continuation", () => {
         if (filters.some(olderAlpha)) browserCursors.push(filters);
       }
     });
-    app.relay.quotaNextOlder("alpha", 0);
+    // A hint past the first backoff ceiling surfaces instead of retrying quietly.
+    app.relay.quotaNextOlder("alpha");
     const cursors = () =>
       app.report.queries.filter(({ filter }) => olderAlpha(filter));
     await history(page).hover();
@@ -594,7 +595,7 @@ test.describe("pages inside one second", () => {
     app,
   }) => {
     await open(page, app);
-    app.relay.quotaNextOlder("alpha", 0);
+    app.relay.quotaNextOlder("alpha");
     await history(page).hover();
     await page.mouse.wheel(0, -100000);
     await expect(history(page).getByRole("alert")).toContainText(

@@ -51,21 +51,15 @@ export async function communityRequest<T>(
     );
   return result as T;
 }
-export async function inspectProfile(
-  id: string,
-  session: RelaySession | undefined,
-  caller: AbortSignal,
-) {
-  caller.throwIfAborted();
+export async function inspectProfile(id: string, session?: RelaySession) {
   // Existing-community editors use the captured session so confirmed reads also
   // update its shared profile directory. Joining uses the selected host adapter.
   const transport =
     session ??
     (await retryRead(
       (signal) => connectCommunityTransport(id, signal),
-      AbortSignal.any([caller, AbortSignal.timeout(12000)]),
+      AbortSignal.timeout(12000),
     ));
-  const signal = AbortSignal.any([caller, AbortSignal.timeout(12000)]);
   if (!transport.viewer) throw new Error("Profile identity is unavailable");
   const filters = [
     {
@@ -77,9 +71,14 @@ export async function inspectProfile(
   ];
   const events =
     "read" in transport
-      ? await transport.read(filters, { signal, fresh: true })
-      : await retryRead((signal) => transport.query(filters, signal), signal);
-  signal.throwIfAborted();
+      ? await transport.read(filters, {
+          signal: AbortSignal.timeout(12000),
+          fresh: true,
+        })
+      : await retryRead(
+          (signal) => transport.query(filters, signal),
+          AbortSignal.timeout(12000),
+        );
   const event = events
     .filter((e) => e.kind === 0 && e.pubkey === transport.viewer)
     .sort((a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id))[0];

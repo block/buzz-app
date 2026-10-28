@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { isTransientFailure, ReadError, ReadRetriesExhausted } from "./errors";
+import { ReadError } from "./errors";
 import { retryRead } from "./read-retry";
 
 beforeEach(() => {
@@ -24,16 +24,11 @@ it("retries transient reads at the backoff boundaries and returns success", asyn
   expect(read).toHaveBeenCalledTimes(2);
 });
 
-it("exhausts once across nested owners and preserves the original failure", async () => {
+it("rethrows the last failure after one read and three retries", async () => {
   const error = new ReadError("unavailable", "offline", 503);
   const read = vi.fn().mockRejectedValue(error);
-  const signal = new AbortController().signal;
-  const pending = retryRead(() => retryRead(read, signal), signal);
-  const rejected = expect(pending).rejects.toMatchObject({
-    name: "ReadRetriesExhausted",
-    message: "offline",
-    cause: error,
-  });
+  const pending = retryRead(read, new AbortController().signal);
+  const rejected = expect(pending).rejects.toBe(error);
   for (const [index, delay] of [750, 1500, 3000].entries()) {
     await vi.advanceTimersByTimeAsync(delay - 1);
     expect(read).toHaveBeenCalledTimes(index + 1);
@@ -42,18 +37,40 @@ it("exhausts once across nested owners and preserves the original failure", asyn
   await rejected;
   await vi.advanceTimersByTimeAsync(120_000);
   expect(read).toHaveBeenCalledTimes(4);
-  expect(isTransientFailure(new ReadRetriesExhausted(error))).toBe(true);
-  expect(String(new ReadRetriesExhausted(error))).toBe(String(error));
-  expect(
-    isTransientFailure(
-      new Error("context", { cause: new ReadRetriesExhausted(error) }),
-    ),
-  ).toBe(true);
+});
+
+it.each([400, 403, 404])(
+  "retries transport-classified edge HTTP %s pages",
+  async (status) => {
+    const read = vi
+      .fn()
+      .mockRejectedValueOnce(new ReadError("unavailable", "edge", status))
+      .mockResolvedValue("loaded");
+    const pending = retryRead(read, new AbortController().signal);
+    await vi.advanceTimersByTimeAsync(750);
+    expect(await pending).toBe("loaded");
+    expect(read).toHaveBeenCalledTimes(2);
+  },
+);
+
+it("does not start a retry after the 10-second quiet window", async () => {
+  const error = new ReadError("unavailable", "Relay read timed out");
+  const read = vi.fn(
+    () =>
+      new Promise<never>((_, reject) => setTimeout(() => reject(error), 4000)),
+  );
+  const pending = retryRead(read, new AbortController().signal);
+  const rejected = expect(pending).rejects.toBe(error);
+  await vi.advanceTimersByTimeAsync(9999);
+  expect(read).toHaveBeenCalledTimes(2);
+  await vi.advanceTimersByTimeAsync(120_000);
+  await rejected;
+  expect(read).toHaveBeenCalledTimes(2);
 });
 
 it.each([
   new ReadError("denied", "denied", 403),
-  new ReadError("invalid-response", "invalid"),
+  new ReadError("invalid-response", "invalid", 400),
   new Error("Invalid input"),
 ])("surfaces permanent failures immediately: %s", async (error) => {
   const read = vi.fn().mockRejectedValue(error);
@@ -69,9 +86,9 @@ it.each([5000, 60000, 86401000])(
   async (delay) => {
     const error = new ReadError("unavailable", "quota", 429, delay);
     const read = vi.fn().mockRejectedValue(error);
-    await expect(
-      retryRead(read, new AbortController().signal),
-    ).rejects.toMatchObject({ cause: error });
+    await expect(retryRead(read, new AbortController().signal)).rejects.toBe(
+      error,
+    );
     expect(read).toHaveBeenCalledOnce();
     expect(vi.getTimerCount()).toBe(0);
   },
@@ -101,24 +118,6 @@ it.each([
   );
   expect(read).toHaveBeenCalledOnce();
   expect(vi.getTimerCount()).toBe(0);
-});
-
-it("preserves nested exhaustion through context wrappers", async () => {
-  const signal = new AbortController().signal;
-  const read = vi.fn().mockRejectedValue(new TypeError("offline"));
-  const pending = retryRead(async () => {
-    try {
-      return await retryRead(read, signal);
-    } catch (cause) {
-      throw new Error("context", { cause });
-    }
-  }, signal);
-  const rejected = expect(pending).rejects.toMatchObject({
-    message: "context",
-  });
-  await vi.advanceTimersByTimeAsync(5250);
-  await rejected;
-  expect(read).toHaveBeenCalledTimes(4);
 });
 
 it("aborts backoff and releases the timer", async () => {

@@ -1,6 +1,6 @@
-import { isRetryableRead, retryRead } from "../../features/relay/read-retry";
 // What the panel shows for a GitHub link: read with the person's `gh` sign-in
 // when there is one, so private repositories work, else from the public API.
+import { isRetryableRead, retryRead } from "../../features/relay/read-retry";
 import { loadGitHubDetails, type GitHubDetails } from "./data";
 import { GhUnavailable, GitHubError, type GitHubCli } from "./gh";
 import { loadPull, type PullChecklist } from "./pull";

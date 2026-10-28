@@ -21,7 +21,7 @@ import type {
 import type { Staff } from "./staff";
 import type { Held, Writes } from "./writes";
 import { retryRead } from "../../features/relay/read-retry";
-import { ReadRetriesExhausted } from "../../features/relay/errors";
+import { transientStatus } from "../../features/relay/errors";
 
 const READ_ROUTES = new Set<StaffRequest["route"]>([
   "probe",
@@ -45,10 +45,7 @@ function transientRead(failure: StaffFailure) {
   return (
     failure.category === "intercepted" ||
     (failure.category === "ambiguous" &&
-      (failure.status === null ||
-        failure.status === 408 ||
-        failure.status === 429 ||
-        failure.status >= 500))
+      (failure.status === null || transientStatus(failure.status)))
   );
 }
 /** Only read owners call this; frozen write intents keep their explicit retry. */
@@ -69,10 +66,8 @@ export async function retryStaffRead<T>(
     );
   } catch (error) {
     if (signal.aborted) return;
-    const original =
-      error instanceof ReadRetriesExhausted ? error.cause : error;
-    if (original instanceof StaffReadFailure)
-      return { ok: false, failure: original.failure };
+    if (error instanceof StaffReadFailure)
+      return { ok: false, failure: error.failure };
     throw error;
   }
 }

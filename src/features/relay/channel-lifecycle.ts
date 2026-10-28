@@ -194,8 +194,6 @@ export function createChannelLifecycle({
               { signal, fresh: true, priority: "foreground" },
             ),
           profileSignal,
-          (error) =>
-            readErrorKind(error) !== "cancelled" && isTransientFailure(error),
         );
         profileSignal.throwIfAborted();
         assertAccess(id);
@@ -298,19 +296,17 @@ export function createChannelLifecycle({
         ...(caller ? [caller] : []),
       ]);
       refreshSignal = signal;
-      // Four reads total. Reuse session recovery's first three backoff ceilings
-      // (1/2/4s), with equal jitter. Exhausted errors omit `transient` so the
-      // session recovery coordinator cannot start another retry sequence.
-      const operation = Promise.resolve()
-        .then(() =>
-          retryRead(
-            async () => {
-              await owned({ caller: signal }, readVisibility);
-            },
-            signal,
-            isTransientFailure,
-          ),
-        )
+      emit({ status: "loading", hidden: snapshot.hidden });
+      // Exhausted errors omit `transient`, so session recovery cannot restart
+      // them. A read retired by another channel's access change (`cancelled`)
+      // retries within the same budget.
+      const operation = retryRead(
+        async () => {
+          await owned({ caller: signal }, readVisibility);
+        },
+        signal,
+        isTransientFailure,
+      )
         .catch((error: unknown) => {
           if (started === epoch && !closed && refresh === operation)
             emit({
@@ -335,7 +331,6 @@ export function createChannelLifecycle({
           }
         });
       refresh = operation;
-      emit({ status: "loading", hidden: snapshot.hidden });
       return operation;
     },
     async load(value: string, caller?: AbortSignal) {

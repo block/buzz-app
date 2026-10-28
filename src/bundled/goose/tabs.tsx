@@ -1,5 +1,4 @@
 import { ModelDiscoveryRecovery } from "../../features/agents/ModelDiscoveryRecovery";
-import { retryRead } from "../../features/relay/read-retry";
 // goose's New agent choices and agent settings. Providers, their keys and
 // their models are goose's own: listed from it, and saved into its config.
 import {
@@ -91,13 +90,12 @@ function useRead<T>(read: () => Promise<T>, key: string, scope = key) {
   // biome-ignore lint/correctness/useExhaustiveDependencies: `read` follows `key`.
   useEffect(() => {
     let current = true;
-    const controller = new AbortController();
     const kept = (prior: Read<T>) =>
       prior.value === undefined || prior.scope !== scope
         ? {}
         : { value: prior.value, scope };
     setState((prior) => ({ status: "loading", ...kept(prior) }));
-    retryRead(() => read(), controller.signal).then(
+    read().then(
       (value) => current && setState({ status: "ready", value, scope }),
       (error: unknown) =>
         current &&
@@ -109,7 +107,6 @@ function useRead<T>(read: () => Promise<T>, key: string, scope = key) {
     );
     return () => {
       current = false;
-      controller.abort();
     };
   }, [key, round]);
   return [state, () => setRound((value) => value + 1)] as const;

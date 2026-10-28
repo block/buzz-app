@@ -1,6 +1,6 @@
-import { retryRead } from "./read-retry";
 // NIP-ER reminders (kind 30300): the viewer's self-encrypted, replaceable reminder list.
 // Encryption and signing stay in the host; this owner sees only decoded intent.
+import { retryRead } from "./read-retry";
 import type { ReadFilter, RelayEvent } from "./events";
 
 export const REMINDER_KIND = 30300;

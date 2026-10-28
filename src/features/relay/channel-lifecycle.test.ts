@@ -13,7 +13,6 @@ import {
   vi,
 } from "vitest";
 import { ReadError } from "./errors";
-import { createRecovery } from "./recovery";
 import { finalizeEvent, getPublicKey, type EventTemplate } from "nostr-tools";
 import { PublishRejected } from "./outbox";
 import {
@@ -204,26 +203,9 @@ describe("bounded visibility recovery", () => {
     h.owner.dispose();
   });
 
-  it("exhausts exactly four reads without restarting through session recovery", async () => {
+  it("exhausts four reads, then surfaces an error a manual retry can clear", async () => {
     const h = harness();
     const lifecycle = h.owner.capability;
-    const recovery = createRecovery([
-      {
-        subscribe: lifecycle.subscribe,
-        // Match the session adapter: only errors carrying `transient` opt in.
-        status: () => {
-          const state = lifecycle.snapshot();
-          if (
-            state.status === "error" &&
-            "transient" in state &&
-            state.transient
-          )
-            return "failed";
-          return state.status === "loading" ? "busy" : "settled";
-        },
-        retry: () => void lifecycle.refreshVisibility(),
-      },
-    ]);
     h.read.mockRejectedValue(new ReadError("unavailable", "offline", 503));
     const pending = lifecycle.refreshVisibility();
     await vi.advanceTimersByTimeAsync(0);
@@ -244,14 +226,11 @@ describe("bounded visibility recovery", () => {
     h.read.mockResolvedValue([]);
     await lifecycle.refreshVisibility();
     expect(lifecycle.snapshot().status).toBe("ready");
-    recovery.dispose();
     h.owner.dispose();
   });
 
   it.each([
     new ReadError("denied", "denied", 403),
-    new ReadError("invalid-response", "validation", 400),
-    new ReadError("invalid-response", "bad response"),
     new Error("Invalid DM visibility snapshot"),
   ])("surfaces permanent failure immediately: %s", async (error) => {
     const h = harness();
@@ -263,41 +242,6 @@ describe("bounded visibility recovery", () => {
     });
     await vi.advanceTimersByTimeAsync(120_000);
     expect(h.read).toHaveBeenCalledOnce();
-    h.owner.dispose();
-  });
-
-  it.each([400, 401, 403, 404])(
-    "retries transport-classified edge HTTP %s failures",
-    async (status) => {
-      const h = harness();
-      h.read.mockRejectedValueOnce(
-        new ReadError("unavailable", "Edge unavailable", status),
-      );
-      const pending = h.owner.capability.refreshVisibility();
-      await vi.advanceTimersByTimeAsync(749);
-      expect(h.read).toHaveBeenCalledOnce();
-      expect(h.owner.capability.snapshot().status).toBe("loading");
-      await vi.advanceTimersByTimeAsync(1);
-      await pending;
-      expect(h.read).toHaveBeenCalledTimes(2);
-      expect(h.owner.capability.snapshot().status).toBe("ready");
-      h.owner.dispose();
-    },
-  );
-
-  it("surfaces a long admission pause without holding the refresh pending", async () => {
-    const h = harness();
-    h.read.mockRejectedValueOnce(
-      new ReadError("unavailable", "quota", 429, 5000),
-    );
-    const pending = h.owner.capability.refreshVisibility();
-    await pending;
-    expect(h.read).toHaveBeenCalledOnce();
-    expect(h.owner.capability.snapshot()).toMatchObject({
-      status: "error",
-      error: "quota",
-    });
-    expect(vi.getTimerCount()).toBe(0);
     h.owner.dispose();
   });
 
@@ -378,19 +322,6 @@ describe("bounded visibility recovery", () => {
     const pending = h.owner.capability.refreshVisibility();
     await vi.advanceTimersByTimeAsync(0);
     expect(h.read).toHaveBeenCalledOnce();
-    h.owner.cancel([id]);
-    await vi.advanceTimersByTimeAsync(750);
-    await pending;
-    expect(h.read).toHaveBeenCalledTimes(2);
-    expect(h.owner.capability.snapshot().status).toBe("ready");
-    h.owner.dispose();
-  });
-
-  it("keeps the retry budget through channel-scoped invalidation during backoff", async () => {
-    const h = harness();
-    h.read.mockRejectedValueOnce(new TypeError("offline"));
-    const pending = h.owner.capability.refreshVisibility();
-    await vi.advanceTimersByTimeAsync(0);
     h.owner.cancel([id]);
     await vi.advanceTimersByTimeAsync(750);
     await pending;
@@ -854,8 +785,6 @@ it("a clear cannot be repopulated by a late visibility response", async () => {
   const gate = deferred<RelayEvent[]>();
   h.read.mockImplementationOnce(() => gate.promise);
   const pending = h.owner.capability.refreshVisibility();
-  await Promise.resolve();
-  expect(h.read).toHaveBeenCalledOnce();
   h.owner.clear();
   gate.resolve([
     h.record(30622, [

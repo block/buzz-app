@@ -1,3 +1,4 @@
+import { transientStatus } from "../../../features/relay/errors";
 import { retryRead } from "../../../features/relay/read-retry";
 import { invoke } from "@tauri-apps/api/core";
 import { nativeIdentityEnabled } from "../../../features/identity/service";
@@ -200,9 +201,7 @@ export function createAgentClient(
         (error instanceof Error &&
           "status" in error &&
           typeof error.status === "number" &&
-          (error.status === 408 ||
-            error.status === 429 ||
-            error.status >= 500)),
+          transientStatus(error.status)),
     );
   }
   /** Builderlab's identity routes answer failures with `{ error: { code } }`. */

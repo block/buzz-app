@@ -1,5 +1,5 @@
 import { retryRead } from "./read-retry";
-import { ReadError } from "./errors";
+import { ReadError, transientStatus } from "./errors";
 import { nativeIdentityEnabled } from "../identity/service";
 import {
   relayKlipySearchPath,
@@ -150,16 +150,12 @@ async function brokerRequest<T>(
         ...(signal ? { signal } : {}),
       });
   const result = (await response.json()) as T & { error?: string };
-  if (!response.ok)
-    throw new ReadError(
-      response.status === 408 ||
-        response.status === 429 ||
-        response.status >= 500
-        ? "unavailable"
-        : "invalid-response",
-      result.error ?? `GIF request failed (${response.status})`,
-      response.status,
-    );
+  if (!response.ok) {
+    const message = result.error ?? `GIF request failed (${response.status})`;
+    throw transientStatus(response.status)
+      ? new ReadError("unavailable", message, response.status)
+      : new Error(message);
+  }
   return result;
 }
 

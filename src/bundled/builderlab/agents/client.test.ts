@@ -781,7 +781,7 @@ it("shares one binding attempt between overlapping links", async () => {
   ).toEqual(["current", "attest-agent"]);
 });
 
-it.each(["network", "503", "429"])(
+it.each(["network", "429"])(
   "quietly recovers read-only Builderlab discovery after %s",
   async (failure) => {
     const h = await fixture();

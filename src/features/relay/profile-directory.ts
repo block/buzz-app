@@ -137,34 +137,26 @@ export function createProfileDirectory(
     for (let offset = 0; offset < missing.length; offset += 500) {
       const authors = missing.slice(offset, offset + 500);
       let answered = false;
-      const batch: {
-        authors: string[];
-        priority: Priority;
-        reading: boolean;
-        work: Promise<void>;
-      } = {
+      const batch = {
         authors,
         priority,
         reading: false,
         work: Promise.resolve(),
       };
-      const request = async (signal: AbortSignal) => {
+      batch.work = retryRead(async (signal) => {
+        // A promotion during backoff applies to the next attempt instead.
         batch.reading = true;
         try {
           const result = await reader.read(
             [{ kinds: [0], authors, limit: 500 }],
-            {
-              signal,
-              priority: batch.priority,
-            },
+            { signal, priority: batch.priority },
           );
           answered = true;
           return result;
         } finally {
           batch.reading = false;
         }
-      };
-      batch.work = retryRead(request, signal)
+      }, signal)
         .then((result) => {
           if (!signal.aborted)
             accept(result.filter((event) => authors.includes(event.pubkey)));

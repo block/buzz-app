@@ -1,5 +1,4 @@
-import { ReadError } from "../../features/relay/errors";
-import { retryRead } from "../../features/relay/read-retry";
+import { ReadError, transientStatus } from "../../features/relay/errors";
 import type { GitHubReference } from "./references";
 
 export type Branch = { label: string; url?: string | undefined };
@@ -89,23 +88,14 @@ export async function loadGitHubDetails(
     issue: `/issues/${id}`,
     commit: `/commits/${id}`,
   }[reference.kind];
-  const response = await retryRead(async (signal) => {
-    const response = await fetch(
-      `https://api.github.com/repos/${reference.repository}${surface}`,
-      {
-        signal,
-        headers: { Accept: "application/vnd.github.full+json" },
-        credentials: "omit",
-      },
-    );
-    if (response.status === 408 || response.status >= 500)
-      throw new ReadError(
-        "unavailable",
-        `GitHub couldn’t load this object (${response.status}).`,
-        response.status,
-      );
-    return response;
-  }, signal);
+  const response = await fetch(
+    `https://api.github.com/repos/${reference.repository}${surface}`,
+    {
+      signal,
+      headers: { Accept: "application/vnd.github.full+json" },
+      credentials: "omit",
+    },
+  );
   if (!response.ok) {
     if (response.status === 404)
       throw new Error(
@@ -115,7 +105,11 @@ export async function loadGitHubDetails(
       throw new Error(
         "GitHub’s public API limit was reached. Try again later or open it on GitHub.",
       );
-    throw new Error(`GitHub couldn’t load this object (${response.status}).`);
+    const message = `GitHub couldn’t load this object (${response.status}).`;
+    // `loadGitHubObject` retries server failures quietly.
+    throw transientStatus(response.status)
+      ? new ReadError("unavailable", message, response.status)
+      : new Error(message);
   }
   const data: ResponseData = await response.json();
   const facts: GitHubDetails["facts"] = [];

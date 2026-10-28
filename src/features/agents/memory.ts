@@ -1,5 +1,5 @@
-import { retryRead } from "../relay/read-retry.ts";
 /** Owner-view NIP-AE snapshot from a purpose-bound key-owning host. */
+import { retryRead } from "../relay/read-retry.ts";
 /** Budgets of the development broker's single memory query. */
 export const MEMORY_EVENT_LIMIT = 256;
 export const MEMORY_WIRE_BYTES = 2 * 1024 * 1024;

@@ -249,11 +249,7 @@ it("restores a signed community profile and preserves extra fields when publishi
     path === "/query"
       ? { body: [event] }
       : { body: { accepted: true, event_id: (body as { id: string }).id } };
-  const found = await inspectProfile(
-    community,
-    undefined,
-    new AbortController().signal,
-  );
+  const found = await inspectProfile(community);
   expect(found.profile).toEqual({
     name: "Existing",
     picture: "",

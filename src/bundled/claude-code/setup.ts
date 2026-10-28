@@ -3,7 +3,6 @@
 // process; the copy lives apart from any `claude` the user installed, and
 // shares their `~/.claude` sign-in and settings.
 import type { AgentProviderSnapshot } from "../../features/agents/service";
-import { isRetryableRead, retryRead } from "../../features/relay/read-retry";
 import type {
   HostProcess,
   HostRequest,
@@ -77,11 +76,7 @@ async function queryModels(spawn: Spawn, signal: AbortSignal) {
   signal.addEventListener("abort", abort, { once: true });
   if (signal.aborted) abort();
   const timer = setTimeout(() => {
-    request.abort(
-      Object.assign(new Error("Claude Code model discovery timed out"), {
-        name: "TimeoutError",
-      }),
-    );
+    request.abort(new Error("Claude Code model discovery timed out"));
     void child?.kill();
   }, CHECK_TIMEOUT_MS);
   try {
@@ -318,9 +313,8 @@ export class ClaudeSetup {
 
   /** Loads optional model copy only for surfaces that display the catalog. */
   async loadModels(retry = false) {
-    const spawn = this.spawn;
     if (
-      !spawn ||
+      !this.spawn ||
       this.state.status?.state !== "ready" ||
       this.state.checking ||
       this.modelRequest ||
@@ -331,14 +325,7 @@ export class ClaudeSetup {
     this.modelRequest = request;
     this.set({ modelsChecking: true, modelsError: "" });
     try {
-      const began = performance.now();
-      const models = await retryRead(
-        (signal) => queryModels(spawn, signal),
-        request.signal,
-        (error) =>
-          performance.now() - began < CHECK_TIMEOUT_MS &&
-          isRetryableRead(error),
-      );
+      const models = await queryModels(this.spawn, request.signal);
       if (!models.length) throw new Error("Claude did not list its models");
       if (this.modelRequest === request) this.set({ models });
     } catch (error) {

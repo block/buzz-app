@@ -1,11 +1,9 @@
-import {
-  isTransientFailure,
-  readErrorKind,
-  ReadError,
-  ReadRetriesExhausted,
-} from "./errors.ts";
+import { isTransientFailure, readErrorKind, ReadError } from "./errors.ts";
 import { RECOVERY_DELAYS_MS } from "./recovery.ts";
 
+const QUIET_MS = 10_000;
+
+/** Transient, but not the owner's own cancellation. */
 export function isRetryableRead(error: unknown): boolean {
   if (readErrorKind(error) === "cancelled") return false;
   if (error instanceof Error && error.cause !== undefined)
@@ -13,22 +11,16 @@ export function isRetryableRead(error: unknown): boolean {
   return isTransientFailure(error);
 }
 
-function exhausted(error: unknown): boolean {
-  return (
-    error instanceof ReadRetriesExhausted ||
-    (error instanceof Error &&
-      error.cause !== undefined &&
-      exhausted(error.cause))
-  );
-}
-
-/** One initial read and three quiet retries. Nested owners share exhaustion,
- * rather than multiplying budgets. The caller owns the read's lifetime. */
+/** One initial read and up to three quiet retries under session recovery's
+ * first three ceilings (1/2/4 s) with equal jitter, none starting after 10 s.
+ * Exhaustion rethrows the last failure. Use one owner per read path; the
+ * caller owns its lifetime. */
 export async function retryRead<T>(
   read: (signal: AbortSignal) => Promise<T>,
   signal: AbortSignal,
   retryable: (error: unknown) => boolean = isRetryableRead,
 ): Promise<T> {
+  const began = performance.now();
   for (let attempt = 0; ; attempt++) {
     signal.throwIfAborted();
     try {
@@ -37,17 +29,18 @@ export async function retryRead<T>(
       return value;
     } catch (error) {
       signal.throwIfAborted();
-      if (exhausted(error) || !retryable(error)) throw error;
-      if (attempt === 3) throw new ReadRetriesExhausted(error);
-      const ceiling = RECOVERY_DELAYS_MS[attempt] ?? 4000;
-      // Admission has its own actionable cooldown. Never hide it behind a
-      // pending read longer than this retry's normal backoff ceiling.
-      if (error instanceof ReadError && (error.retryAfterMs ?? 0) > ceiling)
-        throw new ReadRetriesExhausted(error);
-      const delay = Math.max(
-        ceiling * (0.5 + Math.random() / 2),
-        error instanceof ReadError ? (error.retryAfterMs ?? 0) : 0,
-      );
+      const ceiling = RECOVERY_DELAYS_MS[attempt] ?? 0;
+      const hint = error instanceof ReadError ? (error.retryAfterMs ?? 0) : 0;
+      const delay = Math.max(ceiling * (0.5 + Math.random() / 2), hint);
+      // A longer admission pause keeps its existing cooldown and action; a
+      // read that already waited out its own deadline surfaces it.
+      if (
+        attempt === 3 ||
+        !retryable(error) ||
+        hint > ceiling ||
+        performance.now() - began + delay > QUIET_MS
+      )
+        throw error;
       await new Promise<void>((resolve, reject) => {
         const abort = () => {
           clearTimeout(timer);

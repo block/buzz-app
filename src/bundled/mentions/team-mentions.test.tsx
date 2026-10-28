@@ -576,3 +576,61 @@ it("an @ keystroke reuses the name index across draft and team rerenders", async
   view.unmount();
   h.library.dispose();
 });
+
+it("directory pages rebuild the name index only for people they add", async () => {
+  const h = fixture({ count: 300 });
+  const profiles = h.session.profiles.snapshot();
+  // Naming knows every profile, as the real service does.
+  Object.assign(h.session, {
+    names: {
+      subscribe: () => () => {},
+      snapshot: () => 0,
+      scope: () => (key: string) => {
+        const name = profiles.get(key)?.name;
+        return name ? { name, source: "public-profile" } : undefined;
+      },
+    },
+  });
+  const members = h.people.slice(1, 4);
+  const outsider = { pubkey: "e".repeat(64), name: "Teal Outsider" };
+  let page = members;
+  // Every settled search returns a new array.
+  vi.mocked(h.session.directMessages.people).mockImplementation(async () => ({
+    people: [...page],
+    hasMore: false,
+  }));
+  const starts = vi.spyOn(personMatch, "nameStarts");
+  function Chooser({ query }: { query: string }) {
+    const model = useMentionChoices(h.session, "parent", false, query, "open");
+    useTeamMentions(h.session, "parent", false, query, model);
+    return null;
+  }
+  vi.useFakeTimers();
+  const settle = () =>
+    act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+  // Inline completion remounts on every keystroke.
+  const type = async (query: string) => {
+    view.rerender(<Chooser key={query} query={query} />);
+    await settle();
+  };
+  const view = render(<Chooser key="p" query="p" />);
+  await settle();
+  starts.mockClear();
+  // Pages of members change no row.
+  await type("pe");
+  await type("per");
+  expect(h.session.directMessages.people).toHaveBeenCalledTimes(3);
+  expect(starts).not.toHaveBeenCalled();
+  // An outsider is a new choice set: one rebuild, then reused while it stays.
+  page = [...members, outsider];
+  await type("pers");
+  expect(starts).toHaveBeenCalledTimes(301);
+  starts.mockClear();
+  await type("perso");
+  await type("person");
+  expect(starts).not.toHaveBeenCalled();
+  view.unmount();
+  h.library.dispose();
+});

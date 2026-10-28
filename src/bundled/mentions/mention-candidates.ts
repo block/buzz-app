@@ -109,6 +109,29 @@ export function mentionCandidates(
   return rows;
 }
 
+/**
+ * The directory people that change `mentionCandidates` or its labels, given
+ * its rows without a directory. A member a profile names gets that name, its
+ * aliases and, once naming knows the key, its label from the profile; the
+ * directory only adds its agent flag. Passing just these gives the same rows.
+ */
+export function directoryChanges<T extends DirectoryPerson>(
+  local: ReadonlyMap<string, MentionCandidate>,
+  directory: readonly T[],
+  profiles: ReadonlyMap<string, { name?: string | undefined }>,
+  named: (pubkey: string) => boolean,
+) {
+  return directory.filter((person) => {
+    const row = local.get(person.pubkey);
+    return !(
+      row?.member &&
+      profiles.get(person.pubkey)?.name &&
+      named(person.pubkey) &&
+      (!person.isAgent || row.agent)
+    );
+  });
+}
+
 function buildCandidates(
   session: ComposerSession,
   channelId: string,

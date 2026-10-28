@@ -15,7 +15,7 @@ import { DraftMentionRoster } from "../../features/messages/draft-mention-roster
 import { SelectedMentionContext } from "../../features/messages/selected-mention-context";
 import { archivedMention } from "../../features/messages/mention-admission";
 import { mentionHistory } from "../../features/messages/mention-history";
-import { mentionCandidates } from "./mention-candidates";
+import { directoryChanges, mentionCandidates } from "./mention-candidates";
 import {
   exactMention,
   matchingMentions,
@@ -31,17 +31,31 @@ const labeled = new WeakMap<
   { sources: readonly unknown[]; choices: readonly MentionChoice[] }
 >();
 const keySets = new WeakMap<readonly unknown[], ReadonlySet<string>>();
-const keyMaps = new WeakMap<
-  readonly MentionChoice[],
-  ReadonlyMap<string, MentionChoice>
->();
-const byKey = (choices: readonly MentionChoice[]) => {
-  const cached = keyMaps.get(choices);
+const keyMaps = new WeakMap<readonly object[], ReadonlyMap<string, object>>();
+const byKey = <T extends { recipient: { pubkey: string } }>(
+  choices: readonly T[],
+) => {
+  const cached = keyMaps.get(choices) as ReadonlyMap<string, T> | undefined;
   if (cached) return cached;
   const map = new Map(choices.map((c) => [c.recipient.pubkey, c]));
   keyMaps.set(choices, map);
   return map;
 };
+// Directory people that change the choice set, interned by content: each
+// settled page and each carried merge is a new array with the same people.
+const pages = new WeakMap<ComposerSession, Map<string, readonly Person[]>>();
+function page(session: ComposerSession, people: readonly Person[]) {
+  const key = JSON.stringify(
+    people.map(({ pubkey, name, isAgent }) => [pubkey, name, !!isAgent]),
+  );
+  const seen = pages.get(session) ?? new Map<string, readonly Person[]>();
+  pages.set(session, seen);
+  const kept = seen.get(key) ?? people;
+  seen.delete(key);
+  seen.set(key, kept);
+  if (seen.size > 8) seen.delete(seen.keys().next().value ?? "");
+  return kept;
+}
 /**
  * One installed key list per opening/query. Evidence stays live, order does not.
  * Local rows install first; directory rows only append after them.
@@ -100,19 +114,39 @@ export function useMentionChoices(
     ];
   }, [directory.people, carried]);
   const current = useCallback(() => {
-    const candidates = mentionCandidates(
+    const elsewhere = community?.joinable();
+    const local = mentionCandidates(
       session,
       channelId,
       invite,
       roster,
-      people,
-      community?.joinable(),
+      undefined,
+      elsewhere,
     );
+    // Only directory people that change the choice set; a page of members rebuilds nothing.
+    const known = session.names?.scope();
+    const changed = directoryChanges(
+      byKey(local),
+      people,
+      session.profiles.snapshot(),
+      (key) => !!known?.(key),
+    );
+    const outside = changed.length ? page(session, changed) : none;
+    const candidates = outside.length
+      ? mentionCandidates(
+          session,
+          channelId,
+          invite,
+          roster,
+          outside,
+          elsewhere,
+        )
+      : local;
     // Drafts recreate their recipient array on every edit; its names and keys
     // are the naming fact, not its identity or positions.
     const sources = [
       JSON.stringify(selected.map(({ pubkey, name }) => [pubkey, name])),
-      people,
+      outside,
       session.names?.snapshot(),
     ];
     const hit = labeled.get(candidates);
@@ -126,9 +160,8 @@ export function useMentionChoices(
     ];
     // Directory pages are menu-local, not cached profiles. Name them only when no
     // other source knows the key, so namesakes in this choice set are qualified.
-    const known = session.names?.scope();
     const facts = [
-      ...people
+      ...outside
         .filter((person) => !known?.(person.pubkey))
         .map(({ pubkey, name, isAgent }) => ({
           pubkey,

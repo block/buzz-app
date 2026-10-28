@@ -1,7 +1,7 @@
 import { eventDto, type RelayEvent } from "./events";
 import { yieldToHost } from "./yield";
 
-export const ARTIFACT_SYNC_LIMITS = Object.freeze({
+export const ARTIFACT_INCREMENTAL_LIMITS = Object.freeze({
   version: 1,
   overlapSeconds: 120,
   pageRows: 100,
@@ -10,58 +10,62 @@ export const ARTIFACT_SYNC_LIMITS = Object.freeze({
   permanentChannelsOnly: true,
   checkpointLifetimeSeconds: 2_592_000,
 });
-export type ArtifactSyncQuery = Readonly<{
+export type ArtifactIncrementalQuery = Readonly<{
   artifact: "current";
   kinds: readonly [45010];
   "#type": readonly string[];
 }>;
-export type ArtifactSyncChange =
+export type ArtifactIncrementalChange =
   | Readonly<{ type: "upsert"; artifactId: string; event: RelayEvent }>
   | Readonly<{ type: "remove"; artifactId: string }>
   | Readonly<{ type: "removeChannel"; channelId: string }>;
-export type ArtifactSyncPage = Readonly<{
+export type ArtifactIncrementalPage = Readonly<{
   startedAt: string;
   overlapSeconds: 120;
-  changes: readonly ArtifactSyncChange[];
+  changes: readonly ArtifactIncrementalChange[];
   nextCursor: string | null;
   checkpoint: string | null;
 }>;
 export type ArtifactCurrentPage = Readonly<{
   startedAt: string;
-  changes: readonly Exclude<ArtifactSyncChange, { type: "removeChannel" }>[];
+  changes: readonly Exclude<
+    ArtifactIncrementalChange,
+    { type: "removeChannel" }
+  >[];
 }>;
-export type ArtifactSyncRequest =
+export type ArtifactIncrementalRequest =
   | Readonly<{
-      artifact: "sync";
-      query: ArtifactSyncQuery;
+      artifact: "incremental";
+      query: ArtifactIncrementalQuery;
       checkpoint?: string;
       cursor?: string;
     }>
   | Readonly<{
-      artifact: "sync";
+      artifact: "incremental";
       action: "current";
-      query: ArtifactSyncQuery;
+      query: ArtifactIncrementalQuery;
       artifactIds: readonly string[];
     }>;
-export type ArtifactSyncReader = {
+export type ArtifactIncrementalReader = {
   delta(
-    query: ArtifactSyncQuery,
+    query: ArtifactIncrementalQuery,
     position: { checkpoint?: string; cursor?: string },
     signal: AbortSignal,
-  ): Promise<ArtifactSyncPage>;
+  ): Promise<ArtifactIncrementalPage>;
   current(
-    query: ArtifactSyncQuery,
+    query: ArtifactIncrementalQuery,
     artifactIds: readonly string[],
     signal: AbortSignal,
   ): Promise<ArtifactCurrentPage>;
 };
 type ErrorCode =
-  | "sync_invalid"
-  | "sync_limit"
-  | "sync_reset"
-  | "sync_unavailable";
+  | "incremental_invalid"
+  | "incremental_limit"
+  | "incremental_reset"
+  | "incremental_unsupported_scope"
+  | "incremental_unavailable";
 type ResetReason = "policy_changed" | "checkpoint_expired";
-export class ArtifactSyncError extends Error {
+export class ArtifactIncrementalError extends Error {
   constructor(
     readonly code: ErrorCode,
     message: string,
@@ -79,14 +83,21 @@ const uuid = (value: unknown): value is string =>
 const token = (value: unknown): value is string =>
   typeof value === "string" && /^[\x21-\x7e]{1,4096}$/.test(value);
 const invalid = () =>
-  new ArtifactSyncError("sync_invalid", "Invalid artifact sync response");
+  new ArtifactIncrementalError(
+    "incremental_invalid",
+    "Invalid artifact sync response",
+  );
 
-export function artifactSyncFailure(value: unknown) {
+export function artifactIncrementalFailure(value: unknown) {
   if (
     !object(value) ||
-    !["sync_invalid", "sync_limit", "sync_reset", "sync_unavailable"].includes(
-      String(value.code),
-    ) ||
+    ![
+      "incremental_invalid",
+      "incremental_limit",
+      "incremental_reset",
+      "incremental_unsupported_scope",
+      "incremental_unavailable",
+    ].includes(String(value.code)) ||
     (value.reason !== undefined &&
       value.reason !== "policy_changed" &&
       value.reason !== "checkpoint_expired")
@@ -98,15 +109,19 @@ export function artifactSyncFailure(value: unknown) {
     ...(value.reason ? { reason: value.reason as ResetReason } : {}),
   };
 }
-export function artifactSyncCapability(info: unknown): boolean {
-  if (!object(info) || !object(info.artifacts) || !object(info.artifacts.sync))
+export function artifactIncrementalCapability(info: unknown): boolean {
+  if (
+    !object(info) ||
+    !object(info.artifacts) ||
+    !object(info.artifacts.incremental)
+  )
     return false;
-  const sync = info.artifacts.sync;
-  return Object.entries(ARTIFACT_SYNC_LIMITS).every(
+  const sync = info.artifacts.incremental;
+  return Object.entries(ARTIFACT_INCREMENTAL_LIMITS).every(
     ([key, value]) => sync[key] === value,
   );
 }
-function queryType(query: ArtifactSyncQuery): string {
+function queryType(query: ArtifactIncrementalQuery): string {
   if (
     !object(query) ||
     Object.keys(query).length !== 3 ||
@@ -180,9 +195,9 @@ async function responseValue(response: Response, signal: AbortSignal) {
         break;
       }
       bytes += value.byteLength;
-      if (bytes > ARTIFACT_SYNC_LIMITS.responseBytes)
-        throw new ArtifactSyncError(
-          "sync_limit",
+      if (bytes > ARTIFACT_INCREMENTAL_LIMITS.responseBytes)
+        throw new ArtifactIncrementalError(
+          "incremental_limit",
           "Artifact sync response exceeds capacity",
         );
       text += decoder.decode(value, { stream: true });
@@ -190,18 +205,22 @@ async function responseValue(response: Response, signal: AbortSignal) {
     signal.throwIfAborted();
     const raw: unknown = JSON.parse(text);
     if (!response.ok) {
-      const failure = artifactSyncFailure(raw);
+      const failure = artifactIncrementalFailure(raw);
       throw failure
-        ? new ArtifactSyncError(failure.code, failure.error, failure.reason)
-        : new ArtifactSyncError(
-            "sync_unavailable",
+        ? new ArtifactIncrementalError(
+            failure.code,
+            failure.error,
+            failure.reason,
+          )
+        : new ArtifactIncrementalError(
+            "incremental_unavailable",
             "Artifact sync request fails",
           );
     }
     return raw;
   } catch (error) {
     signal.throwIfAborted();
-    if (error instanceof ArtifactSyncError) throw error;
+    if (error instanceof ArtifactIncrementalError) throw error;
     throw invalid();
   } finally {
     signal.removeEventListener("abort", abort);
@@ -214,10 +233,10 @@ async function changes(
   type: string,
   signal: AbortSignal,
   currentIds?: ReadonlySet<string>,
-): Promise<readonly ArtifactSyncChange[]> {
-  if (!Array.isArray(raw) || raw.length > ARTIFACT_SYNC_LIMITS.pageRows)
+): Promise<readonly ArtifactIncrementalChange[]> {
+  if (!Array.isArray(raw) || raw.length > ARTIFACT_INCREMENTAL_LIMITS.pageRows)
     throw invalid();
-  const result: ArtifactSyncChange[] = [];
+  const result: ArtifactIncrementalChange[] = [];
   for (const change of raw) {
     signal.throwIfAborted();
     if (!object(change)) throw invalid();
@@ -270,21 +289,24 @@ async function changes(
 }
 
 /** Sync covers permanent channels only. The authenticated transport owns POST requests. */
-export function createArtifactSyncReader(
+export function createArtifactIncrementalReader(
   request: (
-    filter: ArtifactSyncRequest,
+    filter: ArtifactIncrementalRequest,
     signal: AbortSignal,
   ) => Promise<Response>,
-): ArtifactSyncReader {
-  const send = async (filter: ArtifactSyncRequest, signal: AbortSignal) => {
+): ArtifactIncrementalReader {
+  const send = async (
+    filter: ArtifactIncrementalRequest,
+    signal: AbortSignal,
+  ) => {
     signal.throwIfAborted();
     let response: Response;
     try {
       response = await request(filter, signal);
     } catch {
       signal.throwIfAborted();
-      throw new ArtifactSyncError(
-        "sync_unavailable",
+      throw new ArtifactIncrementalError(
+        "incremental_unavailable",
         "Artifact sync request fails",
       );
     }
@@ -304,7 +326,7 @@ export function createArtifactSyncReader(
         throw invalid();
       const raw = await send(
         {
-          artifact: "sync",
+          artifact: "incremental",
           query,
           ...(position.checkpoint !== undefined
             ? { checkpoint: position.checkpoint }
@@ -334,7 +356,7 @@ export function createArtifactSyncReader(
       if (
         !Array.isArray(artifactIds) ||
         !artifactIds.length ||
-        artifactIds.length > ARTIFACT_SYNC_LIMITS.currentRows ||
+        artifactIds.length > ARTIFACT_INCREMENTAL_LIMITS.currentRows ||
         artifactIds.some(
           (id) =>
             typeof id !== "string" ||
@@ -345,7 +367,7 @@ export function createArtifactSyncReader(
       )
         throw invalid();
       const raw = await send(
-        { artifact: "sync", action: "current", query, artifactIds },
+        { artifact: "incremental", action: "current", query, artifactIds },
         signal,
       );
       const rows = await changes(

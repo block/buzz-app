@@ -4,11 +4,11 @@ import type {
 } from "../artifact-storage/types";
 import type { RelayEvent } from "./events";
 import {
-  ARTIFACT_SYNC_LIMITS,
-  ArtifactSyncError,
-  type ArtifactSyncChange,
-  type ArtifactSyncReader,
-} from "./artifact-reader";
+  ARTIFACT_INCREMENTAL_LIMITS,
+  ArtifactIncrementalError,
+  type ArtifactIncrementalChange,
+  type ArtifactIncrementalReader,
+} from "./artifact-incremental-reader";
 import type { ArtifactRefresh } from "../artifact-storage/types";
 
 export function receivedArtifact(
@@ -59,14 +59,17 @@ function savedCheckpoint(value: string | null): string | undefined {
   if (!value) return;
   try {
     const saved = JSON.parse(value);
-    if (saved?.protocol === "sync-v1" && typeof saved.checkpoint === "string")
+    if (
+      saved?.protocol === "incremental-v1" &&
+      typeof saved.checkpoint === "string"
+    )
       return saved.checkpoint;
   } catch {}
 }
 async function applyChanges(
   collection: HostArtifactCollection,
   refresh: ArtifactRefresh,
-  changes: readonly ArtifactSyncChange[],
+  changes: readonly ArtifactIncrementalChange[],
   type: string,
   signal: AbortSignal,
 ) {
@@ -134,7 +137,7 @@ async function applyChanges(
   await flush();
 }
 async function currentBatch(
-  reader: ArtifactSyncReader,
+  reader: ArtifactIncrementalReader,
   collection: HostArtifactCollection,
   refresh: ArtifactRefresh,
   type: string,
@@ -147,8 +150,8 @@ async function currentBatch(
     await applyChanges(collection, refresh, result.changes, type, signal);
   } catch (error) {
     if (
-      !(error instanceof ArtifactSyncError) ||
-      error.code !== "sync_limit" ||
+      !(error instanceof ArtifactIncrementalError) ||
+      error.code !== "incremental_limit" ||
       ids.length === 1
     )
       throw error;
@@ -172,7 +175,7 @@ async function currentBatch(
   }
 }
 async function revalidateKnown(
-  reader: ArtifactSyncReader,
+  reader: ArtifactIncrementalReader,
   collection: HostArtifactCollection,
   refresh: ArtifactRefresh,
   type: string,
@@ -182,7 +185,7 @@ async function revalidateKnown(
   do {
     const page = await collection.knownIds({
       ...(after !== undefined ? { after } : {}),
-      limit: ARTIFACT_SYNC_LIMITS.currentRows,
+      limit: ARTIFACT_INCREMENTAL_LIMITS.currentRows,
     });
     signal.throwIfAborted();
     if (page.ids.length)
@@ -198,19 +201,20 @@ async function reportFailure(
   requested: boolean,
 ) {
   const permanent =
-    error instanceof ArtifactSyncError &&
-    ["sync_limit", "sync_invalid"].includes(error.code);
+    error instanceof ArtifactIncrementalError &&
+    ["incremental_limit", "incremental_invalid"].includes(error.code);
   if (!signal.aborted && (requested || permanent))
     await collection.setRefreshError(
       refresh,
-      error instanceof ArtifactSyncError && error.code === "sync_limit"
+      error instanceof ArtifactIncrementalError &&
+        error.code === "incremental_limit"
         ? "The relay limit prevents a refresh of saved data"
         : "Could not refresh saved data",
       signal,
     );
 }
 export async function reconcileArtifactCurrent(
-  reader: ArtifactSyncReader,
+  reader: ArtifactIncrementalReader,
   collection: HostArtifactCollection,
   type: string,
   ids: readonly string[],
@@ -222,14 +226,14 @@ export async function reconcileArtifactCurrent(
     for (
       let offset = 0;
       offset < ids.length;
-      offset += ARTIFACT_SYNC_LIMITS.currentRows
+      offset += ARTIFACT_INCREMENTAL_LIMITS.currentRows
     )
       await currentBatch(
         reader,
         collection,
         refresh,
         type,
-        ids.slice(offset, offset + ARTIFACT_SYNC_LIMITS.currentRows),
+        ids.slice(offset, offset + ARTIFACT_INCREMENTAL_LIMITS.currentRows),
         signal,
       );
     signal.throwIfAborted();
@@ -245,7 +249,7 @@ export async function reconcileArtifactCurrent(
   }
 }
 export async function reconcileArtifactDelta(
-  reader: ArtifactSyncReader,
+  reader: ArtifactIncrementalReader,
   collection: HostArtifactCollection,
   type: string,
   signal: AbortSignal,
@@ -292,8 +296,8 @@ export async function reconcileArtifactDelta(
         break;
       } catch (error) {
         if (
-          !(error instanceof ArtifactSyncError) ||
-          error.code !== "sync_reset" ||
+          !(error instanceof ArtifactIncrementalError) ||
+          error.code !== "incremental_reset" ||
           recovery
         )
           throw error;
@@ -308,7 +312,7 @@ export async function reconcileArtifactDelta(
       refresh,
       {
         expected,
-        next: JSON.stringify({ protocol: "sync-v1", checkpoint: next }),
+        next: JSON.stringify({ protocol: "incremental-v1", checkpoint: next }),
       },
       signal,
     );

@@ -1765,7 +1765,7 @@ export function createRelaySession(
     liveWasConnected = connected;
   });
   const session = Object.freeze({
-    artifactSync: transport?.artifactSync,
+    artifactIncremental: transport?.artifactIncremental,
     memberAdditions,
     presence,
     viewer: transport?.viewer,

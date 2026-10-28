@@ -1,4 +1,7 @@
-import { ARTIFACT_SYNC_LIMITS, ArtifactSyncError } from "./artifact-reader";
+import {
+  ARTIFACT_INCREMENTAL_LIMITS,
+  ArtifactIncrementalError,
+} from "./artifact-incremental-reader";
 import {
   ReadStateTimestampRejected,
   READ_STATE_TIMESTAMP_REFUSAL,
@@ -2084,22 +2087,25 @@ it("binds audience authority to the advertised community and rejects unknown ver
   ).toBeUndefined();
 });
 
-it.each(["sync_limit", "sync_reset", "sync_invalid", "sync_unavailable"])(
-  "preserves %s through native admission",
-  async (code) => {
-    discovery = { artifacts: { sync: ARTIFACT_SYNC_LIMITS } };
-    const transport = await connectNativeTransport(community);
-    respond = () => ({
-      status: 422,
-      body: { error: "scope or capacity", code },
-    });
-    assert.exists(transport.artifactSync);
-    const work = transport.artifactSync.delta(
-      { artifact: "current", kinds: [45010], "#type": ["task"] },
-      {},
-      new AbortController().signal,
-    );
-    await expect(work).rejects.toBeInstanceOf(ArtifactSyncError);
-    await expect(work).rejects.toMatchObject({ code });
-  },
-);
+it.each([
+  "incremental_limit",
+  "incremental_reset",
+  "incremental_invalid",
+  "incremental_unsupported_scope",
+  "incremental_unavailable",
+])("preserves %s through native admission", async (code) => {
+  discovery = { artifacts: { incremental: ARTIFACT_INCREMENTAL_LIMITS } };
+  const transport = await connectNativeTransport(community);
+  respond = () => ({
+    status: 422,
+    body: { error: "scope or capacity", code },
+  });
+  assert.exists(transport.artifactIncremental);
+  const work = transport.artifactIncremental.delta(
+    { artifact: "current", kinds: [45010], "#type": ["task"] },
+    {},
+    new AbortController().signal,
+  );
+  await expect(work).rejects.toBeInstanceOf(ArtifactIncrementalError);
+  await expect(work).rejects.toMatchObject({ code });
+});

@@ -4,8 +4,8 @@ import type {
   ArtifactStorageService,
   OpenArtifactCollection,
 } from "../artifact-storage/service";
-import { provideArtifactSync } from "./artifact-sync";
-import { ArtifactSyncError } from "./artifact-reader";
+import { provideArtifactStoreSync } from "./artifact-store-sync";
+import { ArtifactIncrementalError } from "./artifact-incremental-reader";
 import {
   reconcileArtifactDelta,
   reconcileArtifactCurrent,
@@ -39,7 +39,7 @@ function setup() {
   let online = true;
   let scoped = true;
   const session = {
-    artifactSync: {},
+    artifactIncremental: {},
     live: {
       snapshot: () => ({ status: online ? "connected" : "retrying" }),
       subscribe: (listener: () => void) => {
@@ -87,7 +87,7 @@ function setup() {
       stops.push(effect());
     },
   };
-  provideArtifactSync(
+  provideArtifactStoreSync(
     ctx as unknown as Context,
     {
       onOpen: (listener: typeof opened) => {
@@ -263,7 +263,7 @@ it("coalesces live invalidations during a capture into one later refresh", async
 it("keeps capture admission failures on the repair interval despite live traffic", async () => {
   const h = setup();
   vi.mocked(reconcileArtifactDelta).mockRejectedValue(
-    new ArtifactSyncError("sync_limit", "Too many memberships"),
+    new ArtifactIncrementalError("incremental_limit", "Too many memberships"),
   );
   h.add();
   await vi.advanceTimersByTimeAsync(0);
@@ -376,7 +376,7 @@ it("keeps capacity backoff when a live read starts before the repair timer", asy
   h.add();
   await vi.advanceTimersByTimeAsync(30_000);
   vi.mocked(reconcileArtifactCurrent).mockRejectedValueOnce(
-    new ArtifactSyncError("sync_limit", "Large"),
+    new ArtifactIncrementalError("incremental_limit", "Large"),
   );
   const event = eventDto(
     signed(keypair(), {

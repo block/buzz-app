@@ -5,8 +5,8 @@ import type {
 } from "../../src/features/artifact-storage/service";
 import { createArtifactStore } from "../../src/features/artifact-storage/store";
 import type { HostArtifactCollection } from "../../src/features/artifact-storage/types";
-import type { ArtifactSyncReader } from "../../src/features/relay/artifact-reader";
-import { provideArtifactSync } from "../../src/features/relay/artifact-sync";
+import type { ArtifactIncrementalReader } from "../../src/features/relay/artifact-incremental-reader";
+import { provideArtifactStoreSync } from "../../src/features/relay/artifact-store-sync";
 
 const viewer = "a".repeat(64);
 const captures: string[] = [];
@@ -23,7 +23,7 @@ const api = {
   open(scope: string) {
     relay = `https://${scope}.test`;
     store = createArtifactStore(viewer, relay);
-    const reader: ArtifactSyncReader = {
+    const reader: ArtifactIncrementalReader = {
       async delta(query) {
         captures.push(query["#type"][0]?.slice("test.sync.".length) ?? "");
         return {
@@ -45,7 +45,7 @@ const api = {
       },
     };
     const session = {
-      artifactSync: reader,
+      artifactIncremental: reader,
       live: {
         snapshot: () => ({ status: "connected" }),
         subscribe: () => () => {},
@@ -67,7 +67,7 @@ const api = {
         stop = effect();
       },
     };
-    provideArtifactSync(
+    provideArtifactStoreSync(
       ctx as unknown as Context,
       {
         onOpen: (listener: typeof opened) => {

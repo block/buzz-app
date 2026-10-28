@@ -1,13 +1,13 @@
 import { expect, it, vi } from "vitest";
 import {
-  ARTIFACT_SYNC_LIMITS,
-  ArtifactSyncError,
-  artifactSyncCapability,
-  artifactSyncFailure,
-  createArtifactSyncReader,
-  type ArtifactSyncQuery,
-  type ArtifactSyncRequest,
-} from "./artifact-reader";
+  ARTIFACT_INCREMENTAL_LIMITS,
+  ArtifactIncrementalError,
+  artifactIncrementalCapability,
+  artifactIncrementalFailure,
+  createArtifactIncrementalReader,
+  type ArtifactIncrementalQuery,
+  type ArtifactIncrementalRequest,
+} from "./artifact-incremental-reader";
 import { hasEventProof } from "./events";
 import { keypair, signed } from "./testing";
 
@@ -41,25 +41,31 @@ const page = (changes: unknown[] = []) => ({
 
 it("requires each advertised sync limit", () => {
   expect(
-    artifactSyncCapability({ artifacts: { sync: ARTIFACT_SYNC_LIMITS } }),
+    artifactIncrementalCapability({
+      artifacts: { incremental: ARTIFACT_INCREMENTAL_LIMITS },
+    }),
   ).toBe(true);
-  for (const key of Object.keys(ARTIFACT_SYNC_LIMITS)) {
-    const limits: Record<string, unknown> = { ...ARTIFACT_SYNC_LIMITS };
+  for (const key of Object.keys(ARTIFACT_INCREMENTAL_LIMITS)) {
+    const limits: Record<string, unknown> = { ...ARTIFACT_INCREMENTAL_LIMITS };
     delete limits[key];
-    expect(artifactSyncCapability({ artifacts: { sync: limits } })).toBe(false);
+    expect(
+      artifactIncrementalCapability({ artifacts: { incremental: limits } }),
+    ).toBe(false);
   }
   expect(
-    artifactSyncCapability({
-      artifacts: { sync: { ...ARTIFACT_SYNC_LIMITS, overlapSeconds: 60 } },
+    artifactIncrementalCapability({
+      artifacts: {
+        incremental: { ...ARTIFACT_INCREMENTAL_LIMITS, overlapSeconds: 60 },
+      },
     }),
   ).toBe(false);
-  expect(artifactSyncCapability({ supported_extensions: ["nip-ar"] })).toBe(
-    false,
-  );
+  expect(
+    artifactIncrementalCapability({ supported_extensions: ["nip-ar"] }),
+  ).toBe(false);
 });
 it("reads signed changes and gives a checkpoint only on the final page", async () => {
   const event = revision();
-  const request = vi.fn(async (_filter: ArtifactSyncRequest) =>
+  const request = vi.fn(async (_filter: ArtifactIncrementalRequest) =>
     Response.json({
       ...page([
         { type: "upsert", artifactId, event },
@@ -70,7 +76,7 @@ it("reads signed changes and gives a checkpoint only on the final page", async (
       checkpoint: null,
     }),
   );
-  const reader = createArtifactSyncReader(request);
+  const reader = createArtifactIncrementalReader(request);
   const first = await reader.delta(
     query,
     { checkpoint: "prior-checkpoint" },
@@ -90,9 +96,9 @@ it("reads signed changes and gives a checkpoint only on the final page", async (
   const last = await reader.delta(query, { cursor: "page-two" }, signal());
   expect(last.checkpoint).toBe("checkpoint-final");
   expect(request.mock.calls.map(([filter]) => filter)).toEqual([
-    { artifact: "sync", query, checkpoint: "prior-checkpoint" },
+    { artifact: "incremental", query, checkpoint: "prior-checkpoint" },
     {
-      artifact: "sync",
+      artifact: "incremental",
       query,
       cursor: "page-two",
     },
@@ -114,11 +120,11 @@ it.each([
     })),
   },
 ])("rejects invalid page fields %j", async (fields) => {
-  const reader = createArtifactSyncReader(async () =>
+  const reader = createArtifactIncrementalReader(async () =>
     Response.json({ ...page(), ...fields }),
   );
   await expect(reader.delta(query, {}, signal())).rejects.toMatchObject({
-    code: "sync_invalid",
+    code: "incremental_invalid",
   });
 });
 it.each([
@@ -130,11 +136,11 @@ it.each([
   "2026-10-21T22:00:01.123456",
   "2026-10-21T22:00:01.123456+24:00",
 ])("rejects invalid sync time %s", async (value) => {
-  const reader = createArtifactSyncReader(async () =>
+  const reader = createArtifactIncrementalReader(async () =>
     Response.json({ ...page(), startedAt: value }),
   );
   await expect(reader.delta(query, {}, signal())).rejects.toMatchObject({
-    code: "sync_invalid",
+    code: "incremental_invalid",
   });
 });
 it.each([
@@ -144,11 +150,11 @@ it.each([
   "2026-10-21T22:00:01.123456789Z",
   "2024-02-29T22:00:01.123456+05:30",
 ])("accepts relay sync time %s", async (time) => {
-  const reader = createArtifactSyncReader(async () =>
+  const reader = createArtifactIncrementalReader(async () =>
     Response.json({ ...page(), startedAt: time }),
   );
   expect((await reader.delta(query, {}, signal())).startedAt).toBe(time);
-  const current = createArtifactSyncReader(async () =>
+  const current = createArtifactIncrementalReader(async () =>
     Response.json({
       version: 1,
       startedAt: time,
@@ -176,13 +182,13 @@ it.each(
 )(
   "rejects signed events with invalid artifact tags %j",
   async ({ eventTags }) => {
-    const reader = createArtifactSyncReader(async () =>
+    const reader = createArtifactIncrementalReader(async () =>
       Response.json(
         page([{ type: "upsert", artifactId, event: revision(eventTags) }]),
       ),
     );
     await expect(reader.delta(query, {}, signal())).rejects.toMatchObject({
-      code: "sync_invalid",
+      code: "incremental_invalid",
     });
   },
 );
@@ -191,11 +197,11 @@ it("rejects a wrong event kind or a modified signed body", async () => {
     revision(tags, 9),
     { ...revision(), content: "modified" },
   ]) {
-    const reader = createArtifactSyncReader(async () =>
+    const reader = createArtifactIncrementalReader(async () =>
       Response.json(page([{ type: "upsert", artifactId, event }])),
     );
     await expect(reader.delta(query, {}, signal())).rejects.toMatchObject({
-      code: "sync_invalid",
+      code: "incremental_invalid",
     });
   }
 });
@@ -205,16 +211,16 @@ it.each([
   { type: "removeChannel", channelId: "local-channel" },
   { type: "unknown", artifactId },
 ])("rejects invalid delta identities %j", async (change) => {
-  const reader = createArtifactSyncReader(async () =>
+  const reader = createArtifactIncrementalReader(async () =>
     Response.json(page([change])),
   );
   await expect(reader.delta(query, {}, signal())).rejects.toMatchObject({
-    code: "sync_invalid",
+    code: "incremental_invalid",
   });
 });
 it("requires one current result for each requested ID and accepts a uniform remove for a local ID", async () => {
   const event = revision();
-  const request = vi.fn(async (_filter: ArtifactSyncRequest) =>
+  const request = vi.fn(async (_filter: ArtifactIncrementalRequest) =>
     Response.json({
       version: 1,
       startedAt,
@@ -224,14 +230,14 @@ it("requires one current result for each requested ID and accepts a uniform remo
       ],
     }),
   );
-  const rows = await createArtifactSyncReader(request).current(
+  const rows = await createArtifactIncrementalReader(request).current(
     query,
     [artifactId, "local-id"],
     signal(),
   );
   expect(rows.changes).toHaveLength(2);
   expect(request.mock.calls[0]?.[0]).toEqual({
-    artifact: "sync",
+    artifact: "incremental",
     action: "current",
     query,
     artifactIds: [artifactId, "local-id"],
@@ -250,12 +256,12 @@ it.each(
 )(
   "rejects missing, duplicate or unrelated current results %j",
   async ({ rows }) => {
-    const reader = createArtifactSyncReader(async () =>
+    const reader = createArtifactIncrementalReader(async () =>
       Response.json({ version: 1, startedAt, changes: rows }),
     );
     await expect(
       reader.current(query, [artifactId], signal()),
-    ).rejects.toMatchObject({ code: "sync_invalid" });
+    ).rejects.toMatchObject({ code: "incremental_invalid" });
   },
 );
 it.each(
@@ -269,13 +275,13 @@ it.each(
 )("rejects invalid current input before a request %j", async ({ ids }) => {
   const request = vi.fn();
   await expect(
-    createArtifactSyncReader(request).current(query, ids, signal()),
-  ).rejects.toMatchObject({ code: "sync_invalid" });
+    createArtifactIncrementalReader(request).current(query, ids, signal()),
+  ).rejects.toMatchObject({ code: "incremental_invalid" });
   expect(request).not.toHaveBeenCalled();
 });
 it("admits 100 bounded current IDs", async () => {
   const ids = Array.from({ length: 100 }, (_, i) => `${i}-${"é".repeat(126)}`);
-  const reader = createArtifactSyncReader(async () =>
+  const reader = createArtifactIncrementalReader(async () =>
     Response.json({
       version: 1,
       startedAt,
@@ -295,12 +301,12 @@ it.each([
 ])("rejects unsupported queries before a request %j", async (value) => {
   const request = vi.fn();
   await expect(
-    createArtifactSyncReader(request).delta(
-      value as ArtifactSyncQuery,
+    createArtifactIncrementalReader(request).delta(
+      value as ArtifactIncrementalQuery,
       {},
       signal(),
     ),
-  ).rejects.toMatchObject({ code: "sync_invalid" });
+  ).rejects.toMatchObject({ code: "incremental_invalid" });
   expect(request).not.toHaveBeenCalled();
 });
 it.each([
@@ -311,17 +317,17 @@ it.each([
 ])("rejects invalid input tokens %j", async (position) => {
   const request = vi.fn();
   await expect(
-    createArtifactSyncReader(request).delta(query, position, signal()),
-  ).rejects.toMatchObject({ code: "sync_invalid" });
+    createArtifactIncrementalReader(request).delta(query, position, signal()),
+  ).rejects.toMatchObject({ code: "incremental_invalid" });
   expect(request).not.toHaveBeenCalled();
 });
 it.each([
-  "sync_invalid",
-  "sync_limit",
-  "sync_reset",
-  "sync_unavailable",
+  "incremental_invalid",
+  "incremental_limit",
+  "incremental_reset",
+  "incremental_unavailable",
 ] as const)("preserves error code %s without relay text", async (code) => {
-  const reader = createArtifactSyncReader(async () =>
+  const reader = createArtifactIncrementalReader(async () =>
     Response.json(
       { code, reason: "policy_changed", error: "private relay detail" },
       { status: 409 },
@@ -334,49 +340,56 @@ it.each([
   await expect(reader.delta(query, {}, signal())).rejects.not.toThrow(
     "private relay detail",
   );
-  expect(artifactSyncFailure({ code, reason: "checkpoint_expired" })).toEqual({
+  expect(
+    artifactIncrementalFailure({ code, reason: "checkpoint_expired" }),
+  ).toEqual({
     error: "Artifact sync request fails",
     code,
     reason: "checkpoint_expired",
   });
 });
 it("rejects unknown error metadata and hides request failures", async () => {
-  expect(artifactSyncFailure({ code: "unknown" })).toBeUndefined();
+  expect(artifactIncrementalFailure({ code: "unknown" })).toBeUndefined();
   expect(
-    artifactSyncFailure({ code: "sync_reset", reason: "unknown" }),
+    artifactIncrementalFailure({
+      code: "incremental_reset",
+      reason: "unknown",
+    }),
   ).toBeUndefined();
-  const reader = createArtifactSyncReader(async () => {
+  const reader = createArtifactIncrementalReader(async () => {
     throw new Error("private transport detail");
   });
   await expect(reader.delta(query, {}, signal())).rejects.toBeInstanceOf(
-    ArtifactSyncError,
+    ArtifactIncrementalError,
   );
   await expect(reader.delta(query, {}, signal())).rejects.toMatchObject({
-    code: "sync_unavailable",
+    code: "incremental_unavailable",
     message: "Artifact sync request fails",
   });
 });
 it.each(["not json", new Uint8Array([0xff])])(
   "rejects invalid response encoding",
   async (body) => {
-    const reader = createArtifactSyncReader(async () => new Response(body));
+    const reader = createArtifactIncrementalReader(
+      async () => new Response(body),
+    );
     await expect(reader.delta(query, {}, signal())).rejects.toMatchObject({
-      code: "sync_invalid",
+      code: "incremental_invalid",
     });
   },
 );
 it("bounds response bytes and cancels the stream", async () => {
   const cancel = vi.fn();
-  const reader = createArtifactSyncReader(
+  const reader = createArtifactIncrementalReader(
     async () =>
       new Response(
         new ReadableStream({
           start(controller) {
             controller.enqueue(
-              new Uint8Array(ARTIFACT_SYNC_LIMITS.responseBytes / 2),
+              new Uint8Array(ARTIFACT_INCREMENTAL_LIMITS.responseBytes / 2),
             );
             controller.enqueue(
-              new Uint8Array(ARTIFACT_SYNC_LIMITS.responseBytes / 2 + 1),
+              new Uint8Array(ARTIFACT_INCREMENTAL_LIMITS.responseBytes / 2 + 1),
             );
           },
           cancel,
@@ -384,7 +397,7 @@ it("bounds response bytes and cancels the stream", async () => {
       ),
   );
   await expect(reader.delta(query, {}, signal())).rejects.toMatchObject({
-    code: "sync_limit",
+    code: "incremental_limit",
   });
   expect(cancel).toHaveBeenCalledOnce();
 });
@@ -393,12 +406,12 @@ it("fences cancellation before requests and during response consumption", async 
   stopped.abort();
   const request = vi.fn();
   await expect(
-    createArtifactSyncReader(request).delta(query, {}, stopped.signal),
+    createArtifactIncrementalReader(request).delta(query, {}, stopped.signal),
   ).rejects.toMatchObject({ name: "AbortError" });
   expect(request).not.toHaveBeenCalled();
   const controller = new AbortController();
   const cancel = vi.fn();
-  const reader = createArtifactSyncReader(
+  const reader = createArtifactIncrementalReader(
     async () =>
       new Response(
         new ReadableStream(

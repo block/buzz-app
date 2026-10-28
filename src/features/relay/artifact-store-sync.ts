@@ -9,7 +9,10 @@ import {
   reconcileArtifactDelta,
   reconcileArtifactCurrent,
 } from "./artifact-reconcile";
-import { ArtifactSyncError, ARTIFACT_SYNC_LIMITS } from "./artifact-reader";
+import {
+  ArtifactIncrementalError,
+  ARTIFACT_INCREMENTAL_LIMITS,
+} from "./artifact-incremental-reader";
 import { transportPartition } from "./partition";
 import { RECOVERY_DELAYS_MS } from "./recovery";
 
@@ -23,7 +26,7 @@ type Group = {
 };
 
 /** The existing session supplies live traffic. Web Locks transfer sync work between windows. */
-export function provideArtifactSync(
+export function provideArtifactStoreSync(
   ctx: Context,
   storage: ArtifactStorageService,
 ) {
@@ -148,7 +151,7 @@ export function provideArtifactSync(
         !group.entries.size ||
         group.lifetime.signal.aborted ||
         !active() ||
-        !session?.artifactSync ||
+        !session?.artifactIncremental ||
         (!requested && !dirty.size)
       )
         return;
@@ -159,7 +162,7 @@ export function provideArtifactSync(
       clearTimeout(timer);
       timer = undefined;
       const current = session;
-      const reader = current.artifactSync;
+      const reader = current.artifactIncremental;
       if (!reader) return;
       const entry = [...group.entries][0];
       if (!entry || entry.signal.aborted) return;
@@ -186,7 +189,10 @@ export function provideArtifactSync(
               throw error;
             }
           }
-          const ids = [...dirty].slice(0, ARTIFACT_SYNC_LIMITS.currentRows);
+          const ids = [...dirty].slice(
+            0,
+            ARTIFACT_INCREMENTAL_LIMITS.currentRows,
+          );
           if (ids.length) {
             for (const id of ids) dirty.delete(id);
             try {
@@ -224,8 +230,12 @@ export function provideArtifactSync(
           } else if (!signal.aborted) {
             retry++;
             const permanent =
-              error instanceof ArtifactSyncError &&
-              ["sync_limit", "sync_invalid"].includes(error.code);
+              error instanceof ArtifactIncrementalError &&
+              [
+                "incremental_limit",
+                "incremental_invalid",
+                "incremental_unsupported_scope",
+              ].includes(error.code);
             const delay =
               !permanent && retry <= 3
                 ? (RECOVERY_DELAYS_MS[retry - 1] ?? REPAIR_MS)

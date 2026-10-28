@@ -2,7 +2,7 @@
 
 The host saves relay records through `ArtifactStorageService`. Each plugin defines one collection and one fixed query. A Web Lock covers `{viewer,relay,owner,collectionName}`. Its owner cancels reads and waits for commits before it releases the lock.
 
-The native transport exposes `session.artifactSync` when the relay advertises the exact `artifacts.sync` v1 contract. It covers permanent channels, 100-row pages, 100-ID current reads, an 8 MiB response bound, and a 30-day checkpoint lifetime. The relay prerequisite is [PR 8523](https://github.com/block/buzz/pull/8523).
+The native transport exposes `session.artifactIncremental` when the relay advertises the exact `artifacts.incremental` v1 contract. It covers permanent channels, 100-row pages, 100-ID current reads, an 8 MiB response bound, and a 30-day checkpoint lifetime. The relay prerequisite is [PR 8523](https://github.com/block/buzz/pull/8523).
 
 The first read discovers authorized records. Later reads use a checkpoint with a 120-second overlap from the last successful server start time. Only a full paged pass saves progress. Live pushes request current-ID reads through the same collection queue. They do not advance progress or directly write saved rows. The existing outbox acceptance observer also requests a current read.
 

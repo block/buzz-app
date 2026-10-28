@@ -8,10 +8,10 @@ import {
   reconcileArtifactCurrent,
 } from "./artifact-reconcile";
 import {
-  ArtifactSyncError,
-  createArtifactSyncReader,
-  type ArtifactSyncReader,
-} from "./artifact-reader";
+  ArtifactIncrementalError,
+  createArtifactIncrementalReader,
+  type ArtifactIncrementalReader,
+} from "./artifact-incremental-reader";
 import { keypair, signed } from "./testing";
 import { eventDto } from "./events";
 const channel = "11111111-1111-4111-8111-111111111111";
@@ -29,7 +29,7 @@ const event = eventDto(
     ],
   }),
 );
-const old = JSON.stringify({ protocol: "sync-v1", checkpoint: "old" });
+const old = JSON.stringify({ protocol: "incremental-v1", checkpoint: "old" });
 function setup(checkpoint: string | null = old) {
   const rows = new Map<string, ArtifactEntry>();
   const controller = new AbortController();
@@ -78,12 +78,14 @@ function setup(checkpoint: string | null = old) {
     checkpoint: "next",
   };
   const reader = {
-    delta: vi.fn<ArtifactSyncReader["delta"]>(async () => page),
-    current: vi.fn<ArtifactSyncReader["current"]>(async (_query, ids) => ({
-      version: 1,
-      startedAt: page.startedAt,
-      changes: ids.map((artifactId) => ({ type: "remove", artifactId })),
-    })),
+    delta: vi.fn<ArtifactIncrementalReader["delta"]>(async () => page),
+    current: vi.fn<ArtifactIncrementalReader["current"]>(
+      async (_query, ids) => ({
+        version: 1,
+        startedAt: page.startedAt,
+        changes: ids.map((artifactId) => ({ type: "remove", artifactId })),
+      }),
+    ),
   };
   const host = collection as unknown as HostArtifactCollection;
   return {
@@ -123,7 +125,7 @@ it("saves delta progress only after all pages commit", async () => {
     expect.objectContaining({ generation: "generation" }),
     {
       expected: old,
-      next: JSON.stringify({ protocol: "sync-v1", checkpoint: "next" }),
+      next: JSON.stringify({ protocol: "incremental-v1", checkpoint: "next" }),
     },
     h.controller.signal,
   );
@@ -131,9 +133,11 @@ it("saves delta progress only after all pages commit", async () => {
 it("continues an incremental pass through the relay request validator", async () => {
   const h = setup();
   const request = vi.fn(
-    async (filter: import("./artifact-reader").ArtifactSyncRequest) => {
+    async (
+      filter: import("./artifact-incremental-reader").ArtifactIncrementalRequest,
+    ) => {
       if ("checkpoint" in filter && "cursor" in filter)
-        return Response.json({ code: "sync_invalid" }, { status: 400 });
+        return Response.json({ code: "incremental_invalid" }, { status: 400 });
       if ("cursor" in filter)
         return Response.json({
           ...h.page,
@@ -148,19 +152,19 @@ it("continues an incremental pass through the relay request validator", async ()
     },
   );
   await reconcileArtifactDelta(
-    createArtifactSyncReader(request),
+    createArtifactIncrementalReader(request),
     h.collection as unknown as HostArtifactCollection,
     "test.task",
     h.controller.signal,
   );
   expect(request.mock.calls.map(([filter]) => filter)).toEqual([
     {
-      artifact: "sync",
+      artifact: "incremental",
       query: { artifact: "current", kinds: [45010], "#type": ["test.task"] },
       checkpoint: "old",
     },
     {
-      artifact: "sync",
+      artifact: "incremental",
       query: { artifact: "current", kinds: [45010], "#type": ["test.task"] },
       cursor: "second",
     },
@@ -249,8 +253,8 @@ it.each(["policy_changed", "checkpoint_expired"])(
       },
     });
     h.reader.delta.mockRejectedValueOnce(
-      new ArtifactSyncError(
-        "sync_reset",
+      new ArtifactIncrementalError(
+        "incremental_reset",
         "Reset",
         reason as "policy_changed" | "checkpoint_expired",
       ),
@@ -327,7 +331,8 @@ it("does not advance delta progress or clear its error on a current read", async
 it("splits a current batch on capacity and rejects an oversized single result", async () => {
   const h = setup();
   h.reader.current.mockImplementation(async (_query, ids) => {
-    if (ids.length > 1) throw new ArtifactSyncError("sync_limit", "Large");
+    if (ids.length > 1)
+      throw new ArtifactIncrementalError("incremental_limit", "Large");
     return {
       version: 1,
       startedAt: h.page.startedAt,
@@ -337,9 +342,11 @@ it("splits a current batch on capacity and rejects an oversized single result", 
   await h.current([id, "imported"]);
   expect(h.reader.current).toHaveBeenCalledTimes(3);
   h.reader.current.mockRejectedValue(
-    new ArtifactSyncError("sync_limit", "Large"),
+    new ArtifactIncrementalError("incremental_limit", "Large"),
   );
-  await expect(h.current([id])).rejects.toMatchObject({ code: "sync_limit" });
+  await expect(h.current([id])).rejects.toMatchObject({
+    code: "incremental_limit",
+  });
 });
 it("rejects repeated cursors and changed capture times", async () => {
   const h = setup();

@@ -14,6 +14,7 @@ import type { Agent, RegisteredAgentType } from "../../features/agents/service";
 import type { EventData } from "../../features/relay/events";
 import { downloadNativeFile } from "../../features/messages/native-download";
 import type { RelaySession } from "../../features/relay/session";
+import { bundledPoster } from "../../features/agents/avatar-packs";
 import { avatarSource } from "../../shared/avatar-source";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
@@ -35,9 +36,11 @@ const ARTWORK_MS = 5000;
  * unreadable or slow artwork leaves the snapshot without it. */
 async function artwork(picture: string | undefined, session: RelaySession) {
   const source = avatarSource(picture);
+  // Pack art is read from the app's own copy; other pictures go through the
+  // session's media path.
   const src = source?.startsWith("data:")
     ? source
-    : source && session.media(source);
+    : source && (bundledPoster(source) ?? session.media(source));
   if (!src) return undefined;
   const image = new Image();
   let timer: ReturnType<typeof setTimeout> | undefined;

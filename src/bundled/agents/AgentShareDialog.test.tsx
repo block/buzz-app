@@ -10,6 +10,7 @@ import {
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { readSnapshot } from "../../features/agents/agent-share";
+import { agentAvatars } from "../../features/agents/avatar-packs";
 import type { Agent, RegisteredAgentType } from "../../features/agents/service";
 import type { EventData } from "../../features/relay/events";
 import type { RelaySession } from "../../features/relay/session";
@@ -422,6 +423,33 @@ it("exports without the picture when it does not load in time", async () => {
     desktop.tauri = false;
     vi.useRealTimers();
   }
+});
+
+it("draws pack art from the app's own copy, since its CDN can't be read back", async () => {
+  const pack = agentAvatars[0];
+  if (!pack?.preview) throw new Error("Bundled avatar catalog is empty");
+  const sources: string[] = [];
+  vi.stubGlobal(
+    "Image",
+    class {
+      crossOrigin = "";
+      set src(value: string) {
+        if (value) sources.push(value);
+      }
+      decode = () => Promise.reject(new Error("not drawn in jsdom"));
+    },
+  );
+  render(
+    <AgentShareDialog
+      agent={{ ...agent, picture: `${pack.url}#buzz-anim=x` }}
+      type={echo}
+      session={community().session}
+      onClose={() => {}}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Export agent" }));
+  expect(await screen.findByRole("status")).toHaveTextContent("Exported Ada.");
+  expect(sources).toEqual([pack.preview]);
 });
 
 it("saves an .agent.png natively on desktop, never through a blob link", async () => {

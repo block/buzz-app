@@ -149,6 +149,37 @@ it("browses shared agents and opens read-only details", async () => {
   expect(screen.getByText(/^npub…/)).toBeVisible();
 });
 
+it("scrolls to an agent selected from elsewhere, not one chosen here", async () => {
+  const scrollIntoView = vi.fn();
+  Element.prototype.scrollIntoView = scrollIntoView;
+  try {
+    const read = vi.fn().mockResolvedValue([shared]);
+    const relay = community(read);
+    const onSelect = vi.fn();
+    const view = render(<Catalog relay={relay} onSelect={onSelect} />);
+    const card = await screen.findByRole("button", { name: "Shared helper" });
+    fireEvent.click(card);
+    const [{ agent }] = onSelect.mock.calls[0] ?? [];
+    view.rerender(
+      <Catalog relay={relay} selectedId={agent.id} onSelect={onSelect} />,
+    );
+    expect(card).toHaveAttribute("aria-current", "true");
+    expect(scrollIntoView).not.toHaveBeenCalled();
+    // As View on a published agent selects it, before its page has loaded.
+    view.unmount();
+    render(<Catalog relay={relay} selectedId={agent.id} onSelect={onSelect} />);
+    const listed = await screen.findByRole("button", { name: "Shared helper" });
+    await vi.waitFor(() =>
+      expect(scrollIntoView).toHaveBeenCalledExactlyOnceWith({
+        block: "center",
+      }),
+    );
+    expect(scrollIntoView.mock.contexts[0]).toBe(listed);
+  } finally {
+    Reflect.deleteProperty(Element.prototype, "scrollIntoView");
+  }
+});
+
 it("asks to connect while no community is ready", () => {
   const snapshot = { status: "disconnected", generation: 0 };
   render(

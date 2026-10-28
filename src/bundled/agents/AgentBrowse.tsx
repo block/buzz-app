@@ -151,6 +151,18 @@ function SharedAgentList({
     return () => controller.abort();
   }, [session, cursor, attempt]);
   const agents = sharedAgents(events);
+  const grid = useRef<HTMLDivElement>(null);
+  // A selection made elsewhere, such as View on a published agent, scrolls to
+  // its card once the card is here; one chosen in the grid is in view already.
+  const shown = useRef<string>(undefined);
+  const present = agents.some((agent) => agent.id === selectedId);
+  useEffect(() => {
+    if (!present || shown.current === selectedId) return;
+    shown.current = selectedId;
+    grid.current
+      ?.querySelector<HTMLElement>("[data-selected]")
+      ?.scrollIntoView({ block: "center" });
+  }, [present, selectedId]);
   return (
     <div className="flex flex-col gap-section-gap">
       {loading && <p role="status">Loading shared agents…</p>}
@@ -165,7 +177,7 @@ function SharedAgentList({
       {!loading && !error && !agents.length && (
         <p>No shared agents found in this community yet.</p>
       )}
-      <div className={cardStyles.grid}>
+      <div ref={grid} className={cardStyles.grid}>
         {agents.map((agent) => (
           <SurfaceButton
             key={agent.id}
@@ -173,9 +185,10 @@ function SharedAgentList({
             aria-label={agent.name}
             aria-current={selectedId === agent.id || undefined}
             data-selected={selectedId === agent.id || undefined}
-            onClick={(event) =>
-              onSelect({ agent, session, community }, event.currentTarget)
-            }
+            onClick={(event) => {
+              shown.current = agent.id;
+              onSelect({ agent, session, community }, event.currentTarget);
+            }}
           >
             <SharedAgentCardContent agent={agent} community={community} />
           </SurfaceButton>

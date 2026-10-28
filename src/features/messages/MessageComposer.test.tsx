@@ -6032,8 +6032,8 @@ it("tags the default agent once while shown, without saving the tag as a draft",
   expect(h.input()).toHaveValue("@Saved hi");
 });
 
-it("retags a single-tag new-chat draft saved by an earlier version, but keeps authored ones", async () => {
-  const open = (defaultMention?: { pubkey: string; name: string }) => {
+it("keeps a tag the viewer chose in a new chat across showing again and a remount", async () => {
+  const open = () => {
     const h = mount({
       submission: {
         draftKey: "new-chat",
@@ -6044,35 +6044,36 @@ it("retags a single-tag new-chat draft saved by an earlier version, but keeps au
       ownSoloConversation: true,
       soloConversation: true,
       requireMention: true,
-      defaultMention,
+      defaultMention: { pubkey: first.pubkey, name: "Ada" },
     });
     h.setLibrary([
-      { pubkey: first.pubkey, name: "Cached" },
-      { pubkey: second.pubkey, name: "Saved" },
+      { pubkey: first.pubkey, name: "Ada" },
+      { pubkey: second.pubkey, name: "Bea" },
     ]);
     Object.assign(h.session, {
       channels: { ...h.session.channels, list: () => soloList },
     });
     return h;
   };
-  // Earlier versions saved the default tag through the same path as a chip
-  // the viewer inserts.
-  const earlier = open();
+  const h = open();
+  await waitFor(() => expect(h.input()).toHaveValue("@Ada "));
+  // The viewer clears the default tag and picks another agent.
+  h.fill("");
   act(() => {
-    earlier.commands().insertMention({ pubkey: first.pubkey, name: "Cached" });
+    h.commands().insertMention({ pubkey: second.pubkey, name: "Bea" });
   });
-  expect(readView("scope", "new-chat", null)).toMatchObject({
-    text: "@Cached ",
-    recipients: [{ pubkey: first.pubkey }],
-  });
-  earlier.unmount();
-  const legacy = open({ pubkey: second.pubkey, name: "Saved" });
-  await waitFor(() => expect(legacy.input()).toHaveValue("@Saved "));
-  legacy.fill("@Saved hi");
-  legacy.unmount();
-  const authored = open({ pubkey: first.pubkey, name: "Cached" });
+  expect(h.input()).toHaveValue("@Bea ");
+  h.retarget({ shown: false });
+  h.retarget({ shown: true });
   await new Promise((resolve) => setTimeout(resolve, 50));
-  expect(authored.input()).toHaveValue("@Saved hi");
+  expect(h.input()).toHaveValue("@Bea ");
+  h.unmount();
+  const reopened = open();
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  expect(reopened.input()).toHaveValue("@Bea ");
+  expect(reopened.commands().recipients).toEqual([
+    { pubkey: second.pubkey, name: "Bea" },
+  ]);
 });
 
 it("an untouched default tag is retagged for the current default after a remount", async () => {

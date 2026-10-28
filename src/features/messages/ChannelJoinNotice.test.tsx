@@ -33,9 +33,7 @@ it.each([false, true])(
     );
     expect(
       screen.getByRole("region", { name: "Read-only channel" }),
-    ).toHaveTextContent(
-      "This channel is read-only for new people. Existing contributors can still post.",
-    );
+    ).toHaveTextContent("This channel is read-only.");
     expect(screen.queryByRole("button", { name: "Join" })).toBeNull();
     expect(run).not.toHaveBeenCalled();
     expect(started).not.toHaveBeenCalled();

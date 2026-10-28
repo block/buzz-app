@@ -1515,9 +1515,7 @@ it("keeps guest threads readable without a reply composer or Join action across 
   h.render();
   expect(
     screen.getByRole("region", { name: "Read-only channel" }),
-  ).toHaveTextContent(
-    "This channel is read-only for new people. Existing contributors can still post.",
-  );
+  ).toHaveTextContent("This channel is read-only.");
   expect(
     screen.getByRole("region", { name: "Thread messages" }),
   ).toBeInTheDocument();

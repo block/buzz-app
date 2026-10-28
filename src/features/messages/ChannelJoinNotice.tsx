@@ -90,7 +90,7 @@ export function ChannelJoinNotice({
         <p className="max-w-md px-2 text-center text-body-sm text-subtle">
           {readOnly
             ? joinRole === "guest"
-              ? "This channel is read-only for new people. Existing contributors can still post."
+              ? "This channel is read-only."
               : "Read-only access"
             : canJoin
               ? "Join channel to send messages"

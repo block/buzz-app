@@ -748,8 +748,7 @@ channels with a Guest default remain intact when changing unrelated details.
 Readers see General access as plain text from verified channel discovery metadata,
 without calling the editing capability. Its audience description is followed by
 “Read-only for you. Ask an owner or admin to contribute.” The compact timeline
-label says “This channel is read-only for new people. Existing contributors can
-still post.” for Guest-default channels; a Guest in a
+label says “This channel is read-only.” for Guest-default channels; a Guest in a
 Member-default channel sees “Read-only access.” Guest-default previews never suggest
 joining to add people or agents.
 

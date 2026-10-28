@@ -497,6 +497,142 @@ test("dismissal follows verified roots and retains thread visits beyond the layo
   ]);
 });
 
+test.each(["nostr:profile", "https://github.com/sample/project/pull/42"])(
+  "same-scope successors inherit all addressed visits for %s without old callback authority",
+  (target) => {
+    const scope = crypto.randomUUID();
+    const first = { scope } as RelaySession;
+    const h = renderHook(
+      ({ session }) => useChannelTabState(session, "alpha"),
+      { initialProps: { session: first } },
+    );
+    const detail = { channelId: "alpha", target };
+    act(() =>
+      h.result.current.enterVisit("first:detail", undefined, true, detail),
+    );
+    act(() =>
+      h.result.current.enterVisit("other:detail", undefined, true, {
+        ...detail,
+        target: "nostr:other",
+      }),
+    );
+    act(() =>
+      h.result.current.enterVisit("last:detail", undefined, true, detail),
+    );
+    const old = h.result.current;
+    h.rerender({ session: { scope } as RelaySession });
+    expect(h.result.current.detailVisits("alpha", target)).toEqual([
+      "first",
+      "last",
+    ]);
+    expect(h.result.current.detailVisits("alpha", "nostr:other")).toEqual([
+      "other",
+    ]);
+    expect(h.result.current.detailVisits("beta", target)).toEqual([]);
+    // No presentation state or live panel objects cross the session boundary.
+    expect(h.result.current.entries).toEqual([]);
+    act(() => old.enterVisit("stale:detail", undefined, true, detail));
+    act(() =>
+      h.result.current.enterVisit("fresh:detail", undefined, true, detail),
+    );
+    h.rerender({ session: { scope } as RelaySession });
+    expect(h.result.current.detailVisits("alpha", target)).toEqual([
+      "first",
+      "last",
+      "fresh",
+    ]);
+  },
+);
+
+test("successors retain verified roots and page/channel retirement partitions", () => {
+  const scope = crypto.randomUUID();
+  const first = { scope } as RelaySession;
+  const h = renderHook(
+    ({ session, channel, page }) => useChannelTabState(session, channel, page),
+    { initialProps: { session: first, channel: "alpha", page: "messages" } },
+  );
+  act(() =>
+    h.result.current.enterVisit("reply:thread", {
+      channelId: "alpha",
+      messageId: "reply",
+      rootId: "hint",
+    }),
+  );
+  act(() =>
+    h.result.current.resolveThreadRoot("thread:alpha:hint", "verified"),
+  );
+  const old = h.result.current;
+  h.rerender({ session: first, channel: "beta", page: "messages" });
+  act(() =>
+    h.result.current.enterVisit("beta:thread", {
+      channelId: "beta",
+      messageId: "root",
+      rootId: "root",
+    }),
+  );
+  const successor = { scope } as RelaySession;
+  h.rerender({ session: successor, channel: "alpha", page: "messages" });
+  expect(h.result.current.threadVisits("alpha", "verified")).toEqual(["reply"]);
+  expect(h.result.current.threadVisits("alpha", "hint")).toEqual([]);
+  act(() => old.resolveThreadRoot("thread:alpha:hint", "stale"));
+  expect(h.result.current.threadVisits("alpha", "verified")).toEqual(["reply"]);
+  act(() =>
+    h.result.current.enterVisit("current:thread", {
+      channelId: "alpha",
+      messageId: "reply",
+      rootId: "hint",
+    }),
+  );
+  act(() =>
+    h.result.current.resolveThreadRoot("thread:alpha:hint", "verified"),
+  );
+  expect(h.result.current.threadVisits("alpha", "verified")).toEqual([
+    "reply",
+    "current",
+  ]);
+  h.rerender({ session: successor, channel: "beta", page: "messages" });
+  expect(h.result.current.threadVisits("beta", "root")).toEqual(["beta"]);
+  h.rerender({ session: successor, channel: "alpha", page: "solo" });
+  expect(h.result.current.threadVisits("alpha", "verified")).toEqual([]);
+});
+
+test.each(["account", "community", "unknown"])(
+  "%s scope does not inherit another session's retirement records",
+  (change) => {
+    const first = { scope: `${crypto.randomUUID()}:viewer` } as RelaySession;
+    const h = renderHook(
+      ({ session }) => useChannelTabState(session, "alpha"),
+      { initialProps: { session: first } },
+    );
+    act(() =>
+      h.result.current.enterVisit("detail:detail", undefined, true, {
+        channelId: "alpha",
+        target: "nostr:profile",
+      }),
+    );
+    act(() =>
+      h.result.current.enterVisit("thread:thread", {
+        channelId: "alpha",
+        messageId: "root",
+        rootId: "root",
+      }),
+    );
+    h.rerender({
+      session: {
+        scope:
+          change === "unknown"
+            ? undefined
+            : change === "account"
+              ? first.scope.replace(":viewer", ":other")
+              : `other:${first.scope}`,
+      } as RelaySession,
+    });
+    expect(h.result.current.detailVisits("alpha", "nostr:profile")).toEqual([]);
+    expect(h.result.current.threadVisits("alpha", "root")).toEqual([]);
+    expect(h.result.current.tabs).toEqual([]);
+  },
+);
+
 test("content retirement identifies only that channel's addressed panel visits beyond fifty layout snapshots", () => {
   const session = {} as RelaySession;
   const h = renderHook(() => useChannelTabState(session, "alpha"));

@@ -254,11 +254,35 @@ const writers = new Map<
     store: ReturnType<typeof createTabStore>;
   }
 >();
+// History outlives a relay session. Retain only dismissal identities per
+// account/community, never layout, panel objects, editors or callbacks.
+type Retirement = Pick<State, "routedVisits" | "detailVisits">;
+const visitOwners = new Map<string, { channels: Record<string, Retirement> }>();
 function createTabStore(
   session: RelaySession,
   initial = readTabWorkspaces(session),
 ) {
-  let channels: Record<string, State> = initial;
+  const scope = session.scope;
+  const owner = { channels: (scope && visitOwners.get(scope)?.channels) || {} };
+  let channels: Record<string, State> = { ...initial };
+  for (const [key, visits] of Object.entries(owner.channels)) {
+    const state = channels[key] ?? empty;
+    channels[key] = {
+      ...state,
+      routedVisits: { ...state.routedVisits, ...visits.routedVisits },
+      detailVisits: { ...state.detailVisits, ...visits.detailVisits },
+    };
+  }
+  owner.channels = Object.fromEntries(
+    Object.entries(channels).map(([key, state]) => [
+      key,
+      {
+        routedVisits: state.routedVisits,
+        detailVisits: state.detailVisits,
+      },
+    ]),
+  );
+  if (scope) visitOwners.set(scope, owner);
   const listeners = new Set<() => void>();
   const mounts = new Map<string, number>();
   const store = {
@@ -291,6 +315,16 @@ function createTabStore(
       const next = change(previous);
       if (next === previous) return;
       channels = { ...channels, [key]: next };
+      // A stale session may still update its own store, but cannot overwrite
+      // the successor's retirement metadata. Records are copy-on-write.
+      if (scope && visitOwners.get(scope) === owner)
+        owner.channels = {
+          ...owner.channels,
+          [key]: {
+            routedVisits: next.routedVisits,
+            detailVisits: next.detailVisits,
+          },
+        };
       if (writers.get(session.scope)?.store === store)
         saveTabWorkspaces(session, channels);
       for (const listener of listeners) listener();

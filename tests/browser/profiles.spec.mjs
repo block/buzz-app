@@ -42,6 +42,61 @@ test("profile bulk closes retire only the closed profiles' native return paths",
   ).toBeHidden();
 });
 
+// Real relay-session replacement and native history traversal exercise the
+// page's close wiring; retirement identity partitions are covered by owner tests.
+test("Close after same-scope replacement retires earlier profile visits through Back/Forward", async ({
+  page,
+}) => {
+  await page.goto("/tests/fixtures/profiles.html");
+  await page.waitForFunction(() => !!window.profilesFixture);
+  const read = () =>
+    page.evaluate(() => window.profilesFixture.navigation.snapshot());
+  const channel = (await read()).entry.id;
+  const view = async (name) => {
+    await page
+      .getByRole("button", { name: `View ${name} profile`, exact: true })
+      .click();
+    await expect(
+      page
+        .getByRole("complementary", { name: "Profile", exact: true })
+        .getByRole("heading", { name, exact: true }),
+    ).toBeVisible();
+    return (await read()).entry.id;
+  };
+  await view("Viewer");
+  const other = await view("Mic");
+  const current = await view("Viewer");
+  await page.evaluate(() => window.profilesFixture.replace());
+  const tabs = page.getByRole("tablist", { name: "Panel tabs" });
+  const viewer = tabs.getByRole("tab", { name: "Viewer", exact: true });
+  await expect(viewer).toHaveAttribute("aria-selected", "true");
+  await expect.poll(async () => (await read()).entry.id).toBe(current);
+  // Rebuild the neighbouring Q tab through passive traversal. #1767 restores
+  // only the current address on replacement; #1793 also keeps the tab strip.
+  await page.goBack();
+  await expect.poll(async () => (await read()).entry.id).toBe(other);
+  await expect(
+    tabs.getByRole("tab", { name: "Mic", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
+  await page.goForward();
+  await expect.poll(async () => (await read()).entry.id).toBe(current);
+  await expect(viewer).toHaveAttribute("aria-selected", "true");
+  await viewer
+    .locator("..")
+    .getByRole("button", { name: /^Close / })
+    .click();
+  await expect.poll(async () => (await read()).entry.id).toBe(other);
+  await page.goBack();
+  await expect.poll(async () => (await read()).entry.id).toBe(channel);
+  await expect(viewer).toHaveCount(0);
+  await page.goForward();
+  await expect.poll(async () => (await read()).entry.id).toBe(other);
+  await expect(viewer).toHaveCount(0);
+  expect((await read()).canGoForward).toBe(false);
+  // A deliberate reopening gets a fresh visit and remains possible.
+  expect(await view("Viewer")).not.toBe(current);
+});
+
 // Browser history must restore the selected profile and skip an explicitly
 // dismissed inactive tab; hook tests cannot establish native event traversal.
 test("profile visits survive passive traversal and X retires active and inactive visits", async ({

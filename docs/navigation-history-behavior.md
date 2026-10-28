@@ -20,6 +20,9 @@ read-only address, including after deliberate same-community resets. Old panel
 callbacks are revoked; local editors do not carry across sessions. A different
 account/community scope clears the current detail address once known; a
 temporarily unknown reconnect scope does not.
+Thread/detail dismissal records survive same-scope session replacement, including
+verified reply roots. Closing reconstructed content retires its earlier visits
+as well as its current one; this does not carry layout or live panel objects.
 An inactive X preserves the selected content while retiring the closed tab's
 known visits. Other panel families keep their existing behavior. Navigation
 does not recreate terminal sessions or change pane layout history. Close other

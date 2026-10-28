@@ -109,6 +109,15 @@ test("a same-document navigation does not end the pending navigation", () => {
   assert.deepEqual(watched.unexplained(), []);
 });
 
+test("another request finishing does not end the pending navigation", () => {
+  const page = fakePage("webkit");
+  const watched = watchPageErrors(page);
+  navigate(page);
+  page.emit("requestfinished", { url: () => presenceAuthors });
+  page.emit("pageerror", reloadCancelLog(presenceAuthors));
+  assert.deepEqual(watched.unexplained(), []);
+});
+
 test("only the main frame's pending navigation explains a refused fetch", () => {
   for (const setup of [
     // The new document has committed.

@@ -1,12 +1,15 @@
+import type { InboxItem } from "../../features/relay/inbox";
 import type { RelaySession } from "../../features/relay/session";
 import { ownSolo } from "../../features/solo/labels";
 
-/** A conversation's newest signal; Team rows open at the message that listed them. */
+/** A conversation's newest signal; Team rows open at the message that listed
+ * them. `item` is its newest Inbox item, which opening it marks read. */
 export type Recent = Readonly<{
   channelId: string;
   at: number;
   messageId?: string;
   rootId?: string;
+  item?: InboxItem;
 }>;
 
 /** Solo chats and DMs by their latest activity, as their lists order them,
@@ -16,6 +19,18 @@ export type Recent = Readonly<{
 export function recentConversations(session: RelaySession): readonly Recent[] {
   const recent: Recent[] = [];
   const streams = new Set<string>();
+  // Inbox items are already sorted newest first.
+  const newest = new Map<string, InboxItem>();
+  for (const item of session.unread.inbox().items)
+    if (!newest.has(item.channelId)) newest.set(item.channelId, item);
+  const listed = (channelId: string, at: number) => {
+    const item = newest.get(channelId);
+    recent.push({
+      channelId,
+      at,
+      ...(item && { item }),
+    });
+  };
   for (const channel of session.channels.list().channels) {
     if (channel.archived) continue;
     const at = channel.lastActivityAt ?? channel.updatedAt;
@@ -24,23 +39,25 @@ export function recentConversations(session: RelaySession): readonly Recent[] {
         at !== undefined &&
         (!channel.readOnly || ownSolo(channel, session.viewer))
       )
-        recent.push({ channelId: channel.id, at });
+        listed(channel.id, at);
     } else if (channel.huddle || channel.metadataPending) continue;
     else if (channel.channelType === "dm") {
       // As the Direct messages list, which keeps hidden DMs.
-      if (at !== undefined) recent.push({ channelId: channel.id, at });
+      if (at !== undefined) listed(channel.id, at);
     } else if (!channel.hidden && channel.channelType !== "forum")
       streams.add(channel.id);
   }
-  // Inbox items are already sorted newest first.
-  for (const item of session.unread.inbox().items)
-    if (streams.delete(item.channelId))
+  for (const channelId of streams) {
+    const item = newest.get(channelId);
+    if (item)
       recent.push({
-        channelId: item.channelId,
+        channelId,
         at: item.createdAt,
         messageId: item.messageId,
         ...(item.rootId && { rootId: item.rootId }),
+        item,
       });
+  }
   return recent.sort(
     (a, b) => b.at - a.at || a.channelId.localeCompare(b.channelId),
   );

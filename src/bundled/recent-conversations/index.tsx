@@ -23,14 +23,36 @@ export const apply: PluginModule["apply"] = (ctx) => {
       SECTION_CAP,
       step,
     );
-    if (item)
-      void navigator.open({
+    if (!item) return;
+    void navigator
+      .open({
         version: 1,
         kind: "conversation",
         scope,
         channelId: item.channelId,
         ...(item.messageId && { messageId: item.messageId }),
         ...(item.rootId && { threadRootId: item.rootId }),
+      })
+      .then(async ({ status }) => {
+        // Opening a message or thread leaves focus where it was, so reading
+        // never starts. Mark what listed it read, as opening it in Inbox does.
+        const listed = item.item;
+        if (
+          status !== "opened" ||
+          !listed ||
+          !(listed.unreadCount > 0 || listed.manual) ||
+          relay.snapshot().session !== session ||
+          session.unread.sync().capability !== "frontier-sync"
+        )
+          return;
+        if (listed.target.kind === "channel")
+          await session.unread.prepareChannelRead(listed.channelId)();
+        else
+          for (const { target, messageId } of listed.readThrough)
+            await session.unread.markThrough(target, messageId);
+      })
+      .catch(() => {
+        // The dot stays; opening the conversation itself still succeeded.
       });
   };
   for (const [id, title, key, step, order] of [

@@ -87,7 +87,7 @@ it("ranks Solo chats and DMs by activity with Team channels by their newest inbo
     item("old", "10", 10),
     item("call", "11", 1),
   ]);
-  expect(recentConversations(value)).toEqual([
+  expect(recentConversations(value).map(({ item, ...rest }) => rest)).toEqual([
     { channelId: "beta", at: 80, messageId: "2", rootId: "root" },
     { channelId: "dm", at: 70 },
     { channelId: "chat", at: 65 },
@@ -216,4 +216,92 @@ it("⌘D opens a DM without a message", () => {
     scope: { communityOrigin: "https://relay.test", viewer: "v" },
     channelId: "dm",
   });
+});
+
+it("⌘D marks the item that listed a conversation read, as Inbox does", async () => {
+  const fake = session([
+    {
+      ...item("beta", "2", 80, "root"),
+      unreadCount: 1,
+      manual: false,
+      target: { kind: "thread", channelId: "beta", rootId: "root" },
+      readThrough: [
+        {
+          target: { kind: "thread", channelId: "beta", rootId: "root" },
+          messageId: "2",
+        },
+      ],
+    } as unknown as InboxItem,
+    {
+      ...item("dm", "1", 70),
+      unreadCount: 2,
+      manual: false,
+      target: { kind: "channel", channelId: "dm" },
+      readThrough: [],
+    } as unknown as InboxItem,
+    {
+      ...item("alpha", "3", 60),
+      unreadCount: 0,
+      manual: false,
+      target: { kind: "message", channelId: "alpha", messageId: "3" },
+      readThrough: [
+        {
+          target: { kind: "message", channelId: "alpha", messageId: "3" },
+          messageId: "3",
+        },
+      ],
+    } as unknown as InboxItem,
+  ]);
+  const markThrough = vi.fn(async () => ({}));
+  const channelRead = vi.fn(async () => ({}));
+  const prepareChannelRead = vi.fn(() => channelRead);
+  Object.assign(fake.value.unread, {
+    sync: () => ({ capability: "frontier-sync" }),
+    markThrough,
+    prepareChannelRead,
+  });
+  const shortcuts = { register: vi.fn() };
+  let current = "elsewhere";
+  const opens: Promise<unknown>[] = [];
+  const relay = {
+    snapshot: () => ({ scope: "https://relay.test:v", session: fake.value }),
+  };
+  apply({
+    relay,
+    navigation: {
+      open: vi.fn(() => {
+        const result = Promise.resolve({ status: "opened" });
+        opens.push(result);
+        return result;
+      }),
+      snapshot: () => ({
+        entry: { target: { kind: "conversation", channelId: current } },
+      }),
+    },
+    conversation: { registerConversationSection: vi.fn() },
+    shortcuts,
+  } as unknown as Parameters<typeof apply>[0]);
+  const down = () => shortcuts.register.mock.calls[0]?.[0].run();
+  // A thread item marks through its steps.
+  down();
+  await vi.waitFor(() =>
+    expect(markThrough).toHaveBeenCalledWith(
+      { kind: "thread", channelId: "beta", rootId: "root" },
+      "2",
+    ),
+  );
+  // A DM item reads the whole DM.
+  current = "beta";
+  down();
+  await vi.waitFor(() => expect(channelRead).toHaveBeenCalled());
+  expect(prepareChannelRead).toHaveBeenCalledWith("dm");
+  // An item already read writes nothing.
+  current = "dm";
+  markThrough.mockClear();
+  down();
+  // Its check runs as the open settles, before any write it would start.
+  await opens.at(-1);
+  expect(opens).toHaveLength(3);
+  expect(markThrough).not.toHaveBeenCalled();
+  expect(prepareChannelRead).toHaveBeenCalledTimes(1);
 });

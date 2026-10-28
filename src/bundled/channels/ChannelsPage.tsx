@@ -1898,6 +1898,7 @@ function ChannelWorkspace({
                 hidden={!!companion && !showingChannelPanel}
               >
                 <PanelWorkspace
+                  presented={!companion || showingChannelPanel}
                   key={currentId}
                   actions={
                     <IconButton

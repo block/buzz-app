@@ -1,5 +1,9 @@
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import styles from "./Panels.module.css";
+import {
+  WorkspacePresentation,
+  useWorkspacePresentation,
+} from "./WorkspacePresentation";
 
 /** Layout owns overlay breakpoints; CSS owns motion and input preferences.
  * Retain closing content only until its own transitions finish, without timers.
@@ -18,6 +22,7 @@ export function PanelDock({
   /** A collapsible workspace keeps its tab contents and local view state. */
   keepMounted?: boolean;
 }) {
+  const presented = useWorkspacePresentation();
   const element = useRef<HTMLDivElement>(null);
   const [retained, setRetained] = useState(open ? { children } : null);
   if (
@@ -60,7 +65,9 @@ export function PanelDock({
       aria-hidden={!open || undefined}
     >
       {open && resizeHandle}
-      {open || keepMounted ? children : retained?.children}
+      <WorkspacePresentation.Provider value={presented && (open || !!retained)}>
+        {open || keepMounted ? children : retained?.children}
+      </WorkspacePresentation.Provider>
     </div>
   );
 }

@@ -70,7 +70,7 @@ export function RetainedWorkspacePresentation({
   );
   return (
     <WorkspacePresentation.Provider
-      value={active && (target ? presented : origin)}
+      value={target ? presented : active && origin}
     >
       {children}
     </WorkspacePresentation.Provider>

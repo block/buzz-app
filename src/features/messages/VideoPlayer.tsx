@@ -75,7 +75,11 @@ export function VideoControls({
   onMarker?(id: string, seconds: number): void;
 }) {
   const corners = useMediaCorners();
-  const presented = useWorkspacePresentation();
+  const workspacePresented = useWorkspacePresentation();
+  // A review/fullscreen surface has its own visible lifetime even when its
+  // inline origin is covered. Only retained inline chrome defers publication.
+  const presented = !inline || workspacePresented;
+  const [time, setTime] = useState(0);
   const publishTime = useRef(true);
   useLayoutEffect(() => {
     publishTime.current = presented;
@@ -84,7 +88,6 @@ export function VideoControls({
     if (presented && videoRef.current) setTime(videoRef.current.currentTime);
   }, [presented, videoRef]);
   const [playing, setPlaying] = useState(false);
-  const [time, setTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(1);
   const [muted, setMuted] = useState(false);

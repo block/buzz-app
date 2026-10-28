@@ -22,6 +22,7 @@ import {
   WorkspacePresentation,
   RetainedWorkspacePresentation,
   publishWorkspacePresentation,
+  useWorkspacePresentation,
 } from "./WorkspacePresentation";
 
 type Item = {
@@ -113,7 +114,10 @@ export function PanelWorkspace({
   adoptSelection,
   tabMenu,
   drag,
+  presented = true,
 }: {
+  /** Outer feature-owned visibility, such as a companion covering this workspace. */
+  presented?: boolean | undefined;
   /** The channel owner closes tabs across both panes, including hidden tabs. */
   tabMenu?:
     | {
@@ -139,6 +143,7 @@ export function PanelWorkspace({
   /** A new value adopts the current selection without moving focus. */
   adoptSelection?: unknown;
 }) {
+  const workspacePresented = useWorkspacePresentation() && presented;
   const prefix = useId();
   const panelId = (id: string) => `${prefix}-${id}`;
   const [titles, setTitles] = useState<Record<string, Identity | undefined>>(
@@ -485,7 +490,12 @@ export function PanelWorkspace({
               inert={selected !== item.id}
               aria-hidden={selected !== item.id || undefined}
             >
-              <WorkspacePresentation.Provider value={selected === item.id}>
+              <WorkspacePresentation.Provider
+                value={
+                  workspacePresented &&
+                  (selected === item.id || motion?.leave === item.id)
+                }
+              >
                 {item.content}
               </WorkspacePresentation.Provider>
             </div>
@@ -497,6 +507,7 @@ export function PanelWorkspace({
             id={tab.id}
             panelId={panelId(tab.id)}
             selected={selected === tab.id}
+            presented={workspacePresented && selected === tab.id}
             setSlot={setSlot}
           />
         ))}
@@ -522,11 +533,13 @@ function LocalSlot({
   id,
   panelId,
   selected,
+  presented,
   setSlot,
 }: {
   id: string;
   panelId: string;
   selected: boolean;
+  presented: boolean;
   setSlot(id: string, element: HTMLDivElement | null): void;
 }) {
   const node = useRef<HTMLDivElement | null>(null);
@@ -540,8 +553,8 @@ function LocalSlot({
     [id, setSlot],
   );
   useLayoutEffect(() => {
-    if (node.current) publishWorkspacePresentation(node.current, selected);
-  }, [selected]);
+    if (node.current) publishWorkspacePresentation(node.current, presented);
+  }, [presented]);
   return (
     <div
       ref={ref}

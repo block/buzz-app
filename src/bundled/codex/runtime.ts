@@ -1,3 +1,4 @@
+import { isFinalMessage } from "../../buzz-mcp/session-tools";
 import type { WorkOutcome } from "../../features/agents/local-activity";
 import { fromOwner, workflowOf } from "../../features/agents/owner-attestation";
 import {
@@ -1238,9 +1239,7 @@ export class CodexRuntime {
       args,
       this.added(),
     );
-    const final =
-      (call.tool === "send" || call.tool === "reply_in_subthread") &&
-      args.final === true;
+    const final = isFinalMessage(call.tool, args);
     if (final) {
       for (const taken of answering) taken.answered();
     }

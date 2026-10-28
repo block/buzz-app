@@ -4,6 +4,7 @@
 // into the running turn at its next tool call. Buzz tools are served over the
 // same pipe, as the SDK serves an in-process MCP server, so the process holds
 // no Buzz key.
+import { MESSAGE_TOOLS } from "../../buzz-mcp/session-tools";
 import type {
   HostProcess,
   HostProcessOptions,
@@ -50,7 +51,7 @@ export type ToolServer = (
 /** Its tools are `mcp__buzz__<name>`. */
 export const TOOL_SERVER = "buzz";
 /** The tools that take `final`, as a hook matcher pattern. */
-const FINAL_TOOL = `mcp__${TOOL_SERVER}__(send|reply_in_subthread)`;
+const FINAL_TOOL = `mcp__${TOOL_SERVER}__(${MESSAGE_TOOLS.join("|")})`;
 const FINAL_NAME = new RegExp(`^${FINAL_TOOL}$`);
 
 type Message = Record<string, unknown> & { type?: string; subtype?: string };

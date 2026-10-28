@@ -180,6 +180,35 @@ it("shows what the agent posted as its reply once sent, and names Buzz tools as 
   ]);
 });
 
+it("leaves a bare send or reply_in_subthread, outside Buzz, as an ordinary tool", () => {
+  clock = 0;
+  const [turn] = claudeTurns(
+    [
+      line("user", prompt("go")),
+      ...["send", "reply_in_subthread"].flatMap((name) => [
+        line("assistant", [
+          { type: "tool_use", id: name, name, input: { text: "Hi." } },
+        ]),
+        line("user", [
+          {
+            type: "tool_result",
+            tool_use_id: name,
+            content: "ok",
+            is_error: false,
+          },
+        ]),
+      ]),
+    ].join("\n"),
+    conversation,
+    false,
+  );
+  expect(turn?.items).toEqual([
+    expect.objectContaining({ type: "prompt" }),
+    expect.objectContaining({ type: "tool" }),
+    expect.objectContaining({ type: "tool" }),
+  ]);
+});
+
 it("keeps steps before the first loaded prompt as a partial turn", () => {
   clock = 0;
   const [turn] = claudeTurns(

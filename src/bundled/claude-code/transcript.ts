@@ -1,6 +1,7 @@
 // A conversation's Claude Code session, read from the transcript Claude Code
 // keeps on this computer and shown in the host's turn-transcript model. Claude
 // Code owns the file; nothing here writes or keeps it.
+import { isMessageTool } from "../../buzz-mcp/session-tools";
 import { readFile } from "../../buzz-mcp/app-client";
 import {
   promptMessage,
@@ -187,8 +188,8 @@ export function claudeTurns(
         const name = str(block.name);
         const input = object(block.input) ?? {};
         if (
-          (name === "mcp__buzz__send" ||
-            name === "mcp__buzz__reply_in_subthread") &&
+          name.startsWith("mcp__buzz__") &&
+          isMessageTool(name.slice("mcp__buzz__".length)) &&
           str(input.text).trim()
         ) {
           const message: TranscriptItem & { posted?: boolean } = {

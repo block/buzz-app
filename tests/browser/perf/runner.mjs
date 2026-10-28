@@ -202,6 +202,8 @@ function observe({
       pendingCancellation.push({ event, receipt });
     } else if (target) {
       ++nativeVersion;
+      // A queued scroll can report the same offset after an unseen correction.
+      if (event.type === "scroll") movementVersion = nativeVersion;
       if (event.type === "scrollend" && event.isTrusted)
         lastEnd = {
           version: nativeVersion,

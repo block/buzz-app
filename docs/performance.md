@@ -509,7 +509,10 @@ admission without driver waits. A trusted target scrollend after the latest
 wheel and covering latest motion may end at0. An earlier genuine end at0 can
 cover an exhausted clamped suffix only when all later accounted outward wheels
 stay at0 with no later movement and oldest visible. Geometry/admission/activity
-changes rearm/revalidate the candidate. End before final Node acknowledgement is
+changes rearm/revalidate the candidate. Every later target scroll notification,
+including one at the same sampled offset, invalidates the earlier end and needs
+a covering genuine end. A no-motion outward wheel without intervening scroll
+activity still needs no new end. End before final Node acknowledgement is
 allowed; browser/Node clocks are never subtracted.
 
 After closure/full mass/cancellation/work/terminal readiness, the existing200ms

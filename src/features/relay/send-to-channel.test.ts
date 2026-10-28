@@ -96,7 +96,7 @@ it("rejects third-party authors, pending messages, mismatched destinations and u
     expect(() => messages.sendToChannel(invalid)).toThrow();
   }
   expect(() => setup([root, reply], false).messages.sendToChannel(row)).toThrow(
-    /Join/,
+    /write access/,
   );
   expect(() => setup([root]).messages.sendToChannel(row)).toThrow(/Load/);
   expect(outbox.snapshot()).toHaveLength(0);

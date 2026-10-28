@@ -1030,6 +1030,12 @@ offers joining with read-only access. Explicit promotion to Member restores the
 composer; changing only `join_role` does not. Guests retain Leave, and the relay
 remains the authority for every write.
 
+The session keeps membership-based reading/lifecycle access separate from writing
+permission. Direct guest writes and uploads are refused, and queued writes are
+checked again before signing and publication, including signed retries. The
+relay's verified agent-owner edit/delete exception is preserved; it does not
+permit ordinary posts or reactions.
+
 Current members may also remove their own verified non-owner agents, but cannot
 edit their roles or remove someone else's agent. The service verifies signed
 ownership once per removal attempt, independently of display hints.

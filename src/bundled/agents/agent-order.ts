@@ -23,25 +23,30 @@ export function useAgentOrder(
   );
   const [error, setError] = useState("");
   const saved = scope ? readView<unknown>(scope, KEY, []) : [];
-  const ranks = new Map(
-    (Array.isArray(saved) ? saved : []).flatMap((key, index) =>
-      typeof key === "string" && /^[0-9a-f]{64}$/.test(key)
-        ? [[key, index] as const]
-        : [],
+  const savedKeys = [
+    ...new Set(
+      (Array.isArray(saved) ? saved : []).filter(
+        (key): key is string =>
+          typeof key === "string" && /^[0-9a-f]{64}$/.test(key),
+      ),
     ),
-  );
+  ];
+  const ranks = new Map(savedKeys.map((key, index) => [key, index]));
   const ordered = [...agents].sort(
     (a, b) =>
       (ranks.get(a.pubkey) ?? Infinity) - (ranks.get(b.pubkey) ?? Infinity),
   );
   const save = (next: readonly Agent[]) => {
-    const saved =
-      !!scope &&
-      writeView(
-        scope,
-        KEY,
-        next.map((agent) => agent.pubkey),
-      );
+    const keys = next.map((agent) => agent.pubkey);
+    const visible = new Set(keys);
+    let index = 0;
+    // An incomplete inventory is not deletion evidence. Replace only visible
+    // slots, retain absent saved keys, then append any newly seen agents.
+    const merged = savedKeys.map((key) =>
+      visible.has(key) ? keys[index++] : key,
+    );
+    merged.push(...keys.slice(index));
+    const saved = !!scope && writeView(scope, KEY, merged);
     setError(
       saved
         ? ""

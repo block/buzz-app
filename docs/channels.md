@@ -1017,11 +1017,12 @@ changing the admission default never changes those roles. Agent Bot roles retain
 their existing Member presentation.
 
 Channel Settings keeps **Visibility** separate from **New participant role**.
-On relays that publish an explicit `join_role` in signed kind:39000 metadata,
-owners/admins can select Member or Guest in Edit details and save through the
-existing kind:9002 command. Unchanged or omitted defaults are not resent, and
-success requires matching fresh signed metadata. A relay that omits or publishes
-an unrecognized default gets no admission-role control.
+Owners/admins can select Member or Guest in Edit details and save through the
+existing kind:9002 command. Older channel metadata may omit `join_role` even on a
+relay that supports it. An absent or unrecognized default displays as unavailable,
+with an unselected role field until the owner explicitly chooses a value.
+Unchanged or omitted defaults are not resent, and success requires matching fresh
+signed metadata; an older relay that ignores the choice cannot report success.
 
 A Guest's signed roster role makes the channel read-only independently of that
 default. Channel and thread history remain available, with a read-only notice

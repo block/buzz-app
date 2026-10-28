@@ -109,7 +109,7 @@ it("edits the new participant role separately, preserving existing participants 
   ]);
 });
 
-it("does not offer an admission setting when the relay does not publish it", async () => {
+it("lets owners explicitly set an unpublished default without guessing its current value", async () => {
   const h = harness();
   const user = userEvent.setup();
   render(
@@ -120,9 +120,19 @@ it("does not offer an admission setting when the relay does not publish it", asy
     />,
   );
   await user.click(await screen.findByRole("button", { name: "Edit details" }));
-  expect(
-    screen.queryByRole("combobox", { name: "New participant role" }),
-  ).not.toBeInTheDocument();
+  const choice = screen.getByRole("combobox", { name: "New participant role" });
+  expect(choice).toHaveTextContent("Choose a role");
+  expect(choice).toHaveAccessibleDescription(/current default is unavailable/i);
+  expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
+  await user.click(choice);
+  await user.click(await screen.findByRole("option", { name: "Guest" }));
+  expect(h.save).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Save changes" }));
+  expect(h.save).toHaveBeenCalledWith(
+    base,
+    { ...base, joinRole: "guest" },
+    expect.any(AbortSignal),
+  );
 });
 
 it("edits deliberately, cancels every field, and sends all fields only on Save", async () => {
@@ -487,6 +497,10 @@ it("orders metadata before actions and dismisses each edit layer with Escape", a
   expect(edit).toHaveFocus();
   await user.tab();
   expect(screen.getByRole("button", { name: "Edit visibility" })).toHaveFocus();
+  await user.tab();
+  expect(
+    screen.getByRole("button", { name: "Edit new participant role" }),
+  ).toHaveFocus();
   await user.tab();
   expect(screen.getByRole("button", { name: "Copy channel id" })).toHaveFocus();
   await user.tab();

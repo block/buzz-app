@@ -36,6 +36,9 @@ it("shows known channel details with diagnostics collapsed until requested", asy
   ).not.toBeInTheDocument();
   expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
   expect(screen.getByText("2")).toBeVisible();
+  const admissionRow = screen.getByText("New participant role").closest("div");
+  expect(admissionRow).toHaveTextContent("Not available");
+  expect(admissionRow).not.toHaveTextContent("Member");
   expect(screen.getByRole("tab", { name: "Channel settings" })).toHaveFocus();
   expect(screen.getByText("Refresh messages")).not.toBeVisible();
   await user.click(screen.getByText("Diagnostics"));

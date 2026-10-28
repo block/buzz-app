@@ -526,29 +526,28 @@ export function ChannelDetailsEditor({
                     })
                   }
                 />
-                {draft.joinRole !== undefined && (
-                  <Select
-                    variant="field"
-                    label="New participant role"
-                    value={draft.joinRole}
-                    description="Members can post and reply. Guests have read-only access. Changing this setting won’t change existing participants’ roles."
-                    error={errors?.joinRole}
-                    disabled={locked || !canEdit}
-                    groups={[
-                      {
-                        label: "Role",
-                        options: [
-                          { value: "member", label: "Member" },
-                          { value: "guest", label: "Guest" },
-                        ],
-                      },
-                    ]}
-                    onValueChange={(joinRole) => {
-                      if (joinRole === "member" || joinRole === "guest")
-                        patch({ draft: { ...draft, joinRole } });
-                    }}
-                  />
-                )}
+                <Select
+                  variant="field"
+                  label="New participant role"
+                  value={draft.joinRole ?? ""}
+                  placeholder="Choose a role"
+                  description={`${view.base?.joinRole === undefined ? "The current default is unavailable. " : ""}Members can post and reply. Guests have read-only access. Changing this setting won’t change existing participants’ roles.`}
+                  error={errors?.joinRole}
+                  disabled={locked || !canEdit}
+                  groups={[
+                    {
+                      label: "Role",
+                      options: [
+                        { value: "member", label: "Member" },
+                        { value: "guest", label: "Guest" },
+                      ],
+                    },
+                  ]}
+                  onValueChange={(joinRole) => {
+                    if (joinRole === "member" || joinRole === "guest")
+                      patch({ draft: { ...draft, joinRole } });
+                  }}
+                />
               </>
             )}
             {view.editing && status}

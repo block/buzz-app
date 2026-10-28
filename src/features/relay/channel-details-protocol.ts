@@ -226,7 +226,7 @@ export function channelTtl(event: RelayEvent): number | undefined {
   }
 }
 
-/** Older relays omit this capability; do not invent an admission default. */
+/** Older channel metadata may omit this field; do not invent its current value. */
 export function channelJoinRole(
   event: RelayEvent,
 ): "member" | "guest" | undefined {

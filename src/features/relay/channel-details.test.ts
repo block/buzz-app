@@ -107,32 +107,38 @@ function harness(role = "owner", labels = false) {
     },
   };
 }
-it("changes admission defaults without changing the signed roster, and requires matching readback", async () => {
-  const h = harness();
-  const withRole = (role: string) =>
-    h.record(39000, [...h.metadata().tags.slice(1), ["join_role", role]]);
-  h.set([withRole("member"), ...h.events().slice(1)]);
-  const originalRoster = h.entry(2);
-  const base = await h.owner.capability.load(id);
-  expect(base.joinRole).toBe("member");
-  const next = { ...base, joinRole: "guest" as const };
-  // A relay OK that ignores the new tag must not report success.
-  h.publish.mockImplementationOnce(async () => {});
-  await expect(h.owner.capability.save(base, next)).rejects.toThrow(
-    "may have been saved",
-  );
-  expect(h.sign.mock.calls[0]?.[0].tags).toContainEqual(["join_role", "guest"]);
-  expect(
-    h.sign.mock.calls[0]?.[0].tags.some(
-      ([key]) => key === "p" || key === "role",
-    ),
-  ).toBe(false);
-  h.set([withRole("guest"), ...h.events().slice(1)]);
-  await h.owner.capability.check(id);
-  expect(h.entry(2)).toBe(originalRoster);
-  expect(h.publish).toHaveBeenCalledOnce();
-  expect(h.owner.capability.snapshot(id)).toBeUndefined();
-});
+it.each([undefined, "member"] as const)(
+  "changes admission defaults from %s without changing the signed roster, and requires matching readback",
+  async (initialRole) => {
+    const h = harness();
+    const withRole = (role: string) =>
+      h.record(39000, [...h.metadata().tags.slice(1), ["join_role", role]]);
+    if (initialRole) h.set([withRole(initialRole), ...h.events().slice(1)]);
+    const originalRoster = h.entry(2);
+    const base = await h.owner.capability.load(id);
+    expect(base.joinRole).toBe(initialRole);
+    const next = { ...base, joinRole: "guest" as const };
+    // A relay OK that ignores the new tag must not report success.
+    h.publish.mockImplementationOnce(async () => {});
+    await expect(h.owner.capability.save(base, next)).rejects.toThrow(
+      "may have been saved",
+    );
+    expect(h.sign.mock.calls[0]?.[0].tags).toContainEqual([
+      "join_role",
+      "guest",
+    ]);
+    expect(
+      h.sign.mock.calls[0]?.[0].tags.some(
+        ([key]) => key === "p" || key === "role",
+      ),
+    ).toBe(false);
+    h.set([withRole("guest"), ...h.events().slice(1)]);
+    await h.owner.capability.check(id);
+    expect(h.entry(2)).toBe(originalRoster);
+    expect(h.publish).toHaveBeenCalledOnce();
+    expect(h.owner.capability.snapshot(id)).toBeUndefined();
+  },
+);
 
 it.each([undefined, "member", "guest"])(
   "only sends a changed admission role (base %s)",

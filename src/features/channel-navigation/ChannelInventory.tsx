@@ -146,13 +146,18 @@ export function ChannelInventory({
     lifecycle.snapshot,
   );
   const visibilityRequest = useRef<AbortController | undefined>(undefined);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: a completed roster refresh also refreshes per-viewer visibility.
+  // Roster commits join an in-flight refresh; only unmount or a new lifecycle
+  // cancels it, so live discovery cannot restart its retry budget.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a new lifecycle retires the previous refresh signal.
   useEffect(() => {
     const request = new AbortController();
     visibilityRequest.current = request;
-    if (list.status === "ready")
-      void lifecycle.refreshVisibility(request.signal);
     return () => request.abort();
+  }, [lifecycle]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a completed roster refresh also refreshes per-viewer visibility.
+  useEffect(() => {
+    if (list.status === "ready")
+      void lifecycle.refreshVisibility(visibilityRequest.current?.signal);
   }, [lifecycle, list.asOf, list.status]);
   const lifecycleFocus = useRef<string | undefined>(undefined);
   const lifecycleTrigger = useRef<HTMLElement | undefined>(undefined);

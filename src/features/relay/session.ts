@@ -1001,24 +1001,33 @@ export function createRelaySession(
     // Fail closed at raw/admitted admission; do not relax reference visibility.
     reader: {
       read: (filters, settings) =>
-        readVerified(filters, settings, true, (visible, raw) => {
-          const admitted = new Set(visible.map((event) => event.id));
-          if (
-            raw.some(
-              (event) =>
-                [40003, 5, 9005].includes(event.kind) &&
-                !admitted.has(event.id),
-            )
-          )
-            throw new Error(
-              "Inbox message updates could not be verified for current access. Retry inbox.",
-            );
-        }),
+        finiteRead(filters, settings, (signal) =>
+          readVerified(
+            filters,
+            { ...settings, signal },
+            true,
+            (visible, raw) => {
+              const admitted = new Set(visible.map((event) => event.id));
+              if (
+                raw.some(
+                  (event) =>
+                    [40003, 5, 9005].includes(event.kind) &&
+                    !admitted.has(event.id),
+                )
+              )
+                throw new Error(
+                  "Inbox message updates could not be verified for current access. Retry inbox.",
+                );
+            },
+          ),
+        ),
     },
     retainedEvent: unread.event,
     retainedEditIds: unread.retainedEditIds,
     addressedRead: (filter, signal, prepare) =>
-      readVerified([filter], { signal }, true, prepare),
+      finiteRead([filter], { signal }, (signal) =>
+        readVerified([filter], { signal }, true, prepare),
+      ),
     channels: channels.queries,
     viewer: transport?.viewer ?? "",
     notify,
@@ -1851,6 +1860,8 @@ export function createRelaySession(
           () => loadState(sidebarPreferences.queries.snapshot()),
           () => void sidebarPreferences.queries.refresh(),
         ),
+        // Visibility owns its quiet retries and exhausts without `transient`,
+        // so this source only reports `busy`; its retry is not reached.
         recoverable(
           lifecycle.capability.subscribe,
           () => loadState(lifecycle.capability.snapshot()),

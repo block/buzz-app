@@ -71,6 +71,19 @@ it("reloads a network failure quietly after backoff and preserves explicit playb
   expect(play).not.toHaveBeenCalled();
 });
 
+it("surfaces a later failure of a recovered source instead of reloading again", async () => {
+  const h = setup();
+  h.error();
+  await advance(750);
+  fireEvent.loadedMetadata(h.element);
+  await advance(0);
+  expect(h.recovered).toHaveBeenCalledOnce();
+  h.error();
+  await advance(7000);
+  expect(h.element.load).toHaveBeenCalledOnce();
+  expect(h.failed).toHaveBeenCalledOnce();
+});
+
 it("counts the initial browser failure and exposes failure after three reloads", async () => {
   const h = setup();
   h.error();

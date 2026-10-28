@@ -15,6 +15,7 @@ export function useMediaReadRecovery(
   recovered: () => void = () => {},
 ) {
   const pending = useRef<AbortController | undefined>(undefined);
+  const spent = useRef<string | undefined>(undefined);
   const callbacks = useRef({ failed, recovered });
   callbacks.current = { failed, recovered };
   useEffect(() => {
@@ -27,6 +28,10 @@ export function useMediaReadRecovery(
   const recover = (element: HTMLMediaElement): boolean => {
     if (pending.current) return true;
     if (!source || element.error?.code !== 2) return false;
+    // One quiet budget per source: loaded metadata does not prove the body
+    // downloads, so a later failure surfaces instead of reloading forever.
+    if (spent.current === source) return false;
+    spent.current = source;
     const controller = new AbortController();
     pending.current = controller;
     const initial = mediaFailure(element);

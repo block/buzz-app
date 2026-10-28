@@ -14,20 +14,23 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.useRealTimers();
 });
-function setup() {
+function setup(options?: Parameters<typeof createRelaySession>[1]) {
   const viewer = keypair(),
     relay = keypair();
   const query = vi.fn(
     async (_filters: readonly ReadFilter[], _signal?: AbortSignal) =>
       [] as RelayEvent[],
   );
-  const owner = createRelaySession({
-    viewer: viewer.pubkey,
-    relayAuthor: relay.pubkey,
-    query,
-    media: () => undefined,
-    subscribe: () => ({ update() {}, retry() {}, dispose() {} }),
-  });
+  const owner = createRelaySession(
+    {
+      viewer: viewer.pubkey,
+      relayAuthor: relay.pubkey,
+      query,
+      media: () => undefined,
+      subscribe: () => ({ update() {}, retry() {}, dispose() {} }),
+    },
+    options,
+  );
   owners.push(owner);
   const filter = [{ kinds: [0], authors: [viewer.pubkey], limit: 1 }];
   return { owner, query, viewer, filter };
@@ -100,3 +103,20 @@ it.each(["caller", "clearCache", "dispose"] as const)(
     ).toHaveLength(before);
   },
 );
+
+it("surfaces a cached-only inbox failure without retrying it", async () => {
+  const h = setup({ cachedOnly: true });
+  await h.owner.session.inboxFeed.ensure();
+  expect(h.owner.session.inboxFeed.snapshot().status).toBe("error");
+  expect(vi.getTimerCount()).toBe(0);
+  expect(h.query).not.toHaveBeenCalled();
+});
+
+it("retries a transient inbox read through the session", async () => {
+  const h = setup();
+  h.query.mockRejectedValueOnce(new TypeError("offline"));
+  const pending = h.owner.session.inboxFeed.ensure();
+  await vi.advanceTimersByTimeAsync(750);
+  await pending;
+  expect(h.owner.session.inboxFeed.snapshot().status).toBe("ready");
+});

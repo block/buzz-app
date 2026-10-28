@@ -148,6 +148,12 @@ function fixture(
       };
       for (const listener of listeners) listener();
     });
+  // A discovery commit, as live roster events produce.
+  const commit = () =>
+    act(() => {
+      list = { ...list, asOf: (list.asOf ?? 0) + 1 };
+      for (const listener of listeners) listener();
+    });
   const drop = (id: string) =>
     act(() => {
       list = {
@@ -218,6 +224,7 @@ function fixture(
     list,
     session,
     publish,
+    commit,
     drop,
     connection(next: RelaySnapshot) {
       act(() => {
@@ -259,7 +266,10 @@ it("keeps visibility recovery quiet, then offers the existing retry after exhaus
     expect(
       screen.queryByRole("button", { name: "Retry hidden conversations" }),
     ).not.toBeInTheDocument();
-    await act(() => vi.advanceTimersByTimeAsync(5250));
+    f.commit();
+    await act(() => vi.advanceTimersByTimeAsync(1000));
+    f.commit();
+    await act(() => vi.advanceTimersByTimeAsync(4250));
     expect(read).toHaveBeenCalledTimes(4);
     expect(
       screen.getByText("Hidden conversations could not be refreshed."),

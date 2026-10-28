@@ -220,11 +220,21 @@ export function ActivityAccessory(props: ActivityProps) {
     >
       <AgentResponsePreview
         name={primary.name}
+        participants={bubble.map((entry) => ({
+          id: entry.agent,
+          name: entry.name,
+          picture: avatarMedia(entry.picture, session.media),
+        }))}
         picture={avatarMedia(primary.picture, session.media)}
         layout={props.messageLayout}
       >
         {shown.map((entry) => (
-          <TypingReplacement key={entry.agent} {...props} agent={entry.agent} />
+          <TypingReplacement
+            shared
+            key={entry.agent}
+            {...props}
+            agent={entry.agent}
+          />
         ))}
         <ActivityBubble
           key={`${channelId}:${message?.id ?? ""}`}
@@ -458,9 +468,6 @@ function ActivityBubble({
     <span className={styles.summaryGroups}>
       {otherEntries.length > 0 && (
         <span className={styles.summaryActivity} data-thread-working="">
-          {avatars(
-            otherEntries.filter((entry) => entry.agent !== entries[0]?.agent),
-          )}
           {(working || waiting) && (
             <ActivityStepPreview
               text={stepText}
@@ -669,7 +676,7 @@ export function ActivityTypingReplacement(props: ComposerAccessoryProps) {
   return (
     <>
       {agents.map(({ agent }) => (
-        <TypingReplacement shared key={agent} {...props} agent={agent} />
+        <TypingReplacement key={agent} {...props} agent={agent} />
       ))}
     </>
   );

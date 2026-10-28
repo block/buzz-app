@@ -13,6 +13,7 @@ export function useActivityIndicator(
   session: RelaySession | undefined,
   row: ChannelMessage,
   eligible: boolean,
+  participants?: readonly string[],
 ) {
   const typing = useSyncExternalStore(
     session?.typing?.subscribe ?? noSubscribe,
@@ -22,16 +23,24 @@ export function useActivityIndicator(
     session?.agentActivity?.subscribe ?? noSubscribe,
     session?.agentActivity?.snapshot ?? noActivity,
   );
+  const represented = new Set(participants ?? [row.authorId]);
   const detail = eligible
     ? currentActivity(
         activity,
         typing,
-        new Set([row.authorId]),
+        represented,
         row.channelId,
         row.threadRootId,
-      ).get(row.authorId)
+      )
     : undefined;
-  const live = !!detail?.roots.includes(row.threadRootId ?? null);
+  const liveAgents = [...(detail ?? [])]
+    .filter(
+      ([agent, value]) =>
+        represented.has(agent) &&
+        value.roots.includes(row.threadRootId ?? null),
+    )
+    .map(([agent]) => agent);
+  const live = liveAgents.length > 0;
   useActivityTypingReplacement(
     session
       ? {
@@ -42,6 +51,7 @@ export function useActivityIndicator(
         }
       : undefined,
     live,
+    liveAgents,
   );
   return live;
 }

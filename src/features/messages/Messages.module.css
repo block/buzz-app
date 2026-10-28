@@ -3573,3 +3573,51 @@ html[data-keyboard-navigation] .activityExpansion {
   letter-spacing: var(--text-message--letter-spacing);
   font-weight: var(--text-message--font-weight);
 }
+
+/* Keep a working team inside the same footprint as one message avatar. */
+.agentAvatarGroup {
+  position: relative;
+  display: block;
+  width: 2.5rem;
+  height: 2.5rem;
+}
+.message:not([data-layout="timeline"]) .agentAvatarGroup {
+  width: 2rem;
+  height: 2rem;
+}
+.agentAvatarGroupItem {
+  position: absolute;
+  inset: 0;
+  transform-origin: top left;
+  transform: scale(1);
+  opacity: 1;
+  transition:
+    transform var(--duration-state) var(--easing-settle),
+    opacity var(--duration-state) var(--easing-enter);
+}
+.agentAvatarGroup[data-count="2"] .agentAvatarGroupItem:first-child {
+  transform: scale(0.62);
+}
+.agentAvatarGroup[data-count="2"] .agentAvatarGroupItem:nth-child(2) {
+  transform: translate(38%, 38%) scale(0.62);
+}
+.agentAvatarGroup[data-count="3"] .agentAvatarGroupItem:first-child {
+  transform: translateX(22%) scale(0.56);
+}
+.agentAvatarGroup[data-count="3"] .agentAvatarGroupItem:nth-child(2) {
+  transform: translateY(44%) scale(0.56);
+}
+.agentAvatarGroup[data-count="3"] .agentAvatarGroupItem:nth-child(3) {
+  transform: translate(44%, 44%) scale(0.56);
+}
+@starting-style {
+  .agentAvatarGroup[data-count] .agentAvatarGroupItem:not(:first-child) {
+    opacity: 0;
+    transform: translate(22%, 22%) scale(0.52);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .agentAvatarGroupItem {
+    transition: none;
+  }
+}

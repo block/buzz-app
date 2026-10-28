@@ -12,7 +12,6 @@ import {
 } from "react";
 import { profileActivityViewTarget } from "../profiles/target";
 import { currentActivity } from "../agents/current-activity";
-import { AvatarStack } from "../../shared/design-system/ui/AvatarStack";
 import { AgentResponsePreview } from "./AgentResponsePreview";
 import { ActivityStepPreview } from "./ActivityStepPreview";
 import { AgentActivityRow } from "../agents/AgentActivityRow";
@@ -55,13 +54,38 @@ export function useConversationAgents(
     () => new Set(choices.identities.map(({ pubkey }) => pubkey)),
     [choices],
   );
-  const details = useMemo(
-    () =>
-      currentActivity(activity, entries, ownedAgents, channelId, threadRootId),
-    [activity, entries, ownedAgents, channelId, threadRootId],
+  const profiles = useSyncExternalStore(
+    session.profiles.subscribe,
+    session.profiles.snapshot,
   );
+  const details = useMemo(() => {
+    const current = new Map(
+      currentActivity(activity, entries, ownedAgents, channelId, threadRootId),
+    );
+    // Public agent identity changes presentation, never access to private activity.
+    for (const entry of entries) {
+      if (
+        entry.channelId !== channelId ||
+        entry.threadRootId !== threadRootId ||
+        !profiles.get(entry.pubkey)?.isAgent ||
+        current.has(entry.pubkey)
+      )
+        continue;
+      current.set(entry.pubkey, {
+        label: "Working",
+        roots: [entry.threadRootId ?? null],
+      });
+    }
+    return current;
+  }, [activity, entries, ownedAgents, channelId, threadRootId, profiles]);
   const agents = [...details.keys()].filter((key) => !replaced.has(key)).sort();
-  return { details, entries, replaced, agents };
+  return {
+    details,
+    entries,
+    replaced,
+    agents,
+    activityStatus: activity?.status,
+  };
 }
 
 /** Incoming conversation activity over existing stores; no reads or capture. */
@@ -86,11 +110,8 @@ export function TypingIndicator({
     | ((target: string, origin?: MessageLinkOrigin) => boolean)
     | undefined;
 }) {
-  const { details, entries, replaced, agents } = useConversationAgents(
-    session,
-    channelId,
-    threadRootId,
-  );
+  const { details, entries, replaced, agents, activityStatus } =
+    useConversationAgents(session, channelId, threadRootId);
   const resolveName = useChannelIdentityNames(session, channelId);
   const profiles = useSyncExternalStore(
     session.profiles.subscribe,
@@ -169,12 +190,24 @@ export function TypingIndicator({
       ? `buzz://message?${new URLSearchParams({ channel: channelId, id: conversationRoot, thread: conversationRoot })}`
       : `buzz://channel/${encodeURIComponent(channelId)}`;
     const picture = profiles.get(pubkey)?.picture;
+    const owner = profiles.get(pubkey)?.ownerPubkey;
+    const otherOwner = !!owner && !!session.viewer && owner !== session.viewer;
     return (
       <AgentActivityRow
         name={name(pubkey)}
         picture={avatarMedia(picture, session.media)}
         status={
-          detail.label === "Working" ? "Step details unavailable" : detail.label
+          detail.label !== "Working"
+            ? detail.label
+            : otherOwner
+              ? "This agent’s work details are private."
+              : activityStatus === "connecting"
+                ? "Connecting to step details…"
+                : activityStatus === "interrupted"
+                  ? "Step updates paused: connection lost."
+                  : activityStatus === "listening"
+                    ? "This agent isn’t sharing step details."
+                    : "This app can’t show step details"
         }
         scope={
           detail.roots.length === 1 && detail.roots[0] === null
@@ -217,12 +250,18 @@ export function TypingIndicator({
         <div
           className={styles.typing}
           data-in-flow={inFlow || undefined}
+          data-layout={threadRootId ? "thread" : "timeline"}
           data-conversation-activity=""
         >
           {firstAgent && (
             <AgentResponsePreview
               stackPrevious={previousAuthor === firstAgent}
               name={name(firstAgent)}
+              participants={agents.map((id) => ({
+                id,
+                name: name(id),
+                picture: avatarMedia(profiles.get(id)?.picture, session.media),
+              }))}
               picture={avatarMedia(
                 profiles.get(firstAgent)?.picture,
                 session.media,
@@ -238,18 +277,6 @@ export function TypingIndicator({
                 }
                 content={
                   <>
-                    <AvatarStack
-                      size="small"
-                      items={agents.slice(1).map((id) => ({
-                        id,
-                        name: name(id),
-                        src: avatarMedia(
-                          profiles.get(id)?.picture,
-                          session.media,
-                        ),
-                        shape: "squircle",
-                      }))}
-                    />
                     <ActivityStepPreview
                       state={
                         details.get(firstAgent)?.label ===

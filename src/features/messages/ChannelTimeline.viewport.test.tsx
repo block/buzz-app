@@ -277,6 +277,10 @@ it("uses one preview in channels and separates runs at public replies", () => {
     );
     expect(screen.queryByText("Update 0")).toBeNull();
     expect(screen.getByText("4 completed steps")).toBeVisible();
+    const completed = screen.getByRole("button", {
+      name: /Show activity history.*4 completed steps/,
+    });
+    expect(completed.querySelector("[data-avatar-motion-key]")).toBeNull();
     expect(screen.getByText("Main reply")).toBeVisible();
     expect(screen.getByText("Update 8")).toBeVisible();
     expect(

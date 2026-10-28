@@ -100,3 +100,25 @@ it("places completed history after its agent reply while keeping unfinished work
     ),
   ).toEqual(pending);
 });
+
+it("hands unparented thread replies to the latest request without overriding explicit reply links", () => {
+  const { audience: _requestAudience, ...request } = activity("request", {
+    authorId: "human",
+    threadRootId: "root",
+  });
+  const { audience: _replyAudience, ...reply } = activity("reply", {
+    agentEnvelope: true,
+    threadRootId: "root",
+  });
+  const projected = (patch: Partial<ChannelMessage>) =>
+    activityPresentation(
+      [request, { ...reply, ...patch }],
+      undefined,
+      new Set(["agent"]),
+      "root",
+    ).representedAgents;
+  expect(projected({}).get("request")).toEqual(["agent"]);
+  expect(projected({}).get("root")).toBeUndefined();
+  expect(projected({ replyParentId: "root" }).get("root")).toEqual(["agent"]);
+  expect(projected({ replyParentId: "root" }).get("request")).toBeUndefined();
+});

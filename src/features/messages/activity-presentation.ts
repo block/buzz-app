@@ -86,9 +86,11 @@ export function activityPresentation(
       !agents.has(row.authorId)
     )
       request = row.id;
-    const parentRequest = requests.get(
-      row.replyParentId ?? row.threadRootId ?? "",
-    );
+    // A thread root is a scope, not necessarily the latest triggering request.
+    // Preserve explicit reply links; otherwise follow the preceding request.
+    const parentRequest = row.replyParentId
+      ? requests.get(row.replyParentId)
+      : undefined;
     const rowRequest =
       row.agentEnvelope || agents?.has(row.authorId)
         ? (parentRequest ?? request)

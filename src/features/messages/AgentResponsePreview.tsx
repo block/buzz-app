@@ -7,6 +7,7 @@ import styles from "./Messages.module.css";
 export function AgentResponsePreview({
   name,
   picture,
+  participants = [],
   layout = "timeline",
   children,
   stackPrevious = false,
@@ -14,6 +15,11 @@ export function AgentResponsePreview({
   stackPrevious?: boolean;
   name: string;
   picture?: string | undefined;
+  participants?: readonly {
+    id: string;
+    name: string;
+    picture?: string | undefined;
+  }[];
   layout?: "timeline" | "thread" | "continuation" | undefined;
   children: ReactNode;
 }) {
@@ -28,13 +34,37 @@ export function AgentResponsePreview({
       <div className={styles.messageBody}>
         <div className={styles.messageContent}>
           <div className={styles.messageAvatar} title={name}>
-            <Avatar
-              src={picture}
-              alt={name}
-              fallback={name}
-              shape="squircle"
-              size={layout === "timeline" ? "large" : "default"}
-            />
+            <span
+              className={styles.agentAvatarGroup}
+              data-count={Math.max(1, Math.min(participants.length, 3))}
+              role="img"
+              aria-label={
+                participants.length
+                  ? participants.map((agent) => agent.name).join(", ")
+                  : name
+              }
+            >
+              <span className={styles.agentAvatarGroupItem}>
+                <Avatar
+                  src={participants[0]?.picture ?? picture}
+                  alt=""
+                  fallback={participants[0]?.name ?? name}
+                  shape="squircle"
+                  size="fill"
+                />
+              </span>
+              {participants.slice(1, 3).map((agent) => (
+                <span key={agent.id} className={styles.agentAvatarGroupItem}>
+                  <Avatar
+                    src={agent.picture}
+                    alt=""
+                    fallback={agent.name}
+                    shape="squircle"
+                    size="fill"
+                  />
+                </span>
+              ))}
+            </span>
           </div>
           {!stackPrevious && (
             <div className={styles.messageHeader}>

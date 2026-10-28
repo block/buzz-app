@@ -36,6 +36,7 @@ export function ActivityGroupPreview({
     session,
     row,
     !done && !group.followingMessage,
+    participants,
   );
   const primary = history[0]?.authorId ?? row.authorId;
   const profile = profiles.get(primary);
@@ -72,7 +73,7 @@ export function ActivityGroupPreview({
             );
           }}
         >
-          {expanded ? (
+          {done ? null : expanded ? (
             <Avatar
               size="small"
               shape="squircle"
@@ -113,7 +114,7 @@ export function ActivityGroupPreview({
             </span>
           )}
           <span className={styles.audiencePreviewText}>
-            {expanded ? (
+            {expanded && !done ? (
               "Collapse"
             ) : (
               <ShimmerText active={working || live}>{preview}</ShimmerText>
@@ -126,6 +127,15 @@ export function ActivityGroupPreview({
   return !done || group.standalone ? (
     <AgentResponsePreview
       name={name}
+      participants={
+        done
+          ? []
+          : participants.map((id) => ({
+              id,
+              name: profiles.get(id)?.name ?? id.slice(0, 10),
+              picture: avatarMedia(profiles.get(id)?.picture, media),
+            }))
+      }
       stackPrevious={!group.standalone}
       picture={avatarMedia(profile?.picture, media)}
       layout={layout}

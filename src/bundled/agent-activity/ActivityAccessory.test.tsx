@@ -18,7 +18,10 @@ import {
   ActivityAccessory,
   ActivityTypingReplacement,
 } from "./ActivityAccessory";
-import { TypingPresentation } from "../../features/conversation/typing-presentation";
+import {
+  ActivityIndicatorPresentation,
+  TypingPresentation,
+} from "../../features/conversation/typing-presentation";
 import { TypingIndicator } from "../../features/messages/TypingIndicator";
 import { createAgentActivity } from "../../features/agents/activity";
 import { createAgentLibrary } from "../../features/agents/library";
@@ -411,6 +414,9 @@ it("shows local receipt and failure without requiring an ACP transcript, and ope
       "View agent activity: Blossom, Starting",
     );
     expect(bubble.querySelector('[data-state="waiting"]')).not.toBeNull();
+    act(() => work.step("send_message"));
+    expect(bubble).not.toHaveTextContent("Sending a message");
+    expect(bubble.querySelector('[data-state="working"]')).not.toBeNull();
     act(() => work.step("Read", "notes.txt"));
     expect(bubble).toHaveAccessibleName(
       "View agent activity: Blossom, Reading notes.txt",
@@ -1162,6 +1168,55 @@ it("shows nothing later when a stopped hosted turn ends before its 30 seconds", 
     expect(notStopped()).toBe(0);
     expect(look().queryByText("Stopping…")).not.toBeInTheDocument();
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  } finally {
+    view.unmount();
+    f.dispose();
+  }
+});
+
+it("hands the visible request bubble to the live preview after a reply, even with the composer replacement mounted", () => {
+  const local = createLocalAgentActivity();
+  const f = fixture(local);
+  const typing = [{ pubkey: A, channelId: "c", threadRootId: root }];
+  const session = {
+    ...f.props.session,
+    typing: { snapshot: () => typing, subscribe: () => () => {} },
+  } as unknown as RelaySession;
+  const props = { ...f.props, session };
+  const ui = (representedAgents: string[]) => (
+    <ActivityIndicatorPresentation>
+      <ActivityAccessory {...props} representedAgents={representedAgents} />
+      <TypingPresentation active>
+        <ActivityTypingReplacement {...props} />
+      </TypingPresentation>
+      <TypingIndicator session={session} channelId="c" threadRootId={root} />
+    </ActivityIndicatorPresentation>
+  );
+  const work = local.begin({
+    scope: "test",
+    agent: A,
+    channelId: "c",
+    messageId: root,
+    threadRootId: root,
+  });
+  work.step("Read", "notes.txt");
+  const view = render(ui([]));
+  try {
+    expect(
+      screen.getByRole("button", {
+        name: "View agent activity: Blossom, Reading notes.txt",
+      }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "Activity: Blossom working" }),
+    ).toBeNull();
+    view.rerender(ui([A]));
+    expect(
+      screen.queryByLabelText("Agent activity on this message"),
+    ).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Activity: Blossom working" }),
+    ).toHaveTextContent("Reading notes.txt");
   } finally {
     view.unmount();
     f.dispose();

@@ -17,7 +17,7 @@ export function ActivityStepPreview({
       : characters.join("");
   return (
     <span className={styles.stepPreview}>
-      {!label ? (
+      {!label || label === "Sending a message" ? (
         <TypingDots size="message" state={state} />
       ) : (
         <span className={styles.stepText}>

@@ -47,7 +47,11 @@ function fixture() {
   };
   const profiles = new Map([
     [agent, { name: "Agent" }],
-    [human, { name: "Human", isAgent: true }],
+    [human, { name: "Human" }],
+    [
+      "public-agent",
+      { name: "Sam’s assistant", isAgent: true, ownerPubkey: "sam" },
+    ],
     [other, { name: "Other" }],
   ]);
   const library = { identities: [{ pubkey: agent }, { pubkey: other }] };
@@ -57,6 +61,7 @@ function fixture() {
   ];
   const ensure = vi.fn();
   const session = {
+    viewer: "viewer",
     typing: { snapshot: () => typing, subscribe },
     agentActivity: { snapshot: () => activity, subscribe },
     profiles: { snapshot: () => profiles, subscribe, ensure },
@@ -105,7 +110,16 @@ it("shows an incoming typing preview without invented details, retaining navigat
   expect(trigger).not.toHaveTextContent("Working");
   await user.hover(trigger);
   let dialog = await screen.findByRole("dialog", { name: "Working now" });
-  expect(within(dialog).getByText("Step details unavailable")).toBeVisible();
+  expect(
+    within(dialog).getByText("This agent isn’t sharing step details."),
+  ).toBeVisible();
+  f.update([entry()], { status: "connecting" });
+  expect(within(dialog).getByText("Connecting to step details…")).toBeVisible();
+  f.update([entry()], { status: "interrupted" });
+  expect(
+    within(dialog).getByText("Step updates paused: connection lost."),
+  ).toBeVisible();
+  f.update([entry()], { status: "listening" });
   expect(within(dialog).getByText("Thread · First task")).toBeVisible();
   await user.click(
     within(dialog).getByRole("button", { name: "View Agent activity" }),
@@ -187,7 +201,9 @@ it.each([
     );
     const dialog = await screen.findByRole("dialog", { name: "Working now" });
     expect(within(dialog).getByText(label, { exact: true })).toBeVisible();
-    expect(within(dialog).queryByText("Step details unavailable")).toBeNull();
+    expect(
+      within(dialog).queryByText("This agent isn’t sharing step details."),
+    ).toBeNull();
     expect(dialog).not.toHaveTextContent("report.txt");
   },
 );
@@ -239,7 +255,9 @@ it("keeps a non-navigable status when the plugin is unavailable and does not clo
   });
   await user.click(trigger);
   let dialog = await screen.findByRole("dialog");
-  expect(within(dialog).getByText("Step details unavailable")).toBeVisible();
+  expect(
+    within(dialog).getByText("This app can’t show step details"),
+  ).toBeVisible();
   expect(within(dialog).queryByRole("button")).toBeNull();
   view.rerender(
     <TypingIndicator
@@ -643,68 +661,79 @@ it("Solo chat ArrowDown exposes retained thread navigation without opening Activ
   expect(trigger).toHaveFocus();
 });
 
-it("hands the live signal to visible activity and restores dots when it leaves", () => {
-  const f = fixture();
-  const row: ChannelMessage = {
-    id: "step",
-    channelId: "channel",
-    authorId: agent,
-    audience: "agents",
-    createdAt: 100,
-    content: "Checking the fix",
-    mentions: [],
-    attachments: [],
-    reactions: [],
-    participants: [],
-    replyCount: 0,
-  };
-  const group = activityPresentation(
-    [{ ...row, id: "first" }, row],
-    undefined,
-    new Set([agent]),
-  ).groups[0];
-  if (!group) throw new Error("Missing activity group");
-  const renderFlow = (show: boolean) => (
-    <ActivityIndicatorPresentation>
-      {show && (
-        <ActivityGroupPreview
-          session={f.session}
-          group={group}
-          profiles={new Map()}
-          media={() => undefined}
-          expanded={false}
-          onToggle={() => {}}
-        />
-      )}
-      <TypingIndicator session={f.session} channelId="channel" />
-    </ActivityIndicatorPresentation>
-  );
-  f.update([{ pubkey: agent, channelId: "channel" }]);
-  const view = render(renderFlow(false));
-  expect(
-    screen.getByRole("button", { name: "Activity: Agent working" }),
-  ).toBeVisible();
-  view.rerender(renderFlow(true));
-  expect(
-    screen.queryByRole("button", { name: "Activity: Agent working" }),
-  ).toBeNull();
-  expect(screen.getByText("Checking the fix")).toHaveAttribute(
-    "data-active",
-    "true",
-  );
-  f.update([{ pubkey: agent, channelId: "channel", threadRootId: secondRoot }]);
-  expect(
-    screen.getByRole("button", { name: "Activity: Agent working" }),
-  ).toBeVisible();
-  expect(screen.getByText("Checking the fix")).not.toHaveAttribute(
-    "data-active",
-  );
-  f.update([{ pubkey: agent, channelId: "channel" }]);
-  view.rerender(renderFlow(false));
-  expect(
-    screen.getByRole("button", { name: "Activity: Agent working" }),
-  ).toBeVisible();
-});
+it.each([false, true])(
+  "hands live signals to visible activity and restores dots when it leaves (team=%s)",
+  (team) => {
+    const f = fixture();
+    const row: ChannelMessage = {
+      id: "step",
+      channelId: "channel",
+      authorId: agent,
+      audience: "agents",
+      createdAt: 100,
+      content: "Checking the fix",
+      mentions: [],
+      attachments: [],
+      reactions: [],
+      participants: [],
+      replyCount: 0,
+    };
+    const group = activityPresentation(
+      [{ ...row, id: "first", authorId: team ? other : agent }, row],
+      undefined,
+      new Set([agent]),
+    ).groups[0];
+    if (!group) throw new Error("Missing activity group");
+    const renderFlow = (show: boolean) => (
+      <ActivityIndicatorPresentation>
+        {show && (
+          <ActivityGroupPreview
+            session={f.session}
+            group={group}
+            profiles={new Map()}
+            media={() => undefined}
+            expanded={false}
+            onToggle={() => {}}
+          />
+        )}
+        <TypingIndicator session={f.session} channelId="channel" />
+      </ActivityIndicatorPresentation>
+    );
+    const pulses = [
+      { pubkey: agent, channelId: "channel" },
+      ...(team ? [{ pubkey: other, channelId: "channel" }] : []),
+    ];
+    f.update(pulses);
+    const view = render(renderFlow(false));
+    expect(
+      screen.getByRole("button", {
+        name: team ? "Activity: 2 agents working" : "Activity: Agent working",
+      }),
+    ).toBeVisible();
+    view.rerender(renderFlow(true));
+    expect(
+      screen.queryByRole("button", { name: /Activity: .*working/ }),
+    ).toBeNull();
+    expect(screen.getByText("Checking the fix")).toHaveAttribute(
+      "data-active",
+      "true",
+    );
+    f.update([
+      { pubkey: agent, channelId: "channel", threadRootId: secondRoot },
+    ]);
+    expect(
+      screen.getByRole("button", { name: "Activity: Agent working" }),
+    ).toBeVisible();
+    expect(screen.getByText("Checking the fix")).not.toHaveAttribute(
+      "data-active",
+    );
+    f.update([{ pubkey: agent, channelId: "channel" }]);
+    view.rerender(renderFlow(false));
+    expect(
+      screen.getByRole("button", { name: "Activity: Agent working" }),
+    ).toBeVisible();
+  },
+);
 
 it("groups an in-flow typing preview without repeating the preceding agent's byline", () => {
   const f = fixture();
@@ -722,4 +751,31 @@ it("groups an in-flow typing preview without repeating the preceding agent's byl
   expect(
     view.container.querySelector("[data-agent-response-preview]"),
   ).toHaveAttribute("data-stack-previous", "true");
+});
+
+it("uses the agent typing bubble for a public agent outside the viewer’s choices", async () => {
+  const f = fixture();
+  f.update([entry("public-agent")]);
+  render(
+    <TypingIndicator
+      session={f.session}
+      channelId="channel"
+      threadRootId={root}
+    />,
+  );
+  const trigger = screen.getByRole("button", {
+    name: "Activity: Sam’s assistant working",
+  });
+  expect(screen.getByRole("img", { name: "Sam’s assistant" })).toBeVisible();
+  expect(trigger.querySelector('[data-state="working"]')).not.toBeNull();
+  await userEvent.setup().click(trigger);
+  expect(
+    within(await screen.findByRole("dialog")).getByText(
+      "This agent’s work details are private.",
+    ),
+  ).toBeVisible();
+  f.update([]);
+  expect(
+    screen.queryByRole("button", { name: "Activity: Sam’s assistant working" }),
+  ).toBeNull();
 });

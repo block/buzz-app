@@ -90,9 +90,15 @@ export function ActivityIndicatorPresentation({
 export function useActivityTypingReplacement(
   value: Replacement | undefined,
   enabled: boolean,
+  participants?: readonly string[],
 ) {
   const store = useContext(ActivityPresentation);
-  useReplacement(store ? { store, active: true } : undefined, value, enabled);
+  useReplacement(
+    store ? { store, active: true } : undefined,
+    value,
+    enabled,
+    participants,
+  );
 }
 function useReplacement(
   context:
@@ -100,19 +106,32 @@ function useReplacement(
     | undefined,
   value: Replacement | undefined,
   enabled: boolean,
+  participants?: readonly string[],
 ) {
   const store = context?.store;
   const active = context?.active;
   const { session, channelId, threadRootId, pubkey } = value ?? {};
+  const participantKeys = (participants ?? (pubkey ? [pubkey] : [])).join(":");
   useLayoutEffect(() => {
-    if (active && enabled && session && channelId && pubkey)
-      return store?.register({
-        session,
-        channelId,
-        threadRootId,
-        pubkey,
-      });
-  }, [store, active, enabled, session, channelId, threadRootId, pubkey]);
+    if (!active || !enabled || !session || !channelId || !participantKeys)
+      return;
+    const releases = participantKeys
+      .split(":")
+      .map((pubkey) =>
+        store?.register({ session, channelId, threadRootId, pubkey }),
+      );
+    return () => {
+      for (const release of releases) release?.();
+    };
+  }, [
+    store,
+    active,
+    enabled,
+    session,
+    channelId,
+    threadRootId,
+    participantKeys,
+  ]);
 }
 export function useReplacedTypers(
   session: object | undefined,

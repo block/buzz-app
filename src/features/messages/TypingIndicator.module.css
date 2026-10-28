@@ -76,6 +76,28 @@
   padding: 0;
 }
 
+/* Align the label with bubble text; dots sit just before that text column. */
+.typing[data-in-flow] .humans {
+  position: relative;
+  margin-inline-start: calc(
+    var(--size-control) +
+    var(--space-3) +
+    var(--space-4)
+  );
+  padding-inline: 0;
+}
+.typing[data-in-flow][data-layout="thread"] .humans {
+  margin-inline-start: calc(
+    var(--size-control-sm) +
+    var(--space-2) +
+    var(--space-4)
+  );
+}
+.typing[data-in-flow] .humans .dots {
+  position: absolute;
+  inset-inline-end: calc(100% + var(--space-2));
+}
+
 /* A message interaction uses the bubble's type and inset, not control sizing. */
 .bubbleTrigger {
   display: flex;

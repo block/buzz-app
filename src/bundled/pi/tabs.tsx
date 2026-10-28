@@ -689,9 +689,13 @@ export function createTabs({
   function ActivityTab({
     agent,
     conversation,
+    initialTranscript,
+    close,
   }: {
     agent: AgentViewProps<Config>["agent"];
     conversation?: AgentViewProps<Config>["conversation"];
+    initialTranscript?: AgentViewProps<Config>["initialTranscript"];
+    close?: AgentViewProps<Config>["close"];
   }) {
     const working = useSyncExternalStore(
       (listener) => runtime.subscribe(listener),
@@ -725,6 +729,8 @@ export function createTabs({
       <PlaceList
         agent={agent}
         conversation={conversation}
+        initialTranscript={initialTranscript}
+        close={close}
         places={places}
         working={working}
       />
@@ -734,11 +740,15 @@ export function createTabs({
   function PlaceList({
     agent,
     conversation,
+    initialTranscript,
+    close,
     places,
     working,
   }: {
     agent: AgentViewProps<Config>["agent"];
     conversation?: AgentViewProps<Config>["conversation"];
+    initialTranscript?: AgentViewProps<Config>["initialTranscript"];
+    close?: AgentViewProps<Config>["close"];
     places: readonly Place[];
     working: readonly number[];
   }) {
@@ -749,7 +759,12 @@ export function createTabs({
     );
     const status = (place: Place) =>
       working.includes(place.conversation) ? "Working" : undefined;
-    const { open, show, back } = useOpenTranscript(conversation, label);
+    const { open, show, back } = useOpenTranscript(
+      conversation,
+      label,
+      initialTranscript ? here : undefined,
+      close,
+    );
     const recent = places
       .filter((place) => place.key !== here?.key)
       .slice(0, CONVERSATION_LIMIT);

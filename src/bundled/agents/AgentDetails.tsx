@@ -78,6 +78,8 @@ export function AgentDetails({
   messageAction,
   conversation,
   initialActivity,
+  initialTranscript,
+  close,
   communities,
 }: {
   agents: Agents;
@@ -90,6 +92,9 @@ export function AgentDetails({
   messageAction: (variant: "glass" | "subtle") => ReactNode;
   conversation?: AgentConversation | undefined;
   initialActivity?: boolean;
+  initialTranscript?: boolean;
+  /** Closes the panel showing the agent. */
+  close?: () => void;
   communities?: CommunityReader | undefined;
 }) {
   const { pack, src: backdrop } = useAgentPortraitSource(agent, agent.relay);
@@ -375,6 +380,8 @@ export function AgentDetails({
               channels={channels}
               conversation={conversation}
               initialActivity={initialActivity}
+              initialTranscript={initialTranscript}
+              close={close}
               settingsHost={settings.settingsHost}
               onDiscard={settings.discard}
               memories={memories}

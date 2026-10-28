@@ -29,6 +29,7 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
 import type { PanelProps } from "../../features/panels/service";
 import {
+  profileActivityTranscript,
   profileActivityViewKey,
   profileAgentHint,
   profilePanelKey,
@@ -73,6 +74,8 @@ export function ProfilePanel({
 }) {
   const connection = useRelayConnection(relay);
   const activityKey = profileActivityViewKey(target);
+  const transcript = profileActivityTranscript(target);
+  const opening = transcript ? "transcript" : activityKey ? "activity" : "info";
   const pubkey = profilePanelKey(target) ?? activityKey;
   const owned = useAgent(agents, pubkey ?? "");
   if (!pubkey) return <p>Unsupported profile.</p>;
@@ -87,10 +90,11 @@ export function ProfilePanel({
   )
     return (
       <OwnedAgentProfile
-        key={`${connection.scope}:${connection.generation}:${pubkey}:${activityKey ? "activity" : "info"}`}
+        key={`${connection.scope}:${connection.generation}:${pubkey}:${opening}`}
         agents={agents}
         communities={communities}
         initialActivity={!!activityKey}
+        initialTranscript={transcript}
         pubkey={pubkey}
         relay={relay}
         session={connection.session}
@@ -101,8 +105,9 @@ export function ProfilePanel({
     );
   return (
     <ProfileDetails
-      key={`${connection.scope}:${connection.generation}:${pubkey}:${activityKey ? "activity" : "info"}`}
+      key={`${connection.scope}:${connection.generation}:${pubkey}:${opening}`}
       initialTab={activityKey ? "activity" : "info"}
+      initialTranscript={transcript}
       session={connection.session}
       pubkey={pubkey}
       agentHint={profileAgentHint(target) || !!activityKey}
@@ -120,6 +125,7 @@ function OwnedAgentProfile({
   agents,
   communities,
   initialActivity,
+  initialTranscript,
   pubkey,
   relay,
   session,
@@ -130,6 +136,7 @@ function OwnedAgentProfile({
   agents: Agents;
   communities: CommunityReader | undefined;
   initialActivity: boolean;
+  initialTranscript: boolean;
   pubkey: string;
   relay: RelayData;
   session: RelaySession;
@@ -152,6 +159,8 @@ function OwnedAgentProfile({
       memories={session.agentMemories}
       onRemoved={close}
       initialActivity={initialActivity}
+      initialTranscript={initialTranscript}
+      close={close}
       conversation={
         context && {
           channelId: context.channelId,
@@ -173,6 +182,7 @@ function OwnedAgentProfile({
 
 function ProfileDetails({
   initialTab,
+  initialTranscript,
   agentHint,
   session,
   pubkey,
@@ -187,6 +197,7 @@ function ProfileDetails({
   agents: Agents | undefined;
   communities: CommunityReader | undefined;
   initialTab: "info" | "activity";
+  initialTranscript: boolean;
   agentHint: boolean;
   session: RelaySession;
   pubkey: string;
@@ -239,6 +250,8 @@ function ProfileDetails({
             channelId: context.channelId,
             ...(context.rootId && { rootId: context.rootId }),
           },
+          initialTranscript,
+          close,
           ...(settings.settingsHost
             ? { settingsHost: settings.settingsHost }
             : {}),

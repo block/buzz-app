@@ -349,6 +349,7 @@ it("exposes thinking through the named profile avatar across tabs", async () => 
 function renderAgentActivity(
   tabs: { title: string; role?: string }[],
   rootId?: string,
+  transcript = false,
 ) {
   const owner = createRelaySession(null);
   const snapshot = {
@@ -372,11 +373,14 @@ function renderAgentActivity(
       role,
       component: ({
         conversation,
+        initialTranscript,
       }: {
         conversation?: { channelId: string; rootId?: string };
+        initialTranscript?: boolean;
       }) => (
         <>
           <p>Echo {title.toLowerCase()}</p>
+          {initialTranscript && <p>Transcript first</p>}
           {conversation && (
             <p>
               Opened from {conversation.channelId}/
@@ -410,7 +414,7 @@ function renderAgentActivity(
     <ProfilePanel
       relay={relay}
       agents={agents}
-      target={profileActivityViewTarget(key) ?? ""}
+      target={profileActivityViewTarget(key, { transcript }) ?? ""}
       context={{
         channelId: "originating-channel",
         ...(rootId && { rootId }),
@@ -449,6 +453,24 @@ it("opens an agent's activity on its type's Activity tab, the profile's only one
     expect(screen.getByText("Echo settings")).toBeVisible();
     await user.click(screen.getByRole("tab", { name: "Activity" }));
     expect(screen.getByText("Echo activity")).toBeVisible();
+  } finally {
+    dispose();
+  }
+});
+
+it("asks the Activity tab for its transcript only when the opener knows the conversation", () => {
+  const tabs = [{ title: "Activity", role: "activity" }];
+  // Work in several threads opens the plain destination, never a transcript.
+  let dispose = renderAgentActivity(tabs);
+  try {
+    expect(screen.getByText("Echo activity")).toBeVisible();
+    expect(screen.queryByText("Transcript first")).toBeNull();
+  } finally {
+    dispose();
+  }
+  dispose = renderAgentActivity(tabs, "thread-root", true);
+  try {
+    expect(screen.getByText("Transcript first")).toBeVisible();
   } finally {
     dispose();
   }

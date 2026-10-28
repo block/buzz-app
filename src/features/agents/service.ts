@@ -246,6 +246,11 @@ export type AgentViewProps<Config = unknown> = {
   agent: Agent<Config>;
   /** Where the agent was opened from, when it was opened from a conversation. */
   conversation?: AgentConversation;
+  /** Opened from that conversation's activity: an Activity tab shows the
+   * conversation's transcript first. */
+  initialTranscript?: boolean;
+  /** Closes the panel showing the tab, when it was opened from activity. */
+  close?: () => void;
   /** Replaces the type's whole config. Spread `agent.config` to change one
    * field, or tabs that each save a part will erase each other's fields. A
    * hosted type's tabs save to its provider instead; for them this rejects. */

@@ -384,6 +384,50 @@ it("brings an open transcript's tab back, and closes it when the profile moves",
   expect(tab(transcript)).toHaveAttribute("aria-selected", "true");
 });
 
+it("opened from activity, shows the transcript, and closing it closes the panel", async () => {
+  const root = "e".repeat(64);
+  const f = fixture({
+    saved: {
+      [JSON.stringify(["channel", root])]: {
+        threadId: "kept",
+        workspace: "/w",
+        at: 2,
+      },
+    },
+  });
+  const close = vi.fn();
+  render(
+    <PanelWorkspace
+      value="profile"
+      select={() => undefined}
+      items={[
+        {
+          id: "profile",
+          label: "Sol",
+          close: () => undefined,
+          content: (
+            <f.tabs.ActivityTab
+              {...f.props()}
+              conversation={{ channelId: "channel", rootId: root }}
+              initialTranscript
+              close={close}
+            />
+          ),
+        },
+      ]}
+    />,
+  );
+  const transcript = "#general · thread eeeeeeee";
+  expect(await screen.findByRole("tab", { name: transcript })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await userEvent.click(
+    screen.getByRole("button", { name: `Close ${transcript} tab` }),
+  );
+  expect(close).toHaveBeenCalledOnce();
+});
+
 it("finds the thread's Codex session another build started", async () => {
   const root = "f".repeat(64);
   const tag = sessionTag("a".repeat(64), { channelId: "channel", root });

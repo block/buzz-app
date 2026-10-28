@@ -35,19 +35,33 @@ export function profileKey(target: string): string | undefined {
   }
 }
 
-/** App-local Activity destination, never a public identity or authority claim. */
-export function profileActivityViewTarget(pubkey: string): string | undefined {
+/** App-local Activity destination, never a public identity or authority claim.
+ * `transcript` is for an opener that knows which one conversation the work is
+ * in: Activity then shows that conversation's transcript first. */
+export function profileActivityViewTarget(
+  pubkey: string,
+  options?: { transcript: boolean },
+): string | undefined {
   return profileTarget(pubkey)
-    ? `buzz:profile?agent=${pubkey.toLowerCase()}&tab=activity`
+    ? `buzz:profile?agent=${pubkey.toLowerCase()}&tab=activity${options?.transcript ? "&open=transcript" : ""}`
     : undefined;
 }
 export function profileActivityViewKey(target: string): string | undefined {
   try {
     const agent = new URL(target).searchParams.get("agent");
-    return agent && target === profileActivityViewTarget(agent)
+    return agent &&
+      (target === profileActivityViewTarget(agent) ||
+        target === profileActivityViewTarget(agent, { transcript: true }))
       ? agent
       : undefined;
   } catch {
     return undefined;
   }
+}
+/** Whether an Activity destination asks for its conversation's transcript. */
+export function profileActivityTranscript(target: string): boolean {
+  const agent = profileActivityViewKey(target);
+  return (
+    !!agent && target === profileActivityViewTarget(agent, { transcript: true })
+  );
 }

@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
 import {
   profileAgentHint,
+  profileActivityTranscript,
   profileActivityViewTarget,
   profileActivityViewKey,
   profileKey,
@@ -65,4 +66,15 @@ it("recognizes only the exact local profile Activity destination", () => {
     `buzz:profile?agent=${key}&tab=info`,
   ])
     expect(profileActivityViewKey(invalid)).toBeUndefined();
+});
+
+it("marks only the transcript Activity destination as asking for it", () => {
+  const key = "ab".repeat(32);
+  const plain = profileActivityViewTarget(key) ?? "";
+  const transcript = profileActivityViewTarget(key, { transcript: true }) ?? "";
+  expect(transcript).not.toBe(plain);
+  expect(profileActivityViewKey(transcript)).toBe(key);
+  expect(profileActivityTranscript(transcript)).toBe(true);
+  expect(profileActivityTranscript(plain)).toBe(false);
+  expect(profileActivityTranscript(`${transcript}&owner=true`)).toBe(false);
 });

@@ -84,27 +84,45 @@ export function useOpenedSession<T extends Saved>(
 
 /** The transcript a type's tab shows over itself as a panel subview, titled
  * `title(row)`. It closes when the profile is retargeted to another
- * conversation, and viewing it again brings its tab back in a tabbed host. */
+ * conversation, and viewing it again brings its tab back in a tabbed host.
+ * `initial`, once found, opens by itself once per conversation unless the
+ * reader has already opened one; closing
+ * that tab calls `close`, since it was all that was asked for. */
 export function useOpenTranscript<T>(
   conversation: AgentConversation | undefined,
   title: (row: T) => string,
+  initial?: T,
+  close?: () => void,
 ) {
   const place = conversation
     ? `${conversation.channelId}/${conversation.rootId ?? ""}`
     : "";
-  const [shown, setShown] = useState<{ place: string; row: T }>();
+  const [shown, setShown] = useState<{
+    place: string;
+    row: T;
+    initial?: true;
+  }>();
   // Forgotten, not just hidden: returning to the first conversation must not
   // reopen it unasked.
   if (shown && shown.place !== place) setShown(undefined);
+  // Kept after Back, so closing it shows the profile rather than reopening.
+  const [offered, setOffered] = useState("");
+  if (initial !== undefined && place && offered !== place) {
+    setOffered(place);
+    setShown({ place, row: initial, initial: true });
+  }
   const tabs = usePanelTabHost();
   return {
     open: shown?.place === place ? shown.row : undefined,
     show(row: T) {
+      // The reader's own choice wins over a lookup still finishing.
+      setOffered(place);
       setShown({ place, row });
       tabs?.activate(tabs.owner, title(row));
     },
     back() {
-      setShown(undefined);
+      if (tabs && close && shown?.initial) close();
+      else setShown(undefined);
     },
   };
 }

@@ -29,6 +29,8 @@ export function agentSections({
   agent,
   type,
   conversation,
+  initialTranscript,
+  close,
   settingsHost,
   memories,
   communities,
@@ -39,6 +41,10 @@ export function agentSections({
   agent: Agent;
   type: RegisteredAgentType | undefined;
   conversation?: AgentConversation | undefined;
+  /** Opened for the conversation's transcript, its work's one known place. */
+  initialTranscript?: boolean | undefined;
+  /** Closes the panel the sections are shown in. */
+  close?: (() => void) | undefined;
   settingsHost?: AgentSettingsHost;
   settingsSection?: "identity" | "runtime";
   settingsContent?: ReactNode;
@@ -77,6 +83,12 @@ export function agentSections({
               ? { settingsContent: content }
               : {})}
             {...(conversation && { conversation })}
+            {...(role === "activity" &&
+              conversation &&
+              initialTranscript && {
+                initialTranscript: true,
+                ...(close && { close }),
+              })}
             save={(config) =>
               settingsHost?.pendingSave
                 ? settingsHost.pendingSave(config)

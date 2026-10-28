@@ -160,9 +160,17 @@ export function TypingIndicator({
     const rootId = threadRootId ?? (roots.length === 1 ? roots[0] : undefined);
     return rootId ? { rootId } : undefined;
   };
+  // Only work in one known conversation opens straight to its transcript.
+  const activityTarget = (pubkey: string) => {
+    const roots = details.get(pubkey)?.roots ?? [];
+    const known =
+      !!threadRootId ||
+      (roots.length === 1 && (roots[0] === null || !!roots[0]));
+    return profileActivityViewTarget(pubkey, { transcript: known });
+  };
   const directTarget =
     clickOpensPanel && agents.length === 1 && firstAgent
-      ? profileActivityViewTarget(firstAgent)
+      ? activityTarget(firstAgent)
       : undefined;
   const agentStatus = (
     pubkey: string,
@@ -170,7 +178,7 @@ export function TypingIndicator({
   ) => {
     const detail = details.get(pubkey);
     if (!detail) return null;
-    const target = profileActivityViewTarget(pubkey);
+    const target = activityTarget(pubkey);
     const canOpen = !!target && !!openActivity && !!canOpenActivity?.(target);
     const knownRoots = detail.roots.filter(
       (value) => typeof value === "string",
@@ -181,6 +189,23 @@ export function TypingIndicator({
       ? `buzz://message?${new URLSearchParams({ channel: channelId, id: conversationRoot, thread: conversationRoot })}`
       : `buzz://channel/${encodeURIComponent(channelId)}`;
     const picture = profiles.get(pubkey)?.picture;
+    const viewActivity =
+      canOpen && target
+        ? () => navigate(target, activityOrigin(pubkey))
+        : undefined;
+    // Going to the conversation already shown would do nothing, so the row
+    // opens its activity instead.
+    if (viewActivity && conversationRoot === threadRootId)
+      return (
+        <AgentActivityRow
+          name={name(pubkey)}
+          picture={avatarMedia(picture, session.media)}
+          status={detail.label}
+          scope={scopeLabel(pubkey)}
+          openLabel={`View ${name(pubkey)} activity`}
+          onOpen={viewActivity}
+        />
+      );
     return (
       <AgentActivityRow
         name={name(pubkey)}
@@ -189,11 +214,7 @@ export function TypingIndicator({
         scope={scopeLabel(pubkey)}
         openLabel={`Open ${conversationRoot ? "thread" : "conversation"} for ${name(pubkey)}`}
         onOpen={openActivity ? () => navigate(conversation) : undefined}
-        onOpenActivity={
-          canOpen && target
-            ? () => navigate(target, activityOrigin(pubkey))
-            : undefined
-        }
+        onOpenActivity={viewActivity}
       />
     );
   };

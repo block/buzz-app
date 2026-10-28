@@ -16,11 +16,14 @@ function availableMentionAgents<T extends { pubkey: string }>(
   agents: readonly T[],
   canInvite: boolean | undefined,
 ) {
-  return channel?.members &&
-    (channel.channelType === "stream" || channel.channelType === "forum") &&
-    canInvite
-    ? agents.filter((agent) => !channel.members?.includes(agent.pubkey))
-    : [];
+  if (
+    !channel?.members ||
+    (channel.channelType !== "stream" && channel.channelType !== "forum") ||
+    !canInvite
+  )
+    return [];
+  const members = new Set(channel.members);
+  return agents.filter((agent) => !members.has(agent.pubkey));
 }
 
 /** Row detail for an outside choice. Nobody can be added to a DM. */
@@ -34,15 +37,68 @@ export function outsideMentionDetail(
     : "Not in channel · Choose whether to add when you send";
 }
 
+type DirectoryPerson = MentionRecipient & { isAgent?: true };
+type ElsewhereAgent = Pick<Agent, "pubkey" | "name" | "relay">;
+const none: readonly never[] = [];
+// Rows change only with their sources, not with each keystroke. Snapshots are
+// immutable, so identity is their revision; `joinable()` copies on each call.
+const built = new WeakMap<
+  ComposerSession,
+  Map<string, { sources: readonly unknown[]; rows: MentionCandidate[] }>
+>();
+export type MentionCandidate = ReturnType<typeof buildCandidates>[number];
+
 /** What the chooser offers. The host admits recipients itself (mention-admission). No reads or writes. */
 export function mentionCandidates(
   session: ComposerSession,
   channelId: string,
   inviteAgents = false,
   roster?: readonly MentionRecipient[],
-  directory: readonly (MentionRecipient & { isAgent?: true })[] = [],
+  directory: readonly DirectoryPerson[] = none,
   /** The owner's agents in their other communities (`agents.joinable()`). */
-  elsewhere: readonly Pick<Agent, "pubkey" | "name" | "relay">[] = [],
+  elsewhere: readonly ElsewhereAgent[] = none,
+): readonly MentionCandidate[] {
+  const sources = [
+    // Only this channel's row; activity elsewhere replaces the list, not it.
+    session.channels.list().channels.find((c) => c.id === channelId),
+    session.agentChoices.snapshot(),
+    session.profiles.snapshot(),
+    session.archives?.snapshot(),
+    session.outbox?.supports(9000),
+    roster,
+    directory,
+    JSON.stringify(
+      elsewhere.map(({ pubkey, name, relay }) => [pubkey, name, relay]),
+    ),
+  ];
+  // The chooser reads both its directory rows and its local rows each render.
+  const key = JSON.stringify([channelId, inviteAgents, directory === none]);
+  const cache: Map<
+    string,
+    { sources: readonly unknown[]; rows: MentionCandidate[] }
+  > = built.get(session) ?? new Map();
+  built.set(session, cache);
+  const hit = cache.get(key);
+  if (hit?.sources.every((source, i) => source === sources[i])) return hit.rows;
+  const rows = buildCandidates(
+    session,
+    channelId,
+    inviteAgents,
+    roster,
+    directory,
+    elsewhere,
+  );
+  cache.set(key, { sources, rows });
+  return rows;
+}
+
+function buildCandidates(
+  session: ComposerSession,
+  channelId: string,
+  inviteAgents: boolean,
+  roster: readonly MentionRecipient[] | undefined,
+  directory: readonly DirectoryPerson[],
+  elsewhere: readonly ElsewhereAgent[],
 ) {
   const channel = session.channels
     .list()
@@ -103,6 +159,25 @@ export function mentionCandidates(
     roster,
     new Set(hosts.keys()),
   );
+  // Keyed lookups keep one pass over members linear in a large channel.
+  const listed = new Map<string, string>();
+  const directoryAgents = new Set<string>();
+  for (const person of directory) {
+    if (!listed.has(person.pubkey)) listed.set(person.pubkey, person.name);
+    if (person.isAgent) directoryAgents.add(person.pubkey);
+  }
+  const rostered = new Map<string, string>();
+  for (const person of roster ?? [])
+    if (!rostered.has(person.pubkey)) rostered.set(person.pubkey, person.name);
+  const agentNames = new Map<string, string[]>();
+  const managed = new Set<string>();
+  for (const agent of agents) {
+    agentNames.set(agent.pubkey, [
+      ...(agentNames.get(agent.pubkey) ?? []),
+      agent.name,
+    ]);
+    if (agent.managed) managed.add(agent.pubkey);
+  }
   return [...choices.values()]
     .filter((p) => admits(p.pubkey))
     .map((recipient) => ({
@@ -115,22 +190,18 @@ export function mentionCandidates(
       agent:
         hosts.has(recipient.pubkey) ||
         known.has(recipient.pubkey) ||
-        directory.some((p) => p.pubkey === recipient.pubkey && p.isAgent),
+        directoryAgents.has(recipient.pubkey),
       owned:
         !!session.viewer &&
         profiles.get(recipient.pubkey)?.ownerPubkey === session.viewer,
-      managed: agents.some((a) => a.pubkey === recipient.pubkey && a.managed),
+      managed: managed.has(recipient.pubkey),
       aliases: [
         ...new Set(
           [
             profiles.get(recipient.pubkey)?.name ||
-              directory.find((person) => person.pubkey === recipient.pubkey)
-                ?.name ||
-              roster?.find((person) => person.pubkey === recipient.pubkey)
-                ?.name,
-            ...agents
-              .filter((a) => a.pubkey === recipient.pubkey)
-              .map((a) => a.name),
+              listed.get(recipient.pubkey) ||
+              rostered.get(recipient.pubkey),
+            ...(agentNames.get(recipient.pubkey) ?? []),
             hosts.has(recipient.pubkey) ? recipient.name : undefined,
           ].filter((name): name is string => !!name),
         ),

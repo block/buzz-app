@@ -74,6 +74,24 @@ export function exactName<T>(
   return exact.length === 1 ? exact[0] : undefined;
 }
 
+/**
+ * Every folded suffix of `name` where `matchPerson` can begin a match: the
+ * trimmed name itself and each later word start. A query matches only as a
+ * prefix of one of these, so a sorted list of them finds matches by search.
+ */
+export function nameStarts(name: string) {
+  const chars = [...name].flatMap((char) => [...foldPoint(char)]);
+  let start = 0;
+  let end = chars.length;
+  while (start < end && space.test(chars[start] ?? "")) start += 1;
+  while (end > start && space.test(chars[end - 1] ?? "")) end -= 1;
+  const starts = [chars.slice(start, end).join("")];
+  for (let from = start + 1; from < end; from += 1)
+    if (isWord(chars[from]) && !isWord(chars[from - 1]))
+      starts.push(chars.slice(from, end).join(""));
+  return starts;
+}
+
 export type PersonMatch = {
   /** 0 equal, 1 name starts with the query, 2 a word equals it, 3 a word starts with it. */
   tier: 0 | 1 | 2 | 3;

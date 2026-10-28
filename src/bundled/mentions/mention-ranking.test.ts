@@ -2,6 +2,7 @@ import { expect, it } from "vitest";
 import { npubEncode } from "nostr-tools/nip19";
 import {
   exactMention,
+  matchingMentions,
   rankMentions,
   type MentionChoice,
 } from "./mention-ranking";
@@ -159,3 +160,35 @@ it.each(mentionConformance.space)(
     ).toBe(fixture.expected);
   },
 );
+
+it("finds every ranked and Space choice through the name index", () => {
+  // The index is a prefilter: every portable fixture must rank, and choose on
+  // Space, exactly as it does when ranking reads the whole choice list.
+  for (const { query, choices } of [
+    ...mentionConformance.ranking,
+    ...mentionConformance.space,
+  ]) {
+    const rows = choices.map(fixtureChoice);
+    const found = matchingMentions(rows, query);
+    expect(rankMentions(found, query)).toEqual(rankMentions(rows, query));
+    expect(exactMention(found, query)).toBe(exactMention(rows, query));
+  }
+  for (const { name, label, query, expected } of mentionConformance.matching) {
+    const row = choice("a", label, { label, aliases: [label] });
+    if (expected !== null)
+      expect(matchingMentions([row], query), name).toEqual([row]);
+  }
+});
+
+it("returns index matches in list order and skips names that cannot match", () => {
+  const rows = [
+    choice("1", "Mary-Jane Watson"),
+    choice("2", "Honey"),
+    choice("3", "Jane Doe"),
+    choice("4", "Agent", { label: "Agent · jane" }),
+  ];
+  expect(matchingMentions(rows, "jane")).toEqual([rows[0], rows[2], rows[3]]);
+  expect(matchingMentions(rows, "oney")).toEqual([]);
+  expect(matchingMentions(rows, "jane d")).toEqual([rows[2]]);
+  expect(matchingMentions(rows, "")).toBe(rows);
+});

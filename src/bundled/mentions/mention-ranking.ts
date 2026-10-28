@@ -1,6 +1,7 @@
 import {
   exactName,
   matchPerson,
+  nameStarts,
   normalizeName,
 } from "../../features/search/person-match";
 import type { mentionCandidates } from "./mention-candidates";
@@ -27,6 +28,51 @@ export function mentionMatch(choice: MentionChoice, query: string) {
   const visible = nameMatch(choice.label, needle);
   if (Number.isFinite(visible)) return visible;
   return 4 + baseMatch(choice, query);
+}
+// One sorted index of name starts per immutable choice list.
+const indexes = new WeakMap<
+  readonly MentionChoice[],
+  { starts: string[]; owners: number[] }
+>();
+/**
+ * The choices, in their given order, with a label or alias that the query can
+ * match: a superset of every choice that `rankMentions` or `exactMention` keeps
+ * for this query. A binary search of the list's name index finds them, so a
+ * keystroke costs O(log n + matches) instead of a scan of every choice.
+ */
+export function matchingMentions(
+  choices: readonly MentionChoice[],
+  query: string,
+): readonly MentionChoice[] {
+  const needle = normalized(query);
+  if (!needle) return choices;
+  let index = indexes.get(choices);
+  if (!index) {
+    const entries = choices.flatMap((choice, owner) =>
+      [...new Set([choice.label, ...choice.aliases])].flatMap((name) =>
+        nameStarts(name).map((start) => ({ start, owner })),
+      ),
+    );
+    entries.sort((a, b) => compare(a.start, b.start));
+    index = {
+      starts: entries.map((entry) => entry.start),
+      owners: entries.map((entry) => entry.owner),
+    };
+    indexes.set(choices, index);
+  }
+  let low = 0;
+  let high = index.starts.length;
+  while (low < high) {
+    const middle = (low + high) >> 1;
+    if ((index.starts[middle] ?? "") < needle) low = middle + 1;
+    else high = middle;
+  }
+  const found = new Set<number>();
+  for (let i = low; index.starts[i]?.startsWith(needle); i += 1)
+    found.add(index.owners[i] ?? 0);
+  return [...found]
+    .sort((a, b) => a - b)
+    .flatMap((owner) => choices[owner] ?? []);
 }
 /**
  * Sorts by per-choice keys, so the order is transitive for any mix of people

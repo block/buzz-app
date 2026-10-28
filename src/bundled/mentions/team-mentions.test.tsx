@@ -498,3 +498,36 @@ it("waits for the initial roster before installing team membership facts", async
     h.library.dispose();
   }
 });
+
+it("a closed chooser reads no member while its composer rerenders", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  const h = fixture({ count: 300 });
+  const members = new Set(h.people.map((person) => person.pubkey));
+  const get = vi.spyOn(h.session.profiles.snapshot(), "get");
+  const memberReads = () =>
+    get.mock.calls.filter(([key]) => members.has(key)).length;
+  const picker = (select: () => boolean) => (
+    <MentionPicker
+      session={h.session}
+      scope="test"
+      channelId="parent"
+      disabled={false}
+      select={select}
+      selectTeam={() => true}
+    />
+  );
+  const view = render(picker(() => true));
+  // Each keystroke rerenders the composer and its closed chooser.
+  for (let key = 0; key < 5; key++) view.rerender(picker(() => true));
+  expect(memberReads()).toBe(0);
+  await userEvent.click(
+    screen.getByRole("button", { name: "Mention a member" }),
+  );
+  expect(memberReads()).toBeGreaterThan(0);
+});

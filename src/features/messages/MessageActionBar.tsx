@@ -2,6 +2,7 @@ import { useConversationPresentation } from "../conversation/ConversationPresent
 import {
   createContext,
   useContext,
+  useId,
   useLayoutEffect,
   useRef,
   useState,
@@ -31,7 +32,7 @@ import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import styles from "./Messages.module.css";
 import {
   useFloatingActionBar,
-  useMessageActionBarReady,
+  useMessageActionMode,
 } from "./useFloatingActionBar";
 
 const AfterMenuClose = createContext<
@@ -48,7 +49,8 @@ type Props = {
   onSendToChannel?: (() => void) | undefined;
   onReply?: (() => void) | undefined;
   replyDisabled?: boolean | undefined;
-  link?: string | undefined;
+  /** A function defers building the link until the controls render. */
+  link?: string | (() => string | undefined) | undefined;
   copyText(): string;
   quickControls?: ReactNode;
   /** Menu items rendered above the built-in actions. */
@@ -70,9 +72,12 @@ export function MessageActionBar(props: Props) {
 }
 
 function ActiveMessageActionBar(props: Props) {
-  const ready = useMessageActionBarReady(props.rowRef);
-  return ready ? (
-    <MessageActionBarControls {...props} />
+  const bar = useRef<HTMLDivElement>(null);
+  const mode = useMessageActionMode(props.rowRef, bar);
+  return mode === "engaged" ? (
+    <MessageActionBarControls {...props} bar={bar} />
+  ) : mode === "lite" ? (
+    <LiteMessageActions {...props} bar={bar} />
   ) : (
     <div className={styles.messageActionsSlot}>
       {/* biome-ignore lint/a11y/useSemanticElements: This groups message actions, not form fields. */}
@@ -85,12 +90,83 @@ function ActiveMessageActionBar(props: Props) {
   );
 }
 
+/**
+ * The closed controls' exact markup without tooltip and menu roots, for rows
+ * prepared without being touched. Engaging the row swaps in the real controls.
+ */
+function LiteMessageActions({
+  bar,
+  onReply,
+  replyDisabled,
+  link,
+  quickControls,
+  menuTriggerRef,
+}: Props & { bar: RefObject<HTMLDivElement | null> }) {
+  const id = useId();
+  // A small ghost IconButton inside a closed tooltip trigger.
+  const control = (
+    name: string,
+    icon: ReactElement,
+    disabled: boolean,
+    extra?: {
+      ref?: Ref<HTMLButtonElement> | undefined;
+      "aria-haspopup"?: "menu";
+    },
+  ) => (
+    <button
+      type="button"
+      data-disabled={disabled ? "" : undefined}
+      tabIndex={0}
+      disabled={disabled}
+      aria-label={name}
+      {...extra}
+      aria-expanded={extra?.["aria-haspopup"] ? false : undefined}
+      data-icon-variant="ghost"
+      data-icon-size="sm"
+      data-icon-shape="control"
+      data-buzz-ui=""
+      data-variant="ghost"
+      data-size="sm"
+      data-button-shape="capsule"
+      id={id + name}
+      data-base-ui-tooltip-trigger=""
+      className="buzz-button"
+    >
+      <span className="buzz-button-label">{icon}</span>
+    </button>
+  );
+  return (
+    <div className={styles.messageActionsSlot}>
+      {/* biome-ignore lint/a11y/useSemanticElements: This groups message actions, not form fields. */}
+      <div
+        className={styles.messageActions}
+        ref={bar}
+        popover="manual"
+        role="group"
+        aria-label="Message actions"
+      >
+        {quickControls}
+        {onReply && control("Reply", <MessageReplyIcon />, !!replyDisabled)}
+        {control(
+          "Copy link",
+          <LinkIcon />,
+          !(typeof link === "function" ? link() : link),
+        )}
+        {control("More message actions", <DotsThreeIcon />, false, {
+          ref: menuTriggerRef,
+          "aria-haspopup": "menu",
+        })}
+      </div>
+    </div>
+  );
+}
+
 function MessageActionBarControls({
   children,
   onSendToChannel,
   onReply,
   replyDisabled,
-  link,
+  link: linkSource,
   copyText,
   quickControls,
   leadingItems,
@@ -98,9 +174,12 @@ function MessageActionBarControls({
   messageId,
   menuTriggerRef,
   rowRef,
-}: Props) {
+  bar,
+}: Props & { bar?: RefObject<HTMLDivElement | null> }) {
+  const link = typeof linkSource === "function" ? linkSource() : linkSource;
   const [open, setOpen] = useState(false);
-  const barRef = useRef<HTMLDivElement>(null);
+  const ownBar = useRef<HTMLDivElement>(null);
+  const barRef = bar ?? ownBar;
   const slotRef = useRef<HTMLDivElement>(null);
   const floating = useFloatingActionBar(
     children ? undefined : rowRef,

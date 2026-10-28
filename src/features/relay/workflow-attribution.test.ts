@@ -4,10 +4,12 @@ import { createEventVerifier, eventDto, hasEventProof } from "./events";
 import { foldMessages } from "./fold";
 import { rowProfileIds } from "./membership";
 import { projectEvents } from "./projection";
+import * as signature from "./signature";
 import { keypair, signed } from "./testing";
 import { workflowOwner, workflowMentionOwner } from "./workflow-attribution";
 
 vi.mock("nostr-tools", { spy: true });
+vi.mock("./signature", { spy: true });
 
 const relay = keypair(),
   owner = keypair(),
@@ -22,10 +24,12 @@ const sample = (nextTags = tags, key = relay, kind = 9) =>
 afterEach(() => vi.restoreAllMocks());
 
 it("uses only admission-owned proof, without verification during repeated folds", () => {
-  const verify = vi.mocked(nostr.verifyEvent);
+  const verify = vi.mocked(signature.verifyEvent);
+  const dependency = vi.mocked(nostr.verifyEvent);
   const event = eventDto(sample());
   expect(hasEventProof(event)).toBe(true);
   verify.mockClear();
+  dependency.mockClear();
   for (let i = 0; i < 20; i++) {
     const projected = projectEvents([event], [], [{ kinds: [9], limit: 50 }]);
     const rows = foldMessages("room", relay.pubkey, projected, {
@@ -39,6 +43,7 @@ it("uses only admission-owned proof, without verification during repeated folds"
     expect(rowProfileIds(rows[0])).toContain(owner.pubkey);
   }
   expect(verify).not.toHaveBeenCalled();
+  expect(dependency).not.toHaveBeenCalled();
 });
 it("recognizes the bounded HTTP verifier's proof too", () => {
   const read = createEventVerifier();

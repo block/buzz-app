@@ -135,6 +135,25 @@ agents are not migrated into this type.
   plugin-lifetime session. `browserCredential()` returns a verified `Credential`;
   `session.credential()` provides access to it. The session handles cancellation,
   sign-out, and disposal.
+  `oauth/first-run.ts` lets the app's first-launch welcome screen run the same
+  sign-in before any plugin session exists, using this plugin's bundled native
+  grant, at the build URL like the Settings card; that credential is separate
+  from the Settings session.
+  A successful first-run sign-in continues into the app-owned setup steps
+  described in [identity](../../../docs/identity.md): the app reads the key
+  bound to the account, the destinations saved to it (this plugin's
+  known-communities list route, never through the Settings session's client)
+  and the communities it owns through this plugin's bundled grant
+  (`src/features/identity/builderlab-account.ts`, reusing the
+  `communities/` routes and parsers); a linked account is asked for that
+  key, otherwise the user creates a key or brings one they already have, and
+  that key is then bound to the account through the same native signer and
+  backed up (an imported key only once the user agrees);
+  starting over creates a new key and unlinks the lost one before binding it.
+  Key backup hands the sign-in to the native uploader, and the same portal is
+  asked which keys the account holds a backup of; Welcome back
+  restores the linked key from one through native recovery's own browser
+  sign-in.
 - `login/` owns the login experience: pending state, cancellation, retry, email
   display, and sign-out.
 - `agents/` lists the signed-in account's remote agents beneath login, with

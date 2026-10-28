@@ -7,7 +7,6 @@ import { avatarMedia } from "../../shared/avatar-source";
 import { CheckIcon, HashIcon } from "../../shared/design-system/icons";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
-import { ScrollEdgeMaterial } from "../../shared/design-system/ui/ScrollEdgeMaterial";
 import { SearchField } from "../../shared/design-system/ui/SearchField";
 import styles from "./AgentShareDialog.module.css";
 
@@ -152,10 +151,6 @@ export function AgentShareRecipients({
             {directory.error}
           </p>
         )}
-        {/* Rows soften into the edge rather than cut off at it. */}
-        <div className={styles.resultsEdge}>
-          <ScrollEdgeMaterial edge="bottom" />
-        </div>
       </div>
     </>
   );

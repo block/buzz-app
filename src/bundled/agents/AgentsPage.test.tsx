@@ -697,6 +697,36 @@ it("restores legacy provider links and writes close visits", async () => {
   );
 });
 
+it("opens the agent a link names, on Your agents", async () => {
+  const target = {
+    version: 1,
+    kind: "page",
+    pluginId: "buzz.agents",
+    pageId: "agents",
+    scope: null,
+    route: { version: 1, params: { agent: "2".repeat(64) } },
+  } as const;
+  const navigator = {
+    snapshot: () => ({ entry: { id: "agent", target } }),
+    open: vi.fn(async () => ({ status: "opened" as const })),
+  } as unknown as Navigation;
+  const navigation: PageNavigation = {
+    entryId: "agent",
+    target,
+    signal: new AbortController().signal,
+    focus: "content",
+    forSession: () => navigation,
+    resolve: () => true,
+    complete: () => true,
+  };
+  setup([agent("Ada", 1), agent("Bea", 2)], {
+    page: { navigator, navigation },
+  });
+  const profile = await screen.findByRole("region", { name: "Agent profile" });
+  expect(within(profile).getAllByText("Bea").length).toBeGreaterThan(0);
+  expect(within(profile).queryByText("Ada")).toBeNull();
+});
+
 it("shows an agent's picture in the grid and side panel", async () => {
   const user = userEvent.setup();
   const picture = "https://old.example/media/a.png";

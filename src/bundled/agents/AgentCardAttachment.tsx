@@ -3,15 +3,18 @@
 import { useEffect, useRef, useState } from "react";
 import { readSnapshot } from "../../features/agents/agent-share";
 import { useAgents } from "../../features/agents/react";
-import type { Agents } from "../../features/agents/service";
+import type { Agent, Agents } from "../../features/agents/service";
 import type { AttachmentRendererProps } from "../../features/conversation/contracts";
+import type { Navigation } from "../../features/navigation/controller";
 import type { Attachment } from "../../features/relay/contracts";
 import { useRelayConnection } from "../../features/relay/react";
 import type { RelayData } from "../../features/relay/service";
 import { SurfaceButton } from "../../shared/design-system/ui/SurfaceButton";
+import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { SharedAgentCardContent, SharedImportDialog } from "./AgentBrowse";
 import cardStyles from "./AgentCard.module.css";
 import styles from "./AgentCardAttachment.module.css";
+import { agentTarget } from "./routes";
 
 const CARD = /\.agent\.png$/i;
 
@@ -26,13 +29,22 @@ export function AgentCardAttachment({
   source,
   agents,
   relay,
-}: AttachmentRendererProps & { agents: Agents; relay: RelayData }) {
+  navigator,
+}: AttachmentRendererProps & {
+  agents: Agents;
+  relay: RelayData;
+  /** Opens an agent of yours on the Agents page; absent, nothing offers to. */
+  navigator?: Navigation | undefined;
+}) {
   const connection = useRelayConnection(relay);
   const { types } = useAgents(agents);
   // `undefined` while the card is read; `null` when it holds no agent.
   const [shared, setShared] = useState<Definition | null>();
   const [adding, setAdding] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
+  const notify = useToastNotification();
+  const opener = (agent: Agent) =>
+    navigator && (() => void navigator.open(agentTarget(agent.pubkey)));
   useEffect(() => {
     const controller = new AbortController();
     setShared(undefined);
@@ -72,7 +84,21 @@ export function AgentCardAttachment({
           shared={shared}
           agents={agents}
           types={runnable}
-          onImported={() => setAdding(false)}
+          onImported={(agent) => {
+            setAdding(false);
+            const show = opener(agent);
+            notify(
+              `Added ${agent.name} to your agents.`,
+              "success",
+              show && { label: "Open", onClick: show },
+            );
+          }}
+          {...(navigator && {
+            onOpen: (agent: Agent) => {
+              setAdding(false);
+              opener(agent)?.();
+            },
+          })}
           onClose={() => setAdding(false)}
           finalFocus={trigger}
         />

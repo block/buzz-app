@@ -27,7 +27,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
     title: "Agent card",
     matches: isAgentCard,
     component: (props) => (
-      <AgentCardAttachment {...props} agents={agents} relay={relay} />
+      <AgentCardAttachment
+        {...props}
+        agents={agents}
+        relay={relay}
+        navigator={navigator}
+      />
     ),
   });
   ctx.pages.register({

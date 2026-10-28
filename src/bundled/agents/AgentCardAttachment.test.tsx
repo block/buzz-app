@@ -2,7 +2,13 @@
 import "@testing-library/jest-dom/vitest";
 import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
 stubAvatarBrowserApis();
-import { cleanup, render, screen, within } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { snapshotPng } from "../../features/agents/agent-share";
@@ -11,9 +17,12 @@ import type {
   Agents,
   RegisteredAgentType,
 } from "../../features/agents/service";
+import type { Navigation } from "../../features/navigation/controller";
 import type { Attachment } from "../../features/relay/contracts";
 import type { RelayData } from "../../features/relay/service";
+import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { AgentCardAttachment, isAgentCard } from "./AgentCardAttachment";
+import { agentTarget } from "./routes";
 
 afterEach(() => {
   cleanup();
@@ -25,13 +34,16 @@ const echo = {
   title: "Echo",
   importShared: (source: { model: string }) => ({ model: source.model }),
 } as unknown as RegisteredAgentType;
-const snapshot = {};
+const snapshot = { agents: [] };
 const types = [echo];
 const agents = {
   subscribe: () => () => {},
   snapshot: () => snapshot,
   types: () => types,
-  port: vi.fn(async () => ({ pubkey: "e".repeat(64) }) as Agent),
+  port: vi.fn(async () => ({
+    agent: { pubkey: "e".repeat(64), name: "Ada" } as Agent,
+    notes: [],
+  })),
 } as unknown as Agents & { port: ReturnType<typeof vi.fn> };
 const connection = { status: "ready", origin: "https://relay.example" };
 const relay = {
@@ -116,4 +128,47 @@ it("shows the picture when the file holds no agent", async () => {
     "buzz-media://ada.png",
   );
   expect(screen.queryByRole("button")).not.toBeInTheDocument();
+});
+
+it("names what it added, and opens it from there", async () => {
+  const user = userEvent.setup();
+  serve(
+    snapshotPng({
+      name: "Ada",
+      instructions: "Review pull requests.",
+      runtime: "echo",
+      model: "echo-1",
+    }),
+  );
+  const navigator = { open: vi.fn(async () => ({})) };
+  render(
+    <AgentCardAttachment
+      attachment={card}
+      source="buzz-media://ada.png"
+      agents={agents}
+      relay={relay}
+      navigator={navigator as unknown as Navigation}
+      canOpen={() => false}
+      open={() => false}
+    />,
+    { wrapper: ToastProvider },
+  );
+  const button = await screen.findByRole("button", {
+    name: "Ada, shared agent",
+  });
+  await vi.waitFor(() => expect(button).toBeEnabled());
+  await user.click(button);
+  await user.click(
+    within(screen.getByRole("dialog", { name: "Ada" })).getByRole("button", {
+      name: "Import",
+    }),
+  );
+  expect(
+    await screen.findByText("Added Ada to your agents."),
+  ).toBeInTheDocument();
+  // sonner's pointer capture is missing in jsdom.
+  fireEvent.click(screen.getByRole("button", { name: "Open" }));
+  expect(navigator.open).toHaveBeenCalledExactlyOnceWith(
+    agentTarget("e".repeat(64)),
+  );
 });

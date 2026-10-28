@@ -110,7 +110,7 @@ import { Textarea } from "../../shared/design-system/ui/Textarea";
 import { Tooltip } from "../../shared/design-system/ui/Tooltip";
 import { publicKeyLabels } from "../../shared/identity/public-key";
 import { readView, writeView } from "../../shared/view-state";
-import { agentProviderRoute, agentProviderTarget } from "./routes";
+import { agentProviderRoute, agentProviderTarget, agentRoute } from "./routes";
 
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
@@ -276,6 +276,19 @@ export function AgentsPage({
     if (next !== "marketplace") setSharedSelection(undefined);
     setTab(next);
   };
+  // Opened for one of your agents, such as from a card sent in chat.
+  const routedAgent =
+    routed && navigation.target.kind === "page"
+      ? agentRoute(navigation.target.route?.params)
+      : undefined;
+  const routedEntry = navigation?.entryId;
+  useEffect(() => {
+    if (!routedAgent || !routedEntry) return;
+    setEditingTeam(undefined);
+    setSharedSelection(undefined);
+    setTab("yours");
+    setSelectedKey(routedAgent);
+  }, [routedAgent, routedEntry]);
   const returnTo = (next: Tab) => () => {
     setFlow(undefined);
     changeTab(next);
@@ -596,6 +609,11 @@ export function AgentsPage({
                             returnToAgents();
                           });
                           document.getElementById("agents-yours-tab")?.focus();
+                        }}
+                        onOpen={(agent) => {
+                          setSharedSelection(undefined);
+                          returnToAgents();
+                          browse(agent.pubkey);
                         }}
                       />
                     ),

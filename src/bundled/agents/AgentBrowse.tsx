@@ -11,10 +11,14 @@ import {
 import {
   checkText,
   type SharedDefinition,
+  shareable,
 } from "../../features/agents/agent-share";
+import { useAgents } from "../../features/agents/react";
+import { flushSync } from "react-dom";
 import { AGENT_CATALOG_KIND } from "../../features/agents/catalog-envelope";
 import { ModelIcon } from "../../features/agents/ModelPicker";
 import type {
+  Agent,
   Agents,
   RegisteredAgentType,
 } from "../../features/agents/service";
@@ -56,7 +60,9 @@ type Importing = Readonly<{
   agents: Agents;
   /** The types an import can be, which run on this computer. */
   types: readonly RegisteredAgentType[];
-  onImported(): void;
+  onImported(agent: Agent): void;
+  /** Opens an agent of yours that an import would only copy. */
+  onOpen?: ((agent: Agent) => void) | undefined;
 }>;
 
 export type SharedAgentSelection = {
@@ -387,11 +393,33 @@ export function SharedAgentCardContent({
   );
 }
 
+/** Whether importing `shared` would only copy `agent` again. */
+function copies(
+  shared: SharedDefinition,
+  agent: Agent,
+  type: RegisteredAgentType | undefined,
+) {
+  try {
+    const own = shareable(agent, type);
+    // Pictures are left out: a built-in avatar's address can differ.
+    return (
+      own.name === shared.name &&
+      own.instructions === shared.instructions &&
+      own.runtime === shared.runtime &&
+      own.model === shared.model &&
+      (own.provider ?? "") === (shared.provider ?? "")
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function SharedImportDialog({
   shared,
   agents,
   types,
   onImported,
+  onOpen,
   onClose,
   finalFocus,
 }: Importing & {
@@ -399,6 +427,8 @@ export function SharedImportDialog({
   onClose(): void;
   finalFocus: React.RefObject<HTMLButtonElement | null>;
 }) {
+  const { snapshot, types: known } = useAgents(agents);
+  const body = useRef<HTMLDivElement>(null);
   const [initial] = useState(() => {
     for (const type of types) {
       const config = type.importShared?.(shared);
@@ -410,6 +440,31 @@ export function SharedImportDialog({
   const [config, setConfig] = useState<unknown>(initial?.config);
   const [instructions, setInstructions] = useState(shared.instructions);
   const [pending, setPending] = useState(false);
+  // Anything changed from what was shared; Undo brings it back.
+  const edited =
+    type !== (initial?.key ?? "") ||
+    JSON.stringify(config) !== JSON.stringify(initial?.config) ||
+    instructions !== shared.instructions;
+  const undo = () => {
+    // Undo goes with the edit; focus starts over at the first field.
+    flushSync(() => {
+      setType(initial?.key ?? "");
+      setConfig(initial?.config);
+      setInstructions(shared.instructions);
+      setError("");
+    });
+    body.current?.querySelector<HTMLElement>("[role='combobox']")?.focus();
+  };
+  // An agent you already have, the same in everything this would copy.
+  const existing = edited
+    ? undefined
+    : snapshot.agents.find((agent) =>
+        copies(
+          shared,
+          agent,
+          known.find((type) => type.key === agent.type),
+        ),
+      );
   const [error, setError] = useState("");
   // What block/buzz refuses, such as hidden characters in what is shown here.
   let refused = "";
@@ -430,7 +485,7 @@ export function SharedImportDialog({
     setPending(true);
     setError("");
     try {
-      await agents.port({
+      const { agent } = await agents.port({
         source: "shared",
         type: chosen.key,
         name: shared.name,
@@ -438,7 +493,7 @@ export function SharedImportDialog({
         instructions,
         ...(config !== undefined ? { config } : {}),
       });
-      onImported();
+      onImported(agent);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
       setPending(false);
@@ -448,29 +503,54 @@ export function SharedImportDialog({
     <Dialog
       open
       title={shared.name}
+      description={
+        existing
+          ? "You already have this agent."
+          : edited
+            ? "Edited. Changes only affect your copy."
+            : "Import it as is, or edit anything below first. Changes only affect your copy."
+      }
       finalFocus={finalFocus}
       preventClose={pending}
       onOpenChange={(open) => {
         if (!open) onClose();
       }}
+      leadingActions={
+        edited && (
+          <Button variant="ghost" disabled={pending} onClick={undo}>
+            Undo changes
+          </Button>
+        )
+      }
       actions={
         <>
-          <Button disabled={pending} onClick={onClose}>
-            Cancel
-          </Button>
+          {!(existing && onOpen) && (
+            <Button disabled={pending} onClick={onClose}>
+              Cancel
+            </Button>
+          )}
           <Button
-            variant="primary"
+            {...(existing && onOpen ? {} : { variant: "primary" as const })}
             disabled={!chosen || pending || !!refused}
             loading={pending}
             onClick={() => void run()}
           >
-            Import
+            {existing ? "Import a copy" : "Import"}
           </Button>
+          {existing && onOpen && (
+            <Button
+              variant="primary"
+              disabled={pending}
+              onClick={() => onOpen(existing)}
+            >
+              Open {existing.name}
+            </Button>
+          )}
         </>
       }
     >
       {/* Laid out as the agent's Identity tab will show it once imported. */}
-      <div className="grid gap-4">
+      <div ref={body} className="grid gap-4">
         {types.length === 0 ? (
           <p className="m-0 text-body-sm text-secondary">
             Enable an agent type plugin to import agents.

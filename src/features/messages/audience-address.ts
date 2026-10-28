@@ -38,3 +38,31 @@ export function addressedMessage(
     },
   };
 }
+
+/** An agent's message for other people reads to this viewer as coordination
+ * between agents: its signed `p` tags name someone other than its author, and
+ * none of them is the viewer. Display only; notifications still follow the
+ * signed `audience` tag. */
+export function viewerAudience<Row extends ChannelMessage>(
+  row: Row,
+  viewer: string | undefined,
+  agents: ReadonlySet<string> | undefined,
+): Row {
+  if (row.audience || row.membership || !viewer || row.authorId === viewer)
+    return row;
+  if (!row.agentEnvelope && !agents?.has(row.authorId)) return row;
+  const to = row.mentions.filter((pubkey) => pubkey !== row.authorId);
+  return to.length && !to.includes(viewer)
+    ? { ...row, audience: "agents" }
+    : row;
+}
+
+/** The rows as this viewer reads them; unchanged rows keep the list's identity. */
+export function viewerAudienceRows<Row extends ChannelMessage>(
+  rows: readonly Row[],
+  viewer: string | undefined,
+  agents: ReadonlySet<string> | undefined,
+): readonly Row[] {
+  const shown = rows.map((row) => viewerAudience(row, viewer, agents));
+  return shown.every((row, index) => row === rows[index]) ? rows : shown;
+}

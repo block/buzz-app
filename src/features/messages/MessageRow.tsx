@@ -16,7 +16,7 @@ import {
 import { useProfileOwner } from "../profiles/useProfileOwner";
 import { messagePreviewText } from "../conversation/message-preview-text";
 import { profileMentionParts } from "./profile-mentions";
-import { addressedMessage } from "./audience-address";
+import { addressedMessage, viewerAudience } from "./audience-address";
 import { WorkflowByline } from "./WorkflowByline";
 import { threadWorkingAgents } from "../agents/thread-working";
 import { TypingDots } from "../../shared/design-system/ui/TypingDots";
@@ -1283,7 +1283,12 @@ function MessageRowContent({
 export const MessageRow = memo(function AudienceMessageRow(
   props: MessageRowProps,
 ) {
-  const { onOpenLink, canOpenLink, row } = props;
+  const { onOpenLink, canOpenLink } = props;
+  const row = viewerAudience(
+    props.row,
+    props.viewer ?? props.session?.viewer,
+    props.agentPubkeys,
+  );
   const rootId = row.threadRootId ?? row.id;
   // Plugin content in this row opens targets as the row's own links do.
   return (
@@ -1292,7 +1297,7 @@ export const MessageRow = memo(function AudienceMessageRow(
       open={(target) => onOpenLink(target, { rootId })}
     >
       {row.audience === "agents" ? (
-        <AgentsMessageRow {...props} />
+        <AgentsMessageRow {...props} row={row} />
       ) : (
         <FullMessageRow {...props} />
       )}

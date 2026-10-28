@@ -11,6 +11,7 @@ import {
 import { MembershipRow } from "./MembershipRow";
 import { membershipRows, withoutStartingAgents } from "./membership-rows";
 import { activityGroups, RECENT_ACTIVITY_COUNT } from "./activity-groups";
+import { viewerAudienceRows } from "./audience-address";
 import { DayDivider } from "./MessageTimestamp";
 import type { ConversationExtensions } from "../conversation/contracts";
 import type { RelaySession } from "../relay/session";
@@ -215,15 +216,19 @@ function Timeline({
   const agentPubkeys = useKnownAgentPubkeys(queries, profiles);
   const visibleRows = useMemo(
     () =>
-      chatPresentation
-        ? withoutStartingAgents(
-            window.rows,
-            viewer,
-            agentPubkeys,
-            // Live trimming can drop the chat's start without restoring hasMore.
-            !window.hasMore && !window.historyLimited,
-          )
-        : window.rows,
+      viewerAudienceRows(
+        chatPresentation
+          ? withoutStartingAgents(
+              window.rows,
+              viewer,
+              agentPubkeys,
+              // Live trimming can drop the chat's start without restoring hasMore.
+              !window.hasMore && !window.historyLimited,
+            )
+          : window.rows,
+        viewer,
+        agentPubkeys,
+      ),
     [
       window.rows,
       window.hasMore,

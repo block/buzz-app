@@ -90,6 +90,11 @@ function fixture(initial: readonly ChannelMessage[]) {
       window = Object.freeze({ ...window, ...metadata });
       emit("window");
     },
+    removeHistoryLimit() {
+      const { historyLimited: _, ...next } = window;
+      window = Object.freeze(next);
+      emit("window");
+    },
     profile(id: string, profile: Profile) {
       profiles = new Map(profiles).set(id, Object.freeze(profile));
       emit("profiles");
@@ -323,12 +328,7 @@ it("does not retain optional window flags after a source snapshot removes them",
   f.metadata({ historyLimited: true });
   expect(owner.header().historyLimited).toBe(true);
   // A reset can omit an optional field rather than supply false.
-  const source = f.window();
-  const { historyLimited: _, ...without } = source;
-  const original = f.session.channels.window;
-  f.session.channels.window = () => without;
-  f.emit("window");
+  f.removeHistoryLimit();
   expect(owner.header().historyLimited).toBeUndefined();
-  f.session.channels.window = original;
   stop();
 });

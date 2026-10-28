@@ -33,6 +33,7 @@ export function AgentDefaults({
     const target = navigation?.target;
     if (
       onProvider &&
+      navigation &&
       target?.kind === "settings" &&
       target.provider &&
       !navigation.signal.aborted &&
@@ -106,7 +107,7 @@ function ProviderDefaults({
     provider.snapshot,
   );
   const [localOpen, setLocalOpen] = useState(false);
-  const routed = target?.kind === "settings" && !!onProvider;
+  const routed = navigation?.target.kind === "settings" && !!onProvider;
   const open = routed
     ? navigation.target.kind === "settings" &&
       navigation.target.provider === type.key

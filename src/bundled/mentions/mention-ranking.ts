@@ -3,6 +3,7 @@ import {
   matchPerson,
   nameStarts,
   normalizeName,
+  startKey,
 } from "../../features/search/person-match";
 import type { mentionCandidates } from "./mention-candidates";
 export type MentionChoice = ReturnType<typeof mentionCandidates>[number] & {
@@ -29,10 +30,11 @@ export function mentionMatch(choice: MentionChoice, query: string) {
   if (Number.isFinite(visible)) return visible;
   return 4 + baseMatch(choice, query);
 }
-// One sorted index of name starts per immutable choice list.
+// One sorted index of name starts per immutable choice list. Choices with a
+// name too long to index are always kept for ranking to match directly.
 const indexes = new WeakMap<
   readonly MentionChoice[],
-  { starts: string[]; owners: number[] }
+  { starts: string[]; owners: number[]; unindexed: number[] }
 >();
 /**
  * The choices, in their given order, with a label or alias that the query can
@@ -44,19 +46,26 @@ export function matchingMentions(
   choices: readonly MentionChoice[],
   query: string,
 ): readonly MentionChoice[] {
-  const needle = normalized(query);
+  const needle = startKey(normalized(query));
   if (!needle) return choices;
   let index = indexes.get(choices);
   if (!index) {
-    const entries = choices.flatMap((choice, owner) =>
-      [...new Set([choice.label, ...choice.aliases])].flatMap((name) =>
-        nameStarts(name).map((start) => ({ start, owner })),
-      ),
-    );
+    const entries: { start: string; owner: number }[] = [];
+    const unindexed: number[] = [];
+    choices.forEach((choice, owner) => {
+      const names = [...new Set([choice.label, ...choice.aliases])].map(
+        nameStarts,
+      );
+      if (names.some((name) => !name.complete)) unindexed.push(owner);
+      else
+        for (const name of names)
+          for (const start of name.starts) entries.push({ start, owner });
+    });
     entries.sort((a, b) => compare(a.start, b.start));
     index = {
       starts: entries.map((entry) => entry.start),
       owners: entries.map((entry) => entry.owner),
+      unindexed,
     };
     indexes.set(choices, index);
   }
@@ -67,7 +76,7 @@ export function matchingMentions(
     if ((index.starts[middle] ?? "") < needle) low = middle + 1;
     else high = middle;
   }
-  const found = new Set<number>();
+  const found = new Set<number>(index.unindexed);
   for (let i = low; index.starts[i]?.startsWith(needle); i += 1)
     found.add(index.owners[i] ?? 0);
   return [...found]

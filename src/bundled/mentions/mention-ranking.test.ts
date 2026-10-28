@@ -7,7 +7,7 @@ import {
   type MentionChoice,
 } from "./mention-ranking";
 import { fixtureChoice, mentionConformance } from "./mention-rules.conformance";
-import { matchPerson } from "../../features/search/person-match";
+import { matchPerson, nameStarts } from "../../features/search/person-match";
 const choice = (
   key: string,
   name: string,
@@ -191,4 +191,40 @@ it("returns index matches in list order and skips names that cannot match", () =
   expect(matchingMentions(rows, "oney")).toEqual([]);
   expect(matchingMentions(rows, "jane d")).toEqual([rows[2]]);
   expect(matchingMentions(rows, "")).toBe(rows);
+});
+
+it("bounds index work for long profile names and still matches them", () => {
+  // Profile names are member input of any length.
+  const words = Array.from({ length: 4000 }, (_, i) => `w${i}`).join(" ");
+  const long = `${"x".repeat(4000)}-tail`;
+  const starts = nameStarts(words);
+  expect(starts.complete).toBe(false);
+  expect(starts.starts).toHaveLength(16);
+  for (const name of [words, long])
+    for (const start of nameStarts(name).starts)
+      expect([...start].length).toBeLessThanOrEqual(32);
+  const rows = [
+    choice("1", words),
+    choice("2", long),
+    choice("3", "Wanda"),
+    choice("4", "Xavier"),
+  ];
+  // Late words and queries longer than a key still rank as without the index.
+  for (const query of [
+    "w3999",
+    "w39",
+    "tail",
+    "w",
+    "x".repeat(40),
+    `${"x".repeat(4000)}-t`,
+    "wanda",
+  ]) {
+    const found = matchingMentions(rows, query);
+    expect(rankMentions(found, query), query).toEqual(
+      rankMentions(rows, query),
+    );
+    expect(exactMention(found, query), query).toBe(exactMention(rows, query));
+  }
+  expect(matchingMentions(rows, "w3999")).toContain(rows[0]);
+  expect(matchingMentions(rows, "tail")).toContain(rows[1]);
 });

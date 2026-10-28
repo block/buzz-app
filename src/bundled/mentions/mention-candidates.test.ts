@@ -20,8 +20,16 @@ const elsewhere = [
 ];
 
 // A new session each time, so no cached rows answer.
-function rows(directory?: Parameters<typeof mentionCandidates>[4]) {
-  const session = {
+function rows(
+  directory?: Parameters<typeof mentionCandidates>[4],
+  session = fresh(),
+) {
+  return [
+    ...mentionCandidates(session, "c", false, undefined, directory, elsewhere),
+  ].sort((a, b) => a.recipient.pubkey.localeCompare(b.recipient.pubkey));
+}
+function fresh() {
+  return {
     viewer: key(1),
     channels: {
       list: () => ({
@@ -38,10 +46,29 @@ function rows(directory?: Parameters<typeof mentionCandidates>[4]) {
     },
     outbox: { supports: () => true },
   } as unknown as ComposerSession;
-  return [
-    ...mentionCandidates(session, "c", false, undefined, directory, elsewhere),
-  ].sort((a, b) => a.recipient.pubkey.localeCompare(b.recipient.pubkey));
 }
+
+it("reads only the session stores its cache compares", () => {
+  // mentionCandidates caches rows on these stores' snapshots (and the viewer,
+  // fixed per session). A new read here, including in the host's admission
+  // rules, must join that cache key, or rows go stale.
+  const read = new Set<string | symbol>();
+  const session = new Proxy(fresh(), {
+    get(target, key, receiver) {
+      read.add(key);
+      return Reflect.get(target, key, receiver);
+    },
+  });
+  rows([{ pubkey: key(8), name: "Dee" }], session);
+  expect([...read].sort()).toEqual([
+    "agentChoices",
+    "archives",
+    "channels",
+    "outbox",
+    "profiles",
+    "viewer",
+  ]);
+});
 
 it("directory people that change nothing can be left out", () => {
   const directory = [

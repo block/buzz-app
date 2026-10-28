@@ -69,6 +69,8 @@ export function mentionCandidates(
   /** The owner's agents in their other communities (`agents.joinable()`). */
   elsewhere: readonly ElsewhereAgent[] = none,
 ): readonly MentionCandidate[] {
+  // Every session store that buildCandidates and its admission rules read; a
+  // test fails when they read one more. The viewer is fixed per session.
   const sources = [
     // Only this channel's row; activity elsewhere replaces the list, not it.
     session.channels.list().channels.find((c) => c.id === channelId),

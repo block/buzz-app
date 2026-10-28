@@ -203,6 +203,14 @@ To move to a newer goose, change `revision` in the pin. The app's own signature
 covers the binary; nothing else checks it at launch. Each release job checks that
 its package contains it.
 
+Normal `main` releases cache the unsigned staged Goose executable and its
+SHA-256-bearing build stamp. Keys cover the Goose pin, native target, tool pins,
+build configuration and runner image (or installed Linux packages). Only an exact
+hit with matching executable bytes skips Goose compilation; other restores are
+discarded and rebuilt. Candidate-only builds do not use this cache. Signing and
+package checks still run on every release. A persistently invalid cache entry
+must be evicted or its key changed because existing entries are immutable.
+
 ## Windows and Linux installers and candidate-only runs
 
 The same **Desktop previews** workflow has a manual `candidates` switch. It builds
@@ -244,7 +252,7 @@ are checksum-pinned. The workflow verifies the app executable in the extracted d
 and the app executable and launch shim in the extracted AppImage after repacking.
 Compatibility guards fail rather than silently omitting a fix.
 AppImage still relies on host desktop/media libraries; this is not a promise of
-universal distro compatibility. Neither candidate job writes shared build caches.
+universal distro compatibility. Candidate-only runs do not write shared build caches.
 
 ### Acceptance still required
 

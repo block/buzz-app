@@ -1,0 +1,41 @@
+name: Cache built Goose executable
+description: Reuse the unsigned Goose executable in trusted main release jobs.
+runs:
+  using: composite
+  steps:
+    - name: Read Goose cache inputs
+      id: build-context
+      shell: bash
+      run: |
+        set -euo pipefail
+        # Hermit pin contents are identical symlinks; versions live in their names.
+        rust_pins=(bin/.rust-*.pkg)
+        cmake_pins=(bin/.cmake-*.pkg)
+        [[ ${#rust_pins[@]} == 1 && -f ${rust_pins[0]} && ${#cmake_pins[@]} == 1 && -f ${cmake_pins[0]} ]]
+        echo "pins=${rust_pins[0]##*/}-${cmake_pins[0]##*/}" >> "$GITHUB_OUTPUT"
+        # The release jobs build natively; cross-compilation needs the effective target.
+        target=$(rustc -vV | sed -n 's/^host: //p')
+        test -n "$target"
+        echo "target=$target" >> "$GITHUB_OUTPUT"
+        if [[ "$RUNNER_OS" == Linux ]]; then
+          packages=$(dpkg-query -W | LC_ALL=C sort | sha256sum)
+          echo "image=ubuntu24.04-${packages%% *}" >> "$GITHUB_OUTPUT"
+        else
+          echo "image=${ImageOS:?}-${ImageVersion:?}" >> "$GITHUB_OUTPUT"
+        fi
+        # A stamp restored by the Rust target cache must not join a partial payload.
+        rm -f src-tauri/resources/bin/goose-acp src-tauri/resources/bin/goose-acp.exe target/goose-acp-build/staged.json
+
+    - name: Restore and save Goose executable
+      id: goose-cache
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          src-tauri/resources/bin/goose-acp${{ runner.os == 'Windows' && '.exe' || '' }}
+          target/goose-acp-build/staged.json
+        key: goose-executable-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.build-context.outputs.target }}-${{ steps.build-context.outputs.pins }}-${{ steps.build-context.outputs.image }}-${{ hashFiles('runtime/goose-acp.json', 'scripts/build-goose-acp.mjs', '.cargo/config.toml', 'bin/hermit.hcl', 'src-tauri/tauri*.conf.json', 'package.json', 'pnpm-lock.yaml', '.github/workflows/release.yml', '.github/actions/setup/action.yml', '.github/actions/cache-goose/action.yml', 'scripts/candidate-version.mjs') }}
+
+    - name: Discard non-exact Goose restores
+      if: steps.goose-cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: rm -f src-tauri/resources/bin/goose-acp src-tauri/resources/bin/goose-acp.exe target/goose-acp-build/staged.json

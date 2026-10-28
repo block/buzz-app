@@ -21,6 +21,7 @@ import type {
   Agents,
   AgentConversation,
   RegisteredAgentType,
+  TranscriptRequest,
 } from "../../features/agents/service";
 import {
   AgentArchiveRetry,
@@ -92,7 +93,7 @@ export function AgentDetails({
   messageAction: (variant: "glass" | "subtle") => ReactNode;
   conversation?: AgentConversation | undefined;
   initialActivity?: boolean;
-  initialTranscript?: (() => void) | undefined;
+  initialTranscript?: TranscriptRequest | undefined;
   /** Closes the panel showing the agent. */
   close?: () => void;
   communities?: CommunityReader | undefined;

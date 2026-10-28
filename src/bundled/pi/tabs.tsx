@@ -709,7 +709,9 @@ export function createTabs({
     // Pi lists its conversations only after the tab shows, so its transcript
     // would open late, under whatever the reader turned to meanwhile. The
     // request is settled without opening it.
-    useEffect(() => initialTranscript?.(), [initialTranscript]);
+    const opening = initialTranscript?.opening;
+    // biome-ignore lint/correctness/useExhaustiveDependencies: once per opening.
+    useEffect(() => initialTranscript?.done(), [opening]);
     if (!places)
       return listing.status === "error" ? (
         <div className="grid gap-2">

@@ -399,7 +399,9 @@ describe("opened from activity", () => {
     });
     const close = vi.fn();
     const done = vi.fn();
-    const panel = (initialTranscript?: () => void) => (
+    // Each call is a new opening, as each Working now click is.
+    let openings = 0;
+    const panel = (done?: () => void) => (
       <PanelWorkspace
         value="profile"
         select={() => undefined}
@@ -417,7 +419,9 @@ describe("opened from activity", () => {
               <f.tabs.ActivityTab
                 {...f.props()}
                 conversation={{ channelId: "channel", rootId: root }}
-                {...(initialTranscript && { initialTranscript })}
+                {...(done && {
+                  initialTranscript: { opening: ++openings, done },
+                })}
                 close={close}
               />
             ),

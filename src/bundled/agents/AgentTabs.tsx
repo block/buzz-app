@@ -6,6 +6,7 @@ import type {
   AgentSettingsHost,
   Agents,
   RegisteredAgentType,
+  TranscriptRequest,
 } from "../../features/agents/service";
 import type { AgentMemories } from "../../features/agents/MemoryPanel";
 import type { CommunityReader } from "../../features/communities/service";
@@ -27,7 +28,7 @@ export function AgentTabs(props: {
   settingsContent: ReactNode;
   conversation?: AgentConversation | undefined;
   initialActivity?: boolean | undefined;
-  initialTranscript?: (() => void) | undefined;
+  initialTranscript?: TranscriptRequest | undefined;
   close?: (() => void) | undefined;
   onDiscard?: () => void;
 }) {

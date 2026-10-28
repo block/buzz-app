@@ -12,6 +12,7 @@ import type {
   AgentSettingsHost,
   Agents,
   RegisteredAgentType,
+  TranscriptRequest,
 } from "./service";
 import { AgentSaveButton, useAgentSaveState } from "./AgentSaveButton";
 import { AgentConfigHistory } from "./AgentConfigHistory";
@@ -42,7 +43,7 @@ export function agentSections({
   type: RegisteredAgentType | undefined;
   conversation?: AgentConversation | undefined;
   /** Asks to show the conversation's transcript first; see AgentViewProps. */
-  initialTranscript?: (() => void) | undefined;
+  initialTranscript?: TranscriptRequest | undefined;
   /** Closes the panel the sections are shown in. */
   close?: (() => void) | undefined;
   settingsHost?: AgentSettingsHost;

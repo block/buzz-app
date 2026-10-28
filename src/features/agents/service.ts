@@ -242,15 +242,17 @@ export type AgentConversation = Readonly<{
   channelId: string;
   rootId?: string;
 }>;
+/** A panel's ask for a conversation's transcript. `opening` identifies it: a
+ * new number is a new opening, even of the conversation already shown. */
+export type TranscriptRequest = Readonly<{ opening: number; done(): void }>;
 export type AgentViewProps<Config = unknown> = {
   agent: Agent<Config>;
   /** Where the agent was opened from, when it was opened from a conversation. */
   conversation?: AgentConversation;
   /** Present while the panel asks to show that conversation's transcript
-   * first: an Activity tab does so, if it knows it then, and calls this once
-   * it has, so the panel asks only once. It stays the same function for one
-   * opening; a new one is a new opening, even of the conversation shown. */
-  initialTranscript?: () => void;
+   * first: an Activity tab does so, if it knows it then, and calls `done`
+   * once it has, so the panel asks only once. */
+  initialTranscript?: TranscriptRequest;
   /** Closes the panel showing the tab. */
   close?: () => void;
   /** Replaces the type's whole config. Spread `agent.config` to change one

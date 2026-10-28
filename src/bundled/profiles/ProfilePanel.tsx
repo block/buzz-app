@@ -51,7 +51,7 @@ import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { AgentDelete } from "../../features/agents/AgentManage";
 import { useAgent, useChannelChoices } from "../../features/agents/react";
-import type { Agents } from "../../features/agents/service";
+import type { Agents, TranscriptRequest } from "../../features/agents/service";
 import type { CommunityReader } from "../../features/communities/service";
 import { agentSections } from "../../features/agents/tabs";
 import { useAgentSettingsHost } from "../agents/AgentSettingsHost";
@@ -100,7 +100,10 @@ export function ProfilePanel({
     () =>
       request === undefined
         ? undefined
-        : () => setOffered((last) => Math.max(last, request)),
+        : {
+            opening: request,
+            done: () => setOffered((last) => Math.max(last, request)),
+          },
     [request],
   );
   const pubkey = profilePanelKey(target) ?? activityKey;
@@ -163,7 +166,7 @@ function OwnedAgentProfile({
   agents: Agents;
   communities: CommunityReader | undefined;
   initialActivity: boolean;
-  initialTranscript: (() => void) | undefined;
+  initialTranscript: TranscriptRequest | undefined;
   pubkey: string;
   relay: RelayData;
   session: RelaySession;
@@ -224,7 +227,7 @@ function ProfileDetails({
   agents: Agents | undefined;
   communities: CommunityReader | undefined;
   initialTab: "info" | "activity";
-  initialTranscript: (() => void) | undefined;
+  initialTranscript: TranscriptRequest | undefined;
   agentHint: boolean;
   session: RelaySession;
   pubkey: string;

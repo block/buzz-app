@@ -19,6 +19,7 @@ import type {
   Agent,
   Agents,
   RegisteredAgentType,
+  TranscriptRequest,
 } from "../../features/agents/service";
 
 import { agentDirectory } from "../../features/identity-names/testing";
@@ -378,11 +379,15 @@ function renderAgentActivity(
         initialTranscript,
       }: {
         conversation?: { channelId: string; rootId?: string };
-        initialTranscript?: () => void;
+        initialTranscript?: TranscriptRequest;
       }) {
         // Like a type's Activity tab: it acts on the request as it shows.
         const [first] = useState(!!initialTranscript);
-        useEffect(() => initialTranscript?.(), [initialTranscript]);
+        // biome-ignore lint/correctness/useExhaustiveDependencies: once per opening.
+        useEffect(
+          () => initialTranscript?.done(),
+          [initialTranscript?.opening],
+        );
         return (
           <>
             <p>Echo {title.toLowerCase()}</p>

@@ -738,7 +738,7 @@ export function createTabs({
     const { open, show, back } = useOpenTranscript(
       conversation,
       label,
-      initialTranscript && { initial: here, done: initialTranscript },
+      initialTranscript && { initial: here, ...initialTranscript },
       close,
     );
     return (

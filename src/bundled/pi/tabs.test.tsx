@@ -528,7 +528,7 @@ it("settles a transcript request without opening it once Pi's late listing arriv
     <ActivityTab
       agent={AGENT}
       conversation={{ channelId: "chan", rootId: "root" }}
-      initialTranscript={done}
+      initialTranscript={{ opening: 1, done }}
     />,
   );
   expect(done).toHaveBeenCalled();

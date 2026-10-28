@@ -88,14 +88,13 @@ export function useOpenedSession<T extends Saved>(
  * `request` asks for the conversation's transcript first. It opens by itself
  * only if already known when the conversation is shown, since one found later
  * must not take the reader's focus; `request.done` reports that it was offered.
- * `done` identifies the request: the same function across renders is one
- * request, and a new one asks again, even for the conversation already shown.
+ * A new `request.opening` asks again, even for the conversation already shown.
  * Closing that tab calls `close`, since it was all that was asked for, unless
  * the host is only clearing the profile's own detail tabs. */
 export function useOpenTranscript<T>(
   conversation: AgentConversation | undefined,
   title: (row: T) => string,
-  request?: { initial: T | undefined; done(): void },
+  request?: { initial: T | undefined; opening: number; done(): void },
   close?: () => void,
 ) {
   const place = conversation
@@ -108,13 +107,13 @@ export function useOpenTranscript<T>(
   }>();
   // Forgotten, not just hidden: returning to the first conversation must not
   // reopen it unasked. A new request opens it again in the same one.
-  const done = request?.done;
-  const [offered, setOffered] = useState<{ place: string; done?: () => void }>({
+  const opening = request?.opening;
+  const [offered, setOffered] = useState<{ place: string; opening?: number }>({
     place: "",
   });
   const moved = offered.place !== place;
-  if (moved || (done && done !== offered.done)) {
-    setOffered({ place, ...(done && { done }) });
+  if (moved || (opening !== undefined && opening !== offered.opening)) {
+    setOffered({ place, ...(opening !== undefined && { opening }) });
     const asked =
       place && request?.initial !== undefined
         ? { place, row: request.initial, initial: true as const }
@@ -123,13 +122,13 @@ export function useOpenTranscript<T>(
   }
   const tabs = usePanelTabHost();
   // A transcript already open in its tab is brought forward when asked again.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: once per request.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: once per opening.
   useEffect(() => {
-    if (!done) return;
+    if (!request) return;
     if (tabs && shown?.initial && shown.place === place)
       tabs.activate(tabs.owner, title(shown.row));
-    done();
-  }, [done]);
+    request.done();
+  }, [opening]);
   return {
     open: shown?.place === place ? shown.row : undefined,
     show(row: T) {

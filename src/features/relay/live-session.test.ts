@@ -1,6 +1,7 @@
 import { ReadError } from "./errors";
 import { assert, expect, it, vi, afterEach } from "vitest";
 import { createRelaySession } from "./session";
+import type { ChannelStoreOptions } from "./store";
 import type { RelayEvent } from "./events";
 import type { LiveCallbacks } from "./live";
 import {
@@ -343,7 +344,7 @@ it.each([1, 2, 130])(
   },
 );
 
-function reconnectHarness() {
+function reconnectHarness(options: ChannelStoreOptions = {}) {
   const relay = keypair(),
     viewer = keypair(),
     alice = keypair();
@@ -357,7 +358,7 @@ function reconnectHarness() {
         return { update() {}, retry() {}, dispose() {} };
       },
     },
-    { prepared: true },
+    { prepared: true, ...options },
   );
   const window = () => owner.session.channels.window("c");
   const rows = () => window().rows.map((row) => row.id);
@@ -368,14 +369,14 @@ function reconnectHarness() {
       (entry) => !entry.signal?.aborted && entry.filters[0]?.top_level === true,
     );
   /** The one outstanding window read, after answering profile reads empty. */
-  const read = () => {
+  const read = (channelId = "c") => {
     for (const entry of wire.pending.splice(0)) {
       if (entry.signal?.aborted) continue;
       if (entry.filters[0]?.kinds?.includes(0)) entry.respond([]);
       else wire.pending.push(entry);
     }
     expect(wire.pending.map((entry) => entry.filters)).toMatchObject([
-      [{ "#h": ["c"], top_level: true }],
+      [{ "#h": [channelId], top_level: true }],
     ]);
     return wire.next();
   };
@@ -383,38 +384,56 @@ function reconnectHarness() {
     suffix: string,
     events: readonly ReturnType<typeof message>[],
     next: ReturnType<typeof message> | null,
+    channelId = "c",
   ) => [
     ...events,
-    bounds(relay, "c", suffix, {
+    bounds(relay, channelId, suffix, {
       has_more: next !== null,
       next_cursor: next ? { created_at: next.created_at, id: next.id } : null,
     }),
   ];
-  /** Open channel c with `seen` loaded and more history behind it, then reconnect. */
-  const reconnect = async (seen: ReturnType<typeof message>) => {
+  /** Read the roster: channel c and `others`, with no window open yet. */
+  const list = async (others: readonly string[] = []) => {
     owner.session.channels.ensureList();
     wire
       .next()
-      .respond([
-        roster(relay, "c", [viewer.pubkey]),
-        metadata(relay, "c", "C"),
-      ]);
+      .respond(
+        ["c", ...others].flatMap((id) => [
+          roster(relay, id, [viewer.pubkey]),
+          metadata(relay, id, id.toUpperCase()),
+        ]),
+      );
     await flush();
+  };
+  /** Open channel c with `seen` loaded and more history behind it. */
+  const open = async (seen: ReturnType<typeof message>) => {
     owner.session.channels.ensure("c");
     await flush();
     read().respond(page("head", [seen], seen));
     await flush();
     expect(rows()).toEqual([seen.id]);
+  };
+  /** Open channel c with `seen` loaded and more history behind it, then reconnect. */
+  const reconnect = async (
+    seen: ReturnType<typeof message>,
+    others: readonly string[] = [],
+  ) => {
+    await list(others);
+    await open(seen);
     live.state({ status: "connected", routes: [] });
     live.established("c");
+    await flush();
+  };
+  /** Drop the stream, with no reconnect yet. */
+  const drop = async () => {
+    live.state({ status: "retrying", routes: [] });
     await flush();
   };
   const cursor = (event: ReturnType<typeof message>) =>
     `${event.created_at}:${event.id}`;
   /** Drop the stream; the later re-establishment replays `replayed` before EOSE. */
   const dropAndReplay = async (replayed: readonly RelayEvent[]) => {
-    live.state({ status: "retrying", routes: [] });
-    await flush();
+    await drop();
     live.state({ status: "connected", routes: [] });
     live.receive(replayed);
     await flush();
@@ -433,7 +452,10 @@ function reconnectHarness() {
     reads,
     read,
     page,
+    list,
+    open,
     reconnect,
+    drop,
     dropAndReplay,
     cursor,
   };
@@ -772,6 +794,198 @@ it("a second drop before any catch-up completes keeps the rows kept across the f
       freshness: "verified",
       error: undefined,
     });
+  } finally {
+    h.owner.dispose();
+  }
+});
+
+it("a channel opened while the stream is down keeps the head it read for its catch-up to reach", async () => {
+  // Its window has no drop-time snapshot. Were the rows at catch-up time the
+  // snapshot, the replay among them would be the head's overlap, and the gap
+  // between that head read and the replay would never be paged.
+  const h = reconnectHarness();
+  try {
+    const seen = message(h.alice, "c", "seen", 10),
+      between = message(h.alice, "c", "between", 20),
+      missed = message(h.alice, "c", "missed", 30),
+      recent = message(h.alice, "c", "recent", 40);
+    await h.list();
+    h.live.state({ status: "connected", routes: [] });
+    await h.drop();
+    await h.open(seen);
+    await h.dropAndReplay([recent]);
+    expect(h.rows()).toEqual([seen.id, recent.id]);
+    h.read().respond(h.page("head", [recent, missed], missed));
+    await flush();
+    expect(h.window().freshness).toBe("cached");
+    const older = h.read();
+    expect(older.filters[0]).toMatchObject({
+      until: missed.created_at,
+      before_id: missed.id,
+    });
+    older.respond(h.page(h.cursor(missed), [between, seen], seen));
+    await flush();
+    expect(h.reads()).toHaveLength(0);
+    expect(h.rows()).toEqual([seen.id, between.id, missed.id, recent.id]);
+    expect(h.window()).toMatchObject({
+      status: "ready",
+      freshness: "verified",
+      error: undefined,
+    });
+  } finally {
+    h.owner.dispose();
+  }
+});
+
+it("a window evicted and re-created while the stream is down keeps the head it adopts for its catch-up to reach", async () => {
+  const h = reconnectHarness({ maxWindows: 1 });
+  try {
+    const seen = message(h.alice, "c", "seen", 10),
+      between = message(h.alice, "c", "between", 20),
+      missed = message(h.alice, "c", "missed", 30),
+      recent = message(h.alice, "c", "recent", 40);
+    await h.reconnect(seen, ["d"]);
+    await h.drop();
+    // Opening d evicts c's window; c's head stays cached.
+    h.owner.session.channels.ensure("d");
+    await flush();
+    h.read("d").respond(h.page("head", [], null, "d"));
+    await flush();
+    expect(h.rows()).toEqual([]);
+    h.owner.session.channels.ensure("c");
+    await flush();
+    expect(h.rows()).toEqual([seen.id]);
+    // The cached head is stale, so the window revalidates it while still down.
+    h.read().respond(h.page("head", [seen], seen));
+    await flush();
+    await h.dropAndReplay([recent]);
+    expect(h.rows()).toEqual([seen.id, recent.id]);
+    h.read().respond(h.page("head", [recent, missed], missed));
+    await flush();
+    expect(h.window().freshness).toBe("cached");
+    const older = h.read();
+    expect(older.filters[0]).toMatchObject({
+      until: missed.created_at,
+      before_id: missed.id,
+    });
+    older.respond(h.page(h.cursor(missed), [between, seen], seen));
+    await flush();
+    expect(h.reads()).toHaveLength(0);
+    expect(h.rows()).toEqual([seen.id, between.id, missed.id, recent.id]);
+    expect(h.window()).toMatchObject({
+      status: "ready",
+      freshness: "verified",
+      error: undefined,
+    });
+  } finally {
+    h.owner.dispose();
+  }
+});
+
+it("a fill whose last page lands in the tick the stream drops reports the window cached", async () => {
+  // The fill reached the rows kept across the drop, but the stream is
+  // retrying: the window is not verified until the next catch-up is.
+  const h = reconnectHarness();
+  try {
+    const seen = message(h.alice, "c", "seen", 10),
+      between = message(h.alice, "c", "between", 20),
+      missed = message(h.alice, "c", "missed", 30),
+      recent = message(h.alice, "c", "recent", 40),
+      later = message(h.alice, "c", "later", 50);
+    await h.reconnect(seen);
+    h.read().respond(h.page("head", [seen], seen));
+    await flush();
+    await h.dropAndReplay([recent]);
+    h.read().respond(h.page("head", [recent, missed], missed));
+    await flush();
+    const older = h.read();
+    // The stream drops as the page that reaches `seen` is being merged: the
+    // drop is seen before the fill completes, after the page it would cancel.
+    const unsubscribe = h.owner.session.channels.subscribeWindow("c", () => {
+      unsubscribe();
+      h.live.state({ status: "retrying", routes: [] });
+    });
+    older.respond(h.page(h.cursor(missed), [between, seen], seen));
+    await flush();
+    expect(h.reads()).toHaveLength(0);
+    expect(h.rows()).toEqual([seen.id, between.id, missed.id, recent.id]);
+    expect(h.window()).toMatchObject({
+      status: "ready",
+      freshness: "cached",
+      error: undefined,
+    });
+    // The rows the fill settled are what the next catch-up must reach.
+    await h.dropAndReplay([later]);
+    h.read().respond(h.page("head", [later, recent], recent));
+    await flush();
+    expect(h.reads()).toHaveLength(0);
+    expect(h.rows()).toEqual([
+      seen.id,
+      between.id,
+      missed.id,
+      recent.id,
+      later.id,
+    ]);
+    expect(h.window().freshness).toBe("verified");
+  } finally {
+    h.owner.dispose();
+  }
+});
+
+it("an older page read while the stream is down waits below a settled fill until paging reaches it", async () => {
+  // Those rows are not in the drop-time snapshot, so a fill that gives up on
+  // the snapshot does not drop them; the settle's cursor hides them below the
+  // window's floor until an older read from the last page reaches them.
+  const h = reconnectHarness();
+  try {
+    const seen = message(h.alice, "c", "seen", 10),
+      old = message(h.alice, "c", "old", 5);
+    const missed = [6, 5, 4, 3, 2, 1].map((n) =>
+      message(h.alice, "c", `missed ${n}`, 10 + n * 10),
+    );
+    await h.reconnect(seen);
+    h.read().respond(h.page("head", [seen], seen));
+    await flush();
+    await h.drop();
+    h.owner.session.channels.loadOlder("c");
+    const older = h.read();
+    expect(older.filters[0]).toMatchObject({
+      until: seen.created_at,
+      before_id: seen.id,
+    });
+    older.respond(h.page(h.cursor(seen), [old], old));
+    await flush();
+    expect(h.rows()).toEqual([old.id, seen.id]);
+    await h.dropAndReplay([]);
+    let previous: (typeof missed)[number] | undefined;
+    for (const row of missed) {
+      h.read().respond(
+        h.page(previous ? h.cursor(previous) : "head", [row], row),
+      );
+      await flush();
+      previous = row;
+    }
+    assert(previous);
+    expect(h.reads()).toHaveLength(0);
+    expect(h.rows()).toEqual(missed.map((row) => row.id).reverse());
+    expect(h.window()).toMatchObject({
+      status: "ready",
+      freshness: "verified",
+      hasMore: true,
+    });
+    h.owner.session.channels.loadOlder("c");
+    const next = h.read();
+    expect(next.filters[0]).toMatchObject({
+      until: previous.created_at,
+      before_id: previous.id,
+    });
+    next.respond(h.page(h.cursor(previous), [seen, old], old));
+    await flush();
+    expect(h.rows()).toEqual([
+      old.id,
+      seen.id,
+      ...missed.map((row) => row.id).reverse(),
+    ]);
   } finally {
     h.owner.dispose();
   }

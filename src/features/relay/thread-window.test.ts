@@ -627,6 +627,87 @@ it("refresh after establishment drops a retained reply it cannot reach within th
   });
 });
 
+/** Reconnect pages: `four` and `three` on the newest page, then `two`, then `one`. */
+const reconnectPages =
+  (reconnected: () => boolean) =>
+  (filter: ReadFilter): readonly RelayEvent[] => {
+    const [one, two, three, four] = [at(1), at(2), at(3), at(4)];
+    if (filter.ids) return [root];
+    if (!reconnected()) return [one, bounds(filter, cursorOf(one))];
+    if (filter.until === undefined)
+      return [four, three, bounds(filter, cursorOf(three))];
+    if (filter.until === three.created_at)
+      return [two, bounds(filter, cursorOf(two))];
+    return [one, bounds(filter, cursorOf(one))];
+  };
+
+it("a refresh completing while the stream is down keeps the replies held across the drop for the establishment refresh to reach", async () => {
+  const [one, two, three, four] = [at(1), at(2), at(3), at(4)];
+  let reconnected = false;
+  const h = await setup(reconnectPages(() => reconnected));
+  await h.view.refresh();
+  h.traffic.state({ status: "connected", routes: [] });
+  h.traffic.state({ status: "retrying", routes: [] });
+  // A user refresh while the stream is down re-reads the same page. Were it
+  // to clear the drop-time snapshot, the replayed reply would be the
+  // establishment refresh's overlap.
+  await h.view.refresh();
+  expect(h.view.snapshot().replies.map((row) => row.id)).toEqual([one.id]);
+  reconnected = true;
+  h.traffic.state({ status: "connected", routes: [] });
+  h.traffic.receive([four]);
+  const before = h.requests.length;
+  h.traffic.established(channel);
+  await vi.waitFor(() =>
+    expect(h.view.snapshot().replies.map((row) => row.id)).toEqual([
+      one.id,
+      two.id,
+      three.id,
+      four.id,
+    ]),
+  );
+  expect(h.requests.slice(before)).toMatchObject([
+    [{ ids: [root.id] }],
+    [{ thread_window: true }],
+    [{ thread_window: true, until: three.created_at, before_id: three.id }],
+    [{ thread_window: true, until: two.created_at, before_id: two.id }],
+  ]);
+  expect(h.view.snapshot()).toMatchObject({ status: "ready", limited: false });
+});
+
+it("a thread view opened while the stream is down keeps its first read for the establishment refresh to reach", async () => {
+  const [one, two, three, four] = [at(1), at(2), at(3), at(4)];
+  let reconnected = false;
+  const h = await setup(reconnectPages(() => reconnected));
+  h.traffic.state({ status: "connected", routes: [] });
+  h.traffic.state({ status: "retrying", routes: [] });
+  h.view.dispose();
+  const view = h.session.thread(channel, root.id);
+  cleanup.push(view.dispose);
+  await view.refresh();
+  expect(view.snapshot().replies.map((row) => row.id)).toEqual([one.id]);
+  reconnected = true;
+  h.traffic.state({ status: "connected", routes: [] });
+  h.traffic.receive([four]);
+  const before = h.requests.length;
+  h.traffic.established(channel);
+  await vi.waitFor(() =>
+    expect(view.snapshot().replies.map((row) => row.id)).toEqual([
+      one.id,
+      two.id,
+      three.id,
+      four.id,
+    ]),
+  );
+  expect(h.requests.slice(before)).toMatchObject([
+    [{ ids: [root.id] }],
+    [{ thread_window: true }],
+    [{ thread_window: true, until: three.created_at, before_id: three.id }],
+    [{ thread_window: true, until: two.created_at, before_id: two.id }],
+  ]);
+  expect(view.snapshot()).toMatchObject({ status: "ready", limited: false });
+});
+
 it("revalidates a missing strict root before repair and preserves tombstones on retry", async () => {
   const row = reply(0);
   let missing = false;

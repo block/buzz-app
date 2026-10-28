@@ -83,6 +83,7 @@ export function createThreadView({
   exact = false,
   admit = (events) => events,
   clock = new MessageClock(),
+  dropped: openedDropped = false,
 }: {
   channelId: string;
   messageId: string;
@@ -107,6 +108,9 @@ export function createThreadView({
   admit?:
     | ((events: readonly RelayEvent[]) => readonly RelayEvent[])
     | undefined;
+  /** Opened while the stream was down: the first read is the snapshot its
+   * establishment refresh must reach. */
+  dropped?: boolean;
 }) {
   // These finite thread reads have no session recovery source. Their existing
   // selection/page controllers still own cancellation and stale-result fencing.
@@ -152,13 +156,17 @@ export function createThreadView({
         .filter((event) => isReply(event) && !(exact && event.id === messageId))
         .map((event) => event.id),
     );
-  /** The replies held when the stream dropped, until a refresh completes. The
-   * re-established stream replays its last minutes before refresh; those
-   * replies are newer than any gap, not overlap with it. */
+  /** The replies held when the stream dropped, or read while it was down,
+   * until the refresh after it is back completes. The re-established stream
+   * replays its last minutes before that refresh; those replies are newer
+   * than any gap, not overlap with it. */
   let held: Set<string> | undefined;
-  let drops = 0;
+  /** The stream is down: a completed refresh keeps `held`, taking one from
+   * its replies if the view has none. Only its establishment refresh clears it. */
+  let dropped = openedDropped;
   let controller: AbortController | undefined;
-  let again = false;
+  /** A refresh requested while a read runs; the stream's return carries over. */
+  let again: false | "refresh" | "established" = false;
   let snapshot: ThreadSnapshot = Object.freeze({
     status: "idle",
     root: undefined,
@@ -518,10 +526,11 @@ export function createThreadView({
     }
   }
 
-  async function run(replace: boolean) {
+  async function run(replace: boolean, established = false) {
     if (disposed) return;
     if (controller) {
-      if (replace) again = true;
+      if (established) again = "established";
+      else if (replace) again ||= "refresh";
       return;
     }
     if (!canAccess()) {
@@ -531,6 +540,9 @@ export function createThreadView({
     if (!replace && (!snapshot.canLoadMore || snapshot.limited)) return;
     const owned = new AbortController();
     controller = owned;
+    // Cleared as this refresh starts, not when the stream came back: a refresh
+    // it supersedes still completes against the replies held across the drop.
+    if (established) dropped = false;
     const active = () =>
       !disposed && !owned.signal.aborted && controller === owned;
     const targetPages = replace ? Math.max(1, pages) : 1;
@@ -616,7 +628,6 @@ export function createThreadView({
       // minutes, not a long disconnect, so keep paging until a reply kept
       // across the drop is reached.
       const kept = replace ? (held ?? unverified()) : new Set<string>();
-      const dropsAtStart = drops;
       let reached = !kept.size;
       let more = false;
       // Where the loop passed the range the reader had, so a fill that never
@@ -766,8 +777,11 @@ export function createThreadView({
       rootUnavailable = false;
       cursor = nextCursor;
       pages = nextPages;
-      // A drop during the refresh ran stale() first; the replies now are held.
-      if (replace) held = drops === dropsAtStart ? undefined : unverified();
+      // While the stream is down (a drop mid-refresh ran stale() first) the
+      // held replies stand; a view holding none, or a fill that gave them up,
+      // takes the replies now.
+      if (replace && !dropped) held = undefined;
+      else if (replace && (unreached || !held?.size)) held = unverified();
       publish({
         status: "ready",
         error: undefined,
@@ -786,8 +800,9 @@ export function createThreadView({
         staged = [];
         controller = undefined;
         if (again && !disposed) {
+          const established = again === "established";
           again = false;
-          void run(true);
+          void run(true, established);
         }
       }
     }
@@ -803,11 +818,14 @@ export function createThreadView({
     events: () => [...remote, ...staged, ...selectionStaged],
     receive,
     purge,
-    /** The stream dropped: the replies held now are what the next refresh must reach. */
+    /** The stream dropped: the replies held now are what its establishment
+     * refresh must reach. */
     stale() {
-      drops++;
+      dropped = true;
       held ??= unverified();
     },
+    /** The stream is back: refresh, reaching the replies held across the drop. */
+    established: () => run(true, true),
     localChanged() {
       const next = localOperations();
       if (

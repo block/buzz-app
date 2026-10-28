@@ -53,9 +53,10 @@ type WindowState = {
   /** Rows came from IndexedDB and no relay read has replaced them. Freshness
    * cannot say this: a dropped socket also marks relay rows `cached`. */
   restored?: boolean;
-  /** Channel rows held when the stream dropped, until a catch-up verifies or
-   * settles the window. The re-established stream replays its last minutes
-   * before catch-up; those rows are newer than any gap, not overlap with it. */
+  /** Channel rows held when the stream dropped, or read while it was down,
+   * until a catch-up verifies or settles the window. The re-established stream
+   * replays its last minutes before catch-up; those rows are newer than any
+   * gap, not overlap with it. */
   kept?: Set<string> | undefined;
 };
 type Head = {
@@ -222,6 +223,10 @@ export function createChannelStore(
   const controllers = new Set<AbortController>();
   /** Stream drops seen; a catch-up compares it to learn one happened mid-fill. */
   let streamDrops = 0;
+  /** The stream is down: a window reading its head now keeps those rows for
+   * the catch-up to reach, as staleHeads() kept the windows that existed at
+   * the drop. The first catch-up after re-establishment clears it. */
+  let dropped = false;
   const accessVersions = new Map<string, number>();
   const listListeners = new Set<Listener>();
   const windowListeners = new Map<string, Set<Listener>>();
@@ -522,6 +527,17 @@ export function createChannelStore(
     freshness: head.cached ? "cached" : "verified",
     historyLimited: false,
   });
+  /** Show a head as the window's rows. Read while the stream is down, they
+   * are what its catch-up must reach: the replay that precedes it is newer
+   * than any gap, not overlap with it. */
+  function adoptHead(state: WindowState, head: Head) {
+    moveCursor(state, head.cursor);
+    state.events = head.events;
+    state.atHead = true;
+    state.restored = head.restored === true;
+    if (dropped) state.kept ??= rowIds(state);
+    setWindow(state, patchFromHead(head));
+  }
   function save(channelId: string, head: Head, previousProfiles?: string) {
     if (
       !persistence ||
@@ -695,11 +711,7 @@ export function createChannelStore(
       if (prepared && !cursor) {
         const head = await requestHead(state.channelId, "foreground");
         if (!live(state, generation)) return;
-        moveCursor(state, head.cursor);
-        state.events = head.events;
-        state.atHead = true;
-        state.restored = head.restored === true;
-        setWindow(state, patchFromHead(head));
+        adoptHead(state, head);
         return;
       }
       const { page } = await readPage(state.channelId, cursor, {
@@ -729,6 +741,7 @@ export function createChannelStore(
       state.atHead = !cursor;
       moveCursor(state, page.cursor);
       state.restored = false;
+      if (dropped && !cursor) state.kept ??= rowIds(state);
       setWindow(state, {
         status: "ready",
         rows,
@@ -891,13 +904,8 @@ export function createChannelStore(
           state &&
           (state.snapshot.status === "idle" ||
             state.snapshot.status === "loading")
-        ) {
-          moveCursor(state, head.cursor);
-          state.events = head.events;
-          state.atHead = true;
-          state.restored = head.restored === true;
-          setWindow(state, patchFromHead(head));
-        }
+        )
+          adoptHead(state, head);
       } catch {
         /* Corrupt or unsigned cache records cannot reach the read model. */
       } finally {
@@ -2525,13 +2533,8 @@ export function createChannelStore(
       current = channelId;
       const state = touch(channelId);
       const retained = prepared ? heads.peek(channelId) : undefined;
-      if (retained && ["idle", "error"].includes(state.snapshot.status)) {
-        moveCursor(state, retained.cursor);
-        state.events = retained.events;
-        state.atHead = true;
-        state.restored = retained.restored === true;
-        setWindow(state, patchFromHead(retained));
-      }
+      if (retained && ["idle", "error"].includes(state.snapshot.status))
+        adoptHead(state, retained);
       if (discovery?.isPending(channelId)) {
         // A chat still starting has no history yet; its own sends show locally.
         if (state.snapshot.status === "idle")
@@ -2572,11 +2575,7 @@ export function createChannelStore(
       }
       const head = prepared ? heads.get(channelId) : undefined;
       if (head) {
-        moveCursor(state, head.cursor);
-        state.events = head.events;
-        state.atHead = true;
-        state.restored = head.restored === true;
-        setWindow(state, patchFromHead(head));
+        adoptHead(state, head);
         prepareMedia(channelId);
       }
       if (head && !head.cached && now() - head.savedAt < FRESH_FOR) return;
@@ -3004,9 +3003,11 @@ export function createChannelStore(
      * that only a queued catch-up marked loading becomes idle: the next ensure()
      * reads it again. Running reads settle their own windows when cancelled.
      * The rows held now are what the catch-up must reach; a second drop before
-     * one completes keeps that snapshot. */
+     * one completes keeps that snapshot, and a window reading its head before
+     * the stream is back takes one from that read. */
     staleHeads() {
       streamDrops++;
+      dropped = true;
       for (const [id, head] of heads.entries())
         heads.set(id, { ...head, cached: true });
       for (const state of windows.values()) {
@@ -3029,6 +3030,7 @@ export function createChannelStore(
      * fails or is cancelled, the kept rows go and the window continues from the
      * pages read rather than showing a gap as history. */
     async catchUp(channelId: string) {
+      dropped = false;
       const cached = heads.peek(channelId);
       if (cached) heads.set(channelId, { ...cached, cached: true });
       const retained = windows.get(channelId);
@@ -3098,10 +3100,11 @@ export function createChannelStore(
           throw new DOMException("Stale live catch-up", "AbortError");
         if (retained.atHead) moveCursor(retained, page.cursor);
         retained.kept = keptAfter();
+        // A drop mid-fill has marked the window cached; the stream is retrying.
         setWindow(retained, {
           ...(retained.atHead ? { hasMore: page.hasMore } : {}),
           status: "ready",
-          freshness: "verified",
+          freshness: streamDrops === dropsAtStart ? "verified" : "cached",
           error: undefined,
         });
         return true;

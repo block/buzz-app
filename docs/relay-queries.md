@@ -810,21 +810,29 @@ windows get finite, signed-bounds head catch-up after establishment/reconnect;
 unopened channels defer it until demand. `live.snapshot().heads` distinguishes
 pending, verified, deferred and failed obligations. Verification covers the
 bounded current head and its continuity with the rows the reader kept across
-the drop, not all history. Those rows are snapshotted when the stream drops;
-the rows the re-established stream replays before catch-up (its last five
-minutes) are newer than any gap, so a head overlapping only them is not
-continuity evidence. When the head has more history and shares no row with the
-snapshot, catch-up pages back from it (up to five pages), merging each page as
-it lands. Past that bound, or when a page fails or the stream drops mid-fill,
-the snapshotted rows it never reached are dropped and the window continues from
-the last page read (verified at the bound, cached after an interruption), so a
-long disconnect never shows a gap as history and the next head's overlap is
-truthful: a fill the drop interrupted leaves the settled rows as the next
-catch-up's snapshot, and a second drop before any catch-up completes keeps the
-first snapshot. Replayed rows and rows the stream delivers meanwhile stay.
-Catch-up merges into paged readers without resetting older pages or their
-cursor. An open thread view refreshes the same way: it snapshots its replies at
-the drop, and its re-read pages past the retained range until it reaches one of
+the drop, not all history. Those rows are snapshotted when the stream drops, or
+at a window's first head read while it is down (a channel opened, or a window
+evicted and reopened, during the disconnect); the rows the re-established
+stream replays before catch-up (its last five minutes) are newer than any gap,
+so a head overlapping only them is not continuity evidence. The healthy renewal
+is unchanged: a head sharing any row with the snapshot verifies the window in
+that one read, and only a channel with more than a page of rows across the
+drop and replay pays pages. When the head has more history and shares no row
+with the snapshot, catch-up pages back from it (up to five pages), merging each
+page as it lands. Past that bound, or when a page fails or the stream drops
+mid-fill, the snapshotted rows it never reached are dropped and the window
+continues from the last page read (verified at the bound, cached after an
+interruption or a drop mid-fill), so a long disconnect never shows a gap as
+history and the next head's overlap is truthful: a fill the drop interrupted
+leaves the settled rows as the next catch-up's snapshot, and a second drop
+before any catch-up completes keeps the first snapshot. Replayed rows, rows
+the stream delivers meanwhile, and older pages read during the disconnect stay
+(the last below the settled range until paging reaches them). Catch-up merges
+into paged readers without resetting older pages or their cursor. An open
+thread view refreshes the same way: it snapshots its replies at the drop, or
+at its first read while the stream is down, and only the refresh after the
+stream is back clears that snapshot (a refresh completing while it is down
+keeps it); the re-read pages past the retained range until it reaches one of
 them, within the thread page bound. Past it, the replies it never reached go
 and the view settles back on the range the reader had, so later refreshes stay
 proportional to it.

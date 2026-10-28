@@ -788,6 +788,32 @@ it("remembers an unconfirmed message after the window closes", async () => {
   expect(directMessages.delivered).toHaveBeenCalledTimes(2);
 });
 
+it("sends an edited agent anew rather than confirming an earlier copy", async () => {
+  const user = userEvent.setup();
+  const { session, directMessages, messages, attachments } = community();
+  directMessages.delivered.mockRejectedValueOnce(new Error("Offline"));
+  const first = share(session);
+  await user.click(await choice("Bea"));
+  await user.click(screen.getByRole("button", { name: "Send" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Couldn’t send to Bea. Offline.",
+  );
+  first.unmount();
+  share(session, {
+    config: { instructions: "Review small pull requests.", model: "echo-1" },
+  });
+  await user.click(await choice("Bea"));
+  await user.click(screen.getByRole("button", { name: "Send" }));
+  expect(await screen.findByText("Sent Ada to Bea.")).toBeInTheDocument();
+  expect(messages.send).toHaveBeenCalledTimes(2);
+  expect(attachments.upload).toHaveBeenCalledTimes(2);
+  // The edited copy is what was uploaded the second time.
+  const card = attachments.upload.mock.calls[1]?.[0] as File;
+  expect((await readSnapshot(card)).instructions).toBe(
+    "Review small pull requests.",
+  );
+});
+
 it("posts to a channel the viewer belongs to, and never offers agents", async () => {
   const user = userEvent.setup();
   const { session, directMessages, attachments, messages } = community();

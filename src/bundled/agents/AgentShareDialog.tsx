@@ -266,11 +266,14 @@ export function AgentShareDialog({
   };
   // Each unconfirmed message, kept past closing the window, so a retry
   // confirms it (delivery retries it in the outbox) rather than sending
-  // another.
+  // another. An edited agent is a different copy, so it sends anew.
   const sent = unconfirmed(session);
-  const key = (target: ShareTarget) => `${agent.pubkey}:${target.id}`;
+  const key = (target: ShareTarget) =>
+    `${agent.pubkey}:${target.id}:${current}`;
   const primary = useRef<HTMLButtonElement>(null);
-  const upload = useRef<UploadedAttachment>(undefined);
+  const upload = useRef<{ content: string; file: UploadedAttachment }>(
+    undefined,
+  );
   const sending = useRef<AbortController>(null);
   useEffect(() => () => sending.current?.abort(), []);
   const send = async () => {
@@ -298,24 +301,29 @@ export function AgentShareDialog({
             target.kind === "channel"
               ? target.id
               : await session.directMessages.open([target.id], signal);
-          // One upload serves every message: community media isn't scoped
-          // to a conversation.
-          upload.current ??= await uploads.upload(
-            new File(
-              [(await file("png")) as Blob],
-              fileName(agent.name, "png"),
-              { type: "image/png" },
-            ),
-            channel,
-            signal,
-          );
+          // One upload serves every message of this copy: community media
+          // isn't scoped to a conversation.
+          let copy = upload.current;
+          if (!copy || copy.content !== current)
+            upload.current = copy = {
+              content: current ?? "",
+              file: await uploads.upload(
+                new File(
+                  [(await file("png")) as Blob],
+                  fileName(agent.name, "png"),
+                  { type: "image/png" },
+                ),
+                channel,
+                signal,
+              ),
+            };
           message = {
             channel,
             id: session.messages.send(
               channel,
               `Here’s a copy of my agent, ${agent.name}. Choose the card to add it to your agents.`,
               [],
-              [upload.current],
+              [copy.file],
             ),
           };
           sent.set(key(target), message);

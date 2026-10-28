@@ -547,6 +547,14 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     expect(
       searchRowPositions.every(({ y }) => y === searchRowPositions[0].y),
     ).toBe(true);
+    // A short result row starts at the left in the same columns as a full row.
+    await search.fill("parrot");
+    await expect(searchResults).toHaveCount(3);
+    expect(
+      await searchResults.evaluateAll((buttons) =>
+        buttons.map((button) => button.getBoundingClientRect().x),
+      ),
+    ).toEqual(searchRowPositions.slice(0, 3).map(({ x }) => x));
     await search.fill("party");
     const emojiClear = page.locator("em-emoji-picker .search .delete");
     await expect(emojiClear).toHaveCSS("position", "static");

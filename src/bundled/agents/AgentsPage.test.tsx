@@ -3409,7 +3409,7 @@ it("offers Make main agent on a stand-in for a missing chosen agent", async () =
   ).toBeNull();
 });
 
-it("moves cards from their actions without remounting neighbours, and restores the scoped order", async () => {
+it("restores scoped card order without menu reorder actions or remounting neighbours", async () => {
   const user = userEvent.setup();
   const ada = agent("Ada", 1);
   const bo = agent("Bo", 2);
@@ -3423,11 +3423,15 @@ it("moves cards from their actions without remounting neighbours, and restores t
   await user.click(screen.getByRole("button", { name: "Actions for Ada" }));
   const menu = await screen.findByRole("menu", { name: "Actions for Ada" });
   expect(
-    within(menu).getByRole("menuitem", { name: "Move earlier" }),
-  ).toHaveAttribute("aria-disabled", "true");
+    within(menu).queryByRole("menuitem", { name: "Move earlier" }),
+  ).toBeNull();
+  expect(
+    within(menu).queryByRole("menuitem", { name: "Move later" }),
+  ).toBeNull();
   act(() => view.show([ada, bo, nova]));
   expect(menu).toBeInTheDocument();
-  await user.click(within(menu).getByRole("menuitem", { name: "Move later" }));
+  await user.keyboard("{Escape}");
+  act(() => writeView(scope, "agents:order", [bo.pubkey, ada.pubkey]));
   expect(order()).toEqual(["Bo", "Ada", "Nova"]);
   await user.click(screen.getByRole("gridcell", { name: "Bo" }));
   await user.keyboard("{ArrowRight}");
@@ -3438,42 +3442,4 @@ it("moves cards from their actions without remounting neighbours, and restores t
   restored.unmount();
   setup([ada, bo], { scope: "https://other.example:owner" });
   expect(order()).toEqual(["Ada", "Bo"]);
-});
-
-it("keeps the old order on a failed save, then lets the same move retry", async () => {
-  const user = userEvent.setup();
-  const scope = "https://relay.example:owner";
-  writeView(scope, "agents:order", { malformed: true });
-  const view = setup([agent("Ada", 1), agent("Bo", 2)], { scope });
-  const order = () =>
-    screen
-      .getAllByRole("gridcell")
-      .map((card) => card.getAttribute("aria-label"));
-  expect(order()).toEqual(["Ada", "Bo"]);
-  const open = async () => {
-    await user.click(screen.getByRole("button", { name: "Actions for Ada" }));
-    return within(
-      await screen.findByRole("menu", { name: "Actions for Ada" }),
-    ).getByRole("menuitem", { name: "Move later" });
-  };
-  const move = await open();
-  const storage = vi
-    .spyOn(Storage.prototype, "setItem")
-    .mockImplementation(() => {
-      throw new Error("Storage unavailable");
-    });
-  try {
-    await user.click(move);
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "order couldn't be saved",
-    );
-    expect(order()).toEqual(["Ada", "Bo"]);
-  } finally {
-    storage.mockRestore();
-  }
-  await user.click(await open());
-  expect(order()).toEqual(["Bo", "Ada"]);
-  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-  act(() => view.show([agent("Bo", 2), agent("New", 3)]));
-  expect(order()).toEqual(["Bo", "New"]);
 });

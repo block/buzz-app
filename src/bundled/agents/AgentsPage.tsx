@@ -34,7 +34,7 @@ import {
 import { AgentShareDialog } from "./AgentShareDialog";
 import { AgentCard, AgentPortrait, TeamCard } from "./AgentCard";
 import { AgentInventoryDrag, DraggableAgentRow } from "./AgentInventoryDrag";
-import { moveAgent, useAgentOrder } from "./agent-order";
+import { useAgentOrder } from "./agent-order";
 import { AgentCreateDialog, TypeIcon } from "./AgentCreateDialog";
 import { NewAgentTile } from "./NewAgentTile";
 import type { ChannelChoice } from "../../features/agents/attention";
@@ -807,7 +807,6 @@ function Inventory({ scope, agents, typeOf, ...props }: InventoryProps) {
             agents={preview}
             dragging={dragging}
             typeOf={typeOf}
-            onReorder={save}
           />
         )}
       </AgentInventoryDrag>
@@ -834,11 +833,9 @@ function InventoryGrid({
   defaultChoices,
   onMakeDefault,
   session,
-  onReorder,
   dragging,
 }: InventoryProps & {
   dragging: boolean;
-  onReorder(agents: readonly Agent[]): void;
 }) {
   const grid = useRef<HTMLDivElement>(null);
   const index = agents.findIndex((agent) => agent.pubkey === selected);
@@ -926,18 +923,6 @@ function InventoryGrid({
                         }
                       : undefined
                   }
-                  reorder={
-                    scope
-                      ? {
-                          first: position === 0,
-                          last: position === agents.length - 1,
-                          move: (delta) =>
-                            onReorder(
-                              moveAgent(agents, position, position + delta),
-                            ),
-                        }
-                      : undefined
-                  }
                   service={service}
                   session={session}
                   type={type}
@@ -989,7 +974,6 @@ function InventoryCard({
   onBuild,
   onRemoved,
   main,
-  reorder,
   ...props
 }: Omit<React.ComponentProps<typeof AgentCard>, "agent"> & {
   agent: Agent;
@@ -998,9 +982,6 @@ function InventoryCard({
   type: RegisteredAgentType | undefined;
   onBuild(): void;
   onRemoved(): void;
-  reorder?:
-    | { first: boolean; last: boolean; move(delta: number): void }
-    | undefined;
   /** Whether it is the community's main agent and can be made it. */
   main?:
     | { isMain: boolean; pinned: boolean; available: boolean; onMake(): void }
@@ -1039,17 +1020,6 @@ function InventoryCard({
           </MenuItem>
         ))}
       {main && <MenuSeparator />}
-      {reorder && (
-        <>
-          <MenuItem disabled={reorder.first} onClick={() => reorder.move(-1)}>
-            Move earlier
-          </MenuItem>
-          <MenuItem disabled={reorder.last} onClick={() => reorder.move(1)}>
-            Move later
-          </MenuItem>
-          <MenuSeparator />
-        </>
-      )}
       {editable && <MenuItem onClick={onBuild}>Open settings</MenuItem>}
       {editable && session && type?.exportShared && (
         <MenuItem onClick={() => setSharing(true)}>Share</MenuItem>

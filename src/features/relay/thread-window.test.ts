@@ -524,7 +524,7 @@ it("refresh after establishment pages past its re-read until it reaches a retain
   });
 });
 
-it("refresh after establishment drops a retained reply it cannot reach within the page bound", async () => {
+it("refresh after establishment drops a retained reply it cannot reach within the page bound and settles on the range the reader had", async () => {
   const old = at(1);
   const fresh = Array.from({ length: 10 }, (_, index) => at(20 - index));
   let reconnected = false;
@@ -548,14 +548,41 @@ it("refresh after establishment drops a retained reply it cannot reach within th
   await vi.waitFor(() =>
     expect(h.view.snapshot()).toMatchObject({
       status: "ready",
-      limited: true,
-      canLoadMore: false,
+      limited: false,
+      canLoadMore: true,
     }),
   );
   // Ten pages never reached `old`: it goes rather than sitting below a gap.
-  expect(h.view.snapshot().replies.map((row) => row.id)).toEqual(
-    fresh.map((row) => row.id).reverse(),
-  );
+  // The pages read stay, but the reader had one page, so the range settles
+  // on one: a later refresh re-reads one page, not ten, and older pages
+  // continue from its bound.
+  const shown = fresh.map((row) => row.id).reverse();
+  expect(h.view.snapshot().replies.map((row) => row.id)).toEqual(shown);
+  let before = h.requests.length;
+  await h.view.refresh();
+  expect(h.requests.slice(before)).toMatchObject([
+    [{ ids: [root.id] }],
+    [{ thread_window: true }],
+  ]);
+  expect(h.requests.at(-1)?.[0]).not.toHaveProperty("until");
+  expect(h.view.snapshot().replies.map((row) => row.id)).toEqual(shown);
+  before = h.requests.length;
+  await h.view.loadMore();
+  expect(h.requests.slice(before)).toMatchObject([
+    [{ ids: [root.id] }],
+    [
+      {
+        thread_window: true,
+        until: fresh[0]?.created_at,
+        before_id: fresh[0]?.id,
+      },
+    ],
+  ]);
+  expect(h.view.snapshot()).toMatchObject({
+    status: "ready",
+    canLoadMore: true,
+    limited: false,
+  });
 });
 
 it("revalidates a missing strict root before repair and preserves tombstones on retry", async () => {

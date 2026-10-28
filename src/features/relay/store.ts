@@ -3008,8 +3008,9 @@ export function createChannelStore(
      * channel needs no eager HTTP head; its normal ensure() owns that finite handoff.
      * Live replay covers minutes, not a long disconnect, so the head may stop short
      * of the rows the reader kept: page back from it until one is reached, merging
-     * each page as it lands. Past the page bound the kept rows go, and the window
-     * continues from the pages read rather than showing a gap as history. */
+     * each page as it lands. Past the page bound, or when a page fails or is
+     * cancelled, the kept rows go and the window continues from the pages read
+     * rather than showing a gap as history. */
     async catchUp(channelId: string) {
       const cached = heads.peek(channelId);
       if (cached) heads.set(channelId, { ...cached, cached: true });
@@ -3025,6 +3026,21 @@ export function createChannelStore(
           .filter((event) => channelRowKind(event.kind))
           .map((event) => event.id),
       );
+      type Page = Pick<Head, "events" | "cursor" | "hasMore">;
+      let page: Page | undefined;
+      let contiguous = true;
+      /** The kept rows sit below a hole the pages read never closed. They go,
+       * by exclusion so rows the stream delivered meanwhile stay, and the
+       * window continues from the last page. */
+      const settle = (last: Page) => {
+        retained.events = retained.events.filter(
+          (event) => !kept.has(event.id),
+        );
+        for (const id of kept) retained.traffic.delete(id);
+        retained.floor = undefined;
+        retained.atHead = true;
+        moveCursor(retained, last.cursor);
+      };
       const controller = new AbortController();
       controllers.add(controller);
       try {
@@ -3034,24 +3050,16 @@ export function createChannelStore(
           throw new DOMException("Stale live catch-up", "AbortError");
         retained.restored = false;
         accept(head.events);
-        let page: Pick<Head, "events" | "cursor" | "hasMore"> = head;
-        const filled = [...head.events];
-        const reached = () =>
-          !page.hasMore ||
-          page.events.some(
+        page = head;
+        const reached = (last: Page) =>
+          !last.hasMore ||
+          last.events.some(
             (event) => channelRowKind(event.kind) && kept.has(event.id),
           );
-        let contiguous = !kept.size || reached();
+        contiguous = !kept.size || reached(page);
         for (let pages = 0; !contiguous && page.cursor; pages++) {
           if (pages >= CATCH_UP_PAGES) {
-            retained.events = [
-              ...new Map(filled.map((event) => [event.id, event])).values(),
-            ];
-            const ids = new Set(retained.events.map((event) => event.id));
-            for (const id of retained.traffic.keys())
-              if (!ids.has(id)) retained.traffic.delete(id);
-            retained.floor = undefined;
-            retained.atHead = true;
+            settle(page);
             break;
           }
           page = (
@@ -3063,8 +3071,7 @@ export function createChannelStore(
           if (!valid())
             throw new DOMException("Stale live catch-up", "AbortError");
           accept(page.events);
-          filled.push(...page.events);
-          contiguous = reached();
+          contiguous = reached(page);
         }
         if (!valid())
           throw new DOMException("Stale live catch-up", "AbortError");
@@ -3080,11 +3087,24 @@ export function createChannelStore(
       } catch (error) {
         if (!valid())
           throw new DOMException("Stale live catch-up", "AbortError");
-        if (!isAbort(error))
+        // An interrupted fill leaves the hole open, and the next head would
+        // overlap the rows above it and certify the window with the hole still
+        // in it. Settle on the pages that landed; a cancelled read's stream
+        // drop has already marked the window cached.
+        const interrupted = contiguous ? undefined : page;
+        if (interrupted) settle(interrupted);
+        if (interrupted || !isAbort(error))
           setWindow(retained, {
-            status: retained.snapshot.rows.length ? "ready" : "error",
-            freshness: "cached",
-            error: describe(error),
+            ...(interrupted
+              ? { hasMore: interrupted.hasMore, historyLimited: false }
+              : {}),
+            ...(isAbort(error)
+              ? {}
+              : {
+                  status: retained.snapshot.rows.length ? "ready" : "error",
+                  freshness: "cached",
+                  error: describe(error),
+                }),
           });
         throw error;
       } finally {

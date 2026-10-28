@@ -360,12 +360,16 @@ function reconnectHarness() {
   );
   const window = () => owner.session.channels.window("c");
   const rows = () => window().rows.map((row) => row.id);
-  /** Outstanding channel window reads; merged rows also queue profile reads. */
+  /** Outstanding channel window reads; merged rows also queue profile reads.
+   * A read the reader cancelled stays on the wire, aborted. */
   const reads = () =>
-    wire.pending.filter((entry) => entry.filters[0]?.top_level === true);
+    wire.pending.filter(
+      (entry) => !entry.signal?.aborted && entry.filters[0]?.top_level === true,
+    );
   /** The one outstanding window read, after answering profile reads empty. */
   const read = () => {
     for (const entry of wire.pending.splice(0)) {
+      if (entry.signal?.aborted) continue;
       if (entry.filters[0]?.kinds?.includes(0)) entry.respond([]);
       else wire.pending.push(entry);
     }
@@ -410,6 +414,9 @@ function reconnectHarness() {
     owner,
     alice,
     wire,
+    get live() {
+      return live;
+    },
     window,
     rows,
     reads,
@@ -419,6 +426,7 @@ function reconnectHarness() {
     cursor,
   };
 }
+type ReconnectHarness = ReturnType<typeof reconnectHarness>;
 
 it("a reconnect catch-up head newer than every loaded row pages back until it reaches one", async () => {
   // Live replay covers minutes. The head alone would leave the loaded rows on
@@ -468,9 +476,11 @@ it("a reconnect catch-up that never reaches a loaded row drops it and continues 
     const missed = [6, 5, 4, 3, 2, 1].map((n) =>
       message(h.alice, "c", `missed ${n}`, 10 + n * 10),
     );
+    // The re-established stream delivers a row while the fill is in flight.
+    const arrived = message(h.alice, "c", "arrived", 100);
     await h.reconnect(seen);
     let previous: (typeof missed)[number] | undefined;
-    for (const row of missed) {
+    for (const [index, row] of missed.entries()) {
       const read = h.read();
       if (previous)
         expect(read.filters[0]).toMatchObject({
@@ -479,12 +489,20 @@ it("a reconnect catch-up that never reaches a loaded row drops it and continues 
         });
       read.respond(h.page(previous ? h.cursor(previous) : "head", [row], row));
       await flush();
+      if (index === 2) {
+        h.live.receive([arrived]);
+        await flush();
+      }
       previous = row;
     }
     // Five pages past the head never reached `seen`: it goes rather than
     // sitting below a gap, and older history continues from the last page.
+    // The row the stream delivered meanwhile stays.
     expect(h.reads()).toHaveLength(0);
-    expect(h.rows()).toEqual(missed.map((row) => row.id).reverse());
+    expect(h.rows()).toEqual([
+      ...missed.map((row) => row.id).reverse(),
+      arrived.id,
+    ]);
     expect(h.window()).toMatchObject({
       status: "ready",
       freshness: "verified",
@@ -502,27 +520,97 @@ it("a reconnect catch-up that never reaches a loaded row drops it and continues 
   }
 });
 
-it("a failed catch-up page keeps the pages already merged and reports the window cached", async () => {
+it("a reconnect catch-up whose head reaches a loaded row verifies the window with that one read", async () => {
+  // The path every renewal takes: a healthy window costs one head read.
   const h = reconnectHarness();
   try {
     const seen = message(h.alice, "c", "seen", 10),
-      between = message(h.alice, "c", "between", 20),
       missed = message(h.alice, "c", "missed", 30);
     await h.reconnect(seen);
-    h.read().respond(h.page("head", [missed], missed));
+    h.read().respond(h.page("head", [missed, seen], seen));
     await flush();
-    h.read().respond(h.page(h.cursor(missed), [between], between));
-    await flush();
-    expect(h.rows()).toEqual([seen.id, between.id, missed.id]);
-    h.read().fail(new Error("offline"));
-    await flush();
-    expect(h.rows()).toEqual([seen.id, between.id, missed.id]);
+    expect(h.reads()).toHaveLength(0);
+    expect(h.rows()).toEqual([seen.id, missed.id]);
     expect(h.window()).toMatchObject({
       status: "ready",
-      freshness: "cached",
-      error: "offline",
+      freshness: "verified",
+      hasMore: true,
+      error: undefined,
     });
   } finally {
     h.owner.dispose();
   }
 });
+
+it.each<
+  [
+    string,
+    (h: ReconnectHarness) => void,
+    (h: ReconnectHarness) => void,
+    string | undefined,
+  ]
+>([
+  ["fails", (h) => h.read().fail(new Error("offline")), () => {}, "offline"],
+  [
+    "is cancelled by the stream dropping",
+    (h) => {
+      h.read();
+      h.live.state({ status: "retrying", routes: [] });
+    },
+    (h) => h.live.state({ status: "connected", routes: [] }),
+    undefined,
+  ],
+])(
+  "a catch-up fill whose page %s settles the window on the pages merged, and a retry pages on from there",
+  async (_, interrupt, recover, error) => {
+    // Were the loaded rows kept below the hole, the retry's head would overlap
+    // the rows above it and certify the window with the hole still in it.
+    const h = reconnectHarness();
+    try {
+      const seen = message(h.alice, "c", "seen", 10),
+        between = message(h.alice, "c", "between", 20),
+        missed = message(h.alice, "c", "missed", 30);
+      await h.reconnect(seen);
+      h.read().respond(h.page("head", [missed], missed));
+      await flush();
+      h.read().respond(h.page(h.cursor(missed), [between], between));
+      await flush();
+      expect(h.rows()).toEqual([seen.id, between.id, missed.id]);
+      interrupt(h);
+      await flush();
+      expect(h.rows()).toEqual([between.id, missed.id]);
+      expect(h.window()).toMatchObject({
+        status: "ready",
+        freshness: "cached",
+        hasMore: true,
+        error,
+      });
+      recover(h);
+      h.live.established("c");
+      await flush();
+      h.read().respond(h.page("head", [missed], missed));
+      await flush();
+      expect(h.reads()).toHaveLength(0);
+      expect(h.rows()).toEqual([between.id, missed.id]);
+      expect(h.window()).toMatchObject({
+        status: "ready",
+        freshness: "verified",
+        hasMore: true,
+        error: undefined,
+      });
+      // A verified head owns the cursor; the rows below it stay, and older
+      // history pages on through them to the rows the fill never reached.
+      h.owner.session.channels.loadOlder("c");
+      const older = h.read();
+      expect(older.filters[0]).toMatchObject({
+        until: missed.created_at,
+        before_id: missed.id,
+      });
+      older.respond(h.page(h.cursor(missed), [between, seen], seen));
+      await flush();
+      expect(h.rows()).toEqual([seen.id, between.id, missed.id]);
+    } finally {
+      h.owner.dispose();
+    }
+  },
+);

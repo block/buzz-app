@@ -612,6 +612,9 @@ export function createThreadView({
       );
       let reached = !kept.size;
       let more = false;
+      // Where the loop passed the range the reader had, so a fill that never
+      // reaches a pre-refresh reply can settle back on it.
+      let range: { cursor: ThreadCursor | undefined } | undefined;
       for (
         let page = 0;
         page < targetPages ||
@@ -729,18 +732,25 @@ export function createThreadView({
         // Only strict bounds prove exhaustion. Legacy short pages may be filtered
         // after LIMIT, so an empty continuation means merely no more returned.
         more = bounds ? bounds.hasMore : replies.length > 0;
+        if (nextPages === targetPages) range = { cursor: nextCursor };
         if (!more) break;
       }
       if (!active()) return;
       // A bounded response cannot retract observed evidence. Retain known edits,
       // tombstones and live rows even when a later finite read omits them. Replies
-      // the re-read never reached sit past a gap it cannot show; those go.
+      // the re-read never reached sit past a gap it cannot show; those go. The
+      // pages read past the reader's range stay as evidence, but the range
+      // settles back on the reader's: as the retained range, every later
+      // refresh would re-read them all.
+      const unreached = mode === "older" && !reached && more;
+      if (unreached && range) {
+        nextCursor = range.cursor;
+        nextPages = targetPages;
+      }
       if (
         !retain(
           union(
-            reached || !more || mode !== "older"
-              ? remote
-              : remote.filter((event) => !kept.has(event.id)),
+            unreached ? remote.filter((event) => !kept.has(event.id)) : remote,
             fetched,
           ),
         )

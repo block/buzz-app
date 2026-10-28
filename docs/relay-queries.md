@@ -811,14 +811,17 @@ unopened channels defer it until demand. `live.snapshot().heads` distinguishes
 pending, verified, deferred and failed obligations. Verification covers the
 bounded current head and its continuity with the rows the reader kept, not all
 history: when the head has more history and shares no row with them, catch-up
-pages back from it (up to five pages), merging each page as it lands; a failed
-page keeps the pages already merged and reports the window cached. Past that
-bound the kept rows are dropped and the window continues from the last page
-read, so a long disconnect never shows a gap as history. Catch-up merges into
-paged readers without resetting older pages or their cursor. An open thread view
-refreshes the same way: its re-read pages past the retained range until it
-reaches a pre-refresh reply, within the thread page bound, and drops replies it
-never reached.
+pages back from it (up to five pages), merging each page as it lands. Past that
+bound, or when a page fails or the stream drops mid-fill, the kept rows it never
+reached are dropped and the window continues from the last page read (verified
+at the bound, cached after an interruption), so a long disconnect never shows a
+gap as history and the next head's overlap is truthful. Rows the re-established
+stream delivers meanwhile stay. Catch-up merges into paged readers without
+resetting older pages or their cursor. An open thread view refreshes the same
+way: its re-read pages past the retained range until it reaches a pre-refresh
+reply, within the thread page bound. Past it, the replies it never reached go
+and the view settles back on the range the reader had, so later refreshes stay
+proportional to it.
 
 Removing a batch member rebuilds only that batch's survivor scope. One established
 source overlaps its zero-replay replacement until EOSE; another removal supersedes

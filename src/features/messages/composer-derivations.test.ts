@@ -85,6 +85,14 @@ function edit(state: EditorState, next: () => number): EditorState {
   return state.apply(tr);
 }
 
+const hasMarks = (doc: EditorNode) => {
+  let marked = false;
+  doc.descendants((node) => {
+    marked ||= node.marks.length > 0;
+  });
+  return marked;
+};
+
 const plain = (doc: EditorNode) => {
   const source = projectComposerDocument(doc);
   return {
@@ -125,6 +133,11 @@ describe("composer derivations", () => {
         );
         expect(mentionDraft(draft)).toEqual(mentionDraft(copy));
         expect(composerMarkdown(draft)).toBe(composerMarkdown(copy));
+        // Without a snapshot the text serializes through the full Markdown path.
+        if (!hasMarks(doc))
+          expect(composerMarkdown(draft)).toBe(
+            composerMarkdown({ text: draft.text, recipients: [] }),
+          );
       }
     }
   });

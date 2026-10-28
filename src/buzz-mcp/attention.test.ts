@@ -254,14 +254,12 @@ describe("the attention tools", () => {
       ...asks,
       name: "Asks",
       is_reply: false,
-      keywords: ["failed"],
       expected_state: ABSENT,
     });
-    expect(added.object).toMatchObject({ keywords: ["failed"] });
     const updated = await call("watch_update", {
       id: "asks",
       kinds: [9, 40002],
-      clear: ["is_reply", "keywords"],
+      clear: ["is_reply"],
       expected_state: added.expected_state,
     });
     expect(updated.object).toEqual({

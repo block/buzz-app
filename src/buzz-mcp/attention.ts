@@ -92,12 +92,6 @@ const watchFields = {
     items: str,
     description: "Event watch: only events by these hex pubkeys.",
   },
-  keywords: {
-    type: "array",
-    items: str,
-    description:
-      "Event watch: match any case-insensitive literal substring in event content. 1 to 32 nonblank strings, up to 256 bytes each.",
-  },
   exclude_authors: {
     type: "array",
     items: str,
@@ -212,7 +206,6 @@ ${WRITES}`,
             "root",
             "authors",
             "exclude_authors",
-            "keywords",
             "tags",
             "is_reply",
             "classifier",
@@ -532,7 +525,6 @@ const EVENT = [
   "kinds",
   "authors",
   "exclude_authors",
-  "keywords",
   "tags",
   "is_reply",
   "classifier",

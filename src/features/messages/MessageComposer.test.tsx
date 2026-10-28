@@ -30,7 +30,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { useLayoutEffect } from "react";
+import { useEffect, useLayoutEffect } from "react";
 import type { Contribution } from "../../plugins/contributions";
 import type {
   ComposerCompletion,
@@ -3995,6 +3995,57 @@ it("accepts a completion before handling list Enter", async () => {
   expect(h.input().querySelectorAll("ul > li")).toHaveLength(1);
   expect(h.input()).toHaveValue("chosen ");
   expect(h.messages.send).not.toHaveBeenCalled();
+});
+
+it("accepts a mention typed just before Enter while its render is still pending", async () => {
+  function Mentions({ publish }: ComposerCompletionProps) {
+    useEffect(() => {
+      publish({
+        items: [{ id: first.pubkey, label: "Honey", edit: { mention: first } }],
+      });
+    }, [publish]);
+    return null;
+  }
+  const completions: readonly Contribution<ComposerCompletion>[] = [
+    {
+      id: "mentions",
+      key: "test/mentions",
+      pluginId: "test",
+      revision: "1",
+      title: "Mention",
+      match: ({ text, start }) =>
+        text.startsWith("@") ? { start: 0, end: start, query: "Hon" } : null,
+      component: Mentions,
+    },
+  ];
+  const none: [] = [];
+  const h = mount({
+    extensions: {
+      tools: { snapshot: () => none, subscribe: () => () => {} },
+      inline: { snapshot: () => none, subscribe: () => () => {} },
+      completions: { snapshot: () => completions, subscribe: () => () => {} },
+    },
+  });
+  const input = h.input();
+  act(() => input.focus());
+  const env = globalThis as {
+    IS_REACT_ACT_ENVIRONMENT?: boolean | undefined;
+  };
+  const previous = env.IS_REACT_ACT_ENVIRONMENT;
+  try {
+    // ProseMirror applies typing outside a React event, so the draft renders at
+    // default priority; a busy page delivers Enter before that render.
+    env.IS_REACT_ACT_ENVIRONMENT = false;
+    input.insertText("@Hon");
+    input.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
+    );
+    await waitFor(() => expect(input).toHaveValue("@Honey "));
+  } finally {
+    env.IS_REACT_ACT_ENVIRONMENT = previous;
+  }
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(h.onSend).not.toHaveBeenCalled();
 });
 
 it("sends a pasted fenced block verbatim on Enter instead of opening a block from its closing fence", async () => {

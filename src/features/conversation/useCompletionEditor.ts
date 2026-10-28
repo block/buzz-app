@@ -1,4 +1,5 @@
 import type { ComposerInputElement } from "../messages/composer-dom";
+import { flushSync } from "react-dom";
 import {
   useLayoutEffect,
   useCallback,
@@ -77,6 +78,21 @@ export function useCompletionEditor(
       element.selectionEnd === expected.end
     );
   }
+  /**
+   * Typing reaches React at default priority, so a busy page can still be
+   * rendering an older caret. Commit the current evidence before a completion key.
+   * The sync commit runs its passive effects inside the flush, so a provider
+   * that publishes synchronously is published before the key is handled.
+   * Providers that publish later (directory search) keep the rendered menu.
+   */
+  function settle(update?: () => void) {
+    observe();
+    if (!update && current.current === observation) return;
+    flushSync(() => {
+      update?.();
+      setObservation(current.current);
+    });
+  }
   useLayoutEffect(() => {
     // Rich tokens rebuild before their caret is restored. Revoke stale evidence
     // here; select/selectionchange observes the settled selection. Publishing a
@@ -104,6 +120,14 @@ export function useCompletionEditor(
       ++revision.current;
     };
   }, [enabled, invalidate]);
-  return { observation, valid, observe, invalidate, keys, composing };
+  return {
+    observation,
+    valid,
+    observe,
+    settle,
+    invalidate,
+    keys,
+    composing,
+  };
 }
 export type CompletionEditor = ReturnType<typeof useCompletionEditor>;

@@ -2209,6 +2209,24 @@ function Composer({
                   completion.invalidate();
                   return;
                 }
+                if (
+                  ["Enter", "Tab", "ArrowDown", "ArrowUp"].includes(
+                    event.key,
+                  ) &&
+                  !event.altKey &&
+                  !event.ctrlKey &&
+                  !event.metaKey &&
+                  !event.shiftKey &&
+                  // The editor already consumed it, such as Tab nesting a list.
+                  !event.defaultPrevented
+                )
+                  // Choose against the text that was typed, not a pending render.
+                  // Arrows move the choice that Enter and Tab then accept.
+                  completion.settle(
+                    value === valueRef.current
+                      ? undefined
+                      : () => updateDraft(valueRef.current),
+                  );
                 if (completion.keys.current?.(event)) return;
                 if (
                   event.key === "ArrowUp" &&

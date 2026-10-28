@@ -1,3 +1,4 @@
+import { createMarkdownPreparation } from "../messages/markdown-worker";
 import { retryRead } from "./read-retry";
 import { channelRowKind, rowProfileIds, messagePreview } from "./membership";
 import type { Outbox } from "./outbox";
@@ -137,6 +138,7 @@ export function createChannelStore(
   directory: ProfileDirectory,
   options: ChannelStoreOptions = {},
 ) {
+  const markdown = createMarkdownPreparation();
   const foldChannelMessages = (
     channelId: string,
     author: string,
@@ -691,6 +693,17 @@ export function createChannelStore(
         signal: controller.signal,
       });
       if (!live(state, generation)) return;
+      if (cursor) {
+        await markdown.prepare(
+          foldChannelMessages(
+            state.channelId,
+            transport.relayAuthor,
+            page.events,
+          ),
+          controller.signal,
+        );
+        if (!live(state, generation)) return;
+      }
       const combined = new Map(
         (cursor ? state.events : []).map((event) => [event.id, event]),
       );
@@ -2183,6 +2196,7 @@ export function createChannelStore(
     warmEligible.clear();
     warmPreferred = [];
     media.dispose();
+    markdown.clear();
     media = createMediaPreparation();
     for (const controller of controllers) controller.abort();
     for (const state of [...windows.values()]) evict(state);
@@ -2872,6 +2886,7 @@ export function createChannelStore(
         warmCandidates.delete(id);
       }
     media.dispose();
+    markdown.clear();
     media = createMediaPreparation();
     for (const controller of controllers) controller.abort();
     for (const [id, head] of heads.entries()) {
@@ -2945,6 +2960,7 @@ export function createChannelStore(
     epoch++;
     creationReads.clear();
     media.dispose();
+    markdown.clear();
     for (const controller of controllers) controller.abort();
     for (const state of windows.values()) {
       state.generation++;

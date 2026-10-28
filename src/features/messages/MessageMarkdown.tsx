@@ -61,6 +61,8 @@ import {
   type LiteralRange,
 } from "./markdown-preparation";
 
+import { preparedMarkdown, takeMarkdownTree } from "./markdown-worker";
+
 type MarkdownNode = {
   type: string;
   value?: string;
@@ -459,7 +461,10 @@ export function MessageMarkdown({
   interactive?: boolean;
 }) {
   const resolveName = useChannelIdentityNames(session, row.channelId);
-  const prepared = useMemo(() => prepareMarkdown(row.content), [row.content]);
+  const prepared = useMemo(
+    () => preparedMarkdown(row.content) ?? prepareMarkdown(row.content),
+    [row.content],
+  );
   if (prepared.kind === "plain")
     return <div className={styles.plainText}>{prepared.content}</div>;
   return (
@@ -724,6 +729,15 @@ function PreparedMessageMarkdown({
   return largeEmoji ? markdown : <div className={styles.text}>{markdown}</div>;
 }
 
+function remarkPreparedTree(this: {
+  parser?: ((document: string, file: never) => unknown) | undefined;
+}) {
+  const parse = this.parser;
+  if (parse)
+    this.parser = (document, file) =>
+      takeMarkdownTree(document) ?? parse(document, file);
+}
+
 const MarkdownBody = memo(function MarkdownBody({
   protectedContent,
 }: {
@@ -732,6 +746,7 @@ const MarkdownBody = memo(function MarkdownBody({
   return (
     <Markdown
       remarkPlugins={[
+        remarkPreparedTree,
         remarkGfm,
         remarkBreaks,
         [remarkSpoilers, `<${protectedContent.prefix}spoiler\uE002>`],

@@ -63,8 +63,6 @@ export type RunnerManager = Pick<
   | "setClassifierKey"
 > &
   Readonly<{
-    /** A record or turn in progress changed what the screens show. */
-    changed(): void;
     /** The community's relay, while the viewer is in it. */
     open(origin: string): RelayData | undefined;
     types(): readonly RegisteredAgentType[];
@@ -149,7 +147,7 @@ export class AgentsRunner {
       },
       changed: () => {
         for (const listener of [...this.recordListeners]) listener();
-        this.changed();
+        this.update();
       },
       // Its timers waited for this change, saved or failed.
       settled: (key) => this.runners.wake(key),
@@ -163,7 +161,6 @@ export class AgentsRunner {
       changed: (origin, renewed) => {
         this.update();
         if (renewed) this.refreshCore(origin);
-        this.manager.changed();
       },
     });
     this.coreMemory = new CoreMemoryCache((key) =>
@@ -204,7 +201,7 @@ export class AgentsRunner {
             console.warn("Agent turns in progress were not saved", error),
           );
         },
-        changed: () => this.changed(),
+        changed: () => this.update(),
       },
       scope: (agent) => this.connections.binding(agent)?.scope,
       saved: (key) => this.records.saved(key),
@@ -375,12 +372,6 @@ export class AgentsRunner {
           .catch((error) =>
             console.warn(`Agent ${key} settings were not removed`, error),
           );
-  }
-  /** Decides again what runs once a record, a turn in progress or one of its
-   * sessions changed, and lets the Manager show it. */
-  private changed() {
-    this.update();
-    this.manager.changed();
   }
   /** Agent types were loaded or unloaded. */
   typesChanged() {

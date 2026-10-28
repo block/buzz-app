@@ -595,6 +595,15 @@ function ThreadMessages({
       snapshot.root ? [snapshot.root, ...snapshot.replies] : snapshot.replies,
     [snapshot.root, snapshot.replies],
   );
+  // Remembered agents follow the viewer's latest message here, not the root.
+  // Undefined until the first page lands: the seeded root is not yet the thread.
+  const threadSeed = useMemo(
+    () =>
+      snapshot.status === "ready"
+        ? rows.filter((row) => row.authorId === session.viewer).at(-1)
+        : undefined,
+    [snapshot.status, rows, session.viewer],
+  );
   const authors = [...new Set(rows.flatMap(rowProfileIds))].sort().join(":");
   useEffect(() => {
     if (authors)
@@ -1589,6 +1598,7 @@ function ThreadMessages({
           channelName={channelName}
           placeholder={replyPlaceholder(composerRoot)}
           threadRootId={composerRoot.id}
+          threadSeed={threadSeed}
           replyParentId={replyParent}
           disabled={
             disabled ||

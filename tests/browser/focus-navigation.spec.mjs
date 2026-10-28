@@ -1,5 +1,5 @@
 import { test, expect } from "./fixture.mjs";
-import { closeSettings } from "./navigation.mjs";
+import { closeSettings, settleShellToggle } from "./navigation.mjs";
 import { open } from "./timeline.mjs";
 import { openChannelDetails } from "./channel-details.mjs";
 
@@ -360,6 +360,9 @@ test("covered panes and notifications preserve focus and F6 recovery", async ({
   // The toast can also cover a dock that covers the main composer. Search
   // through that stack: ignoring just the top toast must not expose the main.
   await page.setViewportSize({ width: 600, height: 900 });
+  // The shell compacts its header in a later render. Focusing Search before
+  // then scrolls the shell, moving main's tab offscreen where F8 can pick it.
+  await settleShellToggle(page);
   await expect.poll(toastCoversComposer).toBe(true);
   const search = page.getByRole("button", { name: "Search Buzz", exact: true });
   await search.focus();

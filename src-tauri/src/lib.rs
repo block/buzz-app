@@ -793,8 +793,9 @@ pub fn run() {
                         data_dir: legacy.clone(),
                     })
                     .map_err(Clone::clone),
-                // `just desktop` builds step aside for a packaged app.
-                !tauri::is_dev(),
+                // `just desktop` builds and debug bundles step aside for the
+                // installed app.
+                !tauri::is_dev() && app.config().identifier == sign_out::legacy_identifier::CURRENT,
             ));
             Ok(())
         });

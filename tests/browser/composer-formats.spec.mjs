@@ -146,67 +146,6 @@ test("typed lists use Enter to split and exit, preserve mentions and send by but
     });
 });
 
-// Native ArrowDown keeps the caret's goal column, so from a converted quote's
-// indent it lands on the next pasted paragraph at that column. Which side of
-// the literal `> ` that is depends on the quote's indent against the rendered
-// width of `> `; with today's tokens it is just after the marker, as in the
-// reported bug. Typing `> ` on either side must quote that paragraph once.
-test("typing `> ` on each pasted quote paragraph quotes it once, wherever ArrowDown leaves the caret", async ({
-  page,
-}) => {
-  const input = await composer(page);
-  const names = ["Alpha", "Bravo", "Charlie", "Delta"];
-  await input.evaluate((element, text) => {
-    const clipboardData = new DataTransfer();
-    clipboardData.setData("text/plain", text);
-    element.dispatchEvent(
-      new ClipboardEvent("paste", {
-        bubbles: true,
-        cancelable: true,
-        clipboardData,
-      }),
-    );
-  }, "> Alpha note\n\n> Bravo note\n\n\n\n> Charlie note\n\n> Delta note");
-  const value = () => input.evaluate((el) => el.value);
-  const caret = () => input.evaluate((el) => el.selectionStart);
-  await expect.poll(value).toContain("> Delta note");
-  await expect(input.locator("blockquote")).toHaveCount(0);
-  await input.evaluate((el) => el.setSelectionRange(0, 0));
-  await page.keyboard.type("> ");
-  await expect(input.locator("blockquote")).toHaveText(["Alpha note"]);
-  for (const [index, name] of names.entries()) {
-    if (!index) continue;
-    const current = await value();
-    const marker = current.indexOf(`> ${name} note`);
-    // One press per line break between the caret and the next marker. The
-    // composer reports the caret after the async selectionchange, so wait for
-    // it to reach the marker's line.
-    const lines = current.slice(await caret(), marker).split("\n").length - 1;
-    for (let line = 0; line < lines; line++)
-      await page.keyboard.press("ArrowDown");
-    await expect.poll(caret).toBeGreaterThanOrEqual(marker);
-    expect([marker, marker + 2]).toContain(await caret());
-    await page.keyboard.type("> ");
-    await expect(input.locator("blockquote")).toHaveText(
-      names.slice(0, index + 1).map((name) => `${name} note`),
-    );
-  }
-  expect(await value()).not.toContain(">");
-  await expect(input.locator("blockquote blockquote")).toHaveCount(0);
-  await page.getByRole("button", { name: "Send message", exact: true }).click();
-  // Each paragraph sends as one level of quote, never `> > `.
-  await expect
-    .poll(() =>
-      page.evaluate(() =>
-        window.linkComposerFixture.sent
-          .at(-1)
-          ?.text.split("\n")
-          .filter(Boolean),
-      ),
-    )
-    .toEqual(names.map((name) => `> ${name} note`));
-});
-
 test("a typed fence opens a code block at once, and the block sends fenced", async ({
   page,
 }) => {

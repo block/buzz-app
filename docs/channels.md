@@ -1243,13 +1243,7 @@ saves as usual and the text still renders as code once sent.
 Typing the space after a list or quote marker that starts a line (`- `, `* `, `+ ` or `• `, a number
 with a dot or parenthesis such as `1. ` or `3) `, or `> `) turns that line into a bullet, a
 numbered item starting at that number, or a quoted paragraph at once, the same block the
-formatting toolbar creates, and one undo restores the typed marker and its space. Pasted or
-restored markers stay literal text, except that `> ` typed just before a literal `>` starting
-the line, or just after a literal `> ` there, quotes the line once and removes that literal
-marker: a pasted `> text` sends as `> text` rather than a nested quote, and a pasted `> > text`
-keeps both levels. A typed `>` and a pasted one look the same to the composer, so a space typed
-into a literal `>>` or `> >` starting the line can also convert it, and the line then sends one
-quote level shallower than it read. The typed
+formatting toolbar creates, and one undo restores the typed marker and its space. The typed
 `• ` alias sends as Markdown `- `. The channel placeholder appears only in an empty plain
 paragraph, not beside a list marker. Enter
 continues a list and exits an empty item; use the Send button to send while the caret is

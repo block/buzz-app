@@ -559,6 +559,101 @@ it("keeps public-key lookup results whose names do not match the key text", asyn
   expect(t.publish).not.toHaveBeenCalled();
 });
 
+it("ranks a matching username with the shared people matcher", async () => {
+  const t = await setup();
+  const handle = profile(keypair(), { display_name: "Alpha", name: "robin" });
+  const named = profile(t.person, { name: "Robin Person" });
+  const query = t.query.getMockImplementation();
+  if (!query) throw new Error("Missing query fixture");
+  t.query.mockImplementation(async (filters) =>
+    filters.some((filter) => filter.search) ? [named, handle] : query(filters),
+  );
+  await t.user.type(screen.getByRole("searchbox"), "robin");
+  await screen.findByRole("button", { name: /^Add Alpha/ });
+  const rows = within(
+    screen.getByRole("region", { name: "Not in this channel" }),
+  ).getAllByRole("button", { name: /^Add / });
+  expect(rows.map((row) => row.getAttribute("aria-label"))).toEqual([
+    expect.stringMatching(/^Add Alpha/),
+    expect.stringMatching(/^Add Robin Person/),
+  ]);
+});
+
+it("ranks local usernames and hidden agent names through the shared matcher", async () => {
+  const t = await setup();
+  const exact = keypair(),
+    word = keypair(),
+    shown = keypair(),
+    handle = keypair();
+  const profiles = [
+    profile(word, { name: "Helper Alpha", is_agent: true }),
+    profile(exact, { name: "Helper Zed", is_agent: true }),
+    profile(shown, { name: "Robin Visible", is_agent: true }),
+    profile(handle, {
+      display_name: "Handle Agent",
+      name: "robin",
+      is_agent: true,
+    }),
+  ];
+  const query = t.query.getMockImplementation();
+  if (!query) throw new Error("Missing query fixture");
+  t.query.mockImplementation(async (filters) =>
+    filters.some((filter) => filter.search)
+      ? []
+      : [
+          ...(await query(filters)),
+          ...profiles.filter((event) =>
+            filters.some((filter) => matchesEvent(event, filter)),
+          ),
+        ],
+  );
+  await act(async () => {
+    t.control.set({
+      agents: [
+        { ...t.agent, pubkey: word.pubkey, name: "Red Robin" },
+        { ...t.agent, pubkey: exact.pubkey, name: "Robin" },
+        { ...t.agent, pubkey: shown.pubkey, name: "Robin Visible" },
+        { ...t.agent, pubkey: handle.pubkey, name: "Local Handle" },
+      ],
+    });
+    await t.session.profiles.ensure(
+      [word.pubkey, exact.pubkey, shown.pubkey, handle.pubkey],
+      "foreground",
+    );
+  });
+  await t.user.type(screen.getByRole("searchbox"), "robin");
+  const yours = await screen.findByRole("region", { name: "Your agents" });
+  const rows = within(yours).getAllByRole("button", { name: /^Add / });
+  expect(rows.map((row) => row.getAttribute("aria-label"))).toEqual([
+    expect.stringMatching(/^Add Handle Agent/),
+    expect.stringMatching(/^Add Robin Visible/),
+    expect.stringMatching(/^Add Helper Zed/),
+    expect.stringMatching(/^Add Helper Alpha/),
+  ]);
+});
+
+it("keeps relay-only matches after shared-ranked names without duplicating rows", async () => {
+  const t = await setup();
+  const relayOnly = profile(keypair(), { name: "A different name" });
+  const named = profile(t.person, { name: "Robin" });
+  const query = t.query.getMockImplementation();
+  if (!query) throw new Error("Missing query fixture");
+  t.query.mockImplementation(async (filters) =>
+    filters.some((filter) => filter.search)
+      ? [relayOnly, named]
+      : query(filters),
+  );
+  await t.user.type(screen.getByRole("searchbox"), "robin");
+  await screen.findByRole("button", { name: /^Add Robin/ });
+  const rows = within(
+    screen.getByRole("region", { name: "Not in this channel" }),
+  ).getAllByRole("button", { name: /^Add / });
+  expect(rows.map((row) => row.getAttribute("aria-label"))).toEqual([
+    expect.stringMatching(/^Add Robin/),
+    expect.stringMatching(/^Add A different name/),
+  ]);
+});
+
 it("starts every invitation group at four and expands only the selected group", async () => {
   const t = await setup();
   const client = Array.from({ length: 5 }, (_, index) => ({

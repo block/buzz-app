@@ -28,13 +28,12 @@ import { useIdentityNames } from "../../features/identity-names/react";
 import { usePresenceStatus } from "../../features/presence/react";
 import { profileTarget } from "../../features/profiles/target";
 import { peopleRelationships } from "../../features/profiles/relationships";
-import { personKey } from "../../features/search/people-rank";
+import { personKey, rankPeople } from "../../features/search/people-rank";
 import {
   noSearchUsage,
   pickerText,
   readSearchUsage,
   recordChoice,
-  searchOrder,
 } from "../../features/search/usage";
 import { matchPerson } from "../../features/search/person-match";
 import { useSearchHighlight } from "../../features/search/use-search-highlight";
@@ -824,7 +823,12 @@ export function ChannelMembersDialog({
       : agentChoices.selectable.filter((agent) => !!text || agent.managed)) {
       if (
         !text ||
-        addable(agent.pubkey, label(agent.pubkey, agent.name), agent.name)
+        addable(
+          agent.pubkey,
+          label(agent.pubkey, agent.name),
+          agent.name,
+          profiles.get(agent.pubkey)?.username,
+        )
       )
         candidates.set(agent.pubkey, {
           pubkey: agent.pubkey,
@@ -877,26 +881,13 @@ export function ChannelMembersDialog({
     pickerText("channel-members", needle),
     new Set(available.map((person) => personKey(person.pubkey))),
   );
-  // Keep the product's outer groups; within each, use New message's shared
-  // exact/choice/relationship/usage order. Relay ties and key-only matches stay.
-  const candidateRank = (person: { pubkey: string; name: string }) => {
-    const rank =
-      typedMatch(label(person.pubkey, person.name), needle)?.tier ?? 4;
-    if (solo || !needle) return rank;
-    const key = personKey(person.pubkey);
-    const dm = relationships.dm(person.pubkey);
-    return searchOrder(usage, picked, {
-      key,
-      rank,
-      band: relationships.rank(person.pubkey),
-      usageKeys: [key, ...(dm ? [`channel:${dm}`] : [])],
-    });
-  };
-  available.sort(
-    (a, b) =>
-      (!solo && candidateGroup(a) - candidateGroup(b)) ||
-      candidateRank(a) - candidateRank(b),
-  );
+  // Solo retains its existing combined, name-ranked page.
+  if (solo)
+    available.sort(
+      (a, b) =>
+        (typedMatch(label(a.pubkey, a.name), needle)?.tier ?? 4) -
+        (typedMatch(label(b.pubkey, b.name), needle)?.tier ?? 4),
+    );
   // Known agents supplement the server page, not its rendering bound. Keep all
   // matches reachable through the existing More action without mounting them all.
   const invitationSize =
@@ -919,8 +910,40 @@ export function ChannelMembersDialog({
       !solo && roleFilter === "All"
         ? available.filter((person) => candidateGroup(person) === index)
         : [];
+    const ranked = rankPeople(
+      people.map((person) => {
+        const dm = relationships.dm(person.pubkey);
+        const own = known.get(person.pubkey);
+        return {
+          ...person,
+          label: label(person.pubkey, person.name),
+          username: person.username ?? profiles.get(person.pubkey)?.username,
+          agentName: own?.managed ? own.name : undefined,
+          agent: agentCandidate(person),
+          relationship: relationships.rank(person.pubkey),
+          usageKeys: [
+            personKey(person.pubkey),
+            ...(dm ? [`channel:${dm}`] : []),
+          ],
+        };
+      }),
+      needle,
+      usage,
+      picked,
+    ).map(({ person }) => person);
+    // Name ranking must not discard exact-key lookups or other relay matches
+    // (for example a profile's NIP-05). Keep those after the shared name matches.
+    const rankedKeys = new Set(ranked.map((person) => person.pubkey));
+    const ordered = [
+      ...ranked,
+      ...people.filter((person) => !rankedKeys.has(person.pubkey)),
+    ];
     const size = invitationPage.groupSizes[name] ?? INVITATION_GROUP_SIZE;
-    return { name, people: people.slice(0, size), more: people.length > size };
+    return {
+      name,
+      people: ordered.slice(0, size),
+      more: ordered.length > size,
+    };
   });
   const visibleCandidates = solo
     ? roleFilter === "All"

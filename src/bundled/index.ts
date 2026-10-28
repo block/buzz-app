@@ -49,6 +49,7 @@ import * as repos from "./repos";
 import workflowsManifest from "./workflows/manifest.json";
 import * as workflows from "./workflows";
 import type { BundledPlugin } from "../plugins/manager";
+import { afterFirstView } from "../plugins/startup";
 import linksManifest from "./links/manifest.json";
 import * as links from "./links";
 import hostedManifest from "./hosted-communities/manifest.json";
@@ -58,6 +59,7 @@ import * as moderation from "./moderation";
 import relayStaffManifest from "./relay-staff/manifest.json";
 import * as relayStaff from "./relay-staff";
 import typesafeManifest from "./typesafe/manifest.json";
+// Agent events are classified from the start, so the provider is ready first.
 import * as typesafe from "./typesafe";
 
 import relayNotesManifest from "./relay-notes/manifest.json";
@@ -86,12 +88,12 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   },
   {
     manifest: { ...pairingManifest, apiVersion: 1 },
-    module: pairing,
+    module: afterFirstView(async () => pairing),
     enabledByDefault: true,
   },
   {
     manifest: { ...feedbackManifest, apiVersion: 1 },
-    module: feedback,
+    module: afterFirstView(async () => feedback),
     enabledByDefault: true,
   },
   {
@@ -201,17 +203,17 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   },
   {
     manifest: { ...hostedManifest, apiVersion: 1 },
-    module: hosted,
+    module: afterFirstView(async () => hosted),
     enabledByDefault: true,
   },
   {
     manifest: { ...moderationManifest, apiVersion: 1 },
-    module: moderation,
+    module: afterFirstView(async () => moderation),
     enabledByDefault: true,
   },
   {
     manifest: { ...relayStaffManifest, apiVersion: 1 },
-    module: relayStaff,
+    module: afterFirstView(async () => relayStaff),
     enabledByDefault: true,
   },
   {

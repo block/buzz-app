@@ -958,28 +958,36 @@ const evidenceReads = (h: ReturnType<typeof setup>) =>
     .map(([filters]) => filters[0])
     .filter((f) => f?.kinds?.includes(9) && f["#h"] && !f.authors && !f.ids);
 const nowSeconds = () => Math.floor(Date.now() / 1000);
+/** The name a relay read gives channels, unlike the name the live roster gave. */
+const DISCOVERED = "discovered";
 /** Serves one fixed answer to repair reads and the roster to the reconnect's roster read. */
 function serve(h: ReturnType<typeof setup>, rows: () => readonly RelayEvent[]) {
   h.query.mockImplementation(async (filters) => {
     if (filters[0]?.kinds?.includes(39002))
       return [
         roster(h.relay, "other", [h.viewer.pubkey], 10),
-        metadata(h.relay, "other", "other", 10),
+        metadata(h.relay, "other", DISCOVERED, 20),
       ];
+    if (filters[0]?.kinds?.includes(39000))
+      return [metadata(h.relay, "other", DISCOVERED, 20)];
     return filters[0]?.kinds?.includes(9) ? [...rows()] : [];
   });
 }
 
 /** The first roster read after a live-only roster is a discovery that bumps the
- * access epoch once and so forgets every mark. Take it before observing. */
+ * access epoch once and so forgets every mark. Take it before observing. Names
+ * are read after the roster is applied and its access change has been purged,
+ * so a channel named by the read means that discovery is over. */
 async function discovered(h: ReturnType<typeof setup>) {
+  expect(
+    h.session.channels.list().channels.map(({ name }) => name),
+  ).not.toContain(DISCOVERED);
   h.reconnect();
   await vi.waitFor(() =>
     expect(
-      h.query.mock.calls.some(([f]) => f[0]?.kinds?.includes(39002) === true),
-    ).toBe(true),
+      h.session.channels.list().channels.map(({ name }) => name),
+    ).toContain(DISCOVERED),
   );
-  await new Promise((resolve) => setTimeout(resolve, 20));
 }
 
 it("a repair after a complete observation reads only near the newest event it returned", async () => {
@@ -1101,4 +1109,79 @@ it("capacity overflow discards the mark with the evidence it described", async (
   await vi.waitFor(() => expect(evidenceReads(h)).toHaveLength(3));
   expect(evidenceReads(h)[1]?.since).toBe(recent - 960);
   expect(evidenceReads(h)[2]?.since).toBeUndefined();
+});
+
+/** A relay that honors `limit` (newest first) and `since` on evidence reads, and
+ * answers every roster read with all the viewer's channels. */
+function serveWindow(
+  h: ReturnType<typeof setup>,
+  rows: () => readonly RelayEvent[],
+) {
+  h.query.mockImplementation(async (filters) => {
+    const filter = filters[0];
+    if (filter?.kinds?.includes(39002))
+      return h.ids.flatMap((id) => [
+        roster(h.relay, id, [h.viewer.pubkey], 10),
+        metadata(h.relay, id, DISCOVERED, 20),
+      ]);
+    if (filter?.kinds?.includes(39000))
+      return h.ids.map((id) => metadata(h.relay, id, DISCOVERED, 20));
+    if (!filter?.kinds?.includes(9) || filter.ids || filter.authors) return [];
+    return rows()
+      .filter((event) => event.created_at >= (filter.since ?? 0))
+      .sort((a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id))
+      .slice(0, filter.limit ?? Infinity);
+  });
+}
+
+it("a read cut off at its limit installs no bound, so a freed slot still shows an older unread message", async () => {
+  const h = setup(2);
+  const t = nowSeconds();
+  const busy = Array.from({ length: 500 }, (_, i) =>
+    message(h.peer, "other", `busy ${i}`, t - 100 - i),
+  );
+  // Older than the newest busy message by more than the repair overlap.
+  const quiet = message(h.peer, "room-1", "quiet", t - 5000);
+  let rows: readonly RelayEvent[] = [...busy, quiet];
+  serveWindow(h, () => rows);
+  const quietCount = () =>
+    h.session.unread.snapshot({ kind: "channel", channelId: "room-1" })
+      .observedCount;
+  await discovered(h);
+  await h.session.unread.ensure();
+  // The busy channel filled the sample; the quiet message was cut off.
+  expect(evidenceReads(h)[0]).toMatchObject({ limit: 500 });
+  expect(quietCount()).not.toBe(1);
+  // One recent message is deleted; its slot is free for the quiet one.
+  rows = rows.filter((event) => event !== busy[0]);
+  h.reconnect();
+  await vi.waitFor(() => expect(evidenceReads(h)).toHaveLength(2));
+  expect(evidenceReads(h)[1]?.since).toBeUndefined();
+  await vi.waitFor(() => expect(quietCount()).toBe(1));
+});
+
+it("a bounded read that comes back at its limit drops the bound for the next read", async () => {
+  const h = setup();
+  const t = nowSeconds();
+  let rows: readonly RelayEvent[] = [
+    message(h.peer, "other", "first", t - 100),
+    message(h.peer, "other", "second", t - 101),
+  ];
+  serveWindow(h, () => rows);
+  await discovered(h);
+  await h.session.unread.ensure();
+  h.reconnect();
+  await vi.waitFor(() => expect(evidenceReads(h)).toHaveLength(2));
+  // The first read was short, so the second one is bounded.
+  expect(evidenceReads(h)[1]?.since).toBe(t - 100 - 960);
+  // A burst fills the bounded read to its limit: it may have cut rows off.
+  rows = Array.from({ length: 500 }, (_, i) =>
+    message(h.peer, "other", `burst ${i}`, t - 50 - i),
+  );
+  h.reconnect();
+  await vi.waitFor(() => expect(evidenceReads(h)).toHaveLength(3));
+  expect(evidenceReads(h)[2]?.since).toBeDefined();
+  h.reconnect();
+  await vi.waitFor(() => expect(evidenceReads(h)).toHaveLength(4));
+  expect(evidenceReads(h)[3]?.since).toBeUndefined();
 });

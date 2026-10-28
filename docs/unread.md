@@ -88,16 +88,20 @@ timeline and the thread being read, without reading unopened threads' replies.
   request per sidebar row. A 278-channel roster therefore makes three reads.
   Earlier results publish progressively and survive a later transport failure;
   capacity overflow retains the existing visible error/clear policy and stops repair.
-  A batch whose complete read returned events is read again only from sixteen minutes
-  (960 s) before the newest of them: the relay accepts a `created_at` up to 900 s
-  from its own clock, so an event stored just after that read can be backdated that
-  far, and the margin covers it. The mark never passes the present, so a skewed clock
-  or a future-dated event cannot hide history. Retained evidence only grows between
-  resets, so this adds what is newer to what a full read already returned. Cache
-  clears, access changes, capacity overflow and an explicit `refresh()` forget those
-  marks and read every batch in full; a batch that returned nothing is always read
-  in full. Edits and deletions of messages older than the window arrive through live
-  traffic, as they do for the unbounded read.
+  A batch whose last read returned fewer rows than its limit (500), and at least one,
+  is read again only from sixteen minutes (960 s) before the newest of them: that read
+  saw everything in its window, and the relay accepts a `created_at` up to 900 s from
+  its own clock, so an event stored just after it can be backdated that far, and the
+  margin covers it. The mark never passes the present, so a skewed clock or a
+  future-dated event cannot hide history. A read that returned its full limit may have
+  cut off older rows (a later deletion frees a slot for one), so it installs no mark
+  and drops any existing one: the next repair of that batch reads in full, as it did
+  before. Retained evidence only grows between resets, so a bounded read adds what is
+  newer to what the earlier reads already returned. Cache clears, access changes,
+  capacity overflow and an explicit `refresh()` forget the marks and read every batch
+  in full; a batch that returned nothing is always read in full. Edits and deletions
+  of messages older than the window arrive through live traffic, as they do for the
+  unbounded read.
   Querying every ID does not mean observing every channel: busy channels can still
   consume their batch's sample, and missing thread roots can affect inherited markers.
   Repair evidence does not seed channel windows, alter cursors, or mark messages read.

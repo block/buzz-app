@@ -150,6 +150,9 @@ export interface UnreadCapability {
  * again (seconds): the relay accepts a created_at up to 900s from its clock, so
  * an event stored after that read can be older than the newest one it returned. */
 const REPAIR_OVERLAP = LIVE_RESUME_LAG;
+/** Rows one repair read asks for per batch. A read that returns this many may
+ * have been cut off, and says nothing about what lay beyond the cut. */
+const REPAIR_LIMIT = 500;
 /** Rendered message order: effective ms, then event id. */
 const order = (a: RelayEvent, b: RelayEvent) =>
   eventMs(a) - eventMs(b) || a.id.localeCompare(b.id);
@@ -1642,7 +1645,7 @@ export function createUnread({
                 kinds: [9, 40002, 40008],
                 "#h": batch,
                 include_aux: true,
-                limit: 500,
+                limit: REPAIR_LIMIT,
                 ...(mark === undefined
                   ? {}
                   : { since: Math.max(0, mark - REPAIR_OVERLAP) }),
@@ -1652,14 +1655,20 @@ export function createUnread({
           );
           if (closed || generation !== epoch) return;
           if (!accept(result) || closed || generation !== epoch) return;
-          // Anchored on what the relay returned, not the clock: a skewed clock
-          // or a future-dated event cannot move the window past unseen history.
-          // An empty read sets nothing, so a batch with no events stays unbounded.
+          // The mark is anchored on what the relay returned, not the clock: a
+          // skewed clock or a future-dated event cannot move the window past
+          // unseen history. Only a read that returned fewer than its limit saw
+          // everything in its window, so only it installs or advances the mark;
+          // the earlier mark was itself such a read, so coverage chains. A read
+          // that filled its limit may have cut off older rows (a deletion would
+          // later free a slot for one), so it drops the mark and the next repair
+          // reads unbounded. An empty read sets nothing either.
           const newest = Math.max(
             0,
             ...result.map((event) => event.created_at),
           );
-          if (newest)
+          if (result.length >= REPAIR_LIMIT) repaired.delete(key);
+          else if (newest)
             repaired.set(key, Math.max(mark ?? 0, Math.min(newest, asked)));
         }
         freshness = "observed";

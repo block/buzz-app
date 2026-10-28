@@ -910,7 +910,9 @@ test("Create new retains its draft when preferences fail before submission and r
     await expect(
       page.locator('[role="status"][aria-label="Reconnecting to relay…"]'),
     ).toBeVisible();
-    await dialog.getByRole("button", { name: "Create and move" }).click();
+    await expect(
+      dialog.getByRole("button", { name: "Create and move" }),
+    ).toBeDisabled();
     await expect(dialog).toBeVisible();
     await expect(field).toHaveValue("Retained launch");
     await expect(dialog.getByRole("alert")).toContainText("Retry preferences");
@@ -936,6 +938,10 @@ test("Create new retains its draft when preferences fail before submission and r
       .click();
     await expect(dialog.getByRole("alert")).toHaveCount(0);
     await expect(field).toHaveValue("Retained launch");
+    await expect(field).toBeFocused();
+    await expect(
+      dialog.getByRole("button", { name: "Create and move" }),
+    ).toBeEnabled();
     await dialog.getByRole("button", { name: "Create and move" }).click();
     await expect(dialog).toHaveCount(0);
     const destination = sidebar(page)

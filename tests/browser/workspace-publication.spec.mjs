@@ -91,10 +91,18 @@ test("covered native playback stays live and restores current controls across pa
   await expect(
     page.getByRole("region", { name: "Side pane" }).locator("video"),
   ).toHaveCount(1);
+  const sideTime = await video.evaluate((v) => v.currentTime);
+  await expect
+    .poll(() => video.evaluate((v) => v.currentTime))
+    .not.toBe(sideTime);
   await page.getByRole("button", { name: "Move player", exact: true }).click();
   await expect(page.locator("[data-panel-dock]")).toHaveCount(0);
   expect(await video.evaluate((v, old) => v === old, original)).toBe(true);
   expect(await video.evaluate((v) => v.paused)).toBe(false);
+  const returnedTime = await video.evaluate((v) => v.currentTime);
+  await expect
+    .poll(() => video.evaluate((v) => v.currentTime))
+    .not.toBe(returnedTime);
   for (const theme of ["light", "dark"]) {
     await page.evaluate((theme) => {
       document.documentElement.classList.toggle("dark", theme === "dark");

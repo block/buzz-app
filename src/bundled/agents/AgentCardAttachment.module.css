@@ -1,0 +1,10 @@
+/* One card in a message keeps the Agents page card's size. */
+.card {
+  width: 14rem;
+  max-width: 100%;
+}
+.picture {
+  display: block;
+  max-width: min(100%, 20rem);
+  border-radius: var(--radius-card);
+}

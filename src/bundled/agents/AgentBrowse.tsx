@@ -171,21 +171,7 @@ function SharedAgentList({
               onSelect({ agent, session, community }, event.currentTarget)
             }
           >
-            <AgentCardBackdrop agent={agent} community={community} />
-            <span className={cardStyles.portrait} aria-hidden="true">
-              <AgentPortrait agent={agent} community={community} />
-            </span>
-            <span className={cardStyles.identity}>
-              <span className={`${cardStyles.name} text-label`}>
-                {agent.name}
-              </span>
-              <span className={cardStyles.detail}>
-                <ModelIcon model={agent.model} />
-                <span className={cardStyles.detailText}>
-                  {agent.model || "Shared agent"}
-                </span>
-              </span>
-            </span>
+            <SharedAgentCardContent agent={agent} community={community} />
           </SurfaceButton>
         ))}
       </div>
@@ -374,6 +360,33 @@ function ImportShared({
 }
 
 /** Imports a shared definition as a new agent, from the marketplace or a file. */
+/** A shared agent's card face, in the Marketplace and in conversations. */
+export function SharedAgentCardContent({
+  agent,
+  community,
+}: {
+  agent: Pick<SharedDefinition, "name" | "picture" | "model">;
+  community: string | undefined;
+}) {
+  return (
+    <>
+      <AgentCardBackdrop agent={agent} community={community} />
+      <span className={cardStyles.portrait} aria-hidden="true">
+        <AgentPortrait agent={agent} community={community} />
+      </span>
+      <span className={cardStyles.identity}>
+        <span className={`${cardStyles.name} text-label`}>{agent.name}</span>
+        <span className={cardStyles.detail}>
+          <ModelIcon model={agent.model} />
+          <span className={cardStyles.detailText}>
+            {agent.model || "Shared agent"}
+          </span>
+        </span>
+      </span>
+    </>
+  );
+}
+
 export function SharedImportDialog({
   shared,
   agents,

@@ -1,7 +1,7 @@
 // Share: send the agent to people or a channel, list it in its community's Marketplace, or
 // export it as a file.
 import { isTauri } from "@tauri-apps/api/core";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   catalogContent,
   catalogHead,
@@ -20,8 +20,8 @@ import { bundledPoster } from "../../features/agents/avatar-packs";
 import { avatarSource } from "../../shared/avatar-source";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
-import { InlineHeader } from "../../shared/design-system/ui/Header";
 import {
+  MenuNote,
   MenuRadioGroup,
   MenuRadioItem,
 } from "../../shared/design-system/ui/Menu";
@@ -29,7 +29,6 @@ import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { SplitButton } from "../../shared/design-system/ui/SplitButton";
 import { SwitchPreferenceRow } from "../../shared/design-system/ui/SwitchPreferenceRow";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
-import browseStyles from "./AgentBrowse.module.css";
 import styles from "./AgentShareDialog.module.css";
 import {
   AgentShareRecipients,
@@ -141,8 +140,8 @@ export function AgentShareDialog({
   // `null` while the catalog is read; `undefined` once read with no head.
   const [head, setHead] = useState<EventData | undefined | null>(null);
   const [pending, setPending] = useState<"listing" | "export" | "send">();
-  // Publishing and removing are reviewed in a step of this dialog.
-  const [view, setView] = useState<"share" | "publish" | "remove">("share");
+  // The listing the switch asked for, while it is published or removed.
+  const [listing, setListing] = useState<boolean>();
   const [failure, setFailure] = useState("");
   const [error, setError] = useState("");
   const [format, setFormat] = useState<"png" | "json">("png");
@@ -162,26 +161,6 @@ export function AgentShareDialog({
     );
     return () => controller.abort();
   }, [session, agent.owner, agent.pubkey, unread]);
-  // A step starts on its Cancel; returning lands on what opened it.
-  const cancel = useRef<HTMLButtonElement>(null);
-  const listing = useRef<HTMLDivElement>(null);
-  const update = useRef<HTMLButtonElement>(null);
-  const opener = useRef<"switch" | "update">("switch");
-  const previousView = useRef(view);
-  useLayoutEffect(() => {
-    if (view !== previousView.current)
-      (view === "share"
-        ? (opener.current === "update" && update.current) ||
-          listing.current?.querySelector<HTMLElement>("[role='switch']")
-        : cancel.current
-      )?.focus();
-    previousView.current = view;
-  }, [view]);
-  const open = (next: "publish" | "remove", from: "switch" | "update") => {
-    opener.current = from;
-    setFailure("");
-    setView(next);
-  };
   // A share is a copy: edits reach the Marketplace only when it is updated.
   let definition: ReturnType<typeof shareable> | undefined;
   let refused = "";
@@ -197,6 +176,7 @@ export function AgentShareDialog({
     const signal = attempt.current?.signal;
     if (head === null || pending || !signal) return;
     setPending("listing");
+    setListing(shared);
     setFailure("");
     let reason = "Try again.";
     let content: string | undefined;
@@ -219,6 +199,7 @@ export function AgentShareDialog({
       signal,
     ).catch(() => head);
     setPending(undefined);
+    setListing(undefined);
     if (signal.aborted) return;
     setHead(next);
     // An update to a listed agent leaves it listed whatever happened, so a
@@ -232,7 +213,6 @@ export function AgentShareDialog({
           : `Removed ${agent.name} from the Marketplace.`,
         "success",
       );
-      setView("share");
     } else
       setFailure(
         `Couldn’t ${shared ? "publish" : "remove"} ${agent.name}. ${reason}`,
@@ -252,7 +232,7 @@ export function AgentShareDialog({
       if (!snapshot) return;
       const path = await saveFile(snapshot, fileName(agent.name, format));
       notify(
-        path ? `Saved ${agent.name} to ${path}.` : `Exported ${agent.name}.`,
+        `${format === "png" ? "Saved an agent card for" : "Saved"} ${agent.name}${path ? ` to ${path}` : ""}.`,
         "success",
       );
     } catch (reason) {
@@ -310,7 +290,7 @@ export function AgentShareDialog({
             channel,
             id: session.messages.send(
               channel,
-              `Here’s a copy of my agent **${agent.name}**. To add it, open **Agents**, choose **Import an agent**, then pick this file.`,
+              `Here’s a copy of my agent, ${agent.name}. Choose the card to add it to your agents.`,
               [],
               [upload.current],
             ),
@@ -343,83 +323,11 @@ export function AgentShareDialog({
     // Send gives way to Done once everyone is reached; focus follows it.
     requestAnimationFrame(() => primary.current?.focus());
   };
-  const back = () => {
-    setFailure("");
-    setView("share");
-  };
   const busy = !!pending;
-  if (view !== "share") {
-    const publishing = view === "publish";
-    const title = publishing
-      ? `${stale ? "Update" : "Publish"} ${agent.name} ${stale ? "in" : "to"} the Marketplace`
-      : `Remove ${agent.name} from the Marketplace?`;
-    return (
-      <Dialog
-        open
-        size="compact"
-        headerGap="compact"
-        step={{ key: view, scale: 0.95 }}
-        title={title}
-        description={
-          publishing
-            ? "Anyone in this community can find and add a copy."
-            : "People who already added a copy keep it."
-        }
-        closeLabel={`Back to Share ${agent.name}`}
-        preventClose={busy}
-        onOpenChange={(open) => {
-          if (!open) back();
-        }}
-        actions={
-          <>
-            <Button ref={cancel} disabled={busy} onClick={back}>
-              Cancel
-            </Button>
-            <Button
-              variant={publishing ? "prominent" : "destructive"}
-              loading={busy}
-              disabled={publishing && !definition}
-              onClick={() => void share(publishing)}
-            >
-              {publishing ? (stale ? "Update" : "Publish") : "Remove"}
-            </Button>
-          </>
-        }
-      >
-        {(publishing || failure) && (
-          <div className="grid gap-3">
-            {publishing && (
-              <div className="grid gap-2">
-                <InlineHeader title="Instructions" />
-                <section
-                  // biome-ignore lint/a11y/noNoninteractiveTabindex: long instructions scroll with the keyboard.
-                  tabIndex={0}
-                  aria-label="Instructions"
-                  className={`${browseStyles.instructions} ${styles.instructions} buzz-thin-scrollbar`}
-                >
-                  {definition?.instructions ||
-                    "This agent has no instructions."}
-                </section>
-                <p className="m-0 text-body-sm text-secondary">
-                  Memories, chats, and saved logins aren’t included.
-                </p>
-              </div>
-            )}
-            {(failure || (publishing && refused)) && (
-              <p role="alert" className="m-0 text-body-sm text-danger">
-                {failure || `${agent.name} can’t be shared. ${refused}`}
-              </p>
-            )}
-          </div>
-        )}
-      </Dialog>
-    );
-  }
   return (
     <Dialog
       open
       headerGap="compact"
-      step={{ key: "share", scale: 1.05 }}
       title={`Share ${agent.name}`}
       description="Everyone gets their own copy. Later changes won’t sync."
       height="stable"
@@ -431,28 +339,34 @@ export function AgentShareDialog({
       }}
       leadingActions={
         <SplitButton
-          aria-label={`Export ${agent.name} as ${format === "png" ? "an image" : "JSON"}`}
+          aria-label={`Export ${agent.name} as ${format === "png" ? "an agent card" : "a JSON file"}`}
           menuLabel="Choose an export format"
           loading={pending === "export"}
           disabled={busy || !definition}
           onClick={() => void save()}
           menu={
-            <MenuRadioGroup
-              value={format}
-              onValueChange={(value: string) =>
-                setFormat(value as "png" | "json")
-              }
-            >
-              <MenuRadioItem value="png" closeOnClick>
-                Image
-              </MenuRadioItem>
-              <MenuRadioItem value="json" closeOnClick>
-                JSON
-              </MenuRadioItem>
-            </MenuRadioGroup>
+            <>
+              <MenuNote>
+                An agent card is an image that holds the agent’s setup, so
+                anyone can add it to Buzz.
+              </MenuNote>
+              <MenuRadioGroup
+                value={format}
+                onValueChange={(value: string) =>
+                  setFormat(value as "png" | "json")
+                }
+              >
+                <MenuRadioItem value="png" closeOnClick>
+                  Agent card
+                </MenuRadioItem>
+                <MenuRadioItem value="json" closeOnClick>
+                  JSON file
+                </MenuRadioItem>
+              </MenuRadioGroup>
+            </>
           }
         >
-          {format === "png" ? "Export" : "Export JSON"}
+          {format === "png" ? "Export agent card" : "Export JSON"}
         </SplitButton>
       }
       actions={
@@ -501,7 +415,7 @@ export function AgentShareDialog({
             {error}
           </p>
         )}
-        <div ref={listing} className="grid gap-2">
+        <div className="grid gap-2">
           <SettingsGroup>
             <SwitchPreferenceRow
               label="Post to Marketplace"
@@ -510,21 +424,26 @@ export function AgentShareDialog({
                   ? "Couldn’t check the Marketplace."
                   : head === null
                     ? "Checking the Marketplace…"
-                    : stale
-                      ? "Your latest changes aren’t in the Marketplace yet."
-                      : listed
-                        ? "Anyone in this community can find and add a copy."
-                        : "Let anyone in this community find and add a copy."
+                    : listing !== undefined
+                      ? listing
+                        ? "Publishing…"
+                        : "Removing…"
+                      : stale
+                        ? "Your latest changes aren’t in the Marketplace yet."
+                        : "Anyone in this community can add a copy, instructions included. Memories and chats stay with you."
               }
-              checked={listed}
+              checked={listing ?? listed}
               disabled={
                 head === null || unread || busy || (!listed && !definition)
               }
-              onCheckedChange={(on) =>
-                open(on ? "publish" : "remove", "switch")
-              }
+              onCheckedChange={(on) => void share(on)}
             />
           </SettingsGroup>
+          {failure && (
+            <p role="alert" className="m-0 text-body-sm text-danger">
+              {failure}
+            </p>
+          )}
           {unread && (
             <Button size="sm" onClick={() => setUnread(false)}>
               Try again
@@ -532,12 +451,12 @@ export function AgentShareDialog({
           )}
           {stale && (
             <Button
-              ref={update}
               size="sm"
+              loading={listing === true}
               disabled={busy || !definition}
-              onClick={() => open("publish", "update")}
+              onClick={() => void share(true)}
             >
-              Update Marketplace…
+              Update Marketplace
             </Button>
           )}
         </div>

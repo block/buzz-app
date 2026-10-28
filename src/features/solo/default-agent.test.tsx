@@ -612,6 +612,25 @@ it("uses the account's choice when this device can't cache it", async () => {
   }
 });
 
+it("saves an explicit choice to the account when this device can't cache it", async () => {
+  const { account, session, Selection } = accountSession("a".repeat(64));
+  render(<Selection />);
+  await act(async () => account.resolve());
+  const write = vi
+    .spyOn(Storage.prototype, "setItem")
+    .mockImplementation(() => {
+      throw new Error("storage full");
+    });
+  try {
+    await act(() => chooseDefaultAgent(session, "account", "b".repeat(64)));
+    expect(screen.getByRole("status").textContent).toBe("Second");
+    expect(account.saved()).toBe("b".repeat(64));
+  } finally {
+    write.mockRestore();
+    forgetDefaultAgent("b".repeat(64));
+  }
+});
+
 it("still picks a main agent when the account can't be read", async () => {
   const { account, Selection } = accountSession(undefined);
   account.read.mockRejectedValueOnce(new Error("offline"));

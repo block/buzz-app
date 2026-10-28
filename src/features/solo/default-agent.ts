@@ -53,8 +53,9 @@ export async function chooseDefaultAgent(
 ) {
   const account = session.mainAgent;
   if (account) explicit.add(account);
-  if (!setDefaultAgent(scope, pubkey))
-    throw new Error("The main agent couldn't be saved on this device.");
+  // A choice this device can't cache still applies here, so it is still saved
+  // to the account.
+  setDefaultAgent(scope, pubkey);
   if (!account) return;
   try {
     await account.write(pubkey);

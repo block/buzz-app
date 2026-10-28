@@ -1393,12 +1393,25 @@ function Composer({
     )
       return;
     if (autoTagged.current === draftKey) return;
-    // Shown again untouched, the prefill retags for the current default.
-    if (automaticTag.current === JSON.stringify(valueRef.current)) {
-      if (!seedMention) return;
-      autoTagged.current = draftKey;
-      if (seedMention.pubkey !== valueRef.current.recipients[0]?.pubkey)
-        prefill(() => replaceRecipients([seedMention]));
+    // Shown again untouched, the prefill retags for the current default. A
+    // draft holding only one tag is such a prefill too, as earlier versions
+    // saved it.
+    const { text, recipients, chatCards } = valueRef.current;
+    const [only] = recipients;
+    if (
+      automaticTag.current === JSON.stringify(valueRef.current) ||
+      (recipients.length === 1 &&
+        only?.start === 0 &&
+        text === `@${only.name} ` &&
+        !chatCards?.length)
+    ) {
+      // Until the default can be tagged, as when its evidence is loading.
+      if (
+        seedMention &&
+        (seedMention.pubkey === only?.pubkey ||
+          prefill(() => replaceRecipients([seedMention])))
+      )
+        autoTagged.current = draftKey;
       return;
     }
     // A shortcut may seed an ordinary editable link. Still add the default

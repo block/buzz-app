@@ -6,7 +6,7 @@ import type {
   ComposerCompletionProps,
 } from "../../features/conversation/contracts";
 import type { ChannelSummary } from "../../features/relay/contracts";
-import { matchName } from "../../features/search/match";
+import { MatchRank, matchName } from "../../features/search/match";
 
 const LIMIT = 20;
 /** Rows kept for open channels when joined matches would fill the list. */
@@ -51,8 +51,8 @@ function open(channel: ChannelSummary) {
  * popup. */
 function rank(name: string, needle: string) {
   const found = matchName(name, needle)?.rank;
-  if (found === undefined || found > 4) return undefined;
-  if (/\s/u.test(needle) && found > 1) return undefined;
+  if (found === undefined || found > MatchRank.wordRuns) return undefined;
+  if (/\s/u.test(needle) && found > MatchRank.prefix) return undefined;
   return found;
 }
 

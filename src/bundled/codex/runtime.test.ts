@@ -4557,7 +4557,7 @@ it.each([
     if (!started) throw new Error("No thread start");
     const config = (started.params as { config: Record<string, unknown> })
       .config;
-    expect(config["features.hooks"]).toBe(!disabled);
+    expect(config).not.toHaveProperty("features.hooks");
     expect(
       Object.hasOwn(config.mcp_servers as object, "buzz_native_hooks"),
     ).toBe(!disabled);
@@ -4567,8 +4567,28 @@ it.each([
     await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
     const resumed = f.sent.find((wire) => wire.method === "thread/resume")
       ?.params as { config: Record<string, unknown> };
-    expect(resumed.config["features.hooks"]).toBe(!disabled);
+    expect(resumed.config).not.toHaveProperty("features.hooks");
     expect(serve).toHaveBeenCalledTimes(disabled ? 0 : 2);
     await f.complete(1);
   },
 );
+
+it("keeps interrupting an idle existing conversation a no-op", async () => {
+  const f = fixture();
+  const delivery = f.delivery("first");
+  const agent = {
+    ...delivery.agent,
+    config: delivery.config,
+  } as unknown as Agent;
+  await f.runtime.run(delivery);
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.complete();
+  await vi.waitFor(() =>
+    expect(f.runtime.sessionState(agent, { channelId: "channel", root })).toBe(
+      "idle",
+    ),
+  );
+  await expect(
+    f.runtime.session(agent, { channelId: "channel", root }, "interrupt"),
+  ).resolves.toBeUndefined();
+});

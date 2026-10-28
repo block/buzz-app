@@ -175,7 +175,6 @@ type Server = {
   opening: Promise<AppServer>;
   /** Threads this process has loaded, and the agent, by key, each belongs to. */
   threads: Map<string, AgentKey>;
-  hasHooks: boolean;
 };
 export type SessionView = { key: string; status: string; detail: string };
 /** A saved binding, newest first, for the owner's transcript list. */
@@ -313,8 +312,6 @@ export class CodexRuntime {
     if (action === "interrupt") {
       if (this.controls.interrupt(control)) return;
       const active = entry.lanes.get(key)?.active;
-      if (!active && entry.lanes.has(key))
-        throw new Error("Codex has not started in this conversation yet");
       if (active) await this.interrupt(entry, key, active.reply);
       return;
     }
@@ -384,8 +381,10 @@ export class CodexRuntime {
     const existing = this.previews.get(agent.key);
     if (existing?.key === key) return existing.ready;
     const server = this.open();
+    const rpc = server.rpc;
     const ready = (async () => {
-      const models = await server.opening.then(listModels);
+      await server.opening;
+      const models = await listModels(rpc);
       const model = resolveModel(settings.model, models);
       const offered = models.map((row) => {
         const efforts = row.supportedReasoningEfforts.map(
@@ -542,7 +541,6 @@ export class CodexRuntime {
         defaults.workspace,
       ),
       threads: new Map(),
-      hasHooks: !!this.hooks,
     };
     // An exit fails current work and permits the next ordinary mention to reopen.
     rpc.onMessage((wire) => {
@@ -935,8 +933,6 @@ export class CodexRuntime {
           "Choose an absolute workspace path or ~/.buzz in Codex settings first.",
       };
     await entry.after.catch(() => undefined);
-    if (entry.abort.signal.aborted || turnSignal.aborted)
-      return { ok: false, error: "Codex was stopped" };
     const server = this.open();
     const signal = AbortSignal.any([entry.abort.signal, turnSignal]);
     let release!: () => void;
@@ -1143,6 +1139,7 @@ export class CodexRuntime {
       .catch(() => undefined)
       .then(async () => {
         current.queued--;
+        entry.waiting.delete(request);
         if (entry.abort.signal.aborted) {
           request.failActivity("Codex was stopped");
           return;
@@ -1152,9 +1149,6 @@ export class CodexRuntime {
           return;
         }
         await this.execute(request, text, key, current, entry);
-      })
-      .finally(() => {
-        entry.waiting.delete(request);
       });
     lane.tail = job;
     this.status(request.agent.key, key, "Starting");
@@ -1411,7 +1405,7 @@ export class CodexRuntime {
                 >,
               ).map(([name, server]) => [name, { ...server, enabled: false }]),
             ),
-            ...(this.server?.rpc === rpc && this.server.hasHooks
+            ...(this.server?.rpc === rpc && this.hooks
               ? { "hooks.state": await nativeHookState(rpc, cwd, false) }
               : {}),
           },
@@ -1493,7 +1487,7 @@ export class CodexRuntime {
     const features = normalized.config.features;
     const disabled = (features?.hooks ?? features?.codex_hooks) === false;
     const hooks =
-      !disabled && this.server?.rpc === rpc && this.server.hasHooks
+      !disabled && this.server?.rpc === rpc && this.hooks
         ? await nativeHookState(rpc, workspace)
         : undefined;
     const hookAdapter = disabled ? undefined : this.hooks;
@@ -1511,11 +1505,7 @@ export class CodexRuntime {
       // agent's own watches and timers start work.
       sandbox: "danger-full-access",
       config: {
-        ...(hooks
-          ? { "hooks.state": hooks, "features.hooks": true }
-          : disabled
-            ? { "features.hooks": false }
-            : {}),
+        ...(hooks ? { "hooks.state": hooks } : {}),
         web_search: "disabled",
         mcp_servers: { ...mcp, ...bridge?.config },
         "features.plugins": false,
@@ -1538,14 +1528,6 @@ export class CodexRuntime {
     let ready!: () => void;
     let notReady!: (error: unknown) => void;
     const turnAbort = new AbortController();
-    if (entry.abort.signal.aborted) {
-      request.failActivity("Codex was stopped");
-      return;
-    }
-    if (request.current && !request.current()) {
-      request.answered();
-      return;
-    }
     const server = this.open();
     // No deadline of our own: a turn runs until Codex ends it.
     const signal = AbortSignal.any([entry.abort.signal, turnAbort.signal]);
@@ -1565,7 +1547,6 @@ export class CodexRuntime {
     };
     void active.ready.catch(() => undefined);
     lane.active = active;
-    entry.waiting.delete(request);
     const { settings, agent } = request;
     const followed = follow(server.rpc, signal, active, (method, item) => {
       const step = method === "item/started" ? codexStep(item) : undefined;

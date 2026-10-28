@@ -1,3 +1,4 @@
+import { RenameSidebarSection } from "./RenameSidebarSection";
 import { SidebarActiveDialog, activeWindowLabel } from "./SidebarActiveDialog";
 import { FadingLabel } from "./FadingLabel";
 import {
@@ -33,6 +34,7 @@ import {
   ChatUnreadIcon,
   DotsThreeIcon,
   Filter2Icon,
+  PencilSimpleIcon,
   PlusIcon,
   TextAaIcon,
   TimerIcon,
@@ -57,7 +59,11 @@ export function SidebarSection({
   session,
   open,
   onToggle,
+  headerActions,
+  headerNotice,
+  hideMoreActions = false,
   createChannel,
+  createSection,
   newMessage,
   sort,
   filter,
@@ -69,6 +75,7 @@ export function SidebarSection({
   dragging = false,
   move,
   onRemove,
+  onRename,
   channelCount,
   removalFocus,
   children,
@@ -76,17 +83,24 @@ export function SidebarSection({
   sectionKey: string;
   title: string;
   hideTitle?: boolean;
-  icon?: string | undefined;
+  icon?: ReactNode;
   session?: RelaySession | undefined;
   open: boolean;
   onToggle: (open: boolean) => void;
+  headerActions?: ReactNode;
+  headerNotice?: ReactNode;
   onRemove?: (() => unknown) | undefined;
+  onRename?: ((name: string) => unknown) | undefined;
+  hideMoreActions?: boolean;
   channelCount?: number | undefined;
   removalFocus?: (() => HTMLElement | null | undefined) | undefined;
   createChannel?:
     | { available: boolean; open: (trigger: HTMLButtonElement) => void }
     | undefined;
   newMessage?: (() => void) | undefined;
+  createSection?:
+    | { available: boolean; open: (trigger: HTMLButtonElement) => void }
+    | undefined;
   sort?:
     | {
         value: "alpha" | "recent";
@@ -132,9 +146,11 @@ export function SidebarSection({
   const [menuOpen, setMenuOpen] = useState(false);
   const [removeOpen, setRemoveOpen] = useState(false);
   const [activeOpen, setActiveOpen] = useState(false);
+  const [renameOpen, setRenameOpen] = useState(false);
   const [removing, setRemoving] = useState(false);
   const [removeError, setRemoveError] = useState("");
   const canRemove = !!onRemove && sectionKey.startsWith("group:");
+  const canRename = !!onRename && sectionKey.startsWith("group:");
   const remove = async () => {
     if (!onRemove || removing) return;
     setRemoving(true);
@@ -160,6 +176,7 @@ export function SidebarSection({
         <div className={styles.sectionActions}>
           {newMessage && (
             <IconButton
+              hint="familiar"
               size="compact"
               aria-label="New message"
               title="New message"
@@ -196,9 +213,11 @@ export function SidebarSection({
             <span className={styles.sectionLabel}>
               {sectionKey === "starred" ? (
                 <SidebarStarIcon />
-              ) : icon && session ? (
+              ) : typeof icon === "string" && session ? (
                 <SidebarGroupIcon icon={icon} session={session} />
-              ) : null}
+              ) : (
+                icon
+              )}
               <FadingLabel className={styles.sectionTitle}>{title}</FadingLabel>
             </span>
             <span className={`${styles.sidebarIcon} ${styles.sectionChevron}`}>
@@ -213,6 +232,7 @@ export function SidebarSection({
               render={(props) => (
                 <IconButton
                   {...props}
+                  hidden={hideMoreActions}
                   size="compact"
                   aria-label={`More actions for ${title}`}
                   icon={<DotsThreeIcon strokeWidth={2.5} size={15} />}
@@ -362,6 +382,24 @@ export function SidebarSection({
                   </MenuSubmenuPopup>
                 </MenuSubmenu>
               )}
+              {createSection && (
+                <>
+                  {(filter || sort) && <MenuSeparator />}
+                  <MenuItem
+                    disabled={!createSection.available}
+                    onClick={() => {
+                      setMenuOpen(false);
+                      if (actionsTrigger.current)
+                        createSection.open(actionsTrigger.current);
+                    }}
+                  >
+                    <MenuIcon>
+                      <PlusIcon size={14} />
+                    </MenuIcon>
+                    Create section
+                  </MenuItem>
+                </>
+              )}
               {move && (
                 <>
                   <MenuItem
@@ -390,6 +428,19 @@ export function SidebarSection({
                   </MenuItem>
                 </>
               )}
+              {canRename && (
+                <MenuItem
+                  onClick={() => {
+                    setMenuOpen(false);
+                    setRenameOpen(true);
+                  }}
+                >
+                  <MenuIcon>
+                    <PencilSimpleIcon size={14} />
+                  </MenuIcon>
+                  Rename section
+                </MenuItem>
+              )}
               {canRemove && (
                 <>
                   <MenuSeparator />
@@ -410,8 +461,10 @@ export function SidebarSection({
               )}
             </MenuPopup>
           </MenuRoot>
+          {headerActions}
           {newMessage && (
             <IconButton
+              hint="familiar"
               size="compact"
               aria-label="New message"
               title="New message"
@@ -427,6 +480,14 @@ export function SidebarSection({
                 filter.dismissError?.();
                 setActiveOpen(false);
               }}
+              finalFocus={actionsTrigger}
+            />
+          )}
+          {renameOpen && onRename && (
+            <RenameSidebarSection
+              title={title}
+              rename={onRename}
+              close={() => setRenameOpen(false)}
               finalFocus={actionsTrigger}
             />
           )}
@@ -490,6 +551,7 @@ export function SidebarSection({
           )}
         </div>
       </div>
+      {headerNotice}
       <div
         id={id}
         className={styles.sectionContent}

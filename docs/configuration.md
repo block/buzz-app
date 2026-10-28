@@ -10,6 +10,7 @@ not in source. Build defaults are readable binary data, **never secret storage**
 | --- | --- |
 | `BUZZ_BUILDERLAB_URL` | Shared frontend/native build: public login URL and the bundled plugin's exact HTTPS host grant; no runtime override. |
 | `BUZZ_DEFAULT_COMMUNITY_URL` | Packaged frontend build: secure relay origin to select once, after identity setup, only when this viewer has no saved community record. Saved choices, including Personal space, always win. Unset in OSS builds. |
+| `BUZZ_DATABRICKS_HOST` | Frontend build and dev server: `https://` Databricks workspace URL passed as `DATABRICKS_HOST` to every bundled `goose-acp`, which then prefers it to the host in goose's config. Unset in OSS builds. See [Databricks host](#databricks-host). |
 | `BUZZ_RELAY_URL` | Live development broker's default community, not an agent relay override or a packaged default. |
 | `BUZZ_BUILD_AUTO_CONNECT_DEFAULT_RELAY` | Presence-only alias for fresh-viewer community selection in live development only. Saved viewer choice wins. |
 | `BUZZ_DEV_OPEN_RELAY` | Development-specific override of that alias: only `1` enables; `0` explicitly opts out. Requires a relay URL and live viewer pin to have an effect. |
@@ -46,6 +47,23 @@ records and unresolvable aliases. A later build default cannot change that saved
 choice. Selection starts the normal authenticated relay session; it grants no
 membership or admission bypass. If the relay refuses admission or is offline,
 the normal connection error/retry flow applies. No legacy preferences are copied.
+
+## Databricks host
+
+Internal packagers can point the bundled goose's Databricks provider at a
+workspace:
+
+```sh
+BUZZ_DATABRICKS_HOST=https://workspace.cloud.databricks.com/ bin/pnpm tauri build
+```
+
+The frontend reads it from repository-root `.env.local` or the process
+environment (process wins) and compiles it in. It must be an `https://` URL
+without credentials; invalid values fail the build. Every `goose-acp` the goose
+plugin starts receives it as `DATABRICKS_HOST`, so goose reports Databricks as
+configured and ignores a host saved in goose's config. Only the host is set:
+the model, thinking level and sign-in stay goose's own. Leave it unset for OSS
+builds.
 
 ## Builderlab URL build input
 
@@ -109,7 +127,7 @@ copied here.
 
 | OG/release input | Why it is not implemented here |
 | --- | --- |
-| `BUZZ_DESKTOP_BUILD_RELAY_URL` | Retired name; internal builds use `BUZZ_DEFAULT_COMMUNITY_URL` above. No legacy input alias or admission bypass is added. Native macOS, Windows and Linux otherwise restore the selected saved community; new admission uses Add a community. Windows/Linux installed-app acceptance remains unverified. The dev broker and saved agent destinations remain separate. See [packaged identity](identity.md). |
+| `BUZZ_DESKTOP_BUILD_RELAY_URL` | Retired name; internal builds use `BUZZ_DEFAULT_COMMUNITY_URL` above. No legacy input alias or admission bypass is added. Native macOS, Windows and Linux otherwise restore the selected saved community; new admission uses Join a community. Windows/Linux installed-app acceptance remains unverified. The dev broker and saved agent destinations remain separate. See [packaged identity](identity.md). |
 | `BUZZ_BUILD_RELAY_RECONNECT_CMD` | No reconnect-command feature; arbitrary deployment command execution is not added. |
 | Updater helper fallback aliases | Only the two canonical updater names above are read. Private signing keys never belong in app defaults. |
 | `--features mesh-llm` | No mesh/provider integration is supplied by the native identity crate. Import carries identities, not legacy runtimes. |

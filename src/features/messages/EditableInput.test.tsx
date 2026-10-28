@@ -19,6 +19,7 @@ import {
   vi,
 } from "vitest";
 import { fromMarkdown } from "mdast-util-from-markdown";
+import { Node as EditorNode } from "prosemirror-model";
 import { MessageMarkdown } from "./MessageMarkdown";
 import {
   EditableInput,
@@ -166,6 +167,50 @@ it("keeps exactly one typed colon when the conversion exceeds the limit", () => 
   expect([h.input.selectionStart, h.input.selectionEnd]).toEqual([3, 3]);
   act(() => h.input.undo(false));
   expect(h.input).toHaveValue(":x");
+});
+
+it("reads value and selection from one projection per document", async () => {
+  const h = mount("alpha beta");
+  const read = () => [
+    h.input.value,
+    h.input.selectionStart,
+    h.input.selectionEnd,
+  ];
+  read();
+  // Each projection snapshots the document once; reads reuse it until it changes.
+  const snapshots = vi.spyOn(EditorNode.prototype, "toJSON");
+  const projections = () =>
+    snapshots.mock.contexts.filter(
+      (node) => (node as EditorNode).type.name === "doc",
+    ).length;
+  const reads = (expected: unknown[]) => {
+    snapshots.mockClear();
+    for (let i = 0; i < 3; i++) expect(read()).toEqual(expected);
+    expect(projections()).toBeLessThanOrEqual(1);
+  };
+  try {
+    act(() => h.input.setSelectionRange(2, 5));
+    snapshots.mockClear();
+    expect(read()).toEqual(["alpha beta", 2, 5]);
+    act(() => h.input.setSelectionRange(10, 10));
+    expect(read()).toEqual(["alpha beta", 10, 10]);
+    // Selection-only transactions keep the document's projection.
+    expect(projections()).toBe(0);
+    await h.user.keyboard("!");
+    reads(["alpha beta!", 11, 11]);
+    act(() => h.input.undo(false));
+    reads(["alpha beta", 10, 10]);
+    act(() => h.input.undo(true));
+    reads(["alpha beta!", 11, 11]);
+    act(() => h.input.reset(mentionDraft("replaced")));
+    reads(["replaced", 0, 0]);
+    act(() => {
+      h.input.value = "set";
+    });
+    reads(["set", 3, 3]);
+  } finally {
+    snapshots.mockRestore();
+  }
 });
 
 describe("Mac WebKit line breaks", () => {
@@ -920,6 +965,179 @@ it("edits a detected plain HTTP link", () => {
   expect(edit).toMatchObject({ existing: true, href: "http://localhost:3000" });
   act(() => expect(edit?.save("local", "http://localhost:3000")).toBe(true));
   expect(h.markdown()).toBe("See [local](http://localhost:3000/)");
+});
+
+describe("pasting a bare URL over a selection", () => {
+  const url = "https://example.com/release-notes";
+  const linked = `Check the [release notes](${url}) before Friday`;
+  /** Mount the sample sentence with "release notes" selected. */
+  function selectNotes(text = "Check the release notes before Friday") {
+    const h = mount(text);
+    act(() => h.input.setSelectionRange(10, 23));
+    return h;
+  }
+
+  it("links the selection as one undo step and leaves the caret unlinked", async () => {
+    const h = selectNotes();
+    paste(h.input, url);
+    expect(h.markdown()).toBe(linked);
+    expect([h.input.selectionStart, h.input.selectionEnd]).toEqual([23, 23]);
+    await h.user.keyboard("!");
+    expect(h.markdown()).toBe(
+      `Check the [release notes](${url})! before Friday`,
+    );
+    act(() => h.input.undo(false));
+    expect(h.markdown()).toBe(linked);
+    act(() => h.input.undo(false));
+    expect(h.markdown()).toBe("Check the release notes before Friday");
+    expect([h.input.selectionStart, h.input.selectionEnd]).toEqual([10, 23]);
+  });
+
+  it.each([
+    ["a trailing newline", `${url}\n`, ""],
+    ["a trailing space", `${url} `, ""],
+    ["the <autolink> form", `<${url}>`, ""],
+    ["an HTML anchor labelled by its URL", url, `<a href="${url}">${url}</a>`],
+  ])("links the selection from a clipboard with %s", (_name, text, html) => {
+    const h = selectNotes();
+    paste(h.input, text, html);
+    expect(h.markdown()).toBe(linked);
+  });
+
+  it("still pastes an HTML anchor with its own label over the selection", () => {
+    const h = selectNotes();
+    paste(h.input, "Release notes", `<a href="${url}">Release notes</a>`);
+    expect(h.markdown()).toBe(
+      `Check the [Release notes](${url}) before Friday`,
+    );
+  });
+
+  it("keeps bold and mention tokens inside the new link", () => {
+    const bold = selectNotes();
+    act(() => {
+      bold.input.setSelectionRange(10, 17);
+      bold.input.toggleFormat("bold");
+      bold.input.setSelectionRange(10, 23);
+    });
+    paste(bold.input, url);
+    expect(bold.markdown()).toBe(
+      `Check the [**release** notes](${url}) before Friday`,
+    );
+
+    const h = mount("Check the ");
+    const honey = { pubkey: "a".repeat(64), name: "Honey" };
+    act(() => h.input.insertText("", honey));
+    act(() => h.input.insertText("notes before Friday"));
+    const recipients = h.draft().recipients;
+    expect(recipients).toEqual([{ ...honey, start: 10, end: 16 }]);
+    act(() => h.input.setSelectionRange(10, 22));
+    paste(h.input, url);
+    expect(h.markdown()).toBe(`Check the [@Honey notes](${url}) before Friday`);
+    expect(h.draft().recipients).toEqual(recipients);
+  });
+
+  it("re-targets a fully selected link and splits a partially selected one", () => {
+    const old = "https://old.example/x";
+    const whole = selectNotes();
+    act(() => whole.input.editLink()?.save("release notes", old));
+    act(() => whole.input.setSelectionRange(10, 23));
+    paste(whole.input, url);
+    expect(whole.markdown()).toBe(linked);
+
+    // A selection inside the link widens to the whole link, as the Link dialog
+    // does, and leaves the caret after it.
+    const inside = selectNotes();
+    act(() => inside.input.editLink()?.save("release notes", old));
+    act(() => inside.input.setSelectionRange(10, 17));
+    paste(inside.input, url);
+    expect(inside.markdown()).toBe(linked);
+    expect([inside.input.selectionStart, inside.input.selectionEnd]).toEqual([
+      23, 23,
+    ]);
+
+    // The selected part follows the pasted URL; the rest keeps its destination.
+    const partial = selectNotes();
+    act(() => partial.input.editLink()?.save("release notes", old));
+    act(() => partial.input.setSelectionRange(6, 17));
+    paste(partial.input, url);
+    expect(partial.markdown()).toBe(
+      `Check [the release](${url})[ notes](${old}) before Friday`,
+    );
+  });
+
+  it("swaps a selected URL instead of labelling it", () => {
+    const old = "https://old.example/x";
+    const raw = mount(`Check ${old} before Friday`);
+    act(() => raw.input.setSelectionRange(6, 27));
+    paste(raw.input, url);
+    expect(raw.markdown()).toBe(`Check ${url} before Friday`);
+
+    const labelled = mount(`Check ${old} before Friday`);
+    act(() => labelled.input.setSelectionRange(6, 27));
+    act(() => labelled.input.editLink()?.save(old, "https://other.example/"));
+    act(() => labelled.input.setSelectionRange(6, 27));
+    paste(labelled.input, url);
+    expect(labelled.markdown()).toBe(`Check ${url} before Friday`);
+  });
+
+  it.each([
+    ["other text", "changelog", "Check the changelog before Friday"],
+    [
+      "a credentialed URL",
+      "http://user:pw@example.com",
+      "Check the http://user:pw@example.com before Friday",
+    ],
+  ])("replaces the selection with %s", (_name, text, expected) => {
+    const h = selectNotes();
+    paste(h.input, text);
+    expect(h.markdown()).toBe(expected);
+  });
+
+  it("replaces a multi-line or whitespace-only selection", () => {
+    const lines = mount("Check the\nrelease notes");
+    act(() => lines.input.setSelectionRange(6, 17));
+    paste(lines.input, url);
+    expect(lines.markdown()).toBe(`Check ${url} notes`);
+
+    const space = mount("Check the release notes before Friday");
+    act(() => space.input.setSelectionRange(9, 10));
+    paste(space.input, url);
+    expect(space.markdown()).toBe(
+      `Check the${url} release notes before Friday`,
+    );
+  });
+
+  it("pastes verbatim inside code", () => {
+    const block = mount("```\nrelease notes\n```");
+    act(() => block.input.setSelectionRange(4, 17));
+    paste(block.input, url);
+    expect(block.markdown()).toBe(`\`\`\`\n${url} \n\`\`\``);
+
+    const inline = mount("Check the `release notes` before");
+    act(() => inline.input.setSelectionRange(11, 24));
+    paste(inline.input, url);
+    expect(inline.markdown()).toBe(`Check the \`${url} \` before`);
+  });
+
+  it("falls back to the limit check when the link would exceed maxLength", () => {
+    const h = mount("Check the release notes before Friday", { maxLength: 60 });
+    act(() => h.input.setSelectionRange(10, 23));
+    paste(h.input, url);
+    expect(h.markdown()).toBe(`Check the ${url} before Friday`);
+  });
+
+  it("keeps inserting a URL at a collapsed caret with the trailing space", () => {
+    const h = mount("Check the release notes before Friday");
+    act(() => h.input.setSelectionRange(10, 10));
+    paste(h.input, url);
+    expect(h.markdown()).toBe(`Check the ${url} release notes before Friday`);
+    expect(h.input.selectionStart).toBe(44);
+    act(() => h.input.setSelectionRange(9, 9));
+    paste(h.input, url);
+    expect(h.markdown()).toBe(
+      `Check the${url} ${url} release notes before Friday`,
+    );
+  });
 });
 
 it("bolds a mention typed between delimiters and keeps its chip and recipient", async () => {
@@ -1860,18 +2078,110 @@ it("does not convert an inserted or pasted marker, or one typed inside pasted fe
   expect(split.markdown()).toBe("```\n- item");
 });
 
-it("keeps a marker literal on a line holding a mention chip", async () => {
-  const h = mount();
-  const honey = { pubkey: "a".repeat(64), name: "Honey" };
-  act(() => h.input.insertText("", honey));
-  expect(h.input).toHaveValue("@Honey ");
+it.each([
+  ["- ", false, "ul > li > p"],
+  ["1. ", false, "ol > li > p"],
+  ["> ", false, "blockquote > p"],
+  ["- ", true, "ul > li > p"],
+  ["1. ", true, "ol > li > p"],
+  ["> ", true, "blockquote > p"],
+] as const)(
+  "converts %j typed before a mention, link chip, link and code, keeping each in the block (next line=%s)",
+  async (marker, followed, selector) => {
+    const h = mount("", { links: true });
+    const honey = { pubkey: "a".repeat(64), name: "Honey" };
+    const url = "https://example.com/a";
+    act(() => h.input.insertText("", honey));
+    paste(h.input, `see ${url} and docs`);
+    await h.user.keyboard(" `x`");
+    act(() => {
+      const at = h.input.value.indexOf("docs");
+      h.input.setSelectionRange(at, at + 4);
+      h.input.editLink()?.save("docs", "https://example.com/docs");
+      h.input.setSelectionRange(h.input.value.length, h.input.value.length);
+    });
+    // A later line of the same paragraph stays behind when the line converts.
+    if (followed) await h.user.keyboard("{Shift>}{Enter}{/Shift}next");
+    act(() => h.input.setSelectionRange(0, 0));
+    const line = `@Honey see ${url} and [docs](https://example.com/docs) \`x\``;
+    const tail = followed ? "\nnext" : "";
+    expect(h.markdown()).toBe(`${line}${tail}`);
+    const value = h.input.value;
+    const converted = () => {
+      const block = h.input.querySelector(selector);
+      expect(block).not.toBeNull();
+      expect(block?.querySelector('[data-source="@Honey"]')).not.toBeNull();
+      expect(block?.querySelector(`[data-source="${url}"]`)).not.toBeNull();
+      expect(
+        block?.querySelector('a[href="https://example.com/docs"]'),
+      ).toHaveTextContent("docs");
+      expect(block?.querySelector("code")).toHaveTextContent("x");
+      expect(h.input.querySelector(":scope > p")?.textContent ?? null).toBe(
+        followed ? "next" : null,
+      );
+      // Only the marker went: every chip and the recipient keep their offsets.
+      expect(h.input.value).toBe(value);
+      expect(h.draft().recipients).toEqual([{ ...honey, start: 0, end: 6 }]);
+      expect(h.markdown()).toBe(
+        `${marker}${line}${followed ? "\n\nnext" : ""}`,
+      );
+    };
+    await h.user.keyboard(marker);
+    converted();
+    act(() => h.input.undo(false));
+    expect(h.input.querySelector("ul, ol, blockquote")).toBeNull();
+    expect(h.input.value).toBe(`${marker}${value}`);
+    expect(h.draft().recipients).toEqual([
+      { ...honey, start: marker.length, end: marker.length + 6 },
+    ]);
+    expect(h.markdown()).toBe(`${marker}${line}${tail}`);
+    act(() => h.input.undo(true));
+    converted();
+  },
+);
+
+// The reported flow: a timeline message pastes its bare links as chips, and
+// `> ` typed at the start of each pasted paragraph quotes every one of them.
+it("quotes every pasted paragraph `> ` is typed before, keeping its link chips", async () => {
+  const pr = "https://github.com/example/widgets/pull/318";
+  const readme =
+    "https://github.com/example/widgets/blob/fix/meter/docs/README.md";
+  const paragraphs = [
+    `Rebased onto main and pushed. Draft PR: ${pr}`,
+    "Folds in #309, #310 and #311 (not #312), so {theme:compact} keeps the team’s (ACUL) banner.",
+    "The meter reads Weak / Moderate / Strong, and “Didn’t get the code? Resend” stays.",
+    `Rollout notes: ${readme}`,
+    "Totals: 1,163 cases; 1,150 passed; 13 skipped.",
+  ];
+  const linked = (text: string) =>
+    text.replace(/https:\S+/, (href) => `<a href="${href}">${href}</a>`);
+  const h = mount("", { links: true });
+  paste(
+    h.input,
+    paragraphs.join("\n\n"),
+    `<div data-buzz-copy="timeline">${paragraphs.map((text) => `<p>${linked(text)}</p>`).join("")}</div>`,
+  );
+  expect(h.input.querySelectorAll("[data-link]")).toHaveLength(2);
   act(() => h.input.setSelectionRange(0, 0));
-  await h.user.keyboard("- ");
-  expect(h.input.querySelector("ul")).toBeNull();
-  expect(h.input).toHaveValue("- @Honey ");
-  expect(h.input.querySelector('[data-source="@Honey"]')).not.toBeNull();
-  expect(h.draft().recipients).toEqual([{ ...honey, start: 2, end: 8 }]);
-  expect(h.markdown()).toBe("- @Honey ");
+  await h.user.keyboard("From Pip’s agent:{Shift>}{Enter}{/Shift}");
+  for (const paragraph of paragraphs) {
+    const start = h.input.value.indexOf(paragraph);
+    act(() => h.input.setSelectionRange(start, start));
+    await h.user.keyboard("> ");
+  }
+  const quotes = [...h.input.querySelectorAll(":scope > blockquote")];
+  expect(quotes).toHaveLength(5);
+  expect(quotes[0]?.querySelector(`[data-source="${pr}"]`)).not.toBeNull();
+  expect(quotes[3]?.querySelector(`[data-source="${readme}"]`)).not.toBeNull();
+  expect(h.input.value).not.toContain(">");
+  // The sent text reads as the header and five quotes, each link inside its own.
+  const blocks = scanMarkdown(h.markdown()).tree.children ?? [];
+  expect(blocks.map((node) => node.type)).toEqual([
+    "paragraph",
+    ...paragraphs.map(() => "blockquote"),
+  ]);
+  expect(JSON.stringify(blocks[1])).toContain(pr);
+  expect(JSON.stringify(blocks[4])).toContain(readme);
 });
 
 it("switches a nested bullet to its ordered ancestor's type without outdenting", async () => {
@@ -3235,3 +3545,77 @@ it.each([
     }
   },
 );
+
+it.each([true, false])(
+  "preserves an explicitly %s bold typing format across recipient replacement",
+  async (enabled) => {
+    const h = mount(enabled ? "" : "bold");
+    act(() => {
+      if (!enabled) {
+        h.input.setSelectionRange(0, 4);
+        h.input.toggleFormat("bold");
+        h.input.setSelectionRange(2, 2);
+      }
+      h.input.toggleFormat("bold");
+      expect(
+        h.input.replaceRecipients([{ pubkey: "a".repeat(64), name: "Honey" }]),
+      ).toBe(true);
+      h.input.insertText("X");
+    });
+    expect(
+      h.input.querySelector("strong")?.textContent?.includes("X") ?? false,
+    ).toBe(enabled);
+  },
+);
+
+it("leaves duplicate mentions and their positions unchanged for the same recipient set", () => {
+  const first = { pubkey: "a".repeat(64), name: "Honey" };
+  const second = { pubkey: "b".repeat(64), name: "Mary Jane" };
+  const text = "ask @Honey about @Mary Jane and @Honey";
+  const h = mount({
+    text,
+    recipients: [
+      { ...first, start: 4, end: 10 },
+      { ...second, start: 17, end: 27 },
+      { ...first, start: 32, end: 38 },
+    ],
+  });
+  act(() => expect(h.input.replaceRecipients([second, first])).toBe(true));
+  expect(h.input).toHaveValue(text);
+  expect(h.draft().recipients).toHaveLength(3);
+});
+
+it("keeps retained recipients in place while adding and removing others", () => {
+  const first = { pubkey: "a".repeat(64), name: "Honey" };
+  const second = { pubkey: "b".repeat(64), name: "Mary Jane" };
+  const h = mount({
+    text: "ask @Honey about X",
+    recipients: [{ ...first, start: 4, end: 10 }],
+  });
+  act(() => expect(h.input.replaceRecipients([first, second])).toBe(true));
+  expect(h.input).toHaveValue("@Mary Jane ask @Honey about X");
+  act(() => expect(h.input.replaceRecipients([first])).toBe(true));
+  expect(h.input).toHaveValue("ask @Honey about X");
+});
+
+it("rejects adding a recipient when retained duplicate mentions fill the limit", () => {
+  const first = { pubkey: "a".repeat(64), name: "Honey" };
+  const text = "@Honey ".repeat(32);
+  const h = mount({
+    text,
+    recipients: Array.from({ length: 32 }, (_, i) => ({
+      ...first,
+      start: i * 7,
+      end: i * 7 + 6,
+    })),
+  });
+  act(() =>
+    expect(
+      h.input.replaceRecipients([
+        first,
+        { pubkey: "b".repeat(64), name: "Mary Jane" },
+      ]),
+    ).toBe(false),
+  );
+  expect(h.input).toHaveValue(text);
+});

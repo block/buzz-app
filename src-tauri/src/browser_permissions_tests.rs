@@ -32,15 +32,23 @@ fn invoke(
 
 #[test]
 fn native_command_permissions_isolate_webviews() {
-    let app = mock_builder()
+    let builder = mock_builder()
         // A marker handler proves which requests pass the real generated ACL,
         // without starting terminals, importing plugins or showing notifications.
         .invoke_handler(|request| {
             request.resolver.resolve("authorized");
             true
-        })
-        .build(super::app_context())
-        .unwrap();
+        });
+    #[cfg(all(feature = "native-mcp", target_os = "macos"))]
+    let builder = builder.plugin(
+        tauri::plugin::Builder::<MockRuntime>::new("mcp-bridge")
+            .invoke_handler(|request| {
+                request.resolver.resolve("authorized");
+                true
+            })
+            .build(),
+    );
+    let app = builder.build(super::app_context()).unwrap();
     let main_window = WindowBuilder::new(&app, "main").build().unwrap();
     let main = main_window
         .add_child(
@@ -111,6 +119,7 @@ fn native_command_permissions_isolate_webviews() {
         "relay_upload",
         "relay_upload_cancel",
         "media_download",
+        "file_download",
         "media_copy_image",
         "media_stream_base",
         "get_os_idle_seconds",
@@ -127,6 +136,7 @@ fn native_command_permissions_isolate_webviews() {
         "plugin_recover",
         "plugin_host_run_command",
         "plugin_host_request",
+        "plugin_host_upload",
         "plugin_host_process_spawn",
         "plugin_host_process_write",
         "plugin_host_process_kill",
@@ -147,6 +157,8 @@ fn native_command_permissions_isolate_webviews() {
         "app_agent_set_type",
         "app_agent_delete",
         "app_agent_begin_delete",
+        "app_agent_begin_leave",
+        "app_agent_join",
         "app_agent_forget",
         "app_agent_publish",
         "app_agent_publish_profile",
@@ -161,9 +173,9 @@ fn native_command_permissions_isolate_webviews() {
         "jev_classifier_status",
         "jev_classifier_set_key",
         "jev_classifier_clear_key",
-        "jev_classify",
         "app_agent_state_load",
         "app_agent_state_set",
+        "decide",
         "title_bar_double_click",
         "notification_show",
         #[cfg(target_os = "macos")]
@@ -172,6 +184,7 @@ fn native_command_permissions_isolate_webviews() {
         "request_notification_access",
         "dock_permission",
         "unread_indicator_set",
+        "keep_awake_set",
         "deep_link_take",
         "deep_link_watch",
         "terminal_create_owner",
@@ -222,4 +235,43 @@ fn native_command_permissions_isolate_webviews() {
         );
     }
     assert!(invoke(&main, "plugin:window|close", local_origin).is_ok());
+
+    #[cfg(all(feature = "native-mcp", target_os = "macos"))]
+    {
+        use tauri::Manager as _;
+        let callbacks = [
+            "script_result",
+            "request_script_injection",
+            "report_ipc_event",
+        ];
+        for callback in callbacks {
+            assert!(invoke(
+                &main,
+                &format!("plugin:mcp-bridge|{callback}"),
+                local_origin
+            )
+            .is_err());
+        }
+        // Apply the actual opt-in overlay capability through Tauri's ACL resolver.
+        // The marker plugin has no bridge server or identity side effects.
+        let overlay: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.native-mcp.conf.json")).unwrap();
+        for capability in overlay["app"]["security"]["capabilities"]
+            .as_array()
+            .unwrap()
+        {
+            if capability.is_object() {
+                app.add_capability(capability.to_string()).unwrap();
+            }
+        }
+        for callback in callbacks {
+            let command = format!("plugin:mcp-bridge|{callback}");
+            assert!(invoke(&main, &command, local_origin).is_ok(), "{command}");
+            assert!(invoke(&main, &command, "https://example.org").is_err());
+            assert!(invoke(&guest, &command, local_origin).is_err());
+            assert!(invoke(huddle.as_ref(), &command, local_origin).is_err());
+        }
+        assert!(invoke(&main, "plugin:mcp-bridge|execute_command", local_origin).is_err());
+        assert!(invoke(&main, "identity_restore", local_origin).is_ok());
+    }
 }

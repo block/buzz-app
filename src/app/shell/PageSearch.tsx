@@ -166,6 +166,7 @@ export function PageSearch({
   return (
     <>
       <IconButton
+        hint="familiar"
         ref={trigger}
         variant="chrome"
         shape="round"
@@ -374,6 +375,7 @@ function CommunitySearch({
       currentChannelId={currentChannelId}
       onScopeChange={onScopeChange}
       usageScope={usageScope(scope)}
+      sidebarScope={connection.scope}
       openConversation={(channelId, messageId) => {
         const current = services.communities.snapshot();
         if (

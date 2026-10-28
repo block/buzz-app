@@ -44,7 +44,7 @@ function fixture(projectName = "Work") {
   };
   const write = vi.fn(
     async (intent: {
-      channelId: string;
+      channelId?: string;
       sectionId?: string;
       createSection?: { id: string; name: string };
     }) => {
@@ -55,8 +55,10 @@ function fixture(projectName = "Work") {
         };
       const assignments = { ...saved.assignments };
       const target = intent.createSection?.id ?? intent.sectionId;
-      if (target) assignments[intent.channelId] = target;
-      else delete assignments[intent.channelId];
+      if (intent.channelId !== undefined) {
+        if (target) assignments[intent.channelId] = target;
+        else delete assignments[intent.channelId];
+      }
       saved = { ...saved, assignments };
       return saved;
     },
@@ -146,12 +148,12 @@ it("creates and moves through the relay service, then restores in a fresh store"
     screen.getByRole("button", { name: "Actions for Planning" }),
   );
   expect(
-    await screen.findByRole("menuitem", { name: "Chat settings…" }),
+    await screen.findByRole("menuitem", { name: "Chat settings" }),
   ).toHaveAttribute("aria-disabled", "true");
   (await screen.findByRole("menuitem", { name: "Move to" })).focus();
   await user.keyboard("{ArrowRight}");
   await user.click(
-    await screen.findByRole("menuitem", { name: "New workspace…" }),
+    await screen.findByRole("menuitem", { name: "New workspace" }),
   );
   await user.type(
     screen.getByRole("textbox", { name: "Workspace name" }),
@@ -267,12 +269,9 @@ it("copies the chat link", async () => {
   await user.click(
     await screen.findByRole("button", { name: "Actions for Planning" }),
   );
-  (await screen.findByRole("menuitem", { name: "Copy" })).focus();
-  await user.keyboard("{ArrowRight}");
-  await user.click(
-    await screen.findByRole("menuitem", { name: "Copy link to chat" }),
-  );
+  await user.click(await screen.findByRole("menuitem", { name: "Copy link" }));
   expect(write).toHaveBeenCalledWith("buzz://channel/chat");
+  expect(await screen.findByText("Link copied.")).toBeVisible();
 });
 
 it("reports a clipboard failure without claiming success", async () => {
@@ -285,14 +284,8 @@ it("reports a clipboard failure without claiming success", async () => {
   await user.click(
     await screen.findByRole("button", { name: "Actions for Planning" }),
   );
-  (await screen.findByRole("menuitem", { name: "Copy" })).focus();
-  await user.keyboard("{ArrowRight}");
-  await user.click(
-    await screen.findByRole("menuitem", { name: "Copy chat ID" }),
-  );
-  expect(
-    await screen.findByText("Couldn’t copy. Try again from the chat menu."),
-  ).toBeVisible();
+  await user.click(await screen.findByRole("menuitem", { name: "Copy link" }));
+  expect(await screen.findByText("Couldn’t copy the link.")).toBeVisible();
 });
 
 it("only offers Chats as a destination from a project", async () => {
@@ -306,7 +299,7 @@ it("only offers Chats as a destination from a project", async () => {
     );
     (await screen.findByRole("menuitem", { name: "Move to" })).focus();
     await user.keyboard("{ArrowRight}");
-    await screen.findByRole("menuitem", { name: "New workspace…" });
+    await screen.findByRole("menuitem", { name: "New workspace" });
   };
   await openProjectMenu();
   expect(screen.queryByRole("menuitem", { name: "Chats" })).toBeNull();
@@ -391,14 +384,14 @@ it("marks a chat read from its row menu and reports a failed save", async () => 
     });
     await user.click(actions);
     await user.click(
-      await screen.findByRole("menuitem", { name: "Mark as Read" }),
+      await screen.findByRole("menuitem", { name: "Mark as read" }),
     );
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Read state unavailable",
     );
     await user.click(actions);
     await user.click(
-      await screen.findByRole("menuitem", { name: "Mark as Read" }),
+      await screen.findByRole("menuitem", { name: "Mark as read" }),
     );
     await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
     expect(screen.queryByRole("menu")).toBeNull();

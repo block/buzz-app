@@ -1,5 +1,6 @@
 import {
   createContext,
+  useCallback,
   useContext,
   useMemo,
   useRef,
@@ -23,6 +24,7 @@ import {
 import { MediaReviewViewer } from "../messages/MediaReviewViewer";
 import { ThreadPanel, type ThreadPanelProps } from "../messages/ThreadPanel";
 import { ownSolo } from "../solo/labels";
+import { useSoloHasPeople } from "../solo/people";
 import {
   ConversationHost,
   type ConversationHostServices,
@@ -49,6 +51,7 @@ export type MediaReview = Pick<
   ComponentProps<typeof MediaReviewViewer>,
   | "messageId"
   | "attachment"
+  | "initialAttachments"
   | "initialTime"
   | "hasComments"
   | "restoreFocus"
@@ -60,18 +63,29 @@ export function useMediaReview() {
   const [media, setMedia] =
     useState<Omit<MediaReview, "restoreFocus" | "close">>();
   const trigger = useRef<HTMLElement | null>(null);
-  const open: ConversationInteractions["onOpenMediaReview"] = (
-    messageId,
-    attachment,
-    initialTime,
-    hasComments = false,
-  ) => {
-    trigger.current =
-      document.activeElement instanceof HTMLElement
-        ? document.activeElement
-        : null;
-    setMedia({ messageId, attachment, initialTime, hasComments });
-  };
+  // Stable, so memoized rows reading it do not re-render with the page.
+  const open = useCallback<ConversationInteractions["onOpenMediaReview"]>(
+    (
+      messageId,
+      attachment,
+      initialTime,
+      hasComments = false,
+      initialAttachments,
+    ) => {
+      trigger.current =
+        document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : null;
+      setMedia({
+        messageId,
+        attachment,
+        initialTime,
+        hasComments,
+        initialAttachments,
+      });
+    },
+    [],
+  );
   const review: MediaReview | undefined = media && {
     ...media,
     restoreFocus: trigger,
@@ -265,15 +279,25 @@ export function ConversationTimeline(
 
 export function ConversationComposer(props: Own<MessageComposerProps>) {
   const { onOpenMediaReview: _, ...shared } = useConversation();
-  // Solo chats address agents; the owner's also start tagged.
+  // Alone, a Solo chat addresses agents; shared, it is a conversation.
+  const withPeople = useSoloHasPeople(
+    shared.session,
+    shared.channelId,
+    shared.soloConversation,
+  );
   return (
     <MessageComposer
       {...shared}
       {...(shared.soloConversation
-        ? { label: "Message your agents", activityClickOpensPanel: true }
+        ? {
+            label: withPeople
+              ? "Message this conversation"
+              : "Message your agents",
+            activityClickOpensPanel: true,
+          }
         : {})}
       chatPresentation={shared.ownSoloConversation}
-      requireMention={shared.ownSoloConversation}
+      requireMention={shared.soloConversation}
       {...props}
     />
   );

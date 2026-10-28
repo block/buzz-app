@@ -100,6 +100,100 @@ describe("GooseSetup", () => {
     expect(fake.geese).toHaveLength(1);
   });
 
+  it.each([
+    ["providers", "_goose/unstable/providers/list"],
+    ["defaults", "_goose/unstable/defaults/read"],
+    ["models", "_goose/unstable/providers/supported-models/list"],
+  ])(
+    "gives up on a %s lookup goose never answers, and reads again next time",
+    async (_, method) => {
+      vi.useFakeTimers();
+      try {
+        const silent = [method];
+        const { fake, setup: goose } = setup({ silent, supported: ["qwen3"] });
+        const read = () =>
+          method.includes("supported")
+            ? goose.models("ollama")
+            : goose.providers();
+        const stuck = read();
+        const failed = expect(stuck).rejects.toThrow(
+          `goose did not answer ${method}`,
+        );
+        await vi.advanceTimersByTimeAsync(60_000);
+        await failed;
+        expect(fake.geese.every((goose) => goose.killed)).toBe(true);
+        silent.length = 0;
+        const again = read();
+        await vi.advanceTimersByTimeAsync(0);
+        await expect(again).resolves.toBeDefined();
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it.each(["session/new", "session/set_config_option"])(
+    "gives up on a %s level lookup goose never answers, and reads again next time",
+    async (method) => {
+      vi.useFakeTimers();
+      try {
+        const silent = [method];
+        const { fake, setup: goose } = setup({
+          silent,
+          thinking: { "claude-haiku-5-5": { current: "off", levels: ["off"] } },
+        });
+        const read = () =>
+          goose.efforts({ provider: "anthropic", model: "claude-haiku-5-5" });
+        const failed = expect(read()).rejects.toThrow();
+        await vi.advanceTimersByTimeAsync(60_000);
+        await failed;
+        expect(fake.geese[0]?.killed).toBe(true);
+        silent.length = 0;
+        const again = read();
+        await vi.advanceTimersByTimeAsync(0);
+        await expect(again).resolves.toEqual({
+          current: "off",
+          levels: ["off"],
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it("keeps the levels it read when goose never answers their session's delete, and reads others next time", async () => {
+    vi.useFakeTimers();
+    try {
+      const silent = ["session/delete"];
+      const { fake, setup: goose } = setup({
+        silent,
+        thinking: {
+          "claude-haiku-5-5": { current: "off", levels: ["off"] },
+          "claude-opus-5-5": { current: "high", levels: ["high"] },
+        },
+      });
+      const stuck = goose.efforts({
+        provider: "anthropic",
+        model: "claude-haiku-5-5",
+      });
+      await vi.advanceTimersByTimeAsync(60_000);
+      await expect(stuck).resolves.toEqual({ current: "off", levels: ["off"] });
+      expect(fake.geese[0]?.killed).toBe(true);
+      silent.length = 0;
+      const again = goose.efforts({
+        provider: "anthropic",
+        model: "claude-opus-5-5",
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      await expect(again).resolves.toEqual({
+        current: "high",
+        levels: ["high"],
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("leaves a provider that signs in to goose", async () => {
     const { setup: goose } = setup();
     const databricks = (await goose.providers()).providers.find(
@@ -117,11 +211,89 @@ describe("GooseSetup", () => {
       { id: "qwen3", label: "qwen3" },
       { id: "llama4", label: "llama4" },
     ]);
-    expect((await goose.models("anthropic")).map((item) => item.id)).toEqual([
-      "claude-opus-5-5",
-      "claude-haiku-5-5",
+    expect(await goose.models("hidden")).toEqual([]);
+  });
+
+  it("offers no catalog models for a provider that is not set up, and says what it needs", async () => {
+    const saved = new Map<string, Set<string>>();
+    const { setup: goose } = setup({
+      saved,
+      supported: ["databricks-gpt-6-luna"],
+    });
+    await expect(goose.models("databricks")).rejects.toThrow(
+      "Databricks isn't set up in goose. Add Host (DATABRICKS_HOST) in Edit configuration, or run goose configure.",
+    );
+    // `goose configure` sets it up meanwhile; a fresh read finds its models.
+    saved.set("databricks", new Set(["DATABRICKS_HOST"]));
+    await goose.check();
+    expect(await goose.models("databricks")).toEqual([
+      { id: "databricks-gpt-6-luna", label: "databricks-gpt-6-luna" },
     ]);
-    expect(await goose.models("databricks")).toEqual([]);
+  });
+
+  it("offers no models for a provider that signs in until it has", async () => {
+    const { setup: goose } = setup({
+      providers: [
+        {
+          providerId: "copilot",
+          providerName: "GitHub Copilot",
+          configured: false,
+          visibleInSetup: true,
+          configKeys: [
+            {
+              name: "GITHUB_COPILOT_TOKEN",
+              required: true,
+              secret: true,
+              deviceCodeFlow: true,
+            },
+          ],
+          models: [{ id: "gpt-6" }, { id: "claude-opus-5-5" }],
+        },
+      ],
+    });
+    await expect(goose.models("copilot")).rejects.toThrow(
+      "GitHub Copilot isn't set up in goose. Run goose configure to sign in.",
+    );
+    await expect(
+      goose.picks({ provider: "copilot", model: "gpt-6" }),
+    ).resolves.toEqual({
+      current: "gpt-6",
+      models: [{ id: "gpt-6", label: "gpt-6", efforts: [] }],
+    });
+  });
+
+  it("offers the models of a provider that runs on its fields' defaults", async () => {
+    // goose lists Ollama as not configured without `OLLAMA_HOST`, though it
+    // runs on localhost's.
+    const { setup: goose } = setup({
+      providers: [
+        {
+          providerId: "ollama",
+          providerName: "Ollama",
+          configured: false,
+          visibleInSetup: true,
+          configKeys: [
+            {
+              name: "OLLAMA_HOST",
+              required: true,
+              secret: false,
+              default: "localhost",
+            },
+          ],
+          models: [{ id: "qwen3" }, { id: "llama4" }],
+        },
+      ],
+    });
+    expect((await goose.models("ollama")).map(({ id }) => id)).toEqual([
+      "qwen3",
+      "llama4",
+    ]);
+    await expect(
+      goose.picks({ provider: "ollama", model: "qwen3" }),
+    ).resolves.toMatchObject({
+      current: "qwen3",
+      models: [{ id: "qwen3" }, { id: "llama4" }],
+    });
   });
 
   it("lists only the workspace's and goose's own Databricks endpoints", async () => {
@@ -189,8 +361,11 @@ describe("GooseSetup", () => {
 
   it("offers an agent its provider's models, or those of goose's config", async () => {
     const { setup: goose } = setup({ supported: ["qwen3", "llama4"] });
+    const { setup: configured } = setup({
+      saved: new Map([["anthropic", new Set(["ANTHROPIC_API_KEY"])]]),
+    });
     await expect(
-      goose.picks({ provider: "anthropic", model: "" }),
+      configured.picks({ provider: "anthropic", model: "" }),
     ).resolves.toEqual({
       current: "claude-sonnet-5-5",
       models: [
@@ -200,10 +375,19 @@ describe("GooseSetup", () => {
       ],
     });
     await expect(
-      goose.picks({ provider: "anthropic", model: "claude-haiku-5-5" }),
+      configured.picks({ provider: "anthropic", model: "claude-haiku-5-5" }),
     ).resolves.toMatchObject({
       current: "claude-haiku-5-5",
       models: [{ id: "claude-opus-5-5" }, { id: "claude-haiku-5-5" }],
+    });
+    // A provider that is not set up offers only the model the agent names.
+    await expect(
+      goose.picks({ provider: "anthropic", model: "claude-haiku-5-5" }),
+    ).resolves.toEqual({
+      current: "claude-haiku-5-5",
+      models: [
+        { id: "claude-haiku-5-5", label: "claude-haiku-5-5", efforts: [] },
+      ],
     });
     await expect(goose.picks({ provider: "", model: "" })).resolves.toEqual({
       current: "qwen3",
@@ -299,6 +483,83 @@ describe("GooseSetup", () => {
     expect(read?.turns).toEqual([]);
     expect(read?.deleted).toEqual(["session-1"]);
     expect(read?.killed).toBe(true);
+  });
+
+  it("offers each model's thinking levels, read in one goose, on the agent's level", async () => {
+    const { fake, setup: goose } = setup({
+      saved: new Map([["anthropic", new Set(["ANTHROPIC_API_KEY"])]]),
+      thinking: {
+        "claude-sonnet-5-5": {
+          current: "medium",
+          levels: ["low", "medium", "high"],
+        },
+        "claude-opus-5-5": { current: "high", levels: ["low", "high"] },
+      },
+    });
+    const picks = await goose.picks({
+      provider: "anthropic",
+      model: "",
+      effort: "low",
+    });
+    expect(picks).toEqual({
+      current: "claude-sonnet-5-5",
+      models: [
+        {
+          id: "claude-sonnet-5-5",
+          label: "claude-sonnet-5-5",
+          efforts: [
+            { id: "low", label: "Low" },
+            { id: "medium", label: "Medium" },
+            { id: "high", label: "High" },
+          ],
+          effort: "low",
+        },
+        {
+          id: "claude-opus-5-5",
+          label: "claude-opus-5-5",
+          efforts: [
+            { id: "low", label: "Low" },
+            { id: "high", label: "High" },
+          ],
+          effort: "low",
+        },
+        // goose lists no levels for it, so it offers no slider.
+        { id: "claude-haiku-5-5", label: "claude-haiku-5-5", efforts: [] },
+      ],
+    });
+    // Without a level of its own, a model rests on goose's.
+    const own = await goose.picks({ provider: "anthropic", model: "" });
+    expect(own.models.map((model) => model.effort)).toEqual([
+      "medium",
+      "high",
+      undefined,
+    ]);
+    const reads = fake.geese.filter((read) => read.opened.length);
+    expect(reads).toHaveLength(1);
+    expect(reads[0]?.deleted).toEqual(["session-1"]);
+    expect(reads[0]?.turns).toEqual([]);
+  });
+
+  it("offers a model without levels when goose cannot read them", async () => {
+    const fake = fakeSpawn({
+      providers: PROVIDERS,
+      saved: new Map([["anthropic", new Set(["ANTHROPIC_API_KEY"])]]),
+      thinking: { "claude-opus-5-5": { current: "high", levels: ["high"] } },
+    });
+    // goose cannot move a session to any model.
+    const goose = new GooseSetup({
+      ...fake,
+      spawn: async (...args: Parameters<typeof fake.spawn>) => {
+        const process = await fake.spawn(...args);
+        for (const started of fake.geese) started.configError = "no";
+        return process;
+      },
+    });
+    await expect(
+      goose.picks({ provider: "anthropic", model: "" }),
+    ).resolves.toMatchObject({
+      models: [{ efforts: [] }, { efforts: [] }, { efforts: [] }],
+    });
   });
 
   it("refreshes inherited thinking choices after saving defaults and rechecking", async () => {

@@ -9,13 +9,14 @@ bin/pnpm perf --scenario channel-open --repeat 5 --cpu 4 --out results.json
 ```
 
 `--scenario all` is the default. A case name runs only that case; a group
-(`channel-open` or `scroll-paging`) runs every case whose name it prefixes, so
+(`channel-open`, `scroll-paging` or `thread`) runs every case whose name it prefixes, so
 `scroll-paging-fast` excludes its variants. `--cpu` sets Chromium's CPU slowdown factor
 (1 means unthrottled); it does not throttle network or the fixture server.
 `--repeat` defaults to 5. Every sample gets fresh browser storage, signed
 histories and server state; a production frontend build is shared by the worker.
-One worker runs serially with no retries. These opt-in cases are separate from
-the normal browser correctness gate and do not add CI journeys.
+One worker runs serially with no retries. Required CI runs every case once in
+**Browser measurements** without timing thresholds. Locally, use `pnpm perf`;
+`pnpm test` / `just scan` do not run these cases.
 
 The existing browser fixture owns the production React/services/IndexedDB/Virtua
 app and modeled local HTTP broker. The runner owns settings and measurement
@@ -42,7 +43,8 @@ browser timings, in milliseconds:
 The first-rows endpoint gives the browser a paint opportunity; it is not a
 compositor screenshot or proof that every pixel finished painting. The settle
 barrier observes row IDs/positions/heights and scroll geometry, not arbitrary
-future async work. A ten-second deadline (60 seconds for paging through history)
+future async work. A ten-second deadline (30 seconds for thread actions and
+60 seconds for paging through history)
 fails the sample instead of reporting an unfinished operation as a win.
 Counter windows also include measurement
 overhead and protocol dispatch around the action. Measured actions use browser
@@ -116,6 +118,7 @@ All scroll scenarios use the same observer, counters, fresh contexts and result 
 | `scroll-paging-delayed` | The same complete traversal with 500ms added older-response delay |
 | `scroll-paging-fast-keyboard` | `scroll-paging-fast` in keyboard modality |
 | `scroll-paging-fast-markdown` | `scroll-paging-fast` through the [Markdown corpus](#corpus-variants) |
+| `scroll-paging-fast-first-seen` | `scroll-paging-fast` with [first-seen](#corpus-variants) older pages |
 
 The long case loads older pages without traversing them first, so the gesture
 encounters rows the virtualizer has not yet mounted/measured. Setup waits for
@@ -196,7 +199,7 @@ inferred from them.
 ## Corpus variants
 
 The default corpus is inert prose: an identifying line plus repeated sentences,
-authored by the viewer. An opt-in fixture option changes one property of it, so a
+authored by the viewer. Two opt-in fixture options change one property each, so a
 variant differs from its base case only there.
 
 `markdownMessages` (the `-markdown` cases) ends seven rows in eight with common
@@ -206,6 +209,57 @@ profile, a nested bullet list with inline code and emphasis, a fenced code block
 or a quote with emphasis and strikethrough. The eighth row stays inert prose.
 Lists are bullets only, because browser helpers find the timeline through its
 single ordered list.
+
+The app verifies each relay event's signature once per connection and reuses that
+proof. Its startup unread read takes the newest 500 events across joined channels,
+so default history reaches the app before measurement, including 480 of the
+620 older paging rows. `firstSeenHistory` (`scroll-paging-fast-first-seen`) adds a
+joined `busy` channel whose 500 newer messages fill that read, as busier channels
+do. Older pages then first reach the app, and are verified, during the measured
+traversal. The fixture records the event IDs of each modeled HTTP query response
+when it computes the response, which for a held older page is before release.
+Paging samples record `work.olderRowsServedBefore`, and the first-seen case
+requires zero. This proves which events arrive first-seen, not when background
+verification of the startup read finishes; setup does not wait for it. The option
+adds 500 fixture signatures to setup and one sidebar row. There is no first-seen
+channel-open case: verifying its one 20-event head page is within that case's
+sample-to-sample variation, and the busy channel also changes unread state
+before the click.
+
+## Rich thread lifecycle
+
+`--scenario thread` measures `thread-open-rich`, `thread-close-rich` and
+`thread-reopen-rich` independently with the existing metrics. Each sample starts
+fresh; close and reopen establish their prerequisite open state outside the
+measurement. Normal pointer-triggered panel animations remain enabled.
+
+The signed corpus has 120 replies from twelve participants, including eight
+agents, and eight additional channel threads.
+The auxiliary roots fit in the initial channel page before the measured thread
+and use reply summaries
+without inserting their replies into the top-level history. Initial setup requires
+all eight auxiliary roots and their rendered reply counts. Each phase records
+the actual mounted channel row IDs and checks
+that all eight roots remain mounted at the start of its measured action.
+Channel roots use distinct millisecond ordering from ordinary rows, so fresh
+signing identities cannot change their order or bubble grouping.
+Twenty nested replies remain collapsed as in an ordinary opening; the visible tree mounts 100 direct replies
+plus its root. The mix includes prose, mentions, links, Markdown tables, task
+lists, code, quotes, fifteen image previews and ten video previews. Media uses
+the repository's local image/video assets, not network downloads. Visible images
+must decode, videos must have loaded data and dimensions, and both transitions
+and thread geometry must settle. Offscreen lazy images retain normal loading.
+
+Each measured action also observes the channel through the existing 200ms
+geometry barrier. Close first waits for actual thread DOM removal and the
+channel's original width, then for Virtua's pointer hold to end, settled channel
+geometry and restoration of its reading anchor. Draft setup settles before
+measurement. Close also records channel geometry before/at/after the window and
+fails if another settling check reveals reflow after the endpoint. Every phase
+checks the channel draft, and reopen checks the saved thread draft. These are
+work-completion checks, not new timing counters. The workload covers populated
+thread mounting and panel reflow, not video playback, gallery interaction,
+expanding nested replies or live agent streaming.
 
 ## Results and iteration
 
@@ -232,8 +286,9 @@ controlled comparison. The runner does not decide which tradeoffs are acceptable
 
 This is Chromium-local evidence with modeled backend responses (immediate except
 for the named paging delays),
-HTTP interception (which disables HTTP cache), preloaded fonts and text content
-from one author.
-It does not measure production network latency, media, native hosting, WebKit,
+HTTP interception (which disables HTTP cache) and preloaded fonts. Channel and
+scrolling workloads use text; the rich thread workload adds local media and
+multiple authors.
+It does not measure production network latency, native hosting, WebKit,
 long-session memory growth or application startup. Add those as explicit workloads
 when needed rather than changing the meaning of existing samples.

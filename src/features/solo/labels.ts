@@ -1,3 +1,5 @@
+import type { ChannelSummary } from "../relay/contracts.ts";
+
 /** Presentation provenance in the relay's existing NIP-CL labels, never access. */
 export const SOLO_NAMED_LABEL = "buzz.session.named";
 /** NIP-CL label marking a Solo chat: a private channel whose owner talks with
@@ -11,7 +13,7 @@ export function soloLabels(labels: readonly string[] | undefined): boolean {
 }
 
 /** The viewer's own Solo chat: one they created. Anyone else in a shared
- * Solo chat sees its flat treatment, but files and composes as in Team. */
+ * Solo chat sees its flat treatment and finds it with their own chats. */
 export function ownSolo(
   channel:
     | Readonly<{
@@ -26,12 +28,19 @@ export function ownSolo(
   );
 }
 
-export function soloChatLinkName(channel: {
-  id: string;
-  name: string;
-  labels?: readonly string[] | undefined;
-}) {
-  return channel.labels?.includes(SOLO_NAMED_LABEL) && channel.name.trim()
-    ? channel.name
-    : channel.id.slice(0, 8);
+export function soloChatLinkName(channel: { id: string; name: string }) {
+  // Unnamed chats still carry their starting title from the first prompt.
+  return channel.name.trim() || channel.id.slice(0, 8);
+}
+
+/** The authorized Solo inventory; unknown metadata never implies Solo. */
+export function eligibleSolo(
+  channel: ChannelSummary,
+  viewer: string | undefined,
+) {
+  return (
+    !channel.archived &&
+    channel.channelType === "solo" &&
+    (!channel.readOnly || ownSolo(channel, viewer))
+  );
 }

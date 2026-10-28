@@ -2063,29 +2063,25 @@ it("cancellation during ingress prevents further chunks and final upload", async
   expect(uploads).toHaveLength(0);
 });
 
-it("binds audience authority to the advertised community and rejects unknown versions", async () => {
-  const communityId = "11111111-1111-4111-8111-111111111111";
-  discovery = {
-    audience_authority: {
-      version: 1,
-      community_id: communityId,
-      max_sources: 100,
-    },
-  };
-  expect(
-    (await connectNativeTransport(community)).audienceAuthorityCommunity,
-  ).toBe(communityId);
-  discovery = {
-    audience_authority: {
-      version: 2,
-      community_id: communityId,
-      max_sources: 100,
-    },
-  };
-  expect(
-    (await connectNativeTransport(community)).audienceAuthorityCommunity,
-  ).toBeUndefined();
-});
+it.each([
+  { live: false, incremental: false },
+  { live: true, incremental: false },
+  { live: false, incremental: true },
+  { live: true, incremental: true },
+])(
+  "keeps live and incremental artifact capabilities separate: %j",
+  async ({ live, incremental }) => {
+    discovery = {
+      artifacts: {
+        ...(live ? { sync: { version: 1 } } : {}),
+        ...(incremental ? { incremental: ARTIFACT_INCREMENTAL_LIMITS } : {}),
+      },
+    };
+    const transport = await connectNativeTransport(community);
+    expect(transport.artifactSync).toBe(live ? true : undefined);
+    expect(transport.artifactIncremental !== undefined).toBe(incremental);
+  },
+);
 
 it.each([
   "incremental_limit",

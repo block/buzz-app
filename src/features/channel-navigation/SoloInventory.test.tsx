@@ -10,9 +10,10 @@ import {
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { stubAvatarBrowserApis } from "../agents/avatar-testing";
-import { conversationTarget } from "./routes";
+import { writeView } from "../../shared/view-state";
+import { conversationTarget, soloDraftTarget } from "./routes";
 import type { Contribution } from "../../plugins/contributions";
-import type { ChatIcon } from "../conversation/service";
+import type { ChatIcon, ChatMenu } from "../conversation/service";
 
 import {
   fixture,
@@ -234,6 +235,37 @@ it.each([
   },
 );
 
+it.each(["new", "linked", "agent"])(
+  "shows and selects the ordinary New chat draft row for %s",
+  async (route) => {
+    const f = fixture();
+    writeView(scope, "solo:collapsed-projects", [""]);
+    const target = soloDraftTarget(
+      scope,
+      route === "agent"
+        ? { agent }
+        : route === "linked"
+          ? { linked: "33333333-3333-4333-8333-333333333333" }
+          : {},
+    );
+    act(() => f.navigate(target));
+    const draft = await screen.findByRole("button", { name: "New chat" });
+    expect(draft).toHaveAttribute("aria-current", "page");
+    expect(draft).toHaveAttribute("data-selected", "true");
+    expect(screen.getByRole("button", { name: /^Other/ })).not.toHaveAttribute(
+      "aria-current",
+    );
+    await userEvent.click(draft);
+    expect(f.open).toHaveBeenLastCalledWith(target);
+    act(() => f.navigate(conversationTarget(scope, id)));
+    expect(screen.queryByRole("button", { name: "New chat" })).toBeNull();
+    expect(screen.getByRole("button", { name: /^Planning/ })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+  },
+);
+
 it("keeps the open, unread and working chats listed past a workspace's cap", () => {
   const f = fixture(false, false, undefined, undefined, 10);
   const listed = () =>
@@ -272,4 +304,28 @@ it("describes a Solo row as Shared only when its Shared mark renders", () => {
   expect(screen.getByRole("button", { name: /^Planning/ })).not.toHaveAttribute(
     "aria-describedby",
   );
+});
+
+it("shows plugin actions in the primary sidebar right-click menu", async () => {
+  const { MenuItem } = await import("../../shared/design-system/ui/Menu");
+  const menus: Contribution<ChatMenu>[] = [
+    {
+      id: "test-menu",
+      key: "test/menu",
+      pluginId: "test",
+      revision: "1",
+      component: ({ channelId }) =>
+        channelId === id ? <MenuItem>Unlink pull request</MenuItem> : null,
+    },
+  ];
+  fixture(true, false, undefined, undefined, 0, undefined, {
+    snapshot: () => menus,
+    subscribe: () => () => {},
+  });
+  fireEvent.keyDown(screen.getByRole("button", { name: /^Planning/ }), {
+    key: "ContextMenu",
+  });
+  expect(
+    await screen.findByRole("menuitem", { name: "Unlink pull request" }),
+  ).toBeVisible();
 });

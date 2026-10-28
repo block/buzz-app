@@ -1,4 +1,3 @@
-import { audienceAuthorityCommunity } from "../sessions/audience-authority";
 import {
   artifactIncrementalCapability,
   artifactIncrementalFailure,
@@ -344,6 +343,10 @@ export async function connectNativeTransport(
   const searchSort =
     Array.isArray(info.supported_extensions) &&
     info.supported_extensions.includes("buzz-search-sort");
+  const artifacts = info.artifacts as
+    | { sync?: { version?: unknown } }
+    | undefined;
+  const artifactSync = artifacts?.sync?.version === 1;
   const transport = await connectSignedTransport(
     nativeRelaySigner(origin),
     origin,
@@ -415,9 +418,6 @@ export async function connectNativeTransport(
           ),
         }
       : {}),
-    audienceAuthorityCommunity: audienceAuthorityCommunity(
-      info.audience_authority,
-    ),
     workflows: workflowHost(async (route, body, signal) => {
       if (route !== "workflow-runs") throw new Error("Invalid workflow read");
       workflowRunsPath(body);
@@ -798,6 +798,7 @@ export async function connectNativeTransport(
       nativeAttachmentUpload(origin, file, signal, progress),
     ...(channelIdentity ? { channelIdentity: true as const } : {}),
     ...(searchSort ? { searchSort: true as const } : {}),
+    ...(artifactSync ? { artifactSync: true as const } : {}),
     writer: {
       ...writer,
       kinds: creation ? [...nativeWriteKinds, 9007] : nativeWriteKinds,

@@ -4,6 +4,8 @@ The host saves relay records through `ArtifactStorageService`. Each plugin defin
 
 The native transport exposes `session.artifactIncremental` when the relay advertises the exact `artifacts.incremental` v1 contract. It covers permanent channels, 100-row pages, 100-ID current reads, an 8 MiB response bound, and a 30-day checkpoint lifetime. The relay prerequisite is [PR 8523](https://github.com/block/buzz/pull/8523).
 
+The client sends `artifact: "incremental"` requests. WebSocket sync uses `artifacts.sync` and `session.artifacts.sync()` for a complete initial set followed by live changes. Each capability works independently. The saved store uses incremental reads so a restart can resume from its last checkpoint.
+
 The first read discovers authorized records. Later reads use a checkpoint with a 120-second overlap from the last successful server start time. Only a full paged pass saves progress. Live pushes request current-ID reads through the same collection queue. They do not advance progress or directly write saved rows. The existing outbox acceptance observer also requests a current read.
 
 The client applies signed upserts and explicit removals. A removal uses the locally observed revision for a conditional write. It retains the body and preferences, and marks the record unavailable. A failed commit prevents progress. Empty replies never establish absence.

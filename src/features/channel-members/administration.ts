@@ -1,5 +1,6 @@
 import { getEventHash } from "nostr-tools";
 import type { RelayReader } from "../relay/reader";
+import { retryRead } from "../relay/read-retry";
 import type { RelayWriter } from "../relay/transport";
 import { newer, type RelayEvent } from "../relay/events";
 import { attestedOwner } from "../agents/owner-attestation";
@@ -7,7 +8,6 @@ import { PublishRejected } from "../relay/outbox";
 import { lifecycleChannelId } from "../relay/channel-lifecycle-protocol";
 import {
   authorizeMemberChange,
-  canManageMember,
   canRemoveMember,
   memberAdministrationTemplate,
   memberAuthority,
@@ -31,7 +31,9 @@ const empty: MemberAdministrationState = Object.freeze({
   authority: Object.freeze({
     roles: Object.freeze({}),
     canManage: false,
+    canRemove: false,
     canRemoveOwnedAgent: false,
+    system: false,
   }),
 });
 const uncertain =
@@ -127,7 +129,7 @@ export function createMemberAdministration({
         const previous = snapshot(id);
         emit(id, { ...previous, status: "loading" });
         try {
-          const result = await read(id, signal);
+          const result = await retryRead(() => read(id, signal), signal);
           const operation = previous.operation;
           const unresolved = operation?.status === "uncertain";
           const confirmed =
@@ -190,7 +192,7 @@ export function createMemberAdministration({
             if (
               change.role === "remove" &&
               owner === undefined &&
-              !canManageMember(authority, viewer, change.pubkey) &&
+              !canRemoveMember(authority, viewer, change.pubkey) &&
               canRemoveMember(authority, viewer, change.pubkey, viewer)
             ) {
               // Verify provenance once per attempt, never from display/inventory hints.

@@ -9,6 +9,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import { ProviderDialogActions } from "../../features/agents/ProviderDialogActions";
+import activityStyles from "../../features/agents/ActivityLayout.module.css";
 import { ActivityTranscript } from "../../features/agents/ActivityTranscript";
 import { AgentSaveButton } from "../../features/agents/AgentSaveButton";
 import { AgentInstructions } from "../../features/agents/AgentInstructions";
@@ -33,7 +34,10 @@ import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
 import { Combobox } from "../../shared/design-system/ui/Combobox";
 import { Select } from "../../shared/design-system/ui/Select";
+import { formatItemTimestamp } from "../../shared/datetime";
+import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
+import { GooseLogoIcon } from "../../shared/design-system/icons";
 import { validWorkspace } from "../codex/config";
 import {
   type Config,
@@ -161,6 +165,8 @@ export function createTabs({
         <ModelDiscoveryRecovery
           error={models.status === "error" ? models.error : undefined}
           loading={models.status === "loading"}
+          // Shown only when ready, so its provider is set up. A recheck could
+          // settle on attention, and the host would unmount this, focus and all.
           retry={reloadModels}
         >
           <ModelPicker
@@ -181,8 +187,9 @@ export function createTabs({
                 : undefined
             }
             defaultLabel="Provider default"
-            disabled={saving || !!state.blocking || !id}
+            disabled={!id}
             loading={models.status === "loading"}
+            pending={saving || !!state.blocking}
             onConfigure={onConfigure}
             onChange={(model) => {
               setSaving(true);
@@ -733,7 +740,7 @@ export function createTabs({
       history
         .transcript(
           {
-            agent: agent.pubkey,
+            agent: agent.key,
             workspace,
             sessionId: row.sessionId,
             ...(row.channelId ? { place: placeOf(row.key) } : {}),
@@ -811,7 +818,7 @@ export function createTabs({
     const workspace = readConfig(agent.config).workspace;
     const live = useSyncExternalStore(
       (listener) => runtime.subscribe(listener),
-      () => runtime.sessions(agent.pubkey),
+      () => runtime.sessions(agent.key),
     );
     const running = live.map(
       (session): Row => ({
@@ -829,12 +836,7 @@ export function createTabs({
       running.filter((row) => row.sessionId),
       conversation,
       async (place, signal) => {
-        const found = await history.find(
-          agent.pubkey,
-          workspace,
-          place,
-          signal,
-        );
+        const found = await history.find(agent.key, workspace, place, signal);
         return (
           found && {
             ...found,
@@ -848,8 +850,8 @@ export function createTabs({
     );
     const [recent, reload] = useRead(() => {
       const abort = new AbortController();
-      return history.recent(agent.pubkey, workspace, abort.signal);
-    }, `${agent.pubkey}\u0000${workspace}`);
+      return history.recent(agent.key, workspace, abort.signal);
+    }, `${agent.key}\u0000${workspace}`);
     const busy = (sessionId: string) =>
       live.find((session) => session.sessionId === sessionId)?.busy;
     const status = (sessionId: string) => {
@@ -866,7 +868,7 @@ export function createTabs({
       .slice(0, RECENT_LIMIT)
       .map((row): Row => ({ ...row, key: row.sessionId, channelId: "" }));
     return (
-      <div className="grid gap-4">
+      <div className={activityStyles.activity}>
         {conversation && (
           <OpenedConversation
             conversation={conversation}
@@ -878,56 +880,73 @@ export function createTabs({
             onView={() => here && show(here)}
           />
         )}
-        <section className="grid gap-1">
-          <div className="flex items-center justify-between gap-2">
-            <h3 className="m-0 text-body">Recent sessions</h3>
-            <Button
-              type="button"
-              variant="ghost"
-              loading={recent.status === "loading"}
-              onClick={reload}
-            >
-              Refresh
-            </Button>
-          </div>
+        <section className={activityStyles.section}>
+          <InlineHeader
+            title="Recent sessions"
+            actions={
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                loading={recent.status === "loading"}
+                onClick={reload}
+              >
+                Refresh
+              </Button>
+            }
+          />
           {recent.status === "error" ? (
             <p role="alert" className="buzz-field-error m-0">
               Could not list goose's sessions: {recent.error}
             </p>
           ) : rows.length ? (
-            <ul className="m-0 grid list-none gap-2 p-0">
-              {rows.map((row) => (
-                <li
-                  key={row.sessionId}
-                  className="flex items-center justify-between gap-2"
-                >
-                  <span className="min-w-0">
-                    <span className="block truncate">{label(row)}</span>
-                    <span className="block text-body-sm text-subtle">
-                      {[
-                        status(row.sessionId),
-                        row.at && new Date(row.at).toLocaleString(),
-                      ]
-                        .filter(Boolean)
-                        .join(" · ")}
-                    </span>
-                  </span>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    aria-label={`View transcript: ${label(row)}`}
-                    onClick={() => show(row)}
-                  >
-                    View transcript
-                  </Button>
-                </li>
-              ))}
-            </ul>
+            <SettingsGroup layout="form">
+              <ul className={activityStyles.list}>
+                {rows.map((row) => (
+                  <li key={row.sessionId} className={activityStyles.entry}>
+                    <div className={activityStyles.row}>
+                      <span className={activityStyles.copy}>
+                        <span
+                          className="block truncate text-label-sm"
+                          title={label(row)}
+                        >
+                          {label(row)}
+                        </span>
+                        <span className="block text-body-sm text-subtle">
+                          {[
+                            status(row.sessionId),
+                            row.at &&
+                              formatItemTimestamp(row.at / 1000, {
+                                withTime: true,
+                              }),
+                          ]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </span>
+                      </span>
+                      <Button
+                        type="button"
+                        variant="subtle"
+                        size="sm"
+                        aria-label={`View transcript: ${label(row)}`}
+                        onClick={() => show(row)}
+                      >
+                        View transcript
+                      </Button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </SettingsGroup>
           ) : recent.status === "ready" ? (
             <p className="m-0 text-body-sm text-subtle">
               None. A conversation's session starts when the agent is mentioned.
             </p>
-          ) : null}
+          ) : (
+            <p role="status" className="m-0 text-body-sm text-subtle">
+              Reading goose's sessions…
+            </p>
+          )}
         </section>
         {open && (
           <PanelSubview
@@ -1047,6 +1066,10 @@ export function createTabs({
       () => (provider ? setup.models(provider) : Promise.resolve([])),
       provider,
     );
+    const refresh = () => {
+      reload();
+      reloadModels();
+    };
     const fallback =
       (current.provider
         ? listing.value?.providers.find((item) => item.id === provider)
@@ -1080,7 +1103,12 @@ export function createTabs({
         <ModelDiscoveryRecovery
           error={models.status === "error" ? models.error : undefined}
           loading={models.status === "loading"}
-          retry={reloadModels}
+          // `goose configure` can set it up meanwhile, on another default
+          // model. The check starts a fresh read at once, which these share.
+          retry={() => {
+            void setup.check();
+            refresh();
+          }}
           disabled={disabled}
         >
           <ModelPicker
@@ -1090,14 +1118,20 @@ export function createTabs({
             resetLabel="Use Goose default"
             allowCustomModel
             label="Goose model"
-            appearance={modelAppearance === "subtle" ? "subtle" : "outlined"}
+            appearance={modelAppearance ?? "outlined"}
+            // A card names its harness before the model, as Pi's does.
+            {...(modelAppearance && {
+              leading: <GooseLogoIcon size={18} />,
+            })}
             models={choices}
             value={current.model}
             defaultModel={fallback}
             defaultLabel={modelLabel(provider, fallback) || "Choose model"}
             effort={current.effort}
+            // A card's chip keeps its room for the model name; its menu
+            // still shows and sets the level.
             effortLabel={
-              thinking.value?.levels.length
+              !modelAppearance && thinking.value?.levels.length
                 ? current.effort
                   ? current.effort.charAt(0).toUpperCase() +
                     current.effort.slice(1)
@@ -1129,8 +1163,7 @@ export function createTabs({
                 effort:
                   choice.provider === current.provider ? current.effort : "",
               });
-              reload();
-              reloadModels();
+              refresh();
               setOpen(false);
             }}
           />

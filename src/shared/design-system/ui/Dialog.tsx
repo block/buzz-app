@@ -9,6 +9,7 @@ import { XIcon } from "../icons";
 import { useRef, useState, type ComponentProps, type ReactNode } from "react";
 import { useModalWindowDrag } from "./ModalWindowDrag";
 import { IconButton } from "./IconButton";
+import { ScrollEdgeMaterial } from "./ScrollEdgeMaterial";
 import { useFinalFocusUnlessMoved } from "./finalFocus";
 
 type PopupProps = ComponentProps<typeof BaseDialog.Popup>;
@@ -19,6 +20,8 @@ export type DialogProps = {
     typeof BaseDialog.Root
   >["onOpenChangeComplete"];
   title: ReactNode;
+  /** Artwork above a centered title lockup, with Close kept at the top right. */
+  artwork?: ReactNode;
   /** Search palettes keep an accessible title without visible header chrome. */
   presentation?: "default" | "search";
   /** Introductory copy belongs in the title lockup, not a body paragraph. */
@@ -27,7 +30,7 @@ export type DialogProps = {
   children?: ReactNode;
   /** Integrated sections for an expanded modal; Dialog owns framing and scrollports. */
   navigation?: { label: string; content: ReactNode };
-  /** Fill a positioned host frame; null waits for its callback ref on cold opens. */
+  /** Position within a host; sectioned modals stay bounded. Null waits for its ref. */
   container?: HTMLElement | null;
   actions?: ReactNode;
   /** Tighter heading-to-body spacing for compact forms. */
@@ -65,6 +68,7 @@ export function Dialog({
   onOpenChange,
   onOpenChangeComplete,
   title,
+  artwork,
   presentation = "default",
   description,
   children,
@@ -112,8 +116,13 @@ export function Dialog({
         <header
           className="buzz-dialog-header"
           data-chrome-spacing={chromeSpacing}
+          data-artwork={artwork != null || undefined}
         >
+          <ScrollEdgeMaterial edge="top" className="buzz-dialog-bar-material" />
           <div className="buzz-dialog-heading">
+            {artwork != null && (
+              <div className="buzz-dialog-artwork">{artwork}</div>
+            )}
             {step ? (
               <div className="text-label" aria-hidden="true">
                 {title}
@@ -199,6 +208,10 @@ export function Dialog({
           className="buzz-dialog-actions"
           data-chrome-spacing={chromeSpacing}
         >
+          <ScrollEdgeMaterial
+            edge="bottom"
+            className="buzz-dialog-bar-material"
+          />
           {leadingActions && (
             <div className="buzz-dialog-leading-actions">{leadingActions}</div>
           )}

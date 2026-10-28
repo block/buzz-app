@@ -41,7 +41,8 @@ later. Inferred idle that fell due while the main thread was busy (a following
 timeline jumps after rendering each new message) could run first, unfreeze the
 direction, and let the jump's own scroll set a native one: the rows behind it
 unmounted and remounted on the next correction. Idle that falls due between a
-jump and its scroll event is therefore skipped; that scroll event restarts it.
+jump and its scroll event is therefore postponed by another idle period, so a
+jump that scrolls nowhere (already at its target) still goes idle.
 
 A shift otherwise counts every row resize as an anchoring correction. Rows wholly
 below the viewport are excluded, so a newly buffered row there that resizes (a

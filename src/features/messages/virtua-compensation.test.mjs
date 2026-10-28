@@ -856,3 +856,22 @@ it("keeps an imperative jump's scroll from setting a native direction when infer
   expect(c.store.O()).toBe(true);
   c.driver.R();
 });
+
+it("still goes idle after an imperative jump that does not scroll", async () => {
+  const c = setup({ vendor: "Google Inc.", offset: 1000 }); // Chromium
+  c.store.h(
+    3,
+    Array.from({ length: 20 }, (_, index) => [index, 100]),
+  );
+  c.store.h(2); // inferred idle: no direction
+  c.viewport.scrollTop = 1100;
+  c.viewport.dispatchEvent(new Event("scroll"));
+  expect(c.store.O()).toBe(true); // a native scroll sets its direction
+  await vi.advanceTimersByTimeAsync(50);
+  // A follower re-pins to the offset it is already at: no scroll event fires.
+  await c.driver.N(() => 1100, false);
+  await vi.advanceTimersByTimeAsync(500);
+  expect(c.viewport.scrollTop).toBe(1100);
+  expect(c.store.O()).toBe(false); // inferred idle still ended the scroll
+  c.driver.R();
+});

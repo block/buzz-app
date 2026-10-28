@@ -154,7 +154,7 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
      let c, f, a = 0, u = !1, d = !1, h = !1, g = !1;
 +    // An imperative jump's scroll event arrives in a later frame. Inferred idle
 +    // that fell due before it must not end the jump and let that scroll set a
-+    // native direction; the scroll event restarts idle.
++    // native direction; it is postponed instead, for jumps that never scroll.
 +    let jumpPending = !1;
 +    // Scroll APIs can truncate fractional offsets. Reach the whole edge without
 +    // quantizing interior reading positions or changing RTL normalization.
@@ -166,7 +166,7 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
              behavior: t ? "smooth" : "instant"
          });
      }, x = () => {
-+        if (jumpPending) return void (jumpPending = !1);
++        if (jumpPending) return jumpPending = !1, void b();
          if (u || d) return u = !1, void b();
          h = !1, e.h(2);
      }, b = () => {

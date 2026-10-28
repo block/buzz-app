@@ -131,8 +131,9 @@ it.skipIf(!binary).each([false, true])(
         role?: string;
         content?: { text?: string }[];
       }[];
-      const child = input
-        .findLast((item) => item.role === "user")
+      const child = [...input]
+        .reverse()
+        .find((item) => item.role === "user")
         ?.content?.some((item) => item.text === "Run the fixture command");
       const step = child ? ++childRequests : ++parentRequests;
       if (child && step === 2) finishChild();

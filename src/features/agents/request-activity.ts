@@ -1,5 +1,6 @@
 import type { ActivityTurn } from "./activity";
 import { activityRecords, type ActivityRecord } from "./activity-records";
+import { observerTriggerIds } from "./observer";
 
 type Parsed = Readonly<{
   record: ActivityRecord;
@@ -74,12 +75,10 @@ export function requestActivity(
   for (const start of parsed.filter(
     ({ value }) => value.kind === "turn_started",
   )) {
-    const triggers = start.value.payload?.triggeringEventIds;
-    if (
-      !Array.isArray(triggers) ||
-      !triggers.some((id) => triggersWanted.has(id))
-    )
-      continue;
+    const triggers = observerTriggerIds(
+      start.value.payload?.triggeringEventIds,
+    );
+    if (!triggers?.some((id) => triggersWanted.has(id))) continue;
     const turn = parsed.filter(
       ({ value }) => value.turnId === start.value.turnId,
     );
@@ -135,14 +134,16 @@ export function requestActivity(
 export function requestActivityState(
   selected: ReturnType<typeof requestActivity>,
   turns: readonly ActivityTurn[],
+  requestEvidenceLost = false,
 ): "waiting" | "working" | "unknown" | "ended" | "error" {
   const linked = [...selected.turnIds].map((id) =>
     turns.find((turn) => turn.turnId === id),
   );
   if (linked.some((turn) => turn?.state === "working")) return "working";
   if (
+    requestEvidenceLost ||
     selected.uncertain ||
-    linked.some((turn) => !turn || turn.state === "unknown")
+    linked.some((turn) => !turn || turn.incomplete || turn.state === "unknown")
   )
     return "unknown";
   if (!linked.length) return "waiting";

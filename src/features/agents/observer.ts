@@ -4,6 +4,15 @@ export const ACTIVITY_HISTORY_AGE_MS = 90 * 24 * 60 * 60 * 1000;
 /** Host-projected telemetry. Never a signed RelayEvent or a general decrypt API. */
 export const OBSERVER_KIND = 24200;
 export const OBSERVER_PLAINTEXT_BYTES = 65535;
+export function observerTriggerIds(
+  value: unknown,
+): readonly string[] | undefined {
+  return Array.isArray(value) &&
+    value.length <= 64 &&
+    value.every((id) => typeof id === "string" && /^[0-9a-f]{64}$/.test(id))
+    ? value
+    : undefined;
+}
 export type ObserverFrame = Readonly<{
   id: string;
   agent: string;

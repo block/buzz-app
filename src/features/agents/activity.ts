@@ -5,6 +5,7 @@ import type { LiveSnapshot } from "../relay/live";
 import {
   ACTIVITY_HISTORY_AGE_MS,
   observerFrame,
+  observerTriggerIds,
   type ObserverFrame,
 } from "./observer";
 
@@ -26,6 +27,7 @@ export type ActivityTurn = Readonly<{
   timestamp: number;
   state: "working" | "unknown" | "ended";
   triggeringEventIds?: readonly string[];
+  incomplete?: boolean;
   /** Roots established from retained signed triggering messages, not typing. */
   requests?: readonly Readonly<{ messageId: string; threadRootId: string }>[];
 }>;
@@ -52,9 +54,16 @@ type Snapshot = Readonly<{
   local?: readonly LocalWork[];
   typing: readonly Typing[];
   trimmed: number;
+  /** The bounded association index overflowed; raw trimming is scoped per turn. */
+  requestEvidenceLost?: boolean;
 }>;
-type Turn = Omit<ActivityTurn, "state" | "requests"> & {
+type Turn = Omit<
+  ActivityTurn,
+  "state" | "requests" | "triggeringEventIds" | "incomplete"
+> & {
   requests?: ActivityTurn["requests"];
+  triggeringEventIds?: readonly string[];
+  incomplete?: boolean;
   ended: boolean;
   epoch: number;
   unresolvedTriggers?: readonly string[];
@@ -92,7 +101,8 @@ export function createAgentActivity(
   let records: RawRecord[] = [],
     bytes = 0,
     trimmed = 0,
-    evidenceFloor = 0;
+    evidenceFloor = 0,
+    requestEvidenceLost = false;
   let timer: ReturnType<typeof setInterval> | undefined;
   const turns = new Map<string, Turn>();
   const typing = new Map<string, Typing>();
@@ -145,6 +155,9 @@ export function createAgentActivity(
       (record) => now - record.receivedAt < ACTIVITY_HISTORY_AGE_MS,
     );
     if (fresh.length !== records.length) {
+      for (const record of records)
+        if (now - record.receivedAt >= ACTIVITY_HISTORY_AGE_MS)
+          markTrimmed(record);
       trimmed += records.length - fresh.length;
       records = fresh;
       bytes = records.reduce(
@@ -167,6 +180,7 @@ export function createAgentActivity(
           turnId: turn.turnId,
           channelId: turn.channelId,
           timestamp: turn.timestamp,
+          ...(turn.incomplete ? { incomplete: true } : {}),
           ...(turn.triggeringEventIds
             ? {
                 triggeringEventIds: turn.triggeringEventIds,
@@ -210,6 +224,7 @@ export function createAgentActivity(
       (snapshot.local ?? []).every((row, index) => row === localWork[index]) &&
       snapshot.records === records &&
       snapshot.trimmed === trimmed &&
+      !!snapshot.requestEvidenceLost === requestEvidenceLost &&
       JSON.stringify(snapshot.turns) === JSON.stringify(visible) &&
       JSON.stringify(snapshot.typing) === JSON.stringify(typers)
     )
@@ -221,6 +236,7 @@ export function createAgentActivity(
       local: Object.freeze(localWork),
       typing: Object.freeze(typers),
       trimmed,
+      ...(requestEvidenceLost ? { requestEvidenceLost: true } : {}),
     });
     for (const listener of listeners) notify(listener);
     if (workingChanged)
@@ -231,6 +247,7 @@ export function createAgentActivity(
     bytes = 0;
     trimmed = 0;
     evidenceFloor = 0;
+    requestEvidenceLost = false;
     turns.clear();
     typing.clear();
     liveAgents.clear();
@@ -251,16 +268,45 @@ export function createAgentActivity(
       !item ||
       !text(item.kind) ||
       !text(item.turnId) ||
-      !(item.channelId === null || text(item.channelId)) ||
-      typeof item.timestamp !== "string"
+      !(item.channelId === null || text(item.channelId))
     )
       return;
     if (item.channelId && !canAccess(item.channelId)) return;
     if (!starts.has(item.kind) && !ends.has(item.kind)) return;
-    const timestamp = Date.parse(item.timestamp);
-    if (!Number.isFinite(timestamp) || timestamp > Date.now() + 5000) return;
+    const parsedTimestamp =
+      typeof item.timestamp === "string" ? Date.parse(item.timestamp) : NaN;
+    const validTimestamp =
+      Number.isFinite(parsedTimestamp) && parsedTimestamp <= Date.now() + 5000;
+    const triggers =
+      item.kind === "turn_started"
+        ? observerTriggerIds(object(item.payload)?.triggeringEventIds)
+        : undefined;
+    if (!validTimestamp && !triggers?.length) return;
+    // A rejected start can only preserve uncertainty, never fresh working evidence.
+    const timestamp = validTimestamp ? parsedTimestamp : Date.now();
     const key = `${agent}:${item.turnId}`;
     const previous = turns.get(key);
+    let triggeringEventIds = previous?.triggeringEventIds;
+    // Duplicate/stale starts can name another request even if lifecycle ignores them.
+    if (triggers) {
+      const combined = [
+        ...new Set([...(triggeringEventIds ?? []), ...triggers]),
+      ];
+      if (combined.length > 64) requestEvidenceLost = true;
+      const added = combined
+        .slice(0, 64)
+        .filter((id) => !triggeringEventIds?.includes(id));
+      triggeringEventIds = Object.freeze(combined.slice(0, 64));
+      if (previous) {
+        previous.triggeringEventIds = triggeringEventIds;
+        previous.unresolvedTriggers = [
+          ...(previous.unresolvedTriggers ?? []),
+          ...added,
+        ];
+        if (!validTimestamp) previous.incomplete = true;
+        associate(previous);
+      }
+    }
     // Terminal evidence wins even when a delayed earlier heartbeat arrives later.
     if (
       previous?.ended ||
@@ -268,18 +314,6 @@ export function createAgentActivity(
     )
       return;
     if (!previous && timestamp <= evidenceFloor) return;
-    const triggers =
-      item.kind === "turn_started"
-        ? object(item.payload)?.triggeringEventIds
-        : previous?.triggeringEventIds;
-    const triggeringEventIds =
-      Array.isArray(triggers) &&
-      triggers.length <= 64 &&
-      triggers.every(
-        (id) => typeof id === "string" && /^[0-9a-f]{64}$/.test(id),
-      )
-        ? (triggers as string[])
-        : undefined;
     const turn: Turn = {
       ...(triggeringEventIds
         ? {
@@ -295,8 +329,9 @@ export function createAgentActivity(
       // Completion may precede liveness on a rolled-back producer clock. Keep
       // the highest observed time so eventual eviction cannot weaken the fence.
       timestamp: Math.max(timestamp, previous?.timestamp ?? timestamp),
+      incomplete: previous?.incomplete || !validTimestamp,
       ended: ends.has(item.kind),
-      epoch,
+      epoch: validTimestamp ? epoch : -1,
     };
     associate(turn);
     turns.set(key, turn);
@@ -308,8 +343,20 @@ export function createAgentActivity(
         turns.delete(oldest[0]);
         // Forgetting a tombstone must not let older evidence resurrect that turn.
         evidenceFloor = Math.max(evidenceFloor, oldest[1].timestamp);
+        requestEvidenceLost = true;
         trimmed++;
       }
+    }
+  }
+  function markTrimmed(record: RawRecord) {
+    const raw = object(JSON.parse(record.plaintext));
+    const children =
+      raw?.kind === "batch" ? object(raw.payload)?.events : undefined;
+    for (const value of Array.isArray(children) ? children : [raw]) {
+      const item = object(value);
+      if (!text(item?.turnId)) continue;
+      const turn = turns.get(`${record.agent}:${item.turnId}`);
+      if (turn && turn.channelId === item.channelId) turn.incomplete = true;
     }
   }
   function channelsAllowed(
@@ -373,7 +420,10 @@ export function createAgentActivity(
       bytes > ACTIVITY_BYTE_LIMIT
     ) {
       const first = records.shift();
-      if (first) bytes -= new TextEncoder().encode(first.plaintext).length;
+      if (first) {
+        markTrimmed(first);
+        bytes -= new TextEncoder().encode(first.plaintext).length;
+      }
       trimmed++;
     }
     publish();

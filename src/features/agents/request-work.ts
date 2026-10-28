@@ -78,7 +78,11 @@ export function requestWork(
     // A linked start may have left the raw buffer while its lifecycle remains.
     // Include it so a retained sibling's completion cannot hide missing evidence.
     for (const turn of turns) selected.turnIds.add(turn.turnId);
-    const state = requestActivityState(selected, turns);
+    const state = requestActivityState(
+      selected,
+      turns,
+      snapshot.requestEvidenceLost,
+    );
     return [
       {
         agent,

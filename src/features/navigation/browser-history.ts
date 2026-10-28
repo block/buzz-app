@@ -120,7 +120,7 @@ export function createBrowserHistory(host: Window): NavigationHistory {
   } catch {
     /* Restoration of forward affordance is best effort. */
   }
-  const visitsKey = () => `buzz-navigation-visits:${stamp.chain}`;
+  const identitiesKey = () => `buzz-navigation-identities:${stamp.chain}`;
   const floorKey = () => `buzz-navigation-floor:${stamp.chain}`;
   let floor = Math.max(0, end - HISTORY_CAPACITY + 1);
   let identities = new Map<number, string>();
@@ -135,7 +135,7 @@ export function createBrowserHistory(host: Window): NavigationHistory {
       )
         floor = Math.max(floor, savedFloor);
       const saved: unknown = JSON.parse(
-        host.sessionStorage.getItem(visitsKey()) ?? "[]",
+        host.sessionStorage.getItem(identitiesKey()) ?? "[]",
       );
       if (Array.isArray(saved))
         for (const item of saved)
@@ -159,7 +159,10 @@ export function createBrowserHistory(host: Window): NavigationHistory {
     for (const index of dismissed)
       if (index < floor || index > end) dismissed.delete(index);
     try {
-      host.sessionStorage.setItem(visitsKey(), JSON.stringify([...identities]));
+      host.sessionStorage.setItem(
+        identitiesKey(),
+        JSON.stringify([...identities]),
+      );
       host.sessionStorage.setItem(floorKey(), String(floor));
     } catch {
       /* Best-effort persistence; no unbounded in-memory fallback. */

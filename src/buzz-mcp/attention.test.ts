@@ -282,6 +282,39 @@ describe("the attention tools", () => {
     ).rejects.toThrow(/^invalid: Not a field of this watch type: prompt/);
   });
 
+  it("refuses the removed keywords selector instead of dropping it", async () => {
+    const { call } = agent();
+    await call("interest_set", {
+      id: "triage",
+      instructions: "T.",
+      expected_state: ABSENT,
+    });
+    await expect(
+      call("watch_add", {
+        ...asks,
+        keywords: ["failed"],
+        expected_state: ABSENT,
+      }),
+    ).rejects.toThrow(/^invalid: keywords was removed from watches/);
+    expect((await call("watch_show", { id: "asks" })).object).toBeNull();
+    const added = await call("watch_add", {
+      ...asks,
+      enabled: false,
+      expected_state: ABSENT,
+    });
+    await expect(
+      call("watch_update", {
+        id: "asks",
+        enabled: true,
+        keywords: ["failed"],
+        expected_state: added.expected_state,
+      }),
+    ).rejects.toThrow(/^invalid: keywords was removed from watches/);
+    expect((await call("watch_show", { id: "asks" })).object).toMatchObject({
+      enabled: false,
+    });
+  });
+
   it("requires since for an event watch", async () => {
     const { call } = agent();
     await call("interest_set", {

@@ -2,7 +2,6 @@ import { registerAttention } from "./attention-command";
 import type { AttentionSource } from "./attention-sources";
 import { appClient } from "../../buzz-mcp/app-client";
 import { callAttentionTool } from "../../buzz-mcp/attention";
-import { migrateWatchKeywords } from "./migrate-keywords";
 import { callTool } from "../../buzz-mcp/tools";
 import { createLocalAgentActivity, type WorkOutcome } from "./local-activity";
 import { createHash } from "node:crypto";
@@ -53,7 +52,7 @@ import { readInterrupted, writeInterrupted } from "./interrupted";
 import { memoryStorage } from "./test-fakes";
 import { SyncedTeams } from "./team-config";
 import { STANDALONE_DEADLINE_MS } from "../agent-harness/standalone";
-import { readRecords, readTeams, writeTeams } from "./store";
+import { readTeams, writeTeams } from "./store";
 import {
   bot,
   channel,
@@ -7517,43 +7516,44 @@ it("runs a spent timer again when its owner restarts it", async () => {
   expect(run).toHaveBeenCalledTimes(2);
 });
 
-it("retries a keyword-repair notice whose first turn failed", async () => {
+it("turns a stored keyword watch off at startup, and retries its notice after a failed turn", async () => {
   vi.useFakeTimers({ now: 1_000_000 });
-  const migrated = memoryStorage();
-  migrated.setItem(
-    `buzz.agent.v1:${bot}`,
-    JSON.stringify({
-      pubkey: bot,
-      config: null,
-      attention: {
-        "watch/w": {
-          slug: "watch/w",
-          value: {
-            type: "event",
-            interest_id: "default",
-            enabled: true,
-            since: 1,
-            channels: "all",
-            kinds: [9],
-            keywords: ["x"],
-          },
-          modifiedAt: 1,
-        },
+  const storage = memoryStorage();
+  const first = await setup({ storage, identities: [echo] });
+  await first.service.save(bot, { attentionEnabled: true });
+  // Saved by a build that still had keywords, then the app quits.
+  const key = `buzz.agent.v1:${bot}`;
+  const record = JSON.parse(storage.getItem(key) ?? "{}");
+  record.attention = {
+    ...record.attention,
+    "watch/w": {
+      slug: "watch/w",
+      value: {
+        type: "event",
+        interest_id: "default",
+        enabled: true,
+        since: 1,
+        channels: "all",
+        kinds: [9],
+        keywords: ["x"],
       },
-    }),
-  );
-  await migrateWatchKeywords(migrated, 1_000);
-  const notice = readRecords(migrated)[bot]?.attention["watch/fix-w"]?.value;
-  if (notice?.type !== "timer") throw new Error("Missing notice");
-  const { service, run } = await setup();
-  await service.create({ type: "example/echo", name: "Echo" });
-  await service.save(bot, { attentionEnabled: true });
+      modifiedAt: 1,
+    },
+  };
+  storage.setItem(key, JSON.stringify(record));
+  const { service, run } = await setup({ storage, identities: [echo] });
+  expect(service.find(bot)?.attention["watch/w"]?.value).toMatchObject({
+    enabled: false,
+  });
+  expect(service.find(bot)?.attention["watch/fix-w"]?.value.type).toBe("timer");
   run.mockRejectedValueOnce(new Error("harness failed to start"));
-  await service.save(bot, { attention: { "watch/fix-w": notice } });
-  await vi.advanceTimersByTimeAsync(notice.interval_secs * 1_000 + 5_000);
+  await vi.advanceTimersByTimeAsync(50_000);
+  expect(run).not.toHaveBeenCalled();
+  // The notice first runs a minute after startup, not an interval later.
+  await vi.advanceTimersByTimeAsync(15_000);
   expect(run).toHaveBeenCalledTimes(1);
   expect(service.find(bot)?.attention["watch/fix-w"]).toBeDefined();
-  await vi.advanceTimersByTimeAsync(notice.interval_secs * 1_000);
+  await vi.advanceTimersByTimeAsync(3_600_000);
   expect(run).toHaveBeenCalledTimes(2);
 });
 

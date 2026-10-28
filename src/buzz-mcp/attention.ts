@@ -539,6 +539,11 @@ const TIMER = [
   "expires_at",
 ];
 function pick(args: Args, names: readonly string[], other: readonly string[]) {
+  // An older caller may still send it; dropping it would widen the watch.
+  if ("keywords" in args)
+    fail(
+      "keywords was removed from watches; narrow the watch with a classifier question, or with authors, exclude_authors, tags or is_reply",
+    );
   const wrong = other.filter((key) => !names.includes(key) && key in args);
   if (wrong.length) fail(`Not a field of this watch type: ${wrong.join(", ")}`);
   return Object.fromEntries(

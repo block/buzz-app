@@ -3,6 +3,7 @@ import {
   useEffect,
   useLayoutEffect,
   useMemo,
+  useReducer,
   useRef,
   useState,
   useSyncExternalStore,
@@ -28,7 +29,7 @@ import {
 } from "../../shared/design-system/icons";
 import { parseBuzzLink } from "../../features/navigation/buzz-links";
 import { ConversationTab } from "./ConversationTab";
-import { TabSlot, useTabNodes } from "./TabHosts";
+import { TabSlot, retain as retainNode, useTabNodes } from "./TabHosts";
 import { createPortal, flushSync } from "react-dom";
 import type { PageNavigation } from "../../features/navigation/service";
 import type { Navigation } from "../../features/navigation/controller";
@@ -478,6 +479,7 @@ export function useConversationTabs({
       closing && tabPane(closing) === "main"
         ? tabState.mainSelected === id
         : tabState.paneOpen && selectedTab === id;
+    if (closing?.kind === "thread") retain(closing);
     tabState.setTabs((tabs) => tabs.filter((tab) => tab.id !== id));
     // Once its pane empties, the page's own focus return (to the opener) is
     // the last word; until then focus stays with the remaining tabs.
@@ -637,8 +639,41 @@ export function useConversationTabs({
     return openLink(url);
   };
 
+  // The thread closed last waits detached while nothing a fresh opening
+  // would show differs, so reopening it attaches the same content again.
+  const retained = useRef<{ tab: Tab; observer?: MutationObserver }>(undefined);
+  const [, released] = useReducer((count: number) => count + 1, 0);
+  // Each reopening is distinct, even of a tab reopened before.
+  const reopenings = useRef(0);
+  const reopened = useRef(new Map<string, number>());
+  const release = () => {
+    retained.current?.observer?.disconnect();
+    retained.current = undefined;
+  };
+  const threadIds = tabState.tabs
+    .filter((tab) => tab.kind === "thread")
+    .map((tab) => tab.id);
+  const reopening = retained.current?.tab.id;
+  let renew: string | undefined;
+  if (reopening && (threadIds.includes(reopening) || !continuingVisit)) {
+    const tab = tabState.tabs.find((entry) => entry.id === reopening);
+    // Only an ordinary opening at the root shows what the retained content
+    // does; an exact or revealing opening mounts afresh in a new host.
+    if (
+      tab?.kind === "thread" &&
+      tab.messageId === retained.current?.tab.messageId &&
+      tab.id === `thread:${tab.channelId}:${tab.messageId}` &&
+      tab.revealRequest === undefined
+    )
+      reopened.current.set(reopening, ++reopenings.current);
+    else if (tab) renew = reopening;
+    release();
+  }
+  for (const id of reopened.current.keys())
+    if (!threadIds.includes(id)) reopened.current.delete(id);
   const nodes = useTabNodes(
-    tabState.tabs.filter((tab) => tab.kind === "thread").map((tab) => tab.id),
+    retained.current ? [...threadIds, retained.current.tab.id] : threadIds,
+    renew,
   );
   // Hidden thread tabs mount when first shown, then stay mounted for the visit.
   const visitTabs = useRef<{ shown: Set<string>; entered: Map<string, Tab> }>(
@@ -655,7 +690,32 @@ export function useConversationTabs({
   for (const id of visitTab.entered.keys())
     if (!openIds.has(id)) visitTab.entered.delete(id);
   for (const id of visitTab.shown)
-    if (!openIds.has(id)) visitTab.shown.delete(id);
+    if (!openIds.has(id) && id !== retained.current?.tab.id)
+      visitTab.shown.delete(id);
+  function retain(tab: Tab) {
+    const node = nodes.get(tab.id);
+    if (!node || !visitTab.shown.has(tab.id) || !retainNode(node)) return;
+    release();
+    retained.current = { tab };
+  }
+  // Watch only after the closing commit: any later change to the detached
+  // content could differ from a fresh mount, so that content is let go.
+  useEffect(() => {
+    const kept = retained.current;
+    const node = kept && nodes.get(kept.tab.id);
+    if (!kept || !node || kept.observer) return;
+    kept.observer = new MutationObserver(() => {
+      if (retained.current !== kept) return;
+      release();
+      released();
+    });
+    kept.observer.observe(node, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    });
+  });
+  useEffect(() => () => retained.current?.observer?.disconnect(), []);
   function usableChannel(target: ChannelSummary) {
     return (
       !target.readOnly &&
@@ -769,7 +829,12 @@ export function useConversationTabs({
             This conversation is no longer available.
           </p>
         ) : tab.kind === "thread" && nodes.get(tab.id) ? (
-          <TabSlot node={nodes.get(tab.id) as HTMLDivElement} />
+          <TabSlot
+            // A closing dock can still hold the slot its retained thread left;
+            // reopening attaches the content through a new one.
+            key={reopened.current.get(tab.id)}
+            node={nodes.get(tab.id) as HTMLDivElement}
+          />
         ) : (
           <ConversationTab
             focusOnMount={continuingVisit}
@@ -898,15 +963,19 @@ export function useConversationTabs({
     selectedMain:
       mainTabIds().find((id) => id === tabState.mainSelected) ?? "conversation",
     // Thread content renders here once and is attached to whichever pane holds it.
-    hosts: tabState.tabs.flatMap((tab) => {
+    hosts: [
+      ...tabState.tabs,
+      ...(retained.current ? [retained.current.tab] : []),
+    ].flatMap((tab) => {
       if (tab.kind !== "thread") return [];
       const node = nodes.get(tab.id);
       const target = tabChannel(tab);
       if (!node || !target) return [];
       const active =
-        tabPane(tab) === "main"
+        tab !== retained.current?.tab &&
+        (tabPane(tab) === "main"
           ? tabState.mainSelected === tab.id
-          : tabState.paneOpen && selectedTab === tab.id;
+          : tabState.paneOpen && selectedTab === tab.id);
       if (active) visitTab.shown.add(tab.id);
       else if (!visitTab.shown.has(tab.id)) return [];
       const route =
@@ -935,6 +1004,7 @@ export function useConversationTabs({
             <ConversationTab
               focusOnMount={continuingVisit}
               restored={visitTab.entered.get(tab.id)}
+              reopenRequest={reopened.current.get(tab.id)}
               active={active}
               visit={visits}
               tab={tab}

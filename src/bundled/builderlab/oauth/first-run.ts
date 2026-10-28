@@ -23,10 +23,12 @@ export const bundledHost: Host = {
 /**
  * The bundled grant exists only while this plugin is enabled, so with it
  * turned off the browser sign-in could finish but never exchange its code.
- * Refuse before opening the browser instead.
+ * Refuse before opening the browser instead. `origin`: a tenant's portal
+ * chosen from the community URL; the build URL otherwise.
  */
 export async function firstRunCredential(
   signal: AbortSignal,
+  origin?: string,
 ): Promise<Credential> {
   const result = await invoke<StorageResult>("plugin_catalog").catch(() => {
     throw new Error("Could not complete Builderlab sign-in. Try again.");
@@ -43,5 +45,5 @@ export async function firstRunCredential(
     throw new Error(
       "Builderlab is turned off on this device, so you can't sign in with email. Enter a community address instead.",
     );
-  return browserCredential(bundledHost, signal);
+  return browserCredential(bundledHost, signal, undefined, origin);
 }

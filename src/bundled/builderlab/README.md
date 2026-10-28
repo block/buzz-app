@@ -159,20 +159,27 @@ agents are not migrated into this type.
   grant, at the build URL like the Settings card; that credential is separate
   from the Settings session. The grant exists only while this plugin is
   enabled, so with it turned off that sign-in refuses before opening the
-  browser.
+  browser. When a community URL on that screen names another Builderlab
+  deployment (the
+  [`BUZZ_BUILDERLAB_TENANTS` table](../../../docs/configuration.md#builderlab-tenant-table-build-input)),
+  the welcome screen passes that deployment's origin and `browserCredential`
+  runs the whole round-trip there; the Settings card always uses the build URL,
+  and so does the sign-in that screen offers for a community no tenant hosts.
   A successful first-run sign-in continues into the app-owned setup steps
   described in [identity](../../../docs/identity.md): the app reads the key
   bound to the account, the destinations saved to it (this plugin's
-  known-communities list route, never through the Settings session's client)
+  known-communities list route, at the deployment that signed the user in,
+  never through the Settings session's client)
   and the communities it owns through this plugin's bundled grant
   (`src/features/identity/builderlab-account.ts`, reusing the
   `communities/` routes and parsers); a linked account is asked for that
   key, otherwise the user creates a key or brings one they already have, and
-  that key is then bound to the account through the same native signer and
-  backed up (an imported key only once the user agrees);
+  that key is then bound to the account through the same native signer at that
+  deployment and backed up (an imported key only once the user agrees);
   starting over creates a new key and unlinks the lost one before binding it.
-  Key backup hands the sign-in to the native uploader, and the same portal is
-  asked which keys the account holds a backup of; Welcome back
+  Key backup hands the sign-in to the native uploader only for the build's own
+  portal (anywhere else the step reports backup unavailable), which is also
+  the only portal asked which keys the account holds a backup of; Welcome back
   restores the linked key from one through native recovery's own browser
   sign-in.
 - `login/` owns the login experience: pending state, cancellation, retry, email

@@ -2,7 +2,6 @@
 //! and owner attestation never enter the WebView; it asks for one bounded
 //! event, read, upload or memory write at a time, and native signs and sends it
 //! to the agent's community.
-use crate::sign_out::{self, legacy_identifier};
 use buzz_agent_controller::{
     inline_picture, AppAgent, AppAgents, Carry, Credentials, OldStores, PlatformCredentials,
     PortSource, Portables, Published, Removal, Secret, CREDENTIALS_BUSY,
@@ -55,7 +54,10 @@ impl AppAgentHost {
         old: Result<OldStores, String>,
         packaged: bool,
     ) -> Self {
-        let hosting = Hosting::new(&path, packaged);
+        let hosts = path
+            .as_ref()
+            .map_err(Clone::clone)
+            .and_then(|path| Ok(path.parent().ok_or("Invalid agent storage")?.join("hosts")));
         Self {
             agents: path.map(|path| {
                 let agents = AppAgents::open(path);
@@ -70,7 +72,11 @@ impl AppAgentHost {
             keys: Arc::default(),
             profiles: Arc::default(),
             removals: Arc::default(),
-            hosting: Arc::new(hosting),
+            hosting: Arc::new(Hosting {
+                dir: hosts,
+                packaged,
+                held: Mutex::default(),
+            }),
         }
     }
     /// The saved identities, for readers outside Agents such as the inventory.
@@ -182,7 +188,7 @@ impl AppAgentHost {
 }
 
 /// Which running copy of the app runs each agent. Every copy on this machine
-/// (the packaged app and any dev builds) has the same agents and hears the
+/// (the packaged app and any dev builds) shares the agent list and hears the
 /// same events. The packaged app always runs what it can and holds
 /// `<pubkey>.packaged` while it does; there is only ever one, since only a
 /// release build with the release identifier counts and it is single-instance.
@@ -190,42 +196,12 @@ impl AppAgentHost {
 /// otherwise run each agent from whichever holds `<pubkey>.lock`. The OS lets go
 /// of both when a copy exits, however it exits.
 struct Hosting {
-    /// Where this copy holds its locks, beside its agent list.
     dir: Result<PathBuf, String>,
-    /// Where the packaged app holds `<pubkey>.packaged`.
-    packaged_dir: Result<PathBuf, String>,
     packaged: bool,
     /// The lock file this copy holds per agent: `.packaged` or `.lock`.
     held: Mutex<HashMap<String, File>>,
 }
 impl Hosting {
-    /// For the agent list at `path`. Dev builds keep their own storage
-    /// (`.dev`), so they look for the packaged app's locks in the release
-    /// identifier's.
-    fn new(path: &Result<PathBuf, String>, packaged: bool) -> Self {
-        let agents = path.as_ref().map_err(Clone::clone).and_then(|path| {
-            path.parent()
-                .ok_or_else(|| "Invalid agent storage".to_owned())
-        });
-        let dir = agents.clone().map(|agents| agents.join("hosts"));
-        let packaged_dir = if packaged {
-            dir.clone()
-        } else {
-            agents.and_then(|agents| {
-                let app = agents.parent().ok_or("Invalid agent storage")?;
-                Ok(app
-                    .with_file_name(legacy_identifier::CURRENT)
-                    .join(sign_out::AGENTS)
-                    .join("hosts"))
-            })
-        };
-        Self {
-            dir,
-            packaged_dir,
-            packaged,
-            held: Mutex::default(),
-        }
-    }
     fn held(&self) -> std::sync::MutexGuard<'_, HashMap<String, File>> {
         self.held
             .lock()
@@ -245,11 +221,7 @@ impl Hosting {
         }
         let dir = self.dir.as_ref().map_err(Clone::clone)?;
         std::fs::create_dir_all(dir).map_err(|_| "Could not open agent hosting")?;
-        let packaged = self
-            .packaged_dir
-            .as_ref()
-            .map_err(Clone::clone)?
-            .join(format!("{pubkey}.packaged"));
+        let packaged = dir.join(format!("{pubkey}.packaged"));
         let mut held = self.held();
         if self.packaged {
             if !held.contains_key(pubkey) {
@@ -261,14 +233,7 @@ impl Hosting {
             }
             return Ok(true);
         }
-        // Opened, never created, as a dev build must not create the release
-        // storage, which the packaged app's next launch may still move into.
-        let running = match File::open(&packaged) {
-            Ok(file) => !lock(file.try_lock_shared())?,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
-            Err(_) => return Err("Could not read agent hosting".into()),
-        };
-        if running {
+        if !lock(open_lock(&packaged)?.try_lock_shared())? {
             held.remove(pubkey);
             return Ok(false);
         }
@@ -1481,7 +1446,6 @@ mod tests {
 
     fn hosting(dir: Result<PathBuf, String>, packaged: bool) -> Hosting {
         Hosting {
-            packaged_dir: dir.clone(),
             dir,
             packaged,
             held: Mutex::default(),
@@ -1530,25 +1494,18 @@ mod tests {
 
     #[test]
     fn dev_builds_let_go_while_the_installed_app_runs_an_agent() {
+        use crate::sign_out::legacy_identifier::{agents, CURRENT, DEV};
         let data = tempfile::tempdir().unwrap();
-        let list = |identifier: &str| {
-            Ok(data
-                .path()
-                .join(identifier)
-                .join(sign_out::AGENTS)
-                .join("identities.json"))
-        };
+        // Where each copy's agent list puts its locks, with separate app data.
+        let hosts =
+            |identifier: &str| Ok(agents(identifier, &data.path().join(identifier)).join("hosts"));
         let agent = "a".repeat(64);
-        let dev = Hosting::new(&list(legacy_identifier::DEV), false);
+        let dev = hosting(hosts(DEV), false);
         assert!(dev.claim(&agent).unwrap());
-        // Before an update's first launch moves it, release storage may still be
-        // under the legacy identifier; a dev build creating the new one would
-        // make that launch refuse to start.
-        assert!(!data.path().join(legacy_identifier::CURRENT).exists());
-        let packaged = Hosting::new(&list(legacy_identifier::CURRENT), true);
+        let packaged = hosting(hosts(CURRENT), true);
         assert!(packaged.claim(&agent).unwrap());
         assert!(!dev.claim(&agent).unwrap());
-        let another = Hosting::new(&list(legacy_identifier::DEV), false);
+        let another = hosting(hosts(DEV), false);
         assert!(!another.claim(&agent).unwrap());
         // As when the installed app quits.
         drop(packaged);

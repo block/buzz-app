@@ -1121,6 +1121,7 @@ test("agent Close retires inactive thread visits without moving the current sele
     );
     expect(host.navigation.snapshot().attempt).toBe(selected);
     expect(h.result.current.selected).toBe(`thread:alpha:${"2".repeat(64)}`);
+    expect(h.result.current.threadVisits("alpha", "1".repeat(64))).toEqual([]);
     host.navigation.back();
     expect(host.navigation.snapshot().entry.target).toEqual(channel);
     host.navigation.forward();

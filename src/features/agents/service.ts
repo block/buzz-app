@@ -1,3 +1,4 @@
+import type {} from "../navigation/service";
 import { appClient } from "../../buzz-mcp/app-client";
 import { respond } from "../../buzz-mcp/rpc";
 import { connectMcp } from "../../buzz-mcp/connection";

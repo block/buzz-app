@@ -470,6 +470,29 @@ it("a late hashchange cannot release the next dismissal's pending traversal", ()
   driver.dispose();
 });
 
+it("bounds browser return paths and metadata to 100 visits, including native traversal and reload", () => {
+  const fixture = browser();
+  const driver = createBrowserHistory(fixture.host);
+  for (let i = 0; i < 150; i++)
+    driver.push({ ...settings, section: `section-${i}` });
+  expect(driver.snapshot().retainedVisits).toHaveLength(100);
+  fixture.host.history.go(-149);
+  expect(driver.snapshot().current.target).toEqual({
+    ...settings,
+    section: "section-50",
+  });
+  expect(driver.snapshot().canGoBack).toBe(false);
+  driver.dispose();
+  const restored = createBrowserHistory(fixture.host);
+  expect(restored.snapshot().retainedVisits).toHaveLength(100);
+  fixture.host.history.back();
+  expect(restored.snapshot().current.target).toEqual({
+    ...settings,
+    section: "section-50",
+  });
+  restored.dispose();
+});
+
 it("guards asynchronous native traversal without losing the presentation or its return path", () => {
   const fixture = browser("", true);
   const host = createNavigationController(createBrowserHistory(fixture.host));

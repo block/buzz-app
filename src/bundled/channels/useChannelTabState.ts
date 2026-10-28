@@ -237,6 +237,36 @@ function createTabStore(scope?: string) {
         else mounts.delete(key);
       };
     },
+    prune(ids: ReadonlySet<string>) {
+      for (const [key, state] of Object.entries(channels)) {
+        const filter = <T>(
+          records: Record<string, T> | undefined,
+          layout = false,
+        ) => {
+          if (!records) return records;
+          const kept = Object.entries(records).filter(([id]) =>
+            ids.has(layout ? id.slice(0, id.lastIndexOf(":")) : id),
+          );
+          return kept.length === Object.keys(records).length
+            ? records
+            : Object.fromEntries(kept);
+        };
+        const routedVisits = filter(state.routedVisits);
+        const detailVisits = filter(state.detailVisits);
+        const visits = filter(state.visits, true);
+        if (
+          routedVisits !== state.routedVisits ||
+          detailVisits !== state.detailVisits ||
+          visits !== state.visits
+        )
+          this.update(key, (current) => ({
+            ...current,
+            routedVisits,
+            detailVisits,
+            visits,
+          }));
+      }
+    },
     snapshot: () => channels,
     subscribe(listener: () => void) {
       listeners.add(listener);
@@ -393,9 +423,19 @@ export function useChannelTabState(
   session: RelaySession,
   channelId: string | undefined,
   page = "messages",
+  navigation?: Navigation,
 ) {
   const store = storeOf(session);
   const channels = useSyncExternalStore(store.subscribe, store.snapshot);
+  useLayoutEffect(() => {
+    if (!navigation) return;
+    const prune = () => {
+      const retained = navigation.snapshot().retainedVisits;
+      if (retained) store.prune(new Set(retained));
+    };
+    prune();
+    return navigation.subscribe(prune);
+  }, [navigation, store]);
   const snapshot = store.snapshot;
   const key = keyOf(page, channelId ?? "");
   // Retain descriptors across navigation, but protect only a mounted workspace.

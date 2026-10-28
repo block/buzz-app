@@ -58,7 +58,9 @@ not add new history visits to every existing confirmation or editor.
 App arrows, supported history shortcuts and mouse Back/Forward use the same
 navigation driver. Browsers retain their physical history entries; the driver
 skips retired entries rather than claiming to delete arbitrary native history.
-The app's traversal affordances account for those skipped entries. Dismissal
+The app's traversal affordances account for those skipped entries. The managed
+window is capped at 100 visits, including its persisted dismissal associations;
+older return paths expire and their tab metadata is pruned. Dismissal
 indices are kept in sessionStorage for the browser chain; open tabs themselves
 retain their existing community-session lifetime. After reload the driver knows
 the current visit and its immediate opener. Older visits not revisited since

@@ -84,6 +84,14 @@ separate retirement records. Leaving a community purges its retained records and
 fences old stores from publishing them again; viewer-less offline sessions do
 not retain records across sessions.
 
+The managed Back/Forward window contains at most 100 visits. Creating more visits
+expires the oldest return paths; native traversal beyond that boundary returns to
+the oldest eligible managed visit. Dismissed or expired visit identities and their
+selection snapshots are pruned from tab metadata. This bounds history bookkeeping,
+not the number of deliberately retained tabs or their drafts. Browser session
+storage retains the window boundary and visit IDs across reload; storage failure
+limits that guarantee to the current document.
+
 ## One navigation owner
 
 Use the existing [navigation controller](../src/features/navigation/controller.ts)

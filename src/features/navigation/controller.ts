@@ -55,6 +55,7 @@ export type NavigationSnapshot = Readonly<{
   /** An incoming URL failed before it could create a history destination. */
   ingress?: boolean;
   retryable?: boolean;
+  retainedVisits?: readonly string[] | undefined;
   canGoBack: boolean;
   canGoForward: boolean;
 }>;
@@ -174,6 +175,7 @@ export function createNavigationController(
       entry: state.current,
       attempt,
       status: "opening",
+      retainedVisits: state.retainedVisits,
       canGoBack: state.canGoBack,
       canGoForward: state.canGoForward,
     });
@@ -212,6 +214,7 @@ export function createNavigationController(
         });
         snapshot = Object.freeze({
           ...snapshot,
+          retainedVisits: state.retainedVisits,
           entry: state.current,
           attempt: active.attempt,
           canGoBack: state.canGoBack,
@@ -257,6 +260,7 @@ export function createNavigationController(
         if (state.current === active.attempt.entry) {
           snapshot = Object.freeze({
             ...snapshot,
+            retainedVisits: state.retainedVisits,
             canGoBack: state.canGoBack,
             canGoForward: state.canGoForward,
           });

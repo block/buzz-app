@@ -1129,3 +1129,79 @@ test("agent Close retires inactive thread visits without moving the current sele
     host.dispose();
   }
 });
+
+test("retirement metadata follows the bounded history window and drops dismissed identities", async () => {
+  const { createNavigationController } = await import(
+    "../../features/navigation/controller"
+  );
+  const { createMemoryHistory } = await import(
+    "../../features/navigation/history"
+  );
+  const scope = {
+    viewer: "a".repeat(64),
+    communityOrigin: "https://relay.example",
+  };
+  const channel = {
+    version: 1,
+    kind: "conversation",
+    scope,
+    channelId: "alpha",
+  } as const;
+  const host = createNavigationController(createMemoryHistory(channel));
+  const session = {
+    viewer: scope.viewer,
+    scope: `${scope.communityOrigin}:${scope.viewer}`,
+  } as RelaySession;
+  const h = renderHook(() =>
+    useChannelTabState(session, "alpha", "messages", host.navigation),
+  );
+  try {
+    for (let i = 0; i < 150; i++) {
+      const target = `https://github.com/sample/project/pull/${i}`;
+      act(() => {
+        void host.navigation.open({ ...channel, detail: { target } });
+        h.result.current.enterVisit(
+          `${host.navigation.snapshot().entry.id}:detail`,
+          undefined,
+          true,
+          { channelId: "alpha", target },
+        );
+      });
+    }
+    expect(
+      Array.from({ length: 150 }, (_, i) =>
+        h.result.current.detailVisits(
+          "alpha",
+          `https://github.com/sample/project/pull/${i}`,
+        ),
+      ).flat(),
+    ).toHaveLength(100);
+    const current = host.navigation.snapshot().entry.id;
+    act(() => host.navigation.dismiss([current], channel));
+    expect(
+      h.result.current.detailVisits(
+        "alpha",
+        "https://github.com/sample/project/pull/149",
+      ),
+    ).toEqual([]);
+    h.unmount();
+    const successor = renderHook(() =>
+      useChannelTabState(
+        { ...session } as RelaySession,
+        "alpha",
+        "messages",
+        host.navigation,
+      ),
+    );
+    expect(
+      Array.from({ length: 150 }, (_, i) =>
+        successor.result.current.detailVisits(
+          "alpha",
+          `https://github.com/sample/project/pull/${i}`,
+        ),
+      ).flat(),
+    ).toHaveLength(99);
+  } finally {
+    host.dispose();
+  }
+});

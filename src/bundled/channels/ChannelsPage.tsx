@@ -583,7 +583,12 @@ function ChannelWorkspace({
       channelType: current?.channelType,
     };
   }, [currentId, queries, current?.channelType]);
-  const tabState = useChannelTabState(queries, currentId);
+  const tabState = useChannelTabState(
+    queries,
+    currentId,
+    "messages",
+    navigator,
+  );
   const { settings, setSettings, retireMenuEntries } = tabState;
   useEffect(() => {
     if (!currentId || composingMessage || draft) return;

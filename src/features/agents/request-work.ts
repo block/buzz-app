@@ -72,9 +72,13 @@ export function requestWork(
       (turn) =>
         turn.agent === agent &&
         turn.channelId === channelId &&
-        selected.turnIds.has(turn.turnId),
+        (selected.turnIds.has(turn.turnId) ||
+          turn.triggeringEventIds?.some((id) => ids.has(id))),
     );
-    const state = requestActivityState(selected, turns, snapshot.trimmed);
+    // A linked start may have left the raw buffer while its lifecycle remains.
+    // Include it so a retained sibling's completion cannot hide missing evidence.
+    for (const turn of turns) selected.turnIds.add(turn.turnId);
+    const state = requestActivityState(selected, turns);
     return [
       {
         agent,

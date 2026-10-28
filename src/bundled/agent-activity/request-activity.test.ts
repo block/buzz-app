@@ -266,18 +266,3 @@ it("ignores wrong identities/channels and unscoped batch terminals", () => {
     "unknown",
   );
 });
-
-it("does not claim aggregate end after another linked start was trimmed", () => {
-  // A's start was evicted but its lifecycle still says active; retained B ended.
-  const selected = select([
-    row(2, "acp_read"),
-    row(3, "turn_started", "B"),
-    row(4, "turn_completed", "B"),
-  ]);
-  const allTurns = [state("turn", "working"), state("B", "ended")];
-  expect(requestActivityState(selected, allTurns, 1)).toBe("unknown");
-  expect(requestActivityState(selected, [state("B", "working")], 1)).toBe(
-    "working",
-  );
-  expect(requestActivityState(select([]), allTurns, 1)).toBe("unknown");
-});

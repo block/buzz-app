@@ -131,18 +131,16 @@ export function requestActivity(
 
 /** Already scoped lifecycle evidence, never a claim that a reply was delivered.
  * Working dominates; all linked turns must agree before an aggregate end label.
- * Any feed trimming can have erased another linked start; do not claim completeness. */
+ * Missing evidence for a linked turn leaves only that request uncertain. */
 export function requestActivityState(
   selected: ReturnType<typeof requestActivity>,
   turns: readonly ActivityTurn[],
-  trimmed = 0,
 ): "waiting" | "working" | "unknown" | "ended" | "error" {
   const linked = [...selected.turnIds].map((id) =>
     turns.find((turn) => turn.turnId === id),
   );
   if (linked.some((turn) => turn?.state === "working")) return "working";
   if (
-    trimmed > 0 ||
     selected.uncertain ||
     linked.some((turn) => !turn || turn.state === "unknown")
   )

@@ -25,6 +25,7 @@ export type ActivityTurn = Readonly<{
   channelId: string | null;
   timestamp: number;
   state: "working" | "unknown" | "ended";
+  triggeringEventIds?: readonly string[];
   /** Roots established from retained signed triggering messages, not typing. */
   requests?: readonly Readonly<{ messageId: string; threadRootId: string }>[];
 }>;
@@ -54,7 +55,6 @@ type Snapshot = Readonly<{
 }>;
 type Turn = Omit<ActivityTurn, "state" | "requests"> & {
   requests?: ActivityTurn["requests"];
-  triggeringEventIds?: readonly string[];
   ended: boolean;
   epoch: number;
   unresolvedTriggers?: readonly string[];
@@ -167,7 +167,12 @@ export function createAgentActivity(
           turnId: turn.turnId,
           channelId: turn.channelId,
           timestamp: turn.timestamp,
-          ...(turn.triggeringEventIds ? { requests: turn.requests ?? [] } : {}),
+          ...(turn.triggeringEventIds
+            ? {
+                triggeringEventIds: turn.triggeringEventIds,
+                requests: turn.requests ?? [],
+              }
+            : {}),
           state: turn.ended
             ? "ended"
             : status === "listening" &&

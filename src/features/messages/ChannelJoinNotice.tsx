@@ -87,10 +87,10 @@ export function ChannelJoinNotice({
         data-ready={visible}
         className={`${styles.channelJoinSurface} pointer-events-auto flex w-fit max-w-full flex-wrap items-center justify-center gap-2 p-1.5`}
       >
-        <p className="px-2 text-body-sm text-subtle">
+        <p className="max-w-md px-2 text-center text-body-sm text-subtle">
           {readOnly
             ? joinRole === "guest"
-              ? "Contributions by invitation"
+              ? "This channel is read-only for new people. Existing contributors can still post."
               : "Read-only access"
             : canJoin
               ? "Join channel to send messages"

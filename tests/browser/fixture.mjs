@@ -2145,10 +2145,12 @@ export const test = base.extend({
             community,
             channel: filter["#h"][0],
             filter,
+            queuedAt,
             events: result.filter((event) => event.kind === 9),
             release: () => {
               if (response.destroyed || response.writableEnded) return;
-              receipt.releaseDelayMs = performance.now() - queuedAt;
+              receipt.releasedAt = performance.now();
+              receipt.releaseDelayMs = receipt.releasedAt - queuedAt;
               send(response, result);
             },
           };

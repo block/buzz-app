@@ -477,3 +477,54 @@ unchanged; rich cases do not opt into these channel hooks. Old datasets remain
 under their original versions. Independent808 source/runtime/fault qualification
 and root adoption are required before matched product comparisons; native macOS
 qualification remains separate.
+
+### main-webkit-wheel-fast-v2 (prospective, adoption pending)
+
+Only `scroll-paging-fast` on Linux WebKit CPU1 uses this NEW timing version.
+`webkit-public-wheel-planned-v1` scheduling is unchanged: six public
+wheel(0,-2500/6) calls planned at0/20/40/60/80/100ms per adaptive train, concurrent
+within each train, all acknowledgements drained before the original oldest
+check. All six expected indices are declared first; omissions, duplicates,
+rejections and unresolved calls fail. The original200-train/60-second bounds,
+640 signed messages, head20/latest content,480 ordinary proof-memo rows,
+620 older messages and31 exact serial100ms cursor/release windows remain.
+Fixture-clock queue/release timestamps and actual wire bodies establish work;
+no driver/network/idle wait is inserted between measured trains.
+
+Pinned native dispatch truncates each fractional request to-416; compatible
+trusted wheels coalesce by summing. Eligibility uses exact negative integral
+multiples of416 totaling6G units, not a fixed event count/histogram or tolerance.
+Every wheel records trust, target/path, coordinates, modifiers, axes/mode and
+focus/modality. Existing recorder rAF checks defaultPrevented after dispatch,
+retaining Event references only until that check. Unknown/cancelled/extra or
+invalid input fails; noncancelable events do not fabricate cancellation proof.
+Requested and delivered totals remain separate; no delta tagging/tuning.
+
+The live recorder records publicPlanComplete, aggregateNativeReceiptMatched,
+originalWorkComplete and observableEndpointSatisfied separately. Browser done
+means successful public submission closure with independent expected input and
+work readiness, not native drain. Passive fetch invocation observes unexpected
+history requests before dispatch; live wire/fixture readiness updates revalidate
+admission without driver waits. A trusted target scrollend after the latest
+wheel and covering latest motion may end at0. An earlier genuine end at0 can
+cover an exhausted clamped suffix only when all later accounted outward wheels
+stay at0 with no later movement and oldest visible. Geometry/admission/activity
+changes rearm/revalidate the candidate. End before final Node acknowledgement is
+allowed; browser/Node clocks are never subtracted.
+
+After closure/full mass/cancellation/work/terminal readiness, the existing200ms
+stability interval is rearmed, plus two subsequent rendering opportunities,
+inside the same60s budget. This is an explicitly changed operation endpoint,
+not native velocity, gesture duration, app-only CPU or causal per-call proof.
+Observer/receipt costs are included without subtraction. Raw plan/send/ack,
+events/cancellation, frames/closure/work/terminal transitions retain slow tails.
+Originalff3 remains failed historical evidence, never rescored or pooled.
+Identical compensating duplicate/drop and hidden post-receipt native-effect loss
+are observability limits; public omission does not establish an uninduced native
+fault. Unsupported CDP/LoAF/cadence metrics stay absent with reasons. No wider
+WebKit case, CPU4, flag/library/product change, nativeMac qualification, A/A or
+product comparison is implied. Exact independent review and root adoption remain.
+
+On failure, `failureSnapshot` freezes declared trains, call status and observed
+wire data during finalization; live command/wire fields can still settle later.
+The browser recording stays pinned to stop and is never retroactively healed.

@@ -27,6 +27,7 @@ function observe({
   chromium,
   channel,
   latestId,
+  nativeWheel,
 }) {
   const lifetime = channel ? window.__perfChannelWork : undefined;
   // Chromium hover remains before recording; its allowed preparation starts here.
@@ -61,6 +62,333 @@ function observe({
   };
   if (!chromium)
     for (const type of inputTypes) document.addEventListener(type, input, true);
+  // Native policy v2 is opt-in; Chromium keeps its original observer/endpoint.
+  const nativeEvents = [],
+    pendingCancellation = [];
+  const nativeElement = nativeWheel
+    ? document.querySelector(selector)
+    : undefined;
+  let nativeAdmission,
+    nativeWorkVersion = 0,
+    nativeRequests = 0;
+  const nativeWorkUpdates = [],
+    nativeTransitions = [];
+  const savedFetch = window.fetch;
+  const nativeFetch = function (...args) {
+    const url = new URL(args[0]?.url ?? args[0], location.href);
+    if (url.pathname === "/api/relay/primary/query") {
+      const filters =
+        typeof args[1]?.body === "string" ? JSON.parse(args[1].body) : [];
+      for (const filter of filters)
+        if (filter.top_level && filter["#h"]?.includes("alpha")) {
+          const expected = nativeWheel.expectedRanges[nativeRequests++];
+          ++nativeVersion;
+          if (
+            !expected ||
+            filter.until !== expected.until ||
+            filter.before_id !== expected.beforeId ||
+            filter.limit !== 20
+          )
+            nativeReceipt.invalid.push({
+              reason: "unexpected history request",
+              filter,
+            });
+        }
+    }
+    return Reflect.apply(savedFetch, this, args);
+  };
+  if (nativeWheel) window.fetch = nativeFetch;
+  let nativeClosure,
+    nativeVersion = 0,
+    movementVersion = 0,
+    lastWheelVersion = 0;
+  let observedTop = nativeElement?.scrollTop,
+    movementObserved = false,
+    lastEnd;
+  let nativeStableKey, nativeStableSince, nativeStableFrame;
+  const nativeReceipt = {
+    publicPlanComplete: false,
+    aggregateNativeReceiptMatched: false,
+    originalWorkComplete: false,
+    observableEndpointSatisfied: false,
+    units: 0,
+    capturedDeltaY: 0,
+    capturedWheels: 0,
+    invalid: [],
+    endpointPolicy: "main-webkit-wheel-fast-v2",
+  };
+  const moved = (top) => {
+    if (top !== observedTop) {
+      movementObserved = true;
+      movementVersion = ++nativeVersion;
+      observedTop = top;
+    }
+  };
+  const nativeInput = (event) => {
+    if (start === undefined || end !== undefined) return;
+    const element = document.querySelector(selector);
+    const target =
+      event.type === "wheel"
+        ? event.composedPath().includes(nativeElement)
+        : event.target === nativeElement;
+    const receipt = {
+      sequence: nativeEvents.length,
+      type: event.type,
+      t: performance.now() - start,
+      eventMs: event.timeStamp - start,
+      frameCount: frames.length,
+      trusted: event.isTrusted,
+      target,
+      path: event
+        .composedPath()
+        .map((e) => e.tagName ?? e.nodeName ?? "window"),
+      deltaX: event.deltaX,
+      deltaY: event.deltaY,
+      deltaMode: event.deltaMode,
+      x: event.clientX,
+      y: event.clientY,
+      ctrl: event.ctrlKey,
+      alt: event.altKey,
+      meta: event.metaKey,
+      shift: event.shiftKey,
+      buttons: event.buttons,
+      cancelable: event.cancelable,
+      defaultPreventedAtCapture: event.defaultPrevented,
+      keyboard: document.documentElement.hasAttribute(
+        "data-keyboard-navigation",
+      ),
+      listFocused: !!element?.contains(document.activeElement),
+      top: element?.scrollTop,
+      height: element?.scrollHeight,
+      viewport: element?.clientHeight,
+    };
+    nativeEvents.push(receipt);
+    if (target) moved(receipt.top);
+    if (event.type === "wheel") {
+      lastWheelVersion = ++nativeVersion;
+      if (target) {
+        wheels++;
+        gestureStartMs ??= performance.now() - start;
+      }
+      nativeReceipt.capturedWheels++;
+      nativeReceipt.capturedDeltaY += event.deltaY;
+      const integral =
+        Number.isInteger(event.deltaY) &&
+        event.deltaY < 0 &&
+        -event.deltaY % 416 === 0;
+      if (integral) nativeReceipt.units += -event.deltaY / 416;
+      receipt.valid = !!(
+        integral &&
+        event.deltaX === 0 &&
+        event.deltaMode === 0 &&
+        event.isTrusted &&
+        target &&
+        element === nativeElement &&
+        event.clientX === nativeWheel.point.x &&
+        event.clientY === nativeWheel.point.y &&
+        !event.ctrlKey &&
+        !event.altKey &&
+        !event.metaKey &&
+        !event.shiftKey &&
+        event.buttons === 0 &&
+        receipt.keyboard === (nativeWheel.modality === "keyboard") &&
+        receipt.listFocused === (nativeWheel.modality === "pointer")
+      );
+      if (!receipt.valid)
+        nativeReceipt.invalid.push({
+          sequence: receipt.sequence,
+          reason: "invalid native wheel",
+        });
+      pendingCancellation.push({ event, receipt });
+    } else if (target) {
+      ++nativeVersion;
+      if (event.type === "scrollend" && event.isTrusted)
+        lastEnd = {
+          version: nativeVersion,
+          sequence: receipt.sequence,
+          top: receipt.top,
+          t: receipt.t,
+        };
+    }
+  };
+  if (nativeWheel)
+    for (const type of ["wheel", "scroll", "scrollend"])
+      document.addEventListener(type, nativeInput, {
+        capture: true,
+        passive: true,
+      });
+  function nativeSample(element, frame, signature, now) {
+    // This rAF runs after the input dispatch task, including later listeners.
+    for (const { event, receipt } of pendingCancellation.splice(0)) {
+      receipt.defaultPrevented = event.defaultPrevented;
+      receipt.cancellationCheckedFrame = frames.length;
+      receipt.phaseAtCheck = event.eventPhase;
+      if (event.eventPhase !== Event.NONE || event.defaultPrevented)
+        nativeReceipt.invalid.push({
+          sequence: receipt.sequence,
+          reason: "native default cancelled or dispatch unfinished",
+        });
+    }
+    if (
+      element !== nativeElement &&
+      !nativeReceipt.invalid.some((e) => e.reason === "target replaced")
+    )
+      nativeReceipt.invalid.push({ reason: "target replaced" });
+    moved(frame.top);
+    if (!nativeClosure) {
+      frame.native = {
+        units: nativeReceipt.units,
+        requests: nativeRequests,
+        publicPlanComplete: false,
+        aggregateNativeReceiptMatched: false,
+        originalWorkComplete: false,
+        observableEndpointSatisfied: false,
+      };
+      return;
+    }
+    const total = nativeClosure.expectedUnits;
+    if (
+      nativeReceipt.units > total &&
+      !nativeReceipt.invalid.some((e) => e.reason === "extra native mass")
+    )
+      nativeReceipt.invalid.push({ reason: "extra native mass" });
+    nativeReceipt.publicPlanComplete =
+      nativeClosure.publicPlanComplete === true;
+    nativeReceipt.aggregateNativeReceiptMatched = !!(
+      nativeReceipt.publicPlanComplete &&
+      nativeReceipt.units === total &&
+      nativeReceipt.capturedWheels > 0 &&
+      !pendingCancellation.length &&
+      !nativeReceipt.invalid.length &&
+      nativeEvents
+        .filter((e) => e.type === "wheel")
+        .every((e) => e.cancellationCheckedFrame !== undefined)
+    );
+    const oldest = element?.querySelector(
+      `[data-message-id="${nativeWheel.oldestId}"]`,
+    );
+    const body = oldest?.querySelector("[data-message-action-anchor]");
+    const b = element?.getBoundingClientRect(),
+      rect = body?.getBoundingClientRect();
+    const bodyVisible = !!(
+      body?.checkVisibility({
+        opacityProperty: true,
+        visibilityProperty: true,
+      }) &&
+      Math.min(rect.right, b.right, innerWidth) -
+        Math.max(rect.left, b.left, 0) >
+        0 &&
+      Math.min(rect.bottom, b.bottom, innerHeight) -
+        Math.max(rect.top, b.top, 0) >
+        0
+    );
+    const content = body?.innerText.replace(/\s+/g, " ").trim();
+    nativeReceipt.originalWorkComplete = !!(
+      (nativeAdmission ?? nativeClosure).originalWorkComplete &&
+      element?.contains(
+        document.elementFromPoint(nativeWheel.point.x, nativeWheel.point.y),
+      ) &&
+      nativeRequests === 31 &&
+      frame.rows.some(([id]) => id === nativeWheel.oldestId) &&
+      bodyVisible &&
+      content === nativeWheel.oldestContent.replace(/\s+/g, " ").trim() &&
+      !element?.textContent.includes("History window limit reached")
+    );
+    const endedMovement = !!(
+      lastEnd &&
+      movementObserved &&
+      lastEnd.version >= movementVersion
+    );
+    const movingEnd = endedMovement && lastEnd.version > lastWheelVersion;
+    const suffix =
+      endedMovement &&
+      lastEnd.top === 0 &&
+      frame.top === 0 &&
+      nativeEvents
+        .filter((e) => e.type === "wheel" && e.sequence > lastEnd.sequence)
+        .every((e) => e.top === 0 && e.deltaY < 0);
+    nativeReceipt.terminal = movingEnd
+      ? { kind: "moving-ending", end: lastEnd }
+      : suffix
+        ? { kind: "clamped-suffix", end: lastEnd }
+        : undefined;
+    nativeReceipt.lastWheelVersion = lastWheelVersion;
+    nativeReceipt.movementVersion = movementVersion;
+    // Query completion and current geometry rearm/revalidate the same live loop.
+    const queryEpoch = nativeWorkVersion;
+    const ready =
+      nativeReceipt.publicPlanComplete &&
+      nativeReceipt.aggregateNativeReceiptMatched &&
+      nativeReceipt.originalWorkComplete &&
+      !!nativeReceipt.terminal;
+    const key = JSON.stringify([
+      signature,
+      [
+        b?.left,
+        b?.top,
+        b?.width,
+        b?.height,
+        element?.clientWidth,
+        element?.clientHeight,
+      ],
+      nativeVersion,
+      queryEpoch,
+      nativeRequests,
+      ready,
+    ]);
+    if (key !== nativeStableKey)
+      nativeTransitions.push({
+        t: now - start,
+        frame: frames.length,
+        activity: nativeVersion,
+        workVersion: nativeWorkVersion,
+        requests: nativeRequests,
+        ready,
+        units: nativeReceipt.units,
+        terminal: nativeReceipt.terminal?.kind,
+      });
+    if (!ready || key !== nativeStableKey) {
+      nativeStableSince = ready ? now : undefined;
+      nativeStableFrame = frames.length;
+    }
+    nativeStableKey = key;
+    nativeReceipt.stability = {
+      sinceMs:
+        nativeStableSince === undefined ? undefined : nativeStableSince - start,
+      frame: nativeStableFrame,
+      frameCount: frames.length,
+      queryEpoch,
+      activity: nativeVersion,
+      ready,
+    };
+    frame.native = {
+      ...nativeReceipt.stability,
+      units: nativeReceipt.units,
+      requests: nativeRequests,
+      workVersion: nativeWorkVersion,
+      publicPlanComplete: nativeReceipt.publicPlanComplete,
+      aggregateNativeReceiptMatched:
+        nativeReceipt.aggregateNativeReceiptMatched,
+      originalWorkComplete: nativeReceipt.originalWorkComplete,
+      observableEndpointSatisfied: false,
+      terminal: nativeReceipt.terminal?.kind,
+      endSequence: lastEnd?.sequence,
+    };
+    if (nativeReceipt.invalid.length) {
+      stop("Invalid native wheel receipt");
+      return;
+    }
+    if (
+      ready &&
+      now - nativeStableSince >= 200 &&
+      frames.length - nativeStableFrame >= 2
+    ) {
+      nativeReceipt.observableEndpointSatisfied = true;
+      frame.native.observableEndpointSatisfied = true;
+      stop();
+    }
+  }
+
   const longAnimationFrames = [];
   let start,
     end,
@@ -98,7 +426,8 @@ function observe({
       gestureStartMs ??= performance.now() - start;
     }
   };
-  document.addEventListener("wheel", wheel, { passive: true });
+  if (!nativeWheel)
+    document.addEventListener("wheel", wheel, { passive: true });
   document.addEventListener("click", clicked, true);
   document.addEventListener("pointerover", hovered, true);
   function stop(error) {
@@ -106,14 +435,40 @@ function observe({
     end = performance.now();
     cancelAnimationFrame(raf);
     clearTimeout(timer);
-    document.removeEventListener("wheel", wheel);
+    if (!nativeWheel) document.removeEventListener("wheel", wheel);
     document.removeEventListener("click", clicked, true);
     document.removeEventListener("pointerover", hovered, true);
     if (!chromium)
       for (const type of inputTypes)
         document.removeEventListener(type, input, true);
+    if (nativeWheel) {
+      if (window.fetch === nativeFetch) window.fetch = savedFetch;
+      if (error) nativeReceipt.observableEndpointSatisfied = false;
+      nativeReceipt.unobservedCancellationAtStop = pendingCancellation.length;
+      if (pendingCancellation.length || nativeReceipt.invalid.length)
+        nativeReceipt.aggregateNativeReceiptMatched = false;
+      for (const type of ["wheel", "scroll", "scrollend"])
+        document.removeEventListener(type, nativeInput, true);
+      for (const entry of pendingCancellation)
+        entry.receipt.cancellationUnobserved = true;
+      pendingCancellation.length = 0;
+    }
     resolve({
       error,
+      ...(nativeWheel
+        ? {
+            nativeEvents,
+            nativeReceipt: {
+              ...nativeReceipt,
+              closure: nativeClosure,
+              error,
+              pendingCancellation: nativeReceipt.unobservedCancellationAtStop,
+              workUpdates: nativeWorkUpdates,
+              transitions: nativeTransitions,
+              requests: nativeRequests,
+            },
+          }
+        : {}),
       ...(lifetime
         ? {
             channelWork: {
@@ -241,7 +596,10 @@ function observe({
     const signature = JSON.stringify([frame.top, frame.height, rows]);
     if (signature !== previous || !rows.length) quietSince = now;
     previous = signature;
-    if (
+    if (nativeWheel) {
+      nativeSample(element, frame, signature, now);
+      if (end === undefined) raf = requestAnimationFrame(sample);
+    } else if (
       done &&
       firstRowsMs !== undefined &&
       now - quietSince >= 200 &&
@@ -286,10 +644,26 @@ function observe({
       );
       raf = requestAnimationFrame(sample);
     },
-    done() {
+    work(admission) {
+      if (end !== undefined || admission.version <= nativeWorkVersion) return;
+      nativeWorkVersion = admission.version;
+      nativeAdmission = admission;
+      nativeWorkUpdates.push({
+        ...admission,
+        t: start === undefined ? undefined : performance.now() - start,
+        frameCount: frames.length,
+      });
+    },
+    done(submission) {
+      if (nativeWheel)
+        nativeClosure = {
+          ...submission,
+          t: performance.now() - start,
+          frameCount: frames.length,
+        };
       // The scrolling action resolves after Chromium's synthetic gesture does.
       // This existing browser marker includes the completion protocol dispatch.
-      if (gestureStartMs !== undefined)
+      if (gestureStartMs !== undefined && !nativeWheel)
         gestureEndMs = performance.now() - start;
       done = true;
     },
@@ -389,15 +763,19 @@ export const test = base.extend({
             y: Math.round(box.top + box.height / 2),
           };
         });
-        for (const type of modality === "pointer"
-          ? ["mouseMoved", "mousePressed", "mouseReleased"]
-          : ["mouseMoved"])
-          await cdp.send("Input.dispatchMouseEvent", {
-            type,
-            ...point,
-            button: type === "mouseMoved" ? "none" : "left",
-            clickCount: 1,
-          });
+        if (!cdp) {
+          await page.mouse.move(point.x, point.y);
+          if (modality === "pointer") await page.mouse.click(point.x, point.y);
+        } else
+          for (const type of modality === "pointer"
+            ? ["mouseMoved", "mousePressed", "mouseReleased"]
+            : ["mouseMoved"])
+            await cdp.send("Input.dispatchMouseEvent", {
+              type,
+              ...point,
+              button: type === "mouseMoved" ? "none" : "left",
+              clickCount: 1,
+            });
         expect(
           await scroller.evaluate(
             (element, { x, y }) => ({
@@ -419,7 +797,15 @@ export const test = base.extend({
       },
       async measure(
         id,
-        { click, hoverMs = 0, act, work = {}, timeoutMs = 10_000 },
+        {
+          click,
+          hoverMs = 0,
+          act,
+          work = {},
+          timeoutMs = 10_000,
+          nativeWheel,
+          nativeWork,
+        },
       ) {
         const ids = app.histories.get(`primary/${id}`).map((event) => event.id);
         const box = click ? await page.locator(click).boundingBox() : null;
@@ -427,20 +813,29 @@ export const test = base.extend({
         const point = box
           ? { x: box.x + box.width / 2, y: box.y + box.height / 2 }
           : null;
-        let observer, recording;
+        let observer,
+          recording,
+          workLive = true,
+          workVersion = 0,
+          workKey;
+        let workUpdates = Promise.resolve();
         const sample = {
           state: app.report.state,
           work,
           metrics: {},
           apparatus: {
-            version: "main-webkit-stage-a-work-oracle-v2",
+            version: nativeWheel
+              ? "main-webkit-wheel-fast-v2"
+              : "main-webkit-stage-a-work-oracle-v2",
             browser: browserName,
             browserVersion: page.context().browser().version(),
-            inputPolicy: click
-              ? cdp
-                ? "chromium-cdp-channel-original"
-                : "playwright-native-channel-v1"
-              : "scenario-owned-action-unchanged",
+            inputPolicy: nativeWheel
+              ? "webkit-public-wheel-planned-v1"
+              : click
+                ? cdp
+                  ? "chromium-cdp-channel-original"
+                  : "playwright-native-channel-v1"
+                : "scenario-owned-action-unchanged",
             unavailable: cdp
               ? {}
               : {
@@ -468,7 +863,56 @@ export const test = base.extend({
             chromium: !!cdp,
             channel: click && enabled ? id : undefined,
             latestId: workOracle?.latest(id),
+            nativeWheel: nativeWheel
+              ? {
+                  point: nativeWheel.point,
+                  modality: nativeWheel.modality,
+                  oldestId: nativeWheel.oldestId,
+                  oldestContent: nativeWheel.oldestContent,
+                  expectedRanges: nativeWheel.expectedRanges,
+                }
+              : undefined,
           });
+          if (nativeWheel) {
+            if (browserName !== "webkit" || process.platform !== "linux")
+              throw new Error("Native fast policy requires Linux WebKit CPU1");
+            nativeWheel.workChanged = () => {
+              if (!workLive) return;
+              let admission;
+              try {
+                admission = nativeWork(false);
+              } catch (error) {
+                nativeWheel.workErrors ??= [];
+                nativeWheel.workErrors.push(String(error));
+                admission = { originalWorkComplete: false };
+              }
+              const key = JSON.stringify([
+                admission.originalWorkComplete,
+                admission.wireCount,
+                admission.fixtureCount,
+                admission.releasedCount,
+              ]);
+              if (key === workKey) return;
+              workKey = key;
+              const payload = {
+                originalWorkComplete: admission.originalWorkComplete,
+                version: ++workVersion,
+                wireCount: admission.wireCount,
+                fixtureCount: admission.fixtureCount,
+                releasedCount: admission.releasedCount,
+              };
+              workUpdates = workUpdates
+                .then(() =>
+                  workLive
+                    ? observer.evaluate((o, p) => o.work(p), payload)
+                    : undefined,
+                )
+                .catch((error) => {
+                  nativeWheel.workUpdateErrors ??= [];
+                  nativeWheel.workUpdateErrors.push(String(error));
+                });
+            };
+          }
           if (hoverMs && cdp) {
             await cdp.send("Input.dispatchMouseEvent", {
               type: "mouseMoved",
@@ -519,9 +963,34 @@ export const test = base.extend({
               clickCount: 1,
             });
           }
-          if (act) await act();
-          await observer.evaluate((o) => o.done());
-          recording = await observer.evaluate((o) => o.result());
+          const nativeResult = nativeWheel
+            ? observer
+                .evaluate((o) => o.result())
+                .then((result) => {
+                  if (result.error) nativeWheel.interrupted = result.error;
+                  return result;
+                })
+            : undefined;
+          if (act) {
+            const action = act();
+            if (nativeWheel)
+              await Promise.race([
+                action,
+                nativeResult.then((result) => {
+                  if (result.error) throw new Error(result.error);
+                }),
+              ]);
+            else await action;
+          }
+          const closure = nativeWheel ? nativeWork() : undefined;
+          if (nativeWheel) {
+            nativeWheel.closure = closure;
+            nativeWheel.workChanged();
+          }
+          await observer.evaluate((o, closure) => o.done(closure), closure);
+          recording = nativeResult
+            ? await nativeResult
+            : await observer.evaluate((o) => o.result());
           const after = await read();
           if (cdp)
             recording.longAnimationFrames = await observer.evaluate((o) =>
@@ -532,6 +1001,7 @@ export const test = base.extend({
             expect(sample.metrics[key], key).toBeGreaterThanOrEqual(0);
           }
           sample.recording = recording;
+          if (nativeWheel) nativeWheel.receipt = recording.nativeReceipt;
           sample.metrics.durationMs = recording.durationMs;
           if (cdp) sample.metrics.loafBlockingMs = loafBlocking(recording);
           if (click) {
@@ -564,9 +1034,23 @@ export const test = base.extend({
           }
           return sample;
         } finally {
+          if (nativeWheel) {
+            workLive = false;
+            nativeWheel.workChanged = undefined;
+          }
           if (observer) {
+            if (nativeWheel) await workUpdates;
             await observer.evaluate((o) => o.stop());
             sample.recording ??= await observer.evaluate((o) => o.result());
+            if (nativeWheel) {
+              nativeWheel.receipt = sample.recording.nativeReceipt;
+              if (sample.recording.error)
+                nativeWheel.failureSnapshot = structuredClone({
+                  trains: nativeWheel.trains,
+                  commands: nativeWheel.commands,
+                  wire: nativeWheel.wire,
+                });
+            }
             await observer.dispose();
           }
           if (cdp)

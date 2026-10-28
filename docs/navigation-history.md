@@ -1,6 +1,6 @@
 # Navigation history and dismissal
 
-This is the product contract for dialogs and content tabs: passive Back/Forward
+This is the product contract for addressable dialogs and content tabs: passive Back/Forward
 preserves their return path; explicit Close retires it. It applies to global and
 contextual dialogs alike, and to content tabs such as threads, Profiles and
 GitHub. Existing surfaces still need to be checked and migrated; using shared
@@ -8,7 +8,9 @@ controls does not automatically connect a feature to navigation history.
 
 ## Passive navigation preserves; explicit close dismisses
 
-Opening a dialog or visiting a content tab creates a navigation visit. Back
+Opening an addressable dialog or visiting a content tab creates a navigation visit.
+Transient confirmations, menus and popovers are nested surfaces, not addresses;
+they dismiss only themselves and do not create history visits. Back
 returns to the preceding view; Forward can restore the content. Back/Forward
 changes what is visible without recording a dismissal.
 

@@ -108,7 +108,13 @@ export function useMentionChoices(
       people,
       community?.joinable(),
     );
-    const sources = [selected, people, session.names?.snapshot()];
+    // Drafts recreate their recipient array on every edit; its names and keys
+    // are the naming fact, not its identity or positions.
+    const sources = [
+      JSON.stringify(selected.map(({ pubkey, name }) => [pubkey, name])),
+      people,
+      session.names?.snapshot(),
+    ];
     const hit = labeled.get(candidates);
     if (hit?.sources.every((source, i) => source === sources[i]))
       return hit.choices;

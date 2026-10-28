@@ -6,6 +6,8 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { MentionCompletion } from "./MentionCompletion";
 import { MentionPicker } from "./MentionPicker";
 import { mentionQuery } from "./mention-query";
+import { useMentionChoices } from "./use-mention-choices";
+import { useTeamMentions } from "./use-team-mentions";
 import { createAgentLibrary } from "../../features/agents/library";
 import { createAgentChoices } from "../../features/agents/choices";
 import { ComposerCompletions } from "../../features/conversation/ComposerCompletions";
@@ -15,8 +17,11 @@ import type {
 } from "../../features/conversation/contracts";
 import type { CompletionEditor } from "../../features/conversation/useCompletionEditor";
 import type { ComposerInputElement } from "../../features/messages/composer-dom";
+import type { MentionRecipient } from "../../features/messages/mention-draft";
+import { SelectedMentionContext } from "../../features/messages/selected-mention-context";
 import type { RelaySession } from "../../features/relay/session";
 import type { Contribution } from "../../plugins/contributions";
+import * as personMatch from "../../features/search/person-match";
 
 // jsdom lacks scrollIntoView; the search highlight keeps its row in view.
 beforeEach(() => {
@@ -530,4 +535,44 @@ it("a closed chooser reads no member while its composer rerenders", async () => 
     screen.getByRole("button", { name: "Mention a member" }),
   );
   expect(memberReads()).toBeGreaterThan(0);
+});
+
+it("an @ keystroke reuses the name index across draft and team rerenders", async () => {
+  const h = fixture({ count: 300 });
+  const starts = vi.spyOn(personMatch, "nameStarts");
+  function Chooser({ query }: { query: string }) {
+    const model = useMentionChoices(h.session, "parent", false, query, "open");
+    // Shown team rows read candidates with their own directory.
+    useTeamMentions(h.session, "parent", false, query, model);
+    return null;
+  }
+  // The draft builds a new recipient array on every edit.
+  const draft = (query: string, selected: readonly MentionRecipient[]) => (
+    <SelectedMentionContext.Provider value={selected}>
+      {/* Inline completion remounts on every keystroke. */}
+      <Chooser key={query} query={query} />
+    </SelectedMentionContext.Provider>
+  );
+  vi.useFakeTimers();
+  // Each settled directory search finds nobody.
+  const settle = () =>
+    act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+  const view = render(draft("te", []));
+  await settle();
+  expect(h.session.directMessages.people).toHaveBeenCalled();
+  expect(starts).toHaveBeenCalled();
+  starts.mockClear();
+  view.rerender(draft("tea", []));
+  await settle();
+  view.rerender(draft("team", []));
+  await settle();
+  expect(starts).not.toHaveBeenCalled();
+  // A different selection is a different naming fact.
+  view.rerender(draft("team", [{ pubkey: "f".repeat(64), name: "Picked" }]));
+  expect(starts).toHaveBeenCalled();
+  view.unmount();
+  h.library.dispose();
+  vi.useRealTimers();
 });

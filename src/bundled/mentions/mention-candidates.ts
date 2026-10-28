@@ -42,10 +42,21 @@ type ElsewhereAgent = Pick<Agent, "pubkey" | "name" | "relay">;
 const none: readonly never[] = [];
 // Rows change only with their sources, not with each keystroke. Snapshots are
 // immutable, so identity is their revision; `joinable()` copies on each call.
+// Each directory array keeps its own rows: the chooser and its team rows pass
+// different directories in one render and must not evict each other. Only the
+// latest few channels and directory pages keep rows.
+type Built = { sources: readonly unknown[]; rows: MentionCandidate[] };
 const built = new WeakMap<
   ComposerSession,
-  Map<string, { sources: readonly unknown[]; rows: MentionCandidate[] }>
+  Map<string, Map<readonly DirectoryPerson[], Built>>
 >();
+/** Moves `key` to the newest end, dropping the oldest past `limit`. */
+function recent<K, V>(map: Map<K, V>, key: K, value: V, limit: number) {
+  map.delete(key);
+  map.set(key, value);
+  if (map.size > limit) map.delete(map.keys().next().value as K);
+  return value;
+}
 export type MentionCandidate = ReturnType<typeof buildCandidates>[number];
 
 /** What the chooser offers. The host admits recipients itself (mention-admission). No reads or writes. */
@@ -66,20 +77,26 @@ export function mentionCandidates(
     session.archives?.snapshot(),
     session.outbox?.supports(9000),
     roster,
-    directory,
     JSON.stringify(
       elsewhere.map(({ pubkey, name, relay }) => [pubkey, name, relay]),
     ),
   ];
-  // The chooser reads both its directory rows and its local rows each render.
-  const key = JSON.stringify([channelId, inviteAgents, directory === none]);
-  const cache: Map<
+  const key = JSON.stringify([channelId, inviteAgents]);
+  const channels: Map<
     string,
-    { sources: readonly unknown[]; rows: MentionCandidate[] }
+    Map<readonly DirectoryPerson[], Built>
   > = built.get(session) ?? new Map();
-  built.set(session, cache);
-  const hit = cache.get(key);
-  if (hit?.sources.every((source, i) => source === sources[i])) return hit.rows;
+  built.set(session, channels);
+  // Local rows, team rows and the current directory page.
+  const cache: Map<readonly DirectoryPerson[], Built> = recent(
+    channels,
+    key,
+    channels.get(key) ?? new Map(),
+    4,
+  );
+  const hit = cache.get(directory);
+  if (hit?.sources.every((source, i) => source === sources[i]))
+    return recent(cache, directory, hit, 3).rows;
   const rows = buildCandidates(
     session,
     channelId,
@@ -88,7 +105,7 @@ export function mentionCandidates(
     directory,
     elsewhere,
   );
-  cache.set(key, { sources, rows });
+  recent(cache, directory, { sources, rows }, 3);
   return rows;
 }
 

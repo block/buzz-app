@@ -1,9 +1,33 @@
 import { test, expect } from "./source-fixture.mjs";
+import {
+  mediaReadyForPausedSeek,
+  playFixtureVideos,
+} from "./fixture-media.mjs";
+
+// The same supported Linux WebKit native/offscreen policy as whole611 editor
+// runs. This functional fixture does not alter any perf scenario or recorder.
+test.use({
+  launchOptions: async ({ browserName, launchOptions }, use) => {
+    await use(
+      browserName === "webkit" && process.platform === "linux"
+        ? {
+            ...launchOptions,
+            env: {
+              ...process.env,
+              ...launchOptions.env,
+              WEBKIT_GST_ALLOW_PLAYBACK_OF_INVISIBLE_VIDEOS: "1",
+            },
+          }
+        : launchOptions,
+    );
+  },
+});
 
 // Native playback, CSS animation completion and the first exposed rendering
 // update cannot be established by jsdom. This is correctness, not a perf case.
 test("covered native playback stays live and restores current controls across pane moves and close", async ({
   page,
+  browserName,
 }) => {
   await page.goto("/tests/fixtures/workspace-publication.html");
   const video = page.locator("video");
@@ -12,12 +36,12 @@ test("covered native playback stays live and restores current controls across pa
   await expect
     .poll(() => video.evaluate((v) => v.readyState))
     .toBeGreaterThanOrEqual(2);
-  await video.evaluate((v) => {
-    v.muted = true;
-    v.loop = true;
-  });
-  await page.locator("[data-video-preview]").hover();
-  await page.getByRole("button", { name: "Play video", exact: true }).click();
+  const pausedSeek = browserName === "webkit" && process.platform === "linux";
+  if (pausedSeek)
+    await expect
+      .poll(() => video.evaluateAll(mediaReadyForPausedSeek))
+      .toBe(true);
+  await video.evaluateAll(playFixtureVideos, pausedSeek);
   await expect
     .poll(() => video.evaluate((v) => !v.paused && v.currentTime > 0))
     .toBe(true);
@@ -87,6 +111,23 @@ test("covered native playback stays live and restores current controls across pa
       ).toBeEnabled();
     }
   }
+  await page.locator("[data-video-preview]").hover();
+  await page.getByRole("button", { name: "Pause video", exact: true }).click();
+  await expect.poll(() => video.evaluate((v) => v.paused)).toBe(true);
+  await progress.focus();
+  const position = Number(await progress.inputValue());
+  const duration = await video.evaluate((v) => v.duration);
+  await progress.press("ArrowRight");
+  const expectedPosition = Math.min(
+    duration,
+    Number((position + 0.1).toFixed(1)),
+  );
+  await expect(progress).toHaveValue(String(expectedPosition));
+  await expect
+    .poll(() => video.evaluate((v) => v.currentTime))
+    .toBeCloseTo(expectedPosition, 1);
+  await page.getByRole("button", { name: "Play video", exact: true }).click();
+  await expect.poll(() => video.evaluate((v) => v.paused)).toBe(false);
   await page.getByRole("button", { name: "Close player", exact: true }).click();
   await expect(video).toHaveCount(0);
   expect(await original.evaluate((v) => v.isConnected)).toBe(false);

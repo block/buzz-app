@@ -33,6 +33,10 @@ import { clientMetrics } from "../developer/client-metrics";
 import { MessageClock } from "./message-order";
 import { yieldToHost } from "./yield";
 import { matchRank } from "../search/match";
+import {
+  clearPreparedMessages,
+  prepareMessageContents,
+} from "../messages/markdown-worker";
 
 type Listener = () => void;
 type WindowState = {
@@ -683,6 +687,14 @@ export function createChannelStore(
         signal: controller.signal,
       });
       if (!live(state, generation)) return;
+      // Older pages are off the opening path: prepare their bodies off-thread.
+      if (cursor) {
+        await prepareMessageContents(
+          page.events.map((event) => event.content),
+          controller.signal,
+        );
+        if (!live(state, generation)) return;
+      }
       const combined = new Map(
         (cursor ? state.events : []).map((event) => [event.id, event]),
       );
@@ -2085,6 +2097,7 @@ export function createChannelStore(
     warmPreferred = [];
     media.dispose();
     media = createMediaPreparation();
+    clearPreparedMessages();
     for (const controller of controllers) controller.abort();
     for (const state of [...windows.values()]) evict(state);
     heads.clear();
@@ -2774,6 +2787,7 @@ export function createChannelStore(
       }
     media.dispose();
     media = createMediaPreparation();
+    clearPreparedMessages();
     for (const controller of controllers) controller.abort();
     for (const [id, head] of heads.entries()) {
       if (!transport || !authorized(id)) {
@@ -2846,6 +2860,7 @@ export function createChannelStore(
     epoch++;
     creationReads.clear();
     media.dispose();
+    clearPreparedMessages();
     for (const controller of controllers) controller.abort();
     for (const state of windows.values()) {
       state.generation++;

@@ -510,6 +510,8 @@ export function SharedImportDialog({
             ? "Edited. Changes only affect your copy."
             : "Import it as is, or edit anything below first. Changes only affect your copy."
       }
+      headerGap="compact"
+      footerGap="compact"
       finalFocus={finalFocus}
       preventClose={pending}
       onOpenChange={(open) => {

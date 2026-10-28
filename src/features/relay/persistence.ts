@@ -228,37 +228,43 @@ export function createHeadPersistence(
       }
     });
   }
-  /** Index keys carry only accounting fields, including for untouched v2 rows. */
+  /** Normal accounting reads only index keys, including for untouched v2 rows.
+   * Damaged fields can omit an entry; preserve the prior full-record policy then. */
   function metadata(
     store: IDBObjectStore,
     then: Then,
     done: (rows: Metadata[]) => void,
   ) {
-    const rows: Metadata[] = [];
-    const request = store.index(RECENCY).openKeyCursor();
-    const next = (cursor: IDBCursor | null) => {
-      if (!cursor) {
-        // getAll + stable sort used primary-key ascending order for equal dates.
-        rows.sort(
-          (a, b) =>
-            b.savedAt - a.savedAt ||
-            (a.key < b.key ? -1 : a.key > b.key ? 1 : 0),
-        );
-        done(rows);
-        return;
-      }
-      const [savedAt, key, bytes, rowScope, channelId] = cursor.key as [
-        number,
-        string,
-        number,
-        string,
-        string,
-      ];
-      rows.push({ savedAt, key, bytes, scope: rowScope, channelId });
-      cursor.continue();
-    };
-    then(request, next);
+    then(store.count(), (count) => {
+      const rows: Metadata[] = [];
+      then(store.index(RECENCY).openKeyCursor(), (cursor) => {
+        if (!cursor) {
+          if (rows.length !== count) {
+            then(store.getAll(), (all: Metadata[]) =>
+              done(all.sort((a, b) => b.savedAt - a.savedAt)),
+            );
+            return;
+          }
+          // getAll + stable sort used primary-key order for equal dates.
+          rows.sort(
+            (a, b) => b.savedAt - a.savedAt || indexedDB.cmp(a.key, b.key),
+          );
+          done(rows);
+          return;
+        }
+        const [savedAt, key, bytes, rowScope, channelId] = cursor.key as [
+          number,
+          string,
+          number,
+          string,
+          string,
+        ];
+        rows.push({ savedAt, key, bytes, scope: rowScope, channelId });
+        cursor.continue();
+      });
+    });
   }
+
   function unlink(
     owner: string,
     garbage: Set<string>,

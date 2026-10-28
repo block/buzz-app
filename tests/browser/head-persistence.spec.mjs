@@ -7,10 +7,8 @@ test.beforeEach(async ({ page }) => {
 
 // Browser-only boundary: actual IDB transaction auto-commit, reopen, shared-wire
 // reference cleanup and migration. Session admission still verifies real signatures.
-test("signed heads survive atomic replacement, reopen and session hydration with scoped cleanup", async ({
-  page,
-}) => {
-  const result = await page.evaluate(async () => {
+async function signedHeadRoundTrip(page, damagedAccounting) {
+  const result = await page.evaluate(async (damagedAccounting) => {
     const f = window.headPersistence;
     const viewer = f.keypair(),
       relay = f.keypair();
@@ -48,6 +46,29 @@ test("signed heads survive atomic replacement, reopen and session hydration with
     } finally {
       cache.close();
       other.close();
+    }
+    if (damagedAccounting) {
+      const db = await new Promise((yes, no) => {
+        const request = indexedDB.open("buzz-channel-heads-v1");
+        request.onsuccess = () => yes(request.result);
+        request.onerror = () => no(request.error);
+      });
+      try {
+        await new Promise((yes, no) => {
+          const tx = db.transaction("heads", "readwrite"),
+            store = tx.objectStore("heads"),
+            request = store.get(`${viewer.pubkey}:relay:a`);
+          request.onsuccess = () => {
+            const row = request.result;
+            delete row.bytes;
+            store.put(row);
+          };
+          tx.oncomplete = yes;
+          tx.onabort = () => no(tx.error);
+        });
+      } finally {
+        db.close();
+      }
     }
     const restored = f.createHeadPersistence(viewer.pubkey, "relay");
     const read = await restored.read();
@@ -131,7 +152,7 @@ test("signed heads survive atomic replacement, reopen and session hydration with
       owner.dispose();
       restored.close();
     }
-  });
+  }, damagedAccounting);
   expect(result.exactWire).toBe(true);
   expect(result.valid).toBe(true);
   expect(result.rows).toEqual(result.expected);
@@ -142,7 +163,13 @@ test("signed heads survive atomic replacement, reopen and session hydration with
   expect(result.otherRows).toEqual(["private-other"]);
   expect(result.afterClear).toEqual(["private-other"]);
   expect(result.counts).toEqual([0, 0, 0]);
-});
+}
+for (const damagedAccounting of [false, true])
+  test(`signed heads survive atomic replacement, reopen and session hydration with scoped cleanup${damagedAccounting ? " and damaged accounting" : ""}`, async ({
+    page,
+  }) => {
+    await signedHeadRoundTrip(page, damagedAccounting);
+  });
 
 test("corrupt and missing shared wires isolate one head and fresh writes repair them", async ({
   page,

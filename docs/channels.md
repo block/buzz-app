@@ -1062,15 +1062,17 @@ The port retains the prepared-store implementation and its behavior tests:
   expiry. Schema 4 stores ordered head manifests and shared, scope-local exact
   signed-wire list blocks. Nonempty event and profile lists each require one
   payload read; empty lists require none. This shares repeated exact lists rather
-  than independently deduplicating individual events. Duplicate occurrences still count against the original
-  logical byte budget; deduplication does not enlarge retained evidence. Payload
+  than independently deduplicating individual events. Duplicate occurrences still
+  count against the original logical byte budget; deduplication does not enlarge retained evidence. Payload
   ownership edges, head replacement, global pruning and last-owner cleanup commit
   atomically. A fresh valid save repairs corrupted shared wire data. One corrupt
   manifest cannot suppress healthy sibling heads.
   Signed cached events are reverified before display; payload hashes are storage
   coordinates, never verification or membership proof. The same database
   stores account/relay-scoped startup discovery and sidebar organization (a separate
-  8 MiB global budget). Version-1/2 whole-head records survive the schema upgrade
+  8 MiB global budget). Incomplete accounting indexes fall back to the prior
+  full-record scan so readable damaged records still participate in global
+  retention and restore. Version-1/2 whole-head records survive the schema upgrade
   and remain readable until normal replacement/removal. Schema-3 per-event manifests
   also remain readable and are replaced lazily. Metadata indexes let the
   store select its current destination before reading unrelated event payloads;

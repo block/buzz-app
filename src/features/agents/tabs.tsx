@@ -41,8 +41,8 @@ export function agentSections({
   agent: Agent;
   type: RegisteredAgentType | undefined;
   conversation?: AgentConversation | undefined;
-  /** Opened for the conversation's transcript, its work's one known place. */
-  initialTranscript?: boolean | undefined;
+  /** Asks to show the conversation's transcript first; see AgentViewProps. */
+  initialTranscript?: (() => void) | undefined;
   /** Closes the panel the sections are shown in. */
   close?: (() => void) | undefined;
   settingsHost?: AgentSettingsHost;
@@ -85,10 +85,8 @@ export function agentSections({
             {...(conversation && { conversation })}
             {...(role === "activity" &&
               conversation &&
-              initialTranscript && {
-                initialTranscript: true,
-                ...(close && { close }),
-              })}
+              initialTranscript && { initialTranscript })}
+            {...(role === "activity" && close && { close })}
             save={(config) =>
               settingsHost?.pendingSave
                 ? settingsHost.pendingSave(config)

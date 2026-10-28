@@ -839,7 +839,7 @@ export function createTabs(
     const { open, show, back } = useOpenTranscript(
       conversation,
       label,
-      initialTranscript ? here : undefined,
+      initialTranscript && { initial: here, done: initialTranscript },
       close,
     );
     const saved = new Set(conversations.map((row) => row.key));
@@ -944,7 +944,7 @@ export function createTabs(
             backLabel="Back to profile"
             onBack={back}
           >
-            <TranscriptView agent={agent} conversation={open} />
+            <TranscriptView key={open.key} agent={agent} conversation={open} />
           </PanelSubview>
         )}
       </div>

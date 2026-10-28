@@ -869,7 +869,7 @@ export function createTabs({
     const { open, show, back } = useOpenTranscript(
       conversation,
       label,
-      initialTranscript ? here : undefined,
+      initialTranscript && { initial: here, done: initialTranscript },
       close,
     );
     const rows = (recent.value ?? [])
@@ -964,6 +964,7 @@ export function createTabs({
             onBack={back}
           >
             <TranscriptView
+              key={open.key}
               agent={agent}
               row={open}
               working={busy(open.sessionId) ? open.sessionId : undefined}

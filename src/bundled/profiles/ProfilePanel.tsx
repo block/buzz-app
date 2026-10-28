@@ -76,6 +76,11 @@ export function ProfilePanel({
   const activityKey = profileActivityViewKey(target);
   const transcript = profileActivityTranscript(target);
   const opening = transcript ? "transcript" : activityKey ? "activity" : "info";
+  // Asked once per conversation: changing sections must not reopen it.
+  const place = context ? `${context.channelId}/${context.rootId ?? ""}` : "";
+  const [asked, setAsked] = useState<string>();
+  const initialTranscript =
+    transcript && asked !== place ? () => setAsked(place) : undefined;
   const pubkey = profilePanelKey(target) ?? activityKey;
   const owned = useAgent(agents, pubkey ?? "");
   if (!pubkey) return <p>Unsupported profile.</p>;
@@ -94,7 +99,7 @@ export function ProfilePanel({
         agents={agents}
         communities={communities}
         initialActivity={!!activityKey}
-        initialTranscript={transcript}
+        initialTranscript={initialTranscript}
         pubkey={pubkey}
         relay={relay}
         session={connection.session}
@@ -107,7 +112,7 @@ export function ProfilePanel({
     <ProfileDetails
       key={`${connection.scope}:${connection.generation}:${pubkey}:${opening}`}
       initialTab={activityKey ? "activity" : "info"}
-      initialTranscript={transcript}
+      initialTranscript={initialTranscript}
       session={connection.session}
       pubkey={pubkey}
       agentHint={profileAgentHint(target) || !!activityKey}
@@ -136,7 +141,7 @@ function OwnedAgentProfile({
   agents: Agents;
   communities: CommunityReader | undefined;
   initialActivity: boolean;
-  initialTranscript: boolean;
+  initialTranscript: (() => void) | undefined;
   pubkey: string;
   relay: RelayData;
   session: RelaySession;
@@ -197,7 +202,7 @@ function ProfileDetails({
   agents: Agents | undefined;
   communities: CommunityReader | undefined;
   initialTab: "info" | "activity";
-  initialTranscript: boolean;
+  initialTranscript: (() => void) | undefined;
   agentHint: boolean;
   session: RelaySession;
   pubkey: string;

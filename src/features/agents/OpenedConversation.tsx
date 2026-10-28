@@ -85,13 +85,15 @@ export function useOpenedSession<T extends Saved>(
 /** The transcript a type's tab shows over itself as a panel subview, titled
  * `title(row)`. It closes when the profile is retargeted to another
  * conversation, and viewing it again brings its tab back in a tabbed host.
- * `initial`, once found, opens by itself once per conversation unless the
- * reader has already opened one; closing
- * that tab calls `close`, since it was all that was asked for. */
+ * `request` asks for the conversation's transcript first. It opens by itself
+ * only if already known when the conversation is shown, since one found later
+ * must not take the reader's focus; `request.done` reports that it was offered.
+ * Closing that tab calls `close`, since it was all that was asked for, unless
+ * the host is only clearing the profile's own detail tabs. */
 export function useOpenTranscript<T>(
   conversation: AgentConversation | undefined,
   title: (row: T) => string,
-  initial?: T,
+  request?: { initial: T | undefined; done(): void },
   close?: () => void,
 ) {
   const place = conversation
@@ -104,24 +106,26 @@ export function useOpenTranscript<T>(
   }>();
   // Forgotten, not just hidden: returning to the first conversation must not
   // reopen it unasked.
-  if (shown && shown.place !== place) setShown(undefined);
-  // Kept after Back, so closing it shows the profile rather than reopening.
   const [offered, setOffered] = useState("");
-  if (initial !== undefined && place && offered !== place) {
+  if (offered !== place) {
     setOffered(place);
-    setShown({ place, row: initial, initial: true });
+    setShown(
+      place && request?.initial !== undefined
+        ? { place, row: request.initial, initial: true }
+        : undefined,
+    );
   }
+  const done = request?.done;
+  useEffect(() => done?.(), [done]);
   const tabs = usePanelTabHost();
   return {
     open: shown?.place === place ? shown.row : undefined,
     show(row: T) {
-      // The reader's own choice wins over a lookup still finishing.
-      setOffered(place);
       setShown({ place, row });
       tabs?.activate(tabs.owner, title(row));
     },
-    back() {
-      if (tabs && close && shown?.initial) close();
+    back(options?: { keepOwner?: boolean }) {
+      if (tabs && close && shown?.initial && !options?.keepOwner) close();
       else setShown(undefined);
     },
   };

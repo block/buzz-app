@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { act, renderHook } from "@testing-library/react";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { useOpenedSession, useOpenTranscript } from "./OpenedConversation";
 
 type Row = { key: string; channelId: string; root?: string };
@@ -19,7 +19,10 @@ it("keeps the reader's choice when the opened conversation's lookup finishes lat
       conversation,
       () => lookup,
     );
-    return useOpenTranscript<Row>(conversation, (row) => row.key, session);
+    return useOpenTranscript<Row>(conversation, (row) => row.key, {
+      initial: session,
+      done() {},
+    });
   });
   expect(result.current.open).toBeUndefined();
   act(() => result.current.show(recent));
@@ -31,16 +34,36 @@ it("keeps the reader's choice when the opened conversation's lookup finishes lat
   expect(result.current.open).toBe(recent);
 });
 
-it("opens the found conversation's transcript once, not again after Back", async () => {
+it("never opens a transcript found only after the conversation was shown", async () => {
+  const done = vi.fn();
   const { result } = renderHook(() => {
     const { session } = useOpenedSession<Row>(
       [recent],
       conversation,
       async () => found,
     );
-    return useOpenTranscript<Row>(conversation, (row) => row.key, session);
+    return useOpenTranscript<Row>(conversation, (row) => row.key, {
+      initial: session,
+      done,
+    });
   });
   await act(async () => {});
+  expect(result.current.open).toBeUndefined();
+  expect(done).toHaveBeenCalled();
+});
+
+it("opens the known conversation's transcript once, not again after Back", () => {
+  const { result } = renderHook(() => {
+    const { session } = useOpenedSession<Row>(
+      [found],
+      conversation,
+      async () => undefined,
+    );
+    return useOpenTranscript<Row>(conversation, (row) => row.key, {
+      initial: session,
+      done() {},
+    });
+  });
   expect(result.current.open).toBe(found);
   act(() => result.current.back());
   expect(result.current.open).toBeUndefined();

@@ -376,7 +376,7 @@ it("opens the conversation's transcript when opened from its activity, once", as
       agent={agent()}
       save={vi.fn()}
       conversation={conversation}
-      initialTranscript
+      initialTranscript={() => undefined}
     />,
   );
   const user = userEvent.setup();

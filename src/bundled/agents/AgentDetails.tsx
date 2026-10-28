@@ -92,7 +92,7 @@ export function AgentDetails({
   messageAction: (variant: "glass" | "subtle") => ReactNode;
   conversation?: AgentConversation | undefined;
   initialActivity?: boolean;
-  initialTranscript?: boolean;
+  initialTranscript?: (() => void) | undefined;
   /** Closes the panel showing the agent. */
   close?: () => void;
   communities?: CommunityReader | undefined;

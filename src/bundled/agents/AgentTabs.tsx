@@ -27,7 +27,7 @@ export function AgentTabs(props: {
   settingsContent: ReactNode;
   conversation?: AgentConversation | undefined;
   initialActivity?: boolean | undefined;
-  initialTranscript?: boolean | undefined;
+  initialTranscript?: (() => void) | undefined;
   close?: (() => void) | undefined;
   onDiscard?: () => void;
 }) {

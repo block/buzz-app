@@ -762,7 +762,7 @@ export function createTabs({
     const { open, show, back } = useOpenTranscript(
       conversation,
       label,
-      initialTranscript ? here : undefined,
+      initialTranscript && { initial: here, done: initialTranscript },
       close,
     );
     const recent = places
@@ -832,6 +832,7 @@ export function createTabs({
             onBack={back}
           >
             <TranscriptView
+              key={open.key}
               agent={agent}
               place={open}
               working={working.includes(open.conversation)}

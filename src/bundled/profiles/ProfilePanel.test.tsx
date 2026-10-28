@@ -4,6 +4,7 @@ import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
 stubAvatarBrowserApis();
 import userEvent from "@testing-library/user-event";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { useEffect, useState } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "../../features/relay/session";
 import type { RelayData } from "../../features/relay/service";
@@ -371,24 +372,29 @@ function renderAgentActivity(
       id: title.toLowerCase(),
       title,
       role,
-      component: ({
+      component: function Echo({
         conversation,
         initialTranscript,
       }: {
         conversation?: { channelId: string; rootId?: string };
-        initialTranscript?: boolean;
-      }) => (
-        <>
-          <p>Echo {title.toLowerCase()}</p>
-          {initialTranscript && <p>Transcript first</p>}
-          {conversation && (
-            <p>
-              Opened from {conversation.channelId}/
-              {conversation.rootId ?? "channel"}
-            </p>
-          )}
-        </>
-      ),
+        initialTranscript?: () => void;
+      }) {
+        // Like a type's Activity tab: it acts on the request as it shows.
+        const [first] = useState(!!initialTranscript);
+        useEffect(() => initialTranscript?.(), [initialTranscript]);
+        return (
+          <>
+            <p>Echo {title.toLowerCase()}</p>
+            {first && <p>Transcript first</p>}
+            {conversation && (
+              <p>
+                Opened from {conversation.channelId}/
+                {conversation.rootId ?? "channel"}
+              </p>
+            )}
+          </>
+        );
+      },
     })),
   } as unknown as RegisteredAgentType;
   const agent = {
@@ -471,6 +477,27 @@ it("asks the Activity tab for its transcript only when the opener knows the conv
   dispose = renderAgentActivity(tabs, "thread-root", true);
   try {
     expect(screen.getByText("Transcript first")).toBeVisible();
+  } finally {
+    dispose();
+  }
+});
+
+it("asks for the transcript once, not again on returning from another section", async () => {
+  const dispose = renderAgentActivity(
+    [
+      { title: "Settings", role: "settings" },
+      { title: "Activity", role: "activity" },
+    ],
+    "thread-root",
+    true,
+  );
+  try {
+    expect(screen.getByText("Transcript first")).toBeVisible();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("tab", { name: "Identity" }));
+    await user.click(screen.getByRole("tab", { name: "Activity" }));
+    expect(screen.getByText("Echo activity")).toBeVisible();
+    expect(screen.queryByText("Transcript first")).toBeNull();
   } finally {
     dispose();
   }

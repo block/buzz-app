@@ -705,7 +705,11 @@ panel grid must have a shrinkable column so tabs do not widen other content.
 
 Keyboard focus is visible, and the component recipes in this guide own the ring.
 Every recipe is gated on the app-root modality fact `html[data-keyboard-navigation]`,
-so a pointer press leaves nothing behind. Keep focusability, Tab order, input
+so a pointer press leaves nothing behind. The base outline reset for controls
+without a recipe reads `[data-keyboard-focus]` instead, which
+`useKeyboardFocusVisibility` keeps on the focused element alongside the root
+fact. A host or fixture that sets only the root attribute gets recipe rings but
+keeps the user-agent outline hidden. Keep focusability, Tab order, input
 modality, selection, and focus restoration intact, and do not add a local
 replacement ring where a component recipe already exists.
 

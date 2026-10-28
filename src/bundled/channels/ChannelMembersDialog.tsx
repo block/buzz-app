@@ -951,7 +951,11 @@ export function ChannelMembersDialog({
     const size = Math.max(
       invitationPage.groupSizes[name] ?? INVITATION_GROUP_SIZE,
       invitationPage.revealRelay
-        ? ordered.findLastIndex((person) => relayKeys.has(person.pubkey)) + 1
+        ? ordered.reduce(
+            (last, person, index) =>
+              relayKeys.has(person.pubkey) ? index + 1 : last,
+            0,
+          )
         : 0,
     );
     return {

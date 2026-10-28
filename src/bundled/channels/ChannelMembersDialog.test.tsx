@@ -390,10 +390,10 @@ it("distinguishes invitation and roster People regions while retaining the capti
   const invitations = await screen.findByRole("region", {
     name: "People not in this channel",
   });
-  const roster = screen.getByRole("region", { name: "People", exact: true });
+  const roster = screen.getByRole("region", { name: "People" });
   expect(within(roster).getByText(nameText("Morgan"))).toBeVisible();
   expect(
-    within(invitations).getByRole("heading", { name: "People", exact: true }),
+    within(invitations).getByRole("heading", { name: "People" }),
   ).toBeVisible();
   expect(
     within(invitations).getByRole("button", { name: /^Add Morgan Guest/ }),

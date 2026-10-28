@@ -8,6 +8,8 @@ import {
   useSyncExternalStore,
 } from "react";
 import { errorText } from "../../buzz-mcp/rpc";
+import { isRetryableRead, retryRead } from "../../features/relay/read-retry";
+import { PiStopped } from "./pi";
 import activityStyles from "../../features/agents/ActivityLayout.module.css";
 import { ActivityTranscript } from "../../features/agents/ActivityTranscript";
 import { AgentInstructions } from "../../features/agents/AgentInstructions";
@@ -113,7 +115,12 @@ function useRead<T>(
         ? {}
         : { value: prior.value, scope };
     setState((prior) => ({ status: "loading", ...kept(prior) }));
-    read(abort.signal).then(
+    retryRead(
+      read,
+      abort.signal,
+      // The next request starts another host.
+      (error) => error instanceof PiStopped || isRetryableRead(error),
+    ).then(
       (value) => {
         if (!abort.signal.aborted) setState({ status: "ready", value, scope });
       },

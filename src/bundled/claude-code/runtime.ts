@@ -193,6 +193,12 @@ export class ClaudeRuntime {
     /** Desktop-local repository instructions; standalone hosts keep their own layout. */
     private readonly repositories: (scope: string | undefined) => string = () =>
       "",
+    private readonly hook: (
+      agent: string,
+      session: string,
+      event: string,
+      input: unknown,
+    ) => Promise<Record<string, unknown>> = async () => ({}),
   ) {}
 
   /** The host's own spawn, not a copy: history read with it is kept for it,
@@ -232,7 +238,9 @@ export class ClaudeRuntime {
       }
     }
     this.spare.warm(
-      ...agents.map((agent) => where(this.resolveConfig(agent.config))),
+      ...agents.map((agent) => ({
+        ...where(this.resolveConfig(agent.config)),
+      })),
     );
     this.notify();
   }
@@ -931,6 +939,8 @@ export class ClaudeRuntime {
         return {
           ...where(entry.config),
           ...(directories ? { directories } : {}),
+          hook: (session, event, input) =>
+            this.hook(agent, session, event, input),
           tools: tools(workspace),
           systemPrompt: systemPrompt({
             scope,

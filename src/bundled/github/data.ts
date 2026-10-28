@@ -1,3 +1,4 @@
+import { ReadError, transientStatus } from "../../features/relay/errors";
 import type { GitHubReference } from "./references";
 
 export type Branch = { label: string; url?: string | undefined };
@@ -104,7 +105,11 @@ export async function loadGitHubDetails(
       throw new Error(
         "GitHub’s public API limit was reached. Try again later or open it on GitHub.",
       );
-    throw new Error(`GitHub couldn’t load this object (${response.status}).`);
+    const message = `GitHub couldn’t load this object (${response.status}).`;
+    // `loadGitHubObject` retries server failures quietly.
+    throw transientStatus(response.status)
+      ? new ReadError("unavailable", message, response.status)
+      : new Error(message);
   }
   const data: ResponseData = await response.json();
   const facts: GitHubDetails["facts"] = [];

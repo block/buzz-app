@@ -84,27 +84,60 @@ export function useOpenedSession<T extends Saved>(
 
 /** The transcript a type's tab shows over itself as a panel subview, titled
  * `title(row)`. It closes when the profile is retargeted to another
- * conversation, and viewing it again brings its tab back in a tabbed host. */
+ * conversation, and viewing it again brings its tab back in a tabbed host.
+ * `request` asks for the conversation's transcript first. It opens by itself
+ * only if already known when the conversation is shown, since one found later
+ * must not take the reader's focus; `request.done` reports that it was offered.
+ * A new `request.opening` asks again, even for the conversation already shown.
+ * Closing that tab calls `close`, since it was all that was asked for, unless
+ * the host is only clearing the profile's own detail tabs. */
 export function useOpenTranscript<T>(
   conversation: AgentConversation | undefined,
   title: (row: T) => string,
+  request?: { initial: T | undefined; opening: number; done(): void },
+  close?: () => void,
 ) {
   const place = conversation
     ? `${conversation.channelId}/${conversation.rootId ?? ""}`
     : "";
-  const [shown, setShown] = useState<{ place: string; row: T }>();
+  const [shown, setShown] = useState<{
+    place: string;
+    row: T;
+    initial?: true;
+  }>();
   // Forgotten, not just hidden: returning to the first conversation must not
-  // reopen it unasked.
-  if (shown && shown.place !== place) setShown(undefined);
+  // reopen it unasked. A new request opens it again in the same one.
+  const opening = request?.opening;
+  const [offered, setOffered] = useState<{ place: string; opening?: number }>({
+    place: "",
+  });
+  const moved = offered.place !== place;
+  if (moved || (opening !== undefined && opening !== offered.opening)) {
+    setOffered({ place, ...(opening !== undefined && { opening }) });
+    const asked =
+      place && request?.initial !== undefined
+        ? { place, row: request.initial, initial: true as const }
+        : undefined;
+    if (moved || asked) setShown(asked);
+  }
   const tabs = usePanelTabHost();
+  // A transcript already open in its tab is brought forward when asked again.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: once per opening.
+  useEffect(() => {
+    if (!request) return;
+    if (tabs && shown?.initial && shown.place === place)
+      tabs.activate(tabs.owner, title(shown.row));
+    request.done();
+  }, [opening]);
   return {
     open: shown?.place === place ? shown.row : undefined,
     show(row: T) {
       setShown({ place, row });
       tabs?.activate(tabs.owner, title(row));
     },
-    back() {
-      setShown(undefined);
+    back(options?: { keepOwner?: boolean }) {
+      if (tabs && close && shown?.initial && !options?.keepOwner) close();
+      else setShown(undefined);
     },
   };
 }

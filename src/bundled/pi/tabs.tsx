@@ -696,9 +696,11 @@ export function createTabs({
   function ActivityTab({
     agent,
     conversation,
+    initialTranscript,
   }: {
     agent: AgentViewProps<Config>["agent"];
     conversation?: AgentViewProps<Config>["conversation"];
+    initialTranscript?: AgentViewProps<Config>["initialTranscript"];
   }) {
     const working = useSyncExternalStore(
       (listener) => runtime.subscribe(listener),
@@ -711,6 +713,12 @@ export function createTabs({
       agent.key,
     );
     const places = listing.value;
+    // Pi lists its conversations only after the tab shows, so its transcript
+    // would open late, under whatever the reader turned to meanwhile. The
+    // request is settled without opening it.
+    const opening = initialTranscript?.opening;
+    // biome-ignore lint/correctness/useExhaustiveDependencies: once per opening.
+    useEffect(() => initialTranscript?.done(), [opening]);
     if (!places)
       return listing.status === "error" ? (
         <div className="grid gap-2">
@@ -824,6 +832,7 @@ export function createTabs({
             onBack={back}
           >
             <TranscriptView
+              key={open.key}
               agent={agent}
               place={open}
               working={working.includes(open.conversation)}

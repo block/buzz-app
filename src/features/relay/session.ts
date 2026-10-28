@@ -1384,25 +1384,29 @@ export function createRelaySession(
         })
       : undefined;
   })();
+  const readPreferences = async (
+    signal?: AbortSignal,
+    consistency?: "strong",
+  ) => {
+    const decode = transport?.decodeSidebarPreferences;
+    if (closed || !transport || !decode)
+      throw new Error("Saved sidebar preferences are unavailable in this host");
+    const combined = AbortSignal.any([
+      lifetime.signal,
+      AbortSignal.timeout(10_000),
+      ...(signal ? [signal] : []),
+    ]);
+    return readSidebarPreferences(
+      preferenceReader,
+      transport.viewer,
+      decode,
+      combined,
+      consistency,
+    );
+  };
   const sidebarPreferences = createSidebarPreferencesStore({
-    read: async (signal?: AbortSignal) => {
-      const decode = transport?.decodeSidebarPreferences;
-      if (closed || !transport || !decode)
-        throw new Error(
-          "Saved sidebar preferences are unavailable in this host",
-        );
-      const combined = AbortSignal.any([
-        lifetime.signal,
-        AbortSignal.timeout(10_000),
-        ...(signal ? [signal] : []),
-      ]);
-      return readSidebarPreferences(
-        preferenceReader,
-        transport.viewer,
-        decode,
-        combined,
-      );
-    },
+    read: readPreferences,
+    readAfterWrite: (signal) => readPreferences(signal, "strong"),
     available: !!transport?.decodeSidebarPreferences,
     write: (() => {
       const write = transport?.writeSidebarAssignment;

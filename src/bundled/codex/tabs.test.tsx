@@ -16,7 +16,7 @@ import {
 } from "@testing-library/react";
 import { StrictMode } from "react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { pubkeyOf } from "../../features/agents/membership";
 import { ownerReads } from "../../features/agents/reads";
 import {
@@ -382,6 +382,108 @@ it("brings an open transcript's tab back, and closes it when the profile moves",
   expect(screen.queryByRole("tab", { name: transcript })).toBeNull();
   await viewHere();
   expect(tab(transcript)).toHaveAttribute("aria-selected", "true");
+});
+
+describe("opened from activity", () => {
+  const root = "e".repeat(64);
+  const transcript = "#general · thread eeeeeeee";
+  const opened = () => {
+    const f = fixture({
+      saved: {
+        [JSON.stringify(["channel", root])]: {
+          threadId: "kept",
+          workspace: "/w",
+          at: 2,
+        },
+      },
+    });
+    const close = vi.fn();
+    const done = vi.fn();
+    // Each call is a new opening, as each Working now click is.
+    let openings = 0;
+    const panel = (done?: () => void) => (
+      <PanelWorkspace
+        value="profile"
+        select={() => undefined}
+        tabMenu={{
+          key: "channel",
+          closeAll: () => false,
+          closeOthers: () => false,
+        }}
+        items={[
+          {
+            id: "profile",
+            label: "Sol",
+            close: () => undefined,
+            content: (
+              <f.tabs.ActivityTab
+                {...f.props()}
+                conversation={{ channelId: "channel", rootId: root }}
+                {...(done && {
+                  initialTranscript: { opening: ++openings, done },
+                })}
+                close={close}
+              />
+            ),
+          },
+        ]}
+      />
+    );
+    return { close, done, panel };
+  };
+
+  it("shows the transcript, and closing it closes the panel", async () => {
+    const { close, done, panel } = opened();
+    render(panel(done));
+    expect(
+      await screen.findByRole("tab", { name: transcript }),
+    ).toHaveAttribute("aria-selected", "true");
+    expect(done).toHaveBeenCalled();
+    await userEvent.click(
+      screen.getByRole("button", { name: `Close ${transcript} tab` }),
+    );
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the panel when the profile's other tabs are closed", async () => {
+    const user = userEvent.setup();
+    const { close, done, panel } = opened();
+    render(panel(done));
+    await screen.findByRole("tab", { name: transcript });
+    await user.pointer({
+      target: screen.getByRole("tab", { name: "Sol" }),
+      keys: "[MouseRight]",
+    });
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Close other tabs" }),
+    );
+    expect(screen.queryByRole("tab", { name: transcript })).toBeNull();
+    expect(close).not.toHaveBeenCalled();
+  });
+
+  it("shows the transcript again when the kept profile is opened again", async () => {
+    const user = userEvent.setup();
+    const { done, panel } = opened();
+    const view = render(panel(done));
+    await screen.findByRole("tab", { name: transcript });
+    await user.pointer({
+      target: screen.getByRole("tab", { name: "Sol" }),
+      keys: "[MouseRight]",
+    });
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Close other tabs" }),
+    );
+    // The panel offered its request, so it no longer asks.
+    view.rerender(panel());
+    expect(screen.queryByRole("tab", { name: transcript })).toBeNull();
+    // Working now opens the same profile again: a new request.
+    const again = vi.fn();
+    view.rerender(panel(again));
+    expect(
+      await screen.findByRole("tab", { name: transcript }),
+    ).toHaveAttribute("aria-selected", "true");
+    expect(again).toHaveBeenCalledOnce();
+  });
 });
 
 it("finds the thread's Codex session another build started", async () => {

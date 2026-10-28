@@ -151,6 +151,28 @@ belong to this persistent sidebar. Rows in saved groups, **Starred** and **Chann
 can also be dragged with a pointer onto another saved group, **Starred** or
 **Channels**; the drop is the same Move intent, with the same gate, optimistic
 placement, rollback notice and Retry.
+The **Channels** ellipsis menu also offers **Create section**, which creates an
+empty section without moving a channel. Its dialog retains the name and section
+ID after an attempted write fails and waits for confirmation before closing.
+The submitted name stays read-only and focused; a rejected gate that attempted
+no write leaves the draft editable. Failed confirmation uses plain copy and
+offers Retry preferences whenever preferences are unavailable, with Create
+disabled until recovery. After a failed creation,
+the session refreshes preferences from the writer before allowing dismissal so
+an accepted save stays visible even after Cancel. If that read fails too, new
+creation is gated across menu, drop and create-and-move paths, and Retry retains
+writer routing until reconciliation succeeds. Recovery waits for all queued
+preference writes and repeats a writer read invalidated by a concurrent write.
+Ordinary startup remains replica-eligible. Dragging a channel into
+the gap above the first custom section expands an **Add to new section** drop
+target inside the sidebar. With no custom sections, the target is above
+**Channels**; **Starred** keeps its pinned position. The created section appears
+at that same first position. The target stays revealed for the rest of that drag, with
+reduced motion opening it immediately; other section destinations remain available.
+Dropping there opens the existing create-and-move dialog; cancelling leaves the
+channel in place, and no preference is written until submission. These entry
+points supplement the per-channel **Move channel → Create new…** route and use
+the existing gated preference queue and encrypted section record.
 Only a channel's select surface starts a drag, the surface its row menu wraps.
 **Starred** accepts drops only when it is already visible; starting a drag does
 not reveal an empty section. Use the row menu to star the first channel.
@@ -268,8 +290,9 @@ A register is `[version, device, value]`, with a nonnegative safe-integer millis
 version and 16 lowercase hex device ID. Meta-less relay heads import at event
 seconds × 1,000 with the zero device ID. Edits exceed every observed register
 version and use a random in-memory device ID. Sections sort by canonical `(order,id)`
-and project dense display orders; new sections append after the canonical live
-maximum. Orphan assignments are omitted from the legacy projection, not deleted
+and project dense display orders; menu-created sections append after the canonical
+live maximum, while drop-created sections precede the live minimum. Orphan
+assignments are omitted from the legacy projection, not deleted
 from metadata. Read projection accepts Desktop string values on retained section
 name/icon registers; only projected live text receives UI length limits. Already
 satisfied intents return without rewriting the head, including assignment removal

@@ -73,8 +73,8 @@ export function OutboxStatus({
                   try {
                     const shareReceipt =
                       item.event.kind === 9 &&
-                      // Saved receipts from earlier share flows.
-                      /^(snapshot-share:(agent|team)|solo-share-link:[^:]+):.+$/.test(
+                      // Share receipts, including those of earlier flows.
+                      /^(snapshot-share:(agent|team)|solo-share-link:[^:]+|agent-share:[^:]+):.+$/.test(
                         item.recovery?.key ?? "",
                       ) &&
                       (item.delivery === "accepted" ||

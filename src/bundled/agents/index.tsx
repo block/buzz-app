@@ -3,6 +3,7 @@ import type { PluginModule } from "../../plugins/api";
 import { registerAttention } from "../../features/agents/attention-command";
 import { registerDiscovery } from "../../features/agents/attention-discovery";
 import { AgentsPage } from "./AgentsPage";
+import { AgentCardAttachment, isAgentCard } from "./AgentCardAttachment";
 import { availableAgentProviderRoute } from "./routes";
 import { developerMode } from "../../features/developer/mode";
 import { withImportScenario } from "../../features/developer/agent-import-scenario";
@@ -14,12 +15,26 @@ export const inject = [
   "navigation",
   "communityReader",
   "host",
+  "conversation",
 ];
 export const apply: PluginModule["apply"] = (ctx) => {
   registerAttention(ctx);
   registerDiscovery(ctx.agents);
   const { relay, navigation: navigator } = ctx;
   const agents = developerMode ? withImportScenario(ctx.agents) : ctx.agents;
+  ctx.conversation.registerAttachment({
+    id: "agent-card",
+    title: "Agent card",
+    matches: isAgentCard,
+    component: (props) => (
+      <AgentCardAttachment
+        {...props}
+        agents={agents}
+        relay={relay}
+        navigator={navigator}
+      />
+    ),
+  });
   ctx.pages.register({
     id: "attention",
     title: "Agent Attention",

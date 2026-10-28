@@ -1175,14 +1175,14 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "bg-affordance-mention",
         variable: "--affordance-mention",
-        pointsAt: "black 10% light / white 12% dark",
+        pointsAt: "black 10% light / white 16% dark",
         use: "Ordinary mention chip fill, paired with text-mention. Frequent, so it stays a neutral overlay that shows the bubble through.",
         status: "core",
       },
       {
         token: "bg-affordance-mention-hover",
         variable: "--affordance-mention-hover",
-        pointsAt: "black 16% light / white 20% dark",
+        pointsAt: "black 14% light / white 20% dark",
         use: "Mention chip under the pointer.",
         status: "core",
       },
@@ -1190,7 +1190,7 @@ export const ROLE_GROUPS: RoleGroup[] = [
         token: "bg-affordance-mention-own",
         variable: "--affordance-mention-own",
         pointsAt:
-          "affordance-mention; at Buzzin’, black 10% on the accent fill (white 12% on Mono in light mode)",
+          "affordance-mention; at Buzzin’, black 10% on the accent fill (16% on Magenta, Iris and Cobalt; white 16% on Mono in light mode)",
         use: "Mention chip fill inside your own bubble, paired with text-mention-own.",
         status: "core",
       },
@@ -1198,7 +1198,7 @@ export const ROLE_GROUPS: RoleGroup[] = [
         token: "bg-affordance-mention-own-hover",
         variable: "--affordance-mention-own-hover",
         pointsAt:
-          "affordance-mention-hover; at Buzzin’, black 16% on the accent fill (white 20% on Mono in light mode)",
+          "affordance-mention-hover; at Buzzin’, black 14% on the accent fill (22% on Magenta, Iris and Cobalt; white 20% on Mono in light mode)",
         use: "Own-bubble mention chip under the pointer.",
         status: "core",
       },

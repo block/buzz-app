@@ -1708,15 +1708,19 @@ Spend the accent on mentions of you, not on mentions in general: ordinary
 mentions repeat in almost every message, so they stay a neutral chip
 (`text-mention` on `affordance-mention`) at every level, matching the composer.
 The chip is a see-through overlay, so it works on any bubble: a shade (black 10%,
-16% on hover) on light and mid-tone fills, and a tint (white 12%, 20% on hover)
+14% on hover) on light and mid-tone fills, and a tint (white 16%, 20% on hover)
 on dark ones. The direction follows how light the fill is, not its text color.
+Strength follows the text: a chip under light text needs more to show, so the
+tint is stronger than the shade, and a mid-tone fill with light text takes a
+strong shade (black 16%, 22% on hover).
 A mention of you asks for your attention and joins the strong group in both
 modes: `text-mention-self` on `affordance-mention-self`, the prominent fill and
 its ink, with the accent's own hover step rather than an overlay, which would
 muddy it. Inside your own bubble the `-own` pair wins; on the solid accent
 bubble (at Buzzin’) it overlays the bubble's fill with the bubble's ink. That is
 a shade on every accent except Mono in light mode, whose near-black bubble takes
-a tint. System notices name people as quiet text, never as chips.
+a tint. Magenta, Iris and Cobalt carry white text there, so they take the
+strong shade. System notices name people as quiet text, never as chips.
 
 Reactions sit on `affordance-reaction`, a softer overlay than a chip: black 6%
 or white 10%, in the same direction as the chips. Hovering the add control lays

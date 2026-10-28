@@ -805,10 +805,14 @@
   --backdrop-pressed-fill: rgb(0 0 0 / 10%);
 
   /* Chip overlays let the bubble's own color show through. A shade sits on
-     light and mid-tone fills, a tint on dark ones. Same values in both modes. */
+     light and mid-tone fills, a tint on dark ones. Same values in both modes.
+     Light text needs a stronger overlay to show: the tint always sits under
+     it, and a mid-tone fill with light text takes the strong shade. */
   --shade-fill: rgb(0 0 0 / 10%);
-  --shade-hover-fill: rgb(0 0 0 / 16%);
-  --tint-fill: rgb(255 255 255 / 12%);
+  --shade-hover-fill: rgb(0 0 0 / 14%);
+  --shade-strong-fill: rgb(0 0 0 / 16%);
+  --shade-strong-hover-fill: rgb(0 0 0 / 22%);
+  --tint-fill: rgb(255 255 255 / 16%);
   --tint-hover-fill: rgb(255 255 255 / 20%);
   /* A reaction strip sits between a bubble and its chips, and a whole bubble
      under the pointer takes the quietest overlay of all. */
@@ -1635,8 +1639,8 @@
   --accent-pressed-light: var(--magenta-pressed-light);
   --accent-link-light: var(--magenta-link-light);
   --accent-link-hover-light: var(--magenta-link-hover-light);
-  --accent-overlay-light: var(--shade-fill);
-  --accent-overlay-hover-light: var(--shade-hover-fill);
+  --accent-overlay-light: var(--shade-strong-fill);
+  --accent-overlay-hover-light: var(--shade-strong-hover-fill);
   --accent-overlay-soft-light: var(--shade-soft-fill);
   --accent-overlay-quiet-light: var(--shade-quiet-fill);
   --accent-1-dark: var(--magenta-1-dark);
@@ -1656,8 +1660,8 @@
   --accent-pressed-dark: var(--magenta-pressed-dark);
   --accent-link-dark: var(--magenta-link-dark);
   --accent-link-hover-dark: var(--magenta-link-hover-dark);
-  --accent-overlay-dark: var(--shade-fill);
-  --accent-overlay-hover-dark: var(--shade-hover-fill);
+  --accent-overlay-dark: var(--shade-strong-fill);
+  --accent-overlay-hover-dark: var(--shade-strong-hover-fill);
   --accent-overlay-soft-dark: var(--shade-soft-fill);
   --accent-overlay-quiet-dark: var(--shade-quiet-fill);
 }
@@ -1680,8 +1684,8 @@
   --accent-pressed-light: var(--iris-pressed-light);
   --accent-link-light: var(--iris-link-light);
   --accent-link-hover-light: var(--iris-link-hover-light);
-  --accent-overlay-light: var(--shade-fill);
-  --accent-overlay-hover-light: var(--shade-hover-fill);
+  --accent-overlay-light: var(--shade-strong-fill);
+  --accent-overlay-hover-light: var(--shade-strong-hover-fill);
   --accent-overlay-soft-light: var(--shade-soft-fill);
   --accent-overlay-quiet-light: var(--shade-quiet-fill);
   --accent-1-dark: var(--iris-1-dark);
@@ -1701,8 +1705,8 @@
   --accent-pressed-dark: var(--iris-pressed-dark);
   --accent-link-dark: var(--iris-link-dark);
   --accent-link-hover-dark: var(--iris-link-hover-dark);
-  --accent-overlay-dark: var(--shade-fill);
-  --accent-overlay-hover-dark: var(--shade-hover-fill);
+  --accent-overlay-dark: var(--shade-strong-fill);
+  --accent-overlay-hover-dark: var(--shade-strong-hover-fill);
   --accent-overlay-soft-dark: var(--shade-soft-fill);
   --accent-overlay-quiet-dark: var(--shade-quiet-fill);
 }
@@ -1725,8 +1729,8 @@
   --accent-pressed-light: var(--cobalt-pressed-light);
   --accent-link-light: var(--cobalt-link-light);
   --accent-link-hover-light: var(--cobalt-link-hover-light);
-  --accent-overlay-light: var(--shade-fill);
-  --accent-overlay-hover-light: var(--shade-hover-fill);
+  --accent-overlay-light: var(--shade-strong-fill);
+  --accent-overlay-hover-light: var(--shade-strong-hover-fill);
   --accent-overlay-soft-light: var(--shade-soft-fill);
   --accent-overlay-quiet-light: var(--shade-quiet-fill);
   --accent-1-dark: var(--cobalt-1-dark);
@@ -1746,8 +1750,8 @@
   --accent-pressed-dark: var(--cobalt-pressed-dark);
   --accent-link-dark: var(--cobalt-link-dark);
   --accent-link-hover-dark: var(--cobalt-link-hover-dark);
-  --accent-overlay-dark: var(--shade-fill);
-  --accent-overlay-hover-dark: var(--shade-hover-fill);
+  --accent-overlay-dark: var(--shade-strong-fill);
+  --accent-overlay-hover-dark: var(--shade-strong-hover-fill);
   --accent-overlay-soft-dark: var(--shade-soft-fill);
   --accent-overlay-quiet-dark: var(--shade-quiet-fill);
 }

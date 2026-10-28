@@ -32,6 +32,7 @@ import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-work
 import lockfile from "proper-lockfile";
 import { AuthFile, serve } from "./host.mjs";
 import { Harness } from "@earendil-works/pi-durable";
+import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 const originalOpen = Harness.open;
 let openedHarness;
 Harness.open = async (...args) => { openedHarness = await originalOpen(...args); return openedHarness; };
@@ -211,8 +212,25 @@ await pi.rpc("open", { agent, tools });
 const n3 = await answer("N3", "after restart");
 // Enough turns that the reset is older than the first page of entries.
 for (let index = 0; index < 110; index++) await answer("M" + index, "more");
+// Count the entries Pi's storage reads, to see that naming a session reads
+// only its markers, not the history before them.
+const probe = await openNodeSqliteStorage(data + "/probe.sqlite");
+const storage = Object.getPrototypeOf(probe);
+await probe.close();
+const scan = storage.scanEntries;
+let read = 0;
+storage.scanEntries = async function (...args) {
+  const page = await scan.apply(this, args);
+  read += page.items.length;
+  return page;
+};
 const page = await pi.rpc("entries", { agent, conversation: n0.conversation });
-out.sessions = { n0: n0.session, n1: n1.session, n2: n2.session, n3: n3.session, reset, page: page.session, more: !!page.next, oldest: page.entries.at(-1)?.id };
+const pageRead = read;
+read = 0;
+const last = await answer("M110", "more");
+const deliverRead = read;
+storage.scanEntries = scan;
+out.sessions = { n0: n0.session, n1: n1.session, n2: n2.session, n3: n3.session, last: last.session, reset, page: page.session, more: !!page.next, oldest: page.entries.at(-1)?.id, shown: page.entries.length, pageRead, deliverRead };
 // A tool loaded on search is offered once tool_search finds it.
 const offered = [];
 /** The tools a request offers: its own, and those its system messages add. */
@@ -674,6 +692,9 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
     expect(out.sessions.n3).toBeUndefined();
     expect(out.sessions.oldest).toBeGreaterThan(out.sessions.reset);
     expect(out.sessions.page).toBe(out.sessions.reset);
+    expect(out.sessions.last).toBeUndefined();
+    // Naming the page's session reads no entry beyond the page itself.
+    expect(out.sessions.pageRead).toBe(out.sessions.shown);
     expect(out.renewed).toEqual({
       place: { seen: 0 },
       kinds: ["pi.reset", "pi.compaction"],

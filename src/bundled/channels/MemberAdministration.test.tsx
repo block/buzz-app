@@ -238,9 +238,21 @@ async function setup(
     },
     choose: async (name: string) => {
       await user.click(
-        screen.getByRole("button", { name: "Actions for Morgan" }),
+        screen.getByRole("button", { name: /^(Actions|Access) for Morgan$/ }),
       );
-      await user.click(await screen.findByRole("menuitem", { name }));
+      const roleChoice =
+        name === "Make admin"
+          ? "Admin"
+          : name === "Make member"
+            ? "Contribute"
+            : name === "Make guest"
+              ? "Read"
+              : undefined;
+      await user.click(
+        roleChoice
+          ? await screen.findByRole("menuitemradio", { name: roleChoice })
+          : await screen.findByRole("menuitem", { name }),
+      );
       expect(onOpenLink).not.toHaveBeenCalled();
       return screen.findByRole("dialog", {
         name:
@@ -674,32 +686,37 @@ it.each(["member", "guest"])(
     );
   },
 );
-it.each([
-  ["member", ["Make admin", "Make guest", "Remove from channel"]],
-  ["admin", ["Make member", "Make guest", "Remove from channel"]],
-  ["guest", ["Make admin", "Make member", "Remove from channel"]],
-] as const)(
-  "offers role changes while preserving the verified %s role until confirmation",
-  async (role, actions) => {
+it.each(["member", "admin", "guest"] as const)(
+  "shows an inline role menu and preserves the verified %s role until confirmation",
+  async (role) => {
     const t = await setup("owner", role);
     const row = required(screen.getByText("Morgan").closest("li"));
+    const caption =
+      role === "member" ? "Contribute" : role === "guest" ? "Read" : "Admin";
+    const access = within(row).getByRole("button", {
+      name: "Access for Morgan",
+    });
+    expect(access).toHaveTextContent(caption);
     expect(
-      within(row).getByRole("button", { name: /Open profile/ }),
-    ).toHaveAccessibleName(new RegExp(`, ${role}$`));
-    await t.user.click(
-      screen.getByRole("button", { name: "Actions for Morgan" }),
-    );
+      within(row).queryByText(role === "guest" ? "Guest" : "Member"),
+    ).not.toBeInTheDocument();
+    await t.user.click(access);
     await screen.findByRole("menuitem", { name: "Remove from channel" });
     expect(
-      screen.getAllByRole("menuitem").map((item) => item.textContent),
-    ).toEqual(["View profile", ...actions]);
+      screen.getAllByRole("menuitemradio").map((item) => item.textContent),
+    ).toEqual(["Admin", "Contribute", "Read"]);
+    expect(
+      screen.getByRole("menuitemradio", { name: caption }),
+    ).toHaveAttribute("aria-checked", "true");
     await t.user.keyboard("{Escape}");
+    await vi.waitFor(() => expect(access).toHaveFocus());
     expect(
       within(row).getByRole("button", { name: /Open profile/ }),
     ).toHaveAccessibleName(new RegExp(`, ${role}$`));
     expect(t.publish).not.toHaveBeenCalled();
   },
 );
+
 it("makes a member a guest only after explicit confirmation", async () => {
   const t = await setup("owner", "member");
   const dialog = await t.choose("Make guest");
@@ -763,13 +780,15 @@ it.each([false, true])(
       ],
     ).toBe("bot");
     await t.user.click(
-      screen.getByRole("button", { name: "Actions for Morgan" }),
+      screen.getByRole("button", { name: /^(Actions|Access) for Morgan$/ }),
     );
     expect(
       await screen.findByRole("menuitem", { name: "Remove from channel" }),
     ).toBeVisible();
-    expect(screen.getByRole("menuitem", { name: "Make admin" })).toBeVisible();
-    expect(screen.getByRole("menuitem", { name: "Make member" })).toBeVisible();
+    expect(screen.getByRole("menuitemradio", { name: "Admin" })).toBeVisible();
+    expect(
+      screen.getByRole("menuitemradio", { name: "Contribute" }),
+    ).toBeVisible();
     expect(t.publish).not.toHaveBeenCalled();
     await t.user.click(
       screen.getByRole("menuitem", { name: "Remove from channel" }),
@@ -966,7 +985,7 @@ it("retains roster and displays rejection with explicit refresh recovery", async
   await t.user.click(
     screen.getByRole("button", { name: "Refresh member data" }),
   );
-  await screen.findByRole("button", { name: "Actions for Morgan" });
+  await screen.findByRole("button", { name: /^(Actions|Access) for Morgan$/ });
   expect(t.publish).toHaveBeenCalledOnce();
 });
 
@@ -1285,7 +1304,11 @@ async function expectProfileOnly(
   user: ReturnType<typeof userEvent.setup>,
   name: string,
 ) {
-  await user.click(screen.getByRole("button", { name: `Actions for ${name}` }));
+  await user.click(
+    screen.getByRole("button", {
+      name: new RegExp(`^(Actions|Access) for ${name}$`),
+    }),
+  );
   expect(
     (await screen.findAllByRole("menuitem")).map((item) => item.textContent),
   ).toEqual(["View profile"]);
@@ -1296,14 +1319,14 @@ async function expectProfileOnly(
   );
 }
 
-it.each(["ellipsis", "context", "keyboard", "context-key"])(
+it.each(["role dropdown", "context", "keyboard", "context-key"])(
   "opens the same profile-first member menu via %s",
   async (entry) => {
     const t = await setup();
     const row = required(screen.getByText("Morgan").closest("li"));
-    if (entry === "ellipsis") {
+    if (entry === "role dropdown") {
       await t.user.click(
-        screen.getByRole("button", { name: "Actions for Morgan" }),
+        screen.getByRole("button", { name: /^(Actions|Access) for Morgan$/ }),
       );
     } else if (entry === "context") {
       fireEvent.contextMenu(row, { clientX: 100, clientY: 100, button: 2 });
@@ -1319,12 +1342,7 @@ it.each(["ellipsis", "context", "keyboard", "context-key"])(
     }
     expect(
       (await screen.findAllByRole("menuitem")).map((item) => item.textContent),
-    ).toEqual([
-      "View profile",
-      "Make admin",
-      "Make guest",
-      "Remove from channel",
-    ]);
+    ).toEqual(["View profile", "Remove from channel"]);
     expect(t.onOpenLink).not.toHaveBeenCalled();
     expect(t.publish).not.toHaveBeenCalled();
     await t.user.click(screen.getByRole("menuitem", { name: "View profile" }));
@@ -1339,7 +1357,9 @@ it.each(["ellipsis", "context", "keyboard", "context-key"])(
 it("keeps Members and restores the menu trigger when profile navigation is declined", async () => {
   const t = await setup();
   t.onOpenLink.mockReturnValue(false);
-  const actions = screen.getByRole("button", { name: "Actions for Morgan" });
+  const actions = screen.getByRole("button", {
+    name: /^(Actions|Access) for Morgan$/,
+  });
   await t.user.click(actions);
   await t.user.click(
     await screen.findByRole("menuitem", { name: "View profile" }),
@@ -1416,7 +1436,9 @@ it.each(["Carl", "Owner", "Morgan"])(
   async (name) => {
     const t = await setup();
     await t.user.click(
-      screen.getByRole("button", { name: `Actions for ${name}` }),
+      screen.getByRole("button", {
+        name: new RegExp(`^(Actions|Access) for ${name}$`),
+      }),
     );
     const view = await screen.findByRole("menuitem", { name: "View profile" });
     expect(
@@ -1448,14 +1470,14 @@ it.each([
       navigation,
     );
     await t.user.click(
-      screen.getByRole("button", { name: "Actions for Morgan" }),
+      screen.getByRole("button", { name: /^(Actions|Access) for Morgan$/ }),
     );
     expect(
       (await screen.findAllByRole("menuitem")).map((item) => item.textContent),
     ).toEqual(offered ? ["View profile", "Send message"] : ["View profile"]);
     await t.user.keyboard("{Escape}");
     await t.user.click(
-      screen.getByRole("button", { name: "Actions for Carl" }),
+      screen.getByRole("button", { name: /^(Actions|Access) for Carl$/ }),
     );
     expect(
       await screen.findByRole("menuitem", { name: "View profile" }),
@@ -1484,7 +1506,9 @@ it("opens a confirmed human DM once, then hands navigation off without a members
         release = resolve;
       }),
   );
-  const actions = screen.getByRole("button", { name: "Actions for Morgan" });
+  const actions = screen.getByRole("button", {
+    name: /^(Actions|Access) for Morgan$/,
+  });
   await t.user.click(actions);
   await t.user.click(
     await screen.findByRole("menuitem", { name: "Send message" }),
@@ -1525,7 +1549,9 @@ it.each(["read", "navigation"])(
     if (failure === "read")
       t.openMessage.mockRejectedValueOnce(new Error("DM unavailable"));
     else t.onOpenConversation.mockReturnValueOnce(false);
-    const actions = screen.getByRole("button", { name: "Actions for Morgan" });
+    const actions = screen.getByRole("button", {
+      name: /^(Actions|Access) for Morgan$/,
+    });
     await t.user.click(actions);
     await t.user.click(
       await screen.findByRole("menuitem", { name: "Send message" }),
@@ -1570,7 +1596,7 @@ it("closing Members aborts the DM waiter and prevents late navigation", async ()
       }),
   );
   await t.user.click(
-    screen.getByRole("button", { name: "Actions for Morgan" }),
+    screen.getByRole("button", { name: /^(Actions|Access) for Morgan$/ }),
   );
   await t.user.click(
     await screen.findByRole("menuitem", { name: "Send message" }),
@@ -1689,14 +1715,12 @@ it.each(["bot", "member"])(
       name: "Open owner profile: Carl (you)",
     });
     await t.user.click(
-      screen.getByRole("button", { name: "Actions for Morgan" }),
+      screen.getByRole("button", { name: /^(Actions|Access) for Morgan$/ }),
     );
     const remove = await screen.findByRole("menuitem", {
       name: "Remove from channel",
     });
-    expect(
-      screen.queryByRole("menuitem", { name: /^Make / }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("menuitemradio")).not.toBeInTheDocument();
     await t.user.click(remove);
     const dialog = await screen.findByRole("dialog", {
       name: "Remove agent from channel",
@@ -1755,15 +1779,13 @@ it.each(["other", "invalid"] as const)(
       ).toHaveAttribute("aria-busy", "false"),
     );
     await t.user.click(
-      screen.getByRole("button", { name: "Actions for Morgan" }),
+      screen.getByRole("button", { name: /^(Actions|Access) for Morgan$/ }),
     );
     await screen.findByRole("menuitem", { name: "View profile" });
     expect(
       screen.queryByRole("menuitem", { name: "Remove from channel" }),
     ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("menuitem", { name: /^Make / }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("menuitemradio")).not.toBeInTheDocument();
   },
 );
 
@@ -1771,6 +1793,13 @@ it.each(["owner", "admin"])(
   "lets %s explicitly promote a bot while preserving verified agent identity",
   async (actor) => {
     const t = await setup(actor, "bot", true, undefined, true);
+    await t.user.click(
+      screen.getByRole("button", { name: "Access for Morgan" }),
+    );
+    expect(
+      await screen.findByRole("menuitemradio", { name: "Contribute" }),
+    ).toHaveAttribute("aria-checked", "true");
+    await t.user.keyboard("{Escape}");
     const dialog = await t.choose("Make admin");
     expect(dialog).toHaveTextContent("from bot to admin");
     expect(t.publish).not.toHaveBeenCalled();

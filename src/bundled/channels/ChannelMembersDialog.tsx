@@ -239,21 +239,6 @@ const MemberIdentityRow = memo(function MemberIdentityRow({
                 {keyLabel}
               </span>
             )}
-            {!adding &&
-              (roleLabel === "owner" ||
-                roleLabel === "admin" ||
-                roleLabel === "member" ||
-                roleLabel === "guest") && (
-                <span className="shrink-0 text-caption text-subtle">
-                  {roleLabel === "owner"
-                    ? "Owner"
-                    : roleLabel === "admin"
-                      ? "Admin"
-                      : roleLabel === "guest"
-                        ? "Read"
-                        : "Contribute"}
-                </span>
-              )}
           </span>
           {ownerName && (
             <span className={styles.manager}>

@@ -12,6 +12,7 @@ import {
   editableMemberRoles,
   type MemberChange,
 } from "../../features/channel-members/administration-protocol";
+import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   ContextMenuRoot,
@@ -21,8 +22,10 @@ import {
   MenuTrigger,
   MenuPopup,
   MenuSeparator,
+  MenuRadioGroup,
+  MenuRadioItem,
 } from "../../shared/design-system/ui/Menu";
-import { DotsThreeIcon } from "../../shared/design-system/icons";
+import { CaretDownIcon, DotsThreeIcon } from "../../shared/design-system/icons";
 import styles from "./ChannelMembersDialog.module.css";
 
 export function useMemberAdministration(
@@ -126,6 +129,16 @@ export function MemberRow({
       pubkey,
       verifiedOwner,
     );
+  const roleCaption =
+    role === "member" || role === "bot"
+      ? "Contribute"
+      : role === "guest"
+        ? "Read"
+        : role === "owner"
+          ? "Owner"
+          : role === "admin"
+            ? "Admin"
+            : undefined;
   const locked =
     state.operation?.status === "pending" ||
     state.operation?.status === "uncertain";
@@ -166,14 +179,27 @@ export function MemberRow({
       {(canEdit || canRemove) && !locked && (
         <>
           <MenuSeparator />
-          {canEdit &&
-            editableMemberRoles
-              .filter((next) => next !== role)
-              .map((next) => (
-                <MenuItem key={next} onClick={() => choose(next)}>
-                  Make {next}
-                </MenuItem>
+          {canEdit && (
+            <MenuRadioGroup
+              value={role === "bot" ? "member" : role}
+              onValueChange={(next) => {
+                const target = editableMemberRoles.find(
+                  (value) => value === next,
+                );
+                if (target && target !== role) choose(target);
+              }}
+            >
+              {editableMemberRoles.map((next) => (
+                <MenuRadioItem key={next} value={next}>
+                  {next === "member"
+                    ? "Contribute"
+                    : next === "guest"
+                      ? "Read"
+                      : "Admin"}
+                </MenuRadioItem>
               ))}
+            </MenuRadioGroup>
+          )}
           {canEdit && <MenuSeparator />}
           {canRemove && (
             <MenuItem tone="danger" onClick={() => choose("remove")}>
@@ -250,13 +276,25 @@ export function MemberRow({
             >
               <MenuTrigger
                 render={
-                  <IconButton
-                    variant="bare"
-                    size="sm"
-                    shape="row-end"
-                    aria-label={`Actions for ${name}`}
-                    icon={<DotsThreeIcon size={18} aria-hidden="true" />}
-                  />
+                  canEdit ? (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      aria-label={`Access for ${name}`}
+                      aria-description={roleCaption}
+                    >
+                      {roleCaption}
+                      <CaretDownIcon size={14} aria-hidden="true" />
+                    </Button>
+                  ) : (
+                    <IconButton
+                      variant="bare"
+                      size="sm"
+                      shape="row-end"
+                      aria-label={`Actions for ${name}`}
+                      icon={<DotsThreeIcon size={18} aria-hidden="true" />}
+                    />
+                  )
                 }
               />
               <MenuPopup
@@ -267,6 +305,11 @@ export function MemberRow({
                 {menuItems}
               </MenuPopup>
             </MenuRoot>
+            {!canEdit && roleCaption && (
+              <span className="self-center px-2 text-body-sm text-subtle">
+                {roleCaption}
+              </span>
+            )}
           </span>
         )}
       </ContextMenuTrigger>

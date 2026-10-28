@@ -13,6 +13,8 @@ import type {
 import { Button } from "../../shared/design-system/ui/Button";
 import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
 import { Select } from "../../shared/design-system/ui/Select";
+import { LockIcon, UsersIcon } from "../../shared/design-system/icons";
+import styles from "./ChannelMembersDialog.module.css";
 import { privacyConsequence } from "./ChannelPrivacyConfirmation";
 
 /** General access uses the same signed save/readback owner as channel details.
@@ -110,58 +112,79 @@ export function ChannelGeneralAccess({
       aria-label="General access"
       tabIndex={-1}
       aria-busy={loading || pending}
-      className="grid gap-4 border-t border-standard pt-4"
+      className={styles.generalAccess}
     >
       <h3 className="text-label-sm">General access</h3>
-      <Select
-        variant="field"
-        label="Who can read"
-        value={base?.visibility ?? ""}
-        placeholder={loading ? "Loading access…" : "Access unavailable"}
-        disabled={locked}
-        groups={[
-          {
-            label: "",
-            options: [
-              { value: "public", label: "Anyone in the community" },
-              { value: "private", label: "Invited people only" },
-            ],
-          },
-        ]}
-        onValueChange={(visibility) => {
-          if (
-            (visibility === "public" || visibility === "private") &&
-            visibility !== base?.visibility
-          )
-            choose({ visibility }, 0);
-        }}
-      />
-      <Select
-        variant="field"
-        label="New people can"
-        value={base ? (base.joinRole ?? "member") : ""}
-        placeholder={loading ? "Loading access…" : "Access unavailable"}
-        disabled={locked}
-        groups={[
-          {
-            label: "",
-            options: [
-              { value: "member", label: "Contribute" },
-              { value: "guest", label: "Only read" },
-            ],
-          },
-        ]}
-        onValueChange={(joinRole) => {
-          if (
-            (joinRole === "member" || joinRole === "guest") &&
-            joinRole !== (base?.joinRole ?? "member")
-          )
-            choose({ joinRole }, 1);
-        }}
-      />
-      <p className="text-body-sm text-subtle">
-        People already in the channel keep their access.
-      </p>
+      <div className={styles.accessRow}>
+        <span className={styles.accessIcon} aria-hidden="true">
+          {base?.visibility === "public" ? (
+            <UsersIcon size={24} />
+          ) : (
+            <LockIcon size={24} />
+          )}
+        </span>
+        <div className={styles.accessAudience}>
+          <Select
+            variant="compact"
+            appearance="ghost"
+            label="Who can read"
+            value={base?.visibility ?? ""}
+            placeholder={loading ? "Loading access…" : "Access unavailable"}
+            disabled={locked}
+            groups={[
+              {
+                label: "",
+                options: [
+                  { value: "public", label: "Anyone in the community" },
+                  { value: "private", label: "Invited people only" },
+                ],
+              },
+            ]}
+            onValueChange={(visibility) => {
+              if (
+                (visibility === "public" || visibility === "private") &&
+                visibility !== base?.visibility
+              )
+                choose({ visibility }, 0);
+            }}
+          />
+          <p className="text-caption text-subtle">
+            {!base
+              ? loading
+                ? "Checking channel access…"
+                : "Channel access could not be confirmed."
+              : base.visibility === "public"
+                ? `Anyone in the community can find and ${base.joinRole === "guest" ? "read" : "contribute"}.`
+                : `Invited people can ${base.joinRole === "guest" ? "read" : "contribute"}.`}
+          </p>
+        </div>
+        <div className={styles.accessRole}>
+          <Select
+            variant="compact"
+            appearance="ghost"
+            label="New people can"
+            value={base ? (base.joinRole ?? "member") : ""}
+            placeholder={loading ? "Loading access…" : "Access unavailable"}
+            disabled={locked}
+            groups={[
+              {
+                label: "",
+                options: [
+                  { value: "member", label: "Contribute" },
+                  { value: "guest", label: "Only read" },
+                ],
+              },
+            ]}
+            onValueChange={(joinRole) => {
+              if (
+                (joinRole === "member" || joinRole === "guest") &&
+                joinRole !== (base?.joinRole ?? "member")
+              )
+                choose({ joinRole }, 1);
+            }}
+          />
+        </div>
+      </div>
       {pending && (
         <p role="status" className="text-body-sm text-subtle">
           Saving access…

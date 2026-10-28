@@ -58,7 +58,7 @@ export function Select({
   variant?: "inline" | "field" | "compact" | "preference";
   /** Match adjacent controls without changing the selection treatment. */
   size?: "xs" | "sm" | "md";
-  appearance?: "outlined" | "glass-ghost";
+  appearance?: "outlined" | "ghost" | "glass-ghost";
   disabled?: boolean;
   value: string;
   groups: readonly SelectGroup[];

@@ -923,6 +923,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "button size: xs | sm | md",
       "disabled",
       "align: start | center | end",
+      "compact ghost",
       "compact glass-ghost (proposed)",
       "compact value suffix",
       "20px leading accessory: icon, avatar, or custom UI",

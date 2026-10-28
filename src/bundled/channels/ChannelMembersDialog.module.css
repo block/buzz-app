@@ -159,3 +159,46 @@
     flex-wrap: wrap;
   }
 }
+
+.generalAccess {
+  display: grid;
+  gap: var(--space-3);
+  border-top: 1px solid var(--border-standard);
+  padding-top: var(--space-4);
+}
+.accessRow {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--space-2);
+}
+.accessIcon {
+  display: flex;
+  align-items: center;
+  min-height: var(--size-control-sm);
+  color: var(--text-subtle);
+}
+.accessAudience {
+  display: grid;
+  min-width: 0;
+  justify-items: start;
+  gap: var(--space-1);
+}
+.accessAudience > * {
+  max-width: 100%;
+}
+.accessAudience > p {
+  padding-inline: var(--space-4);
+}
+.accessRole {
+  min-width: 0;
+}
+@media (max-width: 480px) {
+  .accessRow {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .accessRole {
+    grid-column: 2;
+    justify-self: start;
+  }
+}

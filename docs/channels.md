@@ -725,11 +725,16 @@ only stages the choice and Create channel performs the write.
 
 Access management lives in the members dialog. **People with access** retains the
 existing member list, row menus and confirmed role changes. Member and Guest are
-shown as **Contribute** and **Read**; Owner and Admin retain their authority labels.
-**General access** sits below the list: **Who can read** chooses Anyone in the
-community or Invited people only; **New people can** chooses Contribute or Only read.
-“People already in the channel keep their access.” explains that the second choice
-is an admission default, separate from each person's current role.
+shown as **Contribute** and **Read**. Editable roles are trailing dropdowns,
+with the verified selection checked; immutable roles (including Owner and self)
+remain plain text. Profile/removal actions and the existing role confirmation
+stay available through the same menu owner.
+**General access** sits below the list as one sentence-like row: a community/lock
+icon, a compact audience Select (**Who can read**), a short result description,
+and the trailing **New people can** Select (Contribute / Only read). Both Selects
+use the shared ghost Button treatment. On narrow screens the role control wraps
+under the audience. The confirmation explains “People already in the channel keep
+their access.”; the note is not a permanent paragraph below the controls.
 Each selection opens a consequence confirmation. Cancel/Escape returns focus to
 the unchanged Select. **Change access** saves immediately through the existing
 channel-details capability, then reloads signed metadata. Loading, pending and

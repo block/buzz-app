@@ -441,6 +441,14 @@ export function SelectExamples() {
           groups={workspaceGroups}
         />
         <Select
+          label="Unframed row choice"
+          variant="compact"
+          appearance="ghost"
+          value={inline}
+          onValueChange={setInline}
+          groups={workspaceGroups}
+        />
+        <Select
           label="Input-height filter"
           variant="compact"
           size="md"

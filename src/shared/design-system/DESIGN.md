@@ -885,7 +885,9 @@ Standard Button labels use the complete `text-label-sm` role with an 8px icon ga
 extra-small capsule uses `text-caption`. For a caption-sized inline choice such as
 the composer's model name, `size="inline"` keeps a 24px minimum target with 4px
 horizontal padding and icon gap, and 12px icons. Pair it with `variant="ghost"`
-for an unframed label; shared hover, disabled, and keyboard focus still apply.
+for an unframed label; shared hover, disabled, and keyboard focus still apply. Compact Selects also expose
+`appearance="ghost"` for an unframed, labelled row choice, such as channel access;
+the existing Button owns its hover, disabled, and focus states.
 
 Button defaults to `md` (40px minimum height); IconButton defaults to `sm`
 (32px square with 16px artwork) and a 10px rounded rectangle

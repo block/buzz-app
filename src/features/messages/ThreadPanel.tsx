@@ -20,6 +20,7 @@ import {
   useLayoutEffect,
   useMemo,
   useRef,
+  useDeferredValue,
   useState,
   useSyncExternalStore,
 } from "react";
@@ -439,6 +440,7 @@ function OwnedThreadPanel({
     <ThreadLoading />
   );
 }
+const noReplies: readonly ChannelMessage[] = [];
 function ThreadMessages({
   session,
   extensions,
@@ -530,13 +532,24 @@ function ThreadMessages({
     const current = view.snapshot();
     return current.status === "ready" ? current.root : undefined;
   }, [view]);
+  // An ordinary opening renders arriving replies in interruptible slices and
+  // commits them together; its first positioning waits for that commit.
+  // Exact-message navigation reveals rows as soon as they arrive.
+  const deferredReplies = useDeferredValue(snapshot.replies, noReplies);
+  const replies =
+    !revealSelected &&
+    (!navigation ||
+      (navigation.target.kind === "conversation" &&
+        navigation.target.threadRootId === messageId))
+      ? deferredReplies
+      : snapshot.replies;
   const tree = useMemo(
-    () => replyTree(snapshot.replies, snapshot.root?.id),
-    [snapshot.replies, snapshot.root?.id],
+    () => replyTree(replies, snapshot.root?.id),
+    [replies, snapshot.root?.id],
   );
   const branchReplies = useMemo(() => {
     const branches = new Map<string, ChannelMessage[]>();
-    for (const reply of snapshot.replies) {
+    for (const reply of replies) {
       for (const ancestor of tree.ancestors(reply.id)) {
         const replies = branches.get(ancestor) ?? [];
         replies.push(reply);
@@ -544,7 +557,7 @@ function ThreadMessages({
       }
     }
     return branches;
-  }, [tree, snapshot.replies]);
+  }, [tree, replies]);
   const subscribeUnread = useCallback(
     (listener: () => void) =>
       session.unread.subscribe(
@@ -580,9 +593,8 @@ function ThreadMessages({
       ? "Reply in thread"
       : `Reply in thread to ${senderName(root)}`;
   const rows = useMemo(
-    () =>
-      snapshot.root ? [snapshot.root, ...snapshot.replies] : snapshot.replies,
-    [snapshot.root, snapshot.replies],
+    () => (snapshot.root ? [snapshot.root, ...replies] : replies),
+    [snapshot.root, replies],
   );
   const authors = [...new Set(rows.flatMap(rowProfileIds))].sort().join(":");
   useEffect(() => {
@@ -970,7 +982,9 @@ function ThreadMessages({
       (revealSelected && !inlineReveal) ||
       (revealSignal && revealed.current !== revealSignal) ||
       // Seeded rows are not yet the thread: hold the loader until this view's
-      // first page lands. Later pages and repairs keep presented rows showing.
+      // first page lands and renders. Later pages and repairs keep presented
+      // rows showing.
+      (!positioned.current && replies !== snapshot.replies) ||
       (!positioned.current &&
         !(snapshot.root && snapshot.direction) &&
         (snapshot.status !== "ready" ||
@@ -1114,7 +1128,7 @@ function ThreadMessages({
       captureResizePosition();
       setSent(undefined);
     }
-  }, [sent, snapshot.replies, expanded, captureResizePosition]);
+  }, [sent, replies, expanded, captureResizePosition]);
   // Parent commits already position history, exact targets and own sends. Save
   // their result; only child-only reflow and viewport resizing need correction.
   useLayoutEffect(() => {

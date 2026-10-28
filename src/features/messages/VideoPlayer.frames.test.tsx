@@ -6,6 +6,7 @@ import {
   fireEvent,
   render,
   screen,
+  within,
 } from "@testing-library/react";
 import { Profiler, useRef, type ComponentProps } from "react";
 import { afterEach, expect, it, vi } from "vitest";
@@ -44,6 +45,27 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+function animationFrames() {
+  let nextId = 0;
+  const callbacks = new Map<number, FrameRequestCallback>();
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+    const id = ++nextId;
+    callbacks.set(id, callback);
+    return id;
+  });
+  vi.stubGlobal("cancelAnimationFrame", (id: number) => callbacks.delete(id));
+  return {
+    pending: () => callbacks.size,
+    run: () =>
+      act(() => {
+        const due = [...callbacks.entries()];
+        for (const [id, callback] of due) {
+          if (callbacks.delete(id)) callback(performance.now());
+        }
+      }),
+  };
+}
+
 function Player() {
   const video = useRef<HTMLVideoElement>(null);
   return (
@@ -68,14 +90,7 @@ function Player() {
 }
 
 it("follows playback every frame without re-rendering the other controls", () => {
-  let frames: FrameRequestCallback[] = [];
-  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
-    frames.push(callback);
-    return frames.length;
-  });
-  vi.stubGlobal("cancelAnimationFrame", () => {
-    frames = [];
-  });
+  const frames = animationFrames();
   let commits = 0;
   render(
     <Profiler id="player" onRender={() => commits++}>
@@ -92,11 +107,7 @@ it("follows playback every frame without re-rendering the other controls", () =>
   const slider = screen.getByRole("slider", { name: "Video progress" });
   const frame = (seconds: number) => {
     video.currentTime = seconds;
-    act(() => {
-      const due = frames;
-      frames = [];
-      for (const callback of due) callback(performance.now());
-    });
+    frames.run();
     expect(slider.style.getPropertyValue("--progress")).toBe(
       `${(seconds / 100) * 100}%`,
     );
@@ -112,4 +123,53 @@ it("follows playback every frame without re-rendering the other controls", () =>
   expect(slider).toHaveAttribute("aria-valuetext", "00:13 / 01:40");
   expect(screen.getByText("00:13")).toBeInTheDocument();
   expect(renders).toEqual(settled);
+});
+
+it("keeps mounted players independent through pause, seek, end and unmount", () => {
+  const frames = animationFrames();
+  const first = render(<Player />);
+  const second = render(<Player />);
+  const a = first.container.querySelector("video");
+  const b = second.container.querySelector("video");
+  const aSlider = within(first.container).getByRole("slider", {
+    name: "Video progress",
+  });
+  const bSlider = within(second.container).getByRole("slider", {
+    name: "Video progress",
+  });
+  if (!a || !b) throw new Error("Missing players");
+  for (const video of [a, b]) {
+    Object.defineProperty(video, "duration", {
+      configurable: true,
+      value: 100,
+    });
+    fireEvent.durationChange(video);
+    fireEvent.play(video);
+  }
+  expect(frames.pending()).toBe(2);
+  a.currentTime = 12.25;
+  b.currentTime = 24.5;
+  frames.run();
+  expect(aSlider).toHaveAttribute("aria-valuetext", "00:12 / 01:40");
+  expect(bSlider).toHaveAttribute("aria-valuetext", "00:24 / 01:40");
+  fireEvent.pause(a);
+  expect(frames.pending()).toBe(1);
+  a.currentTime = 30;
+  fireEvent.seeked(a);
+  expect(aSlider).toHaveAttribute("aria-valuetext", "00:30 / 01:40");
+  b.currentTime = 40;
+  frames.run();
+  expect(bSlider).toHaveAttribute("aria-valuetext", "00:40 / 01:40");
+  fireEvent.play(a);
+  expect(frames.pending()).toBe(2);
+  first.unmount();
+  expect(frames.pending()).toBe(1);
+  b.currentTime = 100;
+  fireEvent.ended(b);
+  expect(bSlider).toHaveAttribute("aria-valuetext", "01:40 / 01:40");
+  expect(frames.pending()).toBe(0);
+  fireEvent.play(b);
+  expect(frames.pending()).toBe(1);
+  second.unmount();
+  expect(frames.pending()).toBe(0);
 });

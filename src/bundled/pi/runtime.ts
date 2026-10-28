@@ -6,6 +6,7 @@
 // (`runOnce`), in a one-off conversation. Pi acts in Buzz with the in-process
 // Buzz tools, signed by the agent's native-held key. The runtime reports a
 // turn that fails; what Pi writes without `send` stays in local activity.
+import { isFinalMessage } from "../../buzz-mcp/session-tools";
 import { appClient } from "../../buzz-mcp/app-client";
 import type { Context } from "../../buzz-mcp/client";
 import { content, errorText } from "../../buzz-mcp/rpc";
@@ -734,9 +735,7 @@ export class PiRuntime {
       );
       return {
         content: content(reply),
-        ...(call.name === "send" && call.arguments.final === true
-          ? { final: true }
-          : {}),
+        ...(isFinalMessage(call.name, call.arguments) ? { final: true } : {}),
       };
     } catch (error) {
       return {

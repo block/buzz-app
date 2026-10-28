@@ -13,14 +13,15 @@ import { CreateSidebarSection } from "./CreateSidebarSection";
 
 afterEach(cleanup);
 
-it("retains a rejected draft and its identity through preference recovery", async () => {
+it("keeps a gated draft editable and submits its edited name with a fresh identity", async () => {
+  const user = userEvent.setup();
   const create = vi.fn().mockReturnValue(false);
   const retry = vi.fn().mockResolvedValue(undefined);
   const props = {
     channelName: "Beta",
     create,
     close: vi.fn(),
-    writable: false,
+    writable: true,
     refreshing: false,
     retry,
   };
@@ -41,23 +42,34 @@ it("retains a rejected draft and its identity through preference recovery", asyn
     name: "Launch",
   });
   expect(input).toHaveValue(" Launch ");
+  await waitFor(() => expect(input).not.toHaveAttribute("readonly"));
+  await user.clear(input);
+  await user.type(input, "Release");
+  expect(input).toHaveValue("Release");
+  view.rerender(<CreateSidebarSection {...props} writable={false} />);
   await waitFor(() =>
     expect(screen.getByRole("alert")).toHaveTextContent("Retry preferences"),
   );
   fireEvent.click(screen.getByRole("button", { name: "Retry preferences" }));
   expect(retry).toHaveBeenCalledTimes(1);
-  view.rerender(<CreateSidebarSection {...props} refreshing />);
+  view.rerender(
+    <CreateSidebarSection {...props} writable={false} refreshing />,
+  );
   expect(
     screen.getByRole("button", { name: "Retry preferences" }),
   ).toBeDisabled();
-  view.rerender(<CreateSidebarSection {...props} />);
-  expect(input).toHaveValue(" Launch ");
+  view.rerender(<CreateSidebarSection {...props} writable={false} />);
+  expect(input).toHaveValue("Release");
   create.mockReturnValue(true);
   view.rerender(<CreateSidebarSection {...props} writable />);
   expect(screen.queryByRole("alert")).toBeNull();
   await submit();
   expect(create).toHaveBeenCalledTimes(2);
-  expect(create.mock.calls[1]).toEqual(create.mock.calls[0]);
+  expect(create.mock.calls[1]?.[0]).toEqual({
+    id: expect.any(String),
+    name: "Release",
+  });
+  expect(create.mock.calls[1]?.[0].id).not.toBe(create.mock.calls[0]?.[0].id);
   await submit();
   expect(create).toHaveBeenCalledTimes(2);
 });
@@ -92,7 +104,8 @@ it("keeps the submitted name and identity through a failed save, blocking dismis
   fireEvent.change(input, { target: { value: " Launch " } });
   const submit = screen.getByRole("button", { name: "Create" });
   fireEvent.click(submit);
-  expect(input).toBeDisabled();
+  expect(input).toHaveAttribute("readonly");
+  expect(input).toBeEnabled();
   expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
   const form = input.closest("form");
   if (!form) throw new Error("Create form missing");
@@ -104,7 +117,8 @@ it("keeps the submitted name and identity through a failed save, blocking dismis
   // not pair the retained ID with a different name.
   await user.type(input, "es");
   expect(input).toHaveValue(" Launch ");
-  expect(input).toBeDisabled();
+  expect(input).toHaveAttribute("readonly");
+  expect(input).toBeEnabled();
   expect(close).not.toHaveBeenCalled();
   fireEvent.click(submit);
   await waitFor(() =>

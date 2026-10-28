@@ -35,14 +35,19 @@ export function CreateSidebarSection({
     submitted.current = true;
     // A failed confirmation may follow a successful write. Retry the same
     // identity and name rather than trying to rename an unknown publication.
-    section.current ??= { id: crypto.randomUUID(), name: name.trim() };
+    const attempt = section.current ?? {
+      id: crypto.randomUUID(),
+      name: name.trim(),
+    };
     setPending(true);
     setError("");
     try {
-      const accepted = await create(section.current);
+      const accepted = await create(attempt);
+      section.current = accepted ? attempt : undefined;
       submitted.current = accepted;
       setBlocked(!accepted);
     } catch (cause) {
+      section.current = attempt;
       submitted.current = false;
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -92,7 +97,7 @@ export function CreateSidebarSection({
           aria-label="Section name"
           placeholder="Section name"
           required
-          disabled={pending || !!section.current}
+          readOnly={pending || !!section.current}
           maxLength={256}
           value={name}
           onChange={(event) => setName(event.target.value)}

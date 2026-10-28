@@ -92,10 +92,19 @@ test("Channels offers empty-section creation with keyboard focus and confirmed p
   );
   expect(writerReads).toBe(1);
   await expect.poll(() => app.report.sidebarPublications?.length ?? 0).toBe(1);
-  await expect(field).toBeDisabled();
+  await expect(field).toBeFocused();
+  await expect(field).toHaveAttribute("readonly", "");
   await page.keyboard.type("es");
   await expect(field).toHaveValue("Launch");
-  await dialog.getByRole("button", { name: "Create", exact: true }).click();
+  await page.keyboard.press("Tab");
+  await expect(
+    dialog.getByRole("button", { name: "Cancel", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(
+    dialog.getByRole("button", { name: "Create", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("Enter");
   await expect(dialog).toHaveCount(0);
   expect(creations).toHaveLength(2);
   expect(creations[1]).toEqual(creations[0]);

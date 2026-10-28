@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { stubAvatarBrowserApis } from "../agents/avatar-testing";
 stubAvatarBrowserApis();
@@ -181,7 +187,7 @@ it("shows one latest-agent preview, retains expanded history through appends, an
     toggle = screen.getByRole("button", { name: /Show activity history/ });
     expect(toggle).toHaveFocus();
     expect(toggle).toHaveTextContent("Update 11");
-    expect(screen.getByTitle("reviewer")).toBeVisible();
+    expect(within(toggle).getByTitle("reviewer")).toBeVisible();
     expect(screen.queryByText("Update 10")).toBeNull();
   } finally {
     owner.dispose();
@@ -200,21 +206,24 @@ it("stacks distinct agents with overflow and removes the stack when history open
         })),
       ),
     );
-    expect(screen.getByText("+1")).toBeVisible();
-    expect(screen.getAllByTitle("one")).toHaveLength(2);
-    expect(screen.getByTitle("two")).toBeVisible();
-    expect(screen.getByTitle("three")).toBeVisible();
-    expect(screen.queryByTitle("four")).toBeNull();
-    const compactAvatar = screen.getAllByTitle("one")[1];
+    const compact = within(
+      screen.getByRole("button", { name: /Show activity history/ }),
+    );
+    expect(compact.getByText("+1")).toBeVisible();
+    expect(compact.getAllByTitle("one")).toHaveLength(1);
+    expect(compact.getByTitle("two")).toBeVisible();
+    expect(compact.getByTitle("three")).toBeVisible();
+    expect(compact.queryByTitle("four")).toBeNull();
+    const compactAvatar = compact.getAllByTitle("one")[0];
     if (!compactAvatar) throw new Error("Missing compact agent avatar");
     expect(
-      compactAvatar.compareDocumentPosition(screen.getByTitle("two")) &
+      compactAvatar.compareDocumentPosition(compact.getByTitle("two")) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     expect(
-      screen
+      compact
         .getByTitle("two")
-        .compareDocumentPosition(screen.getByTitle("three")) &
+        .compareDocumentPosition(compact.getByTitle("three")) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     fireEvent.click(

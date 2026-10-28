@@ -39,6 +39,8 @@ import { useOldAgentMentions } from "./useOldAgentMentions";
 import { useKnownAgentPubkeys } from "../agents/use-known";
 import { knownAgentPubkeys } from "../agents/known";
 import { lastMentionedAgent, rememberedMentions } from "./remembered-mentions";
+import { useDefaultAgent } from "../solo/default-agent";
+import { RecipientTip } from "../solo/RecipientTip";
 import { useAgentChoices } from "../agents/use-choices";
 import { ownSolo } from "../solo/labels";
 import { soloHasPeople, soloRoster, useSoloHasPeople } from "../solo/people";
@@ -87,6 +89,7 @@ import styles from "./Messages.module.css";
 import { messageViewKey } from "./view-key";
 import { isEmojiOnly, usesLargeEmojiPresentation } from "./emoji-size";
 import {
+  followupDraft,
   mentionDraft,
   type MentionDraft,
   type MentionRecipient,
@@ -110,7 +113,7 @@ import { useCompletionEditor } from "../conversation/useCompletionEditor";
 import { formatMediaTime, mediaTimeReply } from "./media-timecode";
 import { RichComposerInput } from "./RichComposerInput";
 import type { MessageLinkOrigin } from "./MessageRow";
-import { composerMarkdown } from "./composer-markdown";
+import { composerMarkdown, sentMarkdown } from "./composer-markdown";
 import type {
   ComposerInputElement,
   ComposerLinkEdit,
@@ -128,6 +131,32 @@ const noChannels: ReturnType<ComposerSession["channels"]["list"]> = {
 };
 const noChannelSnapshot = () => noChannels;
 const noChannelSubscription = () => () => {};
+const nobody: readonly MentionRecipient[] = [];
+const captions = new WeakMap<MentionDraft, MentionDraft>();
+
+/**
+ * The part of a draft the editor owns: its text without staged chats or
+ * recipients. One object per draft, so a reset and the next render match.
+ */
+function caption(draft: MentionDraft) {
+  if (!draft.chatCards && !draft.to) return draft;
+  let text = captions.get(draft);
+  if (!text) {
+    const { chatCards: _cards, to: _to, ...rest } = draft;
+    text = rest;
+    captions.set(draft, text);
+  }
+  return text;
+}
+const uniqueRecipients = (people: readonly MentionRecipient[]) => [
+  ...new Map(people.map((person) => [person.pubkey, person])).values(),
+];
+const validRecipient = (person: MentionRecipient | undefined) =>
+  !!person &&
+  typeof person.pubkey === "string" &&
+  /^[0-9a-f]{64}$/.test(person.pubkey) &&
+  typeof person.name === "string" &&
+  !!person.name.trim();
 
 type AcceptedDraft = {
   next: MentionDraft;
@@ -222,10 +251,11 @@ export type MessageComposerProps = {
   placeholder?: string | undefined;
   soloConversation?: boolean | undefined;
   ownSoloConversation?: boolean | undefined;
-  /** Seeds an empty new-chat draft; follow-ups use remembered mentions. */
+  /** The viewer's default agent, which Solo adds whenever the composer is
+   * shown; an existing Solo chat uses the saved default. */
   defaultMention?: MentionRecipient | undefined;
   /** Whether a retained tab shows this composer, apart from its read policy.
-   * Showing a Solo chat again re-tags the agent last tagged there. */
+   * Showing a Solo chat again adds the default agent back. */
   shown?: boolean | undefined;
   /** Sending needs at least one tagged recipient. */
   requireMention?: boolean | undefined;
@@ -301,6 +331,7 @@ function PersonalComposer(props: MessageComposerProps) {
     session.profiles.snapshot,
   );
   const agentPubkeys = useKnownAgentPubkeys(session, profiles);
+  const defaultAgent = useDefaultAgent(session, props.scope);
   const members = list.channels.find((c) => c.id === channelId)?.members;
   // A saved chat keeps its people; agents are only the owner's available ones.
   const roster = useMemo(
@@ -326,7 +357,13 @@ function PersonalComposer(props: MessageComposerProps) {
 
   return (
     <DraftMentionRoster.Provider value={roster}>
-      <Composer {...props} />
+      <Composer
+        {...props}
+        defaultMention={
+          props.defaultMention ?? (submission ? undefined : defaultAgent)
+        }
+        noAgents={choices.complete && !choices.selectable.length}
+      />
       {choices.error && (
         <p role="alert">
           {choices.error}{" "}
@@ -381,7 +418,11 @@ function Composer({
   activityClickOpensPanel = false,
   inviteAgents = false,
   trailingTool,
-}: MessageComposerProps) {
+  noAgents = false,
+}: MessageComposerProps & {
+  /** Solo knows the viewer has no agents to send to. */
+  noAgents?: boolean;
+}) {
   const active = useConversationPresentation();
   const list = useSyncExternalStore(
     session.channels?.get || soloConversation
@@ -455,15 +496,6 @@ function Composer({
     return pending;
   });
   const revision = useRef(viewRevision(scope, draftKey));
-  // Whether this mount seeded the shortcut's initial text, rather than
-  // restoring a saved draft that may already have had its tag removed.
-  const [seededKey] = useState(() =>
-    !accepted?.next &&
-    !submission?.recoveredDraft &&
-    (revision.current === null || revision.current === "null")
-      ? draftKey
-      : undefined,
-  );
   const dirty = useRef(false);
   const writing = useRef(false);
   const [conflict, setConflict] = useState(false);
@@ -479,14 +511,11 @@ function Composer({
     ),
   );
   const chatCards = value.chatCards;
-  const editorDraft = useMemo(() => {
-    if (!value.chatCards) return value;
-    const { chatCards: _cards, ...caption } = value;
-    return caption;
-  }, [value]);
+  // The editor owns the text alone: staged chats and recipients sit beside it.
+  const editorDraft = caption(value);
   const draft = value.text;
   const recipientKey = JSON.stringify(
-    value.recipients.map(({ pubkey, name }) => ({ pubkey, name })),
+    (value.to ?? nobody).map(({ pubkey, name }) => ({ pubkey, name })),
   );
   const recipients = useMemo(
     () => JSON.parse(recipientKey) as readonly MentionRecipient[],
@@ -532,11 +561,11 @@ function Composer({
       : pubkeys;
   // The agents a send addresses: model, effort and session controls are
   // offered for each, so a one-to-one DM with an agent always has them.
-  const addressed = sessionTargets(value.recipients.map((item) => item.pubkey));
+  const addressed = sessionTargets(recipients.map((item) => item.pubkey));
   const sessionState = useSessionState(agents, addressed, sessionPlace);
   const compacting = sessionState === "compacting";
   const compactingNow = (
-    recipients = valueRef.current.recipients.map((item) => item.pubkey),
+    recipients = (valueRef.current.to ?? nobody).map((item) => item.pubkey),
   ) =>
     sessionTargets(recipients).some((pubkey) => {
       const key = agents?.find(pubkey)?.key;
@@ -656,6 +685,9 @@ function Composer({
           ? {
               chatCards: next.chatCards ?? valueRef.current.chatCards ?? [],
             }
+          : {}),
+        ...((next.to ?? valueRef.current.to)
+          ? { to: next.to ?? valueRef.current.to ?? [] }
           : {}),
       },
       list.channels,
@@ -816,7 +848,7 @@ function Composer({
     dirty.current = false;
     valueRef.current = next;
     updateDraft(next);
-    input.current?.reset(next);
+    input.current?.reset(caption(next));
     completion.invalidate();
     setLinkEdit(null);
     restoreSelection.current = undefined;
@@ -858,6 +890,7 @@ function Composer({
         recovering &&
         !valueRef.current.text.trim() &&
         !valueRef.current.recipients.length &&
+        !valueRef.current.to?.length &&
         !composerMarkdown(valueRef.current).trim() &&
         !sendAttempt.current
       )
@@ -1002,7 +1035,7 @@ function Composer({
     );
     valueRef.current = next;
     updateDraft(next);
-    input.current.reset(next);
+    input.current.reset(caption(next));
     setLinkEdit(null);
     caret.current = next.text.length;
     setError(undefined);
@@ -1019,13 +1052,7 @@ function Composer({
       }
     };
   }, [editScope]);
-  function insert(
-    text: string,
-    recipient?: MentionRecipient,
-    range?: CompletionQuery,
-    terminator?: ":",
-    focus = true,
-  ) {
+  function insert(text: string, range?: CompletionQuery, terminator?: ":") {
     if (
       !permitted.current ||
       editingDisabled ||
@@ -1038,90 +1065,27 @@ function Composer({
       typeof text !== "string"
     )
       return false;
-    // Edits replace prose; they do not change the original notification recipients.
-    if (editing.target && recipient) {
-      text = editMentionText(recipient);
-      recipient = undefined;
-    }
-    if (recipient && !admits()(recipient.pubkey)) {
-      setError(
-        "This recipient is no longer available. Remove it or refresh choices.",
-      );
-      return false;
-    }
-    if (recipient && valueRef.current.recipients.length >= 32) {
-      setError("Choose at most 32 recipients");
-      return false;
-    }
     completion.invalidate();
-    if (!input.current.insertText(text, recipient, range, terminator, focus)) {
+    if (!input.current.insertText(text, undefined, range, terminator)) {
       setError("Message is too long to insert text");
       return false;
     }
-    if (recipient) rememberMention(session, channelId, recipient.pubkey);
     setError(undefined);
     return true;
   }
-  function insertMention(recipient: MentionRecipient) {
-    if (
-      !recipient ||
-      typeof recipient.pubkey !== "string" ||
-      !/^[0-9a-f]{64}$/.test(recipient.pubkey) ||
-      typeof recipient.name !== "string" ||
-      !recipient.name.trim()
-    )
-      return false;
-    if (!solo || editing.target)
-      return insert(`@${recipient.name} `, recipient);
-    return keepProseCaret((at) =>
-      insert(`@${recipient.name} `, recipient, at, undefined, false),
-    );
-  }
-  /** Solo chats address agents up front: a picked tag joins the leading tags,
-   * wherever the caret is. The insertion maps the caret, so the caret and its
-   * Undo both stay in the prose it was in. */
-  function keepProseCaret(add: (at: CompletionQuery) => boolean) {
-    const before = valueRef.current;
-    let start = 0;
-    for (const tag of [...before.recipients].sort(
-      (a, b) => a.start - b.start,
-    )) {
-      if (tag.start !== start || !/[ \t]/.test(before.text[tag.end] ?? ""))
-        break;
-      start = tag.end;
-      while (/[ \t]/.test(before.text[start] ?? "")) start++;
-    }
-    const caret = input.current?.selectionStart ?? before.text.length;
-    if (!add({ start, end: start, query: "" })) return false;
-    // A caret among the leading tags has no prose to stay in.
-    if (caret < start)
-      input.current?.setSelectionRange(
-        valueRef.current.text.length,
-        valueRef.current.text.length,
-      );
-    input.current?.focus();
-    return true;
-  }
-  function insertMentions(
-    recipients: readonly MentionRecipient[],
+  /** Adds recipients beside the text, consuming the typed `@query` in `range`.
+   * All or nothing; a message edit only gains references, never recipients. */
+  function address(
+    people: readonly MentionRecipient[],
     range?: CompletionQuery,
   ) {
     if (
-      !Array.isArray(recipients) ||
-      !recipients.length ||
-      recipients.some(
-        (person) =>
-          !person ||
-          typeof person.pubkey !== "string" ||
-          !/^[0-9a-f]{64}$/.test(person.pubkey) ||
-          typeof person.name !== "string" ||
-          !person.name.trim(),
-      )
+      !Array.isArray(people) ||
+      !people.length ||
+      !people.every(validRecipient)
     )
       return false;
-    const unique = [
-      ...new Map(recipients.map((person) => [person.pubkey, person])).values(),
-    ];
+    const unique = uniqueRecipients(people);
     if (unique.length > 32) {
       setError("Choose at most 32 recipients");
       return false;
@@ -1131,51 +1095,45 @@ function Composer({
       editingDisabled ||
       !outbox?.supports(9) ||
       !input.current?.isConnected ||
+      // DOM props are committed before child layout effects; closures can still
+      // carry the preceding render's enabled state during that interval.
       input.current.disabled ||
       input.current.readOnly
     )
       return false;
-    // Message edits only add references, never new notification intent.
     if (editing.target)
-      return insert(unique.map(editMentionText).join(""), undefined, range);
+      return insert(unique.map(editMentionText).join(""), range);
     const admitted = admits();
     if (unique.some((person) => !admitted(person.pubkey))) {
       setError(
-        "A team member is no longer available. Refresh choices before trying again.",
+        unique.length > 1
+          ? "A team member is no longer available. Refresh choices before trying again."
+          : "This recipient is no longer available. Remove it or refresh choices.",
       );
       return false;
     }
-    const text = unique.map((person) => `@${person.name} `).join("");
-    if (
-      !(solo && !range
-        ? keepProseCaret(
-            (at) =>
-              !!input.current?.insertText(text, unique, at, undefined, false),
-          )
-        : input.current.insertText(text, unique, range))
-    ) {
-      setError(
-        "The team would exceed the message length or 32-recipient limit. Nothing was added.",
-      );
+    const to = uniqueRecipients([
+      ...(valueRef.current.to ?? nobody),
+      ...unique,
+    ]);
+    if (to.length > 32) {
+      setError("Choose at most 32 recipients");
       return false;
     }
     completion.invalidate();
+    if (range && !input.current.insertText("", undefined, range)) return false;
+    autoAdded.current = undefined;
+    saveDraft({ ...valueRef.current, to });
+    if (!range) input.current.focus();
     for (const person of unique)
       rememberMention(session, channelId, person.pubkey);
     setError(undefined);
     return true;
   }
-  function replaceRecipients(recipients: readonly MentionRecipient[]) {
+  function replaceRecipients(people: readonly MentionRecipient[]) {
     if (
-      !Array.isArray(recipients) ||
-      recipients.some(
-        (person) =>
-          !person ||
-          typeof person.pubkey !== "string" ||
-          !/^[0-9a-f]{64}$/.test(person.pubkey) ||
-          typeof person.name !== "string" ||
-          !person.name.trim(),
-      ) ||
+      !Array.isArray(people) ||
+      !people.every(validRecipient) ||
       !permitted.current ||
       editingDisabled ||
       editing.target ||
@@ -1185,26 +1143,24 @@ function Composer({
       input.current.readOnly
     )
       return false;
-    const unique = [
-      ...new Map(recipients.map((person) => [person.pubkey, person])).values(),
-    ];
+    const unique = uniqueRecipients(people);
     const admitted = admits();
     if (unique.length > 32 || unique.some((person) => !admitted(person.pubkey)))
       return false;
-    if (!input.current.replaceRecipients(unique)) return false;
-    completion.invalidate();
+    autoAdded.current = undefined;
+    saveDraft({ ...valueRef.current, to: unique });
     setError(undefined);
     return true;
   }
-  function replaceRecipientsIfEmpty(recipients: readonly MentionRecipient[]) {
-    const current = valueRef.current;
-    const prose = [...current.recipients]
-      .sort((a, b) => b.start - a.start)
-      .reduce(
-        (text, tag) => text.slice(0, tag.start) + text.slice(tag.end),
-        current.text,
-      );
-    return !prose.trim() && replaceRecipients(recipients);
+  function removeRecipient(pubkey: string) {
+    autoAdded.current = undefined;
+    saveDraft({
+      ...valueRef.current,
+      to: (valueRef.current.to ?? nobody).filter(
+        (person) => person.pubkey !== pubkey,
+      ),
+    });
+    input.current?.focus();
   }
   function insertResource(resource: ComposerResource): true | string {
     if (
@@ -1242,14 +1198,13 @@ function Composer({
         return false;
     }
     if ("mentions" in edit && edit.mentions)
-      return insertMentions(edit.mentions, query);
+      return address(edit.mentions, query);
     if ("mention" in edit && edit.mention)
-      return insert(`@${edit.mention.name} `, edit.mention, query);
+      return address([edit.mention], query);
     return (
       typeof edit.text === "string" &&
       insert(
         `${edit.text}${isEmojiOnly(edit.text, emojiCatalog.entries) ? "" : " "}`,
-        undefined,
         query,
         key === ":" ? key : undefined,
       )
@@ -1262,12 +1217,17 @@ function Composer({
     (!ownSoloConversation ||
       session.channels.list().channels.find((item) => item.id === channelId)
         ?.channelType === "solo");
-  // A saved Solo chat is seeded with the agent the viewer last tagged there.
-  const restoresAgent = solo && !submission && !threadRootId && !defaultMention;
-  // It waits for the history and for complete agent evidence.
-  const subscribeRows = useCallback(
+  // Solo adds an agent each time its composer is shown, even after it was
+  // removed; removals then stand until the composer is shown again. A new
+  // chat gets the default agent, and a saved chat the agent the viewer last
+  // tagged there, else the default. A chat with other people is a
+  // conversation, so it adds no one.
+  const presented = active && shown;
+  const fromHistory =
+    ownSoloConversation && !submission && !threadRootId && presented;
+  const subscribeHistory = useCallback(
     (listener: () => void) => {
-      if (!restoresAgent) return () => {};
+      if (!fromHistory) return () => {};
       const rows = session.channels.subscribeWindow?.(channelId, listener);
       const choices = session.agentChoices.subscribe(listener);
       return () => {
@@ -1275,83 +1235,109 @@ function Composer({
         choices();
       };
     },
-    [restoresAgent, session.channels, session.agentChoices, channelId],
+    [fromHistory, session.channels, session.agentChoices, channelId],
   );
-  // Only an empty untagged draft looks, so typing doesn't rescan the history.
-  const presented = active && shown;
-  const seeking =
-    restoresAgent && presented && !value.recipients.length && !draft.trim();
-  const lastAgent = useSyncExternalStore(subscribeRows, () =>
-    seeking
-      ? lastMentionedAgent(
-          session,
-          session.channels.window?.(channelId).rows ?? [],
-          mentionAdmission(session, channelId, agentChoices, mentionRoster),
-        )
-      : undefined,
+  // "" while the history or agent choices are still loading.
+  const lastAgent = useSyncExternalStore(subscribeHistory, () => {
+    if (!fromHistory) return undefined;
+    const history = session.channels.window?.(channelId);
+    if (
+      history?.status === "loading" ||
+      !session.agentChoices.snapshot().complete
+    )
+      return "";
+    return lastMentionedAgent(
+      session,
+      history?.rows ?? [],
+      mentionAdmission(session, channelId, agentChoices, mentionRoster),
+    );
+  });
+  const lastRecipient = lastAgent
+    ? (pastedMentionRecipient(
+        session,
+        channelId,
+        lastAgent,
+        agentChoices,
+        mentionRoster,
+      ) ?? undefined)
+    : undefined;
+  const waiting = lastAgent === "";
+  const wanted = withPeople ? undefined : (lastRecipient ?? defaultMention);
+  const addedDefault = useRef<string | undefined>(undefined);
+  // An automatic add, with the recipients right after it, until the person
+  // changes them.
+  const autoAdded = useRef<{ pubkey: string; to: string } | undefined>(
+    undefined,
   );
-  const seedMention =
-    defaultMention ??
-    (lastAgent
-      ? (pastedMentionRecipient(
-          session,
-          channelId,
-          lastAgent,
-          agentChoices,
-          mentionRoster,
-        ) ?? undefined)
-      : undefined);
-  // Each time the composer is shown, an empty untagged draft is seeded with
-  // that agent. Once it has content, respect edits and removals until the
-  // composer is shown again; accepted sends use the remembered-mention draft.
-  const autoTagged = useRef<string | undefined>(undefined);
-  const automaticTag = useRef<string | undefined>(undefined);
   useEffect(() => {
-    if (!presented) autoTagged.current = undefined;
+    if (!presented) addedDefault.current = undefined;
+    // Later evidence, such as members' profiles showing people or the
+    // history naming another agent, replaces an untouched automatic add.
+    const auto = autoAdded.current;
+    if (
+      auto &&
+      !waiting &&
+      (withPeople || (wanted && auto.pubkey !== wanted.pubkey)) &&
+      auto.to === JSON.stringify(valueRef.current.to ?? nobody)
+    ) {
+      autoAdded.current = undefined;
+      addedDefault.current = undefined;
+      saveDraft({
+        ...valueRef.current,
+        to: (valueRef.current.to ?? nobody).filter(
+          (person) => person.pubkey !== auto.pubkey,
+        ),
+      });
+    }
     if (
       !presented ||
+      !ownSoloConversation ||
+      waiting ||
+      !wanted ||
       sendPending ||
       completion.composing.current ||
+      threadRootId ||
       editing.target ||
-      autoTagged.current === draftKey
+      addedDefault.current === draftKey ||
+      !admits()(wanted.pubkey)
     )
       return;
-    // A shortcut may seed an ordinary editable link. Still add the default
-    // agent once while that freshly seeded text is untouched; a restored draft
-    // keeps its recipients as saved, so a removed tag never returns.
-    const untouchedInitial =
-      seededKey === draftKey &&
-      typeof submission?.initialDraft === "string" &&
-      draft === submission.initialDraft;
-    if (value.recipients.length || (draft.trim() && !untouchedInitial)) {
-      autoTagged.current = draftKey;
-      return;
-    }
-    if (seedMention && admits()(seedMention.pubkey)) {
-      if (
-        insert(
-          `@${seedMention.name} `,
-          seedMention,
-          { start: 0, end: 0, query: "" },
-          undefined,
-          false,
-        )
-      ) {
-        automaticTag.current = JSON.stringify(valueRef.current);
-        input.current?.setSelectionRange(
-          valueRef.current.text.length,
-          valueRef.current.text.length,
-        );
-      }
-    }
+    addedDefault.current = draftKey;
+    const to = valueRef.current.to ?? nobody;
+    if (
+      to.length < 32 &&
+      !to.some((p) => p.pubkey === wanted.pubkey) &&
+      saveDraft({ ...valueRef.current, to: [...to, wanted] })
+    )
+      autoAdded.current = {
+        pubkey: wanted.pubkey,
+        to: JSON.stringify(valueRef.current.to),
+      };
   });
+  // Mentions in the text, from a draft saved before recipients moved out of
+  // it or a pasted profile link, become recipients and leave the text.
+  const moveTextRecipients = useEffectEvent(
+    (inText: MentionDraft["recipients"]) => {
+      saveDraft({
+        ...valueRef.current,
+        to: uniqueRecipients([
+          ...(valueRef.current.to ?? nobody),
+          ...inText.map(({ pubkey, name }) => ({ pubkey, name })),
+        ]).slice(0, 32),
+      });
+      input.current?.replaceRecipients([]);
+    },
+  );
+  useLayoutEffect(() => {
+    if (!editing.target && !editingDisabled && value.recipients.length)
+      moveTextRecipients(value.recipients);
+  }, [value.recipients, editing.target, editingDisabled]);
   // Alone in a Solo chat, a send addresses agents; with people it is a conversation.
   const needsRecipient = (requireMention || solo) && !withPeople;
   const recipientHint = submission
     ? "Tag an agent to send"
     : "Tag a person or agent to send";
-  const untagged =
-    needsRecipient && !editing.target && !value.recipients.length;
+  const untagged = needsRecipient && !editing.target && !recipients.length;
   async function prepareRecipients(explicit: readonly string[]) {
     const channel = await session.channelWrites.refreshMembership(channelId);
     if (!currentAdmission())
@@ -1445,7 +1431,7 @@ function Composer({
       !outbox
     )
       return;
-    if (needsRecipient && !valueRef.current.recipients.length) {
+    if (needsRecipient && !valueRef.current.to?.length) {
       setError(recipientHint);
       return;
     }
@@ -1461,7 +1447,7 @@ function Composer({
       setAccepted(recovering);
       valueRef.current = recovering.next;
       updateDraft(recovering.next);
-      input.current?.reset(recovering.next);
+      input.current?.reset(caption(recovering.next));
       return;
     }
     if (!submission && viewRevision(scope, draftKey) !== revision.current) {
@@ -1472,6 +1458,7 @@ function Composer({
     const attempt = new AbortController();
     sendAttempt.current = attempt;
     const captured = valueRef.current;
+    const capturedTo = captured.to ?? nobody;
     const capturedAttachments = attachments.store.snapshot();
     const capturedPicks = picks;
     const capturedRunPicks = { ...picks, ...resolvedPicks.current };
@@ -1489,9 +1476,9 @@ function Composer({
       ownSoloConversation &&
       !threadRootId &&
       followUpBehaviorPreference() === "queue" &&
-      captured.recipients.length > 0 &&
+      capturedTo.length > 0 &&
       !soloHasPeople(
-        captured.recipients.map(({ pubkey }) => pubkey),
+        capturedTo.map(({ pubkey }) => pubkey),
         session.viewer,
         profileSnapshot,
         agentKeys,
@@ -1501,7 +1488,7 @@ function Composer({
         (agents?.joinable() ?? []).map((agent) => agent.pubkey),
       );
       if (
-        captured.recipients.some(
+        capturedTo.some(
           (p) => archivedMention(session, p.pubkey) && !bringable.has(p.pubkey),
         )
       )
@@ -1511,7 +1498,7 @@ function Composer({
       if (
         ownSoloConversation &&
         submission &&
-        captured.recipients.some(
+        capturedTo.some(
           (person) =>
             !session.agentChoices
               .snapshot()
@@ -1526,7 +1513,7 @@ function Composer({
         return;
       }
       let references: readonly string[] = [];
-      let recipients = captured.recipients.map((item) => item.pubkey);
+      let recipients = capturedTo.map((item) => item.pubkey);
       let declinedImports: readonly string[] = [];
       if (soloConversation || ownSoloConversation) {
         admission.current = true;
@@ -1534,7 +1521,7 @@ function Composer({
         recipients = await prepareRecipients(recipients);
       } else if (recipients.length) {
         // An agent only an earlier Buzz runs would not answer; offer it here first.
-        const lookup = oldAgents.find(captured.recipients);
+        const lookup = oldAgents.find(capturedTo);
         const old = lookup instanceof Promise ? await lookup : lookup;
         if (old.length) {
           setSending(true);
@@ -1569,7 +1556,7 @@ function Composer({
           const elsewhere = new Map(
             (agents?.joinable() ?? []).map((agent) => [agent.pubkey, agent]),
           );
-          const bring = captured.recipients.flatMap((person) => {
+          const bring = capturedTo.flatMap((person) => {
             const agent = elsewhere.get(person.pubkey);
             return agent && !channel.members?.includes(person.pubkey)
               ? [agent]
@@ -1586,7 +1573,7 @@ function Composer({
             if (brought === null) return;
             added = brought;
           }
-          const missing = captured.recipients.filter(
+          const missing = capturedTo.filter(
             (person) =>
               !channel.members?.includes(person.pubkey) &&
               !added.includes(person.pubkey),
@@ -1627,9 +1614,33 @@ function Composer({
       }
       const content =
         threadRootId && mediaTimeSeconds !== undefined
-          ? mediaTimeReply(mediaTimeSeconds, composerMarkdown(captured))
-          : composerMarkdown(captured);
-      const next = rememberedMentions(session, captured, recipients);
+          ? mediaTimeReply(mediaTimeSeconds, sentMarkdown(captured))
+          : sentMarkdown(captured);
+      // Solo starts the next message to the agent this one tagged first, as
+      // a return to the chat would, else to the default agent.
+      const soloNext = () => {
+        const agents = knownAgentPubkeys(
+          session.profiles.snapshot(),
+          session.agentChoices.snapshot(),
+        );
+        const admitted = admits();
+        const agent =
+          (!submission &&
+            capturedTo.find(
+              (person) =>
+                agents.has(person.pubkey) &&
+                recipients.includes(person.pubkey) &&
+                admitted(person.pubkey),
+            )) ||
+          (defaultMention && admitted(defaultMention.pubkey)
+            ? defaultMention
+            : undefined);
+        return followupDraft(agent ? [agent] : []);
+      };
+      const next =
+        ownSoloConversation && !withPeople && !threadRootId
+          ? soloNext()
+          : rememberedMentions(session, captured, recipients);
       // Only agents this message still addresses are asked for a model or effort.
       const addressedNow = sessionTargets(recipients);
       const sentPicks: MentionPicks = Object.fromEntries(
@@ -1786,6 +1797,7 @@ function Composer({
                 return (
                   !draft.text.trim() &&
                   !draft.recipients.length &&
+                  !draft.to?.length &&
                   !composerMarkdown(draft).trim()
                 );
               } catch {
@@ -1796,8 +1808,8 @@ function Composer({
               live.current &&
               !cleared(JSON.stringify(valueRef.current)) &&
               (valueRef.current.text !== next.text ||
-                JSON.stringify(valueRef.current.recipients) !==
-                  JSON.stringify(next.recipients) ||
+                JSON.stringify(valueRef.current.to ?? []) !==
+                  JSON.stringify(next.to ?? []) ||
                 JSON.stringify(valueRef.current.chatCards ?? []) !==
                   JSON.stringify(next.chatCards ?? [])) &&
               JSON.stringify(valueRef.current) !== capturedRevision
@@ -1815,8 +1827,8 @@ function Composer({
                 live.current &&
                 current === JSON.stringify(valueRef.current) &&
                 valueRef.current.text === next.text &&
-                JSON.stringify(valueRef.current.recipients) ===
-                  JSON.stringify(next.recipients) &&
+                JSON.stringify(valueRef.current.to ?? []) ===
+                  JSON.stringify(next.to ?? []) &&
                 JSON.stringify(valueRef.current.chatCards ?? []) ===
                   JSON.stringify(next.chatCards ?? [])
               )
@@ -1861,15 +1873,14 @@ function Composer({
       // An unchanged prefill may not render. Do not leave a caret command for
       // the next keystroke to consume after inserting its first character.
       caret.current = changed ? next.text.length : undefined;
-      input.current?.reset(next);
+      input.current?.reset(caption(next));
       input.current?.focus();
       if (!changed)
         input.current?.setSelectionRange(next.text.length, next.text.length);
       setError(undefined);
-      autoTagged.current = draftKey;
-      automaticTag.current = next.recipients.length
-        ? JSON.stringify(next)
-        : undefined;
+      // A follow-up without an agent can still gain one once choices load.
+      autoAdded.current = undefined;
+      if (!next.to?.length) addedDefault.current = undefined;
       if (id) onSend?.(id);
       finishDraft(pending);
     } catch (reason) {
@@ -1887,6 +1898,7 @@ function Composer({
     }
   }
   const readingOnly = !outbox?.supports(9) && !cached;
+  const leadingTools = useRef<HTMLDivElement>(null);
   // The attachments section animates out over 150 ms; the form's gap and
   // padding (data-attachments) collapse when it has, not when the list empties.
   // An edit unmounts the section at once, so no exit completes during one.
@@ -1926,16 +1938,17 @@ function Composer({
   const renderLeadingTools = (tools: ReactNode) => (
     <>
       <div
+        ref={leadingTools}
         className={styles.composerLeadingTools}
-        data-recipients={!!value.recipients.length || undefined}
+        data-recipients={!!recipients.length || undefined}
       >
         {tools}
-        {!!value.recipients.length && (
+        {!!recipients.length && (
           <RecipientAvatars
             session={session}
-            recipients={value.recipients}
+            recipients={recipients}
             disabled={editingDisabled}
-            remove={(pubkey) => input.current?.removeRecipient(pubkey)}
+            remove={removeRecipient}
           />
         )}
       </div>
@@ -1976,12 +1989,27 @@ function Composer({
       </>
     );
   return (
-    <SelectedMentionContext.Provider value={value.recipients}>
+    <SelectedMentionContext.Provider value={recipients}>
       {context}
       {active && bringing.dialog}
       {active && nonmembers.dialog}
       {active && oldAgents.dialog}
       {active && linkSharing.dialog}
+      {ownSoloConversation && presented && !editing.target && (
+        <RecipientTip
+          kind={
+            withPeople
+              ? undefined
+              : noAgents
+                ? "no-agents"
+                : recipients.some((p) => p.pubkey === defaultMention?.pubkey)
+                  ? "main-agent"
+                  : undefined
+          }
+          agent={defaultMention?.name}
+          anchor={leadingTools}
+        />
+      )}
       {!submission && !threadRootId && host && (
         <QueuedFollowUps
           session={host}
@@ -2141,7 +2169,6 @@ function Composer({
               emoji={emojiCatalog.entries}
               onDraftChange={(next) => {
                 const textChanged = next.text !== valueRef.current.text;
-                if (!editing.target) automaticTag.current = undefined;
                 saveDraft(next);
                 completion.observe(true);
                 if (textChanged && next.text.trim()) notifyTyping();
@@ -2221,10 +2248,7 @@ function Composer({
                   !editDisabled &&
                   !submission &&
                   !editing.target &&
-                  ((event.currentTarget.value === "" &&
-                    !valueRef.current.recipients.length) ||
-                    automaticTag.current ===
-                      JSON.stringify(valueRef.current)) &&
+                  event.currentTarget.value === "" &&
                   !valueRef.current.chatCards?.length &&
                   !attachments.items.length
                 ) {
@@ -2304,10 +2328,12 @@ function Composer({
                     inviteAgents={agentChoices && !editing.target}
                     recipients={recipients}
                     insertText={(text) => insert(text)}
-                    insertMention={insertMention}
-                    insertMentions={insertMentions}
+                    insertMention={(person) => address([person])}
+                    insertMentions={(people) => address(people)}
                     replaceRecipients={replaceRecipients}
-                    replaceRecipientsIfEmpty={replaceRecipientsIfEmpty}
+                    replaceRecipientsIfEmpty={(people) =>
+                      !valueRef.current.text.trim() && replaceRecipients(people)
+                    }
                     insertResource={insertResource}
                     focus={() => input.current?.focus()}
                   />

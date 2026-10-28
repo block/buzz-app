@@ -606,10 +606,9 @@ function Timeline({
     // New rows can leave the initial offset unchanged. Hold through their
     // measurements, but leave ordinary prepend follow-up renders to Virtua.
     correctScrollTop(element, moved);
-    const top = () =>
-      element
-        .querySelector(`[data-message-id="${CSS.escape(id)}"]`)
-        ?.getBoundingClientRect().top;
+    const message = () =>
+      element.querySelector(`[data-message-id="${CSS.escape(id)}"]`);
+    const top = () => message()?.getBoundingClientRect().top;
     // The row's offset from the viewport, as last placed by the reader.
     // A live append must not choose a newly inserted row while the older
     // page is still measuring; keep the reader's original row and offset.
@@ -617,10 +616,22 @@ function Timeline({
     const anchor = { id, y, intent: intent.current };
     heldReader.current = anchor;
     // Virtua unmounts rows the reader leaves, but still places them. Track the
-    // row there too, or remounting it would restore where the reader was.
+    // row there too, or remounting it would restore where the reader was. The
+    // message can sit inside its item (a closed agents-audience row is inset),
+    // so keep the inset it had while mounted.
+    let inset = 0;
+    const mounted = () => {
+      const row = message();
+      if (!row) return undefined;
+      const edge = row.getBoundingClientRect().top;
+      inset = edge - (row.closest("li")?.getBoundingClientRect().top ?? edge);
+      return edge;
+    };
+    mounted();
     const read = () => {
       const row =
-        top() ?? list.getBoundingClientRect().top + virtua.getItemOffset(index);
+        mounted() ??
+        list.getBoundingClientRect().top + virtua.getItemOffset(index) + inset;
       anchor.y = y = row - element.getBoundingClientRect().top;
     };
     let height = list.style.height;

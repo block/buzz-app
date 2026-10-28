@@ -14,12 +14,50 @@ import { agentAvatars } from "../../features/agents/avatar-packs";
 import type { Agent, RegisteredAgentType } from "../../features/agents/service";
 import type { EventData } from "../../features/relay/events";
 import type { RelaySession } from "../../features/relay/session";
+import type { Recipient } from "../../features/direct-messages/usePeople";
+import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { AgentShareDialog } from "./AgentShareDialog";
 
 const desktop = vi.hoisted(() => ({ tauri: false, invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({
   isTauri: () => desktop.tauri,
   invoke: desktop.invoke,
+}));
+
+// The picker is covered with New message; here it only hands over people.
+const bea = { pubkey: "b".repeat(64), name: "Bea" };
+const cy = { pubkey: "c".repeat(64), name: "Cy" };
+vi.mock("../../features/direct-messages/RecipientPicker", () => ({
+  RecipientPicker: ({
+    selected,
+    disabled,
+    onChange,
+    onComplete,
+  }: {
+    selected: Recipient[];
+    disabled: boolean;
+    onChange(people: Recipient[]): void;
+    onComplete(): void;
+  }) => (
+    <div>
+      {[bea, cy].map((person) => (
+        <button
+          key={person.pubkey}
+          type="button"
+          disabled={disabled}
+          onClick={() => onChange([...selected, person])}
+        >
+          Add {person.name}
+        </button>
+      ))}
+      <button type="button" onClick={onComplete}>
+        Finish choosing
+      </button>
+      <output aria-label="Recipients">
+        {selected.map((person) => person.name).join(", ")}
+      </output>
+    </div>
+  ),
 }));
 
 afterEach(() => {
@@ -93,10 +131,31 @@ function community() {
     for (const listener of listeners) listener();
   };
   const read = vi.fn(async () => [...heads]);
+  const directMessages = {
+    available: true,
+    open: vi.fn(async ([pubkey]: string[]) => `dm-${pubkey?.[0]}`),
+    delivered: vi.fn(async (_id: string, _channel: string) => {}),
+    delivery: vi.fn((_id: string) => "accepted"),
+  };
+  const attachments = {
+    upload: vi.fn(async (file: File, _channel: string) => ({
+      name: file.name,
+      url: "https://media.example/ada.agent.png",
+      type: file.type,
+      size: file.size,
+      sha256: "0".repeat(64),
+    })),
+  };
+  const messages = {
+    send: vi.fn((channel: string, _content: string) => `sent-${channel}`),
+  };
   return {
     session: {
       read,
       outbox,
+      directMessages,
+      attachments,
+      messages,
       media: (url: string) => url,
     } as unknown as RelaySession,
     heads,
@@ -104,6 +163,9 @@ function community() {
     accept,
     lose,
     read,
+    directMessages,
+    attachments,
+    messages,
   };
 }
 
@@ -113,17 +175,27 @@ function share(session: RelaySession, overrides: Partial<Agent> = {}) {
       agent={{ ...agent, ...overrides }}
       type={echo}
       session={session}
+      scope="test"
       onClose={() => {}}
     />,
+    { wrapper: ToastProvider },
   );
 }
 
-/** The Marketplace row's action, once the listing has been read. */
-async function listingAction(name: string) {
-  const button = await screen.findByRole("button", { name });
-  await vi.waitFor(() => expect(button).toBeEnabled());
-  return button;
+/** The Marketplace switch, once the listing has been read. */
+async function listing() {
+  const toggle = await screen.findByRole("switch", {
+    name: "Post to Marketplace",
+  });
+  await vi.waitFor(() =>
+    expect(toggle).not.toHaveAttribute("aria-disabled", "true"),
+  );
+  return toggle;
 }
+
+/** The footer's export, which saves an image unless JSON is chosen. */
+const exportButton = (name = "Ada") =>
+  screen.getByRole("button", { name: `Export ${name} as an image` });
 
 const sharedContent = JSON.stringify({
   display_name: "Ada",
@@ -139,10 +211,10 @@ it("publishes what the review shows, then removes what it published", async () =
   share(session);
   expect(
     await within(screen.getByRole("dialog", { name: "Share Ada" })).findByText(
-      "Not listed",
+      "Let anyone in this community find and add a copy.",
     ),
   ).toBeInTheDocument();
-  await user.click(await listingAction("Publish Ada to the Marketplace"));
+  await user.click(await listing());
   const review = screen.getByRole("dialog", {
     name: "Publish Ada to the Marketplace",
   });
@@ -171,15 +243,14 @@ it("publishes what the review shows, then removes what it published", async () =
   );
   accept();
   expect(
-    await screen.findByText("Published to the Marketplace."),
+    await screen.findByText("Published Ada to the Marketplace."),
   ).toBeInTheDocument();
-  const remove = screen.getByRole("button", {
-    name: "Remove Ada from the Marketplace",
-  });
-  // Returning lands on the row's action that replaced Publish.
-  expect(remove).toHaveFocus();
+  const toggle = screen.getByRole("switch", { name: "Post to Marketplace" });
+  expect(toggle).toBeChecked();
+  // Returning lands on the switch that opened the review.
+  expect(toggle).toHaveFocus();
 
-  await user.click(remove);
+  await user.click(toggle);
   const confirm = screen.getByRole("dialog", {
     name: "Remove Ada from the Marketplace?",
   });
@@ -199,24 +270,23 @@ it("publishes what the review shows, then removes what it published", async () =
   );
   accept();
   expect(
-    await screen.findByText("Removed from the Marketplace."),
+    await screen.findByText("Removed Ada from the Marketplace."),
   ).toBeInTheDocument();
   expect(
-    screen.getByRole("button", { name: "Publish Ada to the Marketplace" }),
-  ).toBeInTheDocument();
+    screen.getByRole("switch", { name: "Post to Marketplace" }),
+  ).not.toBeChecked();
 });
 
 it("goes back from the review without publishing", async () => {
   const user = userEvent.setup();
   const { session, outbox } = community();
   share(session);
-  const publish = await listingAction("Publish Ada to the Marketplace");
-  await user.click(publish);
+  await user.click(await listing());
   await user.click(screen.getByRole("button", { name: "Cancel" }));
   expect(screen.getByRole("dialog", { name: "Share Ada" })).toBeInTheDocument();
-  expect(
-    screen.getByRole("button", { name: "Publish Ada to the Marketplace" }),
-  ).toHaveFocus();
+  const toggle = screen.getByRole("switch", { name: "Post to Marketplace" });
+  expect(toggle).toHaveFocus();
+  expect(toggle).not.toBeChecked();
   expect(outbox.send).not.toHaveBeenCalled();
 });
 
@@ -229,14 +299,12 @@ it("says up front why an agent can't be shared, before anything is sent", async 
     "Ada can’t be shared. Portable configuration appears to contain a credential. Remove it before sharing or exporting.",
   );
   await vi.waitFor(() => expect(read).toHaveBeenCalled());
-  await screen.findByText("Not listed");
+  await screen.findByText("Let anyone in this community find and add a copy.");
   expect(
-    screen.getByRole("button", { name: "Publish Ada to the Marketplace" }),
-  ).toBeDisabled();
-  expect(screen.getByRole("button", { name: "Export Ada" })).toBeDisabled();
-  expect(
-    screen.getByRole("button", { name: "Export as JSON instead" }),
-  ).toBeDisabled();
+    screen.getByRole("switch", { name: "Post to Marketplace" }),
+  ).toHaveAttribute("aria-disabled", "true");
+  expect(exportButton()).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Add Bea" })).toBeDisabled();
   expect(outbox.send).not.toHaveBeenCalled();
 });
 
@@ -244,18 +312,16 @@ it("asks the relay what an unanswered publish did before saying it failed", asyn
   const user = userEvent.setup();
   const { session, outbox, lose } = community();
   share(session);
-  await user.click(await listingAction("Publish Ada to the Marketplace"));
+  await user.click(await listing());
   await user.click(screen.getByRole("button", { name: "Publish" }));
   await vi.waitFor(() => expect(outbox.send).toHaveBeenCalledTimes(1));
   lose(true);
   expect(
-    await screen.findByText("Published to the Marketplace."),
+    await screen.findByText("Published Ada to the Marketplace."),
   ).toBeInTheDocument();
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 
-  await user.click(
-    screen.getByRole("button", { name: "Remove Ada from the Marketplace" }),
-  );
+  await user.click(screen.getByRole("switch", { name: "Post to Marketplace" }));
   await user.click(screen.getByRole("button", { name: "Remove" }));
   await vi.waitFor(() => expect(outbox.send).toHaveBeenCalledTimes(2));
   lose(false);
@@ -265,7 +331,9 @@ it("asks the relay what an unanswered publish did before saying it failed", asyn
   );
   expect(screen.getByRole("button", { name: "Remove" })).toBeEnabled();
   await user.click(screen.getByRole("button", { name: "Cancel" }));
-  expect(screen.getByText("Listed")).toBeInTheDocument();
+  expect(
+    screen.getByRole("switch", { name: "Post to Marketplace" }),
+  ).toBeChecked();
 });
 
 /** Publishes Ada, then opens the confirmation to remove it. */
@@ -273,15 +341,12 @@ async function publishThenConfirmRemove(
   user: ReturnType<typeof userEvent.setup>,
   { outbox, accept }: ReturnType<typeof community>,
 ) {
-  await user.click(await listingAction("Publish Ada to the Marketplace"));
+  await user.click(await listing());
   await user.click(screen.getByRole("button", { name: "Publish" }));
   await vi.waitFor(() => expect(outbox.send).toHaveBeenCalledTimes(1));
   accept();
-  await user.click(
-    await screen.findByRole("button", {
-      name: "Remove Ada from the Marketplace",
-    }),
-  );
+  await screen.findByText("Published Ada to the Marketplace.");
+  await user.click(screen.getByRole("switch", { name: "Post to Marketplace" }));
   await user.click(screen.getByRole("button", { name: "Remove" }));
   await vi.waitFor(() => expect(outbox.send).toHaveBeenCalledTimes(2));
 }
@@ -300,7 +365,9 @@ it("says removing failed when a newer shared head wins over the accepted one", a
     "Couldn’t remove Ada. Try again.",
   );
   await user.click(screen.getByRole("button", { name: "Cancel" }));
-  expect(screen.getByText("Listed")).toBeInTheDocument();
+  expect(
+    screen.getByRole("switch", { name: "Post to Marketplace" }),
+  ).toBeChecked();
 });
 
 it("keeps the confirmed state when the relay cannot say which head won", async () => {
@@ -314,7 +381,9 @@ it("keeps the confirmed state when the relay cannot say which head won", async (
     "Couldn’t remove Ada. Try again.",
   );
   await user.click(screen.getByRole("button", { name: "Cancel" }));
-  expect(screen.getByText("Listed")).toBeInTheDocument();
+  expect(
+    screen.getByRole("switch", { name: "Post to Marketplace" }),
+  ).toBeChecked();
 });
 
 it("reads the listing again after the first read fails, leaving Export usable", async () => {
@@ -322,13 +391,18 @@ it("reads the listing again after the first read fails, leaving Export usable", 
   const { session, read } = community();
   read.mockRejectedValueOnce(new Error("offline"));
   share(session);
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Couldn’t check the Marketplace.",
-  );
-  expect(screen.getByRole("button", { name: "Export Ada" })).toBeEnabled();
+  expect(
+    await screen.findByText("Couldn’t check the Marketplace."),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole("switch", { name: "Post to Marketplace" }),
+  ).toHaveAttribute("aria-disabled", "true");
+  expect(exportButton()).toBeEnabled();
   await user.click(screen.getByRole("button", { name: "Try again" }));
-  await listingAction("Publish Ada to the Marketplace");
-  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  await listing();
+  expect(
+    screen.queryByText("Couldn’t check the Marketplace."),
+  ).not.toBeInTheDocument();
 });
 
 it("exports the agent as an .agent.json snapshot", async () => {
@@ -348,18 +422,13 @@ it("exports the agent as an .agent.json snapshot", async () => {
       expect(this.download).toBe("Ada.agent.json");
       expect(this.href).toBe("blob:snapshot");
     });
-  render(
-    <AgentShareDialog
-      agent={agent}
-      type={echo}
-      session={community().session}
-      onClose={() => {}}
-    />,
-  );
+  share(community().session);
   await user.click(
-    screen.getByRole("button", { name: "Export as JSON instead" }),
+    screen.getByRole("button", { name: "Choose an export format" }),
   );
-  expect(await screen.findByText("Exported.")).toBeInTheDocument();
+  await user.click(await screen.findByRole("menuitemradio", { name: "JSON" }));
+  await user.click(screen.getByRole("button", { name: "Export Ada as JSON" }));
+  expect(await screen.findByText("Exported Ada.")).toBeInTheDocument();
   expect(click).toHaveBeenCalledTimes(1);
   expect(JSON.parse((await blobs[0]?.text()) ?? "")).toEqual({
     format: "buzz-agent-snapshot",
@@ -388,16 +457,9 @@ it("names a desktop export so every platform accepts it", async () => {
       ["x".repeat(128), `${"x".repeat(64)}.agent.png`],
     ];
     for (const [name, file] of names) {
-      render(
-        <AgentShareDialog
-          agent={{ ...agent, name }}
-          type={echo}
-          session={community().session}
-          onClose={() => {}}
-        />,
-      );
-      await user.click(screen.getByRole("button", { name: `Export ${name}` }));
-      expect(await screen.findByText("Exported.")).toBeInTheDocument();
+      share(community().session, { name });
+      await user.click(exportButton(name));
+      expect(await screen.findByText(`Exported ${name}.`)).toBeInTheDocument();
       expect(desktop.invoke.mock.lastCall?.[2]).toEqual({
         headers: { "x-buzz-file-name": file },
       });
@@ -418,22 +480,15 @@ it("exports without the picture when it does not load in time", async () => {
     },
   );
   try {
-    render(
-      <AgentShareDialog
-        agent={{ ...agent, picture: "https://media.example/ada.png" }}
-        type={echo}
-        session={community().session}
-        onClose={() => {}}
-      />,
-    );
+    share(community().session, { picture: "https://media.example/ada.png" });
     // Only the wait for the picture runs on a controlled clock.
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    fireEvent.click(screen.getByRole("button", { name: "Export Ada" }));
+    fireEvent.click(exportButton());
     await vi.advanceTimersByTimeAsync(4999);
     expect(desktop.invoke).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
     vi.useRealTimers();
-    expect(await screen.findByText("Exported.")).toBeInTheDocument();
+    await vi.waitFor(() => expect(desktop.invoke).toHaveBeenCalledOnce());
     expect(
       await readSnapshot(new Blob([desktop.invoke.mock.calls[0]?.[1]])),
     ).toMatchObject({ name: "Ada", picture: "https://media.example/ada.png" });
@@ -457,16 +512,9 @@ it("draws pack art from the app's own copy, since its CDN can't be read back", a
       decode = () => Promise.reject(new Error("not drawn in jsdom"));
     },
   );
-  render(
-    <AgentShareDialog
-      agent={{ ...agent, picture: `${pack.url}#buzz-anim=x` }}
-      type={echo}
-      session={community().session}
-      onClose={() => {}}
-    />,
-  );
-  fireEvent.click(screen.getByRole("button", { name: "Export Ada" }));
-  expect(await screen.findByText("Exported.")).toBeInTheDocument();
+  share(community().session, { picture: `${pack.url}#buzz-anim=x` });
+  fireEvent.click(exportButton());
+  expect(await screen.findByText("Exported Ada.")).toBeInTheDocument();
   expect(sources).toEqual([pack.preview]);
 });
 
@@ -476,18 +524,13 @@ it("saves an .agent.png natively on desktop, never through a blob link", async (
   desktop.invoke.mockResolvedValueOnce("/Users/ada/Downloads/Ada.agent.png");
   const click = vi.spyOn(HTMLAnchorElement.prototype, "click");
   try {
-    render(
-      <AgentShareDialog
-        agent={agent}
-        type={echo}
-        session={community().session}
-        onClose={() => {}}
-      />,
-    );
-    await user.click(screen.getByRole("button", { name: "Export Ada" }));
+    share(community().session);
+    await user.click(exportButton());
     // Desktop says where the file went.
     expect(
-      await screen.findByText("Saved to /Users/ada/Downloads/Ada.agent.png."),
+      await screen.findByText(
+        "Saved Ada to /Users/ada/Downloads/Ada.agent.png.",
+      ),
     ).toBeInTheDocument();
     expect(click).not.toHaveBeenCalled();
     expect(desktop.invoke).toHaveBeenCalledOnce();
@@ -528,7 +571,9 @@ it("updates a listing older than the agent, keeping it listed", async () => {
       "Your latest changes aren’t in the Marketplace yet.",
     ),
   ).toBeInTheDocument();
-  await user.click(await listingAction("Update Ada in the Marketplace"));
+  await user.click(
+    await screen.findByRole("button", { name: "Update Marketplace…" }),
+  );
   const review = screen.getByRole("dialog", {
     name: "Update Ada in the Marketplace",
   });
@@ -552,14 +597,14 @@ it("updates a listing older than the agent, keeping it listed", async () => {
   );
   accept();
   expect(
-    await screen.findByText("Published to the Marketplace."),
+    await screen.findByText("Published Ada to the Marketplace."),
   ).toBeInTheDocument();
   expect(
-    screen.queryByRole("button", { name: "Update Ada in the Marketplace" }),
+    screen.queryByRole("button", { name: "Update Marketplace…" }),
   ).not.toBeInTheDocument();
   expect(
-    screen.getByRole("button", { name: "Remove Ada from the Marketplace" }),
-  ).toBeInTheDocument();
+    screen.getByRole("switch", { name: "Post to Marketplace" }),
+  ).toBeChecked();
 });
 
 it("says an update failed when the listed head is not what it sent", async () => {
@@ -577,7 +622,9 @@ it("says an update failed when the listed head is not what it sent", async () =>
     content: JSON.stringify({ display_name: "Ada", system_prompt: "Old." }),
   });
   share(session);
-  await user.click(await listingAction("Update Ada in the Marketplace"));
+  await user.click(
+    await screen.findByRole("button", { name: "Update Marketplace…" }),
+  );
   await user.click(screen.getByRole("button", { name: "Update" }));
   await vi.waitFor(() => expect(outbox.send).toHaveBeenCalledTimes(1));
   // It never landed, and the old listing is still shared.
@@ -589,18 +636,130 @@ it("says an update failed when the listed head is not what it sent", async () =>
   expect(
     screen.getByText("Your latest changes aren’t in the Marketplace yet."),
   ).toBeInTheDocument();
-  // Back on the row, focus returns to the button that opened the step.
+  // Back in the window, focus returns to the button that opened the step.
   expect(
-    screen.getByRole("button", { name: "Update Ada in the Marketplace" }),
+    screen.getByRole("button", { name: "Update Marketplace…" }),
   ).toHaveFocus();
-  await user.click(
-    screen.getByRole("button", { name: "Remove Ada from the Marketplace" }),
-  );
+  await user.click(screen.getByRole("switch", { name: "Post to Marketplace" }));
   expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
   // Escape in a step goes back rather than closing the window.
   await user.keyboard("{Escape}");
   expect(screen.getByRole("dialog", { name: "Share Ada" })).toBeInTheDocument();
   expect(
-    screen.getByRole("button", { name: "Remove Ada from the Marketplace" }),
+    screen.getByRole("switch", { name: "Post to Marketplace" }),
   ).toHaveFocus();
+});
+
+it("sends each person a message with one uploaded copy of the agent", async () => {
+  const user = userEvent.setup();
+  const { session, directMessages, attachments, messages } = community();
+  share(session);
+  // With nobody chosen, the window just closes.
+  expect(screen.getByRole("button", { name: "Done" })).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Add Bea" }));
+  await user.click(screen.getByRole("button", { name: "Add Cy" }));
+  expect(
+    screen.queryByRole("button", { name: "Done" }),
+  ).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Send" }));
+  expect(
+    await screen.findByText("Sent Ada to Bea and Cy."),
+  ).toBeInTheDocument();
+  expect(directMessages.open.mock.calls.map(([people]) => people)).toEqual([
+    [bea.pubkey],
+    [cy.pubkey],
+  ]);
+  // Community media is readable from any conversation, so one upload serves.
+  expect(attachments.upload).toHaveBeenCalledOnce();
+  const [file, channel] = attachments.upload.mock.calls[0] ?? [];
+  expect(channel).toBe("dm-b");
+  expect(file?.name).toBe("Ada.agent.png");
+  expect(await readSnapshot(file as File)).toMatchObject({
+    name: "Ada",
+    instructions: "Review pull requests.",
+  });
+  expect(messages.send.mock.calls.map(([to]) => to)).toEqual(["dm-b", "dm-c"]);
+  expect(messages.send.mock.calls[0]?.[1]).toContain("Import an agent");
+  expect((messages.send.mock.calls[0] as unknown[] | undefined)?.[3]).toEqual([
+    expect.objectContaining({ name: "Ada.agent.png" }),
+  ]);
+  expect(directMessages.delivered).toHaveBeenCalledWith(
+    "sent-dm-c",
+    "dm-c",
+    expect.any(AbortSignal),
+  );
+  // Everyone was reached, so the window is ready to close.
+  expect(screen.getByRole("button", { name: "Done" })).toBeInTheDocument();
+  expect(
+    screen.getByRole("status", { name: "Recipients" }),
+  ).toBeEmptyDOMElement();
+});
+
+it("keeps who it couldn't reach, then confirms their message instead of resending it", async () => {
+  const user = userEvent.setup();
+  const { session, directMessages, messages } = community();
+  directMessages.delivered.mockImplementation(async (id) => {
+    if (id === "sent-dm-c") throw new Error("Not delivered");
+  });
+  share(session);
+  await user.click(screen.getByRole("button", { name: "Add Bea" }));
+  await user.click(screen.getByRole("button", { name: "Add Cy" }));
+  await user.click(screen.getByRole("button", { name: "Send" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Couldn’t send to Cy. Not delivered.",
+  );
+  expect(screen.getByText("Sent Ada to Bea.")).toBeInTheDocument();
+  expect(screen.getByRole("status", { name: "Recipients" })).toHaveTextContent(
+    /^Cy$/,
+  );
+  // The relay may still have it, so trying again waits on the same message.
+  directMessages.delivered.mockResolvedValue(undefined);
+  await user.click(screen.getByRole("button", { name: "Send" }));
+  expect(await screen.findByText("Sent Ada to Cy.")).toBeInTheDocument();
+  expect(messages.send).toHaveBeenCalledTimes(2);
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
+it("sends to the rest when one upload fails, and reuses the next upload", async () => {
+  const user = userEvent.setup();
+  const { session, attachments, messages } = community();
+  attachments.upload.mockRejectedValueOnce(new Error("Upload refused"));
+  share(session);
+  await user.click(screen.getByRole("button", { name: "Add Bea" }));
+  await user.click(screen.getByRole("button", { name: "Add Cy" }));
+  // Finishing in the To field moves on to Send.
+  await user.click(screen.getByRole("button", { name: "Finish choosing" }));
+  expect(screen.getByRole("button", { name: "Send" })).toHaveFocus();
+  await user.click(screen.getByRole("button", { name: "Send" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Couldn’t send to Bea. Upload refused.",
+  );
+  expect(screen.getByText("Sent Ada to Cy.")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Send" }));
+  expect(await screen.findByText("Sent Ada to Bea.")).toBeInTheDocument();
+  expect(attachments.upload).toHaveBeenCalledTimes(2);
+  expect(messages.send.mock.calls.map(([to]) => to)).toEqual(["dm-c", "dm-b"]);
+  // With everyone reached, focus lands on Done.
+  await vi.waitFor(() =>
+    expect(screen.getByRole("button", { name: "Done" })).toHaveFocus(),
+  );
+});
+
+it("remembers an unconfirmed message after the window closes", async () => {
+  const user = userEvent.setup();
+  const { session, directMessages, messages } = community();
+  directMessages.delivered.mockRejectedValueOnce(new Error("Offline"));
+  share(session);
+  await user.click(screen.getByRole("button", { name: "Add Bea" }));
+  await user.click(screen.getByRole("button", { name: "Send" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Couldn’t send to Bea. Offline.",
+  );
+  cleanup();
+  share(session);
+  await user.click(screen.getByRole("button", { name: "Add Bea" }));
+  await user.click(screen.getByRole("button", { name: "Send" }));
+  expect(await screen.findByText("Sent Ada to Bea.")).toBeInTheDocument();
+  expect(messages.send).toHaveBeenCalledOnce();
+  expect(directMessages.delivered).toHaveBeenCalledTimes(2);
 });

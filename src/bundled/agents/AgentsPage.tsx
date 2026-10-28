@@ -684,6 +684,8 @@ type InventoryProps = {
   defaultChoices?: ReadonlySet<string>;
   /** The community connection Share publishes through, while it is ready. */
   session?: RelaySession;
+  /** The community's view-state partition, which ranks people to send to. */
+  scope?: string;
 };
 
 /** The inventory with this community's default agent marked and settable. */
@@ -701,6 +703,7 @@ function DefaultAgentInventory({
       <Inventory
         {...props}
         session={session}
+        scope={scope}
         defaultAgent={current?.pubkey}
         defaultPinned={!!current && current.pubkey === chosen}
         defaultChoices={
@@ -787,6 +790,7 @@ function Inventory({
   defaultChoices,
   onMakeDefault,
   session,
+  scope,
 }: InventoryProps) {
   const grid = useRef<HTMLDivElement>(null);
   const index = agents.findIndex((agent) => agent.pubkey === selected);
@@ -873,6 +877,7 @@ function Inventory({
                   }
                   service={service}
                   session={session}
+                  scope={scope}
                   type={type}
                   onBuild={() => onBuild(agent.pubkey)}
                   onRemoved={() => onSelect()}
@@ -918,6 +923,7 @@ function Inventory({
 function InventoryCard({
   service,
   session,
+  scope,
   type,
   onBuild,
   onRemoved,
@@ -927,6 +933,7 @@ function InventoryCard({
   agent: Agent;
   service: Agents;
   session: RelaySession | undefined;
+  scope: string | undefined;
   type: RegisteredAgentType | undefined;
   onBuild(): void;
   onRemoved(): void;
@@ -1071,6 +1078,7 @@ function InventoryCard({
           agent={agent}
           type={type}
           session={session}
+          scope={scope ?? ""}
           onClose={() => setSharing(false)}
         />
       )}

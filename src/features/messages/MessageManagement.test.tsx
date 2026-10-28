@@ -46,6 +46,7 @@ import {
   // @ts-expect-error Exercise the production codec with disposable identities.
 } from "../../../browser-host/read-state.mjs";
 import type { RelayEvent } from "../relay/events";
+import type { LiveCallbacks } from "../relay/live";
 
 composerDOMFixture();
 const owners: ReturnType<typeof createRelaySession>[] = [];
@@ -71,6 +72,7 @@ async function fixture(
   agentOwner: "viewer" | "other" | undefined = undefined,
   chatCard = false,
   shareRead?: Promise<RelayEvent[]>,
+  liveOwner = false,
 ) {
   vi.stubGlobal(
     "ResizeObserver",
@@ -146,8 +148,17 @@ async function fixture(
     result: ReturnType<typeof deferred<void>>;
   }[] = [];
   let journal: ReadJournal | undefined;
+  let live: LiveCallbacks | undefined;
   const owner = createRelaySession(
     {
+      ...(liveOwner
+        ? {
+            subscribe(callbacks: LiveCallbacks) {
+              live = callbacks;
+              return { update() {}, retry() {}, dispose() {} };
+            },
+          }
+        : {}),
       ...(readSync
         ? {
             readState: {
@@ -287,6 +298,24 @@ async function fixture(
     owner,
     original,
     publications,
+    async revokeOwner() {
+      assert.exists(agent);
+      assert.exists(agentProfile);
+      assert.exists(live);
+      const revoked = signed(agent, {
+        kind: 0,
+        content: JSON.stringify({ name: "Test agent" }),
+        tags: [],
+        created_at: agentProfile.created_at + 1,
+      });
+      const subscription = live;
+      act(() => subscription.receive([revoked]));
+      await waitFor(() =>
+        expect(owner.session.profiles.event?.(agent.pubkey)?.id).toBe(
+          revoked.id,
+        ),
+      );
+    },
     preview: () => view.rerender(<Surface composer={false} />),
     present: (presented: boolean) =>
       view.rerender(<Surface presented={presented} />),
@@ -1059,4 +1088,34 @@ it("does not offer Edit message in a preview without a composer", async () => {
     screen.queryByRole("menuitem", { name: "Edit message" }),
   ).not.toBeInTheDocument();
   expect(t.publications).toHaveLength(0);
+});
+
+it("revokes the selected agent-owner deletion proof when a newer signed profile arrives before confirmation", async () => {
+  const h = await fixture(
+    false,
+    false,
+    false,
+    false,
+    false,
+    "viewer",
+    false,
+    undefined,
+    true,
+  );
+  try {
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "Delete message" }),
+    );
+    await screen.findByRole("alertdialog", { name: "Delete message?" });
+    await h.revokeOwner();
+    fireEvent.click(screen.getByRole("button", { name: /^Delete$/ }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Message ownership changed. Reopen the message menu and try again.",
+    );
+    expect(h.publications).toHaveLength(0);
+  } finally {
+    await act(async () => {
+      for (const item of h.publications) item.result.resolve();
+    });
+  }
 });

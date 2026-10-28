@@ -10,6 +10,7 @@ import {
   createContext,
   useContext,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   useSyncExternalStore,
@@ -27,7 +28,10 @@ import type { RelaySession } from "../relay/session";
 import type { AgentOwnerAuthorization } from "../relay/messages";
 import type { OutgoingEvent } from "../relay/outbox";
 import { MessageEditScope, useMessageEditScope } from "./MessageEditScope";
-import { useAfterMessageMenuClose } from "./MessageActionBar";
+import {
+  MessageActionOwner,
+  useAfterMessageMenuClose,
+} from "./MessageActionBar";
 import { lastEditableMessage } from "./useMessageEdit";
 import styles from "./Messages.module.css";
 
@@ -65,6 +69,7 @@ const noop = () => () => {};
 type Deletion = {
   row: ChannelMessage;
   authorization?: AgentOwnerAuthorization | undefined;
+  ownerHeadId?: string | undefined;
   done?: ((focus: boolean) => void) | undefined;
   focus?: (() => HTMLElement | null) | undefined;
 };
@@ -214,11 +219,23 @@ export function MessageManagement({
         operations,
         report,
         remove(row, done, focus, authorization) {
-          setSelection({ row, done, focus, authorization });
+          setSelection({
+            row,
+            done,
+            focus,
+            authorization,
+            ownerHeadId: authorization
+              ? session.profiles.event?.(authorization.agentId)?.id
+              : undefined,
+          });
         },
       }}
     >
-      <MessageEditScope>{children}</MessageEditScope>
+      <MessageEditScope>
+        <MessageActionOwner session={session} channelId={channelId}>
+          {children}
+        </MessageActionOwner>
+      </MessageEditScope>
       {currentVisit && notice.error && <p role="alert">{notice.error}</p>}
       {presented && selection && available && (
         <DeleteMessageDialog
@@ -335,14 +352,13 @@ export function MessageManagementItems({
       ? row.authorId
       : undefined,
   );
-  if (!management) return null;
-  const busy = management.operations.some(
+  const busy = management?.operations.some(
     (item) =>
       ["sending", "accepted"].includes(item.delivery) &&
       [5, 40003].includes(item.event.kind) &&
       item.event.tags.some(([name, id]) => name === "e" && id === row.id),
   );
-  const own = row.authorId === session.viewer && !archived;
+  const own = !!management && row.authorId === session.viewer && !archived;
   const canEdit = own && editor?.current && lastEditableMessage(session, [row]);
   const authorization =
     row.authorId !== session.viewer &&
@@ -352,6 +368,31 @@ export function MessageManagementItems({
       ? { agentId: row.authorId, ownerId: session.viewer }
       : undefined;
   const canDelete = (own || !!authorization) && session.outbox?.supports(5);
+  const deleteBusy =
+    busy ||
+    !!management?.operations.some(
+      (item) =>
+        item.event.kind === 40003 &&
+        item.event.tags.some(([name, id]) => name === "e" && id === row.id),
+    );
+  const deletion =
+    management && canDelete && !deleteBusy
+      ? {
+          management,
+          row,
+          authorization,
+          ownerHeadId: authorization
+            ? session.profiles.event?.(authorization.agentId)?.id
+            : undefined,
+        }
+      : undefined;
+  const currentDeletion = useRef(deletion);
+  // The handoff may outlive popup unmount; the source controller owns retirement.
+  // Update even when management/ownership is revoked, before the early return.
+  useLayoutEffect(() => {
+    currentDeletion.current = deletion;
+  });
+  if (!management) return null;
   const act = (action: () => void) =>
     afterClose ? afterClose(action) : action();
   return (
@@ -378,25 +419,30 @@ export function MessageManagementItems({
       )}
       {canDelete && (
         <MenuItem
-          disabled={
-            busy ||
-            management.operations.some(
-              (item) =>
-                item.event.kind === 40003 &&
-                item.event.tags.some(
-                  ([name, id]) => name === "e" && id === row.id,
-                ),
-            )
-          }
+          disabled={deleteBusy}
           onClick={() =>
-            act(() =>
-              management.remove(
-                row,
+            act(() => {
+              const current = currentDeletion.current;
+              if (
+                !current ||
+                current.row.id !== row.id ||
+                current.management.session !== session
+              )
+                return;
+              if (
+                current.authorization &&
+                (!current.ownerHeadId ||
+                  session.profiles.event?.(current.authorization.agentId)
+                    ?.id !== current.ownerHeadId)
+              )
+                return;
+              current.management.remove(
+                current.row,
                 undefined,
                 () => editor?.focusTarget() ?? null,
-                authorization,
-              ),
-            )
+                current.authorization,
+              );
+            })
           }
         >
           <MenuIcon>
@@ -441,7 +487,7 @@ function DeleteMessageDialog({
   dispatched(id: string, dialog: Element | null): void;
   close(): void;
 }) {
-  const { row, authorization } = selection;
+  const { row, authorization, ownerHeadId } = selection;
   const [operationId, setOperationId] = useState(
     () =>
       operations.find(
@@ -482,6 +528,14 @@ function DeleteMessageDialog({
       )
         throw new Error(
           "This conversation is no longer available for changes.",
+        );
+      if (
+        authorization &&
+        (!ownerHeadId ||
+          session.profiles.event?.(authorization.agentId)?.id !== ownerHeadId)
+      )
+        throw new Error(
+          "Message ownership changed. Reopen the message menu and try again.",
         );
       if (operationId) {
         session.outbox?.retry(operationId);

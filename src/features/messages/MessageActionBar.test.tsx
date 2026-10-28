@@ -12,6 +12,8 @@ import userEvent from "@testing-library/user-event";
 import {
   StrictMode,
   useRef,
+  createContext,
+  useContext,
   type ReactElement,
   type ComponentProps,
   type ReactNode,
@@ -20,7 +22,7 @@ import { ConversationPresentation } from "../conversation/ConversationPresentati
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { useKeyboardFocusVisibility } from "../../shared/design-system/useKeyboardFocusVisibility";
 const render = (ui: ReactElement) => rtlRender(ui, { wrapper: ToastProvider });
-import { MessageActionBar } from "./MessageActionBar";
+import { MessageActionBar, MessageActionOwner } from "./MessageActionBar";
 import { MenuItem } from "../../shared/design-system/ui/Menu";
 import { createPortal } from "react-dom";
 import { MessageLink } from "../conversation/MessageLink";
@@ -591,5 +593,228 @@ it("retires the native top-layer bar and its open menu with the source", async (
     Reflect.deleteProperty(HTMLElement.prototype, "showPopover");
     Reflect.deleteProperty(HTMLElement.prototype, "hidePopover");
     vi.unstubAllGlobals();
+  }
+});
+
+it("keeps native row controls, payloads and provider context under one conversation owner", async () => {
+  const user = userEvent.setup();
+  const write = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+  const replyA = vi.fn(),
+    replyB = vi.fn();
+  const RowIdentity = createContext("");
+  function LeadingItem() {
+    return <MenuItem>{useContext(RowIdentity)} action</MenuItem>;
+  }
+  render(
+    <MessageActionOwner>
+      <RowIdentity value="Alpha">
+        <Row
+          messageId="a"
+          onReply={replyA}
+          link="buzz://message/a"
+          copyText={() => "Alpha body"}
+          leadingItems={<LeadingItem />}
+        />
+      </RowIdentity>
+      <RowIdentity value="Beta">
+        <Row
+          messageId="b"
+          onReply={replyB}
+          link="buzz://message/b"
+          copyText={() => "Beta body"}
+          leadingItems={<LeadingItem />}
+        />
+      </RowIdentity>
+    </MessageActionOwner>,
+  );
+  const more = screen.getAllByRole("button", { name: "More message actions" });
+  more[0]?.focus();
+  await user.keyboard("{Enter}");
+  expect(
+    await screen.findByRole("menuitem", { name: "Alpha action" }),
+  ).toBeTruthy();
+  expect(screen.queryByRole("menuitem", { name: "Beta action" })).toBeNull();
+  await user.click(screen.getByRole("menuitem", { name: "Copy message" }));
+  await waitFor(() => expect(write).toHaveBeenCalledWith("Alpha body"));
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  more[1]?.focus();
+  await user.keyboard("{Enter}");
+  expect(
+    await screen.findByRole("menuitem", { name: "Beta action" }),
+  ).toBeTruthy();
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  expect(document.activeElement).toBe(more[1]);
+  await user.click(
+    screen
+      .getAllByRole("button", { name: "Copy link" })
+      .at(1) as HTMLButtonElement,
+  );
+  await waitFor(() => expect(write).toHaveBeenCalledWith("buzz://message/b"));
+  await user.click(
+    screen.getAllByRole("button", { name: "Reply" }).at(1) as HTMLButtonElement,
+  );
+  expect(replyA).not.toHaveBeenCalled();
+  expect(replyB).toHaveBeenCalledOnce();
+});
+
+it.each(["channel", "session"] as const)(
+  "retires the action surface without remounting conversation content on %s replacement",
+  async (replacement) => {
+    const user = userEvent.setup();
+    const session = {},
+      nextSession = {};
+    const children = (
+      <>
+        <input aria-label="Unsent draft" defaultValue="" />
+        <Row messageId="a" copyText={() => "Alpha"} />
+      </>
+    );
+    const view = render(
+      <MessageActionOwner session={session} channelId="alpha">
+        {children}
+      </MessageActionOwner>,
+    );
+    const draft = screen.getByRole("textbox", {
+      name: "Unsent draft",
+    }) as HTMLInputElement;
+    await user.type(draft, "Keep this unsent draft");
+    await user.click(
+      screen.getByRole("button", { name: "More message actions" }),
+    );
+    await screen.findByRole("menu");
+    view.rerender(
+      <MessageActionOwner
+        session={replacement === "session" ? nextSession : session}
+        channelId={replacement === "channel" ? "beta" : "alpha"}
+      >
+        {children}
+      </MessageActionOwner>,
+    );
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    expect(screen.getByRole("textbox", { name: "Unsent draft" })).toBe(draft);
+    expect(draft.value).toBe("Keep this unsent draft");
+  },
+);
+
+function pendingClipboard() {
+  let resolve!: () => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise<void>((yes, no) => {
+    resolve = yes;
+    reject = no;
+  });
+  return { promise, resolve, reject };
+}
+
+it("keeps concurrent clipboard results with each source instance while the menu target switches", async () => {
+  const user = userEvent.setup();
+  const first = pendingClipboard(),
+    second = pendingClipboard();
+  const write = vi
+    .spyOn(navigator.clipboard, "writeText")
+    .mockImplementationOnce(() => first.promise)
+    .mockImplementationOnce(() => second.promise)
+    .mockResolvedValue();
+  render(
+    <MessageActionOwner>
+      <Row
+        messageId="same-message"
+        link="buzz://source/alpha"
+        copyText={() => "Alpha body"}
+      />
+      <Row
+        messageId="same-message"
+        link="buzz://source/beta"
+        copyText={() => "Beta body"}
+      />
+    </MessageActionOwner>,
+  );
+  const links = screen.getAllByRole("button", { name: "Copy link" });
+  const more = screen.getAllByRole("button", { name: "More message actions" });
+  const alpha = links.at(0) as HTMLButtonElement,
+    beta = links.at(1) as HTMLButtonElement;
+  try {
+    fireEvent.click(alpha);
+    expect(alpha.disabled).toBe(true);
+    expect(beta.disabled).toBe(false);
+    more.at(1)?.focus();
+    await user.keyboard("{Enter}");
+    const copy = await screen.findByRole("menuitem", { name: "Copy message" });
+    copy.focus();
+    await user.keyboard("{Enter}");
+    expect(write).toHaveBeenNthCalledWith(1, "buzz://source/alpha");
+    expect(write).toHaveBeenNthCalledWith(2, "Beta body");
+    expect(beta.disabled).toBe(true);
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(more.at(1)));
+    await act(async () => first.resolve());
+    await screen.findByText("Link copied");
+    expect(alpha.disabled).toBe(false);
+    expect(beta.disabled).toBe(true);
+    expect(document.activeElement).toBe(more.at(1));
+    await act(async () => second.reject(new Error("clipboard denied")));
+    await screen.findByText("Couldn’t copy. Try again from the message menu.");
+    expect(beta.disabled).toBe(false);
+    expect(screen.getByText("Link copied")).toBeTruthy();
+    more.at(1)?.focus();
+    await user.keyboard("{Enter}");
+    const retry = await screen.findByRole("menuitem", { name: "Copy message" });
+    retry.focus();
+    await user.keyboard("{Enter}");
+    await screen.findByText("Message copied");
+    expect(write).toHaveBeenLastCalledWith("Beta body");
+    expect(screen.getByText("Link copied")).toBeTruthy();
+    await waitFor(() => expect(document.activeElement).toBe(more.at(1)));
+  } finally {
+    await act(async () => {
+      first.resolve();
+      second.resolve();
+    });
+  }
+});
+
+it("revokes pending clipboard results on row recycling and covered conversation retirement", async () => {
+  userEvent.setup();
+  const first = pendingClipboard(),
+    replacement = pendingClipboard();
+  vi.spyOn(navigator.clipboard, "writeText")
+    .mockImplementationOnce(() => first.promise)
+    .mockImplementationOnce(() => replacement.promise);
+  const content = (id: string, active: boolean) => (
+    <ConversationPresentation value={active}>
+      <MessageActionOwner>
+        <Row messageId={id} link={`buzz://source/${id}`} copyText={() => id} />
+      </MessageActionOwner>
+    </ConversationPresentation>
+  );
+  const view = render(content("alpha", true));
+  try {
+    fireEvent.click(screen.getByRole("button", { name: "Copy link" }));
+    view.rerender(content("replacement", true));
+    const link = screen.getByRole("button", {
+      name: "Copy link",
+    }) as HTMLButtonElement;
+    expect(link.disabled).toBe(false);
+    await act(async () => first.resolve());
+    expect(screen.queryByText("Link copied")).toBeNull();
+    expect(link.disabled).toBe(false);
+    fireEvent.click(link);
+    expect(link.disabled).toBe(true);
+    view.rerender(content("replacement", false));
+    await act(async () => replacement.resolve());
+    expect(screen.queryByText("Link copied")).toBeNull();
+    expect(screen.queryByRole("menu")).toBeNull();
+    view.rerender(content("replacement", true));
+    expect(
+      (screen.getByRole("button", { name: "Copy link" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(false);
+    expect(screen.queryByText("Link copied")).toBeNull();
+  } finally {
+    await act(async () => {
+      first.resolve();
+      replacement.resolve();
+    });
   }
 });

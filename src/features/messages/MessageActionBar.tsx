@@ -3,6 +3,8 @@ import {
   createContext,
   useContext,
   useLayoutEffect,
+  useId,
+  useSyncExternalStore,
   useRef,
   useState,
   type ReactNode,
@@ -56,8 +58,291 @@ type Props = {
   overflowItems?: ReactNode;
 };
 
+type Notice = { text: string; error: boolean };
+type RowState = {
+  selected: boolean;
+  open: boolean;
+  copying: boolean;
+  notice?: Notice | undefined;
+};
+const idleRow: RowState = Object.freeze({
+  selected: false,
+  open: false,
+  copying: false,
+});
+type Registration = {
+  id: string;
+  owner: MessageActionController;
+  context?: Pick<Selection, "contextAnchor" | "contextFocus"> | undefined;
+  props: Props;
+  live: boolean;
+  state: RowState;
+  listeners: Set<() => void>;
+};
+type Selection = {
+  row: Registration;
+  kind: "menu" | "context";
+  open: boolean;
+  openedByPointer: boolean;
+  handingOff: boolean;
+  contextAnchor?: HTMLElement | undefined;
+  contextFocus?: HTMLElement | null | undefined;
+};
+
+/** One open surface, with independent clipboard operations for each source row. */
+class MessageActionController {
+  readonly rows = new Map<string, Registration>();
+  readonly listeners = new Set<() => void>();
+  readonly pending = new Map<Registration, object>();
+  selection: Selection | undefined;
+  private closed: Selection | undefined;
+  private afterClose: { selection: Selection; action: () => void } | undefined;
+  presented = true;
+  readonly subscribe = (listener: () => void) => {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  };
+  readonly snapshot = () => this.selection;
+
+  private rowState(row: Registration, patch: Partial<RowState>) {
+    row.state = { ...row.state, ...patch };
+    for (const listener of row.listeners) listener();
+  }
+  private publish() {
+    for (const listener of this.listeners) listener();
+  }
+  mount(row: Registration) {
+    row.live = true;
+    this.rows.set(row.id, row);
+    return () => {
+      row.live = false;
+      this.rows.delete(row.id);
+      this.pending.delete(row);
+      if (this.closed?.row === row) this.closed = undefined;
+      if (this.selection?.row === row) {
+        this.afterClose = undefined;
+        this.selection = undefined;
+        this.publish();
+      }
+      row.state = idleRow;
+    };
+  }
+  retire() {
+    this.afterClose = undefined;
+    this.closed = undefined;
+    this.selection = undefined;
+    this.pending.clear();
+    for (const row of this.rows.values()) {
+      if (row.state !== idleRow)
+        this.rowState(row, { ...idleRow, notice: undefined });
+    }
+    this.publish();
+  }
+  change(
+    row: Registration,
+    kind: Selection["kind"],
+    open: boolean,
+    event?: Event,
+    context?: Pick<Selection, "contextAnchor" | "contextFocus">,
+  ) {
+    if (!row.live || !this.presented) return;
+    const previous = this.selection;
+    if (!open) {
+      if (previous?.row !== row || previous.kind !== kind || !previous.open)
+        return;
+      // Preserve this lifetime through Base UI's closing phase and final focus.
+      previous.open = false;
+      if (
+        event?.type.startsWith("key") ||
+        (event?.type === "click" && "detail" in event && event.detail === 0)
+      )
+        previous.openedByPointer = false;
+      this.selection = { ...previous };
+      if (this.afterClose?.selection === previous)
+        this.afterClose.selection = this.selection;
+      this.rowState(row, { open: false });
+      this.publish();
+      return;
+    }
+    this.closed = undefined;
+    this.afterClose = undefined;
+    if (previous && previous.row !== row)
+      this.rowState(previous.row, { selected: false, open: false });
+    this.selection = {
+      row,
+      kind,
+      open: true,
+      handingOff: false,
+      openedByPointer: event instanceof MouseEvent && event.detail > 0,
+      ...context,
+    };
+    this.rowState(row, { selected: true, open: true });
+    this.publish();
+  }
+  complete(kind: Selection["kind"], row?: Registration) {
+    const selected = this.selection;
+    if (
+      !selected ||
+      selected.kind !== kind ||
+      selected.open ||
+      (row && selected.row !== row)
+    )
+      return;
+    const handoff = this.afterClose;
+    this.afterClose = undefined;
+    this.closed = selected;
+    this.selection = undefined;
+    this.rowState(selected.row, { selected: false, open: false });
+    this.publish();
+    if (handoff?.selection === selected && selected.row.live && this.presented)
+      handoff.action();
+  }
+  defer(row: Registration, action: () => void) {
+    const selected = this.selection;
+    if (!selected || selected.row !== row || !row.live || !this.presented)
+      return;
+    selected.handingOff = true;
+    this.afterClose = { selection: selected, action };
+  }
+  finalFocus(row: Registration, selected: Selection | undefined) {
+    if (
+      !selected ||
+      selected.row !== row ||
+      !row.live ||
+      !this.presented ||
+      selected.handingOff ||
+      (this.selection !== selected && this.closed !== selected)
+    )
+      return false;
+    return selected.kind === "context"
+      ? selected.contextFocus?.isConnected
+        ? selected.contextFocus
+        : false
+      : !selected.openedByPointer;
+  }
+  sendToChannel(row: Registration) {
+    const send = row.props.onSendToChannel;
+    if (!row.live || !this.presented || !send) return;
+    try {
+      send();
+      this.rowState(row, {
+        notice: { text: "Sending to channel", error: false },
+      });
+    } catch (error) {
+      this.rowState(row, {
+        notice: {
+          text:
+            error instanceof Error ? error.message : "Couldn’t send to channel",
+          error: true,
+        },
+      });
+    }
+  }
+  dismiss(row: Registration) {
+    this.rowState(row, { notice: undefined });
+  }
+  async copy(row: Registration, kind: "message" | "link") {
+    if (!row.live || !this.presented || this.pending.has(row)) return;
+    if (kind === "link" && row.props.link === undefined) return;
+    const operation = {};
+    this.pending.set(row, operation);
+    this.rowState(row, { copying: true, notice: undefined });
+    let notice: Notice;
+    try {
+      await navigator.clipboard.writeText(
+        kind === "message" ? row.props.copyText() : (row.props.link ?? ""),
+      );
+      notice = {
+        text: `${kind === "message" ? "Message" : "Link"} copied`,
+        error: false,
+      };
+    } catch {
+      notice = {
+        text: "Couldn’t copy. Try again from the message menu.",
+        error: true,
+      };
+    }
+    // Switching the menu never transfers a pending result to its new source.
+    if (this.pending.get(row) !== operation) return;
+    this.pending.delete(row);
+    if (row.live && this.presented)
+      this.rowState(row, { copying: false, notice });
+  }
+}
+const ActionOwner = createContext<MessageActionController | undefined>(
+  undefined,
+);
+
+/** Recovery and the action lifetime share the conversation boundary, not a virtual row. */
+export function MessageActionOwner({
+  children,
+  session,
+  channelId,
+}: {
+  children: ReactNode;
+  session?: object | undefined;
+  channelId?: string | undefined;
+}) {
+  const presented = useConversationPresentation();
+  const [lifetime, setLifetime] = useState(() => ({
+    session,
+    channelId,
+    controller: new MessageActionController(),
+  }));
+  if (lifetime.session !== session || lifetime.channelId !== channelId)
+    setLifetime({
+      session,
+      channelId,
+      controller: new MessageActionController(),
+    });
+  const controller = lifetime.controller;
+  const selected = useSyncExternalStore(
+    controller.subscribe,
+    controller.snapshot,
+    controller.snapshot,
+  );
+  useLayoutEffect(() => {
+    controller.presented = presented;
+    if (!presented) controller.retire();
+    return () => {
+      controller.presented = false;
+      controller.retire();
+    };
+  }, [controller, presented]);
+  return (
+    <ActionOwner value={controller}>
+      <MenuRoot
+        open={selected?.kind === "menu" && selected.open}
+        triggerId={selected?.kind === "menu" ? selected.row.id : null}
+        onOpenChange={(open, details) => {
+          const row = details.trigger
+            ? controller.rows.get(details.trigger.id)
+            : controller.selection?.row;
+          if (!row || !controller.presented) {
+            details.cancel();
+            return;
+          }
+          controller.change(row, "menu", open, details.event);
+        }}
+        onOpenChangeComplete={(open) => {
+          if (!open) controller.complete("menu");
+        }}
+      >
+        {children}
+      </MenuRoot>
+    </ActionOwner>
+  );
+}
+
 export function MessageActionBar(props: Props) {
+  const controller = useContext(ActionOwner);
   const active = useConversationPresentation();
+  if (!controller)
+    return (
+      <MessageActionOwner>
+        <MessageActionBar {...props} />
+      </MessageActionOwner>
+    );
   return active ? (
     props.children ? (
       <MessageActionBarControls {...props} />
@@ -85,21 +370,63 @@ function ActiveMessageActionBar(props: Props) {
   );
 }
 
-function MessageActionBarControls({
-  children,
-  onSendToChannel,
-  onReply,
-  replyDisabled,
-  link,
-  copyText,
-  quickControls,
-  leadingItems,
-  overflowItems,
-  messageId,
-  menuTriggerRef,
-  rowRef,
-}: Props) {
-  const [open, setOpen] = useState(false);
+function MessageActionBarControls(props: Props) {
+  const {
+    children,
+    onSendToChannel,
+    onReply,
+    replyDisabled,
+    link,
+    quickControls,
+    leadingItems,
+    overflowItems,
+    messageId,
+    menuTriggerRef,
+    rowRef,
+  } = props;
+  const controller = useContext(ActionOwner);
+  if (!controller)
+    throw new Error("Message actions require their conversation owner");
+  const id = useId();
+  const [registration, setRegistration] = useState<Registration>(() => ({
+    id,
+    owner: controller,
+    props,
+    live: false,
+    state: idleRow,
+    listeners: new Set(),
+  }));
+  if (
+    registration.owner !== controller ||
+    registration.props.messageId !== messageId
+  )
+    setRegistration({
+      id,
+      owner: controller,
+      props,
+      live: false,
+      state: idleRow,
+      listeners: new Set(),
+    });
+  useLayoutEffect(
+    () => controller.mount(registration),
+    [controller, registration],
+  );
+  useLayoutEffect(() => {
+    registration.props = props;
+  });
+  const state = useSyncExternalStore(
+    (listener) => {
+      registration.listeners.add(listener);
+      return () => {
+        registration.listeners.delete(listener);
+      };
+    },
+    () => registration.state,
+    () => idleRow,
+  );
+  const { open, copying, notice } = state;
+  const selected = state.selected ? controller.selection : undefined;
   const barRef = useRef<HTMLDivElement>(null);
   const slotRef = useRef<HTMLDivElement>(null);
   const floating = useFloatingActionBar(
@@ -108,90 +435,31 @@ function MessageActionBarControls({
     slotRef,
     open,
   );
-  const [copying, setCopying] = useState(false);
-  const [notice, setNotice] = useState<{ text: string; error: boolean }>();
-  const busy = useRef(false);
-  const afterClose = useRef<(() => void) | undefined>(undefined);
-  const live = useRef(true);
-  useLayoutEffect(() => {
-    live.current = true;
-    return () => {
-      live.current = false;
-      afterClose.current = undefined;
-    };
-  }, []);
-  const [handingOffFocus, setHandingOffFocus] = useState(false);
-  const [openedByPointer, setOpenedByPointer] = useState(false);
-  const [contextAnchor, setContextAnchor] = useState<HTMLElement>();
-  const contextFocus = useRef<HTMLElement | null>(null);
-  const copy = async (text: () => string, label: string) => {
-    if (busy.current) return;
-    busy.current = true;
-    setCopying(true);
-    setNotice(undefined);
-    try {
-      await navigator.clipboard.writeText(text());
-      setNotice({ text: `${label} copied`, error: false });
-    } catch {
-      setNotice({
-        text: "Couldn’t copy. Try again from the message menu.",
-        error: true,
-      });
-    } finally {
-      busy.current = false;
-      setCopying(false);
-    }
-  };
-  const popup = (
+  const copy = (kind: "message" | "link") =>
+    controller.copy(registration, kind);
+  const popup = selected && (
     <MenuPopup
       align={children ? "start" : "end"}
-      anchor={contextAnchor}
+      anchor={selected.contextAnchor}
       data-message-id={messageId}
       // The shared popup preserves moved focus; retirement also revokes
       // return-focus ownership, including a retained hidden source row.
-      finalFocus={() =>
-        live.current && !handingOffFocus
-          ? children
-            ? contextFocus.current?.isConnected
-              ? contextFocus.current
-              : false
-            : !openedByPointer
-          : false
-      }
+      finalFocus={() => controller.finalFocus(registration, selected)}
     >
       <AfterMenuClose.Provider
         value={(action) => {
-          setHandingOffFocus(true);
-          afterClose.current = action;
+          controller.defer(registration, action);
         }}
       >
         {leadingItems}
-        <MenuItem
-          disabled={copying}
-          onClick={() => void copy(copyText, "Message")}
-        >
+        <MenuItem disabled={copying} onClick={() => void copy("message")}>
           <MenuIcon>
             <CopyIcon />
           </MenuIcon>
           Copy message
         </MenuItem>
         {onSendToChannel && (
-          <MenuItem
-            onClick={() => {
-              try {
-                onSendToChannel();
-                setNotice({ text: "Sending to channel", error: false });
-              } catch (error) {
-                setNotice({
-                  text:
-                    error instanceof Error
-                      ? error.message
-                      : "Couldn’t send to channel",
-                  error: true,
-                });
-              }
-            }}
-          >
+          <MenuItem onClick={() => controller.sendToChannel(registration)}>
             <MenuIcon>
               <HashArrowInIcon />
             </MenuIcon>
@@ -202,8 +470,10 @@ function MessageActionBarControls({
           <MenuItem
             disabled={replyDisabled}
             onClick={() => {
-              setHandingOffFocus(true);
-              afterClose.current = onReply;
+              controller.defer(registration, () => {
+                if (!registration.props.replyDisabled)
+                  registration.props.onReply?.();
+              });
             }}
           >
             <MenuIcon>
@@ -216,7 +486,7 @@ function MessageActionBarControls({
           <MenuItem
             disabled={!link || copying}
             onClick={() => {
-              if (link) void copy(() => link, "Link");
+              if (link) void copy("link");
             }}
           >
             <MenuIcon>
@@ -229,23 +499,23 @@ function MessageActionBarControls({
       </AfterMenuClose.Provider>
     </MenuPopup>
   );
-  const closed = (opened: boolean) => {
-    if (!opened) {
-      const action = afterClose.current;
-      afterClose.current = undefined;
-      action?.();
-    }
-  };
   return (
     <>
       {children ? (
         <ContextMenuRoot
-          open={open}
-          onOpenChange={(next) => {
-            if (next) setHandingOffFocus(false);
-            setOpen(next);
+          open={selected?.kind === "context" && open}
+          onOpenChange={(next, details) =>
+            controller.change(
+              registration,
+              "context",
+              next,
+              details.event,
+              registration.context,
+            )
+          }
+          onOpenChangeComplete={(next) => {
+            if (!next) controller.complete("context", registration);
           }}
-          onOpenChangeComplete={closed}
         >
           <ContextMenuTrigger
             render={children}
@@ -254,18 +524,18 @@ function MessageActionBarControls({
                 event.preventBaseUIHandler();
                 return;
               }
-              setContextAnchor(undefined);
-              contextFocus.current =
-                event.currentTarget.querySelector("button");
+              registration.context = {
+                contextFocus: event.currentTarget.querySelector("button"),
+              };
             }}
             onTouchStart={(event) => {
               if (!event.currentTarget.contains(event.target as Node)) {
                 event.preventBaseUIHandler();
                 return;
               }
-              setContextAnchor(undefined);
-              contextFocus.current =
-                event.currentTarget.querySelector("button");
+              registration.context = {
+                contextFocus: event.currentTarget.querySelector("button"),
+              };
             }}
             onKeyDown={(event) => {
               if (
@@ -278,10 +548,17 @@ function MessageActionBarControls({
                 (event.shiftKey && event.key === "F10")
               ) {
                 event.preventDefault();
-                contextFocus.current = event.target as HTMLElement;
-                setContextAnchor(event.currentTarget);
-                setHandingOffFocus(false);
-                setOpen(true);
+                registration.context = {
+                  contextFocus: event.target as HTMLElement,
+                  contextAnchor: event.currentTarget,
+                };
+                controller.change(
+                  registration,
+                  "context",
+                  true,
+                  event.nativeEvent,
+                  registration.context,
+                );
               }
             }}
           />
@@ -310,7 +587,8 @@ function MessageActionBarControls({
                 icon={<MessageReplyIcon />}
                 onClick={(event) => {
                   event.currentTarget.focus();
-                  onReply();
+                  if (!registration.props.replyDisabled)
+                    registration.props.onReply?.();
                 }}
               />
             )}
@@ -322,47 +600,23 @@ function MessageActionBarControls({
               disabled={!link || copying}
               icon={<LinkIcon />}
               onClick={() => {
-                if (link) void copy(() => link, "Link");
+                if (link) void copy("link");
               }}
             />
-            <MenuRoot
-              open={open}
-              onOpenChange={(next, details) => {
-                if (next) {
-                  setHandingOffFocus(false);
-                  // Base UI opens on mousedown, so a real pointer press carries a
-                  // click count; keyboard and assistive presses arrive as a click
-                  // with 0.
-                  setOpenedByPointer(
-                    details.event instanceof MouseEvent &&
-                      details.event.detail > 0,
-                  );
-                } else if (
-                  details.event.type.startsWith("key") ||
-                  (details.event.type === "click" &&
-                    "detail" in details.event &&
-                    details.event.detail === 0)
-                ) {
-                  setOpenedByPointer(false);
-                }
-                setOpen(next);
-              }}
-              onOpenChangeComplete={closed}
-            >
-              <MenuTrigger
-                render={
-                  <IconButton
-                    hint="familiar"
-                    ref={menuTriggerRef}
-                    aria-label="More message actions"
-                    title="More message actions"
-                    size="sm"
-                    icon={<DotsThreeIcon />}
-                  />
-                }
-              />
-              {popup}
-            </MenuRoot>
+            <MenuTrigger
+              id={registration.id}
+              render={
+                <IconButton
+                  hint="familiar"
+                  ref={menuTriggerRef}
+                  aria-label="More message actions"
+                  title="More message actions"
+                  size="sm"
+                  icon={<DotsThreeIcon />}
+                />
+              }
+            />
+            {popup}
           </div>
         </div>
       )}
@@ -371,7 +625,7 @@ function MessageActionBarControls({
           title={notice.text}
           tone={notice.error ? "error" : "success"}
           timeout={notice.error ? 0 : 4000}
-          onDismiss={() => setNotice(undefined)}
+          onDismiss={() => controller.dismiss(registration)}
         />
       )}
     </>

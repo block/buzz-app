@@ -9524,8 +9524,10 @@ it.each(["abort", "community"])(
     } finally {
       release();
     }
+    // The save answers over the Runner link, so the refusal can come first.
+    const refused = expect(pending).rejects.toThrow();
     await ownerSave;
-    await expect(pending).rejects.toThrow();
+    await refused;
     expect(service.find(bot)?.attention["interest/revoked"]).toBeUndefined();
   },
 );

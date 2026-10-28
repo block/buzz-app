@@ -425,9 +425,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     const channel = (target && tag(target, "h")) ?? context.channel;
     if (!channel) throw new Error("No channel for that message.");
     if (context.topLevel && channel === context.channel)
-      throw new Error(
-        "This chat stays at the top level: send again without reply.",
-      );
+      throw new Error("This chat stays at the top level: use send instead.");
     const audienceTags = audienceOf(args);
     // As relay ingest reads it: the last valid marker, in either case.
     const root = target

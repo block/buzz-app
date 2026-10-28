@@ -270,6 +270,14 @@ it("keeps a top-level chat out of threads, wherever a reply would resolve", asyn
         ...args,
       }),
     ).rejects.toThrow(refused);
+  for (const parent of [root, nested])
+    await expect(
+      callTool(client, context, "reply_in_subthread", {
+        audience: "everyone",
+        text: "hi",
+        parent,
+      }),
+    ).rejects.toThrow("This chat stays at the top level: use send instead.");
   expect(published).toEqual([]);
   await callTool(client, context, "send", { audience: "everyone", text: "hi" });
   await callTool(client, context, "send", {

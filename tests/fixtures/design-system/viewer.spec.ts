@@ -1836,3 +1836,70 @@ test("dialog footer focus rings remain visible in both themes and widths", async
     }
   }
 });
+
+test("hints and previews answer the hover, focus or press that mounts them", async ({
+  page,
+}) => {
+  const pageErrors = watchPageErrors(page);
+  await page.goto(`${viewer}#/design/components/tooltip`);
+  const create = page.getByRole("button", { name: "Create note" });
+  await create.evaluate((element) => {
+    (window as { trigger?: Element }).trigger = element;
+  });
+  // The first hover rests, then opens the hint on the same element.
+  await create.hover();
+  await expect(page.getByRole("tooltip")).toHaveText("Create a note");
+  await expect(create).toHaveAccessibleDescription("Create a note");
+  expect(
+    await create.evaluate(
+      (element) => (window as { trigger?: Element }).trigger === element,
+    ),
+  ).toBe(true);
+  // A press dismisses it, and the returning focus does not reopen it.
+  await create.click();
+  await expect(page.getByRole("tooltip")).toHaveCount(0);
+  await page.mouse.move(0, 0);
+
+  // A press on a trigger never approached before lands in the same burst.
+  await page.reload();
+  const box = await create.boundingBox();
+  if (!box) throw new Error("The trigger has no box");
+  await page.evaluate(() => {
+    const end = performance.now() + 150;
+    setTimeout(() => {
+      while (performance.now() < end);
+    });
+  });
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.up();
+  await expect(create).toBeFocused();
+  await expect(page.getByRole("tooltip")).toHaveCount(0);
+  await page.mouse.move(0, 0);
+
+  // Keyboard focus shows a hint at once.
+  await page.reload();
+  await create.evaluate((element) => (element as HTMLElement).blur());
+  await page.keyboard.press("Tab");
+  for (
+    let i = 0;
+    i < 40 && !(await create.evaluate((e) => e === document.activeElement));
+    i++
+  )
+    await page.keyboard.press("Tab");
+  await expect(create).toBeFocused();
+  await expect(page.getByRole("tooltip")).toHaveText("Create a note");
+
+  await page.goto(`${viewer}#/design/components/preview-card`);
+  const person = page.getByRole("button", { name: "Morgan Martin" });
+  await person.hover();
+  await expect(page.getByText("Product designer")).toBeVisible();
+  await page.mouse.move(0, 0);
+  await expect(page.getByText("Product designer")).toHaveCount(0);
+  await person.focus();
+  await page.keyboard.press("Shift+Tab");
+  await page.keyboard.press("Tab");
+  await expect(person).toBeFocused();
+  await expect(page.getByText("Product designer")).toBeVisible();
+  expect(pageErrors.unexplained()).toEqual([]);
+});

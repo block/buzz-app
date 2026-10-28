@@ -328,8 +328,7 @@ jobs:
         with:
           version: ${{ steps.pins.outputs.pnpm }}
       - run: pnpm install --frozen-lockfile
-      - if: github.ref == 'refs/heads/main' && !inputs.candidates
-        uses: ./.github/actions/goose-cache
+      - uses: ./.github/actions/goose-cache
       - name: Set candidate version
         run: node scripts/candidate-version.mjs
       - name: Build NSIS installer
@@ -395,11 +394,9 @@ jobs:
         with:
           persist-credentials: false
       - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-      # Candidate-only runs use no shared build caches.
       - uses: cashapp/activate-hermit@cea9af7913204a965fd488637a8d1811bba2e616 # v1
       - run: pnpm install --frozen-lockfile
-      - if: github.ref == 'refs/heads/main' && !inputs.candidates
-        uses: ./.github/actions/goose-cache
+      - uses: ./.github/actions/goose-cache
       - name: Install pinned AppImage repacking tools
         run: |
           wget -q -O /tmp/appimagetool https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage

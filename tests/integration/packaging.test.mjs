@@ -165,14 +165,10 @@ test("all-platform releases preserve candidate isolation and read-only installer
       ),
     );
     assert.ok(!JSON.stringify(job).includes("secrets."));
-    // Only normal main releases read or write the shared Goose cache.
+    // Candidates use the Goose cache too; GitHub scopes their saves to their branch.
     const cache = job.steps.find((step) => step.uses === goose);
-    assert.equal(selected(cache), true);
-    assert.equal(selected(cache, { candidates: true }), false);
-    assert.equal(
-      selected(cache, { candidates: true }, "refs/heads/feature"),
-      false,
-    );
+    assert.ok(cache);
+    assert.equal(cache.if, undefined);
   }
   // Post steps run in reverse, so Goose saves before rust-cache prunes target/.
   const macos = jobs.build.steps;

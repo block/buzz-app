@@ -308,7 +308,11 @@
     inset-inline-end: var(--session-trailing-end);
     margin: 0;
   }
-  .organizedRow:has([data-channel-activity]) [data-solo-shared],
+  /* Keep these rules separate so Lightning CSS does not wrap the :has()
+     selector list in :is(), which slows busy editing in measured WebKit runs. */
+  .organizedRow:has([data-channel-activity]) [data-solo-shared] {
+    opacity: 0;
+  }
   .organizedRow:has([data-solo-working-indicator]:not(:empty))
     :is([data-channel-activity], [data-solo-shared]) {
     opacity: 0;

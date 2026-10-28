@@ -27,6 +27,15 @@ import { splitPartition } from "../../features/relay/partition";
 import { useIdentityNames } from "../../features/identity-names/react";
 import { usePresenceStatus } from "../../features/presence/react";
 import { profileTarget } from "../../features/profiles/target";
+import { peopleRelationships } from "../../features/profiles/relationships";
+import { personKey } from "../../features/search/people-rank";
+import {
+  noSearchUsage,
+  pickerText,
+  readSearchUsage,
+  recordChoice,
+  searchOrder,
+} from "../../features/search/usage";
 import { matchPerson } from "../../features/search/person-match";
 import { useSearchHighlight } from "../../features/search/use-search-highlight";
 import styles from "./ChannelMembersDialog.module.css";
@@ -615,6 +624,11 @@ export function ChannelMembersDialog({
       : ""
     : rosterReadError;
   const text = query.trim();
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a new query or explicit refresh rereads stored choice/visit scores.
+  const usage = useMemo(
+    () => (solo ? noSearchUsage : readSearchUsage(session.scope)),
+    [session.scope, solo, text, refresh],
+  );
   const [invitationPage, setInvitationPage] = useState({
     text,
     size: MEMBER_SEARCH_PAGE_SIZE,
@@ -819,10 +833,18 @@ export function ChannelMembersDialog({
         });
     }
   const needle = text.toLowerCase();
-  // Client-managed agents come first; within each group retain the shared name
-  // ranking and the relay's order for equal ranks.
-  const candidateRank = (person: { pubkey: string; name: string }) =>
-    typedMatch(label(person.pubkey, person.name), needle)?.tier ?? 4;
+  const relationships = useMemo(
+    () =>
+      peopleRelationships(
+        list.channels,
+        new Set(
+          agentChoices.identities
+            .filter((agent) => agent.managed)
+            .map((agent) => agent.pubkey),
+        ),
+      ),
+    [list.channels, agentChoices.identities],
+  );
   const soloAgents = new Set(
     agentChoices.selectable.map((agent) => agent.pubkey),
   );
@@ -840,23 +862,41 @@ export function ChannelMembersDialog({
         : known.has(person.pubkey)
           ? 3
           : 2;
-  const available = [...candidates.values()]
-    .filter(
-      (person) =>
-        !members.has(person.pubkey) &&
-        !archiveHides(session.archives, person.pubkey, session.viewer) &&
-        // A Solo chat offers only the agents its owner can add directly.
-        !(
-          solo &&
-          agentCandidate(person) &&
-          !(canAddSoloAgents && soloAgents.has(person.pubkey))
-        ),
-    )
-    .sort(
-      (a, b) =>
-        (!solo && candidateGroup(a) - candidateGroup(b)) ||
-        candidateRank(a) - candidateRank(b),
-    );
+  const available = [...candidates.values()].filter(
+    (person) =>
+      !members.has(person.pubkey) &&
+      !archiveHides(session.archives, person.pubkey, session.viewer) &&
+      // A Solo chat offers only the agents its owner can add directly.
+      !(
+        solo &&
+        agentCandidate(person) &&
+        !(canAddSoloAgents && soloAgents.has(person.pubkey))
+      ),
+  );
+  const picked = usage.pick(
+    pickerText("channel-members", needle),
+    new Set(available.map((person) => personKey(person.pubkey))),
+  );
+  // Keep the product's outer groups; within each, use New message's shared
+  // exact/choice/relationship/usage order. Relay ties and key-only matches stay.
+  const candidateRank = (person: { pubkey: string; name: string }) => {
+    const rank =
+      typedMatch(label(person.pubkey, person.name), needle)?.tier ?? 4;
+    if (solo || !needle) return rank;
+    const key = personKey(person.pubkey);
+    const dm = relationships.dm(person.pubkey);
+    return searchOrder(usage, picked, {
+      key,
+      rank,
+      band: relationships.rank(person.pubkey),
+      usageKeys: [key, ...(dm ? [`channel:${dm}`] : [])],
+    });
+  };
+  available.sort(
+    (a, b) =>
+      (!solo && candidateGroup(a) - candidateGroup(b)) ||
+      candidateRank(a) - candidateRank(b),
+  );
   // Known agents supplement the server page, not its rendering bound. Keep all
   // matches reachable through the existing More action without mounting them all.
   const invitationSize =
@@ -1001,6 +1041,11 @@ export function ChannelMembersDialog({
     async (key: string) => {
       const signal = lifetime.current?.signal;
       if (!signal) return;
+      // Capture this intent's text without changing the callback on each key.
+      const typed = pickerText(
+        "channel-members",
+        input.current?.value.trim().toLowerCase() ?? "",
+      );
       setNotice("");
       // A Solo owner's agents join directly; people use ordinary additions.
       const direct =
@@ -1023,6 +1068,7 @@ export function ChannelMembersDialog({
           );
         else await session.memberAdditions.add(channelId, key);
         if (!signal.aborted) {
+          if (!solo) recordChoice(session.scope, typed, personKey(key));
           if (direct) {
             setSoloAdditions((old) => ({ ...old, [key]: { pending: false } }));
             setQuery("");
@@ -1049,7 +1095,7 @@ export function ChannelMembersDialog({
         if (direct) pending.delete(key);
       }
     },
-    [session, channelId, canAddSoloAgents, place],
+    [session, channelId, canAddSoloAgents, place, solo],
   );
 
   const addTeam = useCallback(

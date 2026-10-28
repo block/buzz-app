@@ -20,7 +20,20 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import { useEffect } from "react";
 import { createRelaySession } from "../../features/relay/session";
-import { keypair, profile, roster, signed } from "../../features/relay/testing";
+import {
+  keypair,
+  metadata,
+  profile,
+  roster,
+  signed,
+} from "../../features/relay/testing";
+import { personKey } from "../../features/search/people-rank";
+import {
+  pickerText,
+  readSearchUsage,
+  recordChoice,
+  recordVisit,
+} from "../../features/search/usage";
 import { matchesEvent } from "../../features/relay/projection";
 import type { RelayEvent } from "../../features/relay/events";
 import { PublishRejected } from "../../features/relay/outbox";
@@ -53,6 +66,7 @@ function ownedTask(
 }
 // jsdom lacks scrollIntoView; the search highlight keeps its row in view.
 beforeEach(() => {
+  localStorage.clear();
   Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
     configurable: true,
     value: vi.fn(),
@@ -221,6 +235,7 @@ async function setup(
     query,
     readAgentLibrary,
     session: owner.session,
+    relay,
     person,
     viewer,
     delayRoster: () => {
@@ -375,6 +390,11 @@ it("orders matches by client agents, people, other agents, then your non-client 
   t.query.mockImplementation(async (filters) =>
     filters.some((filter) => filter.search) ? [other, person] : query(filters),
   );
+  recordChoice(
+    t.session.scope,
+    pickerText("channel-members", "fixture"),
+    personKey(saved.pubkey),
+  );
   await t.user.type(screen.getByRole("searchbox"), "Fixture");
   await screen.findByRole("button", { name: /^Add Fixture person/ });
   const results = screen.getByRole("region", { name: "Not in this channel" });
@@ -403,6 +423,139 @@ it("orders matches by client agents, people, other agents, then your non-client 
   expect(
     screen.queryByRole("checkbox", { name: "Include other agents" }),
   ).toBeNull();
+  expect(t.publish).not.toHaveBeenCalled();
+});
+
+async function relationshipInvitations() {
+  const t = await setup();
+  const people = [
+    { ...keypair(), name: "Sam A stranger" },
+    { ...keypair(), name: "Sam B shared" },
+    { ...keypair(), name: "Sam C group" },
+    { ...keypair(), name: "Sam D direct" },
+    { ...keypair(), name: "Sam E direct" },
+    { ...keypair(), name: "Sam" },
+  ];
+  const key = (index: number) => people[index]?.pubkey ?? "";
+  const directId = "22222222-2222-4222-8222-222222222222";
+  const otherDirectId = "33333333-3333-4333-8333-333333333333";
+  const groupId = "44444444-4444-4444-8444-444444444444";
+  const sharedId = "55555555-5555-4555-8555-555555555555";
+  const events = [
+    metadata(t.relay, directId, "Direct", undefined, [["t", "dm"]]),
+    roster(t.relay, directId, [t.viewer.pubkey, key(3)]),
+    metadata(t.relay, otherDirectId, "Other direct", undefined, [["t", "dm"]]),
+    roster(t.relay, otherDirectId, [t.viewer.pubkey, key(4)]),
+    metadata(t.relay, groupId, "Group", undefined, [["t", "dm"]]),
+    roster(t.relay, groupId, [t.viewer.pubkey, key(2), t.person.pubkey]),
+    metadata(t.relay, sharedId, "Shared"),
+    roster(t.relay, sharedId, [t.viewer.pubkey, key(1)]),
+  ];
+  const query = t.query.getMockImplementation();
+  if (!query) throw new Error("Missing query fixture");
+  t.query.mockImplementation(async (filters) =>
+    filters.some((filter) => filter.search)
+      ? people.map((person) => profile(person, { name: person.name }))
+      : [
+          ...(await query(filters)),
+          ...events.filter((event) =>
+            filters.some((filter) => matchesEvent(event, filter)),
+          ),
+        ],
+  );
+  await act(async () => t.session.channels.refreshList?.());
+  await vi.waitFor(() =>
+    expect(
+      t.session.channels
+        .list()
+        .channels.find((channel) => channel.id === directId)?.participants,
+    ).toEqual([key(3)]),
+  );
+  const rows = () =>
+    within(
+      within(
+        screen.getByRole("region", { name: "Not in this channel" }),
+      ).getByRole("region", { name: "People" }),
+    )
+      .getAllByRole("button", { name: /^Add / })
+      .map((row) => row.getAttribute("aria-label"));
+  return { ...t, people, key, directId, otherDirectId, rows };
+}
+
+it("uses shared relationship bands inside People while exact names stay first", async () => {
+  const t = await relationshipInvitations();
+  await t.user.type(screen.getByRole("searchbox"), "Sa");
+  await screen.findByRole("button", { name: /^Add Sam D direct/ });
+  expect(t.rows()).toEqual([
+    expect.stringMatching(/^Add Sam D direct/),
+    expect.stringMatching(/^Add Sam E direct/),
+    expect.stringMatching(/^Add Sam C group/),
+    expect.stringMatching(/^Add Sam B shared/),
+  ]);
+  await t.user.type(screen.getByRole("searchbox"), "m");
+  await screen.findByRole("button", { name: /^Add Sam \(/ });
+  expect(t.rows()).toEqual([
+    expect.stringMatching(/^Add Sam \(/),
+    expect.stringMatching(/^Add Sam D direct/),
+    expect.stringMatching(/^Add Sam E direct/),
+    expect.stringMatching(/^Add Sam C group/),
+  ]);
+});
+
+it("uses shared DM visit usage and picker-specific earlier choices", async () => {
+  const t = await relationshipInvitations();
+  recordVisit(t.session.scope, `channel:${t.otherDirectId}`);
+  recordChoice(t.session.scope, pickerText("dm", "sa"), personKey(t.key(0)));
+  await t.user.type(screen.getByRole("searchbox"), "Sa");
+  await screen.findByRole("button", { name: /^Add Sam E direct/ });
+  expect(t.rows()[0]).toMatch(/^Add Sam E direct/);
+  recordChoice(
+    t.session.scope,
+    pickerText("channel-members", "sam"),
+    personKey(t.key(0)),
+  );
+  await t.user.type(screen.getByRole("searchbox"), "m ");
+  await screen.findByRole("button", { name: /^Add Sam \(/ });
+  // Exact still leads; the earlier Add choice precedes the relationship bands.
+  expect(t.rows()).toEqual([
+    expect.stringMatching(/^Add Sam \(/),
+    expect.stringMatching(/^Add Sam A stranger/),
+    expect.stringMatching(/^Add Sam E direct/),
+    expect.stringMatching(/^Add Sam D direct/),
+  ]);
+});
+
+it("remembers successful channel additions without learning from failed writes", async () => {
+  const t = await setup();
+  t.fail("Only the owner can add this agent");
+  const add = await t.search();
+  await t.user.click(add);
+  await screen.findByText(/Only the owner can add this agent/);
+  const typed = pickerText("channel-members", "morgan");
+  const key = personKey(t.person.pubkey);
+  expect(
+    readSearchUsage(t.session.scope).pick(typed, new Set([key])),
+  ).toBeUndefined();
+  t.fail("");
+  await t.user.click(screen.getByRole("button", { name: "Retry" }));
+  await screen.findByText("Morgan is in the channel.");
+  expect(readSearchUsage(t.session.scope).pick(typed, new Set([key]))).toBe(
+    key,
+  );
+});
+
+it("keeps public-key lookup results whose names do not match the key text", async () => {
+  const t = await setup();
+  for (const value of [t.person.pubkey, npubEncode(t.person.pubkey)]) {
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value } });
+    const add = await screen.findByRole("button", { name: /^Add Morgan/ });
+    expect(add).toBeEnabled();
+    expect(
+      within(
+        screen.getByRole("region", { name: "Not in this channel" }),
+      ).getAllByRole("button", { name: /^Add / }),
+    ).toEqual([add]);
+  }
   expect(t.publish).not.toHaveBeenCalled();
 });
 

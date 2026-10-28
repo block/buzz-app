@@ -83,8 +83,9 @@ export function createNavigationController(
   let disposed = false;
   let active: Operation;
   let snapshot: NavigationSnapshot;
-  // The deadline measures a presenter. None may exist yet (the first-run gate
-  // hides the app for minutes), so it runs only while one is attached.
+  // The deadline measures a presenter. None may exist yet (the identity and
+  // key-setup gate, IdentitySetup, hides the app for minutes), so it runs only
+  // while one is attached.
   let presenters = 0;
   let ingressRetry: (() => Promise<OpenResult>) | undefined;
   const listeners = new Set<() => void>();

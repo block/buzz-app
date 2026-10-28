@@ -186,7 +186,12 @@ it("keeps an OS entity intent through real community selection and Retry in App"
   ).not.toBeInTheDocument();
 });
 
-it("offers to join a code-less link's community, or opens it once joined", async () => {
+const elsewhere = "https://elsewhere.example";
+/** Live App services with community links bound to a controllable shell. */
+function bindCommunityLinks(
+  selected: string | null,
+  take: () => Promise<readonly string[]>,
+) {
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -200,8 +205,11 @@ it("offers to join a code-less link's community, or opens it once joined", async
     `buzz-client.v1:${viewer}`,
     JSON.stringify({
       profile: { name: "Fixture", picture: "" },
-      memberships: [{ id: origin, name: "Fixture community" }],
-      selected: null,
+      memberships: [
+        { id: origin, name: "Fixture community" },
+        { id: elsewhere, name: "Elsewhere" },
+      ],
+      selected,
     }),
   );
   vi.stubGlobal(
@@ -216,15 +224,12 @@ it("offers to join a code-less link's community, or opens it once joined", async
   );
   services = createServices();
   const current = services;
-  const queue = [
-    "buzz://add-community?relay=wss%3A%2F%2Fother.example%2F&name=other",
-  ];
   let ping = () => {};
   stop = bindDeepLinks(
     { ...current.navigationHost, invite: current.invites.open },
     current.communities,
     {
-      take: async () => queue.splice(0),
+      take,
       watch(listener) {
         ping = listener;
         return () => {};
@@ -232,6 +237,16 @@ it("offers to join a code-less link's community, or opens it once joined", async
     },
   );
   render(<App services={current} />);
+  return { current, ping: () => ping() };
+}
+
+it("offers to join a code-less link's community, or opens it once joined", async () => {
+  const queue = [
+    "buzz://add-community?relay=wss%3A%2F%2Fother.example%2F&name=other",
+  ];
+  const { current, ping } = bindCommunityLinks(null, async () =>
+    queue.splice(0),
+  );
   expect(await screen.findByLabelText("Community URL")).toHaveValue(
     "https://other.example",
   );
@@ -256,6 +271,33 @@ it("offers to join a code-less link's community, or opens it once joined", async
   expect(current.invites.snapshot()).toBeUndefined();
   await waitFor(() =>
     expect(screen.queryByLabelText("Community URL")).not.toBeInTheDocument(),
+  );
+});
+
+it("keeps a link read while a code-less link switches communities", async () => {
+  const reads: ((urls: readonly string[]) => void)[] = [];
+  const { current, ping } = bindCommunityLinks(
+    elsewhere,
+    () => new Promise((resolve) => reads.push(resolve)),
+  );
+  await waitFor(() => expect(reads).toHaveLength(1));
+  await waitFor(() =>
+    expect(current.communities.snapshot().status).toBe("ready"),
+  );
+  // A second link arrives while the first read is pending.
+  ping();
+  await act(async () =>
+    reads[0]?.(["buzz://connect?relay=wss%3A%2F%2Fcommunity.example"]),
+  );
+  await waitFor(() => expect(reads).toHaveLength(2));
+  await waitFor(() =>
+    expect(current.communities.snapshot().selected).toBe(origin),
+  );
+  await act(async () =>
+    reads[1]?.(["buzz://add-community?relay=wss%3A%2F%2Fother.example"]),
+  );
+  expect(await screen.findByLabelText("Community URL")).toHaveValue(
+    "https://other.example",
   );
 });
 

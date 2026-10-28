@@ -123,6 +123,9 @@ export function createServices() {
       if (invite.code || !memberships.some((m) => m.id === id))
         return inviteIntent.open(invite, viewer);
       inviteIntent.clear();
+      // Select now, not in the navigation effect, so a link read in the
+      // meantime is not discarded as a community switch.
+      communities.select(id);
       void navigation.open({
         version: 1,
         kind: "page",

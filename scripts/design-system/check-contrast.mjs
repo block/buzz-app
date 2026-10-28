@@ -207,6 +207,11 @@ const PAIRS = [
     ["--text-mention-own", `--affordance-mention-own${state}`],
     ["--text-mention-self", `--affordance-mention-self${state}`],
   ]),
+  // Reaction counts sit on the strip overlay, and your whole bubble takes a
+  // quieter overlay under the pointer.
+  ["--text-standard", "--affordance-reaction"],
+  ["--text-message-own", "--affordance-reaction-own"],
+  ["--text-message-own", "--affordance-message-own-hover"],
   ...["subtle", "subtle-hover", "subtle-pressed"].map((state) => [
     "--text-standard",
     `--affordance-${state}`,
@@ -316,14 +321,55 @@ function declarationsByMode(
   return { light, dark };
 }
 
-/** Follows a `var()` chain to its literal, or null if it is not a plain colour. */
-function resolve(map, name, depth = 0) {
+/**
+ * See-through fills and the one surface each always sits on. A chip overlay is
+ * measured as the colour it makes on that surface, which is what a reader
+ * sees. A translucent role missing here stays unmeasurable and is reported.
+ */
+const SITS_ON = new Map([
+  ["--affordance-mention", "--surface-message"],
+  ["--affordance-mention-hover", "--surface-message"],
+  ["--affordance-mention-own", "--surface-message-own"],
+  ["--affordance-mention-own-hover", "--surface-message-own"],
+  ["--affordance-message-own-hover", "--surface-message-own"],
+  ["--affordance-reaction", "--surface-message"],
+  ["--affordance-reaction-own", "--surface-message-own"],
+]);
+
+/** `#rgb` or `#rrggbb` as three 0–255 channels. */
+function channels(hex) {
+  const digits =
+    hex.length === 4
+      ? [...hex.slice(1)].map((d) => d + d)
+      : [1, 3, 5].map((i) => hex.slice(i, i + 2));
+  return digits.map((d) => Number.parseInt(d, 16));
+}
+
+/**
+ * Follows a `var()` chain to its literal, or null if it is not a plain colour.
+ * An `rgb(r g b / a%)` overlay resolves only for a role in `SITS_ON`, as the
+ * flat colour it composites to over its surface.
+ */
+function resolve(map, name, depth = 0, role = name) {
   if (depth > 10) return null;
   const value = map.get(name);
   if (!value) return null;
   const single = /^var\(\s*(--[\w-]+)\s*\)$/.exec(value);
-  if (single) return resolve(map, single[1], depth + 1);
-  return /^#[0-9a-fA-F]{3,6}$/.test(value) ? value : null;
+  if (single) return resolve(map, single[1], depth + 1, role);
+  if (/^#[0-9a-fA-F]{3}(?:[0-9a-fA-F]{3})?$/.test(value)) return value;
+  const overlay = /^rgb\(\s*(\d+)\s+(\d+)\s+(\d+)\s*\/\s*([\d.]+)%\s*\)$/.exec(
+    value,
+  );
+  const under = SITS_ON.has(role) ? resolve(map, SITS_ON.get(role)) : null;
+  if (!overlay || !under) return null;
+  const alpha = Number(overlay[4]) / 100;
+  return `#${channels(under)
+    .map((base, i) =>
+      Math.round(Number(overlay[i + 1]) * alpha + base * (1 - alpha))
+        .toString(16)
+        .padStart(2, "0"),
+    )
+    .join("")}`;
 }
 
 const failures = [];

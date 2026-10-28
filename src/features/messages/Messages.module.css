@@ -245,10 +245,17 @@
   max-width: 100%;
   padding-inline: var(--space-1);
   border-radius: calc(var(--size-control-sm) / 2);
-  background: var(--affordance-backdrop-hover);
+  /* The strip follows the lightness of whatever it sits on, like a chip. */
+  background: var(--reaction-surface, var(--affordance-reaction));
 }
-.message[data-own] > .messageBody {
-  --reaction-surface: var(--surface-message-own);
+/* The add control's circle meets the strip's rounded end. */
+.reactions[data-populated]:has(> .inlineReactionTool:not(:empty):last-child) {
+  padding-inline-end: 0;
+}
+/* Only reactions inside your bubble take its ink and overlay. Reactions that
+   sit outside it, under an emoji-only message, stay on the panel's. */
+.messageBubble[data-own] {
+  --reaction-surface: var(--affordance-reaction-own);
   --reaction-ink: var(--text-message-own);
 }
 .reactions:empty {
@@ -285,6 +292,9 @@
 }
 .reactionCount {
   @apply text-caption;
+}
+.reactionItem [data-reaction] {
+  color: var(--reaction-ink, var(--text-standard));
 }
 @media (hover: hover) and (pointer: fine) and (
     prefers-reduced-motion: no-preference
@@ -444,7 +454,8 @@
 }
 .inlineReactionTool
   [data-icon-variant]:is(:hover, :focus-visible, [aria-expanded="true"]) {
-  background: var(--affordance-backdrop-hover);
+  /* The strip's own overlay again, laid on top of it. */
+  background: var(--reaction-surface, var(--affordance-reaction));
   color: var(--reaction-ink, var(--text-standard));
 }
 .attachment {
@@ -2744,7 +2755,7 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
     position: absolute;
     inset: 0;
     border-radius: inherit;
-    background: var(--affordance-backdrop-hover);
+    background: var(--affordance-message-own-hover);
     pointer-events: none;
   }
 }

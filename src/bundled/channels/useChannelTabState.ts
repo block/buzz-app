@@ -1,3 +1,4 @@
+import { retainTabVisits } from "../../features/messages/tab-visit-lifetime";
 import { threadPlacementPreference } from "../../features/messages/thread-preferences";
 import {
   useCallback,
@@ -208,6 +209,9 @@ const sessions = new WeakMap<RelaySession, ReturnType<typeof createTabStore>>();
 // account/community, never layout, panel objects, editors or callbacks.
 type Retirement = Pick<State, "routedVisits" | "detailVisits">;
 const visitOwners = new Map<string, { channels: Record<string, Retirement> }>();
+const forgetVisits = (scope: string) => {
+  visitOwners.delete(scope);
+};
 function createTabStore(scope?: string) {
   const owner = { channels: (scope && visitOwners.get(scope)?.channels) || {} };
   let channels: Record<string, State> = Object.fromEntries(
@@ -216,7 +220,10 @@ function createTabStore(scope?: string) {
       { ...empty, ...visits },
     ]),
   );
-  if (scope) visitOwners.set(scope, owner);
+  if (scope) {
+    visitOwners.set(scope, owner);
+    retainTabVisits(scope, forgetVisits);
+  }
   const listeners = new Set<() => void>();
   const mounts = new Map<string, number>();
   return {
@@ -261,7 +268,7 @@ const keyOf = (page: string, channelId: string) =>
 function storeOf(session: RelaySession) {
   let store = sessions.get(session);
   if (!store) {
-    store = createTabStore(session.scope);
+    store = createTabStore(session.viewer ? session.scope : undefined);
     sessions.set(session, store);
   }
   return store;

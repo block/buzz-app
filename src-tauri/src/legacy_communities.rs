@@ -32,21 +32,19 @@ fn root() -> Option<PathBuf> {
     None
 }
 
-fn databases(dir: &Path, found: &mut Vec<PathBuf>) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
+fn databases(entries: std::fs::ReadDir, found: &mut Vec<PathBuf>) -> std::io::Result<()> {
+    for entry in entries {
+        let entry = entry?;
         let path = entry.path();
         // `file_type` does not follow symlinks, so a link cannot loop the walk.
-        match entry.file_type() {
-            Ok(kind) if kind.is_dir() => databases(&path, found),
-            Ok(kind) if kind.is_file() && entry.file_name() == "localstorage.sqlite3" => {
-                found.push(path)
-            }
-            _ => {}
+        let kind = entry.file_type()?;
+        if kind.is_dir() {
+            databases(std::fs::read_dir(&path)?, found)?;
+        } else if kind.is_file() && entry.file_name() == "localstorage.sqlite3" {
+            found.push(path);
         }
     }
+    Ok(())
 }
 
 /// WebKit stores values as UTF-16LE; UTF-8 is the fallback old Buzz's own reader used.
@@ -93,10 +91,22 @@ fn read(path: &Path) -> rusqlite::Result<Vec<Saved>> {
 }
 
 /// Every saved community once, in saved order. Missing storage reads as none;
-/// a database that cannot be read fails the whole read so the caller retries.
+/// a traversal or database error fails the whole read so the caller retries.
 fn read_all(root: &Path) -> Result<Vec<Saved>, String> {
     let mut found = Vec::new();
-    databases(root, &mut found);
+    let traversal = match std::fs::read_dir(root) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
+        entries => entries,
+    };
+    traversal
+        .and_then(|entries| databases(entries, &mut found))
+        .map_err(|error| {
+            eprintln!(
+                "buzz-desktop: legacy communities: {}: {error}",
+                root.display()
+            );
+            "Could not read old Buzz's communities".to_string()
+        })?;
     let mut communities = Vec::new();
     for path in found {
         let saved = read(&path).map_err(|error| {
@@ -207,5 +217,51 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("localstorage.sqlite3"), b"not a database").unwrap();
         assert!(read_all(dir.path()).is_err());
+        assert!(read_all(&dir.path().join("localstorage.sqlite3")).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_unreadable_directory_fails_the_read_and_retries_after_access_is_restored() {
+        use std::os::unix::fs::PermissionsExt;
+
+        for nested in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let storage = dir.path().join("Default/LocalStorage");
+            store(
+                &storage,
+                Some(utf16(
+                    r#"[{"relayUrl":"wss://hive.example.com","pubkey":"p"}]"#,
+                )),
+            );
+            let blocked = if nested { &storage } else { dir.path() };
+            let permissions = std::fs::metadata(blocked).unwrap().permissions();
+            std::fs::set_permissions(blocked, std::fs::Permissions::from_mode(0o000)).unwrap();
+            let result = read_all(dir.path());
+            std::fs::set_permissions(blocked, permissions).unwrap();
+            assert!(result.is_err(), "unreadable directory: {blocked:?}");
+            assert_eq!(
+                read_all(dir.path()).unwrap(),
+                vec![Saved {
+                    relay_url: "wss://hive.example.com".into(),
+                    pubkey: Some("p".into()),
+                }]
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn skips_symlinked_directories_and_databases() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let database = outside.path().join("localstorage.sqlite3");
+        std::fs::write(&database, b"not a database").unwrap();
+        symlink(outside.path(), dir.path().join("linked-directory")).unwrap();
+        symlink(database, dir.path().join("localstorage.sqlite3")).unwrap();
+        symlink(dir.path(), dir.path().join("loop")).unwrap();
+        assert_eq!(read_all(dir.path()).unwrap(), Vec::<Saved>::new());
     }
 }

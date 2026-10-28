@@ -140,11 +140,21 @@ it("marks a viewer with no old Buzz state without changing its record", async ()
 
 it("retries on the next launch when old Buzz's list could not be read or saved", async () => {
   const unreadable = setup();
-  importLegacyCommunities(unreadable.start(), async () => {
-    throw new Error("Could not read old Buzz's communities");
-  });
+  const read = vi
+    .fn<() => Promise<LegacyCommunity[]>>()
+    .mockRejectedValueOnce("Could not read old Buzz's communities")
+    .mockResolvedValue(legacy);
+  const dispose = importLegacyCommunities(unreadable.start(), read);
   await flush();
   expect(unreadable.storage.has(marker)).toBe(false);
+  expect(unreadable.storage.has(record)).toBe(false);
+  dispose();
+  const restarted = unreadable.start();
+  importLegacyCommunities(restarted, read);
+  await flush();
+  expect(read).toHaveBeenCalledTimes(2);
+  expect(restarted.snapshot().memberships).toHaveLength(4);
+  expect(unreadable.storage.get(marker)).toBe("1");
 
   const full = setup(undefined, true);
   const client = full.start();

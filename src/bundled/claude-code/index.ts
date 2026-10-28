@@ -1,4 +1,3 @@
-import { dispatchAgentHooks } from "../../features/agents/hooks";
 import { CLAUDE_HOOK_EVENTS } from "./hooks";
 import { repositoriesContext } from "../../features/communities/repositories";
 // Claude agents: an agent type whose agents are Claude sessions on
@@ -40,15 +39,18 @@ export const apply: PluginModule["apply"] = (ctx) => {
     () => agents.tools(),
     repositoriesContext,
     async (agent, session, event, input) => {
-      return ((await dispatchAgentHooks(
-        agents.hookHandlers(typeKey, event),
+      return ((await agents.dispatchHook(
+        typeKey,
+        event,
         input,
         { agent, session },
-        (output) =>
-          !!output &&
-          typeof output === "object" &&
-          Object.keys(output).length > 0,
-        25000,
+        {
+          accepts: (output) =>
+            !!output &&
+            typeof output === "object" &&
+            Object.keys(output).length > 0,
+          milliseconds: 25000,
+        },
       )) ?? {}) as Record<string, unknown>;
     },
   );

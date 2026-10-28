@@ -25,6 +25,23 @@ export function createAgentHooks(root: Context) {
         throw new Error("A hook needs an event and callback");
       contributions.register(ctx, hook);
     },
+    validate(
+      types: readonly {
+        key: string;
+        hooks?: Readonly<{ events: readonly string[] }>;
+      }[],
+    ) {
+      for (const hook of contributions.snapshot()) {
+        const type = types.find((type) => type.key === hook.harness);
+        if (type && !type.hooks?.events.includes(hook.event))
+          console.warn(
+            "Unsupported agent hook",
+            hook.key,
+            hook.harness,
+            hook.event,
+          );
+      }
+    },
     /** Adapters compose results in their own native format. Look up handlers on
      * every event so enabling or removing a plugin needs no process restart. */
     handlers(harness: string, event: string) {

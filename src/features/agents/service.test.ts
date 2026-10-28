@@ -11199,3 +11199,131 @@ it.each(["spawn", "exit"])(
     }
   },
 );
+
+it("lets an installed harness dispatch only its own hooks through the plugin API", async () => {
+  const { plugin, ctx, type } = await setup();
+  plugin.agents.register({
+    ...type,
+    id: "hooked",
+    hooks: { events: ["BeforeTool"] },
+  });
+  const input = { tool: "shell" };
+  const context = { agent: "agent", session: "session" };
+  const calls: string[] = [];
+  const scope = ctx.extend({
+    pluginOwner: {
+      id: "policy",
+      revision: "one",
+      agentHooks: ["example/hooked"],
+    },
+  });
+  const fiber = scope.plugin((policy) => {
+    policy.agents.registerHook({
+      id: "later",
+      harness: "example/hooked",
+      event: "BeforeTool",
+      run: () => {
+        calls.push("later");
+        return { denied: true };
+      },
+    });
+    policy.agents.registerHook({
+      id: "first",
+      harness: "example/hooked",
+      event: "BeforeTool",
+      run: (value, facts) => {
+        expect(value).toBe(input);
+        expect(facts).toEqual(context);
+        calls.push("first");
+        return {};
+      },
+    });
+  });
+  await fiber.await();
+  const options = {
+    accepts: (value: unknown) =>
+      !!value && typeof value === "object" && "denied" in value,
+    milliseconds: 1000,
+  };
+  try {
+    await expect(
+      plugin.agents.dispatchHook(
+        "example/hooked",
+        "BeforeTool",
+        input,
+        context,
+        options,
+      ),
+    ).resolves.toEqual({ denied: true });
+    expect(calls).toEqual(["first", "later"]);
+    expect(() =>
+      scope.agents.dispatchHook(
+        "example/hooked",
+        "BeforeTool",
+        input,
+        context,
+        options,
+      ),
+    ).toThrow(/own agent types/);
+    expect(() =>
+      ctx.agents.dispatchHook(
+        "example/hooked",
+        "BeforeTool",
+        input,
+        context,
+        options,
+      ),
+    ).toThrow(/own agent types/);
+  } finally {
+    await fiber.dispose();
+  }
+  await expect(
+    plugin.agents.dispatchHook(
+      "example/hooked",
+      "BeforeTool",
+      input,
+      context,
+      options,
+    ),
+  ).resolves.toBeUndefined();
+  await ctx.fiber.dispose();
+});
+
+it("reports unsupported hooks when their harness registers later", async () => {
+  const { plugin, ctx, type } = await setup();
+  const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const fiber = ctx
+    .extend({
+      pluginOwner: {
+        id: "policy",
+        revision: "one",
+        agentHooks: ["example/later"],
+      },
+    })
+    .plugin((policy) => {
+      policy.agents.registerHook({
+        id: "unsupported",
+        harness: "example/later",
+        event: "Missing",
+        run: () => undefined,
+      });
+    });
+  await fiber.await();
+  try {
+    plugin.agents.register({
+      ...type,
+      id: "later",
+      hooks: { events: ["BeforeTool"] },
+    });
+    expect(warning).toHaveBeenCalledWith(
+      "Unsupported agent hook",
+      "policy/unsupported",
+      "example/later",
+      "Missing",
+    );
+  } finally {
+    warning.mockRestore();
+    await fiber.dispose();
+    await ctx.fiber.dispose();
+  }
+});

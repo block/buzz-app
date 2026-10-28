@@ -1,4 +1,3 @@
-import { dispatchAgentHooks } from "../../features/agents/hooks";
 import { CODEX_HOOK_EVENTS } from "./hook-bridge";
 import { repositoriesContext } from "../../features/communities/repositories";
 import { isTauri } from "@tauri-apps/api/core";
@@ -32,6 +31,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     ctx.agents.storage,
     setup,
   );
+  const typeKey = `${ctx.pluginOwner?.id ?? "buzz.codex"}/${TYPE_ID}`;
   const runtime = new CodexRuntime(
     start,
     (key) => ownerReads(ctx.agents.relay(key), pubkeyOf(key)),
@@ -44,24 +44,23 @@ export const apply: PluginModule["apply"] = (ctx) => {
       ? {
           serve: ctx.host.serveMcp.bind(ctx.host),
           run: async (agent, session, event, input) => {
-            return ((await dispatchAgentHooks(
-              ctx.agents.hookHandlers(
-                `${ctx.pluginOwner?.id ?? "buzz.codex"}/${TYPE_ID}`,
-                event,
-              ),
+            return ((await ctx.agents.dispatchHook(
+              typeKey,
+              event,
               input,
               { agent, session },
-              (output) =>
-                !!output &&
-                typeof output === "object" &&
-                Object.keys(output).length > 0,
-              event === "Interrupt" ? 2500 : 25000,
+              {
+                accepts: (output) =>
+                  !!output &&
+                  typeof output === "object" &&
+                  Object.keys(output).length > 0,
+                milliseconds: event === "Interrupt" ? 2500 : 25000,
+              },
             )) ?? {}) as Record<string, unknown>;
           },
         }
       : undefined,
   );
-  const typeKey = `${ctx.pluginOwner?.id ?? "buzz.codex"}/${TYPE_ID}`;
   /** A Codex agent is running, so Buzz's copy is needed; unknown until the
    * agents have loaded. */
   let needed: boolean | undefined;

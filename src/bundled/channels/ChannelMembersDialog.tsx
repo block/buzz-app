@@ -1819,7 +1819,7 @@ export function ChannelMembersDialog({
                         <div className="px-control-inset pt-1">
                           <Button
                             variant="subtle"
-                            size="sm"
+                            size="xs"
                             onClick={() =>
                               setInvitationPage((old) => ({
                                 ...old,

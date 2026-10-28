@@ -28,6 +28,7 @@ async function setup() {
     muted: [],
   };
   const read = vi.fn(async () => data);
+  const readAfterWrite = vi.fn(async () => data);
   const assignment = vi.fn(async (intent: SidebarAssignmentIntent) => {
     const id = intent.createSection?.id ?? intent.sectionId;
     const assignments = { ...data.assignments };
@@ -77,6 +78,7 @@ async function setup() {
   });
   const owner = createSidebarPreferencesStore({
     read,
+    readAfterWrite,
     available: true,
     write: assignment,
     writeStar: star,
@@ -84,7 +86,16 @@ async function setup() {
     writeSort: sort,
   });
   await owner.queries.ensure();
-  return { owner, prefs: owner.queries, assignment, star, read, mute, sort };
+  return {
+    owner,
+    prefs: owner.queries,
+    assignment,
+    star,
+    read,
+    readAfterWrite,
+    mute,
+    sort,
+  };
 }
 
 it("moves immediately, keeps later intent through older failure, and serializes both records", async () => {
@@ -634,36 +645,42 @@ it("refreshes an accepted creation before reporting a lost response, superseding
   }
 });
 
-it("gates new creation when reconciliation fails until preferences can be read", async () => {
-  const h = await setup();
-  const save = h.assignment.getMockImplementation();
-  assert(save);
-  h.assignment.mockImplementationOnce(async (intent) => {
-    await save(intent);
-    throw new Error("response lost");
-  });
-  h.read.mockRejectedValueOnce(new Error("read offline"));
-  const section = { id: "accepted", name: "Launch" };
-  try {
-    await expect(h.prefs.createSection(section)).rejects.toThrow(
-      "response lost",
-    );
-    expect(h.prefs.snapshot()).toMatchObject({
-      status: "error",
-      error: "read offline",
+it.each([false, true])(
+  "gates new creation until writer reconciliation succeeds (clear cache: %s)",
+  async (clearCache) => {
+    const h = await setup();
+    const save = h.assignment.getMockImplementation();
+    assert(save);
+    h.assignment.mockImplementationOnce(async (intent) => {
+      await save(intent);
+      throw new Error("response lost");
     });
-    expect(h.prefs.sectionCreationWritable).toBe(false);
-    await expect(
-      h.prefs.createSection({ id: "duplicate", name: "Launch" }),
-    ).rejects.toThrow("unavailable");
-    expect(h.assignment).toHaveBeenCalledOnce();
-    await h.prefs.refresh();
-    expect(h.prefs.sectionCreationWritable).toBe(true);
-    expect(h.prefs.snapshot().data?.sections.at(-1)).toMatchObject(section);
-  } finally {
-    h.owner.dispose();
-  }
-});
+    h.readAfterWrite.mockRejectedValueOnce(new Error("read offline"));
+    const section = { id: "accepted", name: "Launch" };
+    try {
+      await expect(h.prefs.createSection(section)).rejects.toThrow(
+        "response lost",
+      );
+      expect(h.prefs.snapshot()).toMatchObject({
+        status: "error",
+        error: "read offline",
+      });
+      expect(h.prefs.sectionCreationWritable).toBe(false);
+      await expect(
+        h.prefs.createSection({ id: "duplicate", name: "Launch" }),
+      ).rejects.toThrow("unavailable");
+      expect(h.assignment).toHaveBeenCalledOnce();
+      if (clearCache) h.owner.clear();
+      await h.prefs.refresh();
+      expect(h.prefs.sectionCreationWritable).toBe(true);
+      expect(h.prefs.snapshot().data?.sections.at(-1)).toMatchObject(section);
+      expect(h.readAfterWrite).toHaveBeenCalledTimes(2);
+      expect(h.read).toHaveBeenCalledOnce();
+    } finally {
+      h.owner.dispose();
+    }
+  },
+);
 
 it.each(["clear", "dispose"] as const)(
   "fences creation reconciliation after %s",
@@ -672,7 +689,7 @@ it.each(["clear", "dispose"] as const)(
     const read = deferred<SidebarPreferences>();
     const entered = deferred<void>();
     h.assignment.mockRejectedValueOnce(new Error("response lost"));
-    h.read.mockImplementationOnce(() => {
+    h.readAfterWrite.mockImplementationOnce(() => {
       entered.resolve();
       return read.promise;
     });
@@ -715,6 +732,31 @@ it("reconciles a failed creation after a queued move without deadlocking or losi
     expect(h.prefs.snapshot().data?.sections.at(-1)).toMatchObject(section);
     expect(h.prefs.snapshot().data?.assignments.beta).toBe("later");
     expect(h.assignment).toHaveBeenCalledTimes(2);
+  } finally {
+    h.owner.dispose();
+  }
+});
+
+it("reconciles an accepted creation against the writer while ordinary reads lag", async () => {
+  const h = await setup();
+  const before = h.prefs.snapshot().data;
+  assert(before);
+  h.read.mockResolvedValue(before);
+  const save = h.assignment.getMockImplementation();
+  assert(save);
+  h.assignment.mockImplementationOnce(async (intent) => {
+    await save(intent);
+    throw new Error("response lost");
+  });
+  const section = { id: "accepted", name: "Launch" };
+  try {
+    await expect(h.prefs.createSection(section)).rejects.toThrow(
+      "response lost",
+    );
+    expect(h.prefs.snapshot().data?.sections.at(-1)).toMatchObject(section);
+    expect(h.read).toHaveBeenCalledOnce();
+    expect(h.readAfterWrite).toHaveBeenCalledOnce();
+    expect(h.assignment).toHaveBeenCalledOnce();
   } finally {
     h.owner.dispose();
   }

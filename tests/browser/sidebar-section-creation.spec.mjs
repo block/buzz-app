@@ -42,6 +42,32 @@ test("Channels offers empty-section creation with keyboard focus and confirmed p
   await expect(field).toHaveValue("Launch");
   const creations = [];
   let lostResponse = false;
+  let awaitingReconciliation = false;
+  let writerReads = 0;
+  await page.route("**/query", async (route) => {
+    const filters = route.request().postDataJSON();
+    if (
+      awaitingReconciliation &&
+      Array.isArray(filters) &&
+      filters.length === 5 &&
+      filters.some((filter) => filter["#d"]?.includes("channel-sections"))
+    ) {
+      if (filters.every((filter) => filter.consistency === "strong")) {
+        writerReads++;
+        awaitingReconciliation = false;
+      } else {
+        // A replica is still behind the accepted write. Only writer routing
+        // can reconcile this creation before the dialog discards its ID.
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: "[]",
+        });
+        return;
+      }
+    }
+    await route.continue();
+  });
   const loseCreationResponse = async (route) => {
     creations.push(route.request().postDataJSON());
     const response = await route.fetch();
@@ -49,6 +75,7 @@ test("Channels offers empty-section creation with keyboard focus and confirmed p
       // The real broker accepts and persists the write, but its response never
       // reaches the dialog. The retry must reconcile that exact creation.
       lostResponse = true;
+      awaitingReconciliation = true;
       app.report.sidebarAssignmentFailures ??= [];
       app.report.sidebarAssignmentFailures.push(route.request().url());
       await route.fulfill({
@@ -63,6 +90,7 @@ test("Channels offers empty-section creation with keyboard focus and confirmed p
   await expect(dialog.getByRole("alert")).toContainText(
     "Relay request failed (502)",
   );
+  expect(writerReads).toBe(1);
   await expect.poll(() => app.report.sidebarPublications?.length ?? 0).toBe(1);
   await expect(field).toBeDisabled();
   await page.keyboard.type("es");
@@ -103,6 +131,7 @@ test("Channels offers empty-section creation with keyboard focus and confirmed p
   await expect(dialog.getByRole("alert")).toContainText(
     "Relay request failed (502)",
   );
+  expect(writerReads).toBe(2);
   const accepted = page
     .locator("summary")
     .filter({ hasText: /^Cancel check$/ });

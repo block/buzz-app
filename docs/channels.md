@@ -154,9 +154,10 @@ placement, rollback notice and Retry.
 The **Channels** ellipsis menu also offers **Create section**, which creates an
 empty section without moving a channel. Its dialog retains the name and section
 ID on failure and waits for confirmation before closing. After a failed creation,
-the session refreshes preferences before allowing dismissal so an accepted save
-stays visible even after Cancel. If that read fails too, new creation is gated
-until preferences can be read successfully. Dragging a channel into
+the session refreshes preferences from the writer before allowing dismissal so
+an accepted save stays visible even after Cancel. If that read fails too, new
+creation is gated and Retry retains writer routing until reconciliation succeeds.
+Ordinary startup remains replica-eligible. Dragging a channel into
 the gap above the first custom section expands an **Add to new section** drop
 target inside the sidebar. With no custom sections, the target is above
 **Channels**; **Starred** keeps its pinned position. The created section appears

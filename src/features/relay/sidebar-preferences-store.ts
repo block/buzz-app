@@ -60,6 +60,7 @@ type Snapshot = Readonly<{
 /** One bounded account-preference projection per relay session, not per page. */
 export function createSidebarPreferencesStore({
   read,
+  readAfterWrite = read,
   available,
   write,
   writeStar,
@@ -75,6 +76,10 @@ export function createSidebarPreferencesStore({
   writeFilter,
 }: Readonly<{
   read: (signal?: AbortSignal) => Promise<SidebarPreferences>;
+  /** Authoritative reconciliation after uncertain creation, including Retry. */
+  readAfterWrite?:
+    | ((signal?: AbortSignal) => Promise<SidebarPreferences>)
+    | undefined;
   available: boolean;
   write?: SidebarAssignmentMutator | undefined;
   writeStar?: SidebarStarMutator | undefined;
@@ -104,6 +109,8 @@ export function createSidebarPreferencesStore({
   let confirmed: SidebarPreferences | undefined;
   let readFailure: string | undefined;
   let readTransient = false;
+  // Retain writer routing through failed reads and cache clears until reconciled.
+  let creationUncertain = false;
   const writable = () =>
     !closed &&
     !!confirmed &&
@@ -334,7 +341,9 @@ export function createSidebarPreferencesStore({
     job.promise = Promise.resolve().then(async () => {
       if (closed || controller.signal.aborted) return;
       try {
-        const data = await read(controller.signal);
+        const data = await (creationUncertain ? readAfterWrite : read)(
+          controller.signal,
+        );
         if (
           closed ||
           controller.signal.aborted ||
@@ -343,6 +352,7 @@ export function createSidebarPreferencesStore({
         )
           return;
         readFailure = undefined;
+        creationUncertain = false;
         confirmed = data;
         project();
       } catch (error) {
@@ -656,7 +666,12 @@ export function createSidebarPreferencesStore({
         );
       },
       get sectionCreationWritable() {
-        return writable() && !snapshot.cached && !!(createSection || write);
+        return (
+          writable() &&
+          !creationUncertain &&
+          !snapshot.cached &&
+          !!(createSection || write)
+        );
       },
       createSection(section: Readonly<{ id: string; name: string }>) {
         const failure = groupsOnly
@@ -670,7 +685,7 @@ export function createSidebarPreferencesStore({
                 signal: AbortSignal,
               ) => write({ createSection: section }, signal)
             : undefined);
-        if (!writable() || snapshot.cached || !create)
+        if (!writable() || creationUncertain || snapshot.cached || !create)
           return Promise.reject(new Error(failure));
         const writeGeneration = generation;
         return writeGroups(failure, (signal) => create(section, signal)).catch(
@@ -681,6 +696,7 @@ export function createSidebarPreferencesStore({
               // joining a read that began before publication.
               active?.controller.abort();
               active = undefined;
+              creationUncertain = true;
               await refresh();
             }
             throw error;

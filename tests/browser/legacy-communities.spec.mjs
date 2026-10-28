@@ -81,13 +81,17 @@ test("native legacy import waits for consent after launch and remembers a declin
     await page.evaluate(() => {
       localStorage.setItem("buzz-font-scale.v1", "1.5");
       window.dispatchEvent(
-        new StorageEvent("storage", { key: "buzz-font-scale.v1" }),
+        new StorageEvent("storage", {
+          key: "buzz-font-scale.v1",
+          storageArea: localStorage,
+        }),
       );
     });
     await expect(page.locator("html")).toHaveAttribute(
       "data-color-mode",
       "dark",
     );
+    await expect(page.locator("html")).toHaveCSS("font-size", "24px");
     await dialog.getByRole("button", { name: "Skip import" }).focus();
     await page.keyboard.press("Tab");
     const approve = dialog.getByRole("button", {

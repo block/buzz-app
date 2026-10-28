@@ -7,13 +7,15 @@ import { join } from "node:path";
 import { ClaudeProcess } from "./claude";
 import { expect, it } from "vitest";
 
-it.skipIf(!process.env.CLAUDE_FACADE_BINARY)(
-  "blocks a real Claude command through its SDK callback",
-  async () => {
+it.skipIf(!process.env.CLAUDE_FACADE_BINARY).each(["deny", "throw"])(
+  "handles a real Claude SDK hook decision and recovers (%s)",
+  async (mode) => {
     const home = await mkdtemp(join(tmpdir(), "buzz-claude-hooks-")),
       marker = join(home, "executed");
 
     let modelCalls = 0;
+    let toolHooks = 0;
+    const controlResponses: { subtype: string; error?: string }[] = [];
     const observed: string[] = [];
     const server = createServer(async (req, res) => {
       let body = "";
@@ -40,13 +42,13 @@ it.skipIf(!process.env.CLAUDE_FACADE_BINARY)(
             input: Record<string, string>;
           };
       if (auxiliary) block = { type: "text", text: "Fixture" };
-      else if (modelCalls === 1)
+      else if (modelCalls === 1 || modelCalls === 3)
         block = {
           type: "tool_use",
           id: `call_${modelCalls}`,
           name: "Bash",
           input: {
-            command: `touch ${marker}`,
+            command: `touch ${modelCalls === 1 ? marker : `${marker}-recovery`}`,
             description: "Fixture shell command",
           },
         };
@@ -160,6 +162,9 @@ it.skipIf(!process.env.CLAUDE_FACADE_BINARY)(
           const running = child;
           return {
             write: async (text) => {
+              const wire = JSON.parse(text);
+              if (wire.type === "control_response")
+                controlResponses.push(wire.response);
               running.stdin.write(text);
             },
             end: async () => {
@@ -196,6 +201,8 @@ it.skipIf(!process.env.CLAUDE_FACADE_BINARY)(
           },
           hook: async (_session, name) => {
             observed.push(name);
+            if (name === "PreToolUse" && ++toolHooks === 1 && mode === "throw")
+              throw new Error("Fixture callback failed");
             return name === "PreToolUse"
               ? {
                   hookSpecificOutput: {
@@ -215,7 +222,23 @@ it.skipIf(!process.env.CLAUDE_FACADE_BINARY)(
       } finally {
         clearTimeout(timer);
       }
-      await expect(access(marker)).rejects.toMatchObject({ code: "ENOENT" });
+      if (mode === "deny")
+        await expect(access(marker)).rejects.toMatchObject({ code: "ENOENT" });
+      else {
+        await expect(access(marker)).resolves.toBeUndefined();
+        expect(controlResponses).toContainEqual(
+          expect.objectContaining({
+            subtype: "error",
+            error: expect.stringContaining("Fixture callback failed"),
+          }),
+        );
+        const recovery = await claude.send("Run the next fixture command.");
+        expect(recovery).toMatchObject({ ok: true });
+        await expect(access(`${marker}-recovery`)).rejects.toMatchObject({
+          code: "ENOENT",
+        });
+        expect(toolHooks).toBe(2);
+      }
       expect(outcome).toMatchObject({ ok: true });
       expect(observed).toContain("PreToolUse");
     } finally {

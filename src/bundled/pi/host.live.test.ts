@@ -45,7 +45,7 @@ const tools = [
   { name: "watch_add", description: "Watch for events", inputSchema: { type: "object" }, load: "search" },
 ];
 const out = {};
-let blockTools = false;
+let blockTools = false, rewriteTools = false;
 function start(prompt = async () => undefined) {
   const input = new PassThrough(), output = new PassThrough();
   const events = [], tools = [], pending = new Map();
@@ -54,7 +54,12 @@ function start(prompt = async () => undefined) {
     const message = JSON.parse(line);
     if (message.method === "event") events.push(message.params);
     else if (message.method === "hook") {
-      input.write(JSON.stringify({ id: message.id, result: blockTools && message.params.event === "beforeTool" ? { block: "Fixture blocks the command" } : null }) + "\\n");
+      const { event, input: call } = message.params;
+      const result = blockTools && event === "beforeTool" ? { block: "Fixture blocks the command" }
+        : rewriteTools && event === "beforeTool" ? { arguments: { ...call.arguments, text: "Rewritten arguments" } }
+        : rewriteTools && event === "afterTool" ? { output: [{ type: "text", text: "Replaced result" }] }
+        : null;
+      input.write(JSON.stringify({ id: message.id, result }) + "\\n");
     }
     else if (message.method === "prompt") {
       Promise.resolve(prompt(message.params)).then((result) =>
@@ -117,6 +122,7 @@ const blocked = await pi.rpc("deliver", turn("HOOK", "blocked tool"));
 out.blocked = { ...(await pi.rpc("wait", { agent, submission: blocked.submission })), tools: pi.tools.splice(0), conversation: blocked.conversation };
 blockTools = false;
 // A request while the run works steers it.
+rewriteTools = true;
 const c = held();
 let saw = [], results = [];
 faux.setResponses([
@@ -127,7 +133,9 @@ const c1 = await pi.rpc("deliver", turn("C1", "third"));
 await started(pi.events, "C1");
 const c2 = await pi.rpc("deliver", turn("C2", "fourth"));
 c.release();
-out.c = { waits: await Promise.all([c1, c2].map((x) => pi.rpc("wait", { agent, submission: x.submission }))), saw, results, placed: pi.events.filter((e) => e.type === "placed").map((e) => [e.request, e.entry]), steps: pi.events.filter((e) => e.type === "step").map((e) => e.tool) };
+const cWaits = await Promise.all([c1, c2].map((x) => pi.rpc("wait", { agent, submission: x.submission })));
+out.c = { rewritten: pi.tools.slice(-1)[0]?.arguments, waits: cWaits, saw, results, placed: pi.events.filter((e) => e.type === "placed").map((e) => [e.request, e.entry]), steps: pi.events.filter((e) => e.type === "step").map((e) => e.tool) };
+rewriteTools = false;
 // A run the host stops in continues in the next host.
 const d = held(), calling = held();
 faux.setResponses([
@@ -591,7 +599,10 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
     expect(c2).toBeLessThan(first.answer);
     expect(out.c.steps).toContain("send");
     // What a Buzz tool answered is what the model reads.
-    expect(out.c.results.at(-1)).toEqual([{ type: "text", text: "sent" }]);
+    expect(out.c.rewritten).toMatchObject({ text: "Rewritten arguments" });
+    expect(out.c.results.at(-1)).toEqual([
+      { type: "text", text: "Replaced result" },
+    ]);
     expect(out.stopped).toEqual({ status: "closed" });
     expect(out.unfinished).toEqual([
       {

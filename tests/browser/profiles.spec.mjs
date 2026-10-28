@@ -480,7 +480,7 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
   await expect(
     page
       .getByRole("region", { name: "Channel message history" })
-      .getByText("Hello @Mic", { exact: true }),
+      .locator('span[data-mention-kind="person"][data-mention-name="Mic"]'),
   ).toBeVisible();
   await page.evaluate(() =>
     window.profilesFixture.change("enable", "buzz.profiles"),

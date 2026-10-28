@@ -70,16 +70,31 @@ export function mentionDraft(value: unknown): MentionDraft {
   };
 }
 /** What counts as a draft everywhere: text, an attached chat, or `files`.
- * Addressing alone is not something the person wrote: a draft holding only
- * recipients carries over in the composer but is not a draft. */
+ * A typed tag is text the person put there; the composer no longer saves
+ * tags of its own, and the ones earlier releases saved are not content. */
 export function hasDraftContent(value: MentionDraft, files = 0): boolean {
-  if (files > 0 || value.chatCards?.length) return true;
+  return (
+    files > 0 ||
+    !!value.chatCards?.length ||
+    (!!value.text.trim() && !legacyFollowupDraft(value))
+  );
+}
+/** A remembered-agent follow-up that a release through preview.177.1 saved
+ * as the draft: selected recipients and nothing else, without the editor
+ * snapshot every typed draft carries. Relay history seeds it now. */
+export function legacyFollowupDraft(value: MentionDraft): boolean {
+  return !value.document && addressingOnly(value);
+}
+/** Selected recipients and nothing else: no prose outside their spans and no
+ * attached chat. */
+export function addressingOnly(value: MentionDraft): boolean {
+  if (!value.recipients.length || value.chatCards?.length) return false;
   let rest = value.text;
   for (const { start, end } of [...value.recipients].sort(
     (a, b) => b.start - a.start,
   ))
     rest = rest.slice(0, start) + rest.slice(end);
-  return !!rest.trim();
+  return !rest.trim();
 }
 /** Prefill exact, already-selected identities; never infer recipients from prose. */
 export function followupDraft(

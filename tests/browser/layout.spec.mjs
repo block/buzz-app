@@ -19,6 +19,7 @@ import { finalizeEvent, generateSecretKey } from "nostr-tools";
 import {
   wheel,
   anchor,
+  frames,
   settle,
   upper,
   expectAnchor,
@@ -580,6 +581,8 @@ test("composer stays docked while a cold channel loads", async ({
 // observable state plus settled geometry replaces a fake clock, which would
 // also reorder requestAnimationFrame against the rendering update.
 async function virtuaIdle(page) {
+  // The scroll event must have reached Virtua before its idle state is read.
+  await frames(page);
   await expect(
     page.getByRole("region", { name: "Channel message history" }).locator("ol"),
   ).toHaveCSS("pointer-events", "auto");

@@ -24,6 +24,11 @@ import type {
 import type { RelayData, RelaySnapshot } from "../relay/service";
 import type { ChannelList } from "../relay/contracts";
 import type { Navigation } from "../navigation/controller";
+import type {
+  RegisteredSidebarSection,
+  SidebarSectionRow,
+  SidebarSections,
+} from "./sidebar-sections-service";
 import { createRef, type ReactNode } from "react";
 import userEvent from "@testing-library/user-event";
 import { ChannelHeaderMenu } from "../../bundled/channels/ChannelHeaderMenu";
@@ -101,6 +106,7 @@ function fixture(
     { id: "beta", name: "beta", channelType: "stream" },
     { id: "gamma", name: "gamma", channelType: "stream" },
   ],
+  sidebarSections?: SidebarSections,
 ) {
   const owner = createRelaySession(null);
   owners.push(owner);
@@ -202,6 +208,7 @@ function fixture(
                 communityOrigin: "https://relay.test",
               },
             }}
+            sidebarSections={sidebarSections}
           >
             {pages}
           </PrimarySidebar>
@@ -408,6 +415,154 @@ it("ignores local and legacy filter state", async () => {
   render(h.view("alpha"));
   expect(await screen.findByRole("button", { name: "beta" })).toBeVisible();
   expect(screen.getByRole("button", { name: "gamma" })).toBeVisible();
+});
+
+it("preserves disabled contribution positions when active sections reorder", async () => {
+  const makeSection = (id: string): RegisteredSidebarSection => {
+    const rows = [{ id: `${id}-row`, label: `${id.toUpperCase()} item` }];
+    return {
+      version: 1,
+      id,
+      title: id.toUpperCase(),
+      icon: "★",
+      rows: { snapshot: () => rows, subscribe: () => () => {} },
+      select: () => ({ version: 1, kind: "home" }),
+      key: `example.plugin/${id}`,
+      pluginId: "example.plugin",
+      revision: "one",
+    };
+  };
+  const [a, b, c] = ["a", "b", "c"].map(makeSection);
+  assert(a && b && c);
+  let active: readonly RegisteredSidebarSection[] = [a, c];
+  const listeners = new Set<() => void>();
+  const registry: SidebarSections = {
+    version: 1,
+    snapshot: () => active,
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    register: () => {},
+  };
+  const h = fixture(undefined, "ready", [], registry);
+  const scope = h.snapshot.scope;
+  assert.exists(scope);
+  // A raw key saved before canonical section keys keeps its position, and
+  // another owner's section key keeps its slot.
+  const solo = "solo-region:buzz.region:example:work";
+  writeView(scope, "channel-sidebar", {
+    collapsed: [],
+    contributionOrder: [a.key, solo, `plugin:${b.key}`, c.key],
+    scrollTop: 0,
+  });
+  const visibleOrder = () =>
+    [
+      ...document.querySelectorAll<HTMLElement>(
+        '[data-sidebar-section^="plugin:example.plugin/"]',
+      ),
+    ].map((section) => section.dataset.sidebarSection);
+  const user = userEvent.setup();
+
+  render(h.view("alpha"));
+  await waitFor(() =>
+    expect(visibleOrder()).toEqual([
+      "plugin:example.plugin/a",
+      "plugin:example.plugin/c",
+    ]),
+  );
+  await user.click(screen.getByRole("button", { name: "More actions for C" }));
+  await user.click(await screen.findByRole("menuitem", { name: "Move up" }));
+
+  expect(readView(scope, "channel-sidebar", {})).toMatchObject({
+    contributionOrder: [
+      `plugin:${c.key}`,
+      solo,
+      `plugin:${b.key}`,
+      `plugin:${a.key}`,
+    ],
+  });
+  act(() => {
+    active = [a, b, c];
+    for (const listener of listeners) listener();
+  });
+  await waitFor(() =>
+    expect(visibleOrder()).toEqual([
+      "plugin:example.plugin/c",
+      "plugin:example.plugin/b",
+      "plugin:example.plugin/a",
+    ]),
+  );
+});
+
+it("retries a contributed section after invalid rows recover", async () => {
+  const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    let rows: readonly SidebarSectionRow[] = [{ id: "queue", label: "" }];
+    const section = (
+      id: string,
+      title: string,
+      snapshot: () => readonly SidebarSectionRow[],
+    ): RegisteredSidebarSection => ({
+      version: 1,
+      id,
+      title,
+      icon: "★",
+      rows: { snapshot, subscribe: () => () => {} },
+      select: () => ({ version: 1, kind: "home" }),
+      key: `example.plugin/${id}`,
+      pluginId: "example.plugin",
+      revision: "one",
+    });
+    const sibling = [{ id: "review", label: "Review item" }];
+    const sections = [
+      section("work", "Workspace", () => rows),
+      section("review", "Review", () => sibling),
+    ];
+    const registry: SidebarSections = {
+      version: 1,
+      snapshot: () => sections,
+      subscribe: () => () => {},
+      register: () => {},
+    };
+    const h = fixture(undefined, "ready", [], registry);
+    const work = () => {
+      const element = document.querySelector<HTMLElement>(
+        '[data-sidebar-section="plugin:example.plugin/work"]',
+      );
+      if (!element) throw new Error("The Workspace section is not mounted");
+      return element;
+    };
+    const user = userEvent.setup();
+    render(h.view("alpha"));
+
+    expect(
+      await screen.findByText(/Workspace is unavailable/),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Review item" }));
+    expect(h.navigator.open).toHaveBeenCalledWith({ version: 1, kind: "home" });
+
+    // Retrying unchanged invalid rows keeps the recovery control in reach.
+    const retry = within(work()).getByRole("button", { name: "Retry" });
+    await user.click(retry);
+    expect(within(work()).getByRole("alert")).toHaveTextContent(
+      "Workspace is unavailable.",
+    );
+    expect(within(work()).getByRole("button", { name: "Retry" })).toHaveFocus();
+
+    // A later valid snapshot is not observed by the failed section until Retry.
+    rows = [{ id: "queue", label: "Queue" }];
+    expect(screen.queryByRole("button", { name: "Queue" })).toBeNull();
+    await user.click(within(work()).getByRole("button", { name: "Retry" }));
+    expect(
+      await screen.findByRole("button", { name: "Queue" }),
+    ).toBeInTheDocument();
+    expect(within(work()).queryByRole("alert")).toBeNull();
+    expect(work().querySelector("summary")).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Review item" })).toBeVisible();
+  } finally {
+    consoleError.mockRestore();
+  }
 });
 
 it("does not rebuild unchanged rows on channel switches", async () => {

@@ -107,33 +107,56 @@ function community() {
   };
 }
 
-it("shares the agent to its community's catalog and unshares what it shared", async () => {
-  const user = userEvent.setup();
-  const { session, outbox, accept } = community();
-  render(
+function share(session: RelaySession, overrides: Partial<Agent> = {}) {
+  return render(
     <AgentShareDialog
-      agent={agent}
+      agent={{ ...agent, ...overrides }}
       type={echo}
       session={session}
       onClose={() => {}}
     />,
   );
-  const dialog = screen.getByRole("dialog", { name: "Share Ada" });
-  const toggle = within(dialog).getByRole("switch", {
-    name: "Share to catalog",
+}
+
+/** The Marketplace row's action, once the listing has been read. */
+async function listingAction(name: string) {
+  const button = await screen.findByRole("button", { name });
+  await vi.waitFor(() => expect(button).toBeEnabled());
+  return button;
+}
+
+const sharedContent = JSON.stringify({
+  display_name: "Ada",
+  system_prompt: "Review pull requests.",
+  acp_command: "buzz-acp",
+  runtime: "echo",
+  model: "echo-1",
+});
+
+it("publishes what the review shows, then removes what it published", async () => {
+  const user = userEvent.setup();
+  const { session, outbox, accept } = community();
+  share(session);
+  expect(
+    await within(screen.getByRole("dialog", { name: "Share Ada" })).findByText(
+      "Not listed",
+    ),
+  ).toBeInTheDocument();
+  await user.click(await listingAction("Publish Ada to the Marketplace"));
+  const review = screen.getByRole("dialog", {
+    name: "Publish Ada to the Marketplace",
   });
-  await vi.waitFor(() => expect(toggle).not.toHaveAttribute("aria-disabled"));
-  expect(toggle).not.toBeChecked();
-  await user.click(toggle);
+  expect(
+    within(review).getByRole("region", { name: "Instructions" }),
+  ).toHaveTextContent("Review pull requests.");
+  expect(review).toHaveTextContent(
+    "Memories, chats, and saved logins aren’t included.",
+  );
+  // Nothing is published until the review is confirmed.
+  expect(outbox.send).not.toHaveBeenCalled();
+  await user.click(within(review).getByRole("button", { name: "Publish" }));
   await vi.waitFor(() => expect(outbox.send).toHaveBeenCalledTimes(1));
-  expect(toggle).toHaveAttribute("aria-disabled", "true");
-  const sharedContent = JSON.stringify({
-    display_name: "Ada",
-    system_prompt: "Review pull requests.",
-    acp_command: "buzz-acp",
-    runtime: "echo",
-    model: "echo-1",
-  });
+  expect(within(review).getByRole("button", { name: "Cancel" })).toBeDisabled();
   expect(outbox.send).toHaveBeenLastCalledWith(
     {
       kind: 30175,
@@ -148,13 +171,22 @@ it("shares the agent to its community's catalog and unshares what it shared", as
   );
   accept();
   expect(
-    await within(dialog).findByText("Published Ada to the community catalog."),
+    await screen.findByText("Published to the Marketplace."),
   ).toBeInTheDocument();
-  expect(toggle).toBeChecked();
+  const remove = screen.getByRole("button", {
+    name: "Remove Ada from the Marketplace",
+  });
+  // Returning lands on the row's action that replaced Publish.
+  expect(remove).toHaveFocus();
 
-  await user.click(toggle);
+  await user.click(remove);
+  const confirm = screen.getByRole("dialog", {
+    name: "Remove Ada from the Marketplace?",
+  });
+  expect(confirm).toHaveTextContent("People who already added a copy keep it.");
+  await user.click(within(confirm).getByRole("button", { name: "Remove" }));
   await vi.waitFor(() => expect(outbox.send).toHaveBeenCalledTimes(2));
-  // Unsharing replaces the shared head with what it shared.
+  // Removing replaces the shared head with what it shared.
   expect(outbox.send).toHaveBeenLastCalledWith(
     {
       kind: 30175,
@@ -167,147 +199,135 @@ it("shares the agent to its community's catalog and unshares what it shared", as
   );
   accept();
   expect(
-    await within(dialog).findByText(
-      "Ada is no longer discoverable in the community catalog.",
-    ),
+    await screen.findByText("Removed from the Marketplace."),
   ).toBeInTheDocument();
-  expect(toggle).not.toBeChecked();
+  expect(
+    screen.getByRole("button", { name: "Publish Ada to the Marketplace" }),
+  ).toBeInTheDocument();
 });
 
-it("says why sharing failed and keeps the catalog as it was", async () => {
+it("goes back from the review without publishing", async () => {
   const user = userEvent.setup();
   const { session, outbox } = community();
-  render(
-    <AgentShareDialog
-      agent={{
-        ...agent,
-        config: { instructions: "password: hunter2hunter2", model: "" },
-      }}
-      type={echo}
-      session={session}
-      onClose={() => {}}
-    />,
-  );
-  const toggle = screen.getByRole("switch", { name: "Share to catalog" });
-  await vi.waitFor(() => expect(toggle).not.toHaveAttribute("aria-disabled"));
-  await user.click(toggle);
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Failed to update catalog sharing. Portable configuration appears to contain a credential. Remove it before sharing or exporting.",
-  );
+  share(session);
+  const publish = await listingAction("Publish Ada to the Marketplace");
+  await user.click(publish);
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(screen.getByRole("dialog", { name: "Share Ada" })).toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: "Publish Ada to the Marketplace" }),
+  ).toHaveFocus();
   expect(outbox.send).not.toHaveBeenCalled();
-  expect(toggle).not.toBeChecked();
+});
+
+it("says up front why an agent can't be shared, before anything is sent", async () => {
+  const { session, outbox, read } = community();
+  share(session, {
+    config: { instructions: "password: hunter2hunter2", model: "" },
+  });
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Ada can’t be shared. Portable configuration appears to contain a credential. Remove it before sharing or exporting.",
+  );
+  await vi.waitFor(() => expect(read).toHaveBeenCalled());
+  await screen.findByText("Not listed");
+  expect(
+    screen.getByRole("button", { name: "Publish Ada to the Marketplace" }),
+  ).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Export Ada" })).toBeDisabled();
+  expect(
+    screen.getByRole("button", { name: "Export as JSON instead" }),
+  ).toBeDisabled();
+  expect(outbox.send).not.toHaveBeenCalled();
 });
 
 it("asks the relay what an unanswered publish did before saying it failed", async () => {
   const user = userEvent.setup();
   const { session, outbox, lose } = community();
-  render(
-    <AgentShareDialog
-      agent={agent}
-      type={echo}
-      session={session}
-      onClose={() => {}}
-    />,
-  );
-  const toggle = screen.getByRole("switch", { name: "Share to catalog" });
-  await vi.waitFor(() => expect(toggle).not.toHaveAttribute("aria-disabled"));
-  await user.click(toggle);
+  share(session);
+  await user.click(await listingAction("Publish Ada to the Marketplace"));
+  await user.click(screen.getByRole("button", { name: "Publish" }));
   await vi.waitFor(() => expect(outbox.send).toHaveBeenCalledTimes(1));
   lose(true);
   expect(
-    await screen.findByText("Published Ada to the community catalog."),
+    await screen.findByText("Published to the Marketplace."),
   ).toBeInTheDocument();
-  expect(toggle).toBeChecked();
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 
-  await user.click(toggle);
+  await user.click(
+    screen.getByRole("button", { name: "Remove Ada from the Marketplace" }),
+  );
+  await user.click(screen.getByRole("button", { name: "Remove" }));
   await vi.waitFor(() => expect(outbox.send).toHaveBeenCalledTimes(2));
   lose(false);
+  // The failure stays with the confirmation, ready to try again.
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Failed to update catalog sharing. Try again.",
+    "Couldn’t remove Ada. Try again.",
   );
-  expect(toggle).toBeChecked();
+  expect(screen.getByRole("button", { name: "Remove" })).toBeEnabled();
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(screen.getByText("Listed")).toBeInTheDocument();
 });
 
-it("says unsharing failed when a newer shared head wins over the accepted one", async () => {
-  const user = userEvent.setup();
-  const { session, outbox, accept, heads } = community();
-  render(
-    <AgentShareDialog
-      agent={agent}
-      type={echo}
-      session={session}
-      onClose={() => {}}
-    />,
-  );
-  const toggle = screen.getByRole("switch", { name: "Share to catalog" });
-  await vi.waitFor(() => expect(toggle).not.toHaveAttribute("aria-disabled"));
-  await user.click(toggle);
+/** Publishes Ada, then opens the confirmation to remove it. */
+async function publishThenConfirmRemove(
+  user: ReturnType<typeof userEvent.setup>,
+  { outbox, accept }: ReturnType<typeof community>,
+) {
+  await user.click(await listingAction("Publish Ada to the Marketplace"));
+  await user.click(screen.getByRole("button", { name: "Publish" }));
   await vi.waitFor(() => expect(outbox.send).toHaveBeenCalledTimes(1));
   accept();
-  await vi.waitFor(() => expect(toggle).toBeChecked());
-
-  await user.click(toggle);
-  await vi.waitFor(() => expect(outbox.send).toHaveBeenCalledTimes(2));
-  // Another device shared it again, later, before this unshare landed.
-  const shared = heads[0];
-  if (shared) heads.push({ ...shared, id: "9".repeat(64), created_at: 99 });
-  accept();
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Failed to update catalog sharing. Try again.",
+  await user.click(
+    await screen.findByRole("button", {
+      name: "Remove Ada from the Marketplace",
+    }),
   );
-  expect(toggle).toBeChecked();
-  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Remove" }));
+  await vi.waitFor(() => expect(outbox.send).toHaveBeenCalledTimes(2));
+}
+
+it("says removing failed when a newer shared head wins over the accepted one", async () => {
+  const user = userEvent.setup();
+  const fixture = community();
+  share(fixture.session);
+  await publishThenConfirmRemove(user, fixture);
+  // Another device shared it again, later, before this removal landed.
+  const shared = fixture.heads[0];
+  if (shared)
+    fixture.heads.push({ ...shared, id: "9".repeat(64), created_at: 99 });
+  fixture.accept();
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Couldn’t remove Ada. Try again.",
+  );
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(screen.getByText("Listed")).toBeInTheDocument();
 });
 
 it("keeps the confirmed state when the relay cannot say which head won", async () => {
   const user = userEvent.setup();
-  const { session, outbox, accept, read } = community();
-  render(
-    <AgentShareDialog
-      agent={agent}
-      type={echo}
-      session={session}
-      onClose={() => {}}
-    />,
-  );
-  const toggle = screen.getByRole("switch", { name: "Share to catalog" });
-  await vi.waitFor(() => expect(toggle).not.toHaveAttribute("aria-disabled"));
-  await user.click(toggle);
-  await vi.waitFor(() => expect(outbox.send).toHaveBeenCalledTimes(1));
-  accept();
-  await vi.waitFor(() => expect(toggle).toBeChecked());
-
-  await user.click(toggle);
-  await vi.waitFor(() => expect(outbox.send).toHaveBeenCalledTimes(2));
-  read.mockRejectedValueOnce(new Error("offline"));
-  accept();
+  const fixture = community();
+  share(fixture.session);
+  await publishThenConfirmRemove(user, fixture);
+  fixture.read.mockRejectedValueOnce(new Error("offline"));
+  fixture.accept();
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Failed to update catalog sharing. Try again.",
+    "Couldn’t remove Ada. Try again.",
   );
-  expect(toggle).toBeChecked();
-  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(screen.getByText("Listed")).toBeInTheDocument();
 });
 
-it("reads the catalog again after the first read fails", async () => {
+it("reads the listing again after the first read fails, leaving Export usable", async () => {
   const user = userEvent.setup();
   const { session, read } = community();
   read.mockRejectedValueOnce(new Error("offline"));
-  render(
-    <AgentShareDialog
-      agent={agent}
-      type={echo}
-      session={session}
-      onClose={() => {}}
-    />,
-  );
-  const toggle = screen.getByRole("switch", { name: "Share to catalog" });
+  share(session);
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Could not read the community catalog. Check the community connection, then retry.",
+    "Couldn’t check the Marketplace.",
   );
-  expect(toggle).toHaveAttribute("aria-disabled", "true");
+  expect(screen.getByRole("button", { name: "Export Ada" })).toBeEnabled();
   await user.click(screen.getByRole("button", { name: "Try again" }));
-  await vi.waitFor(() => expect(toggle).not.toHaveAttribute("aria-disabled"));
+  await listingAction("Publish Ada to the Marketplace");
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });
 
@@ -336,10 +356,10 @@ it("exports the agent as an .agent.json snapshot", async () => {
       onClose={() => {}}
     />,
   );
-  await user.click(screen.getByRole("combobox", { name: "File format" }));
-  await user.click(await screen.findByRole("option", { name: "JSON" }));
-  await user.click(screen.getByRole("button", { name: "Export agent" }));
-  expect(await screen.findByRole("status")).toHaveTextContent("Exported Ada.");
+  await user.click(
+    screen.getByRole("button", { name: "Export as JSON instead" }),
+  );
+  expect(await screen.findByText("Exported.")).toBeInTheDocument();
   expect(click).toHaveBeenCalledTimes(1);
   expect(JSON.parse((await blobs[0]?.text()) ?? "")).toEqual({
     format: "buzz-agent-snapshot",
@@ -376,8 +396,8 @@ it("names a desktop export so every platform accepts it", async () => {
           onClose={() => {}}
         />,
       );
-      await user.click(screen.getByRole("button", { name: "Export agent" }));
-      expect(await screen.findByRole("status")).toHaveTextContent("Exported");
+      await user.click(screen.getByRole("button", { name: `Export ${name}` }));
+      expect(await screen.findByText("Exported.")).toBeInTheDocument();
       expect(desktop.invoke.mock.lastCall?.[2]).toEqual({
         headers: { "x-buzz-file-name": file },
       });
@@ -408,14 +428,12 @@ it("exports without the picture when it does not load in time", async () => {
     );
     // Only the wait for the picture runs on a controlled clock.
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    fireEvent.click(screen.getByRole("button", { name: "Export agent" }));
+    fireEvent.click(screen.getByRole("button", { name: "Export Ada" }));
     await vi.advanceTimersByTimeAsync(4999);
     expect(desktop.invoke).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
     vi.useRealTimers();
-    expect(await screen.findByRole("status")).toHaveTextContent(
-      "Exported Ada.",
-    );
+    expect(await screen.findByText("Exported.")).toBeInTheDocument();
     expect(
       await readSnapshot(new Blob([desktop.invoke.mock.calls[0]?.[1]])),
     ).toMatchObject({ name: "Ada", picture: "https://media.example/ada.png" });
@@ -447,8 +465,8 @@ it("draws pack art from the app's own copy, since its CDN can't be read back", a
       onClose={() => {}}
     />,
   );
-  fireEvent.click(screen.getByRole("button", { name: "Export agent" }));
-  expect(await screen.findByRole("status")).toHaveTextContent("Exported Ada.");
+  fireEvent.click(screen.getByRole("button", { name: "Export Ada" }));
+  expect(await screen.findByText("Exported.")).toBeInTheDocument();
   expect(sources).toEqual([pack.preview]);
 });
 
@@ -466,14 +484,11 @@ it("saves an .agent.png natively on desktop, never through a blob link", async (
         onClose={() => {}}
       />,
     );
-    expect(
-      screen.getByRole("combobox", { name: "File format" }),
-    ).toHaveTextContent("PNG");
-    await user.click(screen.getByRole("button", { name: "Export agent" }));
+    await user.click(screen.getByRole("button", { name: "Export Ada" }));
     // Desktop says where the file went.
-    expect(await screen.findByRole("status")).toHaveTextContent(
-      "Exported Ada to /Users/ada/Downloads/Ada.agent.png.",
-    );
+    expect(
+      await screen.findByText("Saved to /Users/ada/Downloads/Ada.agent.png."),
+    ).toBeInTheDocument();
     expect(click).not.toHaveBeenCalled();
     expect(desktop.invoke).toHaveBeenCalledOnce();
     const [command, bytes, options] = desktop.invoke.mock.calls[0] ?? [];
@@ -493,7 +508,7 @@ it("saves an .agent.png natively on desktop, never through a blob link", async (
   }
 });
 
-it("updates a share older than the agent, keeping it listed", async () => {
+it("updates a listing older than the agent, keeping it listed", async () => {
   const user = userEvent.setup();
   const { session, heads, outbox, accept } = community();
   heads.push({
@@ -507,34 +522,25 @@ it("updates a share older than the agent, keeping it listed", async () => {
     ],
     content: JSON.stringify({ display_name: "Ada", system_prompt: "Old." }),
   });
-  render(
-    <AgentShareDialog
-      agent={agent}
-      type={echo}
-      session={session}
-      onClose={() => {}}
-    />,
-  );
-  const dialog = screen.getByRole("dialog", { name: "Share Ada" });
+  share(session);
   expect(
-    await within(dialog).findByText(
-      "The shared copy is older than this agent.",
+    await screen.findByText(
+      "Your latest changes aren’t in the Marketplace yet.",
     ),
   ).toBeInTheDocument();
-  await user.click(
-    within(dialog).getByRole("button", { name: "Update share" }),
-  );
+  await user.click(await listingAction("Update Ada in the Marketplace"));
+  const review = screen.getByRole("dialog", {
+    name: "Update Ada in the Marketplace",
+  });
+  expect(
+    within(review).getByRole("region", { name: "Instructions" }),
+  ).toHaveTextContent("Review pull requests.");
+  await user.click(within(review).getByRole("button", { name: "Update" }));
   await vi.waitFor(() => expect(outbox.send).toHaveBeenCalledTimes(1));
   expect(outbox.send).toHaveBeenLastCalledWith(
     {
       kind: 30175,
-      content: JSON.stringify({
-        display_name: "Ada",
-        system_prompt: "Review pull requests.",
-        acp_command: "buzz-acp",
-        runtime: "echo",
-        model: "echo-1",
-      }),
+      content: sharedContent,
       tags: [
         ["d", agent.pubkey],
         ["shared", "true"],
@@ -546,12 +552,12 @@ it("updates a share older than the agent, keeping it listed", async () => {
   );
   accept();
   expect(
-    await within(dialog).findByText("Published Ada to the community catalog."),
+    await screen.findByText("Published to the Marketplace."),
   ).toBeInTheDocument();
   expect(
-    within(dialog).queryByRole("button", { name: "Update share" }),
+    screen.queryByRole("button", { name: "Update Ada in the Marketplace" }),
   ).not.toBeInTheDocument();
   expect(
-    within(dialog).getByRole("switch", { name: "Share to catalog" }),
-  ).toBeChecked();
+    screen.getByRole("button", { name: "Remove Ada from the Marketplace" }),
+  ).toBeInTheDocument();
 });

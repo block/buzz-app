@@ -1,6 +1,6 @@
-// Share: the agent's catalog listing in its community, and a file export.
+// Share: the agent's Marketplace listing in its community, and a file export.
 import { isTauri } from "@tauri-apps/api/core";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   catalogContent,
   catalogHead,
@@ -18,16 +18,16 @@ import { bundledPoster } from "../../features/agents/avatar-packs";
 import { avatarSource } from "../../shared/avatar-source";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
-import { Select } from "../../shared/design-system/ui/Select";
+import { InlineHeader } from "../../shared/design-system/ui/Header";
+import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
-import { SwitchPreferenceRow } from "../../shared/design-system/ui/SwitchPreferenceRow";
+import { AgentPortrait } from "./AgentCard";
+import browseStyles from "./AgentBrowse.module.css";
+import pageStyles from "./AgentsPage.module.css";
+import styles from "./AgentShareDialog.module.css";
 
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
-const FORMATS = [
-  { value: "png", label: "PNG" },
-  { value: "json", label: "JSON" },
-];
 
 /** How long export waits for the picture, which keeps the dialog open. */
 const ARTWORK_MS = 5000;
@@ -81,7 +81,7 @@ function fileName(name: string, format: string) {
 
 /** Desktop saves natively and says where; a browser downloads the file to
  * wherever its settings say. */
-async function save(file: Blob, name: string): Promise<string | undefined> {
+async function saveFile(file: Blob, name: string): Promise<string | undefined> {
   if (isTauri()) return downloadNativeFile(file, name);
   const url = URL.createObjectURL(file);
   const link = document.createElement("a");
@@ -90,6 +90,26 @@ async function save(file: Blob, name: string): Promise<string | undefined> {
   link.click();
   // WebKit may still be reading the blob when click() returns.
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/** A row's latest outcome, which replaces its status line. */
+type Outcome = { text: string; failed?: boolean };
+
+/** The status line a row announces, and an outcome in its place. */
+function Status({
+  line,
+  outcome,
+}: {
+  line: string;
+  outcome?: Outcome | undefined;
+}) {
+  return outcome?.failed ? (
+    <span role="alert" className="text-danger">
+      {outcome.text}
+    </span>
+  ) : (
+    <span role="status">{outcome?.text ?? line}</span>
+  );
 }
 
 export function AgentShareDialog({
@@ -105,10 +125,12 @@ export function AgentShareDialog({
 }) {
   // `null` while the catalog is read; `undefined` once read with no head.
   const [head, setHead] = useState<EventData | undefined | null>(null);
-  const [pending, setPending] = useState(false);
-  const [notice, setNotice] = useState("");
-  const [error, setError] = useState("");
-  const [format, setFormat] = useState<"png" | "json">("png");
+  const [pending, setPending] = useState<"listing" | "download">();
+  const [listing, setListing] = useState<Outcome>();
+  const [download, setDownload] = useState<Outcome>();
+  // Publishing and removing are reviewed in a step of this dialog.
+  const [view, setView] = useState<"share" | "publish" | "remove">("share");
+  const [failure, setFailure] = useState("");
   // The read failed; clearing it reads again.
   const [unread, setUnread] = useState(false);
   const attempt = useRef<AbortController>(null);
@@ -122,21 +144,45 @@ export function AgentShareDialog({
     );
     return () => controller.abort();
   }, [session, agent.owner, agent.pubkey, unread]);
+  // A step starts on its Cancel; returning lands on the Marketplace row's
+  // action, which may have changed with what the step did.
+  const cancel = useRef<HTMLButtonElement>(null);
+  const actions = useRef<HTMLDivElement>(null);
+  const previousView = useRef(view);
+  useLayoutEffect(() => {
+    if (view !== previousView.current)
+      (view === "share"
+        ? actions.current?.querySelector("button")
+        : cancel.current
+      )?.focus();
+    previousView.current = view;
+  }, [view]);
+  // A share is a copy: edits reach the Marketplace only when it is updated.
+  let definition: ReturnType<typeof shareable> | undefined;
+  let refused = "";
+  try {
+    definition = shareable(agent, type);
+  } catch (reason) {
+    refused = message(reason);
+  }
+  const current = definition && catalogContent(definition);
+  const listed = isShared(head ?? undefined);
+  const stale = !!head && listed && current !== head.content;
   const share = async (shared: boolean) => {
     const signal = attempt.current?.signal;
     if (head === null || pending || !signal) return;
-    setPending(true);
-    setNotice("");
-    setError("");
-    let failure = "Try again.";
+    setPending("listing");
+    setListing(undefined);
+    setFailure("");
+    let reason = "Try again.";
     try {
-      // Unsharing keeps what was shared, so it never depends on the agent
+      // Removing keeps what was shared, so it never depends on the agent
       // still being shareable.
       const content =
         !shared && head ? head.content : catalogContent(shareable(agent, type));
       await publishShare(session, agent.pubkey, content, shared, head, signal);
-    } catch (reason) {
-      failure = message(reason);
+    } catch (error) {
+      reason = message(error);
     }
     // An accepted publish can still lose to a newer head, and an unanswered
     // one may still have landed, so the relay says which head won. Until it
@@ -149,113 +195,227 @@ export function AgentShareDialog({
     ).catch(() => head);
     if (signal.aborted) return;
     setHead(next);
-    if (isShared(next) === shared)
-      setNotice(
-        shared
-          ? `Published ${agent.name} to the community catalog.`
-          : `${agent.name} is no longer discoverable in the community catalog.`,
+    setPending(undefined);
+    if (isShared(next) === shared) {
+      setListing({
+        text: shared
+          ? "Published to the Marketplace."
+          : "Removed from the Marketplace.",
+      });
+      setView("share");
+    } else
+      setFailure(
+        `Couldn’t ${shared ? "publish" : "remove"} ${agent.name}. ${reason}`,
       );
-    else setError(`Failed to update catalog sharing. ${failure}`);
-    setPending(false);
   };
-  // A share is a copy: edits reach the catalog only when it is updated. What
-  // can't be shared any more says why on Update share.
-  let current: string | undefined;
-  try {
-    current = catalogContent(shareable(agent, type));
-  } catch {}
-  const stale = !!head && isShared(head) && current !== head.content;
-  const exportAgent = async () => {
-    if (pending) return;
-    setPending(true);
-    setNotice("");
-    setError("");
+  const save = async (format: "png" | "json") => {
+    if (pending || !definition) return;
+    setPending("download");
+    setDownload(undefined);
     try {
-      const definition = shareable(agent, type);
       const file =
         format === "png"
           ? snapshotPng(definition, await artwork(agent.picture, session))
           : new Blob([snapshotJson(definition)], { type: "application/json" });
-      const path = await save(file, fileName(agent.name, format));
-      setNotice(
-        path ? `Exported ${agent.name} to ${path}.` : `Exported ${agent.name}.`,
-      );
+      const path = await saveFile(file, fileName(agent.name, format));
+      setDownload({ text: path ? `Saved to ${path}.` : "Exported." });
     } catch (reason) {
-      setError(`Failed to export agent snapshot. ${message(reason)}`);
+      setDownload({
+        text: `Couldn’t export ${agent.name}. ${message(reason)}`,
+        failed: true,
+      });
     }
-    setPending(false);
+    setPending(undefined);
   };
+  const back = () => {
+    setFailure("");
+    setView("share");
+  };
+  const busy = !!pending;
+  if (view !== "share") {
+    const publishing = view === "publish";
+    const title = publishing
+      ? `${stale ? "Update" : "Publish"} ${agent.name} ${stale ? "in" : "to"} the Marketplace`
+      : `Remove ${agent.name} from the Marketplace?`;
+    return (
+      <Dialog
+        open
+        size="compact"
+        headerGap="compact"
+        step={{ key: view, scale: 0.95 }}
+        title={title}
+        description={
+          publishing
+            ? "Anyone in this community can find and add a copy."
+            : "People who already added a copy keep it."
+        }
+        closeLabel={`Back to Share ${agent.name}`}
+        preventClose={busy}
+        onOpenChange={(open) => {
+          if (!open) back();
+        }}
+        actions={
+          <>
+            <Button ref={cancel} disabled={busy} onClick={back}>
+              Cancel
+            </Button>
+            <Button
+              variant={publishing ? "prominent" : "destructive"}
+              loading={busy}
+              disabled={publishing && !definition}
+              onClick={() => void share(publishing)}
+            >
+              {publishing ? (stale ? "Update" : "Publish") : "Remove"}
+            </Button>
+          </>
+        }
+      >
+        {(publishing || failure) && (
+          <div className="grid gap-3">
+            {publishing && (
+              <div className="grid gap-2">
+                <InlineHeader title="Instructions" />
+                <section
+                  // biome-ignore lint/a11y/noNoninteractiveTabindex: long instructions scroll with the keyboard.
+                  tabIndex={0}
+                  aria-label="Instructions"
+                  className={`${browseStyles.instructions} ${styles.instructions} buzz-thin-scrollbar`}
+                >
+                  {definition?.instructions ||
+                    "This agent has no instructions."}
+                </section>
+                <p className="m-0 text-body-sm text-secondary">
+                  Memories, chats, and saved logins aren’t included.
+                </p>
+              </div>
+            )}
+            {failure && (
+              <p role="alert" className="m-0 text-body-sm text-danger">
+                {failure}
+              </p>
+            )}
+          </div>
+        )}
+      </Dialog>
+    );
+  }
   return (
     <Dialog
       open
       size="compact"
+      headerGap="compact"
+      step={{ key: "share", scale: 1.05 }}
       title={`Share ${agent.name}`}
-      description="Anyone you share this agent with will receive a copy they can add and use. Changes you make later won’t sync."
-      preventClose={pending}
+      description="Everyone gets their own copy. Later changes won’t sync."
+      artwork={
+        <div className={pageStyles.importPortrait} aria-hidden="true">
+          <AgentPortrait agent={agent} community={agent.relay || undefined} />
+        </div>
+      }
+      preventClose={busy}
       onOpenChange={(open) => {
         if (!open) onClose();
       }}
-      actions={
-        <>
-          <Button disabled={pending} onClick={onClose}>
-            Close
-          </Button>
-          <Button disabled={pending} onClick={() => void exportAgent()}>
-            Export agent
-          </Button>
-        </>
-      }
     >
-      <div className="grid gap-4">
+      <div className="grid gap-3">
+        {refused && (
+          <p role="alert" className="m-0 text-body-sm text-danger">
+            {agent.name} can’t be shared. {refused}
+          </p>
+        )}
         <SettingsGroup>
-          <SwitchPreferenceRow
-            label="Share to catalog"
-            description="Anyone in this community can find and use a copy. Your agent instruction is shared as plaintext. Memories and secrets aren’t included."
-            checked={isShared(head ?? undefined)}
-            disabled={head === null || pending}
-            onCheckedChange={(shared) => void share(shared)}
+          <PreferenceRow
+            title="Marketplace"
+            subtitle={
+              <Status
+                line={
+                  unread
+                    ? ""
+                    : head === null
+                      ? "Checking the Marketplace…"
+                      : stale
+                        ? "Your latest changes aren’t in the Marketplace yet."
+                        : listed
+                          ? "Listed"
+                          : "Not listed"
+                }
+                outcome={
+                  unread
+                    ? { text: "Couldn’t check the Marketplace.", failed: true }
+                    : listing
+                }
+              />
+            }
+            trailing={
+              <div ref={actions} className="flex gap-2">
+                {unread ? (
+                  <Button size="sm" onClick={() => setUnread(false)}>
+                    Try again
+                  </Button>
+                ) : listed ? (
+                  <>
+                    {stale && (
+                      <Button
+                        size="sm"
+                        disabled={busy || !definition}
+                        aria-label={`Update ${agent.name} in the Marketplace`}
+                        onClick={() => setView("publish")}
+                      >
+                        Update…
+                      </Button>
+                    )}
+                    <Button
+                      size="sm"
+                      disabled={busy}
+                      aria-label={`Remove ${agent.name} from the Marketplace`}
+                      onClick={() => setView("remove")}
+                    >
+                      Remove…
+                    </Button>
+                  </>
+                ) : (
+                  <Button
+                    size="sm"
+                    disabled={head === null || busy || !definition}
+                    aria-label={`Publish ${agent.name} to the Marketplace`}
+                    onClick={() => setView("publish")}
+                  >
+                    Publish…
+                  </Button>
+                )}
+              </div>
+            }
           />
-          <Select
-            label="File format"
-            variant="preference"
-            value={format}
-            disabled={pending}
-            groups={[{ label: "", options: FORMATS }]}
-            onValueChange={(value) => setFormat(value as "png" | "json")}
+          <PreferenceRow
+            title="Export agent"
+            subtitle={
+              <>
+                {/* Present before any outcome, so the outcome is announced. */}
+                <Status line="" outcome={download} />
+                {download && " "}
+                <Button
+                  variant="link"
+                  size="inline"
+                  disabled={busy || !definition}
+                  onClick={() => void save("json")}
+                >
+                  Export as JSON instead
+                </Button>
+              </>
+            }
+            trailing={
+              <Button
+                size="sm"
+                loading={pending === "download"}
+                disabled={busy || !definition}
+                aria-label={`Export ${agent.name}`}
+                onClick={() => void save("png")}
+              >
+                Export
+              </Button>
+            }
           />
         </SettingsGroup>
-        {stale && (
-          <div className="flex flex-col items-start gap-2">
-            <p className="m-0 text-body-sm text-secondary">
-              The shared copy is older than this agent.
-            </p>
-            <Button disabled={pending} onClick={() => void share(true)}>
-              Update share
-            </Button>
-          </div>
-        )}
-        {notice && (
-          <p
-            role="status"
-            className="m-0 text-body-sm text-secondary wrap-anywhere"
-          >
-            {notice}
-          </p>
-        )}
-        {error && (
-          <p role="alert" className="m-0 text-body-sm text-danger">
-            {error}
-          </p>
-        )}
-        {unread && (
-          <div role="alert" className="flex flex-col items-start gap-2">
-            <p className="m-0 text-body-sm text-danger">
-              Could not read the community catalog. Check the community
-              connection, then retry.
-            </p>
-            <Button onClick={() => setUnread(false)}>Try again</Button>
-          </div>
-        )}
       </div>
     </Dialog>
   );

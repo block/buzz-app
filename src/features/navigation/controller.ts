@@ -194,17 +194,12 @@ export function createNavigationController(
     return promise;
   }
   let departureGuard:
-    | ((next: NavigationEntry, decide: (proceed: boolean) => void) => boolean)
+    | ((next: OpenTarget, decide: (proceed: boolean) => void) => boolean)
     | undefined;
-  let departure:
-    | {
-        from: string;
-        to: string;
-        proceed: boolean;
-        result: Promise<OpenResult>;
-        settle: (result: OpenResult) => void;
-      }
-    | undefined;
+  let departure: { from: string; to: string; proceed: boolean } | undefined;
+  let admittingOpen = false;
+  let opening = false;
+  let openingDecision: { settle: (result: OpenResult) => void } | undefined;
   let resolving: Operation | undefined;
   // Both host drivers publish pushes synchronously; consume this opening only.
   let openingFocus: NavigationFocus | undefined;
@@ -237,31 +232,23 @@ export function createNavigationController(
         }
         const admitted =
           departure?.proceed && departure.to === state.current.id;
-        const admittedDeparture = admitted ? departure : undefined;
         if (admitted) departure = undefined;
         if (
           !admitted &&
+          !opening &&
           state.current.id !== active.attempt.entry.id &&
           departureGuard
         ) {
-          departure?.settle({ status: "superseded" });
-          let settle: (result: OpenResult) => void = () => {};
-          const result = new Promise<OpenResult>((resolve) => {
-            settle = resolve;
-          });
           const pending = {
-            result,
-            settle,
             from: active.attempt.entry.id,
             to: state.current.id,
             proceed: false,
           };
           departure = pending;
-          const blocked = departureGuard(state.current, (proceed) => {
+          const blocked = departureGuard(state.current.target, (proceed) => {
             if (departure !== pending) return;
             if (!proceed) {
               departure = undefined;
-              pending.settle({ status: "cancelled" });
               return;
             }
             pending.proceed = true;
@@ -286,8 +273,7 @@ export function createNavigationController(
         }
         const focus = openingFocus ?? returningFocus;
         openingFocus = returningFocus = undefined;
-        const result = start(focus);
-        if (admittedDeparture) void result.then(admittedDeparture.settle);
+        start(focus);
       }
     });
   });
@@ -314,12 +300,42 @@ export function createNavigationController(
             reason: "invalid-target",
           });
         }
+        if (
+          !admittingOpen &&
+          departureGuard &&
+          targetKey(target) !== targetKey(snapshot.entry.target)
+        ) {
+          openingDecision?.settle({ status: "superseded" });
+          let settle: (result: OpenResult) => void = () => {};
+          const result = new Promise<OpenResult>((resolve) => {
+            settle = resolve;
+          });
+          const pending = { settle };
+          openingDecision = pending;
+          const blocked = departureGuard(target, (proceed) => {
+            if (openingDecision !== pending) return;
+            openingDecision = undefined;
+            if (!proceed) {
+              settle({ status: "cancelled" });
+              return;
+            }
+            admittingOpen = true;
+            try {
+              void navigation.open(target, options).then(settle);
+            } finally {
+              admittingOpen = false;
+            }
+          });
+          if (blocked) return result;
+          openingDecision = undefined;
+        }
         try {
           if (
             !history.snapshot().invalidAddress &&
             targetKey(target) === targetKey(history.snapshot().current.target)
           )
             return start(options?.focus);
+          opening = true;
           openingFocus = options?.focus;
           returningFocus = undefined;
           const previous = history.snapshot().previous;
@@ -355,7 +371,7 @@ export function createNavigationController(
               }
             } else history.push(target);
           }
-          return departure?.result ?? active.promise;
+          return active.promise;
         } catch {
           // Drivers commit atomically and notify only their exclusive controller.
           return Promise.resolve<OpenResult>({
@@ -363,6 +379,7 @@ export function createNavigationController(
             reason: "host-error",
           });
         } finally {
+          opening = false;
           openingFocus = undefined;
         }
       });
@@ -404,7 +421,8 @@ export function createNavigationController(
       return () => {
         if (departureGuard === guard) {
           departureGuard = undefined;
-          departure?.settle({ status: "cancelled" });
+          openingDecision?.settle({ status: "cancelled" });
+          openingDecision = undefined;
           departure = undefined;
         }
       };
@@ -480,7 +498,8 @@ export function createNavigationController(
       transaction(() => {
         if (disposed) return;
         disposed = true;
-        departure?.settle({ status: "cancelled" });
+        openingDecision?.settle({ status: "cancelled" });
+        openingDecision = undefined;
         departure = undefined;
         ingressRetry = undefined;
         unsubscribe();

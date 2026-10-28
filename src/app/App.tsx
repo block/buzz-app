@@ -106,9 +106,9 @@ function ConnectedApp({ services }: { services: AppServices }) {
       // Settings sections share the mounted Profile editor. A different scope
       // or leaving the dialog would unmount it.
       if (
-        next.target.kind === "settings" &&
+        next.kind === "settings" &&
         current.kind === "settings" &&
-        JSON.stringify(next.target.scope) === JSON.stringify(current.scope)
+        JSON.stringify(next.scope) === JSON.stringify(current.scope)
       )
         return false;
       settingsTraversal.current = decide;

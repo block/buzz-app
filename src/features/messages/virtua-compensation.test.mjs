@@ -673,6 +673,52 @@ it("holds the top rows when a removal past the held range lands before a flushed
   c.driver.R();
 });
 
+// A shift corrects every observer batch of rows that measure above the
+// viewport, and on Mac WebKit each correction interrupts native scrolling.
+// There, while shifted, the buffered start snaps to a half-buffer grid so rows
+// above mount and measure in fewer batches; ending the shift re-renders it.
+it("snaps a shifted range's buffered start to a half-buffer grid on Mac WebKit until the shift ends", () => {
+  const c = setup({ offset: 300 });
+  c.store.h(2); // the reader rests, so scroll-end alone will not re-render
+  c.prepend(40); // 20 older rows at the 100px estimate: one 2000px jump
+  c.store.h(1, 2300); // the jump's own scroll event
+  c.store.h(1, 2250);
+  // 2250 - 1600 = 650 snaps to 0: rows 0-5 mount now rather than one by one.
+  expect(c.store.$(1600)).toEqual([0, 39]);
+  c.store.h(1, 2550); // 950 snaps to 800: row 8, not row 9
+  expect(c.store.$(1600)).toEqual([8, 39]);
+  c.store.h(
+    3,
+    Array.from({ length: 20 }, (_, index) => [index, 100]),
+  );
+  const render = vi.fn();
+  c.store.L(1, render);
+  c.store.h(2); // scroll-end with the prepended rows measured ends the shift
+  expect(render).toHaveBeenCalledTimes(1);
+  expect(c.store.$(1600)[0]).toBe(9); // 950 unsnapped: the settled range
+  c.store.h(1, 2250);
+  expect(c.store.$(1600)[0]).toBe(6); // unshifted ranges are not snapped
+  c.driver.R();
+});
+
+it("does not snap a shifted range where corrections do not interrupt input", () => {
+  const c = setup({ vendor: "Google Inc.", offset: 300 }); // Chromium
+  c.store.h(2);
+  c.prepend(40);
+  c.store.h(1, 2300);
+  c.store.h(1, 2550);
+  expect(c.store.$(1600)).toEqual([9, 39]);
+  c.store.h(
+    3,
+    Array.from({ length: 20 }, (_, index) => [index, 100]),
+  );
+  const render = vi.fn();
+  c.store.L(1, render);
+  c.store.h(2);
+  expect(render).not.toHaveBeenCalled();
+  c.driver.R();
+});
+
 it("delivers the latest resize per target outside native observer delivery", () => {
   const h = resizeHarness();
   const first = h.node(),

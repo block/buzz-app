@@ -69,9 +69,8 @@ use identity::{
     identity_legacy_available, identity_prepare_remote_agent_authorization, identity_restore,
     identity_sign_builderlab_binding, IdentityHost,
 };
-use relay::{huddle_close, huddle_open, huddle_pcm, huddle_touch, Huddles};
 use relay::{
-    media_copy_image, media_download, media_stream_base, relay_agent_library,
+    file_download, media_copy_image, media_download, media_stream_base, relay_agent_library,
     relay_agent_log_proof, relay_agent_memories_read, relay_agent_observer, relay_agent_resolve,
     relay_channel_publish, relay_channel_sign, relay_decode_read_state, relay_decode_reminders,
     relay_decode_sidebar, relay_direct_message, relay_git_authorization, relay_http,
@@ -80,6 +79,7 @@ use relay::{
     relay_sign_reminder, relay_sign_sidebar, relay_upload, relay_upload_begin, relay_upload_cancel,
     relay_upload_chunk, relay_workflow_runs,
 };
+use relay::{huddle_close, huddle_open, huddle_pcm, huddle_touch, Huddles};
 mod terminal;
 #[cfg(all(test, unix))]
 mod test_executable;
@@ -543,6 +543,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         relay_upload_chunk,
         relay_upload,
         relay_upload_cancel,
+        file_download,
         media_download,
         media_copy_image,
         media_stream_base,
@@ -731,6 +732,7 @@ pub fn run() {
             }
             #[cfg(target_os = "macos")]
             notifications::macos::init();
+            tauri::async_runtime::spawn(host_command::load_login_shell_path());
             deep_links::setup(app.handle());
             app.manage(relay::Spools::new(
                 app.path()
@@ -926,6 +928,7 @@ pub(crate) fn shut_down<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
         .cancel_all(&app.state::<relay::Uploads>());
     app.state::<image_clipboard::ImageClipboard>().release();
     app.state::<HostProcesses>().shutdown();
+    host_command::stop_login_shell_probe();
     app.state::<HostMcpServers>().stop_all();
     browser::shutdown();
     if let Err(error) = app.state::<Terminals>().shutdown() {

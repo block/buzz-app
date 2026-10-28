@@ -3,7 +3,6 @@ import { useMediaControls } from "./use-media-controls";
 import { useMediaCorners } from "./use-media-corners";
 import {
   useEffect,
-  useLayoutEffect,
   useRef,
   useState,
   type CSSProperties,
@@ -37,7 +36,6 @@ import { formatMediaTime } from "./media-timecode";
 import styles from "./VideoPlayer.module.css";
 import { useMediaElementSource } from "./use-media-element-source";
 import { MediaDownloadAction } from "./MediaDownloadAction";
-import { useWorkspacePresentation } from "../panels/WorkspacePresentation";
 
 export type VideoMarker = {
   id: string;
@@ -75,45 +73,8 @@ export function VideoControls({
   onMarker?(id: string, seconds: number): void;
 }) {
   const corners = useMediaCorners();
-  const workspacePresented = useWorkspacePresentation();
-  // A review/fullscreen surface has its own visible lifetime even when its
-  // inline origin is covered. Only retained inline chrome defers publication.
-  const presented = !inline || workspacePresented;
-  const [time, setTime] = useState(0);
-  const publishTime = useRef(true);
-  useLayoutEffect(() => {
-    publishTime.current = presented;
-    // Activation publishes current native state before this pane can paint or
-    // accept input. The player itself has stayed live while covered.
-    const video = videoRef.current;
-    if (!presented || !video) return;
-    let frame = 0;
-    const syncTime = () => setTime(video.currentTime);
-    const tick = () => {
-      syncTime();
-      frame = requestAnimationFrame(tick);
-    };
-    const play = () => {
-      cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(tick);
-    };
-    const pause = () => {
-      cancelAnimationFrame(frame);
-      syncTime();
-    };
-    syncTime();
-    video.addEventListener("play", play);
-    video.addEventListener("pause", pause);
-    video.addEventListener("ended", pause);
-    if (!video.paused) play();
-    return () => {
-      cancelAnimationFrame(frame);
-      video.removeEventListener("play", play);
-      video.removeEventListener("pause", pause);
-      video.removeEventListener("ended", pause);
-    };
-  }, [presented, videoRef]);
   const [playing, setPlaying] = useState(false);
+  const [time, setTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(1);
   const [muted, setMuted] = useState(false);
@@ -125,15 +86,24 @@ export function VideoControls({
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
+    let frame = 0;
     const syncTime = () => {
-      if (publishTime.current) setTime(video.currentTime);
+      if (!video.closest("[hidden], [data-covered]:not([data-leaving])"))
+        setTime(video.currentTime);
+    };
+    const tick = () => {
+      syncTime();
+      frame = requestAnimationFrame(tick);
     };
     const play = () => {
       setPlaying(true);
       setNotice(undefined);
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(tick);
     };
     const pause = () => {
       setPlaying(false);
+      cancelAnimationFrame(frame);
       syncTime();
     };
     const metadata = () => {
@@ -177,6 +147,7 @@ export function VideoControls({
     speed();
     if (!video.paused) play();
     return () => {
+      cancelAnimationFrame(frame);
       window.removeEventListener(speedEvent, receiveSpeed);
       window.removeEventListener("storage", storage);
       for (const [event, listener] of Object.entries(events))

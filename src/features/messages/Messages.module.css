@@ -2941,8 +2941,9 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 .message .messageBubble > .reactions {
   margin: var(--space-2) 0 0;
   margin-inline-start: calc(-1 * var(--space-1));
-  /* Short prose still leaves room for a reaction and its add control. */
-  min-inline-size: calc(3 * var(--size-control-sm) + 2 * var(--space-1));
+  /* Short prose still leaves room for a reaction and its add control. The add
+     control ends the strip with no end padding, so only the start padding counts. */
+  min-inline-size: calc(3 * var(--size-control-sm) + var(--space-1));
   max-width: 100%;
   border: 0;
 }

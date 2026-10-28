@@ -58,9 +58,9 @@
 
 /* Existing Appearance values. Explicit mode owners allow a light specimen
    inside a dark page (and the reverse) without inheriting the wrong resolved
-   ramp. Numeric steps, ink, pressed and link colors keep their authored values,
-   except step 10: each accent's hover, retuned to move clearly off step 9 while
-   staying clean rather than muddy. */
+   ramp. Numeric steps, ink and link colors keep their authored values, except
+   step 10 and pressed: each accent's hover and press, retuned to move clearly
+   off step 9 while staying clean rather than muddy. */
 :root {
   --magenta-1-light: #fffbfc;
   --magenta-2-light: #fff7fa;

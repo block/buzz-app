@@ -168,6 +168,18 @@ function setup({
         rootId,
         enabled,
       }),
+    setLatest: (next: string) => {
+      latestMessageId = next;
+      view.rerender({
+        session,
+        channelId: "room",
+        scroller,
+        settled: position,
+        latestMessageId,
+        rootId,
+        enabled,
+      });
+    },
     unmount: view.unmount,
   };
 }
@@ -579,6 +591,39 @@ it("a historical viewport or a bottom reached only at dwell end cannot catch up"
     "visible",
     undefined,
   );
+});
+
+it("a new latest message neither restarts observation nor revokes queued durability", async () => {
+  const h = setup({ latestMessageId: "visible" });
+  let release: (() => void) | undefined;
+  h.setObserve(
+    () =>
+      new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+  );
+  try {
+    await vi.advanceTimersByTimeAsync(300);
+    expect(h.leases[0]?.observe).toHaveBeenCalledExactlyOnceWith(["visible"]);
+    const leases = h.leases.length;
+
+    h.setRows([row("visible", 100, 200), row("newest", 200, 300)]);
+    h.setLatest("newest");
+    expect(h.leases).toHaveLength(leases);
+    expect(h.leases[0]?.dispose).not.toHaveBeenCalled();
+    // The new row's mutation measures in the next frame and catches up to it.
+    h.mutation();
+    vi.advanceTimersToNextFrame();
+    await vi.advanceTimersByTimeAsync(300);
+    expect(h.dwelled()?.catchUp).toHaveBeenCalledExactlyOnceWith(
+      "newest",
+      undefined,
+    );
+    expect(h.leases[0]?.dispose).not.toHaveBeenCalled();
+  } finally {
+    release?.();
+    await vi.runAllTimersAsync();
+  }
 });
 
 it("settled notification starts dwell without changed rows, focus or geometry", () => {

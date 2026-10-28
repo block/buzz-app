@@ -14,7 +14,6 @@ import { agentAvatars } from "../../features/agents/avatar-packs";
 import type { Agent, RegisteredAgentType } from "../../features/agents/service";
 import type { EventData } from "../../features/relay/events";
 import type { RelaySession } from "../../features/relay/session";
-import type { Recipient } from "../../features/direct-messages/usePeople";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { AgentShareDialog } from "./AgentShareDialog";
 
@@ -24,41 +23,14 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: desktop.invoke,
 }));
 
-// The picker is covered with New message; here it only hands over people.
 const bea = { pubkey: "b".repeat(64), name: "Bea" };
 const cy = { pubkey: "c".repeat(64), name: "Cy" };
-vi.mock("../../features/direct-messages/RecipientPicker", () => ({
-  RecipientPicker: ({
-    selected,
-    disabled,
-    onChange,
-    onComplete,
-  }: {
-    selected: Recipient[];
-    disabled: boolean;
-    onChange(people: Recipient[]): void;
-    onComplete(): void;
-  }) => (
-    <div>
-      {[bea, cy].map((person) => (
-        <button
-          key={person.pubkey}
-          type="button"
-          disabled={disabled}
-          onClick={() => onChange([...selected, person])}
-        >
-          Add {person.name}
-        </button>
-      ))}
-      <button type="button" onClick={onComplete}>
-        Finish choosing
-      </button>
-      <output aria-label="Recipients">
-        {selected.map((person) => person.name).join(", ")}
-      </output>
-    </div>
-  ),
-}));
+const design = {
+  id: "d".repeat(36),
+  name: "design",
+  channelType: "stream",
+  members: ["f".repeat(64)],
+};
 
 afterEach(() => {
   cleanup();
@@ -131,8 +103,17 @@ function community() {
     for (const listener of listeners) listener();
   };
   const read = vi.fn(async () => [...heads]);
+  const channels = { channels: [design] };
   const directMessages = {
     available: true,
+    people: vi.fn(async () => ({
+      people: [
+        bea,
+        cy,
+        { pubkey: "e".repeat(64), name: "Echo", isAgent: true },
+      ],
+      hasMore: false,
+    })),
     open: vi.fn(async ([pubkey]: string[]) => `dm-${pubkey?.[0]}`),
     delivered: vi.fn(async (_id: string, _channel: string) => {}),
     delivery: vi.fn((_id: string) => "accepted"),
@@ -153,9 +134,14 @@ function community() {
     session: {
       read,
       outbox,
+      viewer: owner,
       directMessages,
       attachments,
       messages,
+      channels: {
+        list: () => channels,
+        subscribeList: () => () => {},
+      },
       media: (url: string) => url,
     } as unknown as RelaySession,
     heads,
@@ -175,7 +161,6 @@ function share(session: RelaySession, overrides: Partial<Agent> = {}) {
       agent={{ ...agent, ...overrides }}
       type={echo}
       session={session}
-      scope="test"
       onClose={() => {}}
     />,
     { wrapper: ToastProvider },
@@ -192,6 +177,10 @@ async function listing() {
   );
   return toggle;
 }
+
+/** A person or channel among the results, ready to choose. */
+const choice = (name: string) =>
+  screen.findByRole("button", { name, pressed: false });
 
 /** The footer's export, which saves an image unless JSON is chosen. */
 const exportButton = (name = "Ada") =>
@@ -304,7 +293,7 @@ it("says up front why an agent can't be shared, before anything is sent", async 
     screen.getByRole("switch", { name: "Post to Marketplace" }),
   ).toHaveAttribute("aria-disabled", "true");
   expect(exportButton()).toBeDisabled();
-  expect(screen.getByRole("button", { name: "Add Bea" })).toBeDisabled();
+  expect(await choice("Bea")).toBeDisabled();
   expect(outbox.send).not.toHaveBeenCalled();
 });
 
@@ -656,8 +645,8 @@ it("sends each person a message with one uploaded copy of the agent", async () =
   share(session);
   // With nobody chosen, the window just closes.
   expect(screen.getByRole("button", { name: "Done" })).toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "Add Bea" }));
-  await user.click(screen.getByRole("button", { name: "Add Cy" }));
+  await user.click(await choice("Bea"));
+  await user.click(await choice("Cy"));
   expect(
     screen.queryByRole("button", { name: "Done" }),
   ).not.toBeInTheDocument();
@@ -691,8 +680,8 @@ it("sends each person a message with one uploaded copy of the agent", async () =
   // Everyone was reached, so the window is ready to close.
   expect(screen.getByRole("button", { name: "Done" })).toBeInTheDocument();
   expect(
-    screen.getByRole("status", { name: "Recipients" }),
-  ).toBeEmptyDOMElement();
+    screen.queryByRole("region", { name: /^Sending to/ }),
+  ).not.toBeInTheDocument();
 });
 
 it("keeps who it couldn't reach, then confirms their message instead of resending it", async () => {
@@ -702,16 +691,17 @@ it("keeps who it couldn't reach, then confirms their message instead of resendin
     if (id === "sent-dm-c") throw new Error("Not delivered");
   });
   share(session);
-  await user.click(screen.getByRole("button", { name: "Add Bea" }));
-  await user.click(screen.getByRole("button", { name: "Add Cy" }));
+  await user.click(await choice("Bea"));
+  await user.click(await choice("Cy"));
   await user.click(screen.getByRole("button", { name: "Send" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Couldn’t send to Cy. Not delivered.",
   );
   expect(screen.getByText("Sent Ada to Bea.")).toBeInTheDocument();
-  expect(screen.getByRole("status", { name: "Recipients" })).toHaveTextContent(
-    /^Cy$/,
-  );
+  const chosen = screen.getByRole("region", { name: "Sending to · 1" });
+  expect(
+    within(chosen).getByRole("button", { name: "Cy", pressed: true }),
+  ).toBeInTheDocument();
   // The relay may still have it, so trying again waits on the same message.
   directMessages.delivered.mockResolvedValue(undefined);
   await user.click(screen.getByRole("button", { name: "Send" }));
@@ -725,11 +715,8 @@ it("sends to the rest when one upload fails, and reuses the next upload", async 
   const { session, attachments, messages } = community();
   attachments.upload.mockRejectedValueOnce(new Error("Upload refused"));
   share(session);
-  await user.click(screen.getByRole("button", { name: "Add Bea" }));
-  await user.click(screen.getByRole("button", { name: "Add Cy" }));
-  // Finishing in the To field moves on to Send.
-  await user.click(screen.getByRole("button", { name: "Finish choosing" }));
-  expect(screen.getByRole("button", { name: "Send" })).toHaveFocus();
+  await user.click(await choice("Bea"));
+  await user.click(await choice("Cy"));
   await user.click(screen.getByRole("button", { name: "Send" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Couldn’t send to Bea. Upload refused.",
@@ -750,16 +737,44 @@ it("remembers an unconfirmed message after the window closes", async () => {
   const { session, directMessages, messages } = community();
   directMessages.delivered.mockRejectedValueOnce(new Error("Offline"));
   share(session);
-  await user.click(screen.getByRole("button", { name: "Add Bea" }));
+  await user.click(await choice("Bea"));
   await user.click(screen.getByRole("button", { name: "Send" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Couldn’t send to Bea. Offline.",
   );
   cleanup();
   share(session);
-  await user.click(screen.getByRole("button", { name: "Add Bea" }));
+  await user.click(await choice("Bea"));
   await user.click(screen.getByRole("button", { name: "Send" }));
   expect(await screen.findByText("Sent Ada to Bea.")).toBeInTheDocument();
   expect(messages.send).toHaveBeenCalledOnce();
   expect(directMessages.delivered).toHaveBeenCalledTimes(2);
+});
+
+it("posts to a channel the viewer belongs to, and never offers agents", async () => {
+  const user = userEvent.setup();
+  const { session, directMessages, attachments, messages } = community();
+  share(session);
+  // Search opens ready to type, and narrows people and channels together.
+  const field = screen.getByRole("searchbox", {
+    name: "Search people and channels",
+  });
+  await vi.waitFor(() => expect(field).toHaveFocus());
+  await choice("Bea");
+  expect(
+    screen.queryByRole("button", { name: "Echo" }),
+  ).not.toBeInTheDocument();
+  await user.type(field, "#des");
+  await user.click(await choice("#design"));
+  await vi.waitFor(() =>
+    expect(
+      screen.queryByRole("button", { name: "Bea" }),
+    ).not.toBeInTheDocument(),
+  );
+  await user.click(screen.getByRole("button", { name: "Send" }));
+  expect(await screen.findByText("Sent Ada to #design.")).toBeInTheDocument();
+  // A channel gets one message in it, not a direct message to each member.
+  expect(directMessages.open).not.toHaveBeenCalled();
+  expect(attachments.upload.mock.calls[0]?.[1]).toBe(design.id);
+  expect(messages.send.mock.calls.map(([to]) => to)).toEqual([design.id]);
 });

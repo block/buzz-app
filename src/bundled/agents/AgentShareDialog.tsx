@@ -1,4 +1,4 @@
-// Share: send the agent to people, list it in its community's Marketplace, or
+// Share: send the agent to people or a channel, list it in its community's Marketplace, or
 // export it as a file.
 import { isTauri } from "@tauri-apps/api/core";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
@@ -29,10 +29,13 @@ import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { SplitButton } from "../../shared/design-system/ui/SplitButton";
 import { SwitchPreferenceRow } from "../../shared/design-system/ui/SwitchPreferenceRow";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
-import { RecipientPicker } from "../../features/direct-messages/RecipientPicker";
-import type { Recipient } from "../../features/direct-messages/usePeople";
 import browseStyles from "./AgentBrowse.module.css";
 import styles from "./AgentShareDialog.module.css";
+import {
+  AgentShareRecipients,
+  type ShareTarget,
+  targetName,
+} from "./AgentShareRecipients";
 
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
@@ -116,27 +119,22 @@ function unconfirmed(session: RelaySession) {
   return sent;
 }
 
-/** Names in a sentence: "Ana", "Ana and Ben", "Ana, Ben and Cy". */
-const names = (people: readonly Recipient[]) =>
-  people.length < 2
-    ? (people[0]?.name ?? "")
-    : `${people
-        .slice(0, -1)
-        .map((person) => person.name)
-        .join(", ")} and ${people.at(-1)?.name}`;
+/** Names in a sentence: "Ana", "Ana and #design", "Ana, Ben and Cy". */
+const names = (targets: readonly ShareTarget[]) => {
+  const all = targets.map(targetName);
+  const last = all.pop() ?? "";
+  return all.length ? `${all.join(", ")} and ${last}` : last;
+};
 
 export function AgentShareDialog({
   agent,
   type,
   session,
-  scope,
   onClose,
 }: {
   agent: Agent;
   type: RegisteredAgentType | undefined;
   session: RelaySession;
-  /** The view-state partition that ranks people in the To field. */
-  scope: string;
   onClose(): void;
 }) {
   const notify = useToastNotification();
@@ -148,7 +146,9 @@ export function AgentShareDialog({
   const [failure, setFailure] = useState("");
   const [error, setError] = useState("");
   const [format, setFormat] = useState<"png" | "json">("png");
-  const [people, setPeople] = useState<Recipient[]>([]);
+  const [targets, setTargets] = useState<ShareTarget[]>([]);
+  const [query, setQuery] = useState("");
+  const search = useRef<HTMLInputElement>(null);
   // The read failed; clearing it reads again.
   const [unread, setUnread] = useState(false);
   const attempt = useRef<AbortController>(null);
@@ -261,19 +261,19 @@ export function AgentShareDialog({
       setPending(undefined);
     }
   };
-  // Each person's unconfirmed message, kept past closing the window, so a
-  // retry confirms it (delivery retries it in the outbox) rather than
-  // sending another.
+  // Each unconfirmed message, kept past closing the window, so a retry
+  // confirms it (delivery retries it in the outbox) rather than sending
+  // another.
   const sent = unconfirmed(session);
-  const key = (person: Recipient) => `${agent.pubkey}:${person.pubkey}`;
+  const key = (target: ShareTarget) => `${agent.pubkey}:${target.id}`;
   const primary = useRef<HTMLButtonElement>(null);
   const upload = useRef<UploadedAttachment>(undefined);
   const sending = useRef<AbortController>(null);
   useEffect(() => () => sending.current?.abort(), []);
   const send = async () => {
-    if (pending || !definition || !people.length) return;
+    if (pending || !definition || !targets.length) return;
     const uploads = session.attachments;
-    if (!uploads || !session.directMessages.available) {
+    if (!uploads) {
       setError("This community can’t send agents in messages.");
       return;
     }
@@ -282,16 +282,19 @@ export function AgentShareDialog({
     const { signal } = controller;
     setPending("send");
     setError("");
-    const failed: Recipient[] = [];
+    const failed: ShareTarget[] = [];
     const reasons = new Set<string>();
-    for (const person of people) {
+    for (const target of targets) {
       try {
-        let message = sent.get(key(person));
+        let message = sent.get(key(target));
         if (!message) {
-          const channel = await session.directMessages.open(
-            [person.pubkey],
-            signal,
-          );
+          if (target.kind === "person" && !session.directMessages.available)
+            throw new Error("Direct messages aren’t available here.");
+          // A person gets it in a direct message; a channel, in the channel.
+          const channel =
+            target.kind === "channel"
+              ? target.id
+              : await session.directMessages.open([target.id], signal);
           // One upload serves every message: community media isn't scoped
           // to a conversation.
           upload.current ??= await uploads.upload(
@@ -312,7 +315,7 @@ export function AgentShareDialog({
               [upload.current],
             ),
           };
-          sent.set(key(person), message);
+          sent.set(key(target), message);
         }
         await session.directMessages.delivered(
           message.id,
@@ -321,18 +324,18 @@ export function AgentShareDialog({
         );
       } catch (error) {
         if (signal.aborted) return;
-        failed.push(person);
+        failed.push(target);
         reasons.add(errorText(error));
       }
     }
     if (signal.aborted) return;
     setPending(undefined);
-    const delivered = people.filter((person) => !failed.includes(person));
-    for (const person of delivered) sent.delete(key(person));
+    const delivered = targets.filter((target) => !failed.includes(target));
+    for (const target of delivered) sent.delete(key(target));
     if (delivered.length)
       notify(`Sent ${agent.name} to ${names(delivered)}.`, "success");
-    // Who it couldn't reach stays chosen, to try again.
-    setPeople(failed);
+    // What it couldn't reach stays chosen, to try again.
+    setTargets(failed);
     if (failed.length)
       setError(
         `Couldn’t send to ${names(failed)}. ${reasons.size === 1 ? [...reasons][0] : "Try again."}`,
@@ -419,6 +422,9 @@ export function AgentShareDialog({
       step={{ key: "share", scale: 1.05 }}
       title={`Share ${agent.name}`}
       description="Everyone gets their own copy. Later changes won’t sync."
+      height="stable"
+      bodyLayout="flex"
+      initialFocus={search}
       preventClose={busy}
       onOpenChange={(open) => {
         if (!open) onClose();
@@ -450,7 +456,7 @@ export function AgentShareDialog({
         </SplitButton>
       }
       actions={
-        people.length ? (
+        targets.length ? (
           <Button
             ref={primary}
             variant="prominent"
@@ -472,29 +478,29 @@ export function AgentShareDialog({
         )
       }
     >
-      <div className="grid gap-4">
+      <div className={styles.layout}>
         {refused && (
           <p role="alert" className="m-0 text-body-sm text-danger">
             {agent.name} can’t be shared. {refused}
           </p>
         )}
-        <div className="grid gap-2">
-          <RecipientPicker
-            session={session}
-            scope={scope}
-            selected={people}
-            disabled={busy || !definition}
-            initiallyOpen={false}
-            onChange={(next) => {
-              setPeople(next);
-              setError("");
-            }}
-            onComplete={() => primary.current?.focus()}
-          />
-          <p className="m-0 text-body-sm text-secondary">
-            Each person gets a message from you with the agent attached.
+        <AgentShareRecipients
+          session={session}
+          query={query}
+          chosen={targets}
+          disabled={busy || !definition}
+          inputRef={search}
+          onQueryChange={setQuery}
+          onChange={(next) => {
+            setTargets(next);
+            setError("");
+          }}
+        />
+        {error && (
+          <p role="alert" className="m-0 text-body-sm text-danger">
+            {error}
           </p>
-        </div>
+        )}
         <div ref={listing} className="grid gap-2">
           <SettingsGroup>
             <SwitchPreferenceRow
@@ -535,11 +541,6 @@ export function AgentShareDialog({
             </Button>
           )}
         </div>
-        {error && (
-          <p role="alert" className="m-0 text-body-sm text-danger">
-            {error}
-          </p>
-        )}
       </div>
     </Dialog>
   );

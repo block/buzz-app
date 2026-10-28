@@ -337,7 +337,10 @@ export type Connection = {
 /** An agent's community while it is live: one object for as long as its
  * session lasts. */
 export type LiveCommunity = {
-  readonly session: Pick<RelaySession, "read" | "readRemote" | "live">;
+  readonly session: Pick<
+    RelaySession,
+    "read" | "readRemote" | "live" | "attendPending"
+  >;
   /** Aborts when the session is replaced, so no work outlives it. */
   readonly controller: AbortController;
   readonly connection: Connection;
@@ -392,6 +395,10 @@ export type RunnerHost = {
   /** Whether the agent is in the event's channel, or undefined while its
    * roster is only the one saved on disk and the relay has not confirmed it. */
   member(agent: Agent, event: Pick<RelayEvent, "tags">): boolean | undefined;
+  /** Whether the agent may read the event's channel: it is in it, or the
+   * channel is public; undefined as for `member`. Only a member may be
+   * delivered to. */
+  reads(agent: Agent, event: Pick<RelayEvent, "tags">): boolean | undefined;
   /** Whether the event's channel is a DM between the agent and one other. */
   dm(agent: Agent, event: RelayEvent): boolean;
   /** While the owner is still starting this chat, settles once it can take
@@ -1146,7 +1153,13 @@ export class AgentRunners {
           // A stream new to catch-up, as every one is on an upgrade, starts
           // now: an earlier `since` does not replay older events.
           move(stream.key, { through: now });
-        else reading.push(stream);
+        // Until its channel's metadata is known, a read returns none of its
+        // events: it waits, with its checkpoint where it was.
+        else if (
+          stream.channel === undefined ||
+          !community?.session.attendPending(stream.channel)
+        )
+          reading.push(stream);
       }
       const pass = this.passes.get(runner.key);
       const since = community?.connection.since;
@@ -1337,6 +1350,8 @@ export class AgentRunners {
         signal,
         priority: "background",
         fresh: true,
+        // Of every channel: a public one the session does not know yet too.
+        ...(filter["#h"] ? {} : { resolveChannels: true }),
       });
       signal.throwIfAborted();
       // Only what the relay signed: a read also returns the owner's own
@@ -1938,9 +1953,9 @@ export class AgentRunners {
       ({ slug, watch }) => !done.has(slug) && watchMatches(watch, event),
     );
     if (!matches.length) return { triggers: [] };
-    const member = this.host.member(agent, event);
-    if (member === undefined) return { triggers: [], held: true };
-    if (!member) return { triggers: [] };
+    const reads = this.host.reads(agent, event);
+    if (reads === undefined) return { triggers: [], held: true };
+    if (!reads) return { triggers: [] };
     const destinations = matches.map(({ watch }) =>
       watch.channel
         ? this.host.member(agent, { tags: [["h", watch.channel]] })

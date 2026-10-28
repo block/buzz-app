@@ -86,7 +86,11 @@ import {
 } from "./attachments";
 import { PRODUCT_FEEDBACK_KIND } from "./product-feedback";
 import type { ReadTransport } from "./transport";
-import type { LiveSnapshot, LiveSubscription } from "./live";
+import {
+  LIVE_CHANNEL_CAPACITY,
+  type LiveSnapshot,
+  type LiveSubscription,
+} from "./live";
 import {
   hasTag,
   type ReadFilter,
@@ -509,24 +513,31 @@ export function createRelaySession(
     events = events.filter((event) => event.kind !== PRODUCT_FEEDBACK_KIND);
     // Ranked global search needs channel authority before visibility filtering.
     // Store metadata reads use channelTraffic=false, so this cannot recurse.
+    // So does a read of every channel that asks for it, of any kinds.
+    const chat = (kind: number) => [9, 40002, 40008].includes(kind);
+    const broad = !!settings?.resolveChannels;
     if (
       channelTraffic &&
       filters.every(
         (filter) =>
-          (filter.search !== undefined ||
+          (broad ||
+            filter.search !== undefined ||
             !!filter.authors?.length ||
             filter.since !== undefined ||
             filter.until !== undefined) &&
           !filter["#h"]?.length &&
           !!filter.kinds?.length &&
-          filter.kinds.every((kind) => [9, 40002, 40008].includes(kind)),
+          (broad || filter.kinds.every(chat)),
       )
     ) {
+      // A lookup may extend a discovered list, never stand in for it.
+      if (broad && channels.queries.list().status !== "ready")
+        throw new ReadError("unavailable", "Channels are not discovered yet.");
       const ids = [
         ...new Set(
           events.flatMap((event) => {
             const tags = event.tags.filter(([name]) => name === "h");
-            return [9, 40002, 40008].includes(event.kind) &&
+            return (broad || chat(event.kind)) &&
               tags.length === 1 &&
               tags[0]?.[1]
               ? [tags[0][1]]
@@ -535,13 +546,15 @@ export function createRelaySession(
         ),
       ];
       await channels.queries.resolve?.(ids, settings);
-      events = events.filter((event) => {
-        const destinations = event.tags.filter(([name]) => name === "h");
-        const id = destinations[0]?.[1];
-        return (
-          destinations.length === 1 && !!id && !!channels.queries.get?.(id)
-        );
-      });
+      // A read of every channel keeps what visibility keeps below.
+      if (!broad)
+        events = events.filter((event) => {
+          const destinations = event.tags.filter(([name]) => name === "h");
+          const id = destinations[0]?.[1];
+          return (
+            destinations.length === 1 && !!id && !!channels.queries.get?.(id)
+          );
+        });
       settings?.signal?.throwIfAborted();
       if (closed || epoch !== accessEpoch)
         throw new DOMException("Stale relay search", "AbortError");
@@ -1038,6 +1051,55 @@ export function createRelaySession(
   const followed = new Set<readonly string[]>();
   /** Each follow's check, after an access change, for channels it lost. */
   const followRevocations = new Set<() => void>();
+  /** Channels each `attend` keeps live for agents' watches, its own list. */
+  const attended = new Set<readonly string[]>();
+  /** Attended channels whose metadata was read for them, or is being read. */
+  const attendChecked = new Set<string>();
+  /** How long a failed metadata read of attended channels waits. */
+  const ATTEND_RETRY_MS = 30_000;
+  /** Attended channels whose metadata read finished, found or not. */
+  const attendRead = new Set<string>();
+  /** Forgets the reads that did not finish, so they are tried again. */
+  const retryAttended = () => {
+    for (const id of attendChecked)
+      if (!attendRead.has(id)) attendChecked.delete(id);
+  };
+  /** Reads the metadata of attended channels not known yet, once each. Only
+   * into a ready list: a lookup may extend one, never stand in for initial
+   * discovery. A failed read is tried again after `ATTEND_RETRY_MS`, or once
+   * discovery is after a reconnect. */
+  const resolveAttended = () => {
+    if (
+      closed ||
+      !channels.queries.resolve ||
+      channels.queries.list().status !== "ready"
+    )
+      return;
+    const unknown = [...new Set([...attended].flat())].filter(
+      (id) => !attendChecked.has(id) && !channels.queries.get?.(id),
+    );
+    for (const id of unknown) attendChecked.add(id);
+    for (let start = 0; start < unknown.length; start += 128) {
+      const batch = unknown.slice(start, start + 128);
+      void channels.queries
+        .resolve(batch, { signal: lifetime.signal })
+        .then(
+          () => {
+            for (const id of batch) attendRead.add(id);
+          },
+          () => {
+            if (closed) return;
+            const timer = setTimeout(() => {
+              timers.delete(timer);
+              retryAttended();
+              updateInterests();
+            }, ATTEND_RETRY_MS);
+            timers.add(timer);
+          },
+        )
+        .finally(updateInterests);
+    }
+  };
   const liveListeners = new Set<() => void>();
   let liveSnapshot: LiveSnapshot = Object.freeze({
     status: transport?.subscribe ? "connecting" : "unavailable",
@@ -1906,6 +1968,38 @@ export function createRelaySession(
         incomingListeners.delete(listener);
       };
     },
+    /** Keeps `channelIds` in the live routes while attended, for agents'
+     * watches: a readable public channel the viewer has not joined too, whose
+     * metadata is read first when unknown. It is not joined, listed or counted
+     * unread, as an opened preview is not. Its events reach `subscribeLive`.
+     * Joined and opened channels keep their room first; past it, the rest
+     * are left out. */
+    attend(channelIds: readonly string[]): () => void {
+      if (closed) return () => {};
+      const ids = [
+        ...new Set(
+          channelIds.filter((id) => /^[a-zA-Z0-9_-]{1,128}$/.test(id)),
+        ),
+      ];
+      // Unread or refused before, it is read again.
+      for (const id of ids) {
+        attendChecked.delete(id);
+        attendRead.delete(id);
+      }
+      attended.add(ids);
+      updateInterests();
+      return () => {
+        if (attended.delete(ids)) updateInterests();
+      };
+    },
+    /** Whether the session does not know `channelId` yet, and has not read
+     * its metadata for `attend`: until then, a read of the channel returns
+     * none of its events. True of a channel not attended yet too, so a read
+     * that runs before its `attend` waits for it as well. */
+    attendPending(channelId: string): boolean {
+      const channel = channels.queries.get?.(channelId);
+      return channel ? !!channel.pending : !attendRead.has(channelId);
+    },
     /** Verified, access-filtered live-phase events of any kind, after reconciliation.
      * Never finite reads or local intent, except the viewer's own messages in
      * a Solo chat this device is starting: those arrive here before the relay
@@ -2742,6 +2836,25 @@ export function createRelaySession(
         }),
       ]),
     ];
+    // Channels agents' watches listen to come last, in the room the others
+    // leave (two globals may take some), so they never push one out.
+    const room = Math.max(0, LIVE_CHANNEL_CAPACITY - 2 - ids.length);
+    const listened = new Set(ids);
+    ids.push(
+      ...[...new Set([...attended].flat())]
+        .filter((id) => {
+          const channel = channels.queries.get?.(id);
+          return (
+            !listened.has(id) &&
+            !!channel &&
+            channels.canAccess(id) &&
+            !channel.cached &&
+            !channel.pending
+          );
+        })
+        .slice(0, room),
+    );
+    resolveAttended();
     const wanted = new Set(ids);
     for (const id of catchups.keys()) if (!wanted.has(id)) catchups.delete(id);
     try {
@@ -3009,6 +3122,7 @@ export function createRelaySession(
         liveGeneration++;
         // Reminder catch-up waits for the recovery read after re-establishment.
         reminders?.stale();
+        retryAttended();
         channelActivity.cancel();
         activityRosterKey = undefined;
         catchups.clear();

@@ -63,7 +63,9 @@ import {
   fakeNative,
   fakeRelay,
   groupDm,
+  lobby,
   other,
+  plaza,
   sibling,
   steps,
   viewer,
@@ -131,6 +133,7 @@ async function setup({
   identities = [] as AgentIdentity[],
   listed = [] as RelayEvent[],
   history = [] as RelayEvent[],
+  pendingChannels = [] as string[],
   timeoutMs = 60_000,
   runOnce = undefined as AgentType<Config>["runOnce"],
   jev = undefined as FakeJev | undefined,
@@ -157,6 +160,7 @@ async function setup({
   const native = fakeNative(identities);
   fake.listed.push(...listed);
   fake.history.push(...history);
+  for (const id of pendingChannels) fake.pending.add(id);
   const authorize = vi.fn(
     async (_: string, __: AbortSignal) =>
       ["auth", viewer, "", "f".repeat(128)] as const,
@@ -277,10 +281,12 @@ async function setup({
     reconnecting: fake.reconnecting,
     recover: fake.recover,
     unrouted: fake.unrouted,
+    pending: fake.pending,
     memories: fake.memories,
     archives: fake.archives,
     session: fake.session,
     history: fake.history,
+    attended: fake.attended,
     authorize,
     plugin,
     presence: fake.presence,
@@ -7388,7 +7394,7 @@ it("wakes nothing from the time its watch was off, also when it is turned on aft
   }
 });
 
-it("wakes a watch only for channels the agent is in, even when it watches all", async () => {
+it("wakes a watch only for channels the agent may read, even when it watches all", async () => {
   const { service, run, emit } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
   await service.save(bot, { attentionEnabled: true });
@@ -7411,15 +7417,174 @@ it("wakes a watch only for channels the agent is in, even when it watches all", 
       event("unknown", { tags: [["h", "elsewhere"]] }),
       event("bare", { kind: 1, tags: [] }),
       event("open"),
+      // Public channels anyone may read, though the agent is in neither.
+      event("lobby", { tags: [["h", lobby]] }),
+      event("plaza", { tags: [["h", plaza]] }),
     ],
   });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(3));
+  await settle();
+  expect(run).toHaveBeenCalledTimes(3);
+  expect(woke(run)).toEqual(["open", "lobby", "plaza"]);
+});
+
+it("listens in a public channel it is not in, but delivers a watch's turn only where it is a member", async () => {
+  const { service, run, emit } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
+  const watch = {
+    type: "event",
+    interest_id: "default",
+    enabled: true,
+    since: 1,
+    channels: [lobby],
+    kinds: [9],
+  } as const;
+  await service.save(bot, {
+    attention: {
+      "watch/here": { ...watch, channel },
+      "watch/there": { ...watch, channel: lobby },
+    },
+  });
+  emit({ events: [event("hello", { tags: [["h", lobby]] })] });
   await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
   await settle();
   expect(run).toHaveBeenCalledTimes(1);
-  expect(run.mock.calls[0]?.[0].trigger).toMatchObject({
-    slug: "watch/everything",
-    event: { id: "open".padEnd(64, "0") },
+  // An addressed watch's turn runs in its channel.
+  const trigger = run.mock.calls[0]?.[0].trigger as {
+    channel?: string;
+    text?: string;
+  };
+  expect(trigger.channel).toBe(channel);
+  expect(trigger.text).toContain('watch "here"');
+});
+
+it("holds a public channel's catch-up until its metadata is known, and hears it in a watch of every channel", async () => {
+  vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
+  try {
+    const { service, run, history, recover, storage, pending, session } =
+      await setup({ identities: [echo] });
+    const now = nowSeconds();
+    vi.setSystemTime(now * 1000);
+    const watch = { ...chat["watch/chat"], channels: [plaza] };
+    await service.save(bot, {
+      attentionEnabled: true,
+      attention: { "watch/channel": null, "watch/plaza": watch },
+    });
+    await settle();
+    vi.setSystemTime((now + 60) * 1000);
+    history.push(eventDto(message(author, plaza, "missed", now + 30)));
+    // Read now, it would come back empty: the session drops a channel's
+    // events until it knows the channel.
+    pending.add(plaza);
+    recover();
+    await vi.advanceTimersByTimeAsync(10_000);
+    await settle();
+    expect(heard(run)).toEqual([]);
+    expect(
+      Object.values(readCheckpoints(storage)).map(({ through }) => through),
+    ).toEqual([now]);
+    pending.delete(plaza);
+    await vi.advanceTimersByTimeAsync(5_000);
+    await settle();
+    await settle();
+    expect(heard(run)).toEqual(["missed"]);
+    // A watch of every channel hears it too, though it is not live, from the
+    // read of what live does not cover.
+    await service.save(bot, {
+      attention: {
+        "watch/plaza": null,
+        "watch/all": { ...chat["watch/chat"], channels: "all" },
+      },
+    });
+    await settle();
+    const later = nowSeconds();
+    history.push(eventDto(message(author, plaza, "posted", later + 1)));
+    await vi.advanceTimersByTimeAsync(45_000);
+    await settle();
+    await settle();
+    expect(heard(run)).toEqual(["missed", "posted"]);
+    // Its read asks the session to resolve the channels it finds.
+    expect(
+      vi
+        .mocked(session.read)
+        .mock.calls.filter(([filters]) => filters[0]?.until !== undefined)
+        .map(([filters, options]) => [
+          !!filters[0]?.["#h"],
+          !!options?.resolveChannels,
+        ]),
+    ).toContainEqual([false, true]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("holds a public channel's catch-up after a restart, before it is attended, until its metadata is known", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  try {
+    const start = nowSeconds();
+    const storage = memoryStorage();
+    const first = await setup({ storage, identities: [echo] });
+    vi.setSystemTime(start * 1000);
+    await first.service.save(bot, {
+      attentionEnabled: true,
+      attention: {
+        "watch/channel": null,
+        "watch/plaza": { ...chat["watch/chat"], channels: [plaza] },
+      },
+    });
+    await settle();
+    first.connect(false);
+    vi.setSystemTime((start + 60) * 1000);
+    // Restarted: the session does not know plaza yet.
+    const second = await setup({
+      storage,
+      identities: [echo],
+      history: [eventDto(message(author, plaza, "missed", start + 30))],
+      pendingChannels: [plaza],
+    });
+    await settle();
+    await settle();
+    second.pending.delete(plaza);
+    vi.setSystemTime((start + 90) * 1000);
+    second.recover();
+    await settle();
+    await settle();
+    await settle();
+    expect(heard(second.run)).toEqual(["missed"]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("keeps the channels its enabled watches name live while attention is on", async () => {
+  const { service, attended } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  const watch = {
+    type: "event",
+    interest_id: "default",
+    enabled: true,
+    since: 1,
+    kinds: [9],
+  } as const;
+  await service.save(bot, {
+    attention: {
+      "watch/plaza": { ...watch, channels: [plaza, channel] },
+      "watch/all": { ...watch, channels: "all" },
+      "watch/off": { ...watch, enabled: false, channels: [lobby] },
+    },
   });
+  await settle();
+  expect([...attended]).toEqual([]);
+  await service.save(bot, { attentionEnabled: true });
+  await settle();
+  // A watch of "all" hears what the session listens to already.
+  expect([...attended].map((ids) => [...ids].sort())).toEqual([
+    [channel, plaza].sort(),
+  ]);
+  await service.save(bot, { attentionEnabled: false });
+  await settle();
+  expect([...attended]).toEqual([]);
 });
 
 it("answers an unmentioned one-to-one DM as conversation even when a watch matches it", async () => {

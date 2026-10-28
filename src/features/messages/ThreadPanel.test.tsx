@@ -1703,12 +1703,14 @@ it("reopens collapsed activity for a new reveal of the same step", async () => {
     replyToId: row.id,
     createdAt: 2 + index,
   }));
+  const target = replies[1];
+  if (!target) throw new Error("Missing activity fixture target");
   h.snapshot.replies = replies;
-  h.snapshot.target = replies[1];
+  h.snapshot.target = target;
   h.snapshot.targetStatus = "ready";
   const props = h.props as ThreadPanelProps;
   Object.assign(props, {
-    messageId: replies[1].id,
+    messageId: target.id,
     retainThread: true,
     revealSelected: true,
     revealRequest: 1,

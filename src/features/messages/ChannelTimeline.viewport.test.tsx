@@ -506,7 +506,7 @@ it("restores a contained activity step at its saved offset rather than the group
     return frames.length;
   });
   vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
-    function () {
+    function (this: HTMLElement) {
       return {
         top: this.dataset.messageId === "activity-4" ? 240 : 0,
         left: 0,

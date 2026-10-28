@@ -1,5 +1,5 @@
 import { test, expect } from "./fixture.mjs";
-import { open, settle } from "./timeline.mjs";
+import { activate, open } from "./timeline.mjs";
 import { openChannelDetails } from "./channel-details.mjs";
 
 test.use({
@@ -34,15 +34,13 @@ async function start(page, app) {
         page.evaluate(() => window.fixtureNavigation.snapshot().status),
       )
       .toBe("opened");
-    // Native traversal also restores the virtual timeline's reading position.
-    // Wait for that geometry before aiming a pointer at a reply summary.
-    await settle(page, page.locator('[data-channel-timeline="alpha"]'));
-    await page
-      .locator(
-        `[data-channel-timeline="alpha"] [data-message-id="${roots[index].id}"]`,
-      )
-      .getByRole("button", { name: /^View thread:/ })
-      .click();
+    await activate(
+      page
+        .locator(
+          `[data-channel-timeline="alpha"] [data-message-id="${roots[index].id}"]`,
+        )
+        .getByRole("button", { name: /^View thread:/ }),
+    );
     await expect(
       page
         .getByRole("complementary", { name: "Thread", exact: true })
@@ -119,7 +117,7 @@ test("GitHub visits restore through native history and reload; X skips their ret
   });
   const target = "https://github.com/sample/project/pull/42";
   app.append("primary", "alpha", `Review ${target}`);
-  await page.getByRole("link", { name: target, exact: true }).click();
+  await activate(page.getByRole("link", { name: target, exact: true }));
   await expect(
     panel.getByRole("heading", { name: "Fixture change #42", exact: true }),
   ).toBeVisible();
@@ -375,7 +373,7 @@ async function openGitHub(page, app) {
   );
   const target = "https://github.com/sample/project/pull/43";
   app.append("primary", "alpha", `Review ${target}`);
-  await page.getByRole("link", { name: target, exact: true }).click();
+  await activate(page.getByRole("link", { name: target, exact: true }));
   await expect(
     page.getByRole("heading", { name: "Bulk close fixture #43", exact: true }),
   ).toBeVisible();

@@ -11,6 +11,7 @@ import {
   type ReactElement,
   type Ref,
   type RefObject,
+  type ComponentProps,
 } from "react";
 import {
   HashArrowInIcon,
@@ -36,8 +37,11 @@ import {
   useMessageActionBarReady,
 } from "./useFloatingActionBar";
 
+// An explicit rejection keeps the popup's normal final-focus ownership.
+// Ordinary void callbacks still hand focus to their destination.
+type MessageMenuAction = (() => void) | (() => false);
 const AfterMenuClose = createContext<
-  ((action: () => void) => void) | undefined
+  ((action: MessageMenuAction) => void) | undefined
 >(undefined);
 export const useAfterMessageMenuClose = () => useContext(AfterMenuClose);
 
@@ -96,7 +100,9 @@ class MessageActionController {
   readonly pending = new Map<Registration, object>();
   selection: Selection | undefined;
   private closed: Selection | undefined;
-  private afterClose: { selection: Selection; action: () => void } | undefined;
+  private afterClose:
+    | { selection: Selection; action: MessageMenuAction }
+    | undefined;
   presented = true;
   readonly subscribe = (listener: () => void) => {
     this.listeners.add(listener);
@@ -190,14 +196,26 @@ class MessageActionController {
       return;
     const handoff = this.afterClose;
     this.afterClose = undefined;
-    this.closed = selected;
-    this.selection = undefined;
-    this.rowState(selected.row, { selected: false, open: false });
-    this.publish();
-    if (handoff?.selection === selected && selected.row.live && this.presented)
-      handoff.action();
+    try {
+      if (
+        handoff?.selection === selected &&
+        selected.row.live &&
+        this.presented &&
+        handoff.action() === false
+      )
+        selected.handingOff = false;
+    } finally {
+      // A synchronous handoff can retire this source or open another target.
+      // Settle rejection before popup teardown resolves its final-focus callback.
+      if (this.selection === selected) {
+        this.closed = selected;
+        this.selection = undefined;
+        this.rowState(selected.row, { selected: false, open: false });
+        this.publish();
+      }
+    }
   }
-  defer(row: Registration, action: () => void) {
+  defer(row: Registration, action: MessageMenuAction) {
     const selected = this.selection;
     if (!selected || selected.row !== row || !row.live || !this.presented)
       return;
@@ -272,6 +290,9 @@ class MessageActionController {
 const ActionOwner = createContext<MessageActionController | undefined>(
   undefined,
 );
+type MenuActions = NonNullable<
+  ComponentProps<typeof MenuRoot>["actionsRef"]
+>["current"];
 
 /** Recovery and the action lifetime share the conversation boundary, not a virtual row. */
 export function MessageActionOwner({
@@ -301,6 +322,13 @@ export function MessageActionOwner({
     controller.snapshot,
     controller.snapshot,
   );
+  const menuActions = useRef<MenuActions>(null);
+  useLayoutEffect(() => {
+    // A removed/retired row takes its popup with it, so there is no exit
+    // animation left to finish the surviving Root's closing lifetime.
+    // Ordinary selected menus retain their normal animation and handoff.
+    if (selected?.kind !== "menu") menuActions.current?.unmount();
+  }, [selected]);
   useLayoutEffect(() => {
     controller.presented = presented;
     if (!presented) controller.retire();
@@ -312,6 +340,7 @@ export function MessageActionOwner({
   return (
     <ActionOwner value={controller}>
       <MenuRoot
+        actionsRef={menuActions}
         open={selected?.kind === "menu" && selected.open}
         triggerId={selected?.kind === "menu" ? selected.row.id : null}
         onOpenChange={(open, details) => {
@@ -471,8 +500,9 @@ function MessageActionBarControls(props: Props) {
             disabled={replyDisabled}
             onClick={() => {
               controller.defer(registration, () => {
-                if (!registration.props.replyDisabled)
-                  registration.props.onReply?.();
+                const reply = registration.props.onReply;
+                if (registration.props.replyDisabled || !reply) return false;
+                reply();
               });
             }}
           >

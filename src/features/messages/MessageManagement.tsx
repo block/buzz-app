@@ -428,14 +428,14 @@ export function MessageManagementItems({
                 current.row.id !== row.id ||
                 current.management.session !== session
               )
-                return;
+                return false;
               if (
                 current.authorization &&
                 (!current.ownerHeadId ||
                   session.profiles.event?.(current.authorization.agentId)
                     ?.id !== current.ownerHeadId)
               )
-                return;
+                return false;
               current.management.remove(
                 current.row,
                 undefined,

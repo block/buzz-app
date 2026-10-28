@@ -22,7 +22,11 @@ import { ConversationPresentation } from "../conversation/ConversationPresentati
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { useKeyboardFocusVisibility } from "../../shared/design-system/useKeyboardFocusVisibility";
 const render = (ui: ReactElement) => rtlRender(ui, { wrapper: ToastProvider });
-import { MessageActionBar, MessageActionOwner } from "./MessageActionBar";
+import {
+  MessageActionBar,
+  MessageActionOwner,
+  useAfterMessageMenuClose,
+} from "./MessageActionBar";
 import { MenuItem } from "../../shared/design-system/ui/Menu";
 import { createPortal } from "react-dom";
 import { MessageLink } from "../conversation/MessageLink";
@@ -817,4 +821,35 @@ it("revokes pending clipboard results on row recycling and covered conversation 
       replacement.resolve();
     });
   }
+});
+
+it("returns keyboard focus when the after-close consumer rejects a revoked handoff", async () => {
+  const user = userEvent.setup();
+  function RevokedAction() {
+    const afterClose = useAfterMessageMenuClose();
+    return (
+      <MenuItem onClick={() => afterClose?.(() => false)}>
+        Unavailable action
+      </MenuItem>
+    );
+  }
+  render(
+    <MessageActionOwner>
+      <Row
+        messageId="a"
+        copyText={() => "Alpha"}
+        overflowItems={<RevokedAction />}
+      />
+    </MessageActionOwner>,
+  );
+  const trigger = screen.getByRole("button", { name: "More message actions" });
+  trigger.focus();
+  await user.keyboard("{Enter}");
+  const action = await screen.findByRole("menuitem", {
+    name: "Unavailable action",
+  });
+  action.focus();
+  await user.keyboard("{Enter}");
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  await waitFor(() => expect(document.activeElement).toBe(trigger));
 });

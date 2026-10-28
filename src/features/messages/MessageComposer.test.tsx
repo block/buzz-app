@@ -4206,6 +4206,41 @@ it("labels simultaneous composers independently and prevents disabled or unsuppo
   ).toBeVisible();
 });
 
+it("keeps typing in the editor without rendering the composer chrome", async () => {
+  let renders = 0;
+  const tools: readonly Contribution<ComposerTool>[] = [
+    {
+      id: "counter",
+      key: "test/counter",
+      pluginId: "test",
+      revision: "1",
+      title: "Counter",
+      component: () => {
+        renders++;
+        return null;
+      },
+    },
+  ];
+  const empty: readonly never[] = [];
+  const none = { snapshot: () => empty, subscribe: () => () => {} };
+  const h = mount({
+    extensions: {
+      tools: { snapshot: () => tools, subscribe: () => () => {} },
+      inline: none,
+      completions: none,
+    },
+  });
+  await h.user.type(h.input(), "H");
+  const typed = renders;
+  await h.user.type(h.input(), "ello there");
+  expect(h.input()).toHaveValue("Hello there");
+  expect(renders).toBe(typed);
+  // Emptying the draft is presented again (the send button disables).
+  await h.user.clear(h.input());
+  expect(h.input()).toHaveValue("");
+  expect(renders).toBeGreaterThan(typed);
+});
+
 it("subscribes to emoji changes and releases the subscription when unmounted", () => {
   const h = mount();
   h.fill(":party:");
@@ -4514,6 +4549,31 @@ it.each([0, 7])(
     expect(h.input().querySelectorAll("[data-reveal]")).toHaveLength(0);
   },
 );
+
+it("does not replay qualifier motion after typing back to the revealed draft", async () => {
+  const h = mount();
+  act(() => {
+    h.commands().insertMention(first);
+  });
+  act(() => {
+    h.commands().insertMention(second);
+  });
+  expect(h.input().querySelectorAll("[data-reveal]")).toHaveLength(1);
+  const end = h.input().value.length;
+  h.input().setSelectionRange(end, end);
+  act(() => {
+    h.commands().insertText("x");
+  });
+  expect(h.input().querySelectorAll("[data-reveal]")).toHaveLength(0);
+  h.input().setSelectionRange(end, end + 1);
+  act(() => {
+    h.commands().insertText("");
+  });
+  expect(h.input().querySelectorAll(".inline-chip-qualifier")).toHaveLength(2);
+  expect(h.input().querySelectorAll("[data-reveal]")).toHaveLength(0);
+  await h.user.keyboard("{Control>}z{/Control}");
+  expect(h.input().querySelectorAll("[data-reveal]")).toHaveLength(0);
+});
 
 it("replacing an inline mention with ordinary prose removes notification intent", async () => {
   const h = mount();

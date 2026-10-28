@@ -1267,14 +1267,18 @@ export function EditableInput({
             editor.updateState(previous);
             return;
           }
+          const hadTokens = hosts.current.size > 0;
           editor.updateState(next);
           if (tr.docChanged) {
             scrollAfterTokens.current ||=
               tr.scrolledIntoView && hosts.current.size > 0;
             emitted.current = projection().draft;
             current.current.onDraftChange(emitted.current);
-            tokenViews();
           }
+          // Rendering presents only token artwork; each transaction has already
+          // adopted its document's decorations.
+          if (next.doc !== previous.doc && (hadTokens || hosts.current.size))
+            tokenViews();
           selected();
         },
         nodeViews: {
@@ -1814,7 +1818,13 @@ export function EditableInput({
   useLayoutEffect(() => {
     const editor = view.current;
     if (!editor) return;
-    if (draft !== emitted.current && !composing.current)
+    // A host's copy of the draft this editor last emitted is already adopted,
+    // even if a token normalization has since moved the editor past it.
+    const own =
+      !!draft.document &&
+      draft.document === emitted.current.document &&
+      draft.text === emitted.current.text;
+    if (draft !== emitted.current && !own && !composing.current)
       api.current?.sync(draft);
     // setProps recomputes the decorations that read this committed hint.
     current.current.placeholder = placeholder;

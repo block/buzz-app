@@ -605,17 +605,15 @@ No dismissal saves, retries, replaces setup or confirms a destructive action.
 
 ## Editing channel details
 
-Channel Settings shows the signed name, description and explicit visibility for
-ordinary channels; missing visibility stays **Not available**, not implicitly
-Public. The centered title opens the same editor, revealing a pencil with a short
+Channel Settings shows the signed name and description for ordinary channels. The centered title opens the same editor, revealing a pencil with a short
 left-to-right fade on hover or keyboard focus (always visible on touch, no animation
 for reduced motion). The pencil follows the final text line;
 balanced side padding keeps the text centered and lets long titles wrap without clipping it.
-Description and Visibility have small pencils immediately after their labels,
+Description has a small pencil after its label,
 revealed with a short left-to-right fade on whole-row hover or keyboard focus
 (always visible on touch, no animation for reduced motion) without shifting layout;
-each whole row opens the shared Dialog with one Name/Description/Duration/Private draft.
-Opening Description focuses its textarea; the title and Visibility still focus Name.
+the whole row opens the shared Dialog with one Name/Description/Duration draft.
+Opening Description focuses its textarea; the title focuses Name.
 Only authorized editors get the interactive rows; other viewers retain plain metadata.
 Members has a right chevron and opens the existing member list. Channel ID has a
 small inline copy icon with the same hover/focus/touch behavior; selecting its row
@@ -624,8 +622,9 @@ growing the row; hovering or focusing does not open a hint or replay old feedbac
 Clipboard failure shows an inline error and leaves the row available to retry. The redundant standalone
 Edit details button, header-menu Edit details entry and informational Channel type
 row are omitted.
-Duration uses Create's Ongoing/Temporary cards, and Private uses the same
-switch in the action row. These controls stage changes; neither publishes immediately.
+Duration uses Create's Ongoing/Temporary cards. Access controls live in the members
+dialog, separate from the text and lifespan draft. These details controls stage
+changes; none publishes immediately.
 **Save changes** submits the draft together and is enabled only for valid, changed values.
 **Cancel** explicitly discards edits and closes without confirmation. Close, Escape
 and backdrop clicks close untouched forms immediately; changed drafts first show
@@ -673,8 +672,8 @@ keyboard navigation switch immediately; hidden controls are inert and excluded
 from accessibility, with one complete accessible description per state.
 Steps are **1 day ↔ 7 days ↔ 2 weeks**, starting at seven days, with
 unavailable directions disabled. Switching to Ongoing and back retains the chosen
-time within the draft. Private reuses the shared switch, left-aligned in each
-footer with matching enabled/disabled label treatment. Both forms use a compact
+time within the draft. Create keeps its Private switch in the footer; Edit details
+leaves access management to the members dialog. Both forms use a compact
 12px header-to-body gap and 16px field spacing. Write ownership stays with each
 workflow.
 
@@ -687,7 +686,7 @@ Description on submission; Edit preserves its exact text and can explicitly clea
 
 Both dialogs opt into backdrop dismissal and guard Close, Escape and backdrop
 dismissal with an in-dialog discard confirmation when the draft differs. Comparison covers raw
-text, staged privacy and effective duration. Reverting
+text, effective duration and, for Create, staged privacy. Reverting
 all fields removes the warning. Pending operations still block dismissal; once
 settled, closing abandons any uncertain Create. Returning from a discard confirmation focuses Name and retains the draft.
 
@@ -720,29 +719,25 @@ and membership (`39002`) for the exact channel, plus current session participati
 Only direct channel owners/admins may edit ordinary stream/forum channels. Cached,
 read-only, archived, DM and Solo chat views do not offer this editor. A local
 key, delegated agent role or community-admin status does not imply channel authority.
-Public ↔ private is supported as a draft choice, never an immediate mutation.
-In both Create and Edit, a Private toggle normally replaces the form with a confirmation
-step in the same modal. The whole surface crossfades using `motion/react`: the form scales from
-1 to 1.05 and blurs while confirmation sharpens from 0.95 to 1. Returning reverses
-the transition; reduced motion and keyboard navigation swap immediately. Outgoing
-controls are inert, with one backdrop and focus trap throughout. This happens
-before changing the switch, including a reversal back to the saved
-value. There is one backdrop and focus trap, not a second overlaid modal. Public → private says
-“Only channel members will have access.” Private → public explicitly warns that everyone in
-this community can view the channel's full history. Continue
-only stages the choice; Create channel or Save changes still performs the write. Cancel/Escape or
-the confirmation's Close control leaves the switch unchanged and returns to the
-intact form with focus on the switch. All other draft fields—including Create's
-selected destination—survive either path. The consequence
-is shown once in the confirmation body, connected as the dialog's accessible description.
-**Don’t show me this again** is saved only on **Continue** and skips both public and
-private warnings. It is a device-local preference shared by Create and Edit for the
-same community/viewer scope, using the existing view-state storage. Existing opt-outs
-for either direction also skip both warnings. Cancel, Escape,
-Close and backdrop dismissal do not remember it. If storage is unavailable or invalid,
-the warning remains enabled. Skipping the warning still only stages the choice:
-Create/Save, authorization and discard protection are unchanged. A busy creation
-cannot open confirmation.
+Create's Private switch stages a choice behind the existing in-modal consequence
+confirmation. The device-local opt-out applies to that Create warning; Continue
+only stages the choice and Create channel performs the write.
+
+Access management lives in the members dialog. **People with access** retains the
+existing member list, row menus and confirmed role changes. Member and Guest are
+shown as **Contribute** and **Read**; Owner and Admin retain their authority labels.
+**General access** sits below the list: **Who can read** chooses Anyone in the
+community or Invited people only; **New people can** chooses Contribute or Only read.
+“People already in the channel keep their access.” explains that the second choice
+is an admission default, separate from each person's current role.
+Each selection opens a consequence confirmation. Cancel/Escape returns focus to
+the unchanged Select. **Change access** saves immediately through the existing
+channel-details capability, then reloads signed metadata. Loading, pending and
+unconfirmed saves disable both controls. Rejections offer **Reload access**;
+uncertain results survive closing the dialog and offer **Check save status**,
+which reads without republishing. Opening or checking never writes. Private
+channels with a Guest default remain intact when changing unrelated details.
+
 In Edit, visibility is sent only when changed (`private` or `open`);
 text-only edits omit it so they do not reopen the channel in the remaining write race.
 The relay remains the final authority.
@@ -771,8 +766,8 @@ survives failed reloads, so an untouched duration follows the next successful re
 while an explicit change to Ongoing remains staged. This baseline never grants
 editing authority: a failed read still clears the current base and disables Save.
 If a failed reload has lost the prior base, privacy adopts the fresh value
-conservatively: a stale public text draft must not become reopening intent. Choose
-visibility again after that recovery. Inspect the retained edits before
+conservatively: a stale public text draft must not become reopening intent.
+Inspect the retained edits before
 saving again. A lost publication response or failed/mismatched readback locks the submitted draft and
 offers **Check save status**, which only reads and never republishes. Uncertain
 intent survives panel close/reopen and cache clear within the same session; no
@@ -1013,13 +1008,14 @@ another non-owner member:
 Agent identity is independent of channel role. Explicitly promoting a Bot to Admin grants authority to that agent’s own public key and preserves its verified agent identity; the human owner’s roles do not confer authority.
 
 The menu includes **Make guest** through the existing deliberate confirmation
-flow. Member and Guest labels show each participant's verified stored role;
-changing the admission default never changes those roles. Agent Bot roles retain
-their existing Member presentation.
+flow. Contribute and Read captions represent each participant's verified Member
+and Guest role; changing the admission default never changes those roles.
+Agent Bot roles retain the contributing presentation.
 
-Channel Settings keeps **Visibility** separate from **New participant role**.
-Owners/admins can select Member or Guest in Edit details and save through the
-existing kind:9002 command. Missing `join_role` means Member, matching legacy relay
+The members dialog's General access controls keep reading access and new people's
+contribution access separate. The note explicitly preserves existing participants'
+access; a Guest default leaves designated writers able to contribute.
+Owners/admins save choices through the existing kind:9002 command. Missing `join_role` means Member, matching legacy relay
 behavior. An unrecognized or malformed explicit default maps to Guest so previews
 fail closed. These defaults never replace a participant's stored role.
 Unchanged or omitted defaults are not resent, and success requires matching fresh

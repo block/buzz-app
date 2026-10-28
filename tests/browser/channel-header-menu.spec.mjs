@@ -175,7 +175,7 @@ test("header actions use the full-size menu and retain pane/dialog focus owners"
       path: testInfo.outputPath("metadata-keyboard-focus.png"),
     });
   };
-  for (const label of ["Edit description", "Edit visibility", "View members"]) {
+  for (const label of ["Edit description", "View members"]) {
     const action = settings.getByRole("button", { name: label, exact: true });
     const row = action.locator("xpath=../..");
     await action.scrollIntoViewIfNeeded();

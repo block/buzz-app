@@ -238,6 +238,7 @@ async function setup(
     relay,
     person,
     viewer,
+    relay,
     delayRoster: () => {
       applyAddition = false;
     },
@@ -2388,4 +2389,86 @@ it("does not offer Solo agent additions when the existing admission API is unava
     screen.queryByRole("button", { name: /Add Fixture agent/ }),
   ).not.toBeInTheDocument();
   expect(t.publish).not.toHaveBeenCalled();
+});
+
+it("shows personal contribution roles and General access in the members dialog", async () => {
+  const h = await setup();
+  cleanup();
+  const id = "11111111-1111-4111-8111-111111111111";
+  let role = "member";
+  const query = h.query.getMockImplementation();
+  if (!query) throw new Error("Missing query");
+  h.query.mockImplementation(async (filters) => [
+    ...(await query(filters)).map((event) =>
+      event.kind === 39002
+        ? signed(h.relay, {
+            ...event,
+            created_at: event.created_at + (role === "member" ? 1 : 2),
+            tags: [
+              ["d", id],
+              ["p", h.viewer.pubkey, "", role],
+            ],
+          })
+        : event,
+    ),
+    signed(h.relay, { kind: 39001, content: "", tags: [["d", id]] }),
+  ]);
+  const details = {
+    channelId: id,
+    version: "v1",
+    name: "Channel",
+    description: "",
+    visibility: "private" as const,
+    joinRole: "guest" as const,
+    canEdit: true,
+  };
+  const save = vi.fn(async () => {});
+  render(
+    <ToastProvider>
+      <ChannelMembersButton
+        session={{
+          ...h.session,
+          channelDetails: {
+            available: true,
+            load: async () => details,
+            save,
+            check: async () => {},
+            snapshot: () => undefined,
+            subscribe: () => () => {},
+          },
+        }}
+        channelId={id}
+      />
+    </ToastProvider>,
+  );
+  await h.user.click(screen.getByRole("button", { name: "Access" }));
+  expect(
+    await screen.findByRole("heading", { name: "People with access" }),
+  ).toBeVisible();
+  expect(
+    await screen.findByRole("region", { name: "General access" }),
+  ).toBeVisible();
+  await vi.waitFor(() =>
+    expect(
+      screen.getByRole("combobox", { name: "New people can" }),
+    ).toBeEnabled(),
+  );
+  expect(
+    screen.getByRole("combobox", { name: "New people can" }),
+  ).toHaveTextContent("Only read");
+  expect(
+    await within(
+      screen.getByRole("region", { name: "Member list" }),
+    ).findAllByText("Contribute"),
+  ).not.toHaveLength(0);
+  role = "guest";
+  await h.user.click(
+    screen.getByRole("button", { name: "Refresh member data" }),
+  );
+  expect(
+    await within(
+      screen.getByRole("region", { name: "Member list" }),
+    ).findByText("Read"),
+  ).toBeVisible();
+  expect(save).not.toHaveBeenCalled();
 });

@@ -82,6 +82,7 @@ import { MemberRow, useMemberAdministration } from "./MemberAdministration";
 import { useMemberSearch } from "./useMemberSearch";
 import { useMemberOwners } from "./useMemberOwners";
 import { useSoloShare } from "./useSoloShare";
+import { ChannelGeneralAccess } from "./ChannelGeneralAccess";
 import { avatarMedia } from "../../shared/avatar-source";
 
 /** How a name matches typed text: the shared person name rule, the same as
@@ -249,8 +250,8 @@ const MemberIdentityRow = memo(function MemberIdentityRow({
                     : roleLabel === "admin"
                       ? "Admin"
                       : roleLabel === "guest"
-                        ? "Guest"
-                        : "Member"}
+                        ? "Read"
+                        : "Contribute"}
                 </span>
               )}
           </span>
@@ -646,6 +647,12 @@ export function ChannelMembersDialog({
     session.channelWrites.available;
   const canAddPeople = solo ? share.eligible : canAddMembers(session, channel);
   const canAdd = canAddPeople || canAddSoloAgents;
+  const generalAccess =
+    channel &&
+    (channel.channelType === "stream" || channel.channelType === "forum") &&
+    !channel.cached &&
+    !channel.archived &&
+    session.channelDetails.available;
   // Solo access is verified by the sharing roster read; channels read 39002.
   const rosterBusy = solo ? share.rosterState === "loading" : rosterReading;
   const rosterError = solo
@@ -1425,7 +1432,7 @@ export function ChannelMembersDialog({
             : "Change member role?"
           : (title ?? (solo ? "Share access" : "Manage members"))
       }
-      height={selection ? "content" : "stable"}
+      height={selection ? "content" : generalAccess ? "stable-tall" : "stable"}
       bodyLayout={selection ? "flow" : "flex"}
       headerGap={
         !selection || selection.role === "remove" ? "compact" : "default"
@@ -1664,6 +1671,7 @@ export function ChannelMembersDialog({
               {administrationError}
             </p>
           )}
+          {!solo && <h3 className="text-label-sm">People with access</h3>}
           <section
             ref={scrollport}
             className={`${styles.memberList} buzz-thin-scrollbar`}
@@ -2075,6 +2083,13 @@ export function ChannelMembersDialog({
                 </p>
               ) : null)}
           </section>
+          {generalAccess && (
+            <ChannelGeneralAccess
+              key={channelId}
+              capability={session.channelDetails}
+              channelId={channelId}
+            />
+          )}
         </div>
       )}
     </Dialog>

@@ -147,46 +147,22 @@ export function ChannelSettingsPanel({
               <dl className={styles.settingsDetails}>
                 {channel.channelType !== "solo" &&
                   channel.channelType !== "dm" && (
-                    <>
-                      <SettingsDetail
-                        label="Description"
-                        value={
-                          channel.description === undefined
-                            ? "Not available"
-                            : channel.description || "No description"
-                        }
-                        valueClassName={styles.settingsDescription}
-                        actionLabel="Edit"
-                        loading={edit?.pending}
-                        onOpen={
-                          edit
-                            ? (trigger) => edit.open(trigger, "description")
-                            : undefined
-                        }
-                      />
-                      <SettingsDetail
-                        label="Visibility"
-                        value={
-                          channel.visibility === "public"
-                            ? "Public"
-                            : channel.visibility === "private"
-                              ? "Private"
-                              : "Not available"
-                        }
-                        actionLabel="Edit"
-                        loading={edit?.pending}
-                        onOpen={edit?.open}
-                      />
-                      <SettingsDetail
-                        label="New participant role"
-                        value={
-                          channel.joinRole === "guest" ? "Guest" : "Member"
-                        }
-                        actionLabel="Edit"
-                        loading={edit?.pending}
-                        onOpen={edit?.open}
-                      />
-                    </>
+                    <SettingsDetail
+                      label="Description"
+                      value={
+                        channel.description === undefined
+                          ? "Not available"
+                          : channel.description || "No description"
+                      }
+                      valueClassName={styles.settingsDescription}
+                      actionLabel="Edit"
+                      loading={edit?.pending}
+                      onOpen={
+                        edit
+                          ? (trigger) => edit.open(trigger, "description")
+                          : undefined
+                      }
+                    />
                   )}
                 {channel.members && (
                   <SettingsDetail

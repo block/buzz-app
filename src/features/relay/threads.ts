@@ -593,8 +593,31 @@ export function createThreadView({
         }
         if (!retain(union(remote, related(root)))) return;
       }
+      const isReply = (event: RelayEvent) =>
+        !AUX.has(event.kind) &&
+        event.id !== rootId &&
+        inChannel(event, channelId) &&
+        threadReference(event)?.rootId === rootId;
+      // A strict refresh re-reads from the newest end. Live replay covers
+      // minutes, not a long disconnect, so keep paging until a pre-refresh reply
+      // is reached. The selected target is retained beyond traversal by design.
+      const kept = new Set(
+        replace
+          ? remote
+              .filter(
+                (event) => isReply(event) && !(exact && event.id === messageId),
+              )
+              .map((event) => event.id)
+          : [],
+      );
+      let reached = !kept.size;
       let more = false;
-      for (let page = 0; page < targetPages; page++) {
+      for (
+        let page = 0;
+        page < targetPages ||
+        (mode === "older" && !reached && page < MAX_PAGES);
+        page++
+      ) {
         const filter: ReadFilter = {
           kinds: [9, 40002, 40008],
           "#h": [channelId],
@@ -685,15 +708,8 @@ export function createThreadView({
         }
         // Count traversal rows before presentation filtering. The bridge may return
         // other content kinds, and appended auxiliaries do not consume its page limit.
-        const replies = events
-          .filter(
-            (event) =>
-              !AUX.has(event.kind) &&
-              event.id !== rootId &&
-              inChannel(event, channelId) &&
-              threadReference(event)?.rootId === rootId,
-          )
-          .sort(compare);
+        const replies = events.filter(isReply).sort(compare);
+        reached ||= replies.some((event) => kept.has(event.id));
         if (
           !bounds &&
           replies.some((event) => nextCursor && compare(event, nextCursor) <= 0)
@@ -717,8 +733,19 @@ export function createThreadView({
       }
       if (!active()) return;
       // A bounded response cannot retract observed evidence. Retain known edits,
-      // tombstones and live rows even when a later finite read omits them.
-      if (!retain(union(remote, fetched))) return;
+      // tombstones and live rows even when a later finite read omits them. Replies
+      // the re-read never reached sit past a gap it cannot show; those go.
+      if (
+        !retain(
+          union(
+            reached || !more || mode !== "older"
+              ? remote
+              : remote.filter((event) => !kept.has(event.id)),
+            fetched,
+          ),
+        )
+      )
+        return;
       rootUnavailable = false;
       cursor = nextCursor;
       pages = nextPages;

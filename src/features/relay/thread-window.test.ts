@@ -476,6 +476,88 @@ it("refreshes retained strict pages after establishment while preserving live de
   expect(h.view.snapshot().replies.map((row) => row.id)).toEqual([one.id]);
 });
 
+const at = (n: number) =>
+  message(author, channel, `reply ${n}`, 10 * n, [["e", root.id, "", "reply"]]);
+const cursorOf = (row: RelayEvent) => ({
+  created_at: row.created_at,
+  id: row.id,
+});
+
+it("refresh after establishment pages past its re-read until it reaches a retained reply", async () => {
+  // Live replay covers minutes; a long disconnect can leave the newest page
+  // short of the retained replies. Pages continue until one is reached.
+  const one = at(1),
+    two = at(2),
+    three = at(3);
+  let reconnected = false;
+  const h = await setup((filter) => {
+    if (filter.ids) return [root];
+    if (!reconnected) return [one, bounds(filter, cursorOf(one))];
+    if (filter.until === undefined)
+      return [three, bounds(filter, cursorOf(three))];
+    if (filter.until === three.created_at)
+      return [two, bounds(filter, cursorOf(two))];
+    return [one, bounds(filter, cursorOf(one))];
+  });
+  await h.view.refresh();
+  expect(h.view.snapshot().replies.map((row) => row.id)).toEqual([one.id]);
+  reconnected = true;
+  const before = h.requests.length;
+  h.traffic.established(channel);
+  await vi.waitFor(() =>
+    expect(h.view.snapshot().replies.map((row) => row.id)).toEqual([
+      one.id,
+      two.id,
+      three.id,
+    ]),
+  );
+  expect(h.requests.slice(before)).toMatchObject([
+    [{ ids: [root.id] }],
+    [{ thread_window: true }],
+    [{ thread_window: true, until: three.created_at, before_id: three.id }],
+    [{ thread_window: true, until: two.created_at, before_id: two.id }],
+  ]);
+  expect(h.view.snapshot()).toMatchObject({
+    status: "ready",
+    canLoadMore: true,
+    limited: false,
+  });
+});
+
+it("refresh after establishment drops a retained reply it cannot reach within the page bound", async () => {
+  const old = at(1);
+  const fresh = Array.from({ length: 10 }, (_, index) => at(20 - index));
+  let reconnected = false;
+  const h = await setup((filter) => {
+    if (filter.ids) return [root];
+    if (!reconnected) return [old, bounds(filter, cursorOf(old))];
+    const row =
+      fresh[
+        filter.until === undefined
+          ? 0
+          : fresh.findIndex(
+              (candidate) => candidate.created_at === filter.until,
+            ) + 1
+      ];
+    assert(row);
+    return [row, bounds(filter, cursorOf(row))];
+  });
+  await h.view.refresh();
+  reconnected = true;
+  h.traffic.established(channel);
+  await vi.waitFor(() =>
+    expect(h.view.snapshot()).toMatchObject({
+      status: "ready",
+      limited: true,
+      canLoadMore: false,
+    }),
+  );
+  // Ten pages never reached `old`: it goes rather than sitting below a gap.
+  expect(h.view.snapshot().replies.map((row) => row.id)).toEqual(
+    fresh.map((row) => row.id).reverse(),
+  );
+});
+
 it("revalidates a missing strict root before repair and preserves tombstones on retry", async () => {
   const row = reply(0);
   let missing = false;

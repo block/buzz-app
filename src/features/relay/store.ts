@@ -111,6 +111,9 @@ const describe = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 const isAbort = (error: unknown) => readErrorKind(error) === "cancelled";
 const FRESH_FOR = 60_000;
+/** Pages a reconnect catch-up reads back from the head before it gives up on
+ * reaching the rows the reader kept across the disconnect. */
+const CATCH_UP_PAGES = 5;
 
 /** Session-owned read model. Broad byte-bounded heads are separate from the small history LRU.
  * Preparing a head never mounts a timeline or evicts a subscribed history window. */
@@ -3002,7 +3005,11 @@ export function createChannelStore(
         });
     },
     /** Revalidate only a retained reader after establishing the stream. An unopened
-     * channel needs no eager HTTP head; its normal ensure() owns that finite handoff. */
+     * channel needs no eager HTTP head; its normal ensure() owns that finite handoff.
+     * Live replay covers minutes, not a long disconnect, so the head may stop short
+     * of the rows the reader kept: page back from it until one is reached, merging
+     * each page as it lands. Past the page bound the kept rows go, and the window
+     * continues from the pages read rather than showing a gap as history. */
     async catchUp(channelId: string) {
       const cached = heads.peek(channelId);
       if (cached) heads.set(channelId, { ...cached, cached: true });
@@ -3013,20 +3020,58 @@ export function createChannelStore(
       const valid = () => epoch === epochAtStart && live(retained, generation);
       if (!retained.snapshot.rows.length)
         setWindow(retained, { status: "loading", error: undefined });
+      const kept = new Set(
+        retained.events
+          .filter((event) => channelRowKind(event.kind))
+          .map((event) => event.id),
+      );
+      const controller = new AbortController();
+      controllers.add(controller);
       try {
-        const head = await requestHead(
-          channelId,
-          current === channelId ? "foreground" : "background",
-        );
+        const priority = current === channelId ? "foreground" : "background";
+        const head = await requestHead(channelId, priority);
         if (!valid())
           throw new DOMException("Stale live catch-up", "AbortError");
         retained.restored = false;
         accept(head.events);
+        let page: Pick<Head, "events" | "cursor" | "hasMore"> = head;
+        const filled = [...head.events];
+        const reached = () =>
+          !page.hasMore ||
+          page.events.some(
+            (event) => channelRowKind(event.kind) && kept.has(event.id),
+          );
+        let contiguous = !kept.size || reached();
+        for (let pages = 0; !contiguous && page.cursor; pages++) {
+          if (pages >= CATCH_UP_PAGES) {
+            retained.events = [
+              ...new Map(filled.map((event) => [event.id, event])).values(),
+            ];
+            const ids = new Set(retained.events.map((event) => event.id));
+            for (const id of retained.traffic.keys())
+              if (!ids.has(id)) retained.traffic.delete(id);
+            retained.floor = undefined;
+            retained.atHead = true;
+            break;
+          }
+          page = (
+            await readPage(channelId, page.cursor, {
+              signal: controller.signal,
+              priority,
+            })
+          ).page;
+          if (!valid())
+            throw new DOMException("Stale live catch-up", "AbortError");
+          accept(page.events);
+          filled.push(...page.events);
+          contiguous = reached();
+        }
         if (!valid())
           throw new DOMException("Stale live catch-up", "AbortError");
-        if (retained.atHead) moveCursor(retained, head.cursor);
+        if (retained.atHead) moveCursor(retained, page.cursor);
         setWindow(retained, {
-          ...(retained.atHead ? { hasMore: head.hasMore } : {}),
+          ...(retained.atHead ? { hasMore: page.hasMore } : {}),
+          ...(contiguous ? {} : { historyLimited: false }),
           status: "ready",
           freshness: "verified",
           error: undefined,
@@ -3042,6 +3087,8 @@ export function createChannelStore(
             error: describe(error),
           });
         throw error;
+      } finally {
+        controllers.delete(controller);
       }
     },
     /** Also settles queued obligations refused before catchUp could dispatch. */

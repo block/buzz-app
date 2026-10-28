@@ -24,6 +24,7 @@ import {
 } from "../../shared/design-system/icons/index";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
+import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
 import {
   MenuPopup,
   MenuRadioGroup,
@@ -1281,6 +1282,16 @@ export function SearchResults({
           </div>
         )}
       </div>
+      {/* A warm directory answers within the typing pause, so this feedback
+          waits a second; the rows and errors above are immediate. */}
+      {query.trim() && !scopedChannelId && (
+        <LoadingRegion
+          pending={publicChannels.loading}
+          label="Searching open channels…"
+        >
+          {null}
+        </LoadingRegion>
+      )}
     </SearchChoices>
   );
 }

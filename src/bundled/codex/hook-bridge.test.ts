@@ -4,7 +4,8 @@ import { callbackHookArgs, openHookBridge } from "./hook-bridge";
 it("binds an authenticated endpoint to one session and keeps dispatcher definitions fixed", async () => {
   let handler!: McpHandler;
   const close = vi.fn(async () => {});
-  const serve: NonNullable<Host["serveMcp"]> = async (run) => {
+  const serve: NonNullable<Host["serveMcp"]> = async (run, options) => {
+    expect(options).toEqual({ sharedSession: true });
     handler = run;
     return {
       url: "http://127.0.0.1:1/mcp",
@@ -21,6 +22,16 @@ it("binds an authenticated endpoint to one session and keeps dispatcher definiti
   await expect(
     handler({ jsonrpc: "2.0", id: null, method: "notifications/initialized" }),
   ).resolves.toBeUndefined();
+  await expect(
+    handler({
+      id: 0,
+      method: "tools/call",
+      params: {
+        name: "SessionStart",
+        arguments: { session_id: "unbound" },
+      },
+    }),
+  ).rejects.toThrow("session mismatch");
   bridge.bind("one");
   const call = (session: string) =>
     handler({

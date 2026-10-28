@@ -9,7 +9,11 @@ import { mkdtemp, access, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it } from "vitest";
-import type { McpHandler, HostMcpServer } from "../../features/host/service";
+import type {
+  McpHandler,
+  HostMcpServer,
+  HostMcpOptions,
+} from "../../features/host/service";
 import { AppServer } from "./rpc";
 import { dispatchAgentHooks } from "../../features/agents/hooks";
 import { nativeHookState } from "./hooks";
@@ -20,9 +24,9 @@ import {
 } from "./hook-bridge";
 
 const binary = process.env.CODEX_FACADE_BINARY;
-it.skipIf(!binary)(
-  "blocks a real Codex native command through its thread-bound callback",
-  async () => {
+it.skipIf(!binary).each([false, true])(
+  "blocks a real Codex native command with subagent=%s",
+  async (subagent) => {
     const home = await mkdtemp(join(tmpdir(), "buzz-hook-facade-"));
     const marker = join(home, "executed");
     const servers: ReturnType<typeof createServer>[] = [];
@@ -42,13 +46,18 @@ it.skipIf(!binary)(
         throw new Error("No address");
       return `http://127.0.0.1:${address.port}`;
     };
-    const serve = async (handler: McpHandler): Promise<HostMcpServer> => {
+    let initializations = 0;
+    const serve = async (
+      handler: McpHandler,
+      options?: HostMcpOptions,
+    ): Promise<HostMcpServer> => {
       const token = crypto.randomUUID();
       // Match host_mcp.rs: one initialized session, notifications answered by the bridge.
       const session = crypto.randomUUID();
       let claimed = false;
+      let stopped = false;
       const url = await listen(async (req, res) => {
-        if (req.headers.authorization !== `Bearer ${token}`) {
+        if (stopped || req.headers.authorization !== `Bearer ${token}`) {
           res.writeHead(401);
           res.end();
           return;
@@ -62,11 +71,16 @@ it.skipIf(!binary)(
         for await (const data of req) body += data;
         const wire = JSON.parse(body);
         if (req.headers["mcp-session-id"] !== session) {
-          if (wire.method !== "initialize" || claimed) {
+          if (
+            wire.method !== "initialize" ||
+            (claimed && !options?.sharedSession)
+          ) {
+            if (wire.method === "initialize") stopped = true;
             res.writeHead(404);
             res.end();
             return;
           }
+          initializations++;
           claimed = true;
         }
         try {
@@ -100,30 +114,66 @@ it.skipIf(!binary)(
       };
     };
     let requests = 0;
+    let parentRequests = 0;
+    let childRequests = 0;
+    let spawned = false;
+    let finishChild!: () => void;
+    const childFinished = new Promise<void>((resolve) => {
+      finishChild = resolve;
+    });
     const model = await listen(async (req, res) => {
-      for await (const _data of req) {
-        /* drain */
+      let payload = "";
+      for await (const data of req) payload += data;
+      const input = JSON.parse(payload).input as {
+        type?: string;
+        call_id?: string;
+        output?: string;
+        role?: string;
+        content?: { text?: string }[];
+      }[];
+      const child = input
+        .findLast((item) => item.role === "user")
+        ?.content?.some((item) => item.text === "Run the fixture command");
+      const step = child ? ++childRequests : ++parentRequests;
+      if (child && step === 2) finishChild();
+      if (subagent && !child && step === 2) {
+        spawned = input.some(
+          (item) =>
+            item.call_id === "call_spawn" && item.output?.includes("agent_id"),
+        );
+        if (spawned) await childFinished;
       }
       requests++;
       const item =
-        requests === 1
+        subagent && !child && step === 1
           ? {
-              id: "fc_1",
+              id: "fc_spawn",
               type: "function_call",
-              call_id: "call_1",
-              name: "exec_command",
-              arguments: JSON.stringify({
-                cmd: `touch ${marker}`,
-                max_output_tokens: 100,
-              }),
+              call_id: "call_spawn",
+              name: "spawn_agent",
+              namespace: "multi_agent_v1",
+              arguments: JSON.stringify({ message: "Run the fixture command" }),
             }
-          : {
-              id: "msg_done",
-              type: "message",
-              role: "assistant",
-              status: "completed",
-              content: [{ type: "output_text", text: "Done", annotations: [] }],
-            };
+          : step === (subagent && !child ? 2 : 1)
+            ? {
+                id: child ? "fc_child" : "fc_parent",
+                type: "function_call",
+                call_id: child ? "call_child" : "call_parent",
+                name: "exec_command",
+                arguments: JSON.stringify({
+                  cmd: `touch ${marker}`,
+                  max_output_tokens: 100,
+                }),
+              }
+            : {
+                id: "msg_done",
+                type: "message",
+                role: "assistant",
+                status: "completed",
+                content: [
+                  { type: "output_text", text: "Done", annotations: [] },
+                ],
+              };
       res.writeHead(200, { "content-type": "text/event-stream" });
       for (const [type, data] of [
         [
@@ -158,9 +208,17 @@ it.skipIf(!binary)(
       res.end();
     });
     const observed: string[] = [];
-    const policy = async (_session: string, event: string) => {
+    const denied: string[] = [];
+    const policy = async (_session: string, event: string, input: unknown) => {
       observed.push(event);
-      return event === "PreToolUse"
+
+      if (
+        event === "PreToolUse" &&
+        (input as { tool_name?: string }).tool_name === "Bash"
+      )
+        denied.push((input as { tool_use_id: string }).tool_use_id);
+      return event === "PreToolUse" &&
+        (input as { tool_name?: string }).tool_name === "Bash"
         ? {
             hookSpecificOutput: {
               hookEventName: "PreToolUse",
@@ -188,7 +246,7 @@ it.skipIf(!binary)(
               id: "policy",
               harness: "codex",
               event,
-              run: () => policy(session, event),
+              run: () => policy(session, event, input),
             },
           ],
           input,
@@ -253,6 +311,7 @@ it.skipIf(!binary)(
             "features.hooks": true,
             "features.plugins": false,
             "features.apps": false,
+            "features.multi_agent": true,
             web_search: "disabled",
           },
         },
@@ -263,7 +322,11 @@ it.skipIf(!binary)(
         done = resolve;
       });
       rpc.onMessage((wire) => {
-        if (wire.method === "turn/completed") done();
+        if (
+          wire.method === "turn/completed" &&
+          (wire.params as { threadId?: string }).threadId === started.thread.id
+        )
+          done();
       });
       await rpc.request("turn/start", {
         threadId: started.thread.id,
@@ -271,6 +334,13 @@ it.skipIf(!binary)(
       });
       await completed;
       expect(observed, stderr).toContain("PreToolUse");
+      expect(observed, stderr).toContain("Stop");
+      expect(denied, stderr).toContain("call_parent");
+      if (subagent) {
+        expect(spawned, stderr).toBe(true);
+        expect(initializations, stderr).toBeGreaterThanOrEqual(2);
+        expect(denied, stderr).toContain("call_child");
+      }
       await expect(access(marker)).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
       await bridge.close();

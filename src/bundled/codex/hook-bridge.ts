@@ -57,44 +57,45 @@ export async function openHookBridge(
 ) {
   let session: string | undefined;
   let closed = false;
-  const server = await serve(async (value) => {
-    const wire = value as {
-      id?: unknown;
-      method?: string;
-      params?: { name?: string; arguments?: Record<string, unknown> };
-    };
-    if (wire.id == null) return;
-    const result = (result: unknown) => ({
-      jsonrpc: "2.0",
-      id: wire.id,
-      result,
-    });
-    if (wire.method === "initialize")
-      return result({
-        protocolVersion: "2025-06-18",
-        capabilities: { tools: {} },
-        serverInfo: { name: SERVER, version: "1" },
+  const server = await serve(
+    async (value) => {
+      const wire = value as {
+        id?: unknown;
+        method?: string;
+        params?: { name?: string; arguments?: Record<string, unknown> };
+      };
+      if (wire.id == null) return;
+      const result = (result: unknown) => ({
+        jsonrpc: "2.0",
+        id: wire.id,
+        result,
       });
-    // Hooks call the dispatcher directly. Do not advertise it to the model.
-    if (wire.method === "tools/list") return result({ tools: [] });
-    if (wire.method !== "tools/call") return result({});
-    const event = wire.params?.name ?? "";
-    const input = wire.params?.arguments;
-    if (
-      closed ||
-      !CODEX_HOOK_EVENTS.includes(event) ||
-      typeof input?.session_id !== "string"
-    )
-      throw new Error("Invalid Codex hook callback");
-    if (session === undefined && event === "SessionStart")
-      session = input.session_id;
-    if (session !== input.session_id)
-      throw new Error("Codex hook session mismatch");
-    const output = await run(session, event, input);
-    return result({
-      content: [{ type: "text", text: JSON.stringify(output) }],
-    });
-  });
+      if (wire.method === "initialize")
+        return result({
+          protocolVersion: "2025-06-18",
+          capabilities: { tools: {} },
+          serverInfo: { name: SERVER, version: "1" },
+        });
+      // Hooks call the dispatcher directly. Do not advertise it to the model.
+      if (wire.method === "tools/list") return result({ tools: [] });
+      if (wire.method !== "tools/call") return result({});
+      const event = wire.params?.name ?? "";
+      const input = wire.params?.arguments;
+      if (
+        closed ||
+        !CODEX_HOOK_EVENTS.includes(event) ||
+        typeof input?.session_id !== "string"
+      )
+        throw new Error("Invalid Codex hook callback");
+      if (session !== input.session_id)
+        throw new Error("Codex hook session mismatch");
+      const output = await run(session, event, input);
+      return result({
+        content: [{ type: "text", text: JSON.stringify(output) }],
+      });
+    },
+    { sharedSession: true },
+  );
   return {
     config: {
       [SERVER]: {
@@ -105,9 +106,6 @@ export async function openHookBridge(
         enabled: true,
         required: true,
       },
-    },
-    newThread() {
-      session = undefined;
     },
     bind(id: string) {
       if (session !== undefined && session !== id)

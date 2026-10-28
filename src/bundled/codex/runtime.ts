@@ -1611,14 +1611,12 @@ export class CodexRuntime {
         existing?.workspace === workspace && (existing.tools ?? "") === tools;
       type Started = { thread: { id: string; cwd: string } };
       const start = () => {
-        bridge?.newThread();
         return rpc.request<Started>("thread/start", {
           ...params,
           dynamicTools: dynamicTools(added),
         });
       };
       const resume = (threadId: string) => {
-        bridge?.bind(threadId);
         return rpc.request<Started>("thread/resume", {
           ...params,
           threadId,

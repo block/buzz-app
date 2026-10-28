@@ -140,6 +140,22 @@ test("rolls back received batches and migration failures without publishing chan
       );
     const after = await c.get("good");
     const checkpoint = await c.checkpoint();
+    const failedImport = window.artifactTest.open("viewer", "relay", "test", {
+      name: "failed-import",
+      project: () => {
+        throw new Error("import projection failed");
+      },
+    });
+    const importFailure = await failedImport
+      .importBatch({
+        records: [{ id: "one", local: {} }],
+        preferences: [{ id: "one", value: false }],
+        marker: "done",
+      })
+      .then(
+        () => "unexpected",
+        (error) => error.message,
+      );
     const original = window.artifactTest.open("viewer", "relay", "test", {
       name: "migration",
     });
@@ -167,6 +183,12 @@ test("rolls back received batches and migration failures without publishing chan
       checkpoint,
       notices,
       migration,
+      importFailure,
+      failedImport: {
+        row: await failedImport.get("one"),
+        marker: await failedImport.imported("done"),
+        preference: await failedImport.preferences.get("one"),
+      },
       imported: await original.imported("done"),
       pref: await original.preferences.get("one"),
       saved: (await original.get("one")).record.local,
@@ -182,6 +204,8 @@ test("rolls back received batches and migration failures without publishing chan
     checkpoint: null,
     notices: [],
     migration: "projection failed",
+    importFailure: "import projection failed",
+    failedImport: { row: undefined, marker: false, preference: undefined },
     imported: true,
     pref: false,
     saved: { title: "saved" },

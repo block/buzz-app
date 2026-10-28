@@ -746,7 +746,7 @@ function Composer({
   const [activeFormats, setActiveFormats] = useState<readonly ComposerFormat[]>(
     [],
   );
-  const saveDraft = (next: MentionDraft) => {
+  const saveDraft = (next: MentionDraft, save = true) => {
     next = stageChatCards(
       {
         ...next,
@@ -761,7 +761,7 @@ function Composer({
     if (JSON.stringify(next) === JSON.stringify(valueRef.current)) return false;
     valueRef.current = next;
     updateDraft(next);
-    if (!editing.target) {
+    if (save && !editing.target) {
       if (submission) writeView(scope, draftKey, next);
       else {
         dirty.current = true;
@@ -1367,31 +1367,21 @@ function Composer({
   // A new Solo chat is seeded with its default agent each time it is shown,
   // while its draft is empty and untagged; a saved chat seeds from its window
   // like every other composer. Once it has content, respect edits and
-  // removals until the composer is shown again.
+  // removals until the composer is shown again. Like the window's seed, the
+  // tag is this composer's own prefill and isn't saved until the viewer edits
+  // the draft, so showing the chat again tags the current default agent.
   const seedMention = defaultMention;
   const autoTagged = useRef<string | undefined>(undefined);
-  // The draft as seeded, saved beside it so an untouched seed is still
-  // recognized after navigation or a reload; any edit stops matching it.
-  // The copy kept in memory still recognizes it when storage can't be written.
-  const seedView = `${draftKey}:seeded`;
-  const seeded = useRef<string | undefined>(undefined);
-  const seedOf = ({ text, recipients }: MentionDraft) =>
-    JSON.stringify([
-      text,
-      recipients.map(({ pubkey, start }) => [pubkey, start]),
-    ]);
-  const isSeed = () => {
-    const seed = seedOf(valueRef.current);
-    return (
-      seeded.current === JSON.stringify([seedView, seed]) ||
-      readView<unknown>(scope, seedView, null) === seed
-    );
-  };
-  const markSeeded = () => {
-    const seed = seedOf(valueRef.current);
-    seeded.current = JSON.stringify([seedView, seed]);
-    writeView(scope, seedView, seed);
+  const seeding = useRef(false);
+  const prefill = (apply: () => boolean) => {
+    seeding.current = true;
+    try {
+      if (!apply()) return false;
+    } finally {
+      seeding.current = false;
+    }
     automaticTag.current = JSON.stringify(valueRef.current);
+    return true;
   };
   useEffect(() => {
     if (!presented) autoTagged.current = undefined;
@@ -1402,20 +1392,15 @@ function Composer({
       editing.target
     )
       return;
-    // Until it is edited, a seeded tag follows the agent it stands for, as
-    // when the account's main agent arrives or the cached one was deleted.
-    if (isSeed()) {
+    if (autoTagged.current === draftKey) return;
+    // Shown again untouched, the prefill retags for the current default.
+    if (automaticTag.current === JSON.stringify(valueRef.current)) {
+      if (!seedMention) return;
       autoTagged.current = draftKey;
-      if (
-        seedMention &&
-        seedMention.pubkey !== valueRef.current.recipients[0]?.pubkey &&
-        replaceRecipients([seedMention])
-      ) {
-        markSeeded();
-      }
+      if (seedMention.pubkey !== valueRef.current.recipients[0]?.pubkey)
+        prefill(() => replaceRecipients([seedMention]));
       return;
     }
-    if (autoTagged.current === draftKey) return;
     // A shortcut may seed an ordinary editable link. Still add the default
     // agent once while that freshly seeded text is untouched; a restored draft
     // keeps its recipients as saved, so a removed tag never returns.
@@ -1429,15 +1414,16 @@ function Composer({
     }
     if (seedMention && admits()(seedMention.pubkey)) {
       if (
-        insert(
-          `@${seedMention.name} `,
-          seedMention,
-          { start: 0, end: 0, query: "" },
-          undefined,
-          false,
+        prefill(() =>
+          insert(
+            `@${seedMention.name} `,
+            seedMention,
+            { start: 0, end: 0, query: "" },
+            undefined,
+            false,
+          ),
         )
       ) {
-        markSeeded();
         input.current?.setSelectionRange(
           valueRef.current.text.length,
           valueRef.current.text.length,
@@ -2315,6 +2301,11 @@ function Composer({
               emoji={emojiCatalog.entries}
               onDraftChange={(next) => {
                 const textChanged = next.text !== valueRef.current.text;
+                // The default tag's prefill shows without being saved.
+                if (seeding.current) {
+                  saveDraft(next, false);
+                  return;
+                }
                 if (!editing.target) {
                   // The user's edit settles the seed on screen, as settled
                   // evidence does: clearing it lasts until the composer is

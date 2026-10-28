@@ -130,9 +130,11 @@ behavior on the label, so a rename touches copy only.
   read has settled. A chosen agent missing for another reason
   is stood in for without replacing the choice. Until the main agent is saved to
   the account, including an automatic pick, a stand-in or a failed save, Make main
-  agent stays offered. The last pick shows at once; the account's choice, or
-  archives showing it deleted, replace it when they arrive, along with a
-  new-chat draft's tag until that draft is edited. Archive rereads, failed
+  agent stays offered. Nothing is picked until the account record has been read
+  and its archive read has settled, so a new chat is never tagged for a stale
+  pick. A new chat tags the main agent once each time it is shown; the tag isn't
+  saved until the draft is edited, so showing an untouched new chat again tags
+  the current main agent. Archive rereads, failed
   rereads and reconnects keep the last known archives, so a known deletion
   is never forgotten and a live choice never disappears.
   Follow-ups keep all exact agents notified by the previous send, just like

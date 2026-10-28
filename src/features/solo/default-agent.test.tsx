@@ -432,11 +432,11 @@ it("adopts the account's main agent before any automatic pick on a new install",
   expect(account.write).not.toHaveBeenCalled();
 });
 
-it("a choice cached on this device shows at once, then the account's replaces it", async () => {
+it("a choice cached on this device waits for the account's, which replaces it", async () => {
   const { account, Selection } = accountSession("b".repeat(64));
   setDefaultAgent("account", "a".repeat(64));
   render(<Selection />);
-  expect(screen.getByRole("status").textContent).toBe("First");
+  expect(screen.getByRole("status").textContent).toBe("none");
   await act(async () => account.resolve());
   expect(screen.getByRole("status").textContent).toBe("Second");
 });
@@ -465,13 +465,13 @@ it("stands in for a deleted agent left on the account without writing to it", as
   expect(account.saved()).toBe("a".repeat(64));
 });
 
-it("an adopted choice shows at once and gives way once archives show it deleted", async () => {
+it("an adopted choice waits for archives, which may show it deleted", async () => {
   // The account still names B, deleted elsewhere; archives aren't read yet.
   const { account, Selection } = accountSession("b".repeat(64), [], "loading");
   setDefaultAgent("account", "a".repeat(64));
   render(<Selection />);
   await act(async () => account.resolve());
-  expect(screen.getByRole("status").textContent).toBe("Second");
+  expect(screen.getByRole("status").textContent).toBe("none");
   act(() => account.archive(["b".repeat(64)]));
   expect(screen.getByRole("status").textContent).toBe("First");
 });
@@ -571,6 +571,45 @@ it("a choice made while the account is read wins, even when already cached", asy
   await act(async () => account.resolve());
   expect(screen.getByRole("status").textContent).toBe("First");
   expect(account.saved()).toBe("a".repeat(64));
+});
+
+it("a choice made before a retried account read wins, even while its save is pending", async () => {
+  const { account, session, Selection } = accountSession("b".repeat(64));
+  account.read.mockRejectedValueOnce(new Error("offline"));
+  const { unmount } = render(<Selection />);
+  await act(async () => {});
+  let save!: () => void;
+  account.write.mockImplementationOnce(
+    () => new Promise<void>((resolve) => (save = resolve)),
+  );
+  const choosing = chooseDefaultAgent(session, "account", "a".repeat(64));
+  // Shown again while the save is pending: the retried read still names B.
+  unmount();
+  render(<Selection />);
+  await act(async () => account.resolve());
+  expect(screen.getByRole("status").textContent).toBe("First");
+  await act(async () => {
+    save();
+    await choosing;
+  });
+  expect(screen.getByRole("status").textContent).toBe("First");
+});
+
+it("uses the account's choice when this device can't cache it", async () => {
+  const { account, Selection } = accountSession("b".repeat(64));
+  const write = vi
+    .spyOn(Storage.prototype, "setItem")
+    .mockImplementation(() => {
+      throw new Error("storage full");
+    });
+  try {
+    render(<Selection />);
+    await act(async () => account.resolve());
+    expect(screen.getByRole("status").textContent).toBe("Second");
+  } finally {
+    write.mockRestore();
+    forgetDefaultAgent("b".repeat(64));
+  }
 });
 
 it("still picks a main agent when the account can't be read", async () => {

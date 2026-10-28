@@ -28,12 +28,21 @@ function subscribeSaved(listener: () => void) {
   listeners.add(listener);
   return () => void listeners.delete(listener);
 }
-// Counts each account's explicit choices, so adoption never overwrites a
-// newer one.
-const explicit = new WeakMap<Account, number>();
+// Accounts the viewer chose for this session. A choice is newer than any
+// read of the account, including one started after it, so adoption stops.
+const explicit = new WeakSet<Account>();
+// Choices this device couldn't cache, by scope, so they still apply here.
+const unsaved = new Map<string, string | null>();
+function cache(scope: string, agent: string | null) {
+  const saves = writeView(scope, KEY, agent);
+  if (saves) unsaved.delete(scope);
+  else unsaved.set(scope, agent);
+  for (const listener of listeners) listener();
+  return saves;
+}
 /** Makes an agent the one new Berd messages are tagged for, on this device. */
 export function setDefaultAgent(scope: string, pubkey: string) {
-  return writeView(scope, KEY, /^[0-9a-f]{64}$/.test(pubkey) ? pubkey : null);
+  return cache(scope, /^[0-9a-f]{64}$/.test(pubkey) ? pubkey : null);
 }
 
 /** The viewer's own choice: saved here, then to their account. */
@@ -43,7 +52,7 @@ export async function chooseDefaultAgent(
   pubkey: string,
 ) {
   const account = session.mainAgent;
-  if (account) explicit.set(account, (explicit.get(account) ?? 0) + 1);
+  if (account) explicit.add(account);
   if (!setDefaultAgent(scope, pubkey))
     throw new Error("The main agent couldn't be saved on this device.");
   if (!account) return;
@@ -62,6 +71,9 @@ export async function chooseDefaultAgent(
  * account is stood in for like any deleted choice, until the next choice. */
 export function forgetDefaultAgent(pubkey: string) {
   clearViewValue(KEY, pubkey);
+  for (const [scope, agent] of unsaved)
+    if (agent === pubkey) unsaved.delete(scope);
+  for (const listener of listeners) listener();
 }
 
 /** Adopts the account's saved choice once per session. Settles even when the
@@ -69,12 +81,10 @@ export function forgetDefaultAgent(pubkey: string) {
 function adopt(account: Account, scope: string) {
   let pending = adopted.get(account);
   if (!pending) {
-    const before = explicit.get(account);
     pending = account.read().then(
       (agent) => {
-        // A choice made while reading is newer than the record read.
-        const adopts = explicit.get(account) === before;
-        if (adopts && agent !== undefined) writeView(scope, KEY, agent);
+        const adopts = !explicit.has(account);
+        if (adopts && agent !== undefined) cache(scope, agent);
         remember(account, adopts ? agent : saved.get(account));
       },
       () => {
@@ -114,9 +124,21 @@ export function useSavedAgent(session: RelaySession, scope: string) {
 /** The agent explicitly saved as main, whether or not it can be tagged now. */
 export function useChosenAgent(scope: string) {
   return useSyncExternalStore(
-    useCallback((notify) => subscribeView(scope, notify), [scope]),
+    useCallback(
+      (notify) => {
+        const view = subscribeView(scope, notify);
+        const choices = subscribeSaved(notify);
+        return () => {
+          view();
+          choices();
+        };
+      },
+      [scope],
+    ),
     () => {
-      const value = readView<unknown>(scope, KEY, null);
+      const value = unsaved.has(scope)
+        ? unsaved.get(scope)
+        : readView<unknown>(scope, KEY, null);
       return typeof value === "string" ? value : undefined;
     },
   );
@@ -149,11 +171,13 @@ export function useDefaultAgent(
   const { status, readAt } = choices.archives;
   const read =
     (status !== "idle" && status !== "loading") || readAt !== undefined;
-  const fallbackReady = !requested && adoption.read && choices.complete && read;
-  // The last pick shows at once; the account's choice or a known deletion
-  // replaces it when either arrives.
+  // Without a request, nothing is picked until the account's choice is read
+  // and, with an account, the archives are known, so a new chat is never
+  // tagged for a stale pick.
+  const settled = adoption.read && (!session.mainAgent || read);
+  const fallbackReady = !requested && adoption.read && read && choices.complete;
   const picked = choices.selectable.find(
-    (choice) => choice.pubkey === (requested ?? chosen),
+    (choice) => choice.pubkey === (requested ?? (settled ? chosen : undefined)),
   );
   const fallback =
     !picked && fallbackReady

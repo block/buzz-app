@@ -1,6 +1,6 @@
+import { useSoloRowActivation } from "./useSoloRowActivation";
 import { useSoloNavigation } from "./solo-navigation-react";
 import {
-  useEffect,
   useRef,
   useState,
   useSyncExternalStore,
@@ -76,6 +76,7 @@ export function SoloInventory({
     actions: ReactNode,
     header: ReactNode,
     trigger: RefObject<HTMLButtonElement | null>,
+    pendingClick: RefObject<ReturnType<typeof setTimeout> | undefined>,
   ) => ReactNode;
 }) {
   const list = useChannelList(session.channels);
@@ -331,7 +332,7 @@ export function SoloInventory({
       aria-label={`${regions.regions.find((region) => region.source)?.title ?? "Solo"} conversations`}
     >
       {renderContents ? (
-        renderContents(content, creationItems, header, trigger)
+        renderContents(content, creationItems, header, trigger, pendingClick)
       ) : (
         <>
           {header}
@@ -373,9 +374,12 @@ function SoloConversationRow({
   ComponentProps<typeof ChannelActivityPopover>,
   "onOpenThread" | "onOpenWorkingAgent" | "onOpenAgentActivity"
 >) {
-  const click = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const pointer = useRef<string | undefined>(undefined);
-  useEffect(() => () => clearTimeout(click.current), []);
+  const activation = useSoloRowActivation(
+    navigation,
+    pendingClick,
+    onSelect,
+    onRename,
+  );
   const { agents, agentProfiles, waiting } = useWorkingAgents(
     session,
     id,
@@ -401,37 +405,7 @@ function SoloConversationRow({
           data-solo-channel-id={id}
           aria-current={selected ? "page" : undefined}
           aria-describedby={shared ? soloSharedMarkId(id) : undefined}
-          onPointerDown={(event) => {
-            pointer.current = event.pointerType;
-          }}
-          onClick={(event) => {
-            if (event.detail >= 2) return;
-            clearTimeout(pendingClick.current);
-            const touch = pointer.current === "touch";
-            pointer.current = undefined;
-            if (
-              event.detail === 1 &&
-              onRename &&
-              !touch &&
-              window.matchMedia("(max-width: 650px)").matches
-            ) {
-              // Keep the drawer present for a mouse double-click. Touch and
-              // keyboard activation, and wide layouts, navigate immediately.
-              const attempt = navigation.snapshot().attempt;
-              click.current = pendingClick.current = setTimeout(() => {
-                if (navigation.snapshot().attempt.id === attempt.id) onSelect();
-              }, 500);
-            } else onSelect();
-          }}
-          onDoubleClick={
-            onRename
-              ? () => {
-                  clearTimeout(pendingClick.current);
-                  if (!onRename()) onSelect();
-                }
-              : undefined
-          }
-          onContextMenu={() => clearTimeout(pendingClick.current)}
+          {...activation}
           icon={
             Icon ? (
               <Icon session={session} channelId={id} fallback={chatIcon} />

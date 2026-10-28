@@ -33,6 +33,7 @@ afterEach(async () => {
   localStorage.clear();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 function fixture() {
   const h = createSoloRegionFixture();
@@ -46,7 +47,7 @@ function mount(
   const open = vi.fn(async () => ({ status: "opened" as const }));
   const retryReveal = vi.fn();
   const revealAgain = vi.fn();
-  const navigator = { open } as unknown as Navigation;
+  const navigator = { ...h.navigator, open } as Navigation;
   function View() {
     const [collapsed, setCollapsed] = useState<string[]>([]);
     const [order, setOrder] = useState<string[]>([]);
@@ -601,6 +602,176 @@ it.each([
     await waitFor(() =>
       expect(screen.getByRole("button", { name: remaining })).toHaveFocus(),
     );
+  },
+);
+
+it("does not restore focus after the user leaves a mounted destination for the page body", async () => {
+  const h = fixture();
+  await h.register({ component: Body });
+  mount(h);
+  const row = screen.getByRole("button", { name: "Owned" });
+  row.focus();
+  row.blur();
+  expect(document.body).toHaveFocus();
+  await act(() =>
+    h.roster(
+      h.session.channels
+        .list()
+        .channels.filter((channel) => channel.id !== "owned"),
+    ),
+  );
+  expect(document.body).toHaveFocus();
+});
+
+it.each(["hidden", "inert"])(
+  "skips a %s neighbor and restores the section summary",
+  async (attribute) => {
+    const h = fixture();
+    await h.register({
+      component: ({ ui }) => (
+        <>
+          <Row ui={ui} channelId="owned" />
+          <div
+            {...(attribute === "hidden" ? { hidden: true } : { inert: true })}
+          >
+            <Row ui={ui} channelId="shared" />
+          </div>
+        </>
+      ),
+    });
+    mount(h);
+    screen.getByRole("button", { name: "Owned" }).focus();
+    await act(() =>
+      h.roster(
+        h.session.channels
+          .list()
+          .channels.filter((channel) => channel.id !== "owned"),
+      ),
+    );
+    expect(screen.getByLabelText("Work")).toHaveFocus();
+  },
+);
+
+async function narrowRenameFixture() {
+  const h = fixture();
+  Object.assign(h.session, {
+    channelDetails: {
+      ...h.session.channelDetails,
+      available: true,
+      load: async () => {
+        throw new Error("Offline");
+      },
+    },
+  });
+  await h.register({
+    component: ({ ui }) => (
+      <>
+        <Row ui={ui} channelId="owned" />
+        <Row ui={ui} channelId="shared" />
+      </>
+    ),
+  });
+  const view = mount(h);
+  vi.stubGlobal("matchMedia", () => ({
+    matches: true,
+    addEventListener() {},
+    removeEventListener() {},
+  }));
+  vi.useFakeTimers();
+  return { h, ...view };
+}
+
+it("keeps the narrow drawer available for double-click rename and cancels the delayed navigation", async () => {
+  const { open } = await narrowRenameFixture();
+  const row = screen.getByRole("button", { name: "Owned" });
+  fireEvent.click(row, { detail: 1 });
+  expect(open).not.toHaveBeenCalled();
+  fireEvent.click(row, { detail: 2 });
+  fireEvent.doubleClick(row);
+  expect(screen.getByRole("textbox", { name: "Chat name" })).toHaveFocus();
+  await act(() => vi.advanceTimersByTimeAsync(500));
+  expect(open).not.toHaveBeenCalled();
+});
+
+it("opens only the latest narrow mouse selection after the double-click boundary", async () => {
+  const { open } = await narrowRenameFixture();
+  fireEvent.click(screen.getByRole("button", { name: "Owned" }), { detail: 1 });
+  fireEvent.click(screen.getByRole("button", { name: "Shared" }), {
+    detail: 1,
+  });
+  await act(() => vi.advanceTimersByTimeAsync(499));
+  expect(open).not.toHaveBeenCalled();
+  await act(() => vi.advanceTimersByTimeAsync(1));
+  expect(open).toHaveBeenCalledTimes(1);
+  expect(open).toHaveBeenCalledWith(
+    expect.objectContaining({ channelId: "shared" }),
+  );
+});
+
+it("shares delayed activation across source regions", async () => {
+  const { h, open } = await narrowRenameFixture();
+  await act(async () => {
+    await h.register({
+      id: "other",
+      title: "Other",
+      component: ({ ui }) => <Row ui={ui} channelId="shared" />,
+    });
+    h.roster(
+      h.session.channels
+        .list()
+        .channels.map((channel) =>
+          channel.id === "shared"
+            ? { ...channel, labels: ["buzz.solo", "buzz.region:example:other"] }
+            : channel,
+        ),
+    );
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Owned" }), { detail: 1 });
+  fireEvent.click(screen.getByRole("button", { name: "Shared" }), {
+    detail: 1,
+  });
+  await act(() => vi.advanceTimersByTimeAsync(500));
+  expect(open).toHaveBeenCalledTimes(1);
+  expect(open).toHaveBeenCalledWith(
+    expect.objectContaining({ channelId: "shared" }),
+  );
+});
+
+it.each(["navigation", "unmount", "context menu"])(
+  "cancels narrow delayed activation after %s",
+  async (action) => {
+    const { h, open, unmount } = await narrowRenameFixture();
+    const row = screen.getByRole("button", { name: "Owned" });
+    fireEvent.click(row, { detail: 1 });
+    if (action === "navigation")
+      await act(() => h.navigate({ version: 1, kind: "home" }));
+    else if (action === "unmount") unmount();
+    else fireEvent.contextMenu(row);
+    await act(() => vi.advanceTimersByTimeAsync(500));
+    expect(open).not.toHaveBeenCalled();
+  },
+);
+
+it.each(["keyboard", "touch", "rename unavailable"])(
+  "activates a narrow row immediately for %s",
+  async (input) => {
+    const { h, open } = await narrowRenameFixture();
+    if (input === "rename unavailable") {
+      Object.assign(h.session.channelDetails, { available: false });
+      await act(() => h.reconnect());
+    }
+    const row = screen.getByRole("button", { name: "Owned" });
+    if (input === "touch") {
+      // jsdom lacks PointerEvent; preserve the browser's pointerType field.
+      fireEvent(
+        row,
+        Object.assign(new Event("pointerdown", { bubbles: true }), {
+          pointerType: "touch",
+        }),
+      );
+    }
+    fireEvent.click(row, { detail: input === "keyboard" ? 0 : 1 });
+    expect(open).toHaveBeenCalledTimes(1);
   },
 );
 

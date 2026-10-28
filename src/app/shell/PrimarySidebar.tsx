@@ -254,6 +254,7 @@ function ScopedSidebar({
                         ordinaryActions,
                         header,
                         creationTrigger,
+                        pendingClick,
                       ) => (
                         <SoloRegions
                           key={`regions:${scope}:${connection.generation}`}
@@ -265,6 +266,7 @@ function ScopedSidebar({
                           ordinary={ordinary}
                           ordinaryActions={ordinaryActions}
                           creationTrigger={creationTrigger}
+                          pendingClick={pendingClick}
                           fallback={
                             <>
                               {header}

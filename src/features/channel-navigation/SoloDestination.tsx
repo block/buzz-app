@@ -1,3 +1,4 @@
+import { useSoloRowActivation } from "./useSoloRowActivation";
 import {
   type ReactNode,
   type RefObject,
@@ -50,6 +51,7 @@ export const RegionDestinationContext = createContext<
       region: SoloRegion;
       session: RelaySession;
       navigator: Navigation;
+      pendingClick: RefObject<ReturnType<typeof setTimeout> | undefined>;
       scope: string;
       current: string | undefined;
       active(): boolean;
@@ -63,7 +65,8 @@ type ConversationState = Readonly<{
   selected: boolean;
   menu: ReactNode;
   open(): void;
-  rename(): void;
+  canRename: boolean;
+  rename(): boolean;
   focusTarget(): HTMLElement | false;
 }>;
 const ConversationContext = createContext<ConversationState | undefined>(
@@ -150,9 +153,18 @@ export function RegionConversation(props: SoloConversationProps) {
     open() {
       if (active()) void navigator.open(conversationTarget(scope, channel.id));
     },
+    canRename:
+      session.channelDetails.available && !channel.readOnly && !channel.cached,
     rename() {
-      if (active() && session.channelDetails.available && !channel.readOnly)
-        setDialog("rename");
+      if (
+        !active() ||
+        !session.channelDetails.available ||
+        channel.readOnly ||
+        channel.cached
+      )
+        return false;
+      setDialog("rename");
+      return true;
     },
     focusTarget,
   };
@@ -209,8 +221,17 @@ export function RegionConversation(props: SoloConversationProps) {
 
 function ConversationLink(props: SoloConversationLinkProps) {
   const state = useContext(ConversationContext);
-  if (!state) return null;
+  const context = useContext(RegionDestinationContext);
   const primary = !props.secondary;
+  const activation = useSoloRowActivation(
+    context?.navigator,
+    context?.pendingClick,
+    () => state?.open(),
+    primary && props.rename !== false && state?.canRename
+      ? state.rename
+      : undefined,
+  );
+  if (!state) return null;
   return (
     <NavigationItem
       {...(primary ? { "data-solo-destination-id": state.channel.id } : {})}
@@ -221,10 +242,7 @@ function ConversationLink(props: SoloConversationLinkProps) {
       trailing={props.trailing}
       multiline={!!props.multiline}
       selected={primary && state.selected}
-      onDoubleClick={() => {
-        if (primary && props.rename !== false) state.rename();
-      }}
-      onClick={state.open}
+      {...activation}
     />
   );
 }
@@ -399,22 +417,24 @@ function useDestinationFocus(
       ];
       queueMicrotask(() => {
         if (document.activeElement !== document.body) return;
-        const remaining = ids
-          .map(
+        const candidates = [
+          ...ids.map(
             (id) =>
               id &&
               document.querySelector<HTMLElement>(
                 `[data-solo-destination-id="${CSS.escape(id)}"]`,
               ),
-          )
-          .find(Boolean);
-        (
-          remaining ||
+          ),
           document.querySelector<HTMLElement>(
             `[data-sidebar-section="${CSS.escape(region?.getAttribute("data-sidebar-section") ?? "")}"] summary`,
-          ) ||
-          document.querySelector<HTMLElement>("[data-solo-heading]")
-        )?.focus();
+          ),
+          document.querySelector<HTMLElement>("[data-solo-heading]"),
+        ];
+        for (const candidate of candidates) {
+          if (!candidate || candidate.closest("[hidden], [inert]")) continue;
+          candidate.focus();
+          if (document.activeElement === candidate) break;
+        }
       });
     };
   }, [root, channelId, visible]);
@@ -429,8 +449,7 @@ function useDestinationFocus(
     },
     onBlurCapture(event: FocusEvent<HTMLDivElement>) {
       if (
-        event.relatedTarget &&
-        event.relatedTarget !== document.body &&
+        event.currentTarget.isConnected &&
         !event.currentTarget.contains(event.relatedTarget as Node)
       )
         focused.current = false;

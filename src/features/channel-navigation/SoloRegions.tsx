@@ -61,6 +61,7 @@ export function SoloRegions({
   ordinaryActions,
   creationTrigger,
   fallback,
+  pendingClick: sharedPendingClick,
 }: {
   session: RelaySession;
   navigator: Navigation;
@@ -71,7 +72,12 @@ export function SoloRegions({
   ordinaryActions?: ReactNode;
   creationTrigger?: RefObject<HTMLButtonElement | null> | undefined;
   fallback?: ReactNode;
+  pendingClick?: RefObject<ReturnType<typeof setTimeout> | undefined>;
 }) {
+  const localPendingClick = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined,
+  );
+  const pendingClick = sharedPendingClick ?? localPendingClick;
   const snapshot = useSoloNavigation(session);
   const service = soloNavigationFor(session);
   const regions = orderContributedSidebarSections(
@@ -93,6 +99,7 @@ export function SoloRegions({
           session={session}
           scope={scope}
           navigator={navigator}
+          pendingClick={pendingClick}
           target={target}
           sidebar={sidebar}
           move={(offset) => {
@@ -130,12 +137,14 @@ function RegionFrame({
   ordinary,
   ordinaryActions,
   creationTrigger,
+  pendingClick,
 }: {
   scope: string;
   region: SoloRegion;
   service: SoloNavigationService;
   session: RelaySession;
   navigator: Navigation;
+  pendingClick: RefObject<ReturnType<typeof setTimeout> | undefined>;
   target: OpenTarget;
   sidebar: ReturnType<typeof useSidebarView>;
   move(offset: number): void;
@@ -287,6 +296,7 @@ function RegionFrame({
         region,
         session,
         navigator,
+        pendingClick,
         scope,
         current,
         active,

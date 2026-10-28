@@ -1036,6 +1036,38 @@ it("leaves room for the final answers of public searches that run side by side",
   expect(h.pending).toHaveLength(0);
 });
 
+it("leaves room for the final answer of a public search that joins after a page lands", async () => {
+  const h = setup();
+  h.channels.ensureList();
+  await h.rosters(1022);
+  await h.metadata(1022);
+  const { id, first, second, take, resolves, names } = openDirectory(h);
+  const typed: string[][] = [];
+  const found = h.channels.searchPublic?.("nsec-backup", {
+    limit: 1,
+    progress: (found) => typed.push(names(found)),
+  });
+  assert.exists(found);
+  // Alone on the read, a page in flight would still spend a slot the final
+  // answers of this search and of an `in:` lookup joining later both need.
+  (await take()).respond(first);
+  await vi.waitFor(() => expect(typed).toEqual([[]]));
+  // Editing `nsec-backup` to `in:recent-1 nsec-backup` starts only the lookup.
+  const scoped = h.channels.searchPublic?.("recent-1", {
+    exact: true,
+    limit: 1,
+  });
+  assert.exists(scoped);
+  (await take()).respond(second);
+  await vi.waitFor(() => expect(typed).toEqual([[], []]));
+  (await take()).respond([]);
+  await resolves([id(500)]);
+  await resolves([id(1)]);
+  expect(names(await found)).toEqual(["nsec-backup-older"]);
+  expect(names(await scoped)).toEqual(["recent-1"]);
+  expect(h.pending).toHaveLength(0);
+});
+
 it("stops a public search between pages when its caller gives up", async () => {
   const h = setup();
   h.channels.ensureList();

@@ -1851,9 +1851,9 @@ export function createChannelStore(
     // it re-reads the signed metadata and the viewer roster for each match
     // before granting a preview. The final answer re-reads every match; pages
     // in flight resolve at most `limit` channels in all and leave every
-    // search in flight (`in:team data` runs two) `limit` free discovery slots
-    // for its final answer, so a long read cannot fill discovery or crowd out
-    // a better match on a later page.
+    // search in flight, and one that joins later (`in:team data` runs two),
+    // `limit` free discovery slots for its final answer, so a long read
+    // cannot fill discovery or crowd out a better match on a later page.
     const answer = async (final: boolean) => {
       const latest = new Map<string, RelayEvent>();
       for (const event of entry.events) {
@@ -1893,7 +1893,7 @@ export function createChannelStore(
                 0,
                 Math.min(
                   limit - resolved.size,
-                  discovery.headroom() - publicSearchReserve,
+                  discovery.headroom() - publicSearchReserve - limit,
                 ),
               ),
             );
@@ -2021,7 +2021,8 @@ export function createChannelStore(
       : undefined;
   }
   /** Metadata slots the final answers of the public searches in flight may
-   * still need, `limit` each; pages ranked while they run admit only beyond. */
+   * still need, `limit` each; pages ranked while they run admit only beyond
+   * it and one more `limit`, for a search that joins the read later. */
   let publicSearchReserve = 0;
   /** The last search's channels (its answer, or the matches of the pages it
    * has read so far) that still match `query`, in search order. Callers

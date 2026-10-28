@@ -33,6 +33,8 @@ import {
 } from "./AgentBrowse";
 import { AgentShareDialog } from "./AgentShareDialog";
 import { AgentCard, AgentPortrait, TeamCard } from "./AgentCard";
+import { AgentInventoryDrag, DraggableAgentRow } from "./AgentInventoryDrag";
+import { moveAgent, useAgentOrder } from "./agent-order";
 import { AgentCreateDialog, TypeIcon } from "./AgentCreateDialog";
 import { NewAgentTile } from "./NewAgentTile";
 import type { ChannelChoice } from "../../features/agents/attention";
@@ -433,7 +435,11 @@ export function AgentsPage({
         {...inventory}
       />
     ) : (
-      <Inventory {...inventory} />
+      <Inventory
+        key={connection.scope}
+        {...inventory}
+        scope={connection.scope}
+      />
     );
   })();
 
@@ -669,6 +675,7 @@ export function AgentsPage({
 }
 
 type InventoryProps = {
+  scope?: string | undefined;
   service: Agents;
   agents: readonly Agent[];
   selected: string | undefined;
@@ -700,6 +707,8 @@ function DefaultAgentInventory({
     <>
       <Inventory
         {...props}
+        key={scope}
+        scope={scope}
         session={session}
         defaultAgent={current?.pubkey}
         defaultPinned={!!current && current.pubkey === chosen}
@@ -774,7 +783,45 @@ function CardContextMenu({
 
 /** Cards retain arrow navigation; their embedded controls have their own tab stops. The
  * New agent tile leads the grid but is its own stop. */
-function Inventory({
+function Inventory({ scope, agents, typeOf, ...props }: InventoryProps) {
+  const { ordered, save, error } = useAgentOrder(scope, agents);
+  return (
+    <>
+      <AgentInventoryDrag
+        agents={ordered}
+        enabled={!!scope}
+        onMove={save}
+        overlay={(agent) => (
+          <AgentCard
+            agent={agent}
+            community={agent.relay || undefined}
+            icon={<TypeIcon type={typeOf(agent)} />}
+            detail={summaryOf(agent, typeOf(agent))}
+          />
+        )}
+      >
+        {(preview, dragging) => (
+          <InventoryGrid
+            {...props}
+            scope={scope}
+            agents={preview}
+            dragging={dragging}
+            typeOf={typeOf}
+            onReorder={save}
+          />
+        )}
+      </AgentInventoryDrag>
+      {error && (
+        <p role="alert" className="text-body-sm text-danger">
+          {error}
+        </p>
+      )}
+    </>
+  );
+}
+
+function InventoryGrid({
+  scope,
   service,
   agents,
   selected,
@@ -787,7 +834,12 @@ function Inventory({
   defaultChoices,
   onMakeDefault,
   session,
-}: InventoryProps) {
+  onReorder,
+  dragging,
+}: InventoryProps & {
+  dragging: boolean;
+  onReorder(agents: readonly Agent[]): void;
+}) {
   const grid = useRef<HTMLDivElement>(null);
   const index = agents.findIndex((agent) => agent.pubkey === selected);
   const columns = () =>
@@ -795,6 +847,7 @@ function Inventory({
       ? getComputedStyle(grid.current).gridTemplateColumns.split(" ").length
       : 1;
   const onKeyDown = (event: KeyboardEvent) => {
+    if (dragging) return;
     if (
       !(event.target instanceof HTMLElement) ||
       event.target.getAttribute("role") !== "gridcell"
@@ -833,7 +886,7 @@ function Inventory({
       [next]?.focus();
   };
   return (
-    <div ref={grid} className={cardStyles.grid}>
+    <div ref={grid} className={cardStyles.grid} data-agent-grid="">
       {newAgent}
       {agents.length > 0 && (
         // biome-ignore lint/a11y/useSemanticElements: This is a wrapping layout grid of interactive cards, not tabular data.
@@ -848,9 +901,11 @@ function Inventory({
             const active = agent.pubkey === selected;
             const isMain = agent.pubkey === defaultAgent;
             return (
-              // biome-ignore lint/a11y/useSemanticElements: Layout grid rows group cards without table layout.
-              // biome-ignore lint/a11y/useFocusableInteractive: Roving focus belongs to the gridcell, not its row wrapper.
-              <div role="row" className="contents" key={agent.pubkey}>
+              <DraggableAgentRow
+                key={agent.pubkey}
+                agent={agent}
+                enabled={!!scope}
+              >
                 <InventoryCard
                   tag={
                     isMain ? (
@@ -868,6 +923,18 @@ function Inventory({
                           pinned: isMain && !!defaultPinned,
                           available: !!defaultChoices?.has(agent.pubkey),
                           onMake: () => onMakeDefault(agent.pubkey),
+                        }
+                      : undefined
+                  }
+                  reorder={
+                    scope
+                      ? {
+                          first: position === 0,
+                          last: position === agents.length - 1,
+                          move: (delta) =>
+                            onReorder(
+                              moveAgent(agents, position, position + delta),
+                            ),
                         }
                       : undefined
                   }
@@ -905,7 +972,7 @@ function Inventory({
                   icon={<TypeIcon type={type} />}
                   detail={summaryOf(agent, type)}
                 />
-              </div>
+              </DraggableAgentRow>
             );
           })}
         </div>
@@ -922,6 +989,7 @@ function InventoryCard({
   onBuild,
   onRemoved,
   main,
+  reorder,
   ...props
 }: Omit<React.ComponentProps<typeof AgentCard>, "agent"> & {
   agent: Agent;
@@ -930,6 +998,9 @@ function InventoryCard({
   type: RegisteredAgentType | undefined;
   onBuild(): void;
   onRemoved(): void;
+  reorder?:
+    | { first: boolean; last: boolean; move(delta: number): void }
+    | undefined;
   /** Whether it is the community's main agent and can be made it. */
   main?:
     | { isMain: boolean; pinned: boolean; available: boolean; onMake(): void }
@@ -968,6 +1039,17 @@ function InventoryCard({
           </MenuItem>
         ))}
       {main && <MenuSeparator />}
+      {reorder && (
+        <>
+          <MenuItem disabled={reorder.first} onClick={() => reorder.move(-1)}>
+            Move earlier
+          </MenuItem>
+          <MenuItem disabled={reorder.last} onClick={() => reorder.move(1)}>
+            Move later
+          </MenuItem>
+          <MenuSeparator />
+        </>
+      )}
       {editable && <MenuItem onClick={onBuild}>Open settings</MenuItem>}
       {editable && session && type?.exportShared && (
         <MenuItem onClick={() => setSharing(true)}>Share</MenuItem>

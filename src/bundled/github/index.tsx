@@ -36,6 +36,7 @@ import {
   stateIcons,
 } from "./SoloPull";
 import { watchPulls } from "./watcher";
+import { SubmitReview } from "./SubmitReview";
 
 /** How often an open pull request panel reads GitHub again. */
 export const REFRESH_MS = 30_000;
@@ -330,6 +331,15 @@ function ObjectPanel({
             </>
           )}
         </div>
+        {/* Pull requests someone else opened take reviews. */}
+        {gh &&
+          typeof loaded === "object" &&
+          loaded.checklist &&
+          !loaded.checklist.authored && (
+            <span className={styles.identityAction}>
+              <SubmitReview pull={loaded.checklist} gh={gh} refresh={load} />
+            </span>
+          )}
       </div>
       {reference.kind !== "pull" && (
         <a

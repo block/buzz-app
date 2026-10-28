@@ -1,3 +1,4 @@
+import type { Navigation } from "../../features/navigation/controller";
 import { retainTabVisits } from "../../features/messages/tab-visit-lifetime";
 import { threadPlacementPreference } from "../../features/messages/thread-preferences";
 import {
@@ -286,7 +287,7 @@ export const rootOfTab = (tab: Extract<ConversationTab, { kind: "thread" }>) =>
  * page. Tabs the viewer opened for other channels' threads are left alone.
  * Opening never moves the viewer's selection or focus, and closing refuses
  * the tab the viewer sees, so no selection needs repair. */
-export function channelTabs(session: RelaySession) {
+export function channelTabs(session: RelaySession, navigation?: Navigation) {
   const store = storeOf(session);
   const stateOf = (channelId: string) =>
     store.snapshot()[keyOf("messages", channelId)] ?? empty;
@@ -356,10 +357,19 @@ export function channelTabs(session: RelaySession) {
       const thread = threads(channelId).find((item) => item.root === rootId);
       if (!thread) return "missing";
       if (thread.shown) return "shown";
+      const visits = Object.entries(
+        stateOf(channelId).routedVisits ?? {},
+      ).flatMap(([id, visit]) =>
+        visit.channelId === channelId && visit.rootId === rootId ? [id] : [],
+      );
       store.update(keyOf("messages", channelId), (state) => ({
         ...state,
         tabs: state.tabs.filter((tab) => tab !== thread.tab),
       }));
+      // Exact session-owned visit IDs cannot retire a different scope. Inactive
+      // close preserves the current destination and its presentation authority.
+      if (navigation)
+        navigation.dismiss(visits, navigation.snapshot().entry.target);
       return "closed";
     },
     /** Names thread `rootId`'s tab; an empty name restores its automatic

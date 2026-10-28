@@ -49,6 +49,14 @@ test("refresh restores profile and thread tabs, both panes and selection", async
   await main.getByRole("tab", { name: "Alpha", exact: true }).click();
   await openThread(1);
   await expect(thread(side, 1)).toHaveAttribute("aria-selected", "true");
+  // A new thread replaces a transient detail. Reopen the detail, then select
+  // the existing thread tab to build the mixed workspace explicitly.
+  await main
+    .getByRole("button", { name: "View Fixture Reader profile", exact: true })
+    .first()
+    .click();
+  await expect(profile).toHaveAttribute("aria-selected", "true");
+  await thread(side, 1).click();
   const order = await side
     .getByRole("tablist", { name: "Panel tabs", exact: true })
     .getByRole("tab")
@@ -83,10 +91,17 @@ test("refresh restores profile and thread tabs, both panes and selection", async
 
   // Back/Forward keeps workspace membership; explicit close stays closed on
   // another refresh. Main's existing dismissal semantics are unchanged here.
+  // Selecting the existing thread changes this visit's layout without adding
+  // another address. Back first reaches its earlier routed thread visit.
+  await page.getByRole("button", { name: "Go back", exact: true }).click();
+  await expect(thread(side, 1)).toHaveAttribute("aria-selected", "true");
   await page.getByRole("button", { name: "Go back", exact: true }).click();
   await expect(thread(main, 0)).toHaveAttribute("aria-selected", "true");
   await page.getByRole("button", { name: "Go forward", exact: true }).click();
   await expect(thread(side, 1)).toHaveAttribute("aria-selected", "true");
+  await page.getByRole("button", { name: "Go forward", exact: true }).click();
+  await expect(profile).toHaveAttribute("aria-selected", "true");
+  await thread(side, 1).click();
   await profile.click();
   await expect(
     side.getByRole("complementary", { name: "Profile", exact: true }),
@@ -135,7 +150,12 @@ test("dismissal after refresh retires older profile and thread visits", async ({
       .getByRole("button", { name: /^View thread:/ }),
   );
   await expect(thread).toHaveAttribute("aria-selected", "true");
-  await profile.click();
+  // The first profile visit remains a return path after replacement. Its fresh
+  // opening must join it in the same dismissal set, including across reload.
+  await main
+    .getByRole("button", { name: "View Fixture Reader profile", exact: true })
+    .first()
+    .click();
   await expect(profile).toHaveAttribute("aria-selected", "true");
   await thread.click();
   await expect(thread).toHaveAttribute("aria-selected", "true");

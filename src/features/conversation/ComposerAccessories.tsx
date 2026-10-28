@@ -68,13 +68,13 @@ function OwnedAccessory({
     current.current = props;
   });
   const canOpenThread = !!props.openThread;
-  // Commands go inert when this owner unmounts or its inputs change. Build
-  // them during render so the accessory mounts in the first pass.
-  const owner = useMemo(() => {
-    const token = { live: true };
-    const session = props.session;
+  const session = props.session;
+  // Built during render so the accessory mounts in the same commit. A set of
+  // commands acts until a newer set replaces it or the accessory unmounts.
+  const { commands, lifetime } = useMemo(() => {
+    const lifetime = { retired: false };
     const active = () =>
-      token.live &&
+      !lifetime.retired &&
       registry.snapshot().includes(entry) &&
       current.current.session === session;
     const commands: Pick<
@@ -90,15 +90,14 @@ function OwnedAccessory({
         ? () => active() && (current.current.openThread?.() ?? false)
         : undefined,
     };
-    return { token, commands };
-  }, [entry, registry, props.session, canOpenThread]);
+    return { commands, lifetime };
+  }, [entry, registry, session, canOpenThread]);
   useLayoutEffect(() => {
-    owner.token.live = true;
+    lifetime.retired = false;
     return () => {
-      owner.token.live = false;
+      lifetime.retired = true;
     };
-  }, [owner]);
-  const commands = owner.commands;
+  }, [lifetime]);
   const Accessory = entry.component;
   return <Accessory {...props} {...commands} />;
 }

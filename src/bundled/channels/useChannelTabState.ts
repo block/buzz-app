@@ -519,7 +519,7 @@ export function useChannelTabState(
   const store = storeOf(session);
   const channels = useSyncExternalStore(store.subscribe, store.snapshot);
   useLayoutEffect(() => {
-    if (!navigation) return;
+    if (!navigation?.snapshot().retainedVisits) return;
     const prune = () => {
       const retained = navigation.snapshot().retainedVisits;
       if (retained) store.prune(new Set(retained));

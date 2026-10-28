@@ -40,6 +40,10 @@ test("holding an agent previews a move, cancels cleanly, and saves only on drop"
   await page.mouse.up();
   await expect.poll(order).toEqual(["Ada", "Bo", "Cy"]);
   await page.clock.runFor(300);
+  // dnd-kit's Web Animation uses real time, not the installed test clock.
+  await expect(
+    page.locator('[aria-hidden="true"]').getByText("Ada", { exact: true }),
+  ).toHaveCount(0);
   await press();
   await page.mouse.move(end.x + end.width / 2, end.y + end.height / 3, {
     steps: 8,
@@ -106,7 +110,7 @@ test("holding an agent previews a move, cancels cleanly, and saves only on drop"
     await expect(page.locator("[data-dragging]")).toHaveCount(0);
     await expect(panel).toBeVisible();
     await expect(ada).toHaveAttribute("aria-selected", "true");
-    // Let both the overlay and dnd-kit's click guard finish before mouseup.
+    // Expire the timer-based click guard, then await the real-time drop animation.
     await page.clock.runFor(300);
     await expect(
       page.locator('[aria-hidden="true"]').getByText("Ada", { exact: true }),

@@ -1,13 +1,11 @@
 diff --git a/lib/index.js b/lib/index.js
-index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f4955fdebb69 100644
+index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..97d83b0614841b8488d3849685aef88615ea61ff 100644
 --- a/lib/index.js
 +++ b/lib/index.js
 @@ -6,6 +6,10 @@ import { jsx as c } from "react/jsx-runtime";
--
-+
+ 
  import { flushSync as f } from "react-dom";
--
-+
+ 
 +// WebKit can restore a stale native scroll offset after an instant correction.
 +// Interrupt only the corrected axis; observer-inferred idle is not native idle.
 +const isMacWebKit = () => typeof navigator !== "undefined" && !I() && navigator.platform === "MacIntel" && navigator.vendor === "Apple Computer, Inc.";
@@ -25,7 +23,7 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
 +    // A shift compensates every resize until scroll-end, a 150ms timer from
 +    // its jump's scroll event, but the rows it prepends measure in the frame
 +    // after that jump. Count the rows it awaits so a late frame cannot lose them.
-+    let shiftEnd = 0, shiftIdle = !1;
++    let shiftEnd = 0, shiftIdle = !1, inputScroll = !1;
 +    const shiftPending = () => {
 +        for (let e = h(x[0], 0), t = d(x[1], shiftEnd - 1, l() - 1); e <= t; e++) if (unmeasured(e)) return !0;
 +        return !1;
@@ -49,7 +47,7 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
          if (y && 1 === z) return d(y[0], e);
          const o = T();
          let n = t(o);
-@@ -44,7 +63,16 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+@@ -44,7 +63,18 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
              let o, n;
              if (_) [o, n] = x; else {
                  let r = h(0, T()), s = r + $;
@@ -57,20 +55,30 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
 +                const [ps, pe] = x;
 +                // Direction is frozen outside native scrolling, such as after a
 +                // shift until inferred idle; it cannot choose one buffered side.
-+                c() || (t = h(0, t), r -= t, s += t), [o, n] = x = e(h(0, r), h(0, s));
-+                if (!c() && !z && v) {
-+                    // A native gesture buffers only ahead, but keeps the rows behind
-+                    // it that are still mounted rather than remount them at idle.
++                c() || (t = h(0, t), (1 !== v || z || !inputScroll) && (r -= t), (2 !== v || z || !inputScroll) && (s += t)), [o, n] = x = e(h(0, r), h(0, s));
++                if (!c() && !z && v && !inputScroll) {
++                    // A native gesture buffers only ahead. A scroll no input drove,
++                    // such as following new rows, keeps the rows behind it that are
++                    // still mounted rather than remount them at idle; a user gesture
++                    // leaves them, as they rarely return before it ends.
 +                    const [vs, ve] = e(h(0, r + t), h(0, s - t));
 +                    1 === v ? o = x[0] = h(o, pe >= vs ? d(vs, ps) : vs) : n = x[1] = d(n, ps <= ve ? h(ve, pe) : ve);
 +                }
                  y && (o = d(o, y[0]), n = h(n, y[1]));
              }
              return [ h(o, 0), d(n, l() - 1) ];
-@@ -79,13 +107,19 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+@@ -68,7 +98,7 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+             switch (t) {
+               case 1:
+                 {
+-                    if (n === m && 0 === z) break;
++                    if (inputScroll = !!c, n === m && 0 === z) break;
+                     const e = _;
+                     _ = 0;
+                     const t = n - m, o = g(t);
+@@ -79,13 +109,19 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
                  }
--
-+
+ 
                case 2:
 -                h = 8, 0 !== v && (f = !0, h += 1), v = 0, z = 0, y = null;
 +                h = 8, 0 !== v && (f = !0, h += 1), v = 0, y = null;
@@ -78,8 +86,7 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
 +                // unmeasured; the batch that measures them ends it below.
 +                2 === z && shiftPending() ? shiftIdle = !0 : (z = 0, shiftEnd = 0, shiftIdle = !1);
                  break;
--
-+
+ 
                case 3:
                  if (n.length) {
                      const e = C(), t = o(e);
@@ -89,9 +96,8 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
 +                    shiftIdle && 2 === z && !shiftPending() && (z = 0, shiftEnd = 0, shiftIdle = !1);
                  }
                  break;
--
-+
-@@ -96,6 +130,17 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+ 
+@@ -96,6 +132,17 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
                case 5:
                  if (n !== l()) {
                      if (c) {
@@ -109,7 +115,7 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
                          const e = s();
                          i(n, !0), M(s() - e), z = 2;
                      } else i(n);
-@@ -308,23 +353,55 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+@@ -308,23 +355,55 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
      };
      return null != o && (s.position = "sticky", s[n] = o + "px", s.zIndex = r), s;
  }, J = e => {
@@ -158,7 +164,8 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
          }
      };
  }, j = (e, t, o, n, r, s, l, i) => {
-     let c, f, a = 0, u = !1, d = !1, h = !1, g = !1;
+-    let c, f, a = 0, u = !1, d = !1, h = !1, g = !1;
++    let c, f, a = 0, u = !1, d = !1, h = !1, g = !1, inputAt = -1 / 0;
 +    // Scroll APIs can truncate fractional offsets. Reach the whole edge without
 +    // quantizing interior reading positions or changing RTL normalization.
 +    const edgeOffset = t => t >= e.M() + e.t() - e.o() ? Math.ceil(t) : t;
@@ -169,8 +176,35 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
              behavior: t ? "smooth" : "instant"
          });
      }, x = () => {
-@@ -353,6 +430,10 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+@@ -333,13 +412,17 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+     }, b = () => {
+         S(f), f = w(x, 150);
+     }, R = () => {
+-        a = $(), h && (g = !0), i && e.h(7, i()), e.h(1, z()), b();
++        // A scroll soon after input, or soon after a scroll it drove, is the user's.
++        const t = $(), user = d || t - inputAt < 150;
++        user && (inputAt = t), a = t, h && (g = !0), i && e.h(7, i()), e.h(1, z(), user), b();
++    }, input = () => {
++        inputAt = $();
+     }, k = t => {
+-        if (u || !e.O() || t.ctrlKey) return;
++        if (inputAt = $(), u || !e.O() || t.ctrlKey) return;
+         const o = $() - a;
+         150 > o && 50 < o && (r ? t.deltaX : t.deltaY) && (u = !0);
+     }, T = () => {
+-        d = !0, h = g = !1;
++        inputAt = $(), d = !0, h = g = !1;
+     }, O = () => {
+         d = !1, I() && (h = !0);
+     };
+@@ -351,18 +434,29 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
          passive: !0
+     }), o.addEventListener("touchcancel", O, {
+         passive: !0
++    }), o.addEventListener("keydown", input, {
++        passive: !0
++    }), o.addEventListener("pointerdown", input, {
++        passive: !0
      }), {
          j: R,
 +        offset: z,
@@ -179,8 +213,10 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
 +        },
          J: () => {
              o.removeEventListener("scroll", R), o.removeEventListener("wheel", k), o.removeEventListener("touchstart", T), 
-             o.removeEventListener("touchend", O), o.removeEventListener("touchcancel", O), S(f);
-@@ -360,9 +441,11 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+-            o.removeEventListener("touchend", O), o.removeEventListener("touchcancel", O), S(f);
++            o.removeEventListener("touchend", O), o.removeEventListener("touchcancel", O), 
++            o.removeEventListener("keydown", input), o.removeEventListener("pointerdown", input), S(f);
+         },
          D: () => {
              const [t, o] = e.C();
              if (!t) return;
@@ -194,7 +230,7 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
                  [m]: v(t),
                  behavior: "instant"
              }), o && (c && c(), e.o() > e.t() && e.h(1, z()));
-@@ -393,10 +476,32 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+@@ -393,10 +487,32 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
          }
      };
  }, D = (e, t, o) => {
@@ -229,7 +265,7 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
          l = !0, e.h(4, o ? a : u)) : l = !1; else if (f.offsetParent) {
              const e = i.get(f);
              if (null != e) {
-@@ -408,7 +513,13 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+@@ -408,7 +524,13 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
      });
      return {
          F(l, i = l.parentElement) {
@@ -244,7 +280,7 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
                  const e = o ? "overflowX" : "overflowY", t = i.style, n = t[e];
                  t[e] = "hidden", w(() => {
                      t[e] = n;
-@@ -416,7 +527,9 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+@@ -416,7 +538,9 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
              }), s[1](!0);
          },
          R() {
@@ -255,7 +291,7 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
          },
          K: (e, t) => (i.set(e, t), c.V(e), () => {
              i.delete(e), c.X(e);
-@@ -485,7 +598,8 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+@@ -485,7 +609,8 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
          },
          F(c, f = c.parentElement) {
              u.V(r = f);
@@ -265,10 +301,9 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
                  const e = o ? "overflowX" : "overflowY", t = f.style, n = t[e];
                  t[e] = "hidden", w(() => {
                      t[e] = n;
-@@ -1194,4 +1308,3 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+@@ -1194,4 +1319,3 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
  });
--
-+
+ 
  export { he as VGrid, ce as VList, pe as VMasonry, ie as Virtualizer, fe as WindowVirtualizer };
 \ No newline at end of file
 -//# sourceMappingURL=index.js.map

@@ -35,11 +35,14 @@ viewport, and React commits one frame behind, so the leading edge stays blank fo
 the rest of the gesture. The range therefore buffers both sides while the
 direction is frozen, as it already does when idle.
 
-A native gesture still buffers only ahead, but keeps the rows behind it that
-are already mounted, up to the idle buffer. Stock drops every row behind the
-gesture on its first scroll event, and the next shift or inferred idle mounts
-them again. No row is mounted that stock would not mount; the anchor and
-correction policy are unchanged.
+A native gesture still buffers only ahead. A scroll that no input drove, such
+as following new rows at the end, keeps the rows behind it that are already
+mounted, up to the idle buffer. Stock drops every row behind the scroll on its
+first event, and the next shift or inferred idle mounts them again. A scroll
+within 150ms of wheel, touch, key or pointer input, or of a scroll that input
+drove, keeps stock's buffering: rows behind a user's long gesture rarely return
+before it ends, and keeping them costs style and script. No row is mounted that
+stock would not mount; the anchor and correction policy are unchanged.
 
 A shift otherwise counts every row resize as an anchoring correction. Rows wholly
 below the viewport are excluded, so a newly buffered row there that resizes (a

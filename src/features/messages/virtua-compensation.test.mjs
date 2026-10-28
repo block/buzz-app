@@ -32,10 +32,11 @@ function setup({
     store: createStore,
     layout,
     driver: createDriver,
+    scroller: createScroller,
   } = new Function(
     "navigator",
     "getComputedStyle",
-    `${helper}${core};return {store:k,layout:M,driver:D};`,
+    `${helper}${core};return {store:k,layout:M,driver:D,scroller:j};`,
   )({ platform, vendor, maxTouchPoints: touch, userAgent: agent }, () => ({
     direction,
   }));
@@ -101,6 +102,7 @@ function setup({
     store,
     sizes,
     driver,
+    createScroller,
     viewport,
     style,
     axis,
@@ -183,6 +185,56 @@ it("keeps only rows already mounted behind a native gesture", () => {
   expect(c.store.$(200)).toEqual([7, 16]); // no further back than idle
   c.store.h(2);
   expect(c.store.$(200)).toEqual([7, 16]);
+});
+
+it("leaves the rows behind a gesture that input drove, as stock does", () => {
+  const c = setup({ offset: 1000 });
+  c.store.h(2);
+  expect(c.store.$(200)).toEqual([8, 17]);
+  c.store.h(1, 900, true); // the user's upward scrolling
+  expect(c.store.$(200)).toEqual([7, 14]);
+  c.store.h(1, 1000, true);
+  expect(c.store.$(200)).toEqual([10, 17]);
+});
+
+it("keeps rows behind only scrolls that no recent input drove", () => {
+  const c = setup({ offset: 1000 });
+  c.store.h(2);
+  expect(c.store.$(200)).toEqual([8, 17]);
+  const element = new EventTarget();
+  element.scrollTop = 1000;
+  const scroller = c.createScroller(
+    c.store,
+    null,
+    element,
+    element,
+    false,
+    false,
+  );
+  const scroll = (top) => {
+    element.scrollTop = top;
+    element.dispatchEvent(new Event("scroll"));
+  };
+  element.dispatchEvent(new Event("wheel"));
+  scroll(900);
+  expect(c.store.$(200)).toEqual([7, 14]);
+  // Momentum continues the gesture without further input.
+  vi.advanceTimersByTime(100);
+  scroll(800);
+  expect(c.store.$(200)).toEqual([6, 13]);
+  vi.advanceTimersByTime(400); // inferred idle
+  expect(c.store.$(200)).toEqual([6, 15]);
+  scroll(900); // following new rows, say
+  expect(c.store.$(200)).toEqual([7, 16]); // not [9, 16]
+  for (const type of ["keydown", "pointerdown", "touchstart"]) {
+    vi.advanceTimersByTime(400);
+    element.dispatchEvent(new Event(type));
+    scroll(element.scrollTop + 100);
+    // Nothing stays mounted behind the viewport's first row.
+    expect(c.store.$(200)[0], type).toBe(c.store.T() / 100);
+    element.dispatchEvent(new Event("touchend"));
+  }
+  scroller.J();
 });
 
 it("does not correct for a row kept below a native upward gesture", () => {

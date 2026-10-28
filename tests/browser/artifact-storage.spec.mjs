@@ -448,7 +448,7 @@ test("applies explicit removals after missed revisions and rejects a failed page
   expect(result.restored.preference).toBe(false);
 });
 
-test("reads bounded indexed pages for 10,000 tasks and 40,000 archived records", async ({
+test("reads bounded indexed pages for 10,000 tasks and 40,000 archived records @local-only", async ({
   page,
   storageUrl,
 }) => {

@@ -6,11 +6,11 @@ import config from "./playwright.config.mjs";
 // The documented @local-webkit measurements remain local-only.
 export default defineConfig({
   ...config,
-  projects: config.projects.map((project) =>
-    project.name === "webkit-measurements"
-      ? { ...project, grepInvert: /@local-webkit/ }
-      : project.name === "webkit"
-        ? { ...project, grepInvert: /@classic-scrollbars|@media-recorder/ }
-        : project,
-  ),
+  projects: config.projects.map((project) => {
+    const excluded = [/@local-only/];
+    if (project.grepInvert) excluded.push(...[project.grepInvert].flat());
+    if (project.name === "webkit-measurements") excluded.push(/@local-webkit/);
+    if (project.name === "webkit") excluded.push(/@media-recorder/);
+    return { ...project, grepInvert: excluded };
+  }),
 });

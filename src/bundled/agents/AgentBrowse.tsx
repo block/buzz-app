@@ -383,9 +383,12 @@ function ImportShared({
 export function SharedAgentCardContent({
   agent,
   community,
+  detail,
 }: {
   agent: Pick<SharedDefinition, "name" | "picture" | "model">;
   community: string | undefined;
+  /** Said in place of the model, such as why the card isn't ready. */
+  detail?: string | undefined;
 }) {
   return (
     <>
@@ -396,9 +399,9 @@ export function SharedAgentCardContent({
       <span className={cardStyles.identity}>
         <span className={`${cardStyles.name} text-label`}>{agent.name}</span>
         <span className={cardStyles.detail}>
-          <ModelIcon model={agent.model} />
+          {!detail && <ModelIcon model={agent.model} />}
           <span className={cardStyles.detailText}>
-            {agent.model || "Shared agent"}
+            {detail ?? (agent.model || "Shared agent")}
           </span>
         </span>
       </span>

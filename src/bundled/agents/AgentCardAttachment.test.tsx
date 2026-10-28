@@ -11,7 +11,7 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
-import { snapshotPng } from "../../features/agents/agent-share";
+import { MAX_PNG_BYTES, snapshotPng } from "../../features/agents/agent-share";
 import type {
   Agent,
   Agents,
@@ -57,13 +57,42 @@ const card: Attachment = {
   name: "Ada.agent.png",
 };
 
-/** Media that answers with `body`. jsdom's Blob doesn't survive Node's
- * Response, so answer with the blob itself. */
-const serve = (body: Blob) => {
-  const fetch = vi.fn(async () => ({ ok: true, blob: async () => body }));
+/** A response streaming `chunks`, which counts what was read and whether it
+ * was cancelled. jsdom's Blob doesn't survive Node's Response. */
+const stream = (chunks: Uint8Array[], length?: number) => {
+  const read = { bytes: 0, cancelled: false };
+  let next = 0;
+  const body = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      const chunk = chunks[next++];
+      if (!chunk) return controller.close();
+      read.bytes += chunk.byteLength;
+      controller.enqueue(chunk);
+    },
+    cancel() {
+      read.cancelled = true;
+    },
+  });
+  const headers = new Headers(
+    length === undefined ? {} : { "content-length": String(length) },
+  );
+  return { response: { ok: true, status: 200, headers, body }, read };
+};
+
+/** Media that answers with `body`. */
+const serve = async (body: Blob) => {
+  const bytes = new Uint8Array(await body.arrayBuffer());
+  const fetch = vi.fn(async () => stream([bytes], bytes.byteLength).response);
   vi.stubGlobal("fetch", fetch);
   return fetch;
 };
+const ada = () =>
+  snapshotPng({
+    name: "Ada",
+    instructions: "Review pull requests.",
+    runtime: "echo",
+    model: "echo-1",
+  });
 
 const show = (attachment = card) =>
   render(
@@ -85,7 +114,7 @@ it("claims only the agent cards Share sends", () => {
 
 it("shows a sent agent as its card, and adds it from there", async () => {
   const user = userEvent.setup();
-  const fetch = serve(
+  const fetch = await serve(
     snapshotPng({
       name: "Ada",
       instructions: "Review pull requests.",
@@ -121,7 +150,7 @@ it("shows a sent agent as its card, and adds it from there", async () => {
 });
 
 it("shows the picture when the file holds no agent", async () => {
-  serve(new Blob(["not a card"], { type: "image/png" }));
+  await serve(new Blob(["not a card"], { type: "image/png" }));
   show();
   expect(await screen.findByRole("img", { name: "Ada" })).toHaveAttribute(
     "src",
@@ -132,7 +161,7 @@ it("shows the picture when the file holds no agent", async () => {
 
 it("names what it added, and opens it from there", async () => {
   const user = userEvent.setup();
-  serve(
+  await serve(
     snapshotPng({
       name: "Ada",
       instructions: "Review pull requests.",
@@ -171,4 +200,46 @@ it("names what it added, and opens it from there", async () => {
   expect(navigator.open).toHaveBeenCalledExactlyOnceWith(
     agentTarget("e".repeat(64)),
   );
+});
+
+it("refuses a card larger than the limit without reading it all", async () => {
+  const chunk = new Uint8Array(1024 * 1024);
+  const chunks = Array.from({ length: 20 }, () => chunk);
+  const declared = stream(chunks, MAX_PNG_BYTES + 1);
+  const chunked = stream(chunks);
+  for (const { response, read } of [declared, chunked]) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => response),
+    );
+    const view = show();
+    expect(await screen.findByRole("img", { name: "Ada" })).toBeVisible();
+    expect(read.cancelled).toBe(true);
+    // The stream may pull one chunk ahead of the reader.
+    expect(read.bytes).toBeLessThanOrEqual(
+      MAX_PNG_BYTES + 2 * chunk.byteLength,
+    );
+    view.unmount();
+  }
+  // Refused by its length before reading, past what the stream pulls ahead.
+  expect(declared.read.bytes).toBeLessThanOrEqual(chunk.byteLength);
+});
+
+it("reads a card again when chosen after its read failed", async () => {
+  const user = userEvent.setup();
+  const bytes = new Uint8Array(await ada().arrayBuffer());
+  const fetch = vi
+    .fn()
+    .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+    .mockImplementation(async () => stream([bytes]).response);
+  vi.stubGlobal("fetch", fetch);
+  show();
+  const button = await screen.findByRole("button", {
+    name: "Ada, shared agent. Couldn’t load. Try again",
+  });
+  expect(within(button).getByText("Couldn’t load. Try again")).toBeVisible();
+  expect(screen.queryByRole("img", { name: "Ada" })).not.toBeInTheDocument();
+  await user.click(button);
+  expect(await screen.findByRole("dialog", { name: "Ada" })).toBeVisible();
+  expect(fetch).toHaveBeenCalledTimes(2);
 });

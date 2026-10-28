@@ -65,6 +65,7 @@ const echo = {
 } as unknown as RegisteredAgentType;
 
 /** A community whose catalog holds the heads its outbox accepted. */
+let communities = 0;
 function community() {
   const heads: EventData[] = [];
   const listeners = new Set<() => void>();
@@ -135,6 +136,8 @@ function community() {
       read,
       outbox,
       viewer: owner,
+      // Each test's community is its own.
+      scope: `https://relay${++communities}.example ${owner}`,
       directMessages,
       attachments,
       messages,
@@ -769,7 +772,7 @@ it("sends to the rest when one upload fails, and reuses the next upload", async 
   );
 });
 
-it("remembers an unconfirmed message after the window closes", async () => {
+it("remembers an unconfirmed message after the window closes and a reconnect", async () => {
   const user = userEvent.setup();
   const { session, directMessages, messages } = community();
   directMessages.delivered.mockRejectedValueOnce(new Error("Offline"));
@@ -780,7 +783,8 @@ it("remembers an unconfirmed message after the window closes", async () => {
     "Couldn’t send to Bea. Offline.",
   );
   cleanup();
-  share(session);
+  // Reconnecting replaces the session; the outbox keeps the message.
+  share({ ...session } as RelaySession);
   await user.click(await choice("Bea"));
   await user.click(screen.getByRole("button", { name: "Send" }));
   expect(await screen.findByText("Sent Ada to Bea.")).toBeInTheDocument();

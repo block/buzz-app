@@ -111,14 +111,15 @@ async function saveFile(file: Blob, name: string): Promise<string | undefined> {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-const pendingSends = new WeakMap<
-  RelaySession,
+const pendingSends = new Map<
+  string,
   Map<string, { channel: string; id: string }>
 >();
-/** Messages sent from Share and not yet confirmed, per community session. */
+/** Messages sent from Share and not yet confirmed, per community and viewer:
+ * the outbox keeps them there across reconnects, which replace the session. */
 function unconfirmed(session: RelaySession) {
-  const sent = pendingSends.get(session) ?? new Map();
-  pendingSends.set(session, sent);
+  const sent = pendingSends.get(session.scope) ?? new Map();
+  pendingSends.set(session.scope, sent);
   return sent;
 }
 

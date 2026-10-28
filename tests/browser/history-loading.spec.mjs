@@ -330,6 +330,59 @@ test.describe("pages inside one second", () => {
     }
   });
 
+  test("a held pointer keeps its place after the page's reader row unmounts", async ({
+    page,
+    app,
+  }) => {
+    const pending = await reading(page, app, 1400);
+    const box = await history(page).boundingBox();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    try {
+      // The row the page lands around, which the timeline holds while pressed.
+      const held = await anchor(page);
+      const height = await history(page).evaluate((e) => e.scrollHeight);
+      pending.release();
+      await expect
+        .poll(() => history(page).evaluate((e) => e.scrollHeight))
+        .toBeGreaterThan(height);
+      await settle(page);
+      await expectAnchor(page, held);
+      // Over a viewport at once, Virtua renders upward synchronously: the held
+      // row is gone from the scroll event until Virtua's idle timer buffers
+      // below again, too briefly for polling, so record its removal in page.
+      const row = history(page).locator(`[data-message-id="${held.id}"]`);
+      const seen = await history(page).evaluateHandle((e, id) => {
+        const seen = { unmounted: false };
+        new MutationObserver(() => {
+          if (!e.querySelector(`[data-message-id="${id}"]`))
+            seen.unmounted = true;
+        }).observe(e, { childList: true, subtree: true });
+        e.scrollTop -= e.clientHeight + 150;
+        return seen;
+      }, held.id);
+      await expect.poll(() => seen.evaluate((s) => s.unmounted)).toBe(true);
+      // Once idle, Virtua remounts it.
+      await expect(row).toHaveCount(1);
+      await settle(page);
+      const before = await anchor(page);
+      // A row above the viewport finishes measuring taller (an image loading).
+      await history(page).evaluate((e) => {
+        const top = e.getBoundingClientRect().top;
+        const above = Array.from(
+          e.querySelectorAll("[data-message-id]"),
+        ).findLast((row) => row.getBoundingClientRect().bottom < top);
+        const extra = document.createElement("div");
+        extra.style.height = "300px";
+        above.querySelector("p").after(extra);
+      });
+      await settle(page);
+      await expectAnchor(page, before);
+    } finally {
+      await page.mouse.up();
+    }
+  });
+
   // Release the held page, read `distance` px further up, then grow the row
   // in view: it grows downward from the reader.
   async function grows(page, pending, distance) {

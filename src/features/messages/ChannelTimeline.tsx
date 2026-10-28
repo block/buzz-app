@@ -590,7 +590,8 @@ function Timeline({
       !handle.current
     )
       return;
-    const moved = handle.current.getItemOffset(index) - reader.current.top;
+    const virtua = handle.current;
+    const moved = virtua.getItemOffset(index) - reader.current.top;
     const id = reader.current.id;
     if (
       !id ||
@@ -615,10 +616,12 @@ function Timeline({
     let y = reader.current.y;
     const anchor = { id, y, intent: intent.current };
     heldReader.current = anchor;
+    // Virtua unmounts rows the reader leaves, but still places them. Track the
+    // row there too, or remounting it would restore where the reader was.
     const read = () => {
-      const row = top();
-      if (row !== undefined)
-        anchor.y = y = row - element.getBoundingClientRect().top;
+      const row =
+        top() ?? list.getBoundingClientRect().top + virtua.getItemOffset(index);
+      anchor.y = y = row - element.getBoundingClientRect().top;
     };
     let height = list.style.height;
     const since = intent.current;

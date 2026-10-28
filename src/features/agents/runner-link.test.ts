@@ -2,14 +2,15 @@ import { afterEach, expect, it, vi } from "vitest";
 import { link, type Link, type LinkPort } from "./link";
 import { createLocalAgentActivity } from "./local-activity";
 import { agentKey } from "./membership";
-import type { Member, RecordEdit } from "./records";
+import type { RunnerStatus } from "./agents-runner";
+import { blank, type Member, type RecordEdit } from "./records";
 import {
   linkedActivity,
   managerSide,
   runnerSide,
   serveActivity,
 } from "./runner-link";
-import type { Agent } from "./service";
+import type { Agent, SessionControlAction, SessionPlace } from "./service";
 import type { AgentRecord } from "./store";
 
 const open: Link[] = [];
@@ -115,6 +116,8 @@ function fakeRunner() {
   const left = new Set<string>();
   const recordListeners = new Set<() => void>();
   let saved: Record<string, AgentRecord> = {};
+  let status: RunnerStatus = { runs: [], yielded: [], transitioning: [] };
+  let types: Record<string, string> = {};
   const runner = {
     members: vi.fn(
       (identities: readonly Member[], _viewer?: string, _loaded?: boolean) => {
@@ -134,6 +137,29 @@ function fakeRunner() {
     ),
     running: () => running,
     interrupted: () => running.filter((agent) => left.has(agent.key)),
+    runnerStatus: () => status,
+    /** Another copy took an agent, or a change of type began or ended. */
+    hold(next: RunnerStatus) {
+      status = next;
+      for (const listener of [...listeners]) listener();
+    },
+    edit: (key: string, edit: RecordEdit) => runner.records.edit(key, edit),
+    session: vi.fn(
+      async (
+        _key: string,
+        _type: string,
+        _place: SessionPlace,
+        _action: SessionControlAction,
+      ) => {},
+    ),
+    // Saves the config, and the type it is shown with, at once.
+    retype: vi.fn(async (key: string, type: string, config: unknown) => {
+      await Promise.resolve();
+      saved = { ...saved, [key]: { ...(saved[key] ?? blank(key)), config } };
+      types = { ...types, [key]: type };
+      for (const listener of [...recordListeners]) listener();
+    }),
+    retypes: () => types,
     subscribe(listener: () => void) {
       listeners.add(listener);
       return () => {
@@ -176,10 +202,12 @@ function split(identities: Member[] = []) {
   const channel = new MessageChannel();
   let shown: Member[] = identities;
   const changed = vi.fn();
+  const retyped = vi.fn((_types: Readonly<Record<string, string>>) => {});
   const runnerLink = runnerSide(channel.port1, runner);
   const manager = managerSide(channel.port2, {
     members: () => ({ loaded: true, identities: shown, viewer: owner }),
     defaults,
+    retyped: (types) => retyped(types),
     changed,
   });
   open.push(runnerLink);
@@ -189,6 +217,7 @@ function split(identities: Member[] = []) {
     left,
     manager,
     changed,
+    retyped,
     show(next: Member[]) {
       shown = next;
       manager.changed();
@@ -298,6 +327,7 @@ it("does not take what the Runner decided for a page that reloaded as an answer"
         viewer: owner,
       }),
       defaults: () => undefined,
+      retyped: () => {},
       changed: () => {},
     });
     closing.push(page);
@@ -374,4 +404,57 @@ it("gives a membership outside its home its own attention and the agent's config
     attention: {},
     config: { reply: "home" },
   });
+});
+
+it("shows who holds each agent, keeping it while unchanged", async () => {
+  const ada = member("a".repeat(64), "Ada");
+  const bo = member("c".repeat(64), "Bo");
+  const { runner, manager, show } = split();
+  show([ada]);
+  await manager.decided();
+  expect(manager.runs(ada.key)).toBe(false);
+  runner.hold({ runs: [ada.key], yielded: [], transitioning: [] });
+  await vi.waitFor(() => expect(manager.runs(ada.key)).toBe(true));
+  const held = manager.status();
+  expect(manager.yielded(ada.key)).toBe(false);
+  expect(manager.transitioning(ada.key)).toBe(false);
+  // What it decided changed, but not who holds what.
+  show([ada, bo]);
+  await manager.decided();
+  expect(manager.status()).toBe(held);
+  runner.hold({ runs: [ada.key], yielded: [bo.key], transitioning: [ada.key] });
+  await vi.waitFor(() => expect(manager.transitioning(ada.key)).toBe(true));
+  expect(manager.yielded(bo.key)).toBe(true);
+});
+
+it("shows a retyped agent's new type only with its new config", async () => {
+  const ada = member("a".repeat(64), "Ada");
+  const { runner, manager, show, retyped } = split();
+  show([ada]);
+  await manager.decided();
+  const seen: unknown[] = [];
+  retyped.mockImplementation((types) =>
+    seen.push([types, manager.records.settingsOf(ada).config]),
+  );
+  await manager.retype(ada.key, "example/other", { reply: "other" });
+  expect(runner.retype).toHaveBeenCalledWith(ada.key, "example/other", {
+    reply: "other",
+  });
+  // Settled only once the type and its config were both shown.
+  expect(seen).toEqual([[{ [ada.key]: "example/other" }, { reply: "other" }]]);
+});
+
+it("asks the Runner to run a session control", async () => {
+  const ada = member("a".repeat(64), "Ada");
+  const { runner, manager, show } = split();
+  show([ada]);
+  await manager.decided();
+  const place = { channelId: "c".repeat(64), root: "d".repeat(64) };
+  await manager.session(ada.key, "example/echo", place, "compact");
+  expect(runner.session).toHaveBeenCalledWith(
+    ada.key,
+    "example/echo",
+    place,
+    "compact",
+  );
 });

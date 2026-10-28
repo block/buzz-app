@@ -84,7 +84,7 @@ import {
 } from "./native";
 import { agentKey, pubkeyOf, type AgentKey } from "./membership";
 import { EMPTY, type Member } from "./records";
-import { AgentsRunner } from "./agents-runner";
+import { AgentsRunner, type RunnerStatus } from "./agents-runner";
 import { RunnerPlugins } from "./runner-plugins";
 import { managerSide, runnerSide } from "./runner-link";
 import { originOf } from "./connections";
@@ -1269,6 +1269,8 @@ export class AgentsService extends Service implements Agents {
   private listed = 0;
   /** Native's agent list was read, so `identities` is every membership. */
   private loaded = false;
+  /** Who holds each membership, as the screens last heard. */
+  private held: RunnerStatus | undefined;
   /** Each running cleanup of a deleted membership, by key, how to stop it,
    * and whether it finished. */
   private cleaning = new Map<
@@ -1308,11 +1310,7 @@ export class AgentsService extends Service implements Agents {
       const online = new Map<string, Set<string>>();
       for (const agent of this.state.running) {
         const origin = originOf(agent.relay);
-        if (
-          origin &&
-          this.bindingOf(agent) &&
-          this.runner.runners.runs(agent.key)
-        )
+        if (origin && this.bindingOf(agent) && this.decided.runs(agent.key))
           online.set(
             origin,
             (online.get(origin) ?? new Set()).add(agent.pubkey),
@@ -1332,7 +1330,7 @@ export class AgentsService extends Service implements Agents {
           !identity.deleted &&
           originOf(identity.relay) === origin,
       )?.key;
-      return !!key && this.runner.runners.yielded(key);
+      return !!key && this.decided.yielded(key);
     },
   });
 
@@ -1357,7 +1355,6 @@ export class AgentsService extends Service implements Agents {
     this.contributions = createContributions<AgentType>(ctx);
     this.presentations = createContributions<Presentation>(ctx);
     this.runner = new AgentsRunner(storage, native, localActivity, decisions, {
-      ownershipChanged: () => this.notify(),
       changed: () => this.update(),
       open: (origin) => this.communities.open(origin),
       types: () => this.types(),
@@ -1500,6 +1497,15 @@ export class AgentsService extends Service implements Agents {
           } catch (error) {
             console.warn(`Agent type ${type} has invalid defaults`, error);
           }
+      },
+      // Shown with its new type once the Runner saved its config.
+      retyped: (types) => {
+        this.identities = this.identities.map((identity) => {
+          const type = types[identity.pubkey];
+          return type && type !== identity.type
+            ? { ...identity, type }
+            : identity;
+        });
       },
       changed: () => this.update(),
     });
@@ -2300,8 +2306,6 @@ export class AgentsService extends Service implements Agents {
       return this.exclusive(key, () => this.saveHosted(key, change));
     if (!this.native) throw new Error("No such agent on this device");
     const { pubkey } = identity;
-    if (change.config !== undefined && this.runner.runners.transitioning(key))
-      throw new Error(`${identity.name}'s provider is already changing`);
     const name = change.name?.trim();
     if (name === "") throw new Error("Name the agent");
     const { name: _, picture: __, ...settings } = change;
@@ -2364,11 +2368,7 @@ export class AgentsService extends Service implements Agents {
   sessionState(key: AgentKey, place: SessionPlace): SessionState {
     const agent = this.agent(key);
     const type = agent && this.types().find((kind) => kind.key === agent.type);
-    if (
-      !agent ||
-      !this.runner.runners.runs(key) ||
-      this.runner.runners.transitioning(key)
-    )
+    if (!agent || !this.decided.runs(key) || this.decided.transitioning(key))
       return "unavailable";
     return type?.sessionControls?.state(agent, place) ?? "unavailable";
   }
@@ -2389,12 +2389,7 @@ export class AgentsService extends Service implements Agents {
       throw new Error(
         "Use session controls in the Buzz app that runs this agent.",
       );
-    await this.runner.runners.control(key, async () => {
-      const current = shown();
-      if (current?.type !== agent.type || !this.types().includes(type))
-        throw new Error("The agent's harness changed. Try again.");
-      await type.sessionControls?.run(current, place, action);
-    });
+    await this.decided.session(key, agent.type, place, action);
   }
 
   /** Whether the owner can stop a hosted agent's turn: its provider can. A
@@ -2454,43 +2449,14 @@ export class AgentsService extends Service implements Agents {
     if (kind.remote)
       throw new Error("A hosted provider cannot take over a local agent key");
     if (type === identity.type) return [];
-    const native = this.native;
-    const { pubkey } = identity;
-    return this.runner.runners.retype(key, identity.name, async () => {
-      const { adopted, preview } = this.retypePlan(
-        identity,
-        kinds.get(identity.type),
-        kind,
-      );
-      await native.setType(pubkey, type);
-      try {
-        await this.runner.records.change(
-          pubkey,
-          (saved) => ({
-            ...(saved ?? this.decided.records.settingsOf(identity)),
-            config: change ? change.config : adopted,
-          }),
-          // Shown with its new type, only once its config is saved.
-          () => {
-            this.identities = this.identities.map((saved) =>
-              saved.pubkey === pubkey ? { ...saved, type } : saved,
-            );
-          },
-        );
-      } catch (error) {
-        try {
-          await native.setType(pubkey, identity.type);
-        } catch (rollback) {
-          throw new AggregateError(
-            [error, rollback],
-            `Could not save or restore ${identity.name}'s provider`,
-          );
-        }
-        throw error;
-      }
-      await this.refresh();
-      return preview.dropped;
-    });
+    const { adopted, preview } = this.retypePlan(
+      identity,
+      kinds.get(identity.type),
+      kind,
+    );
+    await this.decided.retype(key, type, change ? change.config : adopted);
+    await this.refresh();
+    return preview.dropped;
   }
 
   previewRetype(key: AgentKey, type: string): RetypePreview {
@@ -3523,6 +3489,7 @@ export class AgentsService extends Service implements Agents {
     ];
     const running = this.decided.running();
     const interrupted = this.decided.interrupted();
+    const held = this.decided.status();
     if (
       !same(agents, this.state.agents) ||
       running !== this.state.running ||
@@ -3535,7 +3502,8 @@ export class AgentsService extends Service implements Agents {
         interrupted,
       });
       this.notify();
-    }
+    } else if (held !== this.held) this.notify();
+    this.held = held;
     this.presence.announce();
   }
 

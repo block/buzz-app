@@ -22,14 +22,17 @@ import { pubkeyOf, type AgentKey } from "./membership";
 import { migrateWatchFilters } from "./migrate-filter";
 import { migrateAgentStorage } from "./migrate-storage";
 import { ownerReads } from "./reads";
-import { AgentRecords, EMPTY, type Member } from "./records";
+import { AgentRecords, EMPTY, type Member, type RecordEdit } from "./records";
 import { AgentRunners, type Connection, type RunnerHost } from "./runner";
+import type { AgentsNative } from "./native";
 import type {
   Agent,
   AgentWake,
   ConfigBinding,
   HandoffSource,
   RegisteredAgentType,
+  SessionControlAction,
+  SessionPlace,
 } from "./service";
 import { soloChat } from "./solo-chat";
 import { nameSoloChat } from "./solo-chat-name";
@@ -57,8 +60,6 @@ export type RunnerManager = Pick<
   | "setClassifierKey"
 > &
   Readonly<{
-    /** Who runs which agent changed. */
-    ownershipChanged(): void;
     /** A record or turn in progress changed what the screens show. */
     changed(): void;
     /** The community's relay, while the viewer is in it. */
@@ -86,6 +87,16 @@ export class AgentsRunner {
     running: readonly Agent[];
     interrupted: readonly Agent[];
   }> = { running: [], interrupted: [] };
+  /** Which memberships this copy runs, which another copy holds, and which
+   * are changing type. */
+  private held: RunnerStatus = {
+    runs: EMPTY_KEYS,
+    yielded: EMPTY_KEYS,
+    transitioning: EMPTY_KEYS,
+  };
+  /** The type each retyped agent has, until the memberships the Manager
+   * sends say so too. */
+  private readonly retyped = new Map<string, string>();
   /** The memberships it last decided from, and their viewer. */
   private identities: readonly Member[] = [];
   private viewer: string | undefined;
@@ -96,7 +107,9 @@ export class AgentsRunner {
 
   constructor(
     storage: AgentStore,
-    private readonly custody: RunnerHost["custody"],
+    private readonly custody:
+      | (NonNullable<RunnerHost["custody"]> & Pick<AgentsNative, "setType">)
+      | undefined,
     activity: LocalAgentActivity,
     decisions: Decisions | undefined,
     private readonly manager: RunnerManager,
@@ -139,10 +152,7 @@ export class AgentsRunner {
     /** The catch-up progress this program last read or saved. */
     let savedProgress: Checkpoints = {};
     this.runners = new AgentRunners({
-      ownershipChanged: () => {
-        this.notify();
-        manager.ownershipChanged();
-      },
+      ownershipChanged: () => this.status(),
       ready: (key) => this.ready(key),
       agent: (key) => this.agent(key),
       member: (agent, event) => this.member(agent, event),
@@ -274,8 +284,8 @@ export class AgentsRunner {
     });
   }
 
-  /** Hears each change to what runs here, which of it was interrupted, or
-   * who holds it. */
+  /** Hears each change to what runs here, which of it was interrupted, who
+   * holds it, or which is changing type. */
   subscribe(listener: () => void) {
     this.listeners.add(listener);
     return () => {
@@ -305,7 +315,10 @@ export class AgentsRunner {
     const list = JSON.stringify(identities);
     const listed = loaded && list !== this.list;
     if (loaded) this.list = list;
-    this.identities = identities;
+    for (const identity of identities)
+      if (this.retyped.get(identity.pubkey) === identity.type)
+        this.retyped.delete(identity.pubkey);
+    this.identities = this.overlaid(identities);
     this.viewer = viewer;
     this.connections.watch(identities, viewer);
     this.update();
@@ -354,6 +367,89 @@ export class AgentsRunner {
   dismissInterrupted(keys: readonly AgentKey[]) {
     this.runners.dismissInterrupted(keys);
     this.update();
+  }
+  /** Applies the Manager's edit. Its config waits for no change of type: one
+   * sent once that began would write the old type's config over the new. */
+  async edit(key: AgentKey, edit: RecordEdit) {
+    if (
+      edit.kind === "settings" &&
+      edit.change.config !== undefined &&
+      this.runners.transitioning(key)
+    )
+      throw new Error(`${edit.member.name}'s provider is already changing`);
+    await this.records.edit(key, edit);
+  }
+  /** Runs `action` on the agent's session in `place`, while this copy holds
+   * the agent with the type `type`, as the owner last saw it. */
+  async session(
+    key: AgentKey,
+    type: string,
+    place: SessionPlace,
+    action: SessionControlAction,
+  ) {
+    const kind = this.manager.types().find((entry) => entry.key === type);
+    if (!kind?.sessionControls || this.agent(key)?.type !== type)
+      throw new Error(
+        "Use session controls in the Buzz app that runs this agent.",
+      );
+    await this.runners.control(key, async () => {
+      const current = this.agent(key);
+      if (current?.type !== type || !this.manager.types().includes(kind))
+        throw new Error("The agent's harness changed. Try again.");
+      await kind.sessionControls?.run(current, place, action);
+    });
+  }
+  /** Gives the agent the type `type`, starting with `config`, while no turn
+   * of it works and this copy holds it. It shows with the new type once that
+   * config is saved; when the save fails, it keeps its type. */
+  async retype(key: AgentKey, type: string, config: unknown) {
+    const member = this.liveMember(key);
+    const custody = this.custody;
+    if (!member || !custody) throw new Error("No such agent on this device");
+    const { pubkey, name } = member;
+    const retyping = this.runners.retype(key, name, async () => {
+      await custody.setType(pubkey, type);
+      try {
+        await this.records.change(
+          pubkey,
+          (saved) => ({
+            ...(saved ?? this.records.settingsOf(member)),
+            config,
+          }),
+          () => {
+            this.retyped.set(pubkey, type);
+            this.identities = this.overlaid(this.identities);
+          },
+        );
+      } catch (error) {
+        try {
+          await custody.setType(pubkey, member.type);
+        } catch (rollback) {
+          throw new AggregateError(
+            [error, rollback],
+            `Could not save or restore ${name}'s provider`,
+          );
+        }
+        throw error;
+      }
+    });
+    this.status();
+    try {
+      await retyping;
+    } finally {
+      this.status();
+    }
+  }
+  /** The types of retyped agents the Manager does not show yet, by pubkey. */
+  retypes(): Readonly<Record<string, string>> {
+    return Object.fromEntries(this.retyped);
+  }
+  private overlaid(identities: readonly Member[]) {
+    if (!this.retyped.size) return identities;
+    return identities.map((identity) => {
+      const type = this.retyped.get(identity.pubkey);
+      return type && type !== identity.type ? { ...identity, type } : identity;
+    });
   }
   /** Decides which agents run: each of the viewer's agents whose community is
    * joined and not disconnected. A reconnect does not stop one. An unfinished
@@ -416,8 +512,9 @@ export class AgentsRunner {
         : Object.freeze(interrupted),
     };
     if (
-      this.state.running !== prior.running ||
-      this.state.interrupted !== prior.interrupted
+      !this.status() &&
+      (this.state.running !== prior.running ||
+        this.state.interrupted !== prior.interrupted)
     )
       this.notify();
     this.runners.resume(
@@ -436,6 +533,32 @@ export class AgentsRunner {
   /** The running agents with turns the app left working last time. */
   interrupted() {
     return this.state.interrupted;
+  }
+  /** Which memberships this copy runs, which another copy holds, and which
+   * are changing type. */
+  runnerStatus() {
+    return this.held;
+  }
+  /** Reads again who holds each membership and which is changing type, and
+   * says so when that changed. */
+  private status() {
+    const keys = this.identities
+      .filter((identity) => !identity.deleted)
+      .map((identity) => identity.key);
+    const next: RunnerStatus = {
+      runs: keys.filter((key) => this.runners.runs(key)),
+      yielded: keys.filter((key) => this.runners.yielded(key)),
+      transitioning: keys.filter((key) => this.runners.transitioning(key)),
+    };
+    const prior = this.held;
+    const changed =
+      !sameKeys(next.runs, prior.runs) ||
+      !sameKeys(next.yielded, prior.yielded) ||
+      !sameKeys(next.transitioning, prior.transitioning);
+    if (!changed) return false;
+    this.held = Object.freeze(next);
+    this.notify();
+    return true;
   }
   /** A running agent, in any community. */
   agent(key: AgentKey) {
@@ -487,7 +610,13 @@ export class AgentsRunner {
     this.identities = [];
     this.viewer = undefined;
     this.list = undefined;
+    this.retyped.clear();
     this.state = { running: [], interrupted: [] };
+    this.held = {
+      runs: EMPTY_KEYS,
+      yielded: EMPTY_KEYS,
+      transitioning: EMPTY_KEYS,
+    };
   }
 
   /** Delivers the session's live events, and retries what failed whenever its
@@ -637,6 +766,17 @@ const PARENT_LOOKUP_MS = 5_000;
 const same = (next: readonly Agent[], prior: readonly Agent[]) =>
   next.length === prior.length &&
   next.every((agent, index) => agent === prior[index]);
+/** Which memberships this copy runs, which another copy holds, and which are
+ * changing type. */
+export type RunnerStatus = Readonly<{
+  runs: readonly AgentKey[];
+  yielded: readonly AgentKey[];
+  transitioning: readonly AgentKey[];
+}>;
+const EMPTY_KEYS: readonly AgentKey[] = Object.freeze([]);
+const sameKeys = (next: readonly AgentKey[], prior: readonly AgentKey[]) =>
+  next.length === prior.length &&
+  next.every((key, index) => key === prior[index]);
 /** A membership as it runs here. */
 function view(identity: Member, record: AgentRecord): Agent {
   return Object.freeze({

@@ -1,13 +1,13 @@
 // What the Runner serves the Manager over the agents link. Each name here is
 // part of the contract between the two owners, so add to it with care: only
 // JSON crosses, and either side may be a page that reloads.
-import type { AgentsRunner } from "./agents-runner";
+import type { AgentsRunner, RunnerStatus } from "./agents-runner";
 import { link, type Json, type Link, type LinkPort, type Served } from "./link";
 import type { LocalAgentSource, LocalWork } from "./local-activity";
 import type { AgentKey } from "./membership";
 import { blank, type Member, type RecordEdit } from "./records";
 import type { AgentRecord } from "./store";
-import type { Agent } from "./service";
+import type { Agent, SessionControlAction, SessionPlace } from "./service";
 
 type WorkKey = Pick<LocalWork, "scope" | "agent" | "messageId">;
 
@@ -81,13 +81,22 @@ type Members = Readonly<{
   viewer: string | null;
 }>;
 /** What the Runner decided from the memberships it was last sent, which
- * were `revision` of the Manager page `from`: the agents running here, and
- * the keys of those with turns the app left working last time. */
+ * were `revision` of the Manager page `from`: the agents running here, the
+ * keys of those with turns the app left working last time, and who holds
+ * each membership. */
 type RunnerState = Readonly<{
   from: string | null;
   revision: number;
   running: readonly Agent[];
   interrupted: readonly AgentKey[];
+  status: RunnerStatus;
+}>;
+/** The records the Runner keeps, and the type of each agent it retyped that
+ * the memberships it was sent do not say yet, by pubkey. One value, so a new
+ * config never shows with the type it replaced. */
+type RunnerRecords = Readonly<{
+  records: readonly AgentRecord[];
+  types: Readonly<Record<string, string>>;
 }>;
 
 /** The Runner's side: it decides what runs from the memberships the Manager
@@ -96,9 +105,18 @@ export function runnerSide(
   port: LinkPort,
   runner: Pick<
     AgentsRunner,
-    "members" | "running" | "interrupted" | "subscribe" | "subscribeRecords"
+    | "members"
+    | "running"
+    | "interrupted"
+    | "runnerStatus"
+    | "subscribe"
+    | "subscribeRecords"
+    | "edit"
+    | "session"
+    | "retype"
+    | "retypes"
   > &
-    Readonly<{ records: Pick<AgentsRunner["records"], "all" | "edit"> }>,
+    Readonly<{ records: Pick<AgentsRunner["records"], "all"> }>,
 ) {
   let from: string | null = null;
   let revision = 0;
@@ -112,6 +130,7 @@ export function runnerSide(
             revision,
             running: runner.running(),
             interrupted: runner.interrupted().map((agent) => agent.key),
+            status: runner.runnerStatus(),
           }) satisfies RunnerState as unknown as Json,
         subscribe: (listener) => {
           const stop = runner.subscribe(listener);
@@ -123,7 +142,11 @@ export function runnerSide(
         },
       }),
       "runner.records": () => ({
-        get: () => runner.records.all() as unknown as Json,
+        get: () =>
+          ({
+            records: runner.records.all(),
+            types: runner.retypes(),
+          }) satisfies RunnerRecords as unknown as Json,
         subscribe: (listener) => runner.subscribeRecords(listener),
       }),
     },
@@ -133,7 +156,26 @@ export function runnerSide(
           key: AgentKey;
           edit: RecordEdit;
         }>;
-        await runner.records.edit(key, edit);
+        await runner.edit(key, edit);
+        return null;
+      },
+      "agents.session": async (args) => {
+        const { key, type, place, action } = args as unknown as Readonly<{
+          key: AgentKey;
+          type: string;
+          place: SessionPlace;
+          action: SessionControlAction;
+        }>;
+        await runner.session(key, type, place, action);
+        return null;
+      },
+      "agents.retype": async (args) => {
+        const { key, type, config } = args as unknown as Readonly<{
+          key: AgentKey;
+          type: string;
+          config: unknown;
+        }>;
+        await runner.retype(key, type, config);
         return null;
       },
     },
@@ -173,6 +215,9 @@ export function managerSide(
     defaults(
       identity: Pick<Member, "pubkey" | "type">,
     ): AgentRecord | undefined;
+    /** The Runner gave these agents a type, by pubkey, that the
+     * memberships do not say yet. */
+    retyped(types: Readonly<Record<string, string>>): void;
     /** What the Runner decided, or a record, changed. */
     changed(): void;
   }>,
@@ -183,15 +228,23 @@ export function managerSide(
   let closed = false;
   let sent: string | undefined;
   const listeners = new Set<() => void>();
+  const none: RunnerStatus = Object.freeze({
+    runs: [],
+    yielded: [],
+    transitioning: [],
+  });
   let state: Readonly<{
     revision: number;
     running: readonly Agent[];
     interrupted: readonly Agent[];
+    status: RunnerStatus;
   }> = {
     revision: 0,
     running: Object.freeze([]),
     interrupted: Object.freeze([]),
+    status: none,
   };
+  let statusJson = JSON.stringify(none);
   const waits = new Set<Readonly<{ revision: number; resolve(): void }>>();
   const shown = new Map<AgentKey, string>();
   let records: Readonly<Record<AgentKey, AgentRecord>> = {};
@@ -232,6 +285,10 @@ export function managerSide(
       if (!running.some((agent) => agent.key === key)) shown.delete(key);
     const left = new Set(next.interrupted);
     const interrupted = running.filter((agent) => left.has(agent.key));
+    const json = JSON.stringify(next.status);
+    const status =
+      json === statusJson ? state.status : Object.freeze(next.status);
+    statusJson = json;
     state = {
       // What it decided for an earlier load of this page is no answer.
       revision: next.from === from ? next.revision : 0,
@@ -241,6 +298,7 @@ export function managerSide(
       interrupted: same(interrupted, state.interrupted)
         ? state.interrupted
         : Object.freeze(interrupted),
+      status,
     };
     for (const wait of [...waits])
       if (wait.revision <= state.revision) {
@@ -250,12 +308,12 @@ export function managerSide(
     changed();
   });
   side.watch("runner.records", null, () => {
-    const all = side.read("runner.records") as unknown as
-      | readonly AgentRecord[]
+    const sent = side.read("runner.records") as unknown as
+      | RunnerRecords
       | undefined;
-    if (!all) return;
+    if (!sent) return;
     const next: Record<AgentKey, AgentRecord> = {};
-    for (const record of all) {
+    for (const record of sent.records) {
       const json = JSON.stringify(record);
       const prior = records[record.pubkey];
       next[record.pubkey] =
@@ -265,6 +323,7 @@ export function managerSide(
     }
     for (const key of recordJson.keys()) if (!next[key]) recordJson.delete(key);
     records = next;
+    if (Object.keys(sent.types).length) host.retyped(sent.types);
     changed();
   });
   /** The agent's home record, which keeps its config: as the Runner keeps it
@@ -298,6 +357,38 @@ export function managerSide(
     interrupted: () => state.interrupted,
     /** A running agent, in any community. */
     agent: (key: AgentKey) => state.running.find((agent) => agent.key === key),
+    /** Who holds each membership, kept while unchanged. */
+    status: () => state.status,
+    /** Whether this copy runs the agent. */
+    runs: (key: AgentKey) => state.status.runs.includes(key),
+    /** Whether another copy of the app runs an agent this one could. */
+    yielded: (key: AgentKey) => state.status.yielded.includes(key),
+    /** Whether a change of type holds the agent's runner now. */
+    transitioning: (key: AgentKey) => state.status.transitioning.includes(key),
+    /** Asks the Runner to run `action` on the session of the agent of type
+     * `type` in `place`. */
+    async session(
+      key: AgentKey,
+      type: string,
+      place: SessionPlace,
+      action: SessionControlAction,
+    ) {
+      await side.call("agents.session", {
+        key,
+        type,
+        place,
+        action,
+      } as unknown as Json);
+    },
+    /** Asks the Runner to give the agent type `type`, starting with
+     * `config`; settles once it is saved, and shown here. */
+    async retype(key: AgentKey, type: string, config: unknown) {
+      await side.call("agents.retype", {
+        key,
+        type,
+        config,
+      } as unknown as Json);
+    },
     /** The records the Runner keeps, as it last sent them. */
     records: {
       keys: () => Object.keys(records),

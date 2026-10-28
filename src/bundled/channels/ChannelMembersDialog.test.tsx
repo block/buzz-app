@@ -1508,12 +1508,22 @@ async function pagedInvitations(
     within(screen.getByRole("region", { name })).getAllByRole("button", {
       name: /^Add /,
     });
-  const moreIn = (name: string) =>
-    click(
-      within(screen.getByRole("region", { name })).getByRole("button", {
-        name: "Show more",
-      }),
-    );
+  // React retains the group's control while it expands. Resolve it once rather
+  // than recomputing every growing row's accessible name before each click.
+  const moreButtons = new Map<string, HTMLElement>();
+  const moreIn = (name: string) => {
+    let button = moreButtons.get(name);
+    if (!button?.isConnected) {
+      button = within(screen.getByRole("region", { name })).getByRole(
+        "button",
+        {
+          name: "Show more",
+        },
+      );
+      moreButtons.set(name, button);
+    }
+    return click(button);
+  };
   const rows = () =>
     within(
       screen.getByRole("region", { name: "Not in this channel" }),

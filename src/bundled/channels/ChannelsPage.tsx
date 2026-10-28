@@ -1322,6 +1322,28 @@ function ChannelWorkspace({
         tab.channelId === currentId,
     );
   const split = usePanelSplit();
+  // A routed thread can mount behind a collapsed pane, where it cannot take
+  // focus. Once the pane shows it, hand over focus nothing else took.
+  const showingRoutedThread =
+    showingChannelPanel && !companion && !membersOpen && !!routedThread;
+  const routedVisit = useRef<AbortSignal | string | undefined>(undefined);
+  useLayoutEffect(() => {
+    const visit = navigation?.signal ?? currentId;
+    if (!showingRoutedThread || routedVisit.current === visit) return;
+    routedVisit.current = visit;
+    if (document.activeElement !== document.body) return;
+    split.ref.current
+      ?.querySelector<HTMLElement>(
+        `[role="tab"][data-tab-value="${CSS.escape(selectedTab)}"]`,
+      )
+      ?.focus({ preventScroll: true });
+  }, [
+    showingRoutedThread,
+    navigation?.signal,
+    currentId,
+    selectedTab,
+    split.ref,
+  ]);
   useEffect(() => {
     // Only an explicit settings click moves focus; restoring a visit does not.
     if (settingsFocus)

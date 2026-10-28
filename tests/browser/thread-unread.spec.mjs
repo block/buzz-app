@@ -126,6 +126,72 @@ test.describe("mentioned reply priority", () => {
     }
   });
 
+  test("opening a thread from Activity reads it when its channel's pane was collapsed", async ({
+    page,
+    app,
+  }) => {
+    // Hold the clock so the thread cannot be read before Activity opens it.
+    await page.clock.install();
+    await holdReadingFocus(page);
+    await open(page, app);
+    const root = app.histories
+      .get("primary/alpha")
+      .find((row) => row.content === "Thread root 1");
+    const panel = page.getByRole("complementary", {
+      name: "Thread",
+      exact: true,
+    });
+    const unread = () =>
+      page.evaluate(
+        (rootId) =>
+          window.fixtureRelay.snapshot().session.unread.snapshot({
+            kind: "thread",
+            channelId: "alpha",
+            rootId,
+          }),
+        root.id,
+      );
+    await page
+      .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
+      .getByRole("button", { name: /^View thread:/ })
+      .click();
+    await expect(panel).toBeVisible();
+    await page.clock.runFor(1000);
+    // Collapse Alpha's pane around its selected thread, then leave the channel.
+    await page
+      .getByRole("button", { name: "Toggle tab pane", exact: true })
+      .click();
+    await page.locator("button[data-channel-id=beta]").click();
+    await expect(
+      page.getByRole("textbox", { name: "Message #Beta", exact: true }),
+    ).toBeVisible();
+    expect((await unread()).observedCount).toBeGreaterThan(0);
+    await page.locator('button[data-channel-id="alpha"]').hover();
+    const item = page
+      .getByRole("dialog", { name: "Activity in Alpha" })
+      .getByRole("button", { name: /Open unread thread from/ })
+      .filter({ hasText: "Unread reply 1" });
+    await expect(item).toBeVisible();
+    await releaseReadingFocus(page);
+    await item.click();
+    await expect(panel).toBeVisible();
+    await page.clock.runFor(1000);
+    try {
+      await expect.poll(async () => (await unread()).observedCount).toBe(0);
+    } catch (error) {
+      const focus = await page.evaluate(() => ({
+        active:
+          document.activeElement?.getAttribute("aria-label") ??
+          document.activeElement?.tagName,
+        inThread: !!document.activeElement?.closest("[data-reading-surface]"),
+      }));
+      throw new Error(
+        `The thread opened but stayed unread. Focus: ${JSON.stringify(focus)}`,
+        { cause: error },
+      );
+    }
+  });
+
   test("an Activity reopening leaves focus the person moved meanwhile", async ({
     page,
     app,

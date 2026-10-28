@@ -5,19 +5,68 @@ import { useFinalFocusUnlessMoved } from "./finalFocus";
 import { hoverOpenTiming, type HoverOpen } from "./hoverIntent";
 import {
   createContext,
+  isValidElement,
+  useCallback,
   useContext,
+  useId,
+  useRef,
   useState,
   type ComponentProps,
+  type ReactElement,
   type ReactNode,
 } from "react";
+import { useDeferredTrigger } from "./deferredTrigger";
 
 // null is an ordinary menu; a boolean is a context menu's visible lifetime.
 const ContextMenuPresence = createContext<boolean | null>(null);
 
-export function MenuRoot<Payload>(props: BaseMenu.Root.Props<Payload>) {
+type DeferredMenuState = {
+  handle: BaseMenu.Handle<unknown> | undefined;
+  activate(): void;
+  root: Omit<BaseMenu.Root.Props<unknown>, "children">;
+};
+
+// A deferred menu's root mounts beside its popup once the trigger is used.
+const DeferredMenu = createContext<DeferredMenuState | null>(null);
+
+export function MenuRoot<Payload>({
+  deferred = false,
+  ...props
+}: BaseMenu.Root.Props<Payload> & {
+  /**
+   * Mount the menu's root on the trigger's first pointer, focus or press,
+   * for menus repeated per row. The trigger must take its props on its
+   * `render` element, and the root needs exactly one `MenuPopup`.
+   */
+  deferred?: boolean;
+}) {
+  const handle = useRef<BaseMenu.Handle<Payload>>(undefined);
+  const [live, setLive] = useState(false);
+  const activate = useCallback(() => {
+    handle.current ??= BaseMenu.createHandle<Payload>();
+    setLive(true);
+  }, []);
+  if (deferred && (props.open || props.defaultOpen) && !live) activate();
+  if (!deferred)
+    return (
+      <ContextMenuPresence value={null}>
+        <BaseMenu.Root {...props} />
+      </ContextMenuPresence>
+    );
+  const { children, ...root } = props;
   return (
     <ContextMenuPresence value={null}>
-      <BaseMenu.Root {...props} />
+      <DeferredMenu
+        value={{
+          handle: live
+            ? (handle.current as BaseMenu.Handle<unknown>)
+            : undefined,
+          activate,
+          root: root as DeferredMenuState["root"],
+        }}
+      >
+        {children as ReactNode}
+      </DeferredMenu>
     </ContextMenuPresence>
   );
 }
@@ -34,17 +83,68 @@ export function MenuTrigger<Payload>({
   openOnHover,
   ...props
 }: MenuTriggerProps<Payload>) {
-  return (
-    <BaseMenu.Trigger
-      {...props}
-      {...(openOnHover && {
-        openOnHover: true,
-        ...hoverOpenTiming[openOnHover],
-      })}
-    />
-  );
+  const menu = useContext(DeferredMenu);
+  const timing = openOnHover && {
+    openOnHover: true,
+    ...hoverOpenTiming[openOnHover],
+  };
+  if (menu && isValidElement(props.render))
+    return (
+      <DeferredMenuTrigger
+        menu={menu}
+        render={props.render}
+        trigger={{ ...props, ...timing }}
+      />
+    );
+  return <BaseMenu.Trigger {...props} {...timing} />;
 }
 
+function DeferredMenuTrigger({
+  menu,
+  render,
+  trigger: props,
+}: {
+  menu: DeferredMenuState;
+  render: ReactElement;
+  trigger: Omit<BaseMenu.Trigger.Props<unknown>, "render">;
+}) {
+  const node = useRef<HTMLElement | null>(null);
+  const triggerId = `base-ui-${useId()}`;
+  const trigger = useDeferredTrigger({
+    node,
+    child: render,
+    open: !!menu.handle,
+    resting: {
+      id: triggerId,
+      "aria-haspopup": "menu",
+      "aria-expanded": false,
+      tabIndex: 0,
+    },
+    activateOn: [
+      "onPointerEnter",
+      "onMouseEnter",
+      "onPointerDown",
+      "onMouseDown",
+      "onFocus",
+      "onKeyDown",
+      "onClick",
+    ],
+    onActivate: menu.activate,
+  });
+  return (
+    <>
+      {trigger.element}
+      {menu.handle && (
+        <BaseMenu.Trigger
+          {...props}
+          id={triggerId}
+          handle={menu.handle}
+          render={trigger.relay}
+        />
+      )}
+    </>
+  );
+}
 export function ContextMenuRoot({
   open,
   defaultOpen,
@@ -156,7 +256,16 @@ function PositionedPopup({
 
 /** An anchored action menu with collision handling and shared floating-surface styling. */
 export function MenuPopup(props: PopupProps) {
-  return <PositionedPopup {...props} />;
+  const menu = useContext(DeferredMenu);
+  if (!menu) return <PositionedPopup {...props} />;
+  if (!menu.handle) return null;
+  return (
+    <DeferredMenu value={null}>
+      <BaseMenu.Root {...menu.root} handle={menu.handle}>
+        <PositionedPopup {...props} />
+      </BaseMenu.Root>
+    </DeferredMenu>
+  );
 }
 
 export function MenuSubmenu(

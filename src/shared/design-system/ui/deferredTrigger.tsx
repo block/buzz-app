@@ -75,6 +75,7 @@ export function useDeferredTrigger({
   open,
   resting,
   activateOn,
+  onActivate,
 }: {
   /** Receives the trigger element. */
   node: RefObject<HTMLElement | null>;
@@ -88,12 +89,16 @@ export function useDeferredTrigger({
   resting: ElementProps;
   /** The interactions that need Base UI, such as `onPointerEnter`. */
   activateOn: readonly string[];
+  /** Mounts a root that the trigger does not own, in the same update. */
+  onActivate?: (() => void) | undefined;
 }) {
   const [live, setLive] = useState(false);
   const [mountedAt] = useState(countInputs);
   if (open && !live) setLive(true);
   const liveRef = useRef(live);
   liveRef.current = live;
+  const activate = useRef(onActivate);
+  activate.current = onActivate;
   const latest = useRef<ElementProps>({});
   const attached = useRef<{
     ref?: RefCallback | undefined;
@@ -200,9 +205,13 @@ export function useDeferredTrigger({
               { once: true },
             );
             setLive(true);
+            activate.current?.();
             return;
           }
-          flushSync(() => setLive(true));
+          flushSync(() => {
+            setLive(true);
+            activate.current?.();
+          });
           // Base UI hears mouseenter natively. Input always reaches the
           // element with pointer events first, but a mouse-only sequence
           // may already have dispatched mouseenter before React's mouseover.

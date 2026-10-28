@@ -10,8 +10,10 @@ import {
   screen,
 } from "@testing-library/react";
 import { useLayoutEffect, useRef, useState } from "react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { HELPFUL_HINT_REST_MS, PREVIEW_REST_MS } from "./hoverIntent";
+import { MenuItem, MenuPopup, MenuRoot, MenuTrigger } from "./Menu";
 import { PreviewCard } from "./PreviewCard";
 import { Tooltip } from "./Tooltip";
 
@@ -193,4 +195,72 @@ it("leaves the updates of a handler that focuses a hint trigger to that handler"
   const action = screen.getByRole("button", { name: "Action" });
   expect(action).toHaveFocus();
   expect(action).toHaveAccessibleDescription("A hint");
+});
+
+function RowMenu({ deferred }: { deferred: boolean }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <MenuRoot deferred={deferred} open={open} onOpenChange={setOpen}>
+      <MenuTrigger
+        render={
+          <button type="button" aria-label={deferred ? "Deferred" : "Base"} />
+        }
+      />
+      <MenuPopup>
+        <MenuItem>Copy message</MenuItem>
+      </MenuPopup>
+    </MenuRoot>
+  );
+}
+
+it("renders a resting deferred menu trigger exactly as Base UI's closed trigger", () => {
+  render(
+    <>
+      <RowMenu deferred={false} />
+      <RowMenu deferred />
+    </>,
+  );
+  const base = attributes(screen.getByRole("button", { name: "Base" }));
+  const deferred = attributes(screen.getByRole("button", { name: "Deferred" }));
+  expect({ ...deferred, "aria-label": "Base" }).toEqual(base);
+});
+
+it.each([
+  ["a mouse click", { skipHover: false }],
+  ["a click that skips hover", { skipHover: true }],
+] as const)(
+  "opens a deferred menu on %s within one task",
+  async (_, options) => {
+    vi.useRealTimers();
+    const deferred = !process.env.EAGER;
+    // No delay: every event of the click is dispatched before any task runs.
+    const user = userEvent.setup({ delay: null });
+    render(<RowMenu deferred={deferred} />);
+    const name = deferred ? "Deferred" : "Base";
+    const trigger = screen.getByRole("button", { name });
+    if (options.skipHover)
+      await user.pointer({ keys: "[MouseLeft]", target: trigger });
+    else await user.click(trigger);
+    expect(await screen.findByRole("menu")).toBeInTheDocument();
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("button", { name })).toBe(trigger);
+  },
+);
+
+it("opens a deferred menu on an assistive click", async () => {
+  render(<RowMenu deferred />);
+  const trigger = screen.getByRole("button", { name: "Deferred" });
+  fireEvent.click(trigger, { detail: 0 });
+  await rest(50);
+  expect(screen.getByRole("menu")).toBeInTheDocument();
+  expect(trigger).toHaveAttribute("aria-expanded", "true");
+});
+
+it("opens a deferred menu from the keyboard once its trigger is focused", async () => {
+  render(<RowMenu deferred />);
+  const trigger = screen.getByRole("button", { name: "Deferred" });
+  act(() => trigger.focus());
+  fireEvent.keyDown(trigger, { key: "ArrowDown" });
+  await rest(0);
+  expect(screen.getByRole("menu")).toBeInTheDocument();
 });

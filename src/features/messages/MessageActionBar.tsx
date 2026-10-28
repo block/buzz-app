@@ -326,6 +326,7 @@ function MessageActionBarControls({
               }}
             />
             <MenuRoot
+              deferred
               open={open}
               onOpenChange={(next, details) => {
                 if (next) {

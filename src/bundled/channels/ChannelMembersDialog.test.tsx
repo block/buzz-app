@@ -482,6 +482,60 @@ async function relationshipInvitations() {
   return { ...t, people, key, directId, otherDirectId, rows };
 }
 
+it("orders blank invitations by shared relationships and usage before the four-row limit", async () => {
+  const t = await setup();
+  await t.user.click(screen.getByRole("button", { name: "Done" }));
+  const agents = ["Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot"].map(
+    (name) => ({ ...t.agent, pubkey: keypair().pubkey, name }),
+  );
+  const directId = "22222222-2222-4222-8222-222222222222";
+  const direct = agents[5]?.pubkey ?? "";
+  const used = agents[4]?.pubkey ?? "";
+  const events = [
+    metadata(t.relay, directId, "Direct", undefined, [["t", "dm"]]),
+    roster(t.relay, directId, [t.viewer.pubkey, direct]),
+  ];
+  const query = t.query.getMockImplementation();
+  if (!query) throw new Error("Missing query fixture");
+  t.query.mockImplementation(async (filters) => [
+    ...(await query(filters)),
+    ...events.filter((event) =>
+      filters.some((filter) => matchesEvent(event, filter)),
+    ),
+  ]);
+  await act(async () => {
+    t.control.set({ agents });
+    await t.session.channels.refreshList?.();
+  });
+  await vi.waitFor(() =>
+    expect(
+      t.session.channels
+        .list()
+        .channels.find((channel) => channel.id === directId)?.participants,
+    ).toEqual([direct]),
+  );
+  recordChoice(t.session.scope, "", personKey(used));
+  await t.user.click(t.trigger);
+  const group = await screen.findByRole("region", { name: "Your agents" });
+  await vi.waitFor(() =>
+    expect(
+      within(group)
+        .getAllByRole("button", { name: /^Add / })
+        .map((row) => row.getAttribute("aria-label")),
+    ).toEqual([
+      expect.stringMatching(/^Add Foxtrot/),
+      expect.stringMatching(/^Add Echo/),
+      expect.stringMatching(/^Add Alpha/),
+      expect.stringMatching(/^Add Bravo/),
+    ]),
+  );
+  expect(screen.getByRole("searchbox")).toHaveValue("");
+  expect(
+    within(group).getByRole("button", { name: "Show more" }),
+  ).toBeVisible();
+  expect(t.publish).not.toHaveBeenCalled();
+});
+
 it("uses shared relationship bands inside People while exact names stay first", async () => {
   const t = await relationshipInvitations();
   await t.user.type(screen.getByRole("searchbox"), "Sa");

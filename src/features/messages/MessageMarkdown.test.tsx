@@ -566,13 +566,21 @@ describe("Markdown profile mentions", () => {
     },
   );
 
-  it("does not rebind edited, untagged, unknown, disabled or ambiguous names", () => {
+  it.each<[string, RenderOptions]>([
+    ["no opener", { canOpenLink: undefined }],
+    ["a refusing opener", { canOpenLink: () => false }],
+  ])("renders mentions as inert names with %s", (_, options) => {
+    const html = render("**@Mic**", options);
+    expect(html).not.toContain("<button");
+    expect(html).toContain('data-mention-kind="person"');
+    expect(html).toContain('data-mention-name="Mic"');
+  });
+
+  it("does not rebind edited, untagged, unknown or ambiguous names", () => {
     const unavailable: RenderOptions[] = [
       { patch: { edited: true } },
       { patch: { mentions: [] } },
       { participantProfiles: undefined },
-      { canOpenLink: undefined },
-      { canOpenLink: () => false },
       {
         patch: { mentions: [mic, other] },
         participantProfiles: new Map([

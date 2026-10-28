@@ -100,7 +100,6 @@ import { avatarMedia } from "../../shared/avatar-source";
 export type MessageLinkOrigin = Readonly<{ rootId: string }>;
 export type MessageRowProps = {
   row: ChannelMessage;
-  staticMentions?: boolean | undefined;
   getThreadRoot?: (() => ChannelMessage | undefined) | undefined;
   session?: RelaySession | undefined;
   scope?: string | undefined;
@@ -168,7 +167,6 @@ const FullMessageRow = memo(function MessageRow(props: MessageContentProps) {
 });
 function MessageRowContent({
   row,
-  staticMentions,
   shownRow,
   renderMessage,
   getThreadRoot,
@@ -502,7 +500,6 @@ function MessageRowContent({
       session={session}
       scope={scope}
       row={displayRow}
-      staticMentions={staticMentions}
       extensions={extensions}
       media={media}
       onOpenLink={openLink}

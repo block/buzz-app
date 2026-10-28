@@ -2,7 +2,6 @@ import { gfmStrikethroughFromMarkdown } from "mdast-util-gfm-strikethrough";
 import { gfmTableFromMarkdown } from "mdast-util-gfm-table";
 import { gfmStrikethrough } from "micromark-extension-gfm-strikethrough";
 import { gfmTable } from "micromark-extension-gfm-table";
-import type { Options } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 /** micromark's GFM autolink literal extension tries an email literal at every
@@ -41,7 +40,7 @@ function remarkGfmSubset(
 
 export function remarkMessageGfm(
   content: string,
-): NonNullable<Options["remarkPlugins"]>[number] {
+): typeof remarkGfm | [typeof remarkGfmSubset, { table: boolean }] {
   return autolinkOrBracketSyntax.test(content)
     ? remarkGfm
     : [remarkGfmSubset, { table: tableSyntax.test(content) }];

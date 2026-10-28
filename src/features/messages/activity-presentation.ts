@@ -18,7 +18,14 @@ type ActivityRun = {
 export type ActivityPresentation = ActivityRun & {
   done: boolean;
   working: boolean;
-  standalone?: boolean;
+  standalone: boolean;
+  completedReply: ChannelMessage | undefined;
+};
+export type ActivityRowPresentation = {
+  active: boolean;
+  ownsLive: boolean;
+  container: "history" | "bubble" | "standalone";
+  motionKey: string | undefined;
 };
 const noSubscribe = () => () => {};
 const noActivity = () => undefined;
@@ -60,7 +67,7 @@ function activityStatus(group: ActivityRun, snapshot: Snapshot | undefined) {
       ? []
       : work.filter((entry) => entry.working).map((entry) => entry.agent),
   );
-  return { done, working };
+  return { done, working, completedReply: closed ? response : undefined };
 }
 
 /** Shared projection for timeline and thread; hosts own scrolling and disclosure state. */
@@ -72,6 +79,9 @@ export function activityPresentation(
 ) {
   const following = new Map(
     rows.map((row, index) => [row.id, rows[index + 1]]),
+  );
+  const preceding = new Map(
+    rows.map((row, index) => [row.id, rows[index - 1]]),
   );
   const requests = new Map<string, string>();
   if (rootId) requests.set(rootId, rootId);
@@ -108,16 +118,7 @@ export function activityPresentation(
   }
   const groups: ActivityPresentation[] = [];
   const bubbleAnchors = new Set<string>();
-  const byRow = new Map<
-    string,
-    {
-      active: boolean;
-      ownsLive: boolean;
-      standalone: boolean;
-      bubble: boolean;
-      motionKey: string | undefined;
-    }
-  >();
+  const byRow = new Map<string, ActivityRowPresentation>();
   for (const history of activityRuns(rows)) {
     const first = history[0];
     const latest = history.at(-1);
@@ -131,12 +132,10 @@ export function activityPresentation(
       requestId: requests.get(first.id) ?? first.threadRootId,
       followingMessage: following.get(latest.id),
     };
-    const { done, working } = activityStatus(group, snapshot);
-    const before = rows[rows.findIndex((row) => row.id === first.id) - 1];
+    const { done, working, completedReply } = activityStatus(group, snapshot);
+    const before = preceding.get(first.id);
     const anchor =
-      done && group.followingMessage?.authorId === first.authorId
-        ? group.followingMessage
-        : before;
+      completedReply?.authorId === first.authorId ? completedReply : before;
     const standalone =
       !anchor ||
       !!anchor.membership ||
@@ -151,29 +150,26 @@ export function activityPresentation(
       byRow.set(row.id, {
         active: last && working.has(row.authorId),
         ownsLive: last && !done && !group.followingMessage,
-        standalone: row.id === first.id && standalone,
-        bubble: !done || standalone,
-        motionKey:
-          history.length > 1 && last
-            ? `${first.id}:${row.authorId}`
-            : undefined,
+        container:
+          row.id === first.id && standalone
+            ? "standalone"
+            : !done || standalone
+              ? "bubble"
+              : "history",
+        motionKey: last ? `${first.id}:${row.authorId}` : undefined,
       });
     }
-    if (history.length > 1) {
-      groups.push({ ...group, done, working: working.size > 0, standalone });
-    }
+    groups.push({
+      ...group,
+      done,
+      working: working.size > 0,
+      standalone,
+      completedReply,
+    });
   }
   const completedReplies = new Set(
     groups.flatMap((group) =>
-      group.done &&
-      group.followingMessage &&
-      !group.followingMessage.membership &&
-      group.followingMessage.audience !== "agents" &&
-      group.followingMessage.channelId === group.latest.channelId &&
-      group.followingMessage.threadRootId === group.latest.threadRootId &&
-      group.participants.includes(group.followingMessage.authorId)
-        ? [group.followingMessage.id]
-        : [],
+      group.completedReply ? [group.completedReply.id] : [],
     ),
   );
   return { groups, byRow, representedAgents, bubbleAnchors, completedReplies };
@@ -200,18 +196,8 @@ export function activityDisplayRows<T extends ChannelMessage>(
   const replies = new Map<string, T>();
   for (const group of groups) {
     const first = group.ids[0];
-    const reply = group.followingMessage && byId.get(group.followingMessage.id);
-    if (
-      first &&
-      group.done &&
-      reply &&
-      !reply.membership &&
-      reply.audience !== "agents" &&
-      group.participants.includes(reply.authorId) &&
-      reply.channelId === group.latest.channelId &&
-      reply.threadRootId === group.latest.threadRootId
-    )
-      replies.set(first, reply);
+    const reply = group.completedReply && byId.get(group.completedReply.id);
+    if (first && reply) replies.set(first, reply);
   }
   if (!replies.size) return rows;
   const moved = new Set([...replies.values()].map((row) => row.id));

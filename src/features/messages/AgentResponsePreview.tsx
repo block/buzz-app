@@ -19,10 +19,14 @@ export function AgentResponsePreview({
     id: string;
     name: string;
     picture?: string | undefined;
+    motionKey?: string | undefined;
   }[];
   layout?: "timeline" | "thread" | "continuation" | undefined;
   children: ReactNode;
 }) {
+  const avatars: typeof participants = participants.length
+    ? participants.slice(0, 3)
+    : [{ id: "primary", name, picture }];
   return (
     <div
       className={styles.message}
@@ -44,23 +48,12 @@ export function AgentResponsePreview({
                   : name
               }
             >
-              <span
-                className={styles.agentAvatarGroupItem}
-                title={participants[0]?.name ?? name}
-              >
-                <Avatar
-                  src={participants[0]?.picture ?? picture}
-                  alt=""
-                  fallback={participants[0]?.name ?? name}
-                  shape="squircle"
-                  size="fill"
-                />
-              </span>
-              {participants.slice(1, 3).map((agent) => (
+              {avatars.map((agent) => (
                 <span
                   key={agent.id}
                   className={styles.agentAvatarGroupItem}
                   title={agent.name}
+                  data-avatar-motion-key={agent.motionKey}
                 >
                   <Avatar
                     src={agent.picture}

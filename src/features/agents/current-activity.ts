@@ -61,6 +61,7 @@ function toolLabel(tool: ToolItem): string {
 
 export type CurrentActivity = {
   label: string;
+  detailAvailability: "available" | "no-current-step" | "typing-only";
   /** Null is the channel conversation; undefined is genuinely unknown. */
   roots: (string | null | undefined)[];
 };
@@ -69,7 +70,7 @@ export type CurrentActivity = {
 export function currentActivity(
   snapshot: Snapshot | undefined,
   entries: readonly TypingEntry[],
-  ownedAgents: ReadonlySet<string>,
+  knownAgents: ReadonlySet<string>,
   channelId: string,
   threadRootId?: string,
 ): ReadonlyMap<string, CurrentActivity> {
@@ -77,6 +78,7 @@ export function currentActivity(
   const add = (agent: string, root: string | null | undefined) => {
     const activity: CurrentActivity = agents.get(agent) ?? {
       label: "Working",
+      detailAvailability: "typing-only",
       roots: [],
     };
     if (!activity.roots.includes(root)) activity.roots.push(root);
@@ -101,7 +103,7 @@ export function currentActivity(
   for (const entry of entries) {
     if (
       matches(entry.channelId, entry.threadRootId) &&
-      (ownedAgents.has(entry.pubkey) ||
+      (knownAgents.has(entry.pubkey) ||
         ownerTyping.some((owner) => owner.agent === entry.pubkey) ||
         working.some((turn) => turn.agent === entry.pubkey))
     )
@@ -118,7 +120,8 @@ export function currentActivity(
         (threadRootId && turn?.threadRootId !== threadRootId)
       )
         continue;
-      add(agent, turn?.threadRootId);
+      const detail = add(agent, turn?.threadRootId);
+      detail.detailAvailability = "no-current-step";
       tools.push(
         ...(turn?.items.filter(
           (item): item is ToolItem =>
@@ -130,11 +133,13 @@ export function currentActivity(
     }
     const activity = agents.get(agent);
     const firstTool = tools[0];
-    if (activity && firstTool)
+    if (activity && firstTool) {
+      activity.detailAvailability = "available";
       activity.label =
         tools.length > 1
           ? `Running ${tools.length} tools`
           : toolLabel(firstTool);
+    }
   }
   const local = localActivity(snapshot, channelId, threadRootId);
   for (const [agent, work] of local) {
@@ -153,7 +158,11 @@ export function currentActivity(
           .map((row) => row.threadRootId),
       ),
     ];
-    agents.set(agent, { label: localWorkLabel(work), roots });
+    agents.set(agent, {
+      label: localWorkLabel(work),
+      detailAvailability: "available",
+      roots,
+    });
   }
   return agents;
 }

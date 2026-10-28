@@ -37,6 +37,7 @@ import { useKnownAgentPubkeys } from "../agents/use-known";
 import { MessageComposer } from "./MessageComposer";
 import { ImageReviewStage } from "./ImageReviewStage";
 import { MessageRow } from "./MessageRow";
+import { useActivityPresentation } from "./activity-presentation";
 import { parseMediaTimeReply } from "./media-timecode";
 import { VideoReviewReactions } from "./VideoReviewReactions";
 import styles from "./Messages.module.css";
@@ -598,6 +599,11 @@ function ReviewComments({
 }) {
   const profiles = useRowProfiles(session.profiles, replies);
   const agentPubkeys = useKnownAgentPubkeys(session, profiles);
+  const activity = useActivityPresentation(
+    replies,
+    session.agentActivity,
+    agentPubkeys,
+  );
   const comments = useRef<HTMLElement>(null);
   useEffect(() => {
     if (selectedComment)
@@ -622,37 +628,46 @@ function ReviewComments({
         className={styles.mediaReviewThread}
         aria-label="Media comments"
       >
-        {replies.map((row, index) => (
-          <div
-            key={row.id}
-            data-review-comment={row.id}
-            data-selected={selectedComment === row.id || undefined}
-            className={styles.mediaReviewComment}
-          >
-            <MessageRow
-              row={row}
-              extensions={extensions}
-              session={session}
-              scope={scope}
-              profile={profiles.get(row.authorId)}
-              agentPubkeys={agentPubkeys}
-              media={session.media}
-              onOpenLink={() => false}
-              day={
-                index === 0 ||
-                new Date(
-                  (replies[index - 1]?.createdAt ?? 0) * 1000,
-                ).toDateString() !==
-                  new Date(row.createdAt * 1000).toDateString()
-              }
-              retry={session.messages.retry}
-              onOpenMediaReview={(_rowId, attachment, seconds) =>
-                selectAttachment(attachment, seconds)
-              }
-              {...(seek ? { onMediaTime: seek } : {})}
-            />
-          </div>
-        ))}
+        {replies.map((row, index) => {
+          const recordedActivity = activity.byRow.get(row.id);
+          return (
+            <div
+              key={row.id}
+              data-review-comment={row.id}
+              data-selected={selectedComment === row.id || undefined}
+              className={styles.mediaReviewComment}
+            >
+              <MessageRow
+                row={row}
+                recordedActivity={
+                  recordedActivity && {
+                    ...recordedActivity,
+                    container: "history",
+                  }
+                }
+                extensions={extensions}
+                session={session}
+                scope={scope}
+                profile={profiles.get(row.authorId)}
+                agentPubkeys={agentPubkeys}
+                media={session.media}
+                onOpenLink={() => false}
+                day={
+                  index === 0 ||
+                  new Date(
+                    (replies[index - 1]?.createdAt ?? 0) * 1000,
+                  ).toDateString() !==
+                    new Date(row.createdAt * 1000).toDateString()
+                }
+                retry={session.messages.retry}
+                onOpenMediaReview={(_rowId, attachment, seconds) =>
+                  selectAttachment(attachment, seconds)
+                }
+                {...(seek ? { onMediaTime: seek } : {})}
+              />
+            </div>
+          );
+        })}
         {!replies.length && (
           <p className={styles.threadNote}>
             No comments yet. Add the first below.

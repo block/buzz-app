@@ -3,7 +3,7 @@ import {
   activityDisplayRows,
   activityPresentation,
 } from "./activity-presentation";
-import { activityGroups } from "./activity-groups";
+import { activityRuns } from "./activity-groups";
 import type { ChannelMessage } from "../relay/contracts";
 
 const activity = (
@@ -27,10 +27,11 @@ const run = (prefix: string, count = 6) =>
   Array.from({ length: count }, (_, index) => activity(`${prefix}${index}`));
 
 it("folds consecutive activity into one preview and includes different agents in a run", () => {
-  expect(activityGroups(run("a", 1))).toEqual([]);
+  const single = run("a", 1);
+  expect(activityRuns(single)).toEqual([single]);
   const rows = run("a");
   rows[2] = activity("other-agent", { authorId: "other" });
-  expect(activityGroups(rows)).toEqual([{ ids: rows.map((row) => row.id) }]);
+  expect(activityRuns(rows)).toEqual([rows]);
 });
 
 it.each(["human", "agent", "membership"])(
@@ -50,9 +51,9 @@ it.each(["human", "agent", "membership"])(
             },
           }
         : { ...ordinary, authorId: kind };
-    expect(activityGroups([...before, separator, ...after])).toEqual([
-      { ids: before.map((row) => row.id) },
-      { ids: after.map((row) => row.id) },
+    expect(activityRuns([...before, separator, ...after])).toEqual([
+      before,
+      after,
     ]);
   },
 );
@@ -67,39 +68,42 @@ it("splits groups across local days and channels", () => {
     ...row,
     channelId: "other",
   }));
-  expect(activityGroups([...today, ...tomorrow, ...elsewhere])).toEqual(
-    [today, tomorrow, elsewhere].map((rows) => ({
-      ids: rows.map((row) => row.id),
-    })),
-  );
+  expect(activityRuns([...today, ...tomorrow, ...elsewhere])).toEqual([
+    today,
+    tomorrow,
+    elsewhere,
+  ]);
 });
 
-it("places completed history after its agent reply while keeping unfinished work in place", () => {
-  const history = run("step", 2);
-  const { audience: _, ...reply } = activity("reply");
-  const rows = [...history, reply];
-  const completed = activityPresentation(rows, undefined, new Set(["agent"]));
-  expect(
-    activityDisplayRows(rows, completed.groups).map((row) => row.id),
-  ).toEqual(["reply", "step0", "step1"]);
-  expect([...completed.completedReplies]).toEqual(["reply"]);
-  const request = { ...reply, id: "request", authorId: "human" };
-  expect([
-    ...activityPresentation(
-      [request, ...history],
-      undefined,
-      new Set(["agent"]),
-    ).completedReplies,
-  ]).toEqual([]);
-  const otherReply = { ...reply, authorId: "human" };
-  const pending = [...history, otherReply];
-  expect(
-    activityDisplayRows(
-      pending,
-      activityPresentation(pending, undefined, new Set(["agent"])).groups,
-    ),
-  ).toEqual(pending);
-});
+it.each([1, 2])(
+  "places %i completed steps after its agent reply while keeping unfinished work in place",
+  (count) => {
+    const history = run("step", count);
+    const { audience: _, ...reply } = activity("reply");
+    const rows = [...history, reply];
+    const completed = activityPresentation(rows, undefined, new Set(["agent"]));
+    expect(
+      activityDisplayRows(rows, completed.groups).map((row) => row.id),
+    ).toEqual(["reply", ...history.map((row) => row.id)]);
+    expect([...completed.completedReplies]).toEqual(["reply"]);
+    const request = { ...reply, id: "request", authorId: "human" };
+    expect([
+      ...activityPresentation(
+        [request, ...history],
+        undefined,
+        new Set(["agent"]),
+      ).completedReplies,
+    ]).toEqual([]);
+    const otherReply = { ...reply, authorId: "human" };
+    const pending = [...history, otherReply];
+    expect(
+      activityDisplayRows(
+        pending,
+        activityPresentation(pending, undefined, new Set(["agent"])).groups,
+      ),
+    ).toEqual(pending);
+  },
+);
 
 it("hands unparented thread replies to the latest request without overriding explicit reply links", () => {
   const { audience: _requestAudience, ...request } = activity("request", {

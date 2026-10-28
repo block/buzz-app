@@ -3481,13 +3481,6 @@ html[data-keyboard-navigation] .activityExpansion {
 .audienceLine[data-collapse] {
   color: var(--text-subtle);
 }
-.activityCollapseIcon {
-  flex: none;
-  width: var(--space-4);
-  height: var(--space-4);
-  color: var(--text-subtle);
-  opacity: 0.5;
-}
 
 /* Extend the native button hit target, keeping its painted surface content-sized. */
 .audienceRow[data-collapse] > .audienceEntry,
@@ -3516,9 +3509,6 @@ html[data-keyboard-navigation] .activityExpansion {
   padding-inline-start: 0;
   max-inline-size: 100%;
   display: block;
-}
-.standaloneActivity .audienceAvatar {
-  display: none;
 }
 .standaloneActivity .audienceRow .audienceLine {
   inline-size: fit-content;
@@ -3552,11 +3542,6 @@ html[data-keyboard-navigation] .activityExpansion {
   font-weight: var(--text-message--font-weight);
 }
 
-.standaloneActivity
-  .audienceLine:not([data-collapse])
-  > :not(.audiencePreviewText) {
-  display: none;
-}
 .standaloneActivity .audienceBody {
   min-height: calc(var(--text-message) * var(--text-message--line-height));
 }

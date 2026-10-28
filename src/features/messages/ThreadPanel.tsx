@@ -7,7 +7,7 @@ import {
   activityDisplayRows,
   useActivitySnapshot,
 } from "./activity-presentation";
-import { activityGroups } from "./activity-groups";
+import { activityRuns } from "./activity-groups";
 import { DayDivider } from "./MessageTimestamp";
 import { workflowLabel } from "../relay/workflow-attribution";
 import { usePanelTabHost } from "../panels/PanelWorkspace";
@@ -596,9 +596,9 @@ function ThreadMessages({
       return;
     activityVisit.current = messageId;
     const group = [...tree.children.values()]
-      .flatMap((rows) => activityGroups(rows))
-      .find((group) => group.ids.includes(messageId));
-    const first = group?.ids[0];
+      .flatMap((rows) => activityRuns(rows))
+      .find((group) => group.some((row) => row.id === messageId));
+    const first = group?.[0]?.id;
     if (first) setExpandedActivity((current) => new Set([...current, first]));
   }, [messageId, snapshot.replies, tree]);
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
@@ -894,6 +894,15 @@ function ThreadMessages({
     request: number;
   }>();
   const rootId = snapshot.root?.id;
+  const rootPresentation = activityPresentation(
+    snapshot.root?.audience === "agents"
+      ? [snapshot.root, ...snapshot.replies]
+      : snapshot.replies,
+    activitySnapshot,
+    agentPubkeys,
+    rootId,
+  );
+  const rootActivity = rootId ? rootPresentation.byRow.get(rootId) : undefined;
   const { agents: liveAgents } = useConversationAgents(
     session,
     channelId,
@@ -1264,13 +1273,16 @@ function ThreadMessages({
       group.ids.every((id) => !tree.children.get(id)?.length),
     );
     const siblings = activityDisplayRows(chronologicalSiblings, groups);
+    const groupsByFirst = new Map(groups.map((group) => [group.ids[0], group]));
+    const groupedIds = new Set(groups.flatMap((group) => group.ids));
     const hidden = new Set(
       groups.flatMap((group) =>
         expandedActivity.has(group.ids[0] ?? "") ? [] : group.ids,
       ),
     );
     return siblings.map((row, index) => {
-      const group = groups.find((group) => group.ids[0] === row.id);
+      const group = groupsByFirst.get(row.id);
+      const recordedActivity = presentation.byRow.get(row.id);
       if (hidden.has(row.id) && !group) return null;
       const nextRow =
         row.audience === "agents"
@@ -1309,13 +1321,14 @@ function ThreadMessages({
           <MessageRow
             activityFollows={presentation.completedReplies.has(row.id)}
             representedAgents={presentation.representedAgents.get(row.id)}
-            activityMotionKey={presentation.byRow.get(row.id)?.motionKey}
-            activityActive={presentation.byRow.get(row.id)?.active}
-            activityBubble={!group && presentation.byRow.get(row.id)?.bubble}
-            activityStandalone={
-              !group && presentation.byRow.get(row.id)?.standalone
+            recordedActivity={
+              recordedActivity && {
+                ...recordedActivity,
+                container: groupedIds.has(row.id)
+                  ? "history"
+                  : recordedActivity.container,
+              }
             }
-            activityOwnsLive={presentation.byRow.get(row.id)?.ownsLive}
             viewer={session.viewer}
             extensions={extensions}
             session={session}
@@ -1593,12 +1606,12 @@ function ThreadMessages({
               onReply={soloConversation ? undefined : focusReply}
               stackNext={joinsLive && snapshot.root.id === lastMessage?.id}
               row={snapshot.root}
-              representedAgents={activityPresentation(
-                snapshot.replies,
-                activitySnapshot,
-                agentPubkeys,
-                rootId,
-              ).representedAgents.get(snapshot.root.id)}
+              representedAgents={rootPresentation.representedAgents.get(
+                snapshot.root.id,
+              )}
+              recordedActivity={
+                rootActivity && { ...rootActivity, container: "history" }
+              }
               profile={profiles.get(snapshot.root.authorId)}
               participantProfiles={profiles}
               agentPubkeys={agentPubkeys}

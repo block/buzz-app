@@ -4,8 +4,6 @@ import styles from "./AvatarStack.module.css";
 
 type StackAvatar = {
   id: string;
-  /** Optional identity for feature-owned shared-position animation. */
-  motionKey?: string | undefined;
   name: string;
   src?: string | undefined;
   shape: "circle" | "squircle";
@@ -42,7 +40,6 @@ export function AvatarStack({
           style={{ zIndex: index + 1 }}
           data-avatar-shape={item.shape}
           title={item.name}
-          data-avatar-motion-key={item.motionKey}
         >
           <Avatar
             src={item.src}

@@ -1,7 +1,14 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render, screen } from "@testing-library/react";
-import { afterEach, expect, it } from "vitest";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
+import { useState } from "react";
+import { afterEach, expect, it, vi } from "vitest";
 import { stubAvatarBrowserApis } from "../agents/avatar-testing";
 import { createAgentActivity } from "../agents/activity";
 import { createLocalAgentActivity } from "../agents/local-activity";
@@ -16,7 +23,11 @@ import {
 import { MessageRow } from "./MessageRow";
 
 stubAvatarBrowserApis();
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+  Reflect.deleteProperty(HTMLElement.prototype, "animate");
+});
 const step: ChannelMessage = {
   id: "step",
   channelId: "channel",
@@ -121,17 +132,27 @@ it("shimmers a standalone working step and stops when that request finishes", ()
       threadRootId: "request",
     });
     work.started();
-    render(
-      <MessageRow
-        row={step}
-        session={{ ...owner.session, agentActivity: f.activity }}
-        profile={undefined}
-        media={() => undefined}
-        onOpenLink={() => false}
-        day={false}
-        retry={undefined}
-      />,
-    );
+    function Preview() {
+      const presentation = useActivityPresentation(
+        [step],
+        f.activity,
+        new Set(["agent"]),
+        step.threadRootId,
+      );
+      return (
+        <MessageRow
+          row={step}
+          recordedActivity={presentation.byRow.get(step.id)}
+          session={{ ...owner.session, agentActivity: f.activity }}
+          profile={undefined}
+          media={() => undefined}
+          onOpenLink={() => false}
+          day={false}
+          retry={undefined}
+        />
+      );
+    }
+    render(<Preview />);
     expect(screen.getByText(step.content)).toHaveAttribute(
       "data-active",
       "true",
@@ -141,6 +162,121 @@ it("shimmers a standalone working step and stops when that request finishes", ()
   } finally {
     owner.dispose();
     f.dispose();
+  }
+});
+
+it("moves the visible team avatars into history and returns them to their clustered positions", async () => {
+  const history = [step, { ...step, id: "helper-step", authorId: "helper" }];
+  const presentation = activityPresentation(
+    history,
+    undefined,
+    new Set(["agent", "helper"]),
+  );
+  const group = presentation.groups[0];
+  let finish = () => {};
+  const finished = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  const animations: { node: HTMLElement; frames: Keyframe[] }[] = [];
+  Object.defineProperty(HTMLElement.prototype, "animate", {
+    configurable: true,
+    value(this: HTMLElement, frames: Keyframe[]) {
+      animations.push({ node: this, frames });
+      return { finished, cancel: () => {} };
+    },
+  });
+  // jsdom has no layout. Supply boxes only for the visible cluster and the
+  // actual history rows, excluding hidden duplicate artwork.
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+    function (this: HTMLElement) {
+      const identity = this.closest('[role="img"]');
+      if (!this.dataset.avatarMotionKey || this.closest("[inert]"))
+        return new DOMRect();
+      if (identity) return new DOMRect(10, 20, 25, 25);
+      return this.closest('[data-audience="agents"]')
+        ? new DOMRect(50, this.title === "helper" ? 120 : 70, 40, 40)
+        : new DOMRect();
+    },
+  );
+  function Preview() {
+    const [expanded, setExpanded] = useState(false);
+    if (!group) throw new Error("Missing activity group");
+    return (
+      <div data-activity-history-scope="">
+        <ActivityGroupPreview
+          group={group}
+          profiles={new Map()}
+          media={() => undefined}
+          expanded={expanded}
+          onToggle={() => setExpanded((value) => !value)}
+        />
+        {expanded &&
+          history.map((row) => {
+            const activity = presentation.byRow.get(row.id);
+            if (!activity) throw new Error("Missing history presentation");
+            return (
+              <MessageRow
+                key={row.id}
+                row={row}
+                recordedActivity={{ ...activity, container: "history" }}
+                profile={undefined}
+                media={() => undefined}
+                onOpenLink={() => false}
+                day={false}
+                retry={undefined}
+              />
+            );
+          })}
+      </div>
+    );
+  }
+  try {
+    render(<Preview />);
+    const team = screen.getByRole("img", { name: "agent, helper" });
+    const restingTransform = "matrix(0.6, 0, 0, 0.6, 12, 12)";
+    for (const avatar of team.querySelectorAll<HTMLElement>("[title]")) {
+      avatar.style.transform = restingTransform;
+    }
+    fireEvent.click(
+      screen.getByRole("button", { name: /Show activity history/ }),
+      {
+        detail: 1,
+      },
+    );
+    const expanded = animations.filter(
+      ({ node }) => node.dataset.avatarMotionKey,
+    );
+    expect(expanded).toHaveLength(2);
+    expect(
+      expanded.every(
+        ({ node }) =>
+          node.closest('[data-audience="agents"]') &&
+          !node.closest("[data-agent-response-preview]"),
+      ),
+    ).toBe(true);
+    expect(
+      expanded.every(({ frames }) =>
+        frames[0]?.transform?.toString().includes("translate("),
+      ),
+    ).toBe(true);
+    animations.length = 0;
+    fireEvent.click(
+      screen.getByRole("button", { name: /Collapse activity history/ }),
+      {
+        detail: 1,
+      },
+    );
+    const collapsed = animations.filter(
+      ({ node }) => node.dataset.avatarMotionKey,
+    );
+    expect(collapsed).toHaveLength(2);
+    expect(collapsed.every(({ node }) => team.contains(node))).toBe(true);
+    expect(collapsed.map(({ frames }) => frames.at(-1)?.transform)).toEqual([
+      restingTransform,
+      restingTransform,
+    ]);
+  } finally {
+    await act(async () => finish());
   }
 });
 

@@ -50,41 +50,29 @@ export function useConversationAgents(
     session.agentChoices.subscribe,
     session.agentChoices.snapshot,
   );
-  const ownedAgents = useMemo(
-    () => new Set(choices.identities.map(({ pubkey }) => pubkey)),
-    [choices],
-  );
   const profiles = useSyncExternalStore(
     session.profiles.subscribe,
     session.profiles.snapshot,
   );
-  const details = useMemo(() => {
-    const current = new Map(
-      currentActivity(activity, entries, ownedAgents, channelId, threadRootId),
-    );
-    // Public agent identity changes presentation, never access to private activity.
-    for (const entry of entries) {
-      if (
-        entry.channelId !== channelId ||
-        entry.threadRootId !== threadRootId ||
-        !profiles.get(entry.pubkey)?.isAgent ||
-        current.has(entry.pubkey)
-      )
-        continue;
-      current.set(entry.pubkey, {
-        label: "Working",
-        roots: [entry.threadRootId ?? null],
-      });
-    }
-    return current;
-  }, [activity, entries, ownedAgents, channelId, threadRootId, profiles]);
+  // Public identity classifies typing only; it grants no access to step details.
+  const knownAgents = useMemo(() => {
+    const known = new Set(choices.identities.map(({ pubkey }) => pubkey));
+    for (const entry of entries)
+      if (profiles.get(entry.pubkey)?.isAgent) known.add(entry.pubkey);
+    return known;
+  }, [choices, entries, profiles]);
+  const details = useMemo(
+    () =>
+      currentActivity(activity, entries, knownAgents, channelId, threadRootId),
+    [activity, entries, knownAgents, channelId, threadRootId],
+  );
   const agents = [...details.keys()].filter((key) => !replaced.has(key)).sort();
   return {
     details,
     entries,
     replaced,
     agents,
-    activityStatus: activity?.status,
+    knownAgents,
   };
 }
 
@@ -110,7 +98,7 @@ export function TypingIndicator({
     | ((target: string, origin?: MessageLinkOrigin) => boolean)
     | undefined;
 }) {
-  const { details, entries, replaced, agents, activityStatus } =
+  const { details, entries, replaced, agents, knownAgents } =
     useConversationAgents(session, channelId, threadRootId);
   const resolveName = useChannelIdentityNames(session, channelId);
   const profiles = useSyncExternalStore(
@@ -140,6 +128,7 @@ export function TypingIndicator({
     (entry) =>
       entry.channelId === channelId &&
       entry.threadRootId === threadRootId &&
+      !knownAgents.has(entry.pubkey) &&
       !details.has(entry.pubkey) &&
       !replaced.has(entry.pubkey),
   );
@@ -190,24 +179,16 @@ export function TypingIndicator({
       ? `buzz://message?${new URLSearchParams({ channel: channelId, id: conversationRoot, thread: conversationRoot })}`
       : `buzz://channel/${encodeURIComponent(channelId)}`;
     const picture = profiles.get(pubkey)?.picture;
-    const owner = profiles.get(pubkey)?.ownerPubkey;
-    const otherOwner = !!owner && !!session.viewer && owner !== session.viewer;
     return (
       <AgentActivityRow
         name={name(pubkey)}
         picture={avatarMedia(picture, session.media)}
         status={
-          detail.label !== "Working"
+          detail.detailAvailability === "available"
             ? detail.label
-            : otherOwner
-              ? "This agent’s work details are private."
-              : activityStatus === "connecting"
-                ? "Connecting to step details…"
-                : activityStatus === "interrupted"
-                  ? "Step updates paused: connection lost."
-                  : activityStatus === "listening"
-                    ? "This agent isn’t sharing step details."
-                    : "This app can’t show step details"
+            : detail.detailAvailability === "no-current-step"
+              ? "No current step details received."
+              : "Only typing updates are reaching this app."
         }
         scope={
           detail.roots.length === 1 && detail.roots[0] === null

@@ -76,15 +76,18 @@ export function toggleActivityHistory(
           ),
         );
     }
+    // The cluster's resting transform places and sizes each avatar. Preserve it
+    // at both endpoints so collapsing does not briefly expand every item to full size.
+    const transform = view.getComputedStyle(node).transform || "none";
     animations.push(
       node.animate(
         from
           ? [
               {
-                transform: `translate(${from.x - to.x}px, ${from.y - to.y}px) scale(${from.width / to.width}, ${from.height / to.height})`,
+                transform: `translate(${from.x - to.x}px, ${from.y - to.y}px) ${transform === "none" ? "" : transform} scale(${from.width / to.width}, ${from.height / to.height})`,
                 transformOrigin: "top left",
               },
-              { transform: "none", transformOrigin: "top left" },
+              { transform, transformOrigin: "top left" },
             ]
           : [{ opacity: 0 }, { opacity: 1 }],
         { duration, easing, fill: "both" },

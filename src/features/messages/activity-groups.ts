@@ -1,9 +1,5 @@
 import type { ChannelMessage } from "../relay/contracts";
 
-export type ActivityGroup = {
-  ids: string[];
-};
-
 /** Only consecutive agent-only messages on one local day fold together.
  * Human messages, public agent replies and membership notices stay visible. */
 export function activityRuns(
@@ -30,12 +26,4 @@ export function activityRuns(
     previous = row;
   }
   return groups;
-}
-
-export function activityGroups(
-  rows: readonly ChannelMessage[],
-): ActivityGroup[] {
-  return activityRuns(rows)
-    .filter((group) => group.length > 1)
-    .map((group) => ({ ids: group.map((row) => row.id) }));
 }

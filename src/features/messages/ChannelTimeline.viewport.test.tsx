@@ -187,14 +187,18 @@ it("shows one latest-agent preview, retains expanded history through appends, an
     toggle = screen.getByRole("button", { name: /Show activity history/ });
     expect(toggle).toHaveFocus();
     expect(toggle).toHaveTextContent("Update 11");
-    expect(within(toggle).getByTitle("reviewer")).toBeVisible();
+    expect(
+      within(screen.getByRole("img", { name: "agent, reviewer" })).getByTitle(
+        "reviewer",
+      ),
+    ).toBeVisible();
     expect(screen.queryByText("Update 10")).toBeNull();
   } finally {
     owner.dispose();
   }
 });
 
-it("stacks distinct agents with overflow and removes the stack when history opens", () => {
+it("shows the first three distinct agents in the visible identity cluster while retaining its full label", () => {
   const { owner, updates, content } = activityFixture();
   try {
     const authors = ["one", "two", "three", "four"];
@@ -207,9 +211,9 @@ it("stacks distinct agents with overflow and removes the stack when history open
       ),
     );
     const compact = within(
-      screen.getByRole("button", { name: /Show activity history/ }),
+      screen.getByRole("img", { name: "one, two, three, four" }),
     );
-    expect(compact.getByText("+1")).toBeVisible();
+    expect(compact.queryByText("+1")).toBeNull();
     expect(compact.getAllByTitle("one")).toHaveLength(1);
     expect(compact.getByTitle("two")).toBeVisible();
     expect(compact.getByTitle("three")).toBeVisible();
@@ -267,38 +271,51 @@ it("reveals an older folded message for an exact visit, then permits folding it 
   }
 });
 
-it("uses one preview in channels and separates runs at public replies", () => {
-  const { owner, updates, content } = activityFixture();
-  try {
-    const rows = updates(9);
-    const view = render(content(rows, undefined, false));
-    expect(screen.queryByText("Update 0")).toBeNull();
-    expect(screen.getByText("Update 8")).toBeVisible();
-    const middle = rows[4];
-    if (!middle) throw new Error("Missing fixture reply");
-    const { audience: _audience, ...publicReply } = middle;
-    view.rerender(
-      content([
-        ...rows.slice(0, 4),
-        { ...publicReply, content: "Main reply" },
-        ...rows.slice(5),
-      ]),
-    );
-    expect(screen.queryByText("Update 0")).toBeNull();
-    expect(screen.getByText("4 completed steps")).toBeVisible();
-    const completed = screen.getByRole("button", {
-      name: /Show activity history.*4 completed steps/,
-    });
-    expect(completed.querySelector("[data-avatar-motion-key]")).toBeNull();
-    expect(screen.getByText("Main reply")).toBeVisible();
-    expect(screen.getByText("Update 8")).toBeVisible();
-    expect(
-      screen.getAllByRole("button", { name: /Show activity history/ }),
-    ).toHaveLength(2);
-  } finally {
-    owner.dispose();
-  }
-});
+it.each([1, 4])(
+  "keeps a %i-step completed disclosure below its public reply in channels",
+  (count) => {
+    const { owner, updates, content } = activityFixture();
+    try {
+      const rows = updates(count * 2 + 1);
+      const view = render(content(rows, undefined, false));
+      expect(screen.queryByText("Update 0")).toBeNull();
+      expect(screen.getByText(`Update ${count * 2}`)).toBeVisible();
+      const middle = rows[count];
+      if (!middle) throw new Error("Missing fixture reply");
+      const { audience: _audience, ...publicReply } = middle;
+      view.rerender(
+        content([
+          ...rows.slice(0, count),
+          { ...publicReply, content: "Main reply" },
+          ...rows.slice(count + 1),
+        ]),
+      );
+      expect(screen.queryByText("Update 0")).toBeNull();
+      const label = `${count} completed ${count === 1 ? "step" : "steps"}`;
+      expect(screen.getByText(label)).toBeVisible();
+      const completed = screen.getByRole("button", {
+        name: new RegExp(`Show activity history.*${label}`),
+      });
+      expect(completed.querySelector("[data-avatar-motion-key]")).toBeNull();
+      const reply = screen.getByText("Main reply");
+      expect(reply).toBeVisible();
+      expect(
+        reply.compareDocumentPosition(completed) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+      fireEvent.click(completed);
+      expect(screen.getByText("Update 0")).toBeVisible();
+      expect(completed).toHaveAttribute("aria-expanded", "true");
+      fireEvent.click(completed);
+      expect(screen.getByText(`Update ${count * 2}`)).toBeVisible();
+      expect(
+        screen.getAllByRole("button", { name: /Show activity history/ }),
+      ).toHaveLength(2);
+    } finally {
+      owner.dispose();
+    }
+  },
+);
 
 it.each([
   { anchor: "activity-8", expanded: true },

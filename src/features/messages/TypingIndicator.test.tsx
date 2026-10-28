@@ -111,13 +111,15 @@ it("shows an incoming typing preview without invented details, retaining navigat
   await user.hover(trigger);
   let dialog = await screen.findByRole("dialog", { name: "Working now" });
   expect(
-    within(dialog).getByText("This agent isn’t sharing step details."),
+    within(dialog).getByText("Only typing updates are reaching this app."),
   ).toBeVisible();
   f.update([entry()], { status: "connecting" });
-  expect(within(dialog).getByText("Connecting to step details…")).toBeVisible();
+  expect(
+    within(dialog).getByText("Only typing updates are reaching this app."),
+  ).toBeVisible();
   f.update([entry()], { status: "interrupted" });
   expect(
-    within(dialog).getByText("Step updates paused: connection lost."),
+    within(dialog).getByText("Only typing updates are reaching this app."),
   ).toBeVisible();
   f.update([entry()], { status: "listening" });
   expect(within(dialog).getByText("Thread · First task")).toBeVisible();
@@ -202,7 +204,7 @@ it.each([
     const dialog = await screen.findByRole("dialog", { name: "Working now" });
     expect(within(dialog).getByText(label, { exact: true })).toBeVisible();
     expect(
-      within(dialog).queryByText("This agent isn’t sharing step details."),
+      within(dialog).queryByText("Only typing updates are reaching this app."),
     ).toBeNull();
     expect(dialog).not.toHaveTextContent("report.txt");
   },
@@ -256,7 +258,7 @@ it("keeps a non-navigable status when the plugin is unavailable and does not clo
   await user.click(trigger);
   let dialog = await screen.findByRole("dialog");
   expect(
-    within(dialog).getByText("This app can’t show step details"),
+    within(dialog).getByText("Only typing updates are reaching this app."),
   ).toBeVisible();
   expect(within(dialog).queryByRole("button")).toBeNull();
   view.rerender(
@@ -463,6 +465,11 @@ it("opens the sole known conversation without attributing unknown telemetry to t
   expect(
     within(screen.getByRole("dialog", { name: "Working now" })).getByText(
       /Work with unconfirmed thread/,
+    ),
+  ).toBeVisible();
+  expect(
+    within(screen.getByRole("dialog")).getByText(
+      "No current step details received.",
     ),
   ).toBeVisible();
   await user.click(screen.getByRole("button", { name: "View Agent activity" }));
@@ -771,11 +778,58 @@ it("uses the agent typing bubble for a public agent outside the viewer’s choic
   await userEvent.setup().click(trigger);
   expect(
     within(await screen.findByRole("dialog")).getByText(
-      "This agent’s work details are private.",
+      "Only typing updates are reaching this app.",
     ),
   ).toBeVisible();
+  for (const status of [
+    "connecting",
+    "interrupted",
+    "disabled",
+    "unavailable",
+  ] as const) {
+    f.update([entry("public-agent")], { status });
+    expect(
+      within(screen.getByRole("dialog")).getByText(
+        "Only typing updates are reaching this app.",
+      ),
+    ).toBeVisible();
+  }
   f.update([]);
   expect(
     screen.queryByRole("button", { name: "Activity: Sam’s assistant working" }),
   ).toBeNull();
 });
+
+it.each(["done", "error", "stopped", "superseded"] as const)(
+  "keeps a public agent’s %s local work terminal despite stale typing",
+  (state) => {
+    const f = fixture();
+    const entries = [entry("public-agent"), entry(human)];
+    const local = {
+      agent: "public-agent",
+      scope: "scope",
+      channelId: "channel",
+      messageId: "request",
+      threadRootId: root,
+      startedAt: 1,
+      state: "working" as const,
+    };
+    f.update(entries, { local: [local] });
+    render(
+      <TypingIndicator
+        session={f.session}
+        channelId="channel"
+        threadRootId={root}
+      />,
+    );
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Sam’s assistant is working",
+    );
+    f.update(entries, { local: [{ ...local, state }] });
+    expect(
+      screen.queryByRole("button", { name: /Sam’s assistant working/ }),
+    ).toBeNull();
+    expect(screen.getByRole("status")).toHaveTextContent("Human is typing");
+    expect(screen.getByRole("status")).not.toHaveTextContent("Sam’s assistant");
+  },
+);

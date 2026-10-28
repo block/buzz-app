@@ -1,6 +1,6 @@
 import { AgentResponsePreview } from "./AgentResponsePreview";
 import { useActivityIndicator } from "./use-activity-indicator";
-import { activityPresentation } from "./activity-presentation";
+import type { ActivityRowPresentation } from "./activity-presentation";
 import { ShimmerText } from "../../shared/design-system/ui/ShimmerText";
 import { Collapsible } from "@base-ui/react/collapsible";
 import { formatItemTimestamp } from "../../shared/datetime";
@@ -100,12 +100,8 @@ import { avatarMedia } from "../../shared/avatar-source";
 export type MessageLinkOrigin = Readonly<{ rootId: string }>;
 export type MessageRowProps = {
   row: ChannelMessage;
-  activityMotionKey?: string | undefined;
+  recordedActivity?: ActivityRowPresentation | undefined;
   activityFollows?: boolean | undefined;
-  activityActive?: boolean | undefined;
-  activityOwnsLive?: boolean | undefined;
-  activityStandalone?: boolean | undefined;
-  activityBubble?: boolean | undefined;
   representedAgents?: readonly string[] | undefined;
   staticMentions?: boolean | undefined;
   getThreadRoot?: (() => ChannelMessage | undefined) | undefined;
@@ -1352,25 +1348,11 @@ export const MessageRow = memo(function AudienceMessageRow(
 function AgentsMessageRow(props: MessageRowProps) {
   const { row, session, media, participantProfiles, agentPubkeys } = props;
   const [open, setOpen] = useState(false);
-  const activity = useSyncExternalStore(
-    session?.agentActivity?.subscribe ?? noSubscribe,
-    session?.agentActivity?.snapshot ?? noLibrary,
-  );
-  const live = useActivityIndicator(
-    session,
-    row,
-    props.activityOwnsLive ?? false,
-  );
-  const active =
-    live ||
-    (props.activityActive ??
-      activityPresentation(
-        [row],
-        activity,
-        agentPubkeys,
-        row.threadRootId,
-      ).byRow.get(row.id)?.active ??
-      false);
+  const activity = props.recordedActivity;
+  const bubble =
+    activity?.container === "bubble" || activity?.container === "standalone";
+  const live = useActivityIndicator(session, row, activity?.ownsLive ?? false);
+  const active = live || (activity?.active ?? false);
   const keepMounted = props.keepMounted;
   useEffect(() => {
     if (open) return keepMounted?.(row.id);
@@ -1420,7 +1402,7 @@ function AgentsMessageRow(props: MessageRowProps) {
     <span
       className={styles.audienceAvatar}
       title={who.name}
-      data-avatar-motion-key={props.activityMotionKey}
+      data-avatar-motion-key={activity?.motionKey}
     >
       <AgentAvatar
         session={session}
@@ -1460,9 +1442,7 @@ function AgentsMessageRow(props: MessageRowProps) {
           }
           data-open={open || undefined}
         >
-          {props.day && !(props.activityBubble || props.activityStandalone) && (
-            <DayDivider createdAt={row.createdAt} />
-          )}
+          {props.day && !bubble && <DayDivider createdAt={row.createdAt} />}
           {/* Keep the address column stable while details open and close. */}
           <Collapsible.Root
             open={open}
@@ -1493,10 +1473,8 @@ function AgentsMessageRow(props: MessageRowProps) {
               className={styles.audienceLine}
               aria-label={`${author.name}${to.length ? ` to ${to.map((who) => who.name).join(", ")}` : ""}: ${preview}`}
             >
-              {avatar(author)}
-              {open &&
-                (props.activityBubble || props.activityStandalone) &&
-                "Collapse"}
+              {!bubble && avatar(author)}
+              {open && bubble && "Collapse"}
               {!open && (
                 <span className={styles.audiencePreviewText}>
                   <ShimmerText active={active}>{visiblePreview}</ShimmerText>
@@ -1517,12 +1495,20 @@ function AgentsMessageRow(props: MessageRowProps) {
       )}
     />
   );
-  return props.activityBubble || props.activityStandalone ? (
+  return bubble ? (
     <>
       {props.day && <DayDivider createdAt={row.createdAt} />}
       <AgentResponsePreview
         name={author.name}
-        stackPrevious={!props.activityStandalone}
+        participants={[
+          {
+            id: author.pubkey,
+            name: author.name,
+            picture: author.picture,
+            motionKey: activity?.motionKey,
+          },
+        ]}
+        stackPrevious={activity?.container !== "standalone"}
         picture={author.picture}
         layout={props.layout === "thread" ? "thread" : "timeline"}
       >

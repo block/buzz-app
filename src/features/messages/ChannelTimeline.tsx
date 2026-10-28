@@ -1168,6 +1168,7 @@ function Timeline({
         >
           {rows.map((row, index) => {
             const disclosure = disclosures.get(row.id);
+            const recordedActivity = presentation.byRow.get(row.id);
             const hidden = foldedActivity.has(row.id);
             const previousRow =
               row.audience === "agents"
@@ -1253,19 +1254,11 @@ function Timeline({
                       representedAgents={presentation.representedAgents.get(
                         row.id,
                       )}
-                      activityMotionKey={
-                        presentation.byRow.get(row.id)?.motionKey
-                      }
-                      activityActive={presentation.byRow.get(row.id)?.active}
-                      activityBubble={
-                        !disclosure && presentation.byRow.get(row.id)?.bubble
-                      }
-                      activityStandalone={
-                        !disclosure &&
-                        presentation.byRow.get(row.id)?.standalone
-                      }
-                      activityOwnsLive={
-                        presentation.byRow.get(row.id)?.ownsLive
+                      recordedActivity={
+                        recordedActivity && {
+                          ...recordedActivity,
+                          container: "history",
+                        }
                       }
                       stackPrevious={
                         !!previousRow &&

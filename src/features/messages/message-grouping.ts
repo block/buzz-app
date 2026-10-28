@@ -31,18 +31,11 @@ export function continuesMessageGroup(
   );
 }
 
-export type TimelineRowLayout = {
-  /** The row starts a local day. */
-  day: boolean;
-  /** continuesMessageGroup(previous row, this row). */
-  continues: boolean;
-};
-
-/** Day dividers and stacking for consecutive rows, converting each row's local
- * day once instead of once per comparison. */
+/** Per row: whether it starts a local day, and whether it continues the
+ * previous row's group. Each row's local day is converted once. */
 export function timelineRowLayout(
   rows: readonly ChannelMessage[],
-): TimelineRowLayout[] {
+): { day: boolean; continues: boolean }[] {
   const days = rows.map(localDay);
   return rows.map((row, index) => {
     const previous = rows[index - 1];

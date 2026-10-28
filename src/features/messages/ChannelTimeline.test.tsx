@@ -543,7 +543,7 @@ it("an append does not steal a reading position when virtualizer still reports b
 });
 it("repeated scroll events at one position leave the timeline's state alone", () => {
   // React re-renders a component that just updated even for an unchanged
-  // value, rebuilding every row before it bails out.
+  // value, rebuilding the whole timeline before it bails out.
   const h = setup();
   h.scroll();
   h.render();

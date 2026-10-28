@@ -50,6 +50,62 @@ tall(
   },
 );
 
+// A reveal hold and the floating toolbar read rows from frame callbacks and
+// scroll handlers that a page's commits schedule. Every such read must find
+// the reader's row where it is painted.
+test("frame and scroll readers after a page's commits see the reader's row in place", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  await history(page).hover();
+  while (!app.pending.length) {
+    const before = await history(page).evaluate((e) => e.scrollTop);
+    await page.mouse.wheel(0, -450);
+    await expect
+      .poll(
+        async () =>
+          app.pending.length > 0 ||
+          (await history(page).evaluate((e) => e.scrollTop)) < before,
+      )
+      .toBe(true);
+  }
+  await settle(page);
+  const before = await anchor(page);
+  const height = await history(page).evaluate((e) => e.scrollHeight);
+  const reads = await history(page).evaluateHandle((element, id) => {
+    const reads = [];
+    const read = () => {
+      const row = element.querySelector(`[data-message-id="${id}"]`);
+      if (!row) return;
+      reads.push(
+        row.querySelector("p").getBoundingClientRect().top -
+          element.getBoundingClientRect().top,
+      );
+    };
+    let queued = false;
+    new MutationObserver(() => {
+      if (!queued)
+        requestAnimationFrame(() => {
+          queued = false;
+          read();
+        });
+      queued = true;
+      element.addEventListener("scroll", read, { once: true });
+    }).observe(element, { subtree: true, childList: true, attributes: true });
+    return reads;
+  }, before.id);
+  app.pending.shift().release();
+  await expect
+    .poll(() => history(page).evaluate((e) => e.scrollHeight))
+    .toBeGreaterThan(height);
+  await settle(page);
+  await expectAnchor(page, before);
+  const values = await reads.evaluate((reads) => reads);
+  expect(values.length).toBeGreaterThan(0);
+  for (const y of values) expect(Math.abs(y - before.y)).toBeLessThan(4);
+});
+
 test("returning to the top continues history loading on wheel without a button", async ({
   page,
   app,

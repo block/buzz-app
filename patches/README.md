@@ -219,6 +219,42 @@ per run, interleaved runs). Installed-driver regressions cover immediate
 viewport delivery with deferred rows, removal and remount, and the offset read
 in LTR and RTL.
 
+## Prepend corrections land in the next frame
+
+Virtua applies a jump from the Virtualizer's layout effect. Scrolling there
+forces the style and layout that the same commit just dirtied, inside the task
+that rendered it. While history pages in, that is every shift commit and every
+measurement batch of the prepended rows: in Chromium's `scroll-paging-fast`,
+about 150 corrections per run, nearly one per frame, spent about 800 ms in
+`scrollBy`.
+
+While the latest render passes `shift`, a commit from a task instead leaves
+the jump pending. The element driver lands it from an animation callback that
+the commit's layout effect requests, so it runs before every callback that the
+commit's observers (a reveal hold, the floating toolbar) request afterwards,
+and from a window capture listener for scroll and reader input, so handlers
+that run before that frame read the corrected offset too. Commits before that
+frame land as one correction, and none forces layout inside its task. A commit
+from a later phase of the frame lands from the container's resize delivery,
+before paint: observing the container always delivers once, and it lies
+deeper than the viewport whose delivery can commit. A commit rendered from
+resize delivery itself (measured sizes) corrects inside the commit, as stock
+does, because a callback it requested would wait a frame. Deferring a nonzero
+jump cancels a retained imperative target, as the commit's correction does in
+stock; an imperative scroll lands a pending jump before its absolute target,
+and disposal drops it.
+
+Renders without `shift` keep the jump in the commit. `ChannelTimeline` anchors
+the reader itself in those renders, from a layout effect and a
+MutationObserver that read row positions right after the commit; a deferred
+jump would land on top of theirs. Store shift mode can outlast the prepend
+render, so the rule follows the render, not the mode.
+
+The remaining window is narrower than stock's: an animation callback requested
+before the page's commit, in the same frame, still runs before the jump lands.
+A browser regression reads the reader's row from frame callbacks and scroll
+handlers that each page commit schedules.
+
 ## Automated checks
 
 ```sh

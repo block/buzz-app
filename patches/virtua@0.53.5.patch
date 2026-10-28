@@ -1,21 +1,23 @@
 diff --git a/lib/index.js b/lib/index.js
-index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f4955fdebb69 100644
+index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..202c4430f245f2fc39097dd5ee6fa8a76a2afb46 100644
 --- a/lib/index.js
 +++ b/lib/index.js
-@@ -6,6 +6,10 @@ import { jsx as c } from "react/jsx-runtime";
--
-+
+@@ -6,6 +6,14 @@ import { jsx as c } from "react/jsx-runtime";
+ 
  import { flushSync as f } from "react-dom";
--
-+
+ 
 +// WebKit can restore a stale native scroll offset after an instant correction.
 +// Interrupt only the corrected axis; observer-inferred idle is not native idle.
 +const isMacWebKit = () => typeof navigator !== "undefined" && !I() && navigator.platform === "MacIntel" && navigator.vendor === "Apple Computer, Inc.";
 +
++// Set while resize delivery renders measured sizes, which runs after the
++// frame's animation callbacks.
++let sizing = !1;
++
  var a, u = [], {min: d, max: h, abs: g, floor: $} = Math, p = (e, t, o) => d(o, h(t, e)), m = e => e.sort((e, t) => e - t), w = setTimeout, S = clearTimeout, _ = "function" == typeof queueMicrotask ? queueMicrotask : e => {
      Promise.resolve().then(e);
  }, v = () => {
-@@ -17,16 +21,31 @@ var a, u = [], {min: d, max: h, abs: g, floor: $} = Math, p = (e, t, o) => d(o,
+@@ -17,16 +25,31 @@ var a, u = [], {min: d, max: h, abs: g, floor: $} = Math, p = (e, t, o) => d(o,
  a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
      const r = e.l(), s = t.i(r);
      t.u(o, n) && e.h(6, t.i(r) - s);
@@ -25,7 +27,7 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
 +    // A shift compensates every resize until scroll-end, a 150ms timer from
 +    // its jump's scroll event, but the rows it prepends measure in the frame
 +    // after that jump. Count the rows it awaits so a late frame cannot lose them.
-+    let shiftEnd = 0, shiftIdle = !1;
++    let shiftEnd = 0, shiftIdle = !1, rendersShift = !1;
 +    const shiftPending = () => {
 +        for (let e = h(x[0], 0), t = d(x[1], shiftEnd - 1, l() - 1); e <= t; e++) if (unmeasured(e)) return !0;
 +        return !1;
@@ -49,7 +51,7 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
          if (y && 1 === z) return d(y[0], e);
          const o = T();
          let n = t(o);
-@@ -44,7 +63,9 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+@@ -44,7 +67,9 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
              let o, n;
              if (_) [o, n] = x; else {
                  let r = h(0, T()), s = r + $;
@@ -60,10 +62,20 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
                  y && (o = d(o, y[0]), n = h(n, y[1]));
              }
              return [ h(o, 0), d(n, l() - 1) ];
-@@ -79,13 +100,19 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+@@ -57,6 +82,10 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+         M: () => p,
+         t: s,
+         C: () => (_ = w, w = 0, [ _, 2 === z ]),
++        jump: () => w,
++        // Only while the latest render shifts: the timeline anchors the reader
++        // itself in renders without a shift.
++        shifting: () => 2 === z && rendersShift,
+         L: (e, t) => {
+             const o = [ e, t ];
+             return R.add(o), () => {
+@@ -79,13 +108,19 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
                  }
--
-+
+ 
                case 2:
 -                h = 8, 0 !== v && (f = !0, h += 1), v = 0, z = 0, y = null;
 +                h = 8, 0 !== v && (f = !0, h += 1), v = 0, y = null;
@@ -71,8 +83,7 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
 +                // unmeasured; the batch that measures them ends it below.
 +                2 === z && shiftPending() ? shiftIdle = !0 : (z = 0, shiftEnd = 0, shiftIdle = !1);
                  break;
--
-+
+ 
                case 3:
                  if (n.length) {
                      const e = C(), t = o(e);
@@ -82,10 +93,12 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
 +                    shiftIdle && 2 === z && !shiftPending() && (z = 0, shiftEnd = 0, shiftIdle = !1);
                  }
                  break;
--
-+
-@@ -96,6 +123,17 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+ 
+@@ -94,8 +129,20 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+                 break;
+ 
                case 5:
++                rendersShift = !!c;
                  if (n !== l()) {
                      if (c) {
 +                        // Rows a shift prepends measure after its jump; remember
@@ -102,13 +115,20 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
                          const e = s();
                          i(n, !0), M(s() - e), z = 2;
                      } else i(n);
-@@ -308,23 +346,55 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+@@ -308,23 +355,62 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
      };
      return null != o && (s.position = "sticky", s[n] = o + "px", s.zIndex = r), s;
  }, J = e => {
 -    let t;
 +    let t, view, frame;
-+    const observed = new Set, pending = new Map, immediate = new Set;
++    const observed = new Set, pending = new Map, immediate = new Set, sized = entries => {
++        sizing = !0;
++        try {
++            e(entries);
++        } finally {
++            sizing = !1;
++        }
++    };
      return {
 -        V(o) {
 -            (t || (t = new (x(y(o)).ResizeObserver)(e))).observe(o);
@@ -124,12 +144,12 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
 +                t = new view.ResizeObserver(entries => {
 +                    const direct = [];
 +                    for (const entry of entries) if (immediate.has(entry.target)) direct.push(entry); else if (observed.has(entry.target)) pending.set(entry.target, entry);
-+                    if (direct.length) e(direct);
++                    if (direct.length) sized(direct);
 +                    if (pending.size && frame === undefined) frame = view.requestAnimationFrame(() => {
 +                        frame = undefined;
 +                        const batch = [...pending.values()];
 +                        pending.clear();
-+                        if (batch.length) e(batch);
++                        if (batch.length) sized(batch);
 +                    });
 +                });
 +            }
@@ -162,7 +182,7 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
              behavior: t ? "smooth" : "instant"
          });
      }, x = () => {
-@@ -353,6 +423,10 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+@@ -353,6 +439,10 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
          passive: !0
      }), {
          j: R,
@@ -173,7 +193,7 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
          J: () => {
              o.removeEventListener("scroll", R), o.removeEventListener("wheel", k), o.removeEventListener("touchstart", T), 
              o.removeEventListener("touchend", O), o.removeEventListener("touchcancel", O), S(f);
-@@ -360,9 +434,11 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+@@ -360,9 +450,11 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
          D: () => {
              const [t, o] = e.C();
              if (!t) return;
@@ -187,12 +207,27 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
                  [m]: v(t),
                  behavior: "instant"
              }), o && (c && c(), e.o() > e.t() && e.h(1, z()));
-@@ -393,10 +469,32 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+@@ -393,10 +485,47 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
          }
      };
  }, D = (e, t, o) => {
 -    let n, r, s = v(), l = !0;
-+    let n, r, s = v(), l = !0, restoreOverflow;
++    let n, r, s = v(), l = !0, restoreOverflow, container, view, laidOut, frame, corrects = !1;
++    // Scrolling from a commit forces the layout that commit dirtied. While a
++    // render prepends history, the timeline leaves its anchor to this
++    // correction, so a commit from a task lands it from the first animation
++    // callback instead, registered before any the commit's observers schedule,
++    // or from an earlier scroll or input event: app readers see the corrected
++    // offset, and commits before that frame land as one. A commit from a
++    // later phase of the frame lands from the container's resize delivery,
++    // before paint; observing the container always delivers once, and it lies
++    // deeper than the viewport whose delivery can commit. Other corrections,
++    // and those of resize delivery itself, stay in the commit.
++    const correct = () => {
++        corrects && (corrects = !1, laidOut.unobserve(container), view.cancelAnimationFrame(frame)), r && r.D();
++    }, land = () => {
++        corrects && correct();
++    }, landEvents = [ "scroll", "wheel", "touchmove", "keydown", "pointerdown", "pointerover", "focusin" ];
 +    const interruptMomentum = () => {
 +        // Repeated corrections in one task share the original declaration.
 +        restoreOverflow && restoreOverflow();
@@ -222,11 +257,16 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
          l = !0, e.h(4, o ? a : u)) : l = !1; else if (f.offsetParent) {
              const e = i.get(f);
              if (null != e) {
-@@ -408,7 +506,13 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+@@ -408,7 +537,18 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
      });
      return {
          F(l, i = l.parentElement) {
 -            c.V(n = i), r = j(e, t, i, i, o, o && "rtl" === getComputedStyle(i).direction, () => {
++            container = l, view = x(y(l));
++            for (const e of landEvents) view.addEventListener(e, land, {
++                capture: !0,
++                passive: !0
++            });
 +            for (const e of inputEvents) i.addEventListener(e, cancel, {
 +                capture: !0,
 +                passive: !0
@@ -237,18 +277,36 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
                  const e = o ? "overflowX" : "overflowY", t = i.style, n = t[e];
                  t[e] = "hidden", w(() => {
                      t[e] = n;
-@@ -416,7 +520,9 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+@@ -416,16 +556,26 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
              }), s[1](!0);
          },
          R() {
--            c.J(), r && r.J(), s[1](!1), s = v();
 +            cancel();
 +            for (const e of inputEvents) n && n.removeEventListener(e, cancel, !0);
-+            restoreOverflow && restoreOverflow(), c.J(), r && r.J(), s[1](!1), s = v();
++            for (const e of landEvents) view && view.removeEventListener(e, land, !0);
++            corrects && view.cancelAnimationFrame(frame), corrects = !1, laidOut && laidOut.disconnect(), 
++            restoreOverflow && restoreOverflow(), 
+             c.J(), r && r.J(), s[1](!1), s = v();
          },
          K: (e, t) => (i.set(e, t), c.V(e), () => {
              i.delete(e), c.X(e);
-@@ -485,7 +591,8 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+         }),
+         async N(e, t) {
+-            await s[0] && r.G(e, t);
++            // An imperative target is absolute: land a pending correction first.
++            await s[0] && (correct(), r.G(e, t));
+         },
+         U() {
+-            r && r.D();
++            if (!e.shifting() || !container || sizing) return correct();
++            // A retained imperative target predates the prepend; the jump
++            // supersedes it, as a correction in the commit would.
++            e.jump() && (r.cancel(), corrects || (corrects = !0, frame = view.requestAnimationFrame(land), 
++            (laidOut || (laidOut = new view.ResizeObserver(land))).observe(container)));
+         },
+         Z: e.M
+     };
+@@ -485,7 +635,8 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
          },
          F(c, f = c.parentElement) {
              u.V(r = f);
@@ -258,10 +316,12 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
                  const e = o ? "overflowX" : "overflowY", t = f.style, n = t[e];
                  t[e] = "hidden", w(() => {
                      t[e] = n;
-@@ -1194,4 +1301,3 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+@@ -1193,5 +1344,4 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+     });
  });
--
-+
- export { he as VGrid, ce as VList, pe as VMasonry, ie as Virtualizer, fe as WindowVirtualizer };
-\ No newline at end of file
+ 
+-export { he as VGrid, ce as VList, pe as VMasonry, ie as Virtualizer, fe as WindowVirtualizer };
 -//# sourceMappingURL=index.js.map
+\ No newline at end of file
++export { he as VGrid, ce as VList, pe as VMasonry, ie as Virtualizer, fe as WindowVirtualizer };
+\ No newline at end of file

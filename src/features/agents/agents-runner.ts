@@ -89,7 +89,10 @@ export class AgentsRunner {
   /** The memberships it last decided from, and their viewer. */
   private identities: readonly Member[] = [];
   private viewer: string | undefined;
+  /** The last full list it forgot records by. */
+  private list: string | undefined;
   private readonly listeners = new Set<() => void>();
+  private readonly recordListeners = new Set<() => void>();
 
   constructor(
     storage: AgentStore,
@@ -111,7 +114,10 @@ export class AgentsRunner {
             console.warn(`Agent type ${type} has invalid defaults`, error);
           }
       },
-      changed: () => this.changed(),
+      changed: () => {
+        for (const listener of [...this.recordListeners]) listener();
+        this.changed();
+      },
       // Its timers waited for this change, saved or failed.
       settled: (key) => this.runners.wake(key),
     });
@@ -276,16 +282,51 @@ export class AgentsRunner {
       this.listeners.delete(listener);
     };
   }
+  /** Hears each change to a record. */
+  subscribeRecords(listener: () => void) {
+    this.recordListeners.add(listener);
+    return () => {
+      this.recordListeners.delete(listener);
+    };
+  }
   private notify() {
     for (const listener of [...this.listeners]) listener();
   }
-  /** The viewer's memberships, as the Manager last sent them: connects each
-   * community where the viewer has an agent, and decides again what runs. */
-  members(identities: readonly Member[], viewer: string | undefined) {
+  /** The memberships on this device, as the Manager last sent them, and
+   * whether they are all of them (`loaded`): connects each community where
+   * the viewer has an agent, decides again what runs, and forgets records
+   * no membership keeps. */
+  members(
+    identities: readonly Member[],
+    viewer: string | undefined,
+    loaded: boolean,
+  ) {
+    // Only a new list can name a record no membership keeps.
+    const list = JSON.stringify(identities);
+    const listed = loaded && list !== this.list;
+    if (loaded) this.list = list;
     this.identities = identities;
     this.viewer = viewer;
     this.connections.watch(identities, viewer);
     this.update();
+    if (listed) this.forget();
+  }
+  /** Removes the settings whose agent is gone, or that a community it left
+   * kept: they do nothing. Its home record keeps its config while it is
+   * anywhere. */
+  private forget() {
+    const live = new Set(
+      this.identities
+        .filter((saved) => !saved.deleted)
+        .flatMap((saved) => [saved.key, saved.pubkey]),
+    );
+    for (const key of this.records.keys())
+      if (!live.has(key))
+        void this.records
+          .edit(key, { kind: "remove" })
+          .catch((error) =>
+            console.warn(`Agent ${key} settings were not removed`, error),
+          );
   }
   /** Decides again what runs once a record, a turn in progress or one of its
    * sessions changed, and lets the Manager show it. */
@@ -445,6 +486,7 @@ export class AgentsRunner {
     this.runners.clear();
     this.identities = [];
     this.viewer = undefined;
+    this.list = undefined;
     this.state = { running: [], interrupted: [] };
   }
 

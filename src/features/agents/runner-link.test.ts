@@ -1,7 +1,8 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { link, type Link, type LinkPort } from "./link";
 import { createLocalAgentActivity } from "./local-activity";
-import type { Member } from "./records";
+import { agentKey } from "./membership";
+import type { Member, RecordEdit } from "./records";
 import {
   linkedActivity,
   managerSide,
@@ -9,6 +10,7 @@ import {
   serveActivity,
 } from "./runner-link";
 import type { Agent } from "./service";
+import type { AgentRecord } from "./store";
 
 const open: Link[] = [];
 afterEach(() => {
@@ -111,21 +113,25 @@ function fakeRunner() {
   const listeners = new Set<() => void>();
   let running: readonly Agent[] = [];
   const left = new Set<string>();
+  const recordListeners = new Set<() => void>();
+  let saved: Record<string, AgentRecord> = {};
   const runner = {
-    members: vi.fn((identities: readonly Member[], _viewer?: string) => {
-      const next = identities.map(
-        (identity) =>
-          running.find(
-            (agent) =>
-              agent.key === identity.key && agent.name === identity.name,
-          ) ?? agentOf(identity),
-      );
-      const changed =
-        next.length !== running.length ||
-        next.some((agent, index) => agent !== running[index]);
-      running = next;
-      if (changed) for (const listener of [...listeners]) listener();
-    }),
+    members: vi.fn(
+      (identities: readonly Member[], _viewer?: string, _loaded?: boolean) => {
+        const next = identities.map(
+          (identity) =>
+            running.find(
+              (agent) =>
+                agent.key === identity.key && agent.name === identity.name,
+            ) ?? agentOf(identity),
+        );
+        const changed =
+          next.length !== running.length ||
+          next.some((agent, index) => agent !== running[index]);
+        running = next;
+        if (changed) for (const listener of [...listeners]) listener();
+      },
+    ),
     running: () => running,
     interrupted: () => running.filter((agent) => left.has(agent.key)),
     subscribe(listener: () => void) {
@@ -134,9 +140,36 @@ function fakeRunner() {
         listeners.delete(listener);
       };
     },
+    records: {
+      all: () => Object.values(saved),
+      edit: vi.fn(async (key: string, edit: RecordEdit) => {
+        await Promise.resolve();
+        if (edit.kind === "remove") {
+          const { [key]: _, ...rest } = saved;
+          saved = rest;
+        } else if (edit.kind === "create")
+          saved = { ...saved, [key]: edit.record };
+        for (const listener of [...recordListeners]) listener();
+      }),
+    },
+    subscribeRecords(listener: () => void) {
+      recordListeners.add(listener);
+      return () => {
+        recordListeners.delete(listener);
+      };
+    },
   };
   return { runner, left };
 }
+
+/** A new agent's settings, as its type gives them. */
+const defaults = vi.fn(
+  ({ pubkey }: Pick<Member, "pubkey">): AgentRecord => ({
+    pubkey,
+    attention: {},
+    config: { reply: "default" },
+  }),
+);
 
 function split(identities: Member[] = []) {
   const { runner, left } = fakeRunner();
@@ -144,11 +177,11 @@ function split(identities: Member[] = []) {
   let shown: Member[] = identities;
   const changed = vi.fn();
   const runnerLink = runnerSide(channel.port1, runner);
-  const manager = managerSide(
-    channel.port2,
-    () => ({ identities: shown, viewer: owner }),
+  const manager = managerSide(channel.port2, {
+    members: () => ({ loaded: true, identities: shown, viewer: owner }),
+    defaults,
     changed,
-  );
+  });
   open.push(runnerLink);
   closing.push(manager);
   return {
@@ -172,7 +205,7 @@ it("lets the Runner decide from the Manager's memberships, and waits for it", as
   const { runner, manager, show } = split();
   show([ada]);
   await manager.decided();
-  expect(runner.members).toHaveBeenLastCalledWith([ada], owner);
+  expect(runner.members).toHaveBeenLastCalledWith([ada], owner, true);
   expect(manager.running()).toEqual([agentOf(ada)]);
   expect(manager.agent(ada.key)?.name).toBe("Ada");
   expect(Object.isFrozen(manager.running()[0])).toBe(true);
@@ -196,6 +229,7 @@ it("settles a wait even when nothing that runs changed", async () => {
   expect(runner.members).toHaveBeenLastCalledWith(
     [{ ...ada, deleting: true }],
     owner,
+    true,
   );
   expect(manager.running()).toBe(shown);
 });
@@ -257,11 +291,15 @@ it("does not take what the Runner decided for a page that reloaded as an answer"
     const channel = new MessageChannel();
     to = channel.port1;
     channel.port1.onmessage = (event) => port.onmessage?.(event);
-    const page = managerSide(
-      channel.port2,
-      () => ({ identities: identities(), viewer: owner }),
-      () => {},
-    );
+    const page = managerSide(channel.port2, {
+      members: () => ({
+        loaded: true,
+        identities: identities(),
+        viewer: owner,
+      }),
+      defaults: () => undefined,
+      changed: () => {},
+    });
     closing.push(page);
     return page;
   };
@@ -275,11 +313,65 @@ it("does not take what the Runner decided for a page that reloaded as an answer"
   shown = [ada, bo];
   first.changed();
   await first.decided();
-  expect(runner.members).toHaveBeenLastCalledWith([ada, bo], owner);
+  expect(runner.members).toHaveBeenLastCalledWith([ada, bo], owner, true);
   // The reloaded page's first revision is not the Runner's last one.
   const second = load(() => [bo]);
   second.changed();
   await second.decided();
-  expect(runner.members).toHaveBeenLastCalledWith([bo], owner);
+  expect(runner.members).toHaveBeenLastCalledWith([bo], owner, true);
   expect(second.running().map((agent) => agent.name)).toEqual(["Bo"]);
+});
+
+it("shows the Runner's records, and settles an edit once it is shown", async () => {
+  const ada = member("a".repeat(64), "Ada");
+  const { runner, manager, show, changed } = split();
+  show([ada]);
+  await manager.decided();
+  // Until the Runner keeps one, its type's defaults, the same each time.
+  const first = manager.records.settingsOf(ada);
+  expect(first.config).toEqual({ reply: "default" });
+  expect(manager.records.settingsOf(ada)).toBe(first);
+  expect(manager.records.keys()).toEqual([]);
+  const record = { pubkey: ada.key, attention: {}, config: { reply: "mine" } };
+  changed.mockClear();
+  await manager.records.edit(ada.key, { kind: "create", record });
+  expect(runner.records.edit).toHaveBeenCalledWith(ada.key, {
+    kind: "create",
+    record,
+  });
+  expect(changed).toHaveBeenCalled();
+  expect(manager.records.keys()).toEqual([ada.key]);
+  const kept = manager.records.recordOf(ada);
+  expect(kept).toEqual(record);
+  // An unchanged record keeps its identity when another changes.
+  const bo = member("c".repeat(64), "Bo");
+  await manager.records.edit(bo.key, {
+    kind: "create",
+    record: { ...record, pubkey: bo.key },
+  });
+  expect(manager.records.recordOf(ada)).toBe(kept);
+  await manager.records.edit(ada.key, { kind: "remove" });
+  expect(manager.records.keys()).toEqual([bo.key]);
+});
+
+it("gives a membership outside its home its own attention and the agent's config", async () => {
+  const ada = member("a".repeat(64), "Ada");
+  const away: Member = {
+    ...ada,
+    key: agentKey(ada.pubkey, "https://other.example", "https://relay.example"),
+    relay: "wss://other.example",
+    home: "wss://relay.example",
+  };
+  const { manager, show } = split();
+  show([ada, away]);
+  await manager.decided();
+  await manager.records.edit(ada.key, {
+    kind: "create",
+    record: { pubkey: ada.key, attention: {}, config: { reply: "home" } },
+  });
+  expect(manager.records.recordOf(away)).toEqual({
+    pubkey: away.key,
+    attention: {},
+    config: { reply: "home" },
+  });
 });

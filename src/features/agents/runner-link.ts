@@ -5,7 +5,8 @@ import type { AgentsRunner } from "./agents-runner";
 import { link, type Json, type Link, type LinkPort, type Served } from "./link";
 import type { LocalAgentSource, LocalWork } from "./local-activity";
 import type { AgentKey } from "./membership";
-import type { Member } from "./records";
+import { blank, type Member, type RecordEdit } from "./records";
+import type { AgentRecord } from "./store";
 import type { Agent } from "./service";
 
 type WorkKey = Pick<LocalWork, "scope" | "agent" | "messageId">;
@@ -74,6 +75,8 @@ export function linkedActivity(runner: Link) {
 type Members = Readonly<{
   from: string;
   revision: number;
+  /** The list was read, so it names every membership on this device. */
+  loaded: boolean;
   identities: readonly Member[];
   viewer: string | null;
 }>;
@@ -93,8 +96,9 @@ export function runnerSide(
   port: LinkPort,
   runner: Pick<
     AgentsRunner,
-    "members" | "running" | "interrupted" | "subscribe"
-  >,
+    "members" | "running" | "interrupted" | "subscribe" | "subscribeRecords"
+  > &
+    Readonly<{ records: Pick<AgentsRunner["records"], "all" | "edit"> }>,
 ) {
   let from: string | null = null;
   let revision = 0;
@@ -118,6 +122,20 @@ export function runnerSide(
           };
         },
       }),
+      "runner.records": () => ({
+        get: () => runner.records.all() as unknown as Json,
+        subscribe: (listener) => runner.subscribeRecords(listener),
+      }),
+    },
+    commands: {
+      "records.edit": async (args) => {
+        const { key, edit } = args as unknown as Readonly<{
+          key: AgentKey;
+          edit: RecordEdit;
+        }>;
+        await runner.records.edit(key, edit);
+        return null;
+      },
     },
   });
   side.watch("manager.members", null, () => {
@@ -126,7 +144,11 @@ export function runnerSide(
       | undefined;
     if (!members) return;
     try {
-      runner.members(members.identities, members.viewer ?? undefined);
+      runner.members(
+        members.identities,
+        members.viewer ?? undefined,
+        members.loaded,
+      );
     } catch (error) {
       console.error("The Runner could not decide what runs", error);
     }
@@ -140,13 +162,22 @@ export function runnerSide(
 }
 
 /** The Manager's side: it sends the Runner the viewer's memberships, and
- * shows what the Runner decided. An agent keeps its identity until the Runner
- * sends a change to it. */
+ * shows what the Runner decided and the records it keeps. An agent or record
+ * keeps its identity until the Runner sends a change to it. */
 export function managerSide(
   port: LinkPort,
-  members: () => Omit<Members, "from" | "revision">,
-  changed: () => void,
+  host: Readonly<{
+    members(): Omit<Members, "from" | "revision">;
+    /** The settings a new agent of this type starts with, if its type is
+     * here. */
+    defaults(
+      identity: Pick<Member, "pubkey" | "type">,
+    ): AgentRecord | undefined;
+    /** What the Runner decided, or a record, changed. */
+    changed(): void;
+  }>,
 ) {
+  const { members, changed } = host;
   const from = crypto.randomUUID();
   let revision = 0;
   let closed = false;
@@ -163,6 +194,10 @@ export function managerSide(
   };
   const waits = new Set<Readonly<{ revision: number; resolve(): void }>>();
   const shown = new Map<AgentKey, string>();
+  let records: Readonly<Record<AgentKey, AgentRecord>> = {};
+  const recordJson = new Map<AgentKey, string>();
+  // A new agent's defaults, until the Runner sends a record for it.
+  const filled = new Map<string, AgentRecord>();
   const side = link(port, {
     topics: {
       "manager.members": () => ({
@@ -214,6 +249,35 @@ export function managerSide(
       }
     changed();
   });
+  side.watch("runner.records", null, () => {
+    const all = side.read("runner.records") as unknown as
+      | readonly AgentRecord[]
+      | undefined;
+    if (!all) return;
+    const next: Record<AgentKey, AgentRecord> = {};
+    for (const record of all) {
+      const json = JSON.stringify(record);
+      const prior = records[record.pubkey];
+      next[record.pubkey] =
+        prior && recordJson.get(record.pubkey) === json ? prior : record;
+      recordJson.set(record.pubkey, json);
+      filled.delete(record.pubkey);
+    }
+    for (const key of recordJson.keys()) if (!next[key]) recordJson.delete(key);
+    records = next;
+    changed();
+  });
+  /** The agent's home record, which keeps its config: as the Runner keeps it
+   * or, without one, its type's defaults. */
+  const settingsOf = (identity: Pick<Member, "pubkey" | "type">) => {
+    const { pubkey } = identity;
+    const kept = records[pubkey] ?? filled.get(pubkey);
+    if (kept) return kept;
+    const record = host.defaults(identity);
+    if (!record) return blank(pubkey);
+    filled.set(pubkey, record);
+    return record;
+  };
   return {
     /** The memberships may have changed: sends them if they did. */
     changed() {
@@ -234,6 +298,27 @@ export function managerSide(
     interrupted: () => state.interrupted,
     /** A running agent, in any community. */
     agent: (key: AgentKey) => state.running.find((agent) => agent.key === key),
+    /** The records the Runner keeps, as it last sent them. */
+    records: {
+      keys: () => Object.keys(records),
+      settingsOf,
+      /** The membership's settings as its owner and agent see them: its own
+       * attention, starting with none, and the agent's config. */
+      recordOf(member: Member): AgentRecord {
+        const settings = settingsOf(member);
+        if (member.key === member.pubkey) return settings;
+        const own = records[member.key] ?? blank(member.key);
+        return { ...own, config: settings.config };
+      },
+      /** Asks the Runner to apply `edit`; settles once it is saved, and
+       * shown here. */
+      async edit(key: AgentKey, edit: RecordEdit) {
+        await side.call("records.edit", {
+          key,
+          edit,
+        } as unknown as Json);
+      },
+    },
     close() {
       closed = true;
       side.close();

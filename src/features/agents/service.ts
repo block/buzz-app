@@ -1267,6 +1267,8 @@ export class AgentsService extends Service implements Agents {
   private readonly decided: ReturnType<typeof managerSide>;
   /** Counts list requests, so only the latest one is applied. */
   private listed = 0;
+  /** Native's agent list was read, so `identities` is every membership. */
+  private loaded = false;
   /** Each running cleanup of a deleted membership, by key, how to stop it,
    * and whether it finished. */
   private cleaning = new Map<
@@ -1484,14 +1486,23 @@ export class AgentsService extends Service implements Agents {
     // will between pages.
     const channel = new MessageChannel();
     this.runnerLink = runnerSide(channel.port1, this.runner);
-    this.decided = managerSide(
-      channel.port2,
-      () => ({
+    this.decided = managerSide(channel.port2, {
+      members: () => ({
+        loaded: this.loaded,
         identities: this.identities,
         viewer: this.communities.snapshot().viewer ?? null,
       }),
-      () => this.update(),
-    );
+      defaults: ({ pubkey, type }) => {
+        const kind = this.types().find((entry) => entry.key === type);
+        if (kind)
+          try {
+            return defaults(pubkey, kind);
+          } catch (error) {
+            console.warn(`Agent type ${type} has invalid defaults`, error);
+          }
+      },
+      changed: () => this.update(),
+    });
     this.unfinished = Object.freeze(readUnfinished(storage));
     this.unarchiving = readArchiveUnchecked(storage);
     this.teamList = Object.freeze(readTeams(storage));
@@ -2238,7 +2249,7 @@ export class AgentsService extends Service implements Agents {
         record = { ...record, config: made.config };
       if (carry && kind.adopt)
         record = { ...record, config: kind.adopt(carry, record.config) };
-      await this.runner.records.edit(identity.pubkey, {
+      await this.decided.records.edit(identity.pubkey, {
         kind: "create",
         record,
       });
@@ -2294,7 +2305,7 @@ export class AgentsService extends Service implements Agents {
     const name = change.name?.trim();
     if (name === "") throw new Error("Name the agent");
     const { name: _, picture: __, ...settings } = change;
-    await this.runner.records.edit(key, {
+    await this.decided.records.edit(key, {
       kind: "settings",
       member: identity,
       change: settings,
@@ -2456,7 +2467,7 @@ export class AgentsService extends Service implements Agents {
         await this.runner.records.change(
           pubkey,
           (saved) => ({
-            ...(saved ?? this.runner.records.settingsOf(identity)),
+            ...(saved ?? this.decided.records.settingsOf(identity)),
             config: change ? change.config : adopted,
           }),
           // Shown with its new type, only once its config is saved.
@@ -2493,7 +2504,7 @@ export class AgentsService extends Service implements Agents {
       throw new Error("A hosted provider cannot take over a local agent key");
     if (type === identity.type)
       return {
-        config: this.runner.records.settingsOf(identity).config,
+        config: this.decided.records.settingsOf(identity).config,
         moved: [],
         dropped: [],
         settings: [],
@@ -2647,7 +2658,7 @@ export class AgentsService extends Service implements Agents {
       if (shown.has(pubkey) && member.key !== pubkey) continue;
       shown.set(
         pubkey,
-        this.view(member, this.runner.records.recordOf(member)),
+        this.view(member, this.decided.records.recordOf(member)),
       );
     }
     return [...shown.values()];
@@ -2748,7 +2759,7 @@ export class AgentsService extends Service implements Agents {
       );
     // Its home record keeps the agent's settings, but not what it paid
     // attention to there.
-    if (key === pubkey) await this.runner.records.edit(key, { kind: "leave" });
+    if (key === pubkey) await this.decided.records.edit(key, { kind: "leave" });
     await this.refresh();
   }
 
@@ -3141,7 +3152,7 @@ export class AgentsService extends Service implements Agents {
     source: RegisteredAgentType | undefined,
     kind: RegisteredAgentType,
   ) {
-    const record = this.runner.records.settingsOf(identity);
+    const record = this.decided.records.settingsOf(identity);
     const carry = source?.carry?.(record.config) ?? {};
     const { config } = kind.defaults();
     const adopted = kind.adopt ? kind.adopt(carry, config) : config;
@@ -3248,20 +3259,12 @@ export class AgentsService extends Service implements Agents {
       // A read that succeeds ends the failure the last one reported.
       const { error: _, ...state } = this.state;
       this.state = Object.freeze({ ...state, status: "ready" });
-      // Settings whose agent is gone, or that a community it left kept, do
-      // nothing. Its home record keeps its config while it is anywhere.
+      this.loaded = true;
       const live = new Set(
         identities
           .filter((saved) => !saved.deleted)
           .flatMap((saved) => [saved.key, saved.pubkey]),
       );
-      const gone = this.runner.records.keys().filter((key) => !live.has(key));
-      for (const key of gone)
-        void this.runner.records
-          .edit(key, { kind: "remove" })
-          .catch((error) =>
-            console.warn(`Agent ${key} settings were not removed`, error),
-          );
       // Nor do change requests, which would hold review slots unseen.
       this.updates = this.updates.filter((request) => live.has(request.agent));
       // A deleted agent leaves its teams; the teams stay.
@@ -3490,7 +3493,7 @@ export class AgentsService extends Service implements Agents {
     const alive: Agent[] = [];
     for (const identity of this.identities) {
       if (identity.deleted || !this.alive(identity)) continue;
-      const record = this.runner.records.recordOf(identity);
+      const record = this.decided.records.recordOf(identity);
       // Reuse the frozen agent while nothing visible changed, so subscribers see
       // a stable snapshot.
       const fits = (prior: Agent | undefined) =>

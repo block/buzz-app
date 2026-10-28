@@ -189,3 +189,23 @@ it("does not answer a call for a page that has since reloaded", async () => {
   release("slow");
   await expect(answer).resolves.toBe("fast");
 });
+
+it("sends what a command changed before its result", async () => {
+  const count = store<number>(1);
+  const { first, second } = pages();
+  first({
+    topics: { count: () => count },
+    commands: {
+      bump: async () => {
+        await Promise.resolve();
+        count.set(count.get() + 1);
+        return "done";
+      },
+    },
+  });
+  const manager = second();
+  manager.watch("count", null, () => {});
+  await vi.waitFor(() => expect(manager.read("count")).toBe(1));
+  await expect(manager.call("bump")).resolves.toBe("done");
+  expect(manager.read("count")).toBe(2);
+});

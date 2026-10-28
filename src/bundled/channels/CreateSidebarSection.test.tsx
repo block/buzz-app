@@ -13,6 +13,39 @@ import { CreateSidebarSection } from "./CreateSidebarSection";
 
 afterEach(cleanup);
 
+it("offers recovery when preferences become unavailable before the first submission", async () => {
+  const create = vi.fn();
+  const view = render(
+    <CreateSidebarSection
+      create={create}
+      close={vi.fn()}
+      writable
+      refreshing={false}
+      retry={vi.fn()}
+    />,
+  );
+  const input = screen.getByRole("textbox", { name: "Section name" });
+  await waitFor(() => expect(input).toHaveFocus());
+  fireEvent.change(input, { target: { value: "Launch" } });
+  view.rerender(
+    <CreateSidebarSection
+      create={create}
+      close={vi.fn()}
+      writable={false}
+      refreshing={false}
+      retry={vi.fn()}
+    />,
+  );
+  expect(
+    screen.getByRole("button", { name: "Retry preferences" }),
+  ).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Create" })).toBeDisabled();
+  const form = input.closest("form");
+  if (!form) throw new Error("Create form missing");
+  fireEvent.submit(form);
+  expect(create).not.toHaveBeenCalled();
+});
+
 it("keeps a gated draft editable and submits its edited name with a fresh identity", async () => {
   const user = userEvent.setup();
   const create = vi.fn().mockReturnValue(false);
@@ -126,4 +159,64 @@ it("keeps the submitted name and identity through a failed save, blocking dismis
   );
   expect(create).toHaveBeenCalledTimes(2);
   expect(create.mock.calls[1]).toEqual(create.mock.calls[0]);
+});
+
+it("offers preference recovery immediately after an uncertain save and blocks creation until recovered", async () => {
+  const user = userEvent.setup();
+  let finish!: () => void;
+  const recovered = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  const retry = vi.fn(() => recovered);
+  const create = vi
+    .fn()
+    .mockRejectedValueOnce(new Error("Relay request failed (502)"))
+    .mockResolvedValue(true);
+  const props = {
+    create,
+    close: vi.fn(),
+    writable: true,
+    refreshing: false,
+    retry,
+  };
+  const view = render(<CreateSidebarSection {...props} />);
+  const input = screen.getByRole("textbox", { name: "Section name" });
+  await waitFor(() => expect(input).toHaveFocus());
+  await user.type(input, "Launch{Enter}");
+  await screen.findByRole("alert");
+  try {
+    view.rerender(<CreateSidebarSection {...props} writable={false} />);
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Couldn't confirm the section was saved",
+    );
+    expect(screen.queryByText(/Relay request failed/)).toBeNull();
+    expect(input).toHaveAccessibleDescription(
+      expect.stringContaining("Couldn't confirm"),
+    );
+    const submit = screen.getByRole("button", { name: "Create" });
+    expect(submit).toBeDisabled();
+    const form = input.closest("form");
+    if (!form) throw new Error("Create form missing");
+    fireEvent.submit(form);
+    expect(create).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole("button", { name: "Retry preferences" }));
+    expect(retry).toHaveBeenCalledOnce();
+    view.rerender(
+      <CreateSidebarSection {...props} writable={false} refreshing />,
+    );
+    expect(
+      screen.getByRole("button", { name: "Retry preferences" }),
+    ).toBeDisabled();
+    view.rerender(<CreateSidebarSection {...props} />);
+    finish();
+    await waitFor(() => expect(input).toHaveFocus());
+    expect(
+      screen.queryByRole("button", { name: "Retry preferences" }),
+    ).toBeNull();
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(create).toHaveBeenCalledTimes(2));
+    expect(create.mock.calls[1]).toEqual(create.mock.calls[0]);
+  } finally {
+    finish();
+  }
 });

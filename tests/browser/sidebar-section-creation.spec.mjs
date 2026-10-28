@@ -43,6 +43,7 @@ test("Channels offers empty-section creation with keyboard focus and confirmed p
   const creations = [];
   let lostResponse = false;
   let awaitingReconciliation = false;
+  let failWriterRead = false;
   let writerReads = 0;
   await page.route("**/query", async (route) => {
     const filters = route.request().postDataJSON();
@@ -54,6 +55,17 @@ test("Channels offers empty-section creation with keyboard focus and confirmed p
     ) {
       if (filters.every((filter) => filter.consistency === "strong")) {
         writerReads++;
+        if (failWriterRead) {
+          failWriterRead = false;
+          app.report.sidebarPreferenceFailures ??= [];
+          app.report.sidebarPreferenceFailures.push(route.request().url());
+          await route.fulfill({
+            status: 502,
+            contentType: "application/json",
+            body: JSON.stringify({ error: "Preference read unavailable" }),
+          });
+          return;
+        }
         awaitingReconciliation = false;
       } else {
         // A replica is still behind the accepted write. Only writer routing
@@ -88,7 +100,7 @@ test("Channels offers empty-section creation with keyboard focus and confirmed p
   await page.route("**/sidebar-assignment", loseCreationResponse);
   await field.press("Enter");
   await expect(dialog.getByRole("alert")).toContainText(
-    "Relay request failed (502)",
+    "Couldn't confirm the section was saved. Try again.",
   );
   expect(writerReads).toBe(1);
   await expect.poll(() => app.report.sidebarPublications?.length ?? 0).toBe(1);
@@ -130,6 +142,7 @@ test("Channels offers empty-section creation with keyboard focus and confirmed p
   // An accepted creation must also appear if the user cancels instead of
   // retrying. Reopening the form must not hide that confirmed section.
   lostResponse = false;
+  failWriterRead = true;
   await page.route("**/sidebar-assignment", loseCreationResponse);
   await trigger.click();
   await page
@@ -138,9 +151,21 @@ test("Channels offers empty-section creation with keyboard focus and confirmed p
   await field.fill("Cancel check");
   await dialog.getByRole("button", { name: "Create", exact: true }).click();
   await expect(dialog.getByRole("alert")).toContainText(
-    "Relay request failed (502)",
+    "Couldn't confirm the section was saved. Try again.",
   );
   expect(writerReads).toBe(2);
+  await expect(
+    dialog.getByRole("button", { name: "Create", exact: true }),
+  ).toBeDisabled();
+  await expect(dialog.getByRole("alert")).not.toContainText("502");
+  // Recover preferences without replaying creation, then Cancel/reopen.
+  await dialog.getByRole("button", { name: "Retry preferences" }).click();
+  await expect(field).toBeFocused();
+  await expect(
+    dialog.getByRole("button", { name: "Create", exact: true }),
+  ).toBeEnabled();
+  expect(writerReads).toBe(3);
+  expect(creations).toHaveLength(3);
   const accepted = page
     .locator("summary")
     .filter({ hasText: /^Cancel check$/ });

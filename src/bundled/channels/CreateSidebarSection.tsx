@@ -27,11 +27,12 @@ export function CreateSidebarSection({
   const [name, setName] = useState("");
   const submitted = useRef(false);
   const section = useRef<{ id: string; name: string } | undefined>(undefined);
-  const [blocked, setBlocked] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
+  const needsRecovery = !pending && !writable;
+  const errorId = `${formId}-error`;
   const submit = async () => {
-    if (submitted.current || pending || !name.trim()) return;
+    if (submitted.current || pending || !writable || !name.trim()) return;
     submitted.current = true;
     // A failed confirmation may follow a successful write. Retry the same
     // identity and name rather than trying to rename an unknown publication.
@@ -45,11 +46,10 @@ export function CreateSidebarSection({
       const accepted = await create(attempt);
       section.current = accepted ? attempt : undefined;
       submitted.current = accepted;
-      setBlocked(!accepted);
-    } catch (cause) {
+    } catch {
       section.current = attempt;
       submitted.current = false;
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError("Couldn't confirm the section was saved. Try again.");
     } finally {
       setPending(false);
     }
@@ -77,7 +77,7 @@ export function CreateSidebarSection({
             form={formId}
             type="submit"
             variant="prominent"
-            disabled={!name.trim()}
+            disabled={!writable || !name.trim()}
             loading={pending}
           >
             {channelName ? "Create and move" : "Create"}
@@ -95,6 +95,7 @@ export function CreateSidebarSection({
         <Input
           ref={input}
           aria-label="Section name"
+          aria-describedby={error || needsRecovery ? errorId : undefined}
           placeholder="Section name"
           required
           readOnly={pending || !!section.current}
@@ -103,16 +104,26 @@ export function CreateSidebarSection({
           onChange={(event) => setName(event.target.value)}
         />
       </form>
-      {error && <p role="alert">{error}</p>}
-      {blocked && !writable && (
-        <div role="alert">
-          <p>
-            Saved preferences are unavailable. Retry preferences to keep
-            creating this section.
-          </p>
-          <Button disabled={refreshing} onClick={() => void retry()}>
-            Retry preferences
-          </Button>
+      {(error || needsRecovery) && (
+        <div id={errorId} role="alert">
+          {error && <p>{error}</p>}
+          {needsRecovery && (
+            <>
+              <p>
+                Saved preferences are unavailable. Retry preferences before
+                trying again.
+              </p>
+              <Button
+                disabled={refreshing}
+                onClick={async () => {
+                  await retry();
+                  input.current?.focus();
+                }}
+              >
+                Retry preferences
+              </Button>
+            </>
+          )}
         </div>
       )}
     </Dialog>

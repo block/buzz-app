@@ -153,7 +153,11 @@ can also be dragged with a pointer onto another saved group, **Starred** or
 placement, rollback notice and Retry.
 The **Channels** ellipsis menu also offers **Create section**, which creates an
 empty section without moving a channel. Its dialog retains the name and section
-ID on failure and waits for confirmation before closing. After a failed creation,
+ID after an attempted write fails and waits for confirmation before closing.
+The submitted name stays read-only and focused; a rejected gate that attempted
+no write leaves the draft editable. Failed confirmation uses plain copy and
+offers Retry preferences whenever preferences are unavailable, with Create
+disabled until recovery. After a failed creation,
 the session refreshes preferences from the writer before allowing dismissal so
 an accepted save stays visible even after Cancel. If that read fails too, new
 creation is gated across menu, drop and create-and-move paths, and Retry retains

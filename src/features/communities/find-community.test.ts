@@ -1,9 +1,13 @@
+import { invoke } from "@tauri-apps/api/core";
 import { expect, it, vi } from "vitest";
 import {
   FindCommunityError,
   findCommunity,
+  nativeRelayFetch,
   type RelayFetch,
 } from "./find-community";
+
+vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
 const url = "https://relay.example.com:8443";
 const self = "76aa9daa7edc9c2e1dc6a2a90dbce10c1bd52f060fa6506ba7bad4f50240fc01";
@@ -176,4 +180,46 @@ it("passes the caller's abort through instead of calling it unreachable", async 
   const found = findCommunity(url, request, controller.signal);
   controller.abort(new Error("left the page"));
   await expect(found).rejects.toThrow("left the page");
+});
+
+it("finds a relay that answers after 12 s, within the native limit", async () => {
+  vi.useFakeTimers();
+  // Node's native AbortSignal timer is not driven by Vitest's clock.
+  const timeout = vi
+    .spyOn(AbortSignal, "timeout")
+    .mockImplementation((milliseconds) => {
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(), milliseconds);
+      return controller.signal;
+    });
+  const answers: Record<string, unknown> = {
+    "/": buzz,
+    "/api/join-policy": { policy },
+  };
+  let release!: () => void;
+  const answered = new Promise<void>((resolve) => (release = resolve));
+  vi.mocked(invoke).mockImplementation(async (command, args) => {
+    expect(command).toBe("relay_http");
+    await answered;
+    return {
+      status: 200,
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(answers[(args as { path: string }).path]),
+    };
+  });
+  let settled = false;
+  const found = findCommunity(
+    url,
+    nativeRelayFetch,
+    new AbortController().signal,
+  ).finally(() => (settled = true));
+  try {
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(settled).toBe(false);
+    release();
+    await expect(found).resolves.toMatchObject({ self, policy: {} });
+  } finally {
+    timeout.mockRestore();
+    vi.useRealTimers();
+  }
 });

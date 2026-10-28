@@ -28,11 +28,13 @@ const held = (profile: PersonalProfile) => ({
 });
 const denied = () => Promise.reject(new Error("Relay read failed (403)"));
 const entries = () => JSON.parse(localStorage.getItem(key) ?? "[]");
-/** Every remote call and journal write, in order. */
+/** Every remote call, journal write and saved membership, in order. */
 let sequence: string[];
 function communities(profile = none.profile) {
   return {
-    joined: vi.fn(),
+    joined: vi.fn(() => {
+      sequence.push("joined");
+    }),
     snapshot: () => ({ profile }) as ReturnType<Communities["snapshot"]>,
   };
 }
@@ -208,7 +210,7 @@ it("saves the membership without publishing when the fresh read already matches"
       current: () => true,
     }),
   ).resolves.toBe(true);
-  expect(sequence).toEqual(["setItem", "read", "setItem"]);
+  expect(sequence).toEqual(["setItem", "read", "joined", "setItem"]);
   expect(publishProfile).not.toHaveBeenCalled();
   expect(service.joined).toHaveBeenCalledWith(
     { id: community, name: "relay.example.com" },
@@ -241,7 +243,14 @@ it("publishes a differing profile, confirms it by readback, then saves the membe
       current: () => true,
     }),
   ).resolves.toBe(true);
-  expect(sequence).toEqual(["setItem", "read", "publish", "read", "setItem"]);
+  expect(sequence).toEqual([
+    "setItem",
+    "read",
+    "publish",
+    "read",
+    "joined",
+    "setItem",
+  ]);
   expect(publishProfile).toHaveBeenCalledWith(community, next, {});
   expect(service.joined).toHaveBeenCalledWith(
     { id: community, name: "relay.example.com" },
@@ -317,7 +326,7 @@ it("saves the membership with the relay's profile and finishes the admission ent
       current: () => true,
     }),
   ).resolves.toBe(true);
-  expect(sequence).toEqual(["setItem"]);
+  expect(sequence).toEqual(["joined", "setItem"]);
   expect(inspectProfile).not.toHaveBeenCalled();
   expect(publishProfile).not.toHaveBeenCalled();
   // The same local-default rule as the dialog: this community's media stays out of it.

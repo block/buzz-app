@@ -43,9 +43,10 @@ export async function findCommunity(
   request: RelayFetch,
   signal: AbortSignal,
 ): Promise<FoundCommunity> {
-  const bounded = AbortSignal.any([signal, AbortSignal.timeout(12_000)]);
+  // The native request bounds the wait (10 s connect, 30 s total); IPC cannot
+  // end it sooner.
   const get = (path: string) =>
-    request(url, path, bounded).catch((error: unknown) => {
+    request(url, path, signal).catch((error: unknown) => {
       if (signal.aborted) throw error;
       throw new FindCommunityError("unreachable");
     });

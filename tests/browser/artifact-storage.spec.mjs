@@ -105,6 +105,107 @@ test("commits across windows and survives offline restart with isolated scopes",
     expect(result[field]).toBeUndefined();
 });
 
+test("notifies another window when a committed writer closes", async ({
+  page,
+  context,
+  storageUrl,
+}) => {
+  await open(page, storageUrl);
+  const other = await context.newPage();
+  await open(other, storageUrl);
+  await other.evaluate(async () => {
+    const c = window.artifactTest.open();
+    await c.get("saved");
+    window.committedValue = null;
+    c.subscribe(async () => {
+      window.committedValue = (await c.get("saved"))?.record.local;
+    });
+  });
+  const closed = await page.evaluate(async () => {
+    const c = window.artifactTest.open();
+    await c.get("saved");
+    const transaction = IDBDatabase.prototype.transaction;
+    let closed = false;
+    IDBDatabase.prototype.transaction = function (...args) {
+      const tx = transaction.apply(this, args);
+      IDBDatabase.prototype.transaction = transaction;
+      tx.addEventListener(
+        "complete",
+        () => {
+          c.close();
+          closed = true;
+        },
+        { once: true },
+      );
+      return tx;
+    };
+    try {
+      await c.importBatch({
+        records: [{ id: "saved", local: { title: "saved" } }],
+      });
+      return closed;
+    } finally {
+      IDBDatabase.prototype.transaction = transaction;
+    }
+  });
+  expect(closed).toBe(true);
+  await expect
+    .poll(() => other.evaluate(() => window.committedValue))
+    .toEqual({ title: "saved" });
+});
+
+test("continues indexed pages and raw ID pages through their final cursors", async ({
+  page,
+  storageUrl,
+}) => {
+  await open(page, storageUrl);
+  const result = await page.evaluate(async () => {
+    const c = window.artifactTest.open("viewer", "relay", "test", {
+      project: () => [{ index: "all", value: "", order: "same" }],
+    });
+    await c.importBatch({
+      records: ["a", "b", "c"].map((id) => ({ id, local: {} })),
+    });
+    const first = await c.page({ index: "all", value: "", limit: 2 });
+    const last = await c.page({
+      index: "all",
+      value: "",
+      limit: 2,
+      after: first.next,
+    });
+    const empty = await c.page({
+      index: "all",
+      value: "",
+      after: { order: "same", id: "c" },
+    });
+    const ids = await c.knownIds({ limit: 2 });
+    const lastIds = await c.knownIds({ limit: 2, after: ids.next });
+    const emptyIds = await c.knownIds({ after: "c" });
+    return {
+      first: {
+        ids: first.entries.map((entry) => entry.record.id),
+        next: first.next,
+      },
+      last: {
+        ids: last.entries.map((entry) => entry.record.id),
+        next: last.next,
+      },
+      empty,
+      ids,
+      lastIds,
+      emptyIds,
+    };
+  });
+  expect(result).toEqual({
+    first: { ids: ["a", "b"], next: { order: "same", id: "b" } },
+    last: { ids: ["c"], next: undefined },
+    empty: { entries: [] },
+    ids: { ids: ["a", "b"], next: "b" },
+    lastIds: { ids: ["c"] },
+    emptyIds: { ids: [] },
+  });
+});
+
 test("rolls back received batches and migration failures without publishing changes", async ({
   page,
   storageUrl,

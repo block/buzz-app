@@ -469,9 +469,9 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
       });
     }
   }
-  const visit = await page.evaluate(() => {
+  const visit = await page.evaluate(async () => {
     const visit = window.profilesFixture.navigation.snapshot().entry;
-    window.profilesFixture.replace();
+    await window.profilesFixture.replace();
     return visit;
   });
   // Same-account/community replacement reconstructs the read-only address;
@@ -557,12 +557,34 @@ test("contextual panel callbacks retire with opening, channel, contribution and 
   await page.evaluate(() => window.profilesFixture.retain());
   expect(await invoke()).toBe(false);
   await expect(panel).toBeVisible();
-  await page.evaluate(() => window.profilesFixture.replace());
+  await page.evaluate(() => {
+    window.profilesFixture.holdReplacementDiscovery();
+    window.replacement = window.profilesFixture.replace();
+  });
+  try {
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          window.profilesFixture.replacementDiscoveryStarted(),
+        ),
+      )
+      .toBe(true);
+    expect(await page.evaluate(() => window.profilesFixture.retained())).toBe(
+      true,
+    );
+    // Hold successor discovery to expose a cold publication deterministically.
+    // The retained view must survive preparation as well as the final handoff.
+    expect(await workingBody.evaluate((node) => node.isConnected)).toBe(true);
+  } finally {
+    await page.evaluate(() =>
+      window.profilesFixture.releaseReplacementDiscovery(),
+    );
+    await page.evaluate(() => window.replacement);
+  }
   expect(await invoke()).toBe(false);
   expect(await page.evaluate(() => window.profilesFixture.generation())).toBe(
     generation,
   );
-  expect(await workingBody.evaluate((node) => node.isConnected)).toBe(true);
   const resume = panel.getByRole("button", { name: "Resume", exact: true });
   // A retained reconnect keeps its generation and working view but revokes
   // old callbacks; the retained component receives a fresh context.
@@ -582,6 +604,8 @@ test("contextual panel callbacks retire with opening, channel, contribution and 
         .open(window.profilesFixture.targets.viewer),
     ),
   ).toBe(true);
+  // Success here proves the callback uses the successor's committed authority.
+  expect(await workingBody.evaluate((node) => node.isConnected)).toBe(true);
   await page.evaluate(() => {
     window.oldPanelContext = window.profilesFixture.contexts.at(-1);
   });

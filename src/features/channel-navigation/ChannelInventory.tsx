@@ -561,19 +561,23 @@ export function ChannelInventory({
   // Group drags land on the placement drop targets, so they need both writers.
   const orderWritable = placementWritable && preferences.sectionOrderWritable;
   const groupIds = preferences.data?.sections.map(({ id }) => id) ?? [];
+  // Saved order uses the same section keys as collapse and drag.
   const orderedContributions = orderContributedSidebarSections(
-    contributions,
+    contributions.map((entry) => ({
+      key: contributedSidebarSectionKey(entry.key),
+      entry,
+    })),
     sidebar.contributionOrder,
-  );
+  ).map(({ entry }) => entry);
   const reorderContributions = (sectionKey: string, overKey: string) => {
-    const key = sectionKey.replace(/^plugin:/, "");
-    const over = overKey.replace(/^plugin:/, "");
-    const ids = orderedContributions.map(({ key }) => key);
-    const from = ids.indexOf(key);
-    const to = ids.indexOf(over);
+    const ids = orderedContributions.map(({ key }) =>
+      contributedSidebarSectionKey(key),
+    );
+    const from = ids.indexOf(sectionKey);
+    const to = ids.indexOf(overKey);
     if (from < 0 || to < 0) return;
     ids.splice(from, 1);
-    ids.splice(to, 0, key);
+    ids.splice(to, 0, sectionKey);
     const activeKeys = new Set(ids);
     const seenSavedKeys = new Set<string>();
     const order: string[] = [];

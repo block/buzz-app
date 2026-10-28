@@ -230,8 +230,9 @@ subscription: return a stable immutable array until the data changes, then notif
 listeners. `select` is a pure row-to-`OpenTarget` function used for both active
 selection and opening the row. Optional
 header actions are compact buttons; each has a stable id, accessible label,
-icon, and callback. A render failure replaces only that section with its
-unavailable state, and rejected row/header actions stay local to that section.
+icon, and callback. A render failure, including invalid rows, replaces only that
+section with its unavailable state. Its Retry renders the current rows again.
+Rejected row/header actions stay local to that section.
 
 ```tsx
 import { createElement } from "react";

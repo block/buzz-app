@@ -1,5 +1,6 @@
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { readView, subscribeView, writeView } from "../../shared/view-state";
+import { contributedSidebarSectionKey } from "./sidebar-sections";
 
 type SidebarView = {
   collapsed: string[];
@@ -18,9 +19,12 @@ function restore(scope: string): SidebarView {
       ? saved.collapsed.filter((key): key is string => typeof key === "string")
       : [],
     contributionOrder: Array.isArray(saved.contributionOrder)
-      ? saved.contributionOrder.filter(
-          (key): key is string => typeof key === "string",
-        )
+      ? saved.contributionOrder
+          .filter((key): key is string => typeof key === "string")
+          // Earlier orders saved raw `<plugin>/<id>` keys; section keys are prefixed.
+          .map((key) =>
+            key.includes(":") ? key : contributedSidebarSectionKey(key),
+          )
       : [],
     scrollTop:
       typeof saved.scrollTop === "number" &&

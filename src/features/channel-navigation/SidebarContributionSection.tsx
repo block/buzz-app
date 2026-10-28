@@ -1,9 +1,11 @@
 import {
   useCallback,
   useLayoutEffect,
+  useRef,
   useState,
   useSyncExternalStore,
 } from "react";
+import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { OwnedContribution } from "../../plugins/OwnedContribution";
@@ -70,17 +72,32 @@ export function SidebarContributionSection({
   move: { up?: () => void; down?: () => void } | undefined;
   onRowsCommitted?: () => void;
 }) {
+  // A failed section stops observing its rows; Retry renders it again.
+  const [attempt, setAttempt] = useState(0);
+  const retry = useRef<HTMLButtonElement>(null);
+  const sectionKey = `plugin:${entry.key}`;
+  useLayoutEffect(() => {
+    // Retry remounts the section: focus the new Retry, or the recovered header.
+    if (!attempt || document.activeElement !== document.body) return;
+    (
+      retry.current ??
+      document.querySelector<HTMLElement>(
+        `[data-sidebar-section="${CSS.escape(sectionKey)}"] details > summary`,
+      )
+    )?.focus({ preventScroll: true });
+  }, [attempt, sectionKey]);
   return (
     <OwnedContribution
       entry={entry}
       registry={registry}
+      resetIdentity={attempt}
       fallback={
         <DroppableSidebarSection
           disabled={false}
           reorderable={reorderable}
           groupIndex={groupIndex}
           groupDomain="contributions"
-          sectionKey={`plugin:${entry.key}`}
+          sectionKey={sectionKey}
           title={entry.title}
           open={open}
           onToggle={onToggle}
@@ -91,6 +108,13 @@ export function SidebarContributionSection({
             {entry.title} is unavailable. Other sidebar sections remain
             available.
           </p>
+          <Button
+            ref={retry}
+            size="sm"
+            onClick={() => setAttempt((count) => count + 1)}
+          >
+            Retry
+          </Button>
         </DroppableSidebarSection>
       }
     >

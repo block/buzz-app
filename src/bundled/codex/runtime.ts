@@ -1,3 +1,6 @@
+import { callbackHookArgs, openHookBridge } from "./hook-bridge";
+import type { Host } from "../../features/host/service";
+import { nativeHookState } from "./hooks";
 import { isFinalMessage } from "../../buzz-mcp/session-tools";
 import type { WorkOutcome } from "../../features/agents/local-activity";
 import { fromOwner, workflowOf } from "../../features/agents/owner-attestation";
@@ -260,6 +263,15 @@ export class CodexRuntime {
     /** Desktop-local repository instructions; standalone hosts keep their own layout. */
     private readonly repositories: (scope: string | undefined) => string = () =>
       "",
+    private readonly hooks?: {
+      serve: NonNullable<Host["serveMcp"]>;
+      run(
+        agent: string,
+        session: string,
+        event: string,
+        input: unknown,
+      ): Promise<Record<string, unknown>>;
+    },
   ) {}
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
@@ -330,15 +342,16 @@ export class CodexRuntime {
         throw new Error(
           "The workspace changed. Send a message to start its session first.",
         );
-      const { params } = await this.prepare(
+      const { params, bridge } = await this.prepare(
         rpc,
         agent,
         settings,
         workspace,
         {},
       );
-      signal.throwIfAborted();
       try {
+        signal.throwIfAborted();
+        bridge?.bind(saved.threadId);
         await rpc.request("thread/resume", {
           ...params,
           threadId: saved.threadId,
@@ -356,6 +369,7 @@ export class CodexRuntime {
         );
         throw error;
       } finally {
+        await bridge?.close();
         await rpc
           .request("thread/unsubscribe", { threadId: saved.threadId })
           .catch(() => undefined);
@@ -516,7 +530,17 @@ export class CodexRuntime {
     // Threads set their own cwd; the process just needs a directory that exists.
     const server: Server = {
       rpc,
-      opening: rpc.open(this.spawn, defaults.workspace),
+      opening: rpc.open(
+        (id, options) =>
+          this.spawn(id, {
+            ...options,
+            args: [
+              ...(options?.args ?? []),
+              ...(this.hooks ? callbackHookArgs : []),
+            ],
+          }),
+        defaults.workspace,
+      ),
       threads: new Map(),
     };
     // An exit fails current work and permits the next ordinary mention to reopen.
@@ -925,13 +949,14 @@ export class CodexRuntime {
     };
     const followed = follow(server.rpc, signal, once);
     entry.onces.add(once);
+    let hookBridge: Awaited<ReturnType<typeof openHookBridge>> | undefined;
     try {
       const rpc = await server.opening;
       signal.throwIfAborted();
       const workspace = await this.workspace(settings.workspace);
       signal.throwIfAborted();
       once.workspace = workspace;
-      const { params, model, effort, summary } = await this.prepare(
+      const { params, model, effort, summary, bridge } = await this.prepare(
         rpc,
         agent,
         settings,
@@ -939,6 +964,7 @@ export class CodexRuntime {
         {},
         delivery.synced,
       );
+      hookBridge = bridge;
       const text = await prompt();
       if (text === undefined) return { ok: true };
       const memory = await this.core(agent.key, signal);
@@ -952,6 +978,7 @@ export class CodexRuntime {
         },
       );
       once.threadId = started.thread.id;
+      bridge?.bind(once.threadId);
       server.threads.set(once.threadId, agent.key);
       signal.throwIfAborted();
       if (!delivery.current()) return { ok: true };
@@ -993,6 +1020,7 @@ export class CodexRuntime {
       this.status(agent.key, key, "Needs attention", message(error));
       return { ok: false, error: message(error) };
     } finally {
+      await hookBridge?.close();
       once.finished = true;
       followed.stop();
       const { threadId } = once;
@@ -1368,7 +1396,20 @@ export class CodexRuntime {
           approvalPolicy: "never",
           sandbox: "read-only",
           ephemeral: true,
-          config,
+          config: {
+            ...config,
+            mcp_servers: Object.fromEntries(
+              Object.entries(
+                (config.mcp_servers ?? {}) as Record<
+                  string,
+                  Record<string, unknown>
+                >,
+              ).map(([name, server]) => [name, { ...server, enabled: false }]),
+            ),
+            ...(this.server?.rpc === rpc && this.hooks
+              ? { "hooks.state": await nativeHookState(rpc, cwd, false) }
+              : {}),
+          },
         },
       );
       turn.threadId = started.thread.id;
@@ -1395,7 +1436,7 @@ export class CodexRuntime {
    * model and effort its turn runs on: `pick`'s when available. */
   private async prepare(
     rpc: AppServer,
-    agent: Pick<AgentHandle, "name" | "pubkey">,
+    agent: Pick<AgentHandle, "key" | "name" | "pubkey">,
     settings: Config,
     workspace: string,
     pick: Readonly<{ model?: string; effort?: string }>,
@@ -1405,6 +1446,7 @@ export class CodexRuntime {
       config: {
         mcp_servers?: Record<string, Record<string, unknown>>;
         model_reasoning_summary?: string | null;
+        features?: { hooks?: boolean; codex_hooks?: boolean };
       };
     }>("config/read", { cwd: workspace });
     const models = await listModels(rpc);
@@ -1443,6 +1485,18 @@ export class CodexRuntime {
         ],
       ),
     );
+    const features = normalized.config.features;
+    const disabled = (features?.hooks ?? features?.codex_hooks) === false;
+    const hooks =
+      !disabled && this.server?.rpc === rpc && this.hooks
+        ? await nativeHookState(rpc, workspace)
+        : undefined;
+    const hookAdapter = disabled ? undefined : this.hooks;
+    const bridge = hookAdapter
+      ? await openHookBridge(hookAdapter.serve, (session, event, input) =>
+          hookAdapter.run(agent.key, session, event, input),
+        )
+      : undefined;
     const params = {
       model,
       cwd: workspace,
@@ -1452,8 +1506,9 @@ export class CodexRuntime {
       // agent's own watches and timers start work.
       sandbox: "danger-full-access",
       config: {
+        ...(hooks ? { "hooks.state": hooks } : {}),
         web_search: "disabled",
-        mcp_servers: mcp,
+        mcp_servers: { ...mcp, ...bridge?.config },
         "features.plugins": false,
         "features.apps": false,
       },
@@ -1462,7 +1517,7 @@ export class CodexRuntime {
     const summary = normalized.config.model_reasoning_summary
       ? {}
       : { summary: "auto" };
-    return { params, model, effort, summary };
+    return { params, model, effort, summary, bridge };
   }
   private async execute(
     request: Request,
@@ -1509,6 +1564,7 @@ export class CodexRuntime {
           `${item.command ?? ""}\n${item.aggregatedOutput ?? ""}`,
         );
     });
+    let hookBridge: Awaited<ReturnType<typeof openHookBridge>> | undefined;
     try {
       const rpc = await server.opening;
       signal.throwIfAborted();
@@ -1518,7 +1574,7 @@ export class CodexRuntime {
       signal.throwIfAborted();
       active.workspace = workspace;
       const existing = entry.saved[key];
-      const { params, model, effort, summary } = await this.prepare(
+      const { params, model, effort, summary, bridge } = await this.prepare(
         rpc,
         agent,
         settings,
@@ -1526,6 +1582,7 @@ export class CodexRuntime {
         request,
         request.synced,
       );
+      hookBridge = bridge;
       active.model = model;
       active.effort = effort;
       // Resume restores the thread's tools, so one started with other added
@@ -1567,6 +1624,7 @@ export class CodexRuntime {
           });
       } else started = await start();
       active.threadId = started.thread.id;
+      bridge?.bind(active.threadId);
       server.threads.set(active.threadId, agent.key);
       signal.throwIfAborted();
       await rpc.request("thread/name/set", {
@@ -1693,6 +1751,7 @@ export class CodexRuntime {
         await server.rpc
           .request("thread/unsubscribe", { threadId: active.threadId })
           .catch(() => server.rpc.close());
+      await hookBridge?.close();
       if (lane.active === active) delete lane.active;
     }
   }

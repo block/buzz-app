@@ -12,7 +12,10 @@ import type { RelayData } from "../../features/relay/service";
 import type { EventData } from "../../features/relay/events";
 import { eventDto } from "../../features/relay/events";
 import { keypair, signed } from "../../features/relay/testing";
-import type { HostProcessOptions } from "../../features/host/service";
+import type {
+  McpHandler,
+  HostProcessOptions,
+} from "../../features/host/service";
 import { BUZZ_PROMPT, TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
 import { CodexRuntime, codexStep, programs } from "./runtime";
 import { config } from "./config";
@@ -52,8 +55,10 @@ function fixture(
     model?: string;
     model_reasoning_effort?: string;
     model_reasoning_summary?: string;
+    features?: { hooks?: boolean; codex_hooks?: boolean };
   } = {},
   repositories?: (scope: string | undefined) => string,
+  hooks?: ConstructorParameters<typeof CodexRuntime>[7],
 ) {
   let terminals = remainingTerminals;
   let options: HostProcessOptions | undefined;
@@ -125,6 +130,20 @@ function fixture(
             },
           ],
           nextCursor: null,
+        };
+      if (request.method === "hooks/list")
+        result = {
+          data: [
+            {
+              hooks: [
+                {
+                  key: "dispatcher",
+                  currentHash: "fixed",
+                  source: "sessionFlags",
+                },
+              ],
+            },
+          ],
         };
       if (request.method === "config/read")
         result = {
@@ -319,6 +338,7 @@ function fixture(
     config,
     () => added,
     repositories,
+    hooks,
   );
   runtimes.push(runtime);
   const events: EventData[] = [];
@@ -4454,4 +4474,128 @@ it("refuses a handoff from a channel-scoped Codex session to another of its chan
     "That is this conversation.",
   );
   expect(handoff).not.toHaveBeenCalled();
+});
+
+it("keeps callbacks live beside terminals and lets a title finish after its admission closes", async () => {
+  let handler!: McpHandler;
+  let enabled = true;
+  const close = vi.fn(async () => {});
+  const f = fixture([{}], undefined, false, {}, undefined, {
+    serve: async (run) => {
+      handler = run;
+      return {
+        url: "http://127.0.0.1:1/mcp",
+        headers: [],
+        close,
+        closed: new Promise(() => {}),
+      };
+    },
+    run: async () => (enabled ? { decision: "block", reason: "policy" } : {}),
+  });
+  asSoloChat(f);
+  const named = vi.fn();
+  await f.runtime.run({ ...f.delivery("@Codex title this"), named });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  const title = f.sent.filter((wire) => wire.method === "thread/start")[1];
+  expect(title?.params).toMatchObject({
+    config: {
+      mcp_servers: { buzz_native_hooks: { enabled: false } },
+      "hooks.state": { dispatcher: { enabled: false } },
+    },
+  });
+  const call = () =>
+    handler({
+      id: 1,
+      method: "tools/call",
+      params: { name: "PreToolUse", arguments: { session_id: "thread-1" } },
+    });
+  expect(await call()).toMatchObject({
+    result: { content: [{ text: '{"decision":"block","reason":"policy"}' }] },
+  });
+  enabled = false;
+  expect(await call()).toMatchObject({ result: { content: [{ text: "{}" }] } });
+  await f.complete(0, "FIRST");
+  await vi.waitFor(() => expect(close).toHaveBeenCalledOnce());
+  expect(
+    f.sent.some(
+      (wire) => wire.method === "thread/backgroundTerminals/terminate",
+    ),
+  ).toBe(false);
+  f.emit({
+    method: "item/completed",
+    params: {
+      threadId: "thread-2",
+      item: { type: "agentMessage", text: '{"title":"Still running"}' },
+    },
+  });
+  f.emit({
+    method: "turn/completed",
+    params: {
+      threadId: "thread-2",
+      turn: { id: "turn-2", status: "completed" },
+    },
+  });
+  await vi.waitFor(() => expect(named).toHaveBeenCalledWith("Still running"));
+});
+
+it.each([
+  { features: { hooks: false }, disabled: true },
+  { features: { codex_hooks: false }, disabled: true },
+  { features: { hooks: false, codex_hooks: true }, disabled: true },
+  { features: { hooks: true, codex_hooks: false }, disabled: false },
+  { features: { codex_hooks: true }, disabled: false },
+])(
+  "honors native hook flags $features before opening the bridge",
+  async ({ features, disabled }) => {
+    const serve = vi.fn(async () => ({
+      url: "http://127.0.0.1:1/mcp",
+      headers: [],
+      close: async () => {},
+      closed: new Promise<void>(() => {}),
+    }));
+    const f = fixture([], undefined, false, { features }, undefined, {
+      serve,
+      run: async () => ({}),
+    });
+    await f.runtime.run(f.delivery("@Codex hi"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    expect(serve).toHaveBeenCalledTimes(disabled ? 0 : 1);
+    const started = f.sent.find((wire) => wire.method === "thread/start");
+    if (!started) throw new Error("No thread start");
+    const config = (started.params as { config: Record<string, unknown> })
+      .config;
+    expect(config).not.toHaveProperty("features.hooks");
+    expect(
+      Object.hasOwn(config.mcp_servers as object, "buzz_native_hooks"),
+    ).toBe(!disabled);
+    expect(f.sent.some((wire) => wire.method === "hooks/list")).toBe(!disabled);
+    await f.complete(0);
+    await f.runtime.run(f.delivery("@Codex again"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+    const resumed = f.sent.find((wire) => wire.method === "thread/resume")
+      ?.params as { config: Record<string, unknown> };
+    expect(resumed.config).not.toHaveProperty("features.hooks");
+    expect(serve).toHaveBeenCalledTimes(disabled ? 0 : 2);
+    await f.complete(1);
+  },
+);
+
+it("keeps interrupting an idle existing conversation a no-op", async () => {
+  const f = fixture();
+  const delivery = f.delivery("first");
+  const agent = {
+    ...delivery.agent,
+    config: delivery.config,
+  } as unknown as Agent;
+  await f.runtime.run(delivery);
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.complete();
+  await vi.waitFor(() =>
+    expect(f.runtime.sessionState(agent, { channelId: "channel", root })).toBe(
+      "idle",
+    ),
+  );
+  await expect(
+    f.runtime.session(agent, { channelId: "channel", root }, "interrupt"),
+  ).resolves.toBeUndefined();
 });

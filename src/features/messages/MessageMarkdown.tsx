@@ -9,6 +9,7 @@ import {
   useState,
   useSyncExternalStore,
   type ComponentPropsWithoutRef,
+  type ReactElement,
   type ReactNode,
 } from "react";
 import type { RelaySession } from "../relay/session";
@@ -56,6 +57,7 @@ import { safeLinkUrl, visibleHtmlSource } from "../relay/message-content";
 import styles from "./Messages.module.css";
 import { profileMentionParts } from "./profile-mentions";
 import {
+  CACHED_CONTENT_LENGTH,
   isLiteralMarkdownContext,
   prepareMarkdown,
   type LiteralRange,
@@ -733,27 +735,44 @@ function PreparedMessageMarkdown({
   return largeEmoji ? markdown : <div className={styles.text}>{markdown}</div>;
 }
 
+// Parsing dominates remounting a body (a reopened thread, a returning
+// virtualized row). Every other Markdown input is static and the components
+// read their behavior from context, so the rendered tree depends only on the
+// protected content and can be shared between mounts.
+const renderedBodies = new Map<string, ReactElement>();
+const RENDERED_LIMIT = 256;
+
+// Markdown is a synchronous, hook-free function of its props.
+const renderBody = (protectedContent: ProtectedContent) =>
+  Markdown({
+    remarkPlugins: [
+      remarkGfm,
+      remarkBreaks,
+      [remarkSpoilers, `<${protectedContent.prefix}spoiler\uE002>`],
+      [remarkInlineContent, protectedContent],
+      remarkLiteralHtml,
+    ],
+    components: markdownComponents,
+    skipHtml: true,
+    urlTransform: transformUrl,
+    children: protectedContent.content,
+  });
+
 const MarkdownBody = memo(function MarkdownBody({
   protectedContent,
 }: {
   protectedContent: ProtectedContent;
 }) {
-  return (
-    <Markdown
-      remarkPlugins={[
-        remarkGfm,
-        remarkBreaks,
-        [remarkSpoilers, `<${protectedContent.prefix}spoiler\uE002>`],
-        [remarkInlineContent, protectedContent],
-        remarkLiteralHtml,
-      ]}
-      components={markdownComponents}
-      skipHtml
-      urlTransform={transformUrl}
-    >
-      {protectedContent.content}
-    </Markdown>
-  );
+  if (protectedContent.content.length > CACHED_CONTENT_LENGTH)
+    return renderBody(protectedContent);
+  const key = JSON.stringify(protectedContent);
+  const cached = renderedBodies.get(key);
+  if (cached) return cached;
+  const rendered = renderBody(protectedContent);
+  if (renderedBodies.size >= RENDERED_LIMIT)
+    renderedBodies.delete(renderedBodies.keys().next().value as string);
+  renderedBodies.set(key, rendered);
+  return rendered;
 });
 
 function MessageSpoiler({

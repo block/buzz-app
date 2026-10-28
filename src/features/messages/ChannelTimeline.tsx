@@ -369,6 +369,9 @@ function Timeline({
   // whole timeline after an update, so only changes reach the state.
   const jumpShown = useRef(false);
   const [newMessageCount, setNewMessageCount] = useState(0);
+  // Likewise, a reader at the bottom resets the count only when there is one.
+  const counted = useRef(0);
+  counted.current = newMessageCount;
   const recordPosition = useCallback(
     (element: HTMLElement, layoutOwned = false) => {
       // A delayed membership event can replace a group's rendered representative.
@@ -457,7 +460,7 @@ function Timeline({
       jumpShown.current = !bottom;
       setShowJumpToLatest(!bottom);
     }
-    if (bottom) setNewMessageCount(0);
+    if (bottom && counted.current) setNewMessageCount(0);
   }, []);
   const jumpToLatest = useCallback(() => {
     if (!handle.current || !rows.length) return;

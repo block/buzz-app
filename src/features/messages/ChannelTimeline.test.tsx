@@ -556,6 +556,18 @@ it("repeated scroll events at one position leave the timeline's state alone", ()
   expect(h.hasJumpToLatest()).toBe(true);
   h.unmount();
 });
+it("scroll events at the bottom with no new messages leave the timeline's state alone", () => {
+  const h = setup();
+  h.element.scrollTop = 3038;
+  h.scroll();
+  h.render();
+  expect(h.hasJumpToLatest()).toBe(false);
+  hooks.stateWrites = 0;
+  h.dispatchScroll();
+  h.dispatchScroll();
+  expect(hooks.stateWrites).toBe(0);
+  h.unmount();
+});
 it("reader input retires a pending jump so a live append cannot pull the reader back", () => {
   const h = setup();
   h.scroll();

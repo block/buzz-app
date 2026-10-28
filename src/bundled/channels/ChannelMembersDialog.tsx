@@ -632,10 +632,16 @@ export function ChannelMembersDialog({
   const [invitationPage, setInvitationPage] = useState({
     text,
     size: MEMBER_SEARCH_PAGE_SIZE,
+    revealRelay: false,
     groupSizes: {} as Record<string, number>,
   });
   if (invitationPage.text !== text)
-    setInvitationPage({ text, size: MEMBER_SEARCH_PAGE_SIZE, groupSizes: {} });
+    setInvitationPage({
+      text,
+      size: MEMBER_SEARCH_PAGE_SIZE,
+      revealRelay: false,
+      groupSizes: {},
+    });
   // biome-ignore lint/correctness/useExhaustiveDependencies: destination changes retire addition notices.
   useEffect(() => {
     const controller = new AbortController();
@@ -811,6 +817,7 @@ export function ChannelMembersDialog({
       group.keys.length > 0,
   );
   const search = useMemberSearch(session, query, canAddPeople);
+  const relayKeys = new Set(search.people.map((person) => person.pubkey));
   const candidates = new Map(
     search.people.map((person) => [person.pubkey, person]),
   );
@@ -939,7 +946,14 @@ export function ChannelMembersDialog({
       ...ranked,
       ...people.filter((person) => !rankedKeys.has(person.pubkey)),
     ];
-    const size = invitationPage.groupSizes[name] ?? INVITATION_GROUP_SIZE;
+    // A directory continuation reveals its loaded matches, including the new
+    // page. Local-only rows retain the group's separate expansion limit.
+    const size = Math.max(
+      invitationPage.groupSizes[name] ?? INVITATION_GROUP_SIZE,
+      invitationPage.revealRelay
+        ? ordered.findLastIndex((person) => relayKeys.has(person.pubkey)) + 1
+        : 0,
+    );
     return {
       name,
       people: ordered.slice(0, size),
@@ -1017,7 +1031,12 @@ export function ChannelMembersDialog({
     if (solo) share.reloadRoster();
     else setRosterReading(true);
     setRefresh((value) => value + 1);
-    setInvitationPage({ text, size: MEMBER_SEARCH_PAGE_SIZE, groupSizes: {} });
+    setInvitationPage({
+      text,
+      size: MEMBER_SEARCH_PAGE_SIZE,
+      revealRelay: false,
+      groupSizes: {},
+    });
     void session.memberAdministration.refresh(channelId).catch(() => {});
     // Native inventory retains ready data during refresh, so its snapshot alone
     // does not expose every in-flight read.
@@ -1826,9 +1845,11 @@ export function ChannelMembersDialog({
                                 groupSizes: {
                                   ...old.groupSizes,
                                   [group.name]:
-                                    (old.groupSizes[group.name] ??
-                                      INVITATION_GROUP_SIZE) +
-                                    INVITATION_GROUP_SIZE,
+                                    Math.max(
+                                      old.groupSizes[group.name] ??
+                                        INVITATION_GROUP_SIZE,
+                                      group.people.length,
+                                    ) + INVITATION_GROUP_SIZE,
                                 },
                               }))
                             }
@@ -1880,10 +1901,14 @@ export function ChannelMembersDialog({
                       variant={solo ? "outline" : "subtle"}
                       size="sm"
                       onClick={() => {
-                        setInvitationPage((old) => ({
-                          ...old,
-                          size: invitationSize + MEMBER_SEARCH_PAGE_SIZE,
-                        }));
+                        setInvitationPage((old) =>
+                          solo
+                            ? {
+                                ...old,
+                                size: invitationSize + MEMBER_SEARCH_PAGE_SIZE,
+                              }
+                            : { ...old, revealRelay: true },
+                        );
                         if (!moreCandidates) search.next();
                       }}
                       disabled={search.loading}

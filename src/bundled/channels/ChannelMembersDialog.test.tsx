@@ -1174,11 +1174,10 @@ it("refresh restarts the current directory query from page one instead of mixing
   const people = within(
     screen.getByRole("region", { name: "Not in this channel" }),
   ).getByRole("region", { name: "People" });
-  for (let index = 0; index < 7; index++)
-    await t.user.click(
-      within(people).getByRole("button", { name: "Show more" }),
-    );
   await screen.findByText(nameText("Morgan stale"));
+  expect(within(people).getAllByRole("button", { name: /^Add / })).toHaveLength(
+    31,
+  );
   const refresh = screen.getByRole("button", { name: "Refresh member data" });
   await vi.waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false"));
   fresh = true;
@@ -1839,6 +1838,8 @@ async function pagedInvitations(
   await idle();
   return {
     t,
+    local,
+    remote,
     refresh,
     idle,
     search,
@@ -1876,6 +1877,61 @@ it("expands local and relay groups independently without losing paged matches", 
     expect(
       screen.queryByRole("button", { name: "Find more matches" }),
     ).toBeNull();
+    expect(t.publish).not.toHaveBeenCalled();
+  });
+});
+
+it("reveals fetched relay pages while local-only rows keep their own limit", async ({
+  signal,
+}) => {
+  return ownedTask(signal, async (step) => {
+    const { t, idle, more, moreIn, groupRows, rows, pages } =
+      await pagedInvitations(step, 65);
+    expect(rows()).toHaveLength(8);
+    await more();
+    await idle();
+    expect(
+      screen.getByRole("button", { name: /^Add Helper final/ }),
+    ).toBeVisible();
+    expect(groupRows("People")).toHaveLength(30);
+    expect(groupRows("Your agents")).toHaveLength(4);
+    await moreIn("Your agents");
+    expect(groupRows("Your agents")).toHaveLength(8);
+    expect(groupRows("People")).toHaveLength(30);
+    expect(pages()).toEqual([1, 2]);
+    expect(t.publish).not.toHaveBeenCalled();
+  });
+});
+
+it("expands a mixed group from its revealed relay boundary", async ({
+  signal,
+}) => {
+  return ownedTask(signal, async (step) => {
+    const { t, local, remote, idle, more, moreIn, groupRows } =
+      await pagedInvitations(step, 5);
+    t.readAgentLibrary.mockResolvedValue({
+      definitions: [],
+      identities: [
+        ...local,
+        ...remote.map((event, index) => ({
+          pubkey: event.pubkey,
+          name: `Helper remote ${index}`,
+        })),
+      ],
+    });
+    await step(() =>
+      act(async () => {
+        t.control.set({ agents: [] });
+        await t.session.agentChoices.refresh();
+      }),
+    );
+    await idle();
+    expect(groupRows("Your other agents")).toHaveLength(4);
+    await more();
+    await idle();
+    expect(groupRows("Your other agents")).toHaveLength(30);
+    await moreIn("Your other agents");
+    expect(groupRows("Your other agents")).toHaveLength(34);
     expect(t.publish).not.toHaveBeenCalled();
   });
 });

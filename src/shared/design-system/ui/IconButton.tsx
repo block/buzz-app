@@ -32,9 +32,13 @@ export function IconButton({
   icon,
   variant = "ghost",
   size = "sm",
-  shape = variant === "avatar" ? "round" : "control",
+  shape: shapeProp,
   ...props
 }: IconButtonProps) {
+  "use memo";
+  // Defaults that read other props stay out of the parameter list, where the
+  // React Compiler cannot order them.
+  const shape = shapeProp ?? (variant === "avatar" ? "round" : "control");
   return (
     <Button
       {...props}

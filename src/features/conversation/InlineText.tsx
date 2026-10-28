@@ -49,6 +49,7 @@ export function InlineText({
   content: InlineContent;
   media(url: string): string | undefined;
 }) {
+  "use memo";
   const renderers = useSyncExternalStore(
     registry.subscribe,
     registry.snapshot,

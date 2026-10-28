@@ -179,6 +179,7 @@ export function ReferenceText({
   channelId?: string | undefined;
   interactive?: boolean;
 }) {
+  "use memo";
   const resolveName = useChannelIdentityNames(session, channelId);
   const references = messageReferences(
     text,

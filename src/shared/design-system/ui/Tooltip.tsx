@@ -48,6 +48,7 @@ export function Tooltip({
   open?: boolean;
   onOpenChange?(open: boolean): void;
 }) {
+  "use memo";
   const id = useId();
   const [trigger, setTrigger] = useState<HTMLElement | null>(null);
   const [localOpen, setLocalOpen] = useState(false);

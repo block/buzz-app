@@ -1,3 +1,4 @@
+import react from "@vitejs/plugin-react";
 import { defineConfig } from "vitest/config";
 import { fixtureAliases } from "./tests/relay-config.ts";
 const workerLimit = process.env.BUZZ_TEST_WORKERS;
@@ -14,6 +15,8 @@ if (
 process.env.LC_ALL = "C.UTF-8";
 
 export default defineConfig({
+  // Tests run components as the app ships them, React Compiler included.
+  plugins: [react()],
   define: {
     "import.meta.env.VITE_BUZZ_COMMUNITY_ALIASES":
       JSON.stringify(fixtureAliases),

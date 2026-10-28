@@ -59,6 +59,7 @@ export function Button({
   hint,
   ...props
 }: ButtonProps) {
+  "use memo";
   const control = (
     <BaseButton
       {...props}

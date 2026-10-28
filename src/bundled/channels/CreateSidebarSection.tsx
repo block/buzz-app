@@ -1,4 +1,10 @@
-import { useId, useRef, useState, type ComponentProps } from "react";
+import {
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ComponentProps,
+} from "react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Input } from "../../shared/design-system/ui/Input";
@@ -29,6 +35,12 @@ export function CreateSidebarSection({
   const section = useRef<{ id: string; name: string } | undefined>(undefined);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
+  const [focusRequest, setFocusRequest] = useState(0);
+  useLayoutEffect(() => {
+    // The preference update may remove the focused Retry button. Hand focus
+    // back only after React commits that removal, including on fast reads.
+    if (focusRequest) input.current?.focus();
+  }, [focusRequest]);
   const needsRecovery = !pending && !writable;
   const errorId = `${formId}-error`;
   const submit = async () => {
@@ -117,7 +129,7 @@ export function CreateSidebarSection({
                 disabled={refreshing}
                 onClick={async () => {
                   await retry();
-                  input.current?.focus();
+                  setFocusRequest((request) => request + 1);
                 }}
               >
                 Retry preferences

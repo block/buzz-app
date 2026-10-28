@@ -10,8 +10,45 @@ import {
 import { afterEach, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { CreateSidebarSection } from "./CreateSidebarSection";
+import { useState } from "react";
 
 afterEach(cleanup);
+
+it("restores focus after the recovered preference render removes the Retry button", async () => {
+  let finish!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  function Harness() {
+    const [writable, setWritable] = useState(false);
+    return (
+      <CreateSidebarSection
+        create={() => false}
+        close={vi.fn()}
+        writable={writable}
+        refreshing={false}
+        retry={async () => {
+          await gate;
+          setWritable(true);
+        }}
+      />
+    );
+  }
+  render(<Harness />);
+  const input = screen.getByRole("textbox", { name: "Section name" });
+  await waitFor(() => expect(input).toHaveFocus());
+  const retry = screen.getByRole("button", { name: "Retry preferences" });
+  const focusedBeforeRemoval: boolean[] = [];
+  input.addEventListener("focus", () =>
+    focusedBeforeRemoval.push(retry.isConnected),
+  );
+  retry.focus();
+  fireEvent.click(retry);
+  finish();
+  await waitFor(() => expect(retry).not.toBeInTheDocument());
+  await waitFor(() => expect(input).toHaveFocus());
+  expect(focusedBeforeRemoval).toEqual([false]);
+});
 
 it("offers recovery when preferences become unavailable before the first submission", async () => {
   const create = vi.fn();

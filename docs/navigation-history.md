@@ -74,6 +74,11 @@ distinguish why that session was replaced. Account/community changes retire the
 current detail address once the new scope is known. A temporarily unknown scope
 while reconnecting does not retire it. Old session callbacks remain revoked;
 restoration uses fresh session authority and never carries a local editor across.
+Known thread/detail visit identities also survive same-scope session replacement,
+so explicit Close still retires earlier visits for that target. These records
+carry only visit IDs, channel IDs, targets and verified thread roots; they do not
+restore the tab layout or grant old callbacks authority. Different scopes keep
+separate retirement records.
 
 ## One navigation owner
 

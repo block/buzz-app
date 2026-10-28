@@ -204,8 +204,19 @@ function withThread(
 // Pages mount and unmount during navigation; their tab descriptors belong to
 // the community session. Weak ownership retires them with that session.
 const sessions = new WeakMap<RelaySession, ReturnType<typeof createTabStore>>();
-function createTabStore() {
-  let channels: Record<string, State> = {};
+// History outlives a relay session. Retain only dismissal identities per
+// account/community, never layout, panel objects, editors or callbacks.
+type Retirement = Pick<State, "routedVisits" | "detailVisits">;
+const visitOwners = new Map<string, { channels: Record<string, Retirement> }>();
+function createTabStore(scope?: string) {
+  const owner = { channels: (scope && visitOwners.get(scope)?.channels) || {} };
+  let channels: Record<string, State> = Object.fromEntries(
+    Object.entries(owner.channels).map(([key, visits]) => [
+      key,
+      { ...empty, ...visits },
+    ]),
+  );
+  if (scope) visitOwners.set(scope, owner);
   const listeners = new Set<() => void>();
   const mounts = new Map<string, number>();
   return {
@@ -231,6 +242,16 @@ function createTabStore() {
       const next = change(previous);
       if (next === previous) return;
       channels = { ...channels, [key]: next };
+      // A stale session may still update its own store, but cannot overwrite
+      // the successor's retirement metadata. Records are copy-on-write.
+      if (scope && visitOwners.get(scope) === owner)
+        owner.channels = {
+          ...owner.channels,
+          [key]: {
+            routedVisits: next.routedVisits,
+            detailVisits: next.detailVisits,
+          },
+        };
       for (const listener of listeners) listener();
     },
   };
@@ -240,7 +261,7 @@ const keyOf = (page: string, channelId: string) =>
 function storeOf(session: RelaySession) {
   let store = sessions.get(session);
   if (!store) {
-    store = createTabStore();
+    store = createTabStore(session.scope);
     sessions.set(session, store);
   }
   return store;

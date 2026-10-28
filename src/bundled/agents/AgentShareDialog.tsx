@@ -139,8 +139,12 @@ export function AgentShareDialog({
   const notify = useToastNotification();
   // `null` while the catalog is read; `undefined` once read with no head.
   const [head, setHead] = useState<EventData | undefined | null>(null);
-  const [pending, setPending] = useState<"listing" | "export" | "send">();
-  // The listing the switch asked for, while it is published or removed.
+  const [pending, setPending] = useState<
+    "done" | "update" | "export" | "send"
+  >();
+  // What the switch asks for; Done publishes or removes it.
+  const [wanted, setWanted] = useState<boolean>();
+  // The listing being published or removed, while the relay answers.
   const [listing, setListing] = useState<boolean>();
   const [failure, setFailure] = useState("");
   const [error, setError] = useState("");
@@ -172,10 +176,11 @@ export function AgentShareDialog({
   const current = definition && catalogContent(definition);
   const listed = isShared(head ?? undefined);
   const stale = !!head && listed && current !== head.content;
-  const share = async (shared: boolean) => {
+  /** Publishes or removes the listing; says whether the relay confirmed it. */
+  const share = async (shared: boolean, via: "done" | "update") => {
     const signal = attempt.current?.signal;
-    if (head === null || pending || !signal) return;
-    setPending("listing");
+    if (head === null || pending || !signal) return false;
+    setPending(via);
     setListing(shared);
     setFailure("");
     let reason = "Try again.";
@@ -200,7 +205,7 @@ export function AgentShareDialog({
     ).catch(() => head);
     setPending(undefined);
     setListing(undefined);
-    if (signal.aborted) return;
+    if (signal.aborted) return false;
     setHead(next);
     // An update to a listed agent leaves it listed whatever happened, so a
     // publish has landed only when the winning head is what it sent.
@@ -213,10 +218,17 @@ export function AgentShareDialog({
           : `Removed ${agent.name} from the Marketplace.`,
         "success",
       );
-    } else
-      setFailure(
-        `Couldn’t ${shared ? "publish" : "remove"} ${agent.name}. ${reason}`,
-      );
+      return true;
+    }
+    // The switch keeps what was asked for, so Done tries again.
+    setFailure(
+      `Couldn’t ${shared ? "publish" : "remove"} ${agent.name}. ${reason}`,
+    );
+    return false;
+  };
+  const finish = async () => {
+    if (wanted === undefined || wanted === listed) return onClose();
+    if (await share(wanted, "done")) onClose();
   };
   const file = async (as: "png" | "json") =>
     definition &&
@@ -384,8 +396,9 @@ export function AgentShareDialog({
           <Button
             ref={primary}
             variant="prominent"
+            loading={pending === "done"}
             disabled={busy}
-            onClick={onClose}
+            onClick={() => void finish()}
           >
             Done
           </Button>
@@ -432,11 +445,14 @@ export function AgentShareDialog({
                         ? "Your latest changes aren’t in the Marketplace yet."
                         : "Anyone in this community can add a copy, instructions included. Memories and chats stay with you."
               }
-              checked={listing ?? listed}
+              checked={listing ?? wanted ?? listed}
               disabled={
                 head === null || unread || busy || (!listed && !definition)
               }
-              onCheckedChange={(on) => void share(on)}
+              onCheckedChange={(on) => {
+                setWanted(on);
+                setFailure("");
+              }}
             />
           </SettingsGroup>
           {failure && (
@@ -449,12 +465,12 @@ export function AgentShareDialog({
               Try again
             </Button>
           )}
-          {stale && (
+          {stale && (wanted ?? listed) && (
             <Button
               size="sm"
-              loading={listing === true}
+              loading={pending === "update"}
               disabled={busy || !definition}
-              onClick={() => void share(true)}
+              onClick={() => void share(true, "update")}
             >
               Update Marketplace
             </Button>

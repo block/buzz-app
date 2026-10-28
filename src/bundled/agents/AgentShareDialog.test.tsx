@@ -198,17 +198,33 @@ const LISTING_NOTE =
   "Anyone in this community can add a copy, instructions included. Memories and chats stay with you.";
 const toggle = () =>
   screen.getByRole("switch", { name: "Post to Marketplace" });
+/** Done applies what the switch asks for. */
+const done = (user: ReturnType<typeof userEvent.setup>) =>
+  user.click(screen.getByRole("button", { name: "Done" }));
 
-it("publishes when switched on, and removes what it published when switched off", async () => {
+it("publishes on Done when switched on, and removes what it published when switched off", async () => {
   const user = userEvent.setup();
   const { session, outbox, accept } = community();
-  share(session);
+  const onClose = vi.fn();
+  render(
+    <AgentShareDialog
+      agent={agent}
+      type={echo}
+      session={session}
+      onClose={onClose}
+    />,
+    { wrapper: ToastProvider },
+  );
   expect(
     await within(screen.getByRole("dialog", { name: "Share Ada" })).findByText(
       LISTING_NOTE,
     ),
   ).toBeInTheDocument();
   await user.click(await listing());
+  // The switch only asks; nothing is published until Done.
+  expect(toggle()).toBeChecked();
+  expect(outbox.send).not.toHaveBeenCalled();
+  await done(user);
   await vi.waitFor(() => expect(outbox.send).toHaveBeenCalledTimes(1));
   // The switch shows what it asked for while the relay answers.
   expect(toggle()).toBeChecked();
@@ -226,13 +242,17 @@ it("publishes when switched on, and removes what it published when switched off"
     undefined,
     expect.any(Function),
   );
+  expect(onClose).not.toHaveBeenCalled();
   accept();
   expect(
     await screen.findByText("Published Ada to the Marketplace."),
   ).toBeInTheDocument();
+  await vi.waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
   expect(toggle()).toBeChecked();
 
   await user.click(await listing());
+  expect(outbox.send).toHaveBeenCalledTimes(1);
+  await done(user);
   await vi.waitFor(() => expect(outbox.send).toHaveBeenCalledTimes(2));
   expect(screen.getByText("Removing…")).toBeInTheDocument();
   // Removing replaces the shared head with what it shared.
@@ -250,7 +270,29 @@ it("publishes when switched on, and removes what it published when switched off"
   expect(
     await screen.findByText("Removed Ada from the Marketplace."),
   ).toBeInTheDocument();
+  await vi.waitFor(() => expect(onClose).toHaveBeenCalledTimes(2));
   expect(toggle()).not.toBeChecked();
+});
+
+it("closes on Done without publishing when the switch is unchanged", async () => {
+  const user = userEvent.setup();
+  const { session, outbox } = community();
+  const onClose = vi.fn();
+  render(
+    <AgentShareDialog
+      agent={agent}
+      type={echo}
+      session={session}
+      onClose={onClose}
+    />,
+    { wrapper: ToastProvider },
+  );
+  // Switched on and back off is no change.
+  await user.click(await listing());
+  await user.click(toggle());
+  await done(user);
+  expect(onClose).toHaveBeenCalledTimes(1);
+  expect(outbox.send).not.toHaveBeenCalled();
 });
 
 it("says up front why an agent can't be shared, before anything is sent", async () => {
@@ -274,6 +316,7 @@ it("asks the relay what an unanswered publish did before saying it failed", asyn
   const { session, outbox, lose } = community();
   share(session);
   await user.click(await listing());
+  await done(user);
   await vi.waitFor(() => expect(outbox.send).toHaveBeenCalledTimes(1));
   lose(true);
   expect(
@@ -282,13 +325,16 @@ it("asks the relay what an unanswered publish did before saying it failed", asyn
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 
   await user.click(await listing());
+  await done(user);
   await vi.waitFor(() => expect(outbox.send).toHaveBeenCalledTimes(2));
   lose(false);
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Couldn’t remove Ada. Try again.",
   );
-  // The switch returns to what the relay confirmed, ready to try again.
-  expect(await listing()).toBeChecked();
+  // The switch keeps what was asked for, so Done tries again.
+  expect(await listing()).not.toBeChecked();
+  await done(user);
+  await vi.waitFor(() => expect(outbox.send).toHaveBeenCalledTimes(3));
 });
 
 /** Publishes Ada, then switches the listing off. */
@@ -297,10 +343,12 @@ async function publishThenRemove(
   { outbox, accept }: ReturnType<typeof community>,
 ) {
   await user.click(await listing());
+  await done(user);
   await vi.waitFor(() => expect(outbox.send).toHaveBeenCalledTimes(1));
   accept();
   await screen.findByText("Published Ada to the Marketplace.");
   await user.click(await listing());
+  await done(user);
   await vi.waitFor(() => expect(outbox.send).toHaveBeenCalledTimes(2));
 }
 
@@ -317,7 +365,7 @@ it("says removing failed when a newer shared head wins over the accepted one", a
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Couldn’t remove Ada. Try again.",
   );
-  expect(await listing()).toBeChecked();
+  expect(await listing()).not.toBeChecked();
 });
 
 it("keeps the confirmed state when the relay cannot say which head won", async () => {
@@ -330,7 +378,7 @@ it("keeps the confirmed state when the relay cannot say which head won", async (
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Couldn’t remove Ada. Try again.",
   );
-  expect(await listing()).toBeChecked();
+  expect(await listing()).not.toBeChecked();
 });
 
 it("reads the listing again after the first read fails, leaving Export usable", async () => {

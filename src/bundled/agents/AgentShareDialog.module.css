@@ -8,7 +8,7 @@
   gap: var(--space-4);
   /* When enlarged text leaves too little room, scroll the whole layout. */
   overflow-y: auto;
-  /* Rows bleed into the inset so their labels align with the field. */
+  /* Room for focus rings, which the scrolling layout would otherwise clip. */
   --row-bleed: min(
     var(--dialog-padding),
     var(--space-control-inset) +
@@ -20,6 +20,7 @@
 .layout > * {
   flex-shrink: 0;
 }
+/* Rows span the same width as the search field and the Marketplace group. */
 .results {
   display: flex;
   flex-direction: column;
@@ -28,8 +29,6 @@
   min-height: calc(var(--size-row) * 2);
   overflow: auto;
   gap: var(--space-4);
-  margin-inline: calc(-1 * var(--row-bleed));
-  padding: 0 var(--space-1);
 }
 .results > * {
   flex-shrink: 0;
@@ -39,9 +38,10 @@
   top: 0;
   z-index: 1;
   padding-block: var(--space-2);
-  padding-inline: var(--space-control-inset);
+  /* Text lines up with the rows' pictures. */
+  padding-inline: var(--space-2);
   background: var(--surface-popover);
 }
 .note {
-  padding-inline: var(--space-control-inset);
+  padding-inline: var(--space-2);
 }

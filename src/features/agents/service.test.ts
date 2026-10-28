@@ -2394,12 +2394,13 @@ it("keeps an agent running while its community reconnects, and stops it on disco
   reconnecting();
   expect(service.find(bot)).toBeUndefined();
   expect(running()).toEqual([bot]);
+  // The screens see what runs once the Runner sends it over the link.
   connect(false);
-  expect(running()).toEqual([]);
+  await vi.waitFor(() => expect(running()).toEqual([]));
   connect(true);
-  expect(running()).toEqual([bot]);
+  await vi.waitFor(() => expect(running()).toEqual([bot]));
   leave("https://relay.example.test");
-  expect(running()).toEqual([]);
+  await vi.waitFor(() => expect(running()).toEqual([]));
   expect(service.relay(bot)).toBeUndefined();
 });
 
@@ -5294,7 +5295,9 @@ describe("a turn closing or reloading the app stopped", () => {
     expect(second.run).not.toHaveBeenCalled();
 
     second.service.resumeInterrupted();
-    expect(second.service.snapshot().interrupted).toEqual([]);
+    await vi.waitFor(() =>
+      expect(second.service.snapshot().interrupted).toEqual([]),
+    );
     await vi.waitFor(() => expect(second.run).toHaveBeenCalledOnce());
     expect(resumedOf(second.run)).toEqual(["Echo, go on (resumed)"]);
     expect(second.run.mock.calls[0]?.[0]).toMatchObject({ channelId: channel });
@@ -5334,7 +5337,9 @@ describe("a turn closing or reloading the app stopped", () => {
     await settle();
     expect(names(second.service.snapshot().interrupted)).toEqual(["Echo"]);
     second.service.dismissInterrupted();
-    expect(second.service.snapshot().interrupted).toEqual([]);
+    await vi.waitFor(() =>
+      expect(second.service.snapshot().interrupted).toEqual([]),
+    );
     expect(readInterrupted(second.storage)).toEqual({});
     second.service.resumeInterrupted();
     await settle();

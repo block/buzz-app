@@ -43,8 +43,10 @@ export type ConnectionsHost = Readonly<{
     origin: string,
     connection: Connection,
   ): () => void;
-  /** The community's live session started, was replaced or ended. */
-  changed(origin: string): void;
+  /** The community's connection changed. `renewed` when a new live session
+   * followed an earlier state of a community it watched, which may have
+   * missed changes made elsewhere. */
+  changed(origin: string, renewed: boolean): void;
 }>;
 
 export class RunnerConnections {
@@ -75,7 +77,7 @@ export class RunnerConnections {
         relay,
         stop: relay.subscribe(() => this.bind(origin)),
       });
-      this.bind(origin);
+      this.bind(origin, true);
     }
   }
   /** The live binding of the agent's community, if it has one now. */
@@ -107,7 +109,7 @@ export class RunnerConnections {
     entry?.binding?.stopLive();
     entry?.binding?.controller.abort();
   }
-  private bind(origin: string) {
+  private bind(origin: string, first = false) {
     const entry = this.bound.get(origin);
     if (!entry) return;
     const snapshot = entry.relay.snapshot();
@@ -128,8 +130,11 @@ export class RunnerConnections {
     if (
       entry.binding?.session === live?.session &&
       entry.binding?.scope === live?.scope
-    )
+    ) {
+      // Disconnecting stops its agents even when no binding changed.
+      this.host.changed(origin, false);
       return;
+    }
     entry.binding?.stopLive();
     entry.binding?.controller.abort();
     const connection: Connection = {
@@ -141,6 +146,6 @@ export class RunnerConnections {
       connection,
       stopLive: this.host.listen(live.session, origin, connection),
     };
-    this.host.changed(origin);
+    this.host.changed(origin, !first && !!entry.binding);
   }
 }

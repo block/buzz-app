@@ -21,7 +21,6 @@ import type { LocalAgentActivity } from "./local-activity";
 import { pubkeyOf, type AgentKey } from "./membership";
 import { migrateWatchFilters } from "./migrate-filter";
 import { migrateAgentStorage } from "./migrate-storage";
-import type { AgentIdentity } from "./native";
 import { ownerReads } from "./reads";
 import { AgentRecords, EMPTY, type Member } from "./records";
 import { AgentRunners, type Connection, type RunnerHost } from "./runner";
@@ -87,8 +86,9 @@ export class AgentsRunner {
     running: readonly Agent[];
     interrupted: readonly Agent[];
   }> = { running: [], interrupted: [] };
-  /** The memberships it last decided from. */
+  /** The memberships it last decided from, and their viewer. */
   private identities: readonly Member[] = [];
+  private viewer: string | undefined;
   private readonly listeners = new Set<() => void>();
 
   constructor(
@@ -111,7 +111,7 @@ export class AgentsRunner {
             console.warn(`Agent type ${type} has invalid defaults`, error);
           }
       },
-      changed: () => manager.changed(),
+      changed: () => this.changed(),
       // Its timers waited for this change, saved or failed.
       settled: (key) => this.runners.wake(key),
     });
@@ -121,9 +121,11 @@ export class AgentsRunner {
       open: (origin) => manager.open(origin),
       listen: (session, origin, connection) =>
         this.listen(session, origin, connection),
-      // The Manager's own session may change first: what runs is shown and
-      // reconciled again once this one has.
-      changed: () => manager.changed(),
+      changed: (origin, renewed) => {
+        this.update();
+        if (renewed) this.refreshCore(origin);
+        this.manager.changed();
+      },
     });
     this.coreMemory = new CoreMemoryCache((key) =>
       ownerReads(this.relay(key), pubkeyOf(key)),
@@ -166,7 +168,7 @@ export class AgentsRunner {
             console.warn("Agent turns in progress were not saved", error),
           );
         },
-        changed: () => manager.changed(),
+        changed: () => this.changed(),
       },
       scope: (agent) => this.connections.binding(agent)?.scope,
       saved: (key) => this.records.saved(key),
@@ -266,7 +268,8 @@ export class AgentsRunner {
     });
   }
 
-  /** Hears each change to what runs here or who holds it. */
+  /** Hears each change to what runs here, which of it was interrupted, or
+   * who holds it. */
   subscribe(listener: () => void) {
     this.listeners.add(listener);
     return () => {
@@ -276,16 +279,47 @@ export class AgentsRunner {
   private notify() {
     for (const listener of [...this.listeners]) listener();
   }
-  /** Connects each community where the viewer has an agent. */
-  watch(identities: readonly AgentIdentity[], viewer: string | undefined) {
+  /** The viewer's memberships, as the Manager last sent them: connects each
+   * community where the viewer has an agent, and decides again what runs. */
+  members(identities: readonly Member[], viewer: string | undefined) {
+    this.identities = identities;
+    this.viewer = viewer;
     this.connections.watch(identities, viewer);
+    this.update();
+  }
+  /** Decides again what runs once a record, a turn in progress or one of its
+   * sessions changed, and lets the Manager show it. */
+  private changed() {
+    this.update();
+    this.manager.changed();
+  }
+  /** Agent types were loaded or unloaded. */
+  typesChanged() {
+    this.update();
+  }
+  /** The viewer joined or left a community: connects or lets go of it. A
+   * new viewer waits for the memberships the Manager sends with it. */
+  communitiesChanged(viewer: string | undefined) {
+    if (viewer !== this.viewer) return;
+    this.connections.watch(this.identities, this.viewer);
+    this.update();
+  }
+  /** Gives the turns the app left `keys` working on last time again. */
+  resumeInterrupted(keys: readonly AgentKey[]) {
+    this.runners.resumeInterrupted(keys);
+    this.update();
+  }
+  /** Forgets the turns the app left `keys` working on last time. */
+  dismissInterrupted(keys: readonly AgentKey[]) {
+    this.runners.dismissInterrupted(keys);
+    this.update();
   }
   /** Decides which agents run: each of the viewer's agents whose community is
    * joined and not disconnected. A reconnect does not stop one. An unfinished
    * Delete or Remove stops it, and its types' plugins stop what they keep for
    * it. Then each runner goes on with what it can do now. */
-  update(identities: readonly Member[], viewer: string | undefined) {
-    this.identities = identities;
+  private update() {
+    const { identities, viewer } = this;
     const live = identities.filter(
       (identity) => !identity.deleted && !identity.deleting,
     );
@@ -340,7 +374,11 @@ export class AgentsRunner {
         ? prior.interrupted
         : Object.freeze(interrupted),
     };
-    if (this.state.running !== prior.running) this.notify();
+    if (
+      this.state.running !== prior.running ||
+      this.state.interrupted !== prior.interrupted
+    )
+      this.notify();
     this.runners.resume(
       new Set(
         running
@@ -405,6 +443,8 @@ export class AgentsRunner {
   clear() {
     this.connections.clear();
     this.runners.clear();
+    this.identities = [];
+    this.viewer = undefined;
     this.state = { running: [], interrupted: [] };
   }
 

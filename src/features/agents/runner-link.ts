@@ -1,8 +1,12 @@
 // What the Runner serves the Manager over the agents link. Each name here is
 // part of the contract between the two owners, so add to it with care: only
 // JSON crosses, and either side may be a page that reloads.
-import type { Json, Link, Served } from "./link";
+import type { AgentsRunner } from "./agents-runner";
+import { link, type Json, type Link, type LinkPort, type Served } from "./link";
 import type { LocalAgentSource, LocalWork } from "./local-activity";
+import type { AgentKey } from "./membership";
+import type { Member } from "./records";
+import type { Agent } from "./service";
 
 type WorkKey = Pick<LocalWork, "scope" | "agent" | "messageId">;
 
@@ -63,3 +67,164 @@ export function linkedActivity(runner: Link) {
   };
   return { source, stop };
 }
+
+/** What the Runner decides from: the viewer's memberships, and the viewer,
+ * as of the Manager's `revision` of them. */
+type Members = Readonly<{
+  revision: number;
+  identities: readonly Member[];
+  viewer: string | null;
+}>;
+/** What the Runner decided from the Manager's `revision` of the memberships:
+ * the agents running here, and the keys of those with turns the app left
+ * working last time. */
+type RunnerState = Readonly<{
+  revision: number;
+  running: readonly Agent[];
+  interrupted: readonly AgentKey[];
+}>;
+
+/** The Runner's side: it decides what runs from the memberships the Manager
+ * sends, and sends back what it decided. */
+export function runnerSide(
+  port: LinkPort,
+  runner: Pick<
+    AgentsRunner,
+    "members" | "running" | "interrupted" | "subscribe"
+  >,
+) {
+  let revision = 0;
+  const decided = new Set<() => void>();
+  const side = link(port, {
+    topics: {
+      "runner.state": () => ({
+        get: () =>
+          ({
+            revision,
+            running: runner.running(),
+            interrupted: runner.interrupted().map((agent) => agent.key),
+          }) satisfies RunnerState as unknown as Json,
+        subscribe: (listener) => {
+          const stop = runner.subscribe(listener);
+          decided.add(listener);
+          return () => {
+            stop();
+            decided.delete(listener);
+          };
+        },
+      }),
+    },
+  });
+  side.watch("manager.members", null, () => {
+    const members = side.read("manager.members") as unknown as
+      | Members
+      | undefined;
+    if (!members) return;
+    runner.members(members.identities, members.viewer ?? undefined);
+    // Sent even when nothing that runs changed, so the Manager knows.
+    revision = members.revision;
+    for (const listener of [...decided]) listener();
+  });
+  return side;
+}
+
+/** The Manager's side: it sends the Runner the viewer's memberships, and
+ * shows what the Runner decided. An agent keeps its identity until the Runner
+ * sends a change to it. */
+export function managerSide(
+  port: LinkPort,
+  members: () => Omit<Members, "revision">,
+  changed: () => void,
+) {
+  let revision = 0;
+  let sent: string | undefined;
+  const listeners = new Set<() => void>();
+  let state: Readonly<{
+    revision: number;
+    running: readonly Agent[];
+    interrupted: readonly Agent[];
+  }> = {
+    revision: 0,
+    running: Object.freeze([]),
+    interrupted: Object.freeze([]),
+  };
+  const waits = new Set<Readonly<{ revision: number; resolve(): void }>>();
+  const shown = new Map<AgentKey, string>();
+  const side = link(port, {
+    topics: {
+      "manager.members": () => ({
+        get: () =>
+          ({ ...members(), revision }) satisfies Members as unknown as Json,
+        subscribe: (listener) => {
+          listeners.add(listener);
+          return () => {
+            listeners.delete(listener);
+          };
+        },
+      }),
+    },
+  });
+  side.watch("runner.state", null, () => {
+    const next = side.read("runner.state") as unknown as
+      | RunnerState
+      | undefined;
+    if (!next) return;
+    const running = next.running.map((agent) => {
+      const json = JSON.stringify(agent);
+      const prior = state.running.find((item) => item.key === agent.key);
+      if (prior && shown.get(agent.key) === json) return prior;
+      shown.set(agent.key, json);
+      return Object.freeze(agent);
+    });
+    for (const key of shown.keys())
+      if (!running.some((agent) => agent.key === key)) shown.delete(key);
+    const left = new Set(next.interrupted);
+    const interrupted = running.filter((agent) => left.has(agent.key));
+    state = {
+      revision: next.revision,
+      running: same(running, state.running)
+        ? state.running
+        : Object.freeze(running),
+      interrupted: same(interrupted, state.interrupted)
+        ? state.interrupted
+        : Object.freeze(interrupted),
+    };
+    for (const wait of [...waits])
+      if (wait.revision <= state.revision) {
+        waits.delete(wait);
+        wait.resolve();
+      }
+    changed();
+  });
+  return {
+    /** The memberships may have changed: sends them if they did. */
+    changed() {
+      const json = JSON.stringify(members());
+      if (json === sent) return;
+      sent = json;
+      revision++;
+      for (const listener of [...listeners]) listener();
+    },
+    /** Settles once the Runner decided from the memberships sent so far. */
+    decided() {
+      if (state.revision >= revision) return Promise.resolve();
+      return new Promise<void>((resolve) => waits.add({ revision, resolve }));
+    },
+    /** The agents running here, in every community. */
+    running: () => state.running,
+    /** The running agents with turns the app left working last time. */
+    interrupted: () => state.interrupted,
+    /** A running agent, in any community. */
+    agent: (key: AgentKey) => state.running.find((agent) => agent.key === key),
+    close() {
+      side.close();
+      // Nothing decides now.
+      for (const wait of waits) wait.resolve();
+      waits.clear();
+    },
+  };
+}
+
+const same = (next: readonly Agent[], prior: readonly Agent[]) =>
+  next.length === prior.length &&
+  next.every((agent, index) => agent === prior[index]);

@@ -86,6 +86,7 @@ import { agentKey, pubkeyOf, type AgentKey } from "./membership";
 import { EMPTY, type Member } from "./records";
 import { AgentsRunner } from "./agents-runner";
 import { RunnerPlugins } from "./runner-plugins";
+import { managerSide, runnerSide } from "./runner-link";
 import { originOf } from "./connections";
 import { AgentPresence } from "./presence";
 import {
@@ -1259,6 +1260,11 @@ export class AgentsService extends Service implements Agents {
   private readonly runner: AgentsRunner;
   /** The tools and attention sources plugins add for agents: the Runner's. */
   private readonly plugins: RunnerPlugins;
+  /** The Runner's side of the link between them. */
+  private readonly runnerLink: ReturnType<typeof runnerSide>;
+  /** The Manager's side: what it sends the Runner, and what the Runner
+   * decided, as the link last sent it. */
+  private readonly decided: ReturnType<typeof managerSide>;
   /** Counts list requests, so only the latest one is applied. */
   private listed = 0;
   /** Each running cleanup of a deleted membership, by key, how to stop it,
@@ -1473,6 +1479,19 @@ export class AgentsService extends Service implements Agents {
       },
     });
     this.plugins = new RunnerPlugins(ctx, this.runner);
+    // The Runner decides from the memberships the Manager sends over the
+    // link, and the screens show what it sends back. Only JSON crosses, as it
+    // will between pages.
+    const channel = new MessageChannel();
+    this.runnerLink = runnerSide(channel.port1, this.runner);
+    this.decided = managerSide(
+      channel.port2,
+      () => ({
+        identities: this.identities,
+        viewer: this.communities.snapshot().viewer ?? null,
+      }),
+      () => this.update(),
+    );
     this.unfinished = Object.freeze(readUnfinished(storage));
     this.unarchiving = readArchiveUnchecked(storage);
     this.teamList = Object.freeze(readTeams(storage));
@@ -1489,6 +1508,7 @@ export class AgentsService extends Service implements Agents {
       const stops = [
         ...[this.contributions, this.presentations].map((registry) =>
           registry.subscribe(() => {
+            this.runner.typesChanged();
             this.update();
             this.notify();
           }),
@@ -1509,6 +1529,7 @@ export class AgentsService extends Service implements Agents {
             this.updates = updates;
             this.notify();
           }
+          this.runner.communitiesChanged(viewer);
           this.watch();
           this.update();
         }),
@@ -1543,6 +1564,9 @@ export class AgentsService extends Service implements Agents {
         this.listed++;
         for (const stop of stops) stop();
         for (const origin of [...this.bound.keys()]) this.unbind(origin);
+        // Nothing the link sends now may start runners again.
+        this.runnerLink.close();
+        this.decided.close();
         this.runner.clear();
         this.presence.clear();
         // Clear what is shown without reconciling, which would make new runners.
@@ -1649,12 +1673,10 @@ export class AgentsService extends Service implements Agents {
     };
   };
   resumeInterrupted = () => {
-    this.runner.runners.resumeInterrupted(this.interruptedKeys());
-    this.update();
+    this.runner.resumeInterrupted(this.interruptedKeys());
   };
   dismissInterrupted = () => {
-    this.runner.runners.dismissInterrupted(this.interruptedKeys());
-    this.update();
+    this.runner.dismissInterrupted(this.interruptedKeys());
   };
   /** The agents the notice names, and only they, are resumed or forgotten. */
   private interruptedKeys() {
@@ -3208,7 +3230,7 @@ export class AgentsService extends Service implements Agents {
   }
   /** A running agent, in any community. */
   private agent(key: AgentKey) {
-    return this.runner.agent(key);
+    return this.decided.agent(key);
   }
 
   /** Reads the agent list from native. Every change is made there first and
@@ -3266,6 +3288,8 @@ export class AgentsService extends Service implements Agents {
     this.update();
     this.notify();
     this.sync();
+    // What runs is decided from this list.
+    await this.decided.decided();
   }
 
   /** Brings the relay in line with the saved identities: publishes each name
@@ -3365,9 +3389,6 @@ export class AgentsService extends Service implements Agents {
    * finish; lets go of the rest. */
   private watch() {
     const { viewer, selected } = this.communities.snapshot();
-    // The Runner's own sessions; each change to one shows and reconciles
-    // what runs again.
-    this.runner.watch(this.identities, viewer);
     const origins = new Set<string>();
     const shown = viewer && originOf(selected ?? "");
     if (shown) origins.add(shown);
@@ -3448,10 +3469,7 @@ export class AgentsService extends Service implements Agents {
     // Disconnecting stops its agents even when no binding changed.
     this.update();
     // Its sync reads the community's agent records too.
-    if (changed && entry.binding) {
-      this.sync();
-      this.runner.refreshCore(origin);
-    }
+    if (changed && entry.binding) this.sync();
   }
 
   /** Syncs the relay again whenever the session's connection recovers. */
@@ -3465,16 +3483,16 @@ export class AgentsService extends Service implements Agents {
   }
 
   private update() {
-    const { viewer, selected } = this.communities.snapshot();
-    // The Runner decides what runs; the screens show what it decided.
-    this.runner.update(this.identities, viewer);
+    const { selected } = this.communities.snapshot();
+    // The Runner decides what runs from these; the screens show what it
+    // decided once the link sends it.
+    this.decided.changed();
     const alive: Agent[] = [];
     for (const identity of this.identities) {
       if (identity.deleted || !this.alive(identity)) continue;
       const record = this.runner.records.recordOf(identity);
       // Reuse the frozen agent while nothing visible changed, so subscribers see
-      // a stable snapshot: as the Runner runs it or, when that is not what is
-      // shown, as it was shown.
+      // a stable snapshot.
       const fits = (prior: Agent | undefined) =>
         prior?.name === identity.name &&
         prior.picture === identity.picture &&
@@ -3491,10 +3509,7 @@ export class AgentsService extends Service implements Agents {
       const before = this.state.agents.find(
         (agent) => agent.key === identity.key && agent.place === "here",
       );
-      alive.push(
-        [this.agent(identity.key), before].find(fits) ??
-          this.view(identity, record),
-      );
+      alive.push(before && fits(before) ? before : this.view(identity, record));
     }
     const shown = originOf(selected ?? "");
     const agents = [
@@ -3503,8 +3518,8 @@ export class AgentsService extends Service implements Agents {
       ),
       ...this.listedAgents(shown),
     ];
-    const running = this.runner.running();
-    const interrupted = this.runner.interrupted();
+    const running = this.decided.running();
+    const interrupted = this.decided.interrupted();
     if (
       !same(agents, this.state.agents) ||
       running !== this.state.running ||

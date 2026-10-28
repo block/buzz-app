@@ -88,7 +88,7 @@ it("preserves generic retry for legacy unguarded invitations", () => {
 
 // The recovery page deliberately has no source inventory or encoder: deleted
 // agents and teams must not be needed to finish an already journaled delivery.
-it.each(["agent", "team", "solo"] as const)(
+it.each(["agent", "team", "solo", "agent-share"] as const)(
   "retries and acknowledges a restored %s share without its deleted source",
   async (kind) => {
     const viewer = keypair();
@@ -129,10 +129,13 @@ it.each(["agent", "team", "solo"] as const)(
           key:
             kind === "solo"
               ? "solo-share-link:deleted-source:dm"
-              : // Shares queued by the removed snapshot dialog.
-                `snapshot-share:${kind}:deleted-source`,
+              : kind === "agent-share"
+                ? // Sent from Share, for one copy and recipient.
+                  `agent-share:${"a".repeat(64)}:${"b".repeat(64)}:${"0".repeat(40)}`
+                : // Shares queued by the removed snapshot dialog.
+                  `snapshot-share:${kind}:deleted-source`,
           value:
-            kind === "solo"
+            kind === "solo" || kind === "agent-share"
               ? "1"
               : JSON.stringify({
                   people: [{ pubkey: "b".repeat(64), name: "Recipient" }],

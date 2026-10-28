@@ -439,7 +439,9 @@ the user must inspect the conversation before explicitly sending a new message.
 
 Protected media and uploads are native, because the webview cannot attach Blossom
 (kind 24242) authentication itself: `<img>`, `<video>` and `<audio>` send no custom
-headers, and the CSP keeps `connect-src` closed to general HTTPS. Relay `/media/`
+headers, and the CSP keeps `connect-src` closed to general HTTPS; it admits only
+the `buzz-media` scheme, whose bytes the requesting window may already read (such
+as an agent card's embedded definition). Relay `/media/`
 URLs selected by shared TypeScript render through the `buzz-media` URI scheme;
 `<video>` and `<audio>` instead load the same URLs from a native listener on
 `127.0.0.1`, since WebKitGTK cannot play a custom scheme. It authorizes each

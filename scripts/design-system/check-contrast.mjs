@@ -322,9 +322,11 @@ function declarationsByMode(
 }
 
 /**
- * See-through fills and the one surface each always sits on. A chip overlay is
- * measured as the colour it makes on that surface, which is what a reader
- * sees. A translucent role missing here stays unmeasurable and is reported.
+ * See-through fills and the message surface each is measured on. A chip overlay
+ * is measured as the colour it makes there, which is what a reader sees. A
+ * mention can also sit on the composer or a panel; those hosts are unmeasured.
+ * A translucent role missing here stays unmeasurable and is reported, and a
+ * listed role that does not resolve fails.
  */
 const SITS_ON = new Map([
   ["--affordance-mention", "--surface-message"],
@@ -395,7 +397,13 @@ function audit(mode, map, baseline) {
     // A translucent or gradient value cannot be measured against one colour;
     // record it rather than passing it silently.
     if (!text || !surface) {
-      skipped.push(`${mode}: ${textRole} on ${surfaceRole}`);
+      // An overlay listed in SITS_ON is meant to be measurable, so a missing
+      // token there is a defect, not a value the guard cannot read.
+      if (SITS_ON.has(surfaceRole))
+        boundaryFailures.push(
+          `${mode}: unresolved overlay pair ${textRole} on ${surfaceRole}`,
+        );
+      else skipped.push(`${mode}: ${textRole} on ${surfaceRole}`);
       return;
     }
     const lc = Math.abs(apcaContrast(text, surface));

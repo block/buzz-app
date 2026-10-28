@@ -297,6 +297,18 @@ describe("semantic contrast contract", () => {
     },
   );
 
+  it("fails when an accent is missing an overlay it is measured on", () => {
+    const from = "  --accent-overlay-soft-dark: var(--shade-soft-fill);\n";
+    const bee = tokens.indexOf('[data-accent="bee"] {');
+    const at = tokens.indexOf(from, bee);
+    expect(at).toBeGreaterThan(bee);
+    const result = check(tokens.slice(0, at) + tokens.slice(at + from.length));
+    expect(result.status, result.output).toBe(1);
+    expect(result.output).toContain(
+      "bee/high/dark: unresolved overlay pair --text-message-own on --affordance-reaction-own",
+    );
+  });
+
   it.each(["danger", "warning"])(
     "rejects the former low-contrast %s boundary",
     (role) => {

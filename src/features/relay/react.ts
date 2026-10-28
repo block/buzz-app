@@ -1,3 +1,4 @@
+import { useBackgroundStore } from "../../shared/scheduler";
 import { rowProfileIds } from "./membership";
 import {
   useCallback,
@@ -6,7 +7,12 @@ import {
   useRef,
   useSyncExternalStore,
 } from "react";
-import type { ChannelMessage, ChannelQueries, Profile } from "./contracts";
+import type {
+  ChannelMessage,
+  ChannelQueries,
+  ChannelWindow,
+  Profile,
+} from "./contracts";
 import type { ProfileQueries } from "./profile-directory";
 import { selectProfiles } from "./profile-selection";
 
@@ -29,6 +35,40 @@ export function useChannelWindow(queries: ChannelQueries, channelId: string) {
     [queries, channelId],
   );
   return useSyncExternalStore(subscribe, snapshot, snapshot);
+}
+/** useChannelWindow for a timeline: live arrivals render as a transition, preempted by input. */
+export function useBackgroundChannelWindow(
+  queries: ChannelQueries,
+  channelId: string,
+) {
+  useEffect(() => queries.ensure(channelId), [queries, channelId]);
+  const subscribe = useCallback(
+    (listener: () => void) => queries.subscribeWindow(channelId, listener),
+    [queries, channelId],
+  );
+  const snapshot = useCallback(
+    () => queries.window(channelId),
+    [queries, channelId],
+  );
+  return useBackgroundStore(subscribe, snapshot, liveWindowChange);
+}
+/**
+ * Live traffic appends rows below the ones already shown. Pages, edits,
+ * reactions, deletions, status changes and the viewer's own sends are urgent.
+ */
+function liveWindowChange(current: ChannelWindow, next: ChannelWindow) {
+  return (
+    next.rows.at(-1)?.delivery === undefined &&
+    current.status === next.status &&
+    current.hasMore === next.hasMore &&
+    current.loadingOlder === next.loadingOlder &&
+    current.refreshing === next.refreshing &&
+    current.freshness === next.freshness &&
+    current.error === next.error &&
+    !!current.rows.length &&
+    next.rows.length > current.rows.length &&
+    current.rows.every((row, index) => row === next.rows[index])
+  );
 }
 export function useRowProfiles(
   queries: ProfileQueries,

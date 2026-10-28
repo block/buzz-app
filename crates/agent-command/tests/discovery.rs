@@ -340,7 +340,7 @@ fn running_command(home: &Path, connection: &str, label: &str) -> RunningCommand
 }
 fn running_script(home: &Path, connection: &str, label: &str, script: &str) -> RunningCommand {
     use std::process::Stdio;
-    let mut host = Command::new("/bin/bash")
+    let mut host = Command::new("bash")
         .args([
             "-c",
             "set -m; \"$@\" & wait",
@@ -434,7 +434,7 @@ fn a_second_build_waits_then_takes_over_the_attention_source() {
         .success());
     let marker = home.path().join("duplicate-executed");
     let mut second = Command::new(&second_binary)
-        .args(["--launch", "/usr/bin/touch", marker.to_str().unwrap()])
+        .args(["--launch", "touch", marker.to_str().unwrap()])
         .env("HOME", home.path())
         .env("BUZZ_AGENT_CONNECTION", &connection)
         .env("BUZZ_ATTENTION_COMMAND", "agent/watch")
@@ -458,7 +458,7 @@ fn a_second_build_waits_then_takes_over_the_attention_source() {
     assert!(!marker.exists(), "both builds executed the source");
     // A different saved source is independent while the takeover waits.
     assert!(Command::new(&second_binary)
-        .args(["--launch", "/usr/bin/true"])
+        .args(["--launch", "true"])
         .env("HOME", home.path())
         .env("BUZZ_AGENT_CONNECTION", &connection)
         .env("BUZZ_ATTENTION_COMMAND", "agent/other-watch")
@@ -474,7 +474,7 @@ fn a_second_build_waits_then_takes_over_the_attention_source() {
     assert!(marker.exists(), "waiting build did not take over");
     // Dead owners leave a reusable lock file, never a permanently stale lease.
     assert!(Command::new(&second_binary)
-        .args(["--launch", "/usr/bin/true"])
+        .args(["--launch", "true"])
         .env("HOME", home.path())
         .env("BUZZ_AGENT_CONNECTION", &connection)
         .env("BUZZ_ATTENTION_COMMAND", "agent/watch")
@@ -491,14 +491,14 @@ fn a_waiting_command_exits_when_its_host_dies() {
     let connection = connection(&server("waiting", &[]), "waiting", false);
     let first = running_command(home.path(), &connection, "agent/watch");
     let marker = home.path().join("waiting-command-executed");
-    let mut host = Command::new("/bin/bash")
+    let mut host = Command::new("bash")
         .args([
             "-c",
             "set -m; \"$@\" & wait",
             "buzz-host",
             env!("CARGO_BIN_EXE_buzz-agent-command"),
             "--launch",
-            "/usr/bin/touch",
+            "touch",
             marker.to_str().unwrap(),
         ])
         .env("HOME", home.path())
@@ -554,7 +554,7 @@ fn a_command_retains_the_lease_after_its_helper_is_terminated() {
     assert!(alive(first.child), "command did not resist termination");
     let marker = home.path().join("replacement-executed");
     let mut second = Command::new(env!("CARGO_BIN_EXE_buzz-agent-command"))
-        .args(["--launch", "/usr/bin/touch", marker.to_str().unwrap()])
+        .args(["--launch", "touch", marker.to_str().unwrap()])
         .env("HOME", home.path())
         .env("BUZZ_AGENT_CONNECTION", &connection)
         .env("BUZZ_ATTENTION_COMMAND", "agent/watch")

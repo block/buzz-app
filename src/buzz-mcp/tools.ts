@@ -240,9 +240,10 @@ export const TOOLS: readonly Tool[] = [
     ["name"],
   ),
   tool("notes_rm", "Delete your note.", { name: str }, ["name"]),
-  tool("canvas", "Read a channel's canvas, or replace it.", {
+  tool("canvas_get", "Read a channel's canvas.", { channel: str }),
+  tool("canvas_set", "Replace a channel's canvas.", {
     channel: str,
-    text: str,
+    content: str,
     path: str,
   }),
   tool(
@@ -1098,16 +1099,15 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     return `deleted ${coordinate}`;
   },
 
-  async canvas(tools, args) {
-    const { client, context } = tools;
-    const channel = text(args.channel) ?? context.channel;
-    if (!channel) throw new Error("channel is required here.");
-    const content = await tools.body(args, false);
-    const [head] = await client.query([
-      { kinds: [40100], "#h": [channel], limit: 1 },
-    ]);
-    if (!head && !(await tools.metadata(channel))) throw unseen(channel);
-    if (content === undefined) return head?.content || "No canvas.";
+  async canvas_get(tools, args) {
+    const { head } = await canvas(tools, args);
+    return head?.content || "No canvas.";
+  },
+
+  async canvas_set(tools, args) {
+    const { client } = tools;
+    const content = (await tools.body(args, true, "content")) as string;
+    const { channel, head } = await canvas(tools, args);
     // The newest canvas wins, so a write must be dated after the current one.
     const after = head ? (head.created_at + 1) * 1000 : 0;
     if (after - Date.now() > 5000)
@@ -1277,16 +1277,17 @@ class Tools {
     return value;
   }
 
-  /** `text`, or the file at `path`. Undefined when neither is given and
-   * `needed` is false. */
-  async body(args: Args, needed: boolean) {
+  /** `field` (default `text`), or the file at `path`. Undefined when neither
+   * is given and `needed` is false. */
+  async body(args: Args, needed: boolean, field = "text") {
     const path = text(args.path);
     const value = path
       ? new TextDecoder().decode(await this.client.read(path))
-      : typeof args.text === "string"
-        ? args.text
+      : typeof args[field] === "string"
+        ? args[field]
         : undefined;
-    if (value === undefined && needed) throw new Error("Give text or path.");
+    if (value === undefined && needed)
+      throw new Error(`Give ${field} or path.`);
     return value;
   }
 
@@ -2039,6 +2040,17 @@ async function leads(
 /** A failed read after a write, as the reason the write is not confirmed. */
 const unread = (error: unknown) =>
   new Error(`its state could not be read back: ${reason(error)}`);
+
+/** The channel's newest canvas, once the channel is known to be visible. */
+async function canvas(tools: Tools, args: Args) {
+  const channel = text(args.channel) ?? tools.context.channel;
+  if (!channel) throw new Error("channel is required here.");
+  const [head] = await tools.client.query([
+    { kinds: [40100], "#h": [channel], limit: 1 },
+  ]);
+  if (!head && !(await tools.metadata(channel))) throw unseen(channel);
+  return { channel, head };
+}
 
 /** The `channel` argument, or the current channel only when it is left out. */
 function target(tools: Tools, args: Args) {

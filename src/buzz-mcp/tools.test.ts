@@ -1193,7 +1193,7 @@ it("finds a channel past the relay's first page, by name and then by ID", async 
     callTool(client, {}, "channel", { channel: fixers }),
   ).resolves.toBe(`${fixers} fixers (private)\nyou: bot`);
   await expect(
-    callTool(client, {}, "canvas", { channel: fixers }),
+    callTool(client, {}, "canvas_get", { channel: fixers }),
   ).resolves.toBe("No canvas.");
   const unseen =
     "No channel fixers that you can see (it may not be visible yet). If you supplied a name, channels with q finds its ID.";
@@ -1201,10 +1201,13 @@ it("finds a channel past the relay's first page, by name and then by ID", async 
     callTool(client, {}, "channel", { channel: "fixers" }),
   ).rejects.toThrow(unseen);
   await expect(
-    callTool(client, {}, "canvas", { channel: "fixers" }),
+    callTool(client, {}, "canvas_get", { channel: "fixers" }),
   ).rejects.toThrow(unseen);
   await expect(
-    callTool(client, {}, "canvas", { channel: "fixers", text: "# Plan" }),
+    callTool(client, {}, "canvas_set", {
+      channel: "fixers",
+      content: "# Plan",
+    }),
   ).rejects.toThrow(unseen);
   expect(published).toEqual([]);
 });
@@ -1440,7 +1443,7 @@ it.each([-1, 0, 1])(
 it("reads an existing canvas without querying channel metadata", async () => {
   const { client } = fake([event({ kind: 40100, content: "# Existing" })]);
   await expect(
-    callTool(client, { channel: "chan" }, "canvas", {}),
+    callTool(client, { channel: "chan" }, "canvas_get", {}),
   ).resolves.toBe("# Existing");
   expect(client.query).toHaveBeenCalledExactlyOnceWith([
     { kinds: [40100], "#h": ["chan"], limit: 1 },
@@ -1459,8 +1462,8 @@ it("waits past the existing canvas timestamp before publishing", async () => {
       expect(Date.now()).toBe(101_000);
       return publish(template);
     });
-    const write = callTool(client, { channel: "chan" }, "canvas", {
-      text: "new",
+    const write = callTool(client, { channel: "chan" }, "canvas_set", {
+      content: "new",
     });
     await vi.advanceTimersByTimeAsync(499);
     expect(published).toEqual([]);
@@ -1490,8 +1493,8 @@ it("keeps waiting when the timer fires a moment early", async () => {
       expect(Date.now()).toBe(101_000);
       return publish(template);
     });
-    const write = callTool(client, { channel: "chan" }, "canvas", {
-      text: "new",
+    const write = callTool(client, { channel: "chan" }, "canvas_set", {
+      content: "new",
     });
     await vi.advanceTimersByTimeAsync(500);
     early.mockRestore();
@@ -1507,13 +1510,53 @@ it("publishes the first canvas only after finding visible channel metadata", asy
     event({ kind: 39000, tags: [["d", "chan"]] }),
   ]);
   await expect(
-    callTool(client, { channel: "chan" }, "canvas", { text: "first" }),
+    callTool(client, { channel: "chan" }, "canvas_set", { content: "first" }),
   ).resolves.toBe("saved");
   expect(client.query).toHaveBeenNthCalledWith(2, [
     { kinds: [39000], "#d": ["chan"], limit: 1 },
   ]);
   expect(published).toEqual([
     { kind: 40100, content: "first", tags: [["h", "chan"]] },
+  ]);
+});
+
+it("reads and replaces the canvas of a named channel or the current one", async () => {
+  const { client, published } = fake([
+    event({ kind: 40100, content: "# Existing" }),
+  ]);
+  await expect(
+    callTool(client, { channel: "chan" }, "canvas_get", {}),
+  ).resolves.toBe("# Existing");
+  await expect(
+    callTool(client, {}, "canvas_get", { channel: "chan" }),
+  ).resolves.toBe("# Existing");
+  await expect(callTool(client, {}, "canvas_get", {})).rejects.toThrow(
+    "channel is required here.",
+  );
+  await expect(
+    callTool(client, {}, "canvas_set", { content: "x" }),
+  ).rejects.toThrow("channel is required here.");
+  await expect(
+    callTool(client, { channel: "chan" }, "canvas_set", {}),
+  ).rejects.toThrow("Give content or path.");
+  await expect(
+    callTool(client, { channel: "chan" }, "canvas_set", { text: "old name" }),
+  ).rejects.toThrow("Give content or path.");
+  expect(() => callTool(client, { channel: "chan" }, "canvas", {})).toThrow(
+    "No tool canvas",
+  );
+  expect(published).toEqual([]);
+
+  await expect(
+    callTool(client, { channel: "chan" }, "canvas_set", { path: "plan.md" }),
+  ).resolves.toBe("saved");
+  expect(client.read).toHaveBeenCalledWith("plan.md");
+  await expect(
+    callTool(client, { channel: "chan" }, "canvas_set", { content: "" }),
+  ).resolves.toBe("saved");
+  expect(published).toEqual([
+    { kind: 40100, content: "# plan.md", tags: [["h", "chan"]] },
+    { kind: 40100, content: "", tags: [["h", "chan"]] },
   ]);
 });
 

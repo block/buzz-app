@@ -244,3 +244,19 @@ it("publishes explicit target names on the initial read without a subscription c
     [...f.sources.values()].every((listeners) => listeners.size === 0),
   ).toBe(true);
 });
+
+it("unregistered name snapshots observe the current published generation before subscribe", () => {
+  const f = fixture([row("current")]),
+    owner = open(f);
+  const stop = owner.subscribeView(() => {});
+  const names = owner.names(["a"]),
+    initial = names.snapshot();
+  expect(initial.get("a")).toBe("Alice");
+  f.profile("a", { name: "Current Alice" });
+  expect(names.snapshot().get("a")).toBe("Current Alice");
+  expect(initial.get("a")).toBe("Alice");
+  const current = names.snapshot();
+  f.metadata({ loadingOlder: true });
+  expect(names.snapshot()).toBe(current);
+  stop();
+});

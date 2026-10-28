@@ -68,6 +68,7 @@ export type ChannelPresentationView = Readonly<{
 type NameSelection = {
   ids: readonly string[];
   current: ReadonlyMap<string, string | undefined>;
+  generation: object;
   listeners: Set<Listener>;
 };
 const sameArray = <T>(a: readonly T[], b: readonly T[]) =>
@@ -153,6 +154,7 @@ export function createChannelPresentation(
     view: ChannelPresentationView;
     cells: ReadonlyMap<string, ChannelRowPresentation>;
     names: ReadonlyMap<string, string | undefined>;
+    members: readonly string[];
   };
   let reverse = new Map<string, Set<string>>();
   let indexed = false;
@@ -198,6 +200,7 @@ export function createChannelPresentation(
         const library = session.agentLibrary.snapshot();
         const list = session.channels.list();
         const channel = list.channels.find((entry) => entry.id === channelId);
+        const members = channel?.members ?? emptyIds;
         const nextPermissions: RowPermissions = {
           listed: !!channel,
           cached: !!channel?.cached,
@@ -435,7 +438,7 @@ export function createChannelPresentation(
           for (const id of ids) wantedNames.add(id);
         for (const selection of selections)
           for (const id of selection.ids) wantedNames.add(id);
-        const lookup = session.names?.scope(channel?.members ?? emptyIds);
+        const lookup = session.names?.scope(members);
         const names = new Map<string, string | undefined>();
         for (const id of wantedNames) names.set(id, lookup?.(id)?.name);
         const nameValues =
@@ -481,24 +484,26 @@ export function createChannelPresentation(
           view: nextView,
           cells,
           names: nameValues,
+          members,
         });
         const nameCallbacks: {
           selection: NameSelection;
           listener: Listener;
         }[] = [];
-        for (const selection of !prior || prior.names !== nameValues
-          ? selections
-          : []) {
-          const next = namesFor(selection.ids, nameValues);
-          if (!sameMap(selection.current, next)) {
-            selection.current = next;
-            nameCallbacks.push(
-              ...[...selection.listeners].map((listener) => ({
-                selection,
-                listener,
-              })),
-            );
+        for (const selection of selections) {
+          if (!prior || prior.names !== nameValues) {
+            const next = namesFor(selection.ids, nameValues);
+            if (!sameMap(selection.current, next)) {
+              selection.current = next;
+              nameCallbacks.push(
+                ...[...selection.listeners].map((listener) => ({
+                  selection,
+                  listener,
+                })),
+              );
+            }
           }
+          selection.generation = root;
         }
         reverse = nextReverse;
         indexed = true;
@@ -564,6 +569,15 @@ export function createChannelPresentation(
       release();
     };
   }
+  function captureNames(ids: readonly string[], generation: typeof root) {
+    if (ids.every((id) => generation.names.has(id)))
+      return namesFor(ids, generation.names);
+    // Dynamic verified owners can be outside static row dependencies. Capture
+    // this whole private selection with the published membership scope, then
+    // discard the live lookup. Construction registers/mutates no shared owner.
+    const lookup = session.names?.scope(generation.members);
+    return new Map(ids.map((id) => [id, lookup?.(id)?.name]));
+  }
   reconcile();
   return {
     session,
@@ -586,11 +600,24 @@ export function createChannelPresentation(
     names(ids: readonly string[]) {
       const selection: NameSelection = {
         ids,
-        current: namesFor(ids, root.names),
+        current: captureNames(ids, root),
+        generation: root,
         listeners: new Set(),
       };
+      const snapshot = () => {
+        // An uncommitted selector can miss notifications. Refresh only its
+        // private immutable memo for React's consistency recheck; never publish,
+        // subscribe, reconcile or notify from a getter.
+        const generation = root;
+        if (selection.generation !== generation) {
+          const next = captureNames(ids, generation);
+          if (!sameMap(selection.current, next)) selection.current = next;
+          selection.generation = generation;
+        }
+        return selection.current;
+      };
       return {
-        snapshot: () => selection.current,
+        snapshot,
         subscribe(listener: Listener) {
           selection.listeners.add(listener);
           selections.add(selection);
@@ -603,6 +630,7 @@ export function createChannelPresentation(
               listener();
             }
           }
+          selection.generation = root;
           let active = true;
           return () => {
             if (!active) return;

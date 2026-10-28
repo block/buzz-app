@@ -1,11 +1,17 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { StrictMode, useSyncExternalStore } from "react";
+import {
+  StrictMode,
+  useSyncExternalStore,
+  useLayoutEffect,
+  useRef,
+  type ReactNode,
+} from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { LinkLabel } from "../../bundled/links/InlineLink";
 import { LockIcon } from "../../shared/design-system/icons";
 import referenceStyles from "../../shared/InlineReference.module.css";
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it } from "vitest";
 import { stubAvatarBrowserApis } from "../agents/avatar-testing";
 import { profileTarget } from "../profiles/target";
@@ -22,6 +28,14 @@ import { MessageRow } from "./MessageRow";
 import { row, fixture } from "./channel-presentation.testing";
 import { createRelaySession } from "../relay/session";
 import type { ChannelMessage } from "../relay/contracts";
+import { schnorr } from "@noble/curves/secp256k1.js";
+import { bytesToHex } from "nostr-tools/utils";
+import { npubEncode } from "nostr-tools/nip19";
+import { keypair, signed, profile as profileEvent } from "../relay/testing";
+import { eventDto } from "../relay/events";
+import { createProfileDirectory } from "../relay/profile-directory";
+import { bindNames } from "../identity-names/service";
+import { agentDirectory } from "../identity-names/testing";
 
 stubAvatarBrowserApis();
 const serviceOwners: ReturnType<typeof createRelaySession>[] = [];
@@ -197,4 +211,78 @@ it("keeps private channel metadata for decoded link destinations and updates it"
   expect(screen.getByRole("link", { name: "Private destination" })).toBe(link);
   expect(link.innerHTML).not.toContain(lock);
   view.unmount();
+});
+
+it("commits the qualified cached verified-owner name before any subscription catch-up", async () => {
+  const agent = keypair(),
+    human = keypair(),
+    viewer = keypair();
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(`nostr:agent-auth:${agent.pubkey}:`),
+  );
+  const auth = bytesToHex(schnorr.sign(new Uint8Array(digest), human.secret));
+  const head = eventDto(
+    signed(agent, {
+      kind: 0,
+      content: JSON.stringify({ name: "Quinn", is_agent: true }),
+      tags: [["auth", human.pubkey, "", auth]],
+    }),
+  );
+  const directory = createProfileDirectory({ read: async () => [] });
+  directory.accept([
+    head,
+    eventDto(profileEvent(human, { name: "Logan" })),
+    eventDto(profileEvent(viewer, { name: "Logan" })),
+  ]);
+  await waitFor(() =>
+    expect(directory.queries.owner?.(agent.pubkey)).toBe(human.pubkey),
+  );
+  const f = mountedFixture([row("owned", { authorId: agent.pubkey })]);
+  f.channel({ members: [viewer.pubkey, agent.pubkey] });
+  const base = createRelaySession(null);
+  serviceOwners.push(base);
+  const names = bindNames(
+    {
+      viewer: viewer.pubkey,
+      profiles: directory.queries,
+      agentLibrary: base.session.agentLibrary,
+    },
+    { snapshot: () => [agentDirectory], subscribe: () => () => {} },
+  );
+  const session = {
+    ...f.session,
+    viewer: viewer.pubkey,
+    profiles: directory.queries,
+    names,
+  };
+  const owner = createChannelPresentation(session, "room", {
+    chat: false,
+    viewer: viewer.pubkey,
+  });
+  expect(owner.view().profiles.has(human.pubkey)).toBe(false);
+  const commits: string[] = [];
+  function Witness({ children }: { children: ReactNode }) {
+    const element = useRef<HTMLDivElement>(null);
+    useLayoutEffect(() => {
+      commits.push(element.current?.textContent ?? "");
+    }, []);
+    return <div ref={element}>{children}</div>;
+  }
+  const view = render(
+    <StrictMode>
+      <Witness>
+        <Rows owner={owner} />
+      </Witness>
+    </StrictMode>,
+  );
+  try {
+    expect(commits[0]).toContain(
+      `Logan · ${npubEncode(human.pubkey).slice(-4)}’s agent`,
+    );
+  } finally {
+    view.unmount();
+    names.dispose();
+    directory.dispose();
+  }
 });

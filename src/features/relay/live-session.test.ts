@@ -1,6 +1,7 @@
 import { ReadError } from "./errors";
 import { assert, expect, it, vi, afterEach } from "vitest";
 import { createRelaySession } from "./session";
+import type { RelayEvent } from "./events";
 import type { LiveCallbacks } from "./live";
 import {
   bounds,
@@ -410,6 +411,16 @@ function reconnectHarness() {
   };
   const cursor = (event: ReturnType<typeof message>) =>
     `${event.created_at}:${event.id}`;
+  /** Drop the stream; the later re-establishment replays `replayed` before EOSE. */
+  const dropAndReplay = async (replayed: readonly RelayEvent[]) => {
+    live.state({ status: "retrying", routes: [] });
+    await flush();
+    live.state({ status: "connected", routes: [] });
+    live.receive(replayed);
+    await flush();
+    live.established("c");
+    await flush();
+  };
   return {
     owner,
     alice,
@@ -423,6 +434,7 @@ function reconnectHarness() {
     read,
     page,
     reconnect,
+    dropAndReplay,
     cursor,
   };
 }
@@ -614,3 +626,153 @@ it.each<
     }
   },
 );
+
+it("rows the re-established stream replays before catch-up are not overlap with the rows kept across the drop", async () => {
+  // Replay covers the five minutes before reconnect, so the head always
+  // overlaps it. The rows kept across the drop are what the fill must reach.
+  const h = reconnectHarness();
+  try {
+    const seen = message(h.alice, "c", "seen", 10),
+      between = message(h.alice, "c", "between", 20),
+      missed = message(h.alice, "c", "missed", 30),
+      recent = message(h.alice, "c", "recent", 40);
+    await h.reconnect(seen);
+    h.read().respond(h.page("head", [seen], seen));
+    await flush();
+    expect(h.window().freshness).toBe("verified");
+    await h.dropAndReplay([recent]);
+    expect(h.rows()).toEqual([seen.id, recent.id]);
+    h.read().respond(h.page("head", [recent, missed], missed));
+    await flush();
+    expect(h.rows()).toEqual([seen.id, missed.id, recent.id]);
+    expect(h.window().freshness).toBe("cached");
+    const older = h.read();
+    expect(older.filters[0]).toMatchObject({
+      until: missed.created_at,
+      before_id: missed.id,
+    });
+    older.respond(h.page(h.cursor(missed), [between, seen], seen));
+    await flush();
+    expect(h.reads()).toHaveLength(0);
+    expect(h.rows()).toEqual([seen.id, between.id, missed.id, recent.id]);
+    expect(h.window()).toMatchObject({
+      status: "ready",
+      freshness: "verified",
+      hasMore: true,
+      error: undefined,
+    });
+  } finally {
+    h.owner.dispose();
+  }
+});
+
+it("an interrupted fill drops the rows kept across the drop and retains the replayed ones", async () => {
+  const h = reconnectHarness();
+  try {
+    const seen = message(h.alice, "c", "seen", 10),
+      missed = message(h.alice, "c", "missed", 30),
+      recent = message(h.alice, "c", "recent", 40);
+    await h.reconnect(seen);
+    h.read().respond(h.page("head", [seen], seen));
+    await flush();
+    await h.dropAndReplay([recent]);
+    h.read().respond(h.page("head", [recent, missed], missed));
+    await flush();
+    h.read().fail(new Error("offline"));
+    await flush();
+    expect(h.reads()).toHaveLength(0);
+    expect(h.rows()).toEqual([missed.id, recent.id]);
+    expect(h.window()).toMatchObject({
+      status: "ready",
+      freshness: "cached",
+      hasMore: true,
+      error: "offline",
+    });
+  } finally {
+    h.owner.dispose();
+  }
+});
+
+it("a fill the stream drop interrupts settles on rows the next catch-up must reach in turn", async () => {
+  // The drop is seen before the cancelled page is; the settled window, not
+  // the rows replayed after this second drop, is what its catch-up must reach.
+  const h = reconnectHarness();
+  try {
+    const seen = message(h.alice, "c", "seen", 10),
+      missed = message(h.alice, "c", "missed", 30),
+      recent = message(h.alice, "c", "recent", 40),
+      later = message(h.alice, "c", "later", 50);
+    await h.reconnect(seen);
+    h.read().respond(h.page("head", [seen], seen));
+    await flush();
+    await h.dropAndReplay([recent]);
+    h.read().respond(h.page("head", [recent, missed], missed));
+    await flush();
+    h.read();
+    await h.dropAndReplay([later]);
+    expect(h.rows()).toEqual([missed.id, recent.id, later.id]);
+    h.read().respond(h.page("head", [later], later));
+    await flush();
+    expect(h.window().freshness).toBe("cached");
+    const older = h.read();
+    expect(older.filters[0]).toMatchObject({
+      until: later.created_at,
+      before_id: later.id,
+    });
+    older.respond(h.page(h.cursor(later), [recent, missed], missed));
+    await flush();
+    expect(h.reads()).toHaveLength(0);
+    expect(h.rows()).toEqual([missed.id, recent.id, later.id]);
+    expect(h.window()).toMatchObject({
+      status: "ready",
+      freshness: "verified",
+      error: undefined,
+    });
+  } finally {
+    h.owner.dispose();
+  }
+});
+
+it("a second drop before any catch-up completes keeps the rows kept across the first", async () => {
+  const h = reconnectHarness();
+  try {
+    const seen = message(h.alice, "c", "seen", 10),
+      between = message(h.alice, "c", "between", 20),
+      missed = message(h.alice, "c", "missed", 30),
+      recent = message(h.alice, "c", "recent", 40),
+      later = message(h.alice, "c", "later", 50);
+    await h.reconnect(seen);
+    h.read().respond(h.page("head", [seen], seen));
+    await flush();
+    await h.dropAndReplay([recent]);
+    // The first catch-up's head is still outstanding when the stream drops again.
+    h.read();
+    await h.dropAndReplay([later]);
+    expect(h.rows()).toEqual([seen.id, recent.id, later.id]);
+    h.read().respond(h.page("head", [later, recent, missed], missed));
+    await flush();
+    expect(h.window().freshness).toBe("cached");
+    const older = h.read();
+    expect(older.filters[0]).toMatchObject({
+      until: missed.created_at,
+      before_id: missed.id,
+    });
+    older.respond(h.page(h.cursor(missed), [between, seen], seen));
+    await flush();
+    expect(h.reads()).toHaveLength(0);
+    expect(h.rows()).toEqual([
+      seen.id,
+      between.id,
+      missed.id,
+      recent.id,
+      later.id,
+    ]);
+    expect(h.window()).toMatchObject({
+      status: "ready",
+      freshness: "verified",
+      error: undefined,
+    });
+  } finally {
+    h.owner.dispose();
+  }
+});

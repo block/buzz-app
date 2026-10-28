@@ -524,6 +524,48 @@ it("refresh after establishment pages past its re-read until it reaches a retain
   });
 });
 
+it("replies the re-established stream replays before refresh are not overlap with the replies kept across the drop", async () => {
+  const one = at(1),
+    two = at(2),
+    three = at(3);
+  let reconnected = false;
+  const h = await setup((filter) => {
+    if (filter.ids) return [root];
+    if (!reconnected) return [one, bounds(filter, cursorOf(one))];
+    if (filter.until === undefined)
+      return [three, two, bounds(filter, cursorOf(two))];
+    return [one, bounds(filter, cursorOf(one))];
+  });
+  await h.view.refresh();
+  expect(h.view.snapshot().replies.map((row) => row.id)).toEqual([one.id]);
+  reconnected = true;
+  h.traffic.state({ status: "connected", routes: [] });
+  h.traffic.state({ status: "retrying", routes: [] });
+  h.traffic.state({ status: "connected", routes: [] });
+  h.traffic.receive([three]);
+  expect(h.view.snapshot().replies.map((row) => row.id)).toEqual([
+    one.id,
+    three.id,
+  ]);
+  const before = h.requests.length;
+  h.traffic.established(channel);
+  await vi.waitFor(() =>
+    expect(h.view.snapshot().replies.map((row) => row.id)).toEqual([
+      one.id,
+      two.id,
+      three.id,
+    ]),
+  );
+  // The newest page overlaps the replayed reply; the fill still pages on to
+  // the reply kept across the drop.
+  expect(h.requests.slice(before)).toMatchObject([
+    [{ ids: [root.id] }],
+    [{ thread_window: true }],
+    [{ thread_window: true, until: two.created_at, before_id: two.id }],
+  ]);
+  expect(h.view.snapshot()).toMatchObject({ status: "ready", limited: false });
+});
+
 it("refresh after establishment drops a retained reply it cannot reach within the page bound and settles on the range the reader had", async () => {
   const old = at(1);
   const fresh = Array.from({ length: 10 }, (_, index) => at(20 - index));

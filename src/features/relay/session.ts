@@ -3070,6 +3070,7 @@ export function createRelaySession(
         archives.stale();
         workflows.interrupt();
         channels.staleHeads();
+        for (const thread of threads) thread.stale();
         unread.stale();
         inboxFeed.stale();
       }

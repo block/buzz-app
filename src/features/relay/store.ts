@@ -53,6 +53,10 @@ type WindowState = {
   /** Rows came from IndexedDB and no relay read has replaced them. Freshness
    * cannot say this: a dropped socket also marks relay rows `cached`. */
   restored?: boolean;
+  /** Channel rows held when the stream dropped, until a catch-up verifies or
+   * settles the window. The re-established stream replays its last minutes
+   * before catch-up; those rows are newer than any gap, not overlap with it. */
+  kept?: Set<string> | undefined;
 };
 type Head = {
   rows: readonly ChannelMessage[];
@@ -114,6 +118,12 @@ const FRESH_FOR = 60_000;
 /** Pages a reconnect catch-up reads back from the head before it gives up on
  * reaching the rows the reader kept across the disconnect. */
 const CATCH_UP_PAGES = 5;
+const rowIds = (state: WindowState) =>
+  new Set(
+    state.events
+      .filter((event) => channelRowKind(event.kind))
+      .map((event) => event.id),
+  );
 
 /** Session-owned read model. Broad byte-bounded heads are separate from the small history LRU.
  * Preparing a head never mounts a timeline or evicts a subscribed history window. */
@@ -210,6 +220,8 @@ export function createChannelStore(
     byteSize({ ...tail, events: [] }) - 2 + listByteSize(tail.events);
   let media = createMediaPreparation();
   const controllers = new Set<AbortController>();
+  /** Stream drops seen; a catch-up compares it to learn one happened mid-fill. */
+  let streamDrops = 0;
   const accessVersions = new Map<string, number>();
   const listListeners = new Set<Listener>();
   const windowListeners = new Map<string, Set<Listener>>();
@@ -2990,11 +3002,15 @@ export function createChannelStore(
      * Inactive cached heads will revalidate when demanded, without an all-roster read.
      * The session drops its queued catch-ups with the stream, so an empty window
      * that only a queued catch-up marked loading becomes idle: the next ensure()
-     * reads it again. Running reads settle their own windows when cancelled. */
+     * reads it again. Running reads settle their own windows when cancelled.
+     * The rows held now are what the catch-up must reach; a second drop before
+     * one completes keeps that snapshot. */
     staleHeads() {
+      streamDrops++;
       for (const [id, head] of heads.entries())
         heads.set(id, { ...head, cached: true });
-      for (const state of windows.values())
+      for (const state of windows.values()) {
+        state.kept ??= rowIds(state);
         setWindow(state, {
           freshness: "cached",
           ...(state.snapshot.status === "loading" &&
@@ -3003,14 +3019,15 @@ export function createChannelStore(
             ? { status: "idle" }
             : {}),
         });
+      }
     },
     /** Revalidate only a retained reader after establishing the stream. An unopened
      * channel needs no eager HTTP head; its normal ensure() owns that finite handoff.
      * Live replay covers minutes, not a long disconnect, so the head may stop short
-     * of the rows the reader kept: page back from it until one is reached, merging
-     * each page as it lands. Past the page bound, or when a page fails or is
-     * cancelled, the kept rows go and the window continues from the pages read
-     * rather than showing a gap as history. */
+     * of the rows the reader kept across the drop: page back from it until one is
+     * reached, merging each page as it lands. Past the page bound, or when a page
+     * fails or is cancelled, the kept rows go and the window continues from the
+     * pages read rather than showing a gap as history. */
     async catchUp(channelId: string) {
       const cached = heads.peek(channelId);
       if (cached) heads.set(channelId, { ...cached, cached: true });
@@ -3021,11 +3038,13 @@ export function createChannelStore(
       const valid = () => epoch === epochAtStart && live(retained, generation);
       if (!retained.snapshot.rows.length)
         setWindow(retained, { status: "loading", error: undefined });
-      const kept = new Set(
-        retained.events
-          .filter((event) => channelRowKind(event.kind))
-          .map((event) => event.id),
-      );
+      const kept = retained.kept ?? rowIds(retained);
+      const dropsAtStart = streamDrops;
+      /** What the reader keeps once this fill has settled continuity: nothing,
+       * or every row when the stream dropped meanwhile (staleHeads() ran before
+       * the page was observed, with this fill still open). */
+      const keptAfter = () =>
+        streamDrops === dropsAtStart ? undefined : rowIds(retained);
       type Page = Pick<Head, "events" | "cursor" | "hasMore">;
       let page: Page | undefined;
       let contiguous = true;
@@ -3037,9 +3056,11 @@ export function createChannelStore(
           (event) => !kept.has(event.id),
         );
         for (const id of kept) retained.traffic.delete(id);
+        retained.kept = keptAfter();
         retained.floor = undefined;
         retained.atHead = true;
         moveCursor(retained, last.cursor);
+        setWindow(retained, { hasMore: last.hasMore, historyLimited: false });
       };
       const controller = new AbortController();
       controllers.add(controller);
@@ -3076,9 +3097,9 @@ export function createChannelStore(
         if (!valid())
           throw new DOMException("Stale live catch-up", "AbortError");
         if (retained.atHead) moveCursor(retained, page.cursor);
+        retained.kept = keptAfter();
         setWindow(retained, {
           ...(retained.atHead ? { hasMore: page.hasMore } : {}),
-          ...(contiguous ? {} : { historyLimited: false }),
           status: "ready",
           freshness: "verified",
           error: undefined,
@@ -3087,24 +3108,16 @@ export function createChannelStore(
       } catch (error) {
         if (!valid())
           throw new DOMException("Stale live catch-up", "AbortError");
-        // An interrupted fill leaves the hole open, and the next head would
-        // overlap the rows above it and certify the window with the hole still
-        // in it. Settle on the pages that landed; a cancelled read's stream
-        // drop has already marked the window cached.
+        // An interrupted fill would show its open hole as history until the
+        // next catch-up closes it. Settle on the pages that landed; a cancelled
+        // read's stream drop has already marked the window cached.
         const interrupted = contiguous ? undefined : page;
         if (interrupted) settle(interrupted);
-        if (interrupted || !isAbort(error))
+        if (!isAbort(error))
           setWindow(retained, {
-            ...(interrupted
-              ? { hasMore: interrupted.hasMore, historyLimited: false }
-              : {}),
-            ...(isAbort(error)
-              ? {}
-              : {
-                  status: retained.snapshot.rows.length ? "ready" : "error",
-                  freshness: "cached",
-                  error: describe(error),
-                }),
+            status: retained.snapshot.rows.length ? "ready" : "error",
+            freshness: "cached",
+            error: describe(error),
           });
         throw error;
       } finally {

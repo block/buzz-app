@@ -139,6 +139,24 @@ export function createThreadView({
     : "legacy";
   let cursor: ThreadCursor | undefined;
   let pages = 0;
+  const isReply = (event: RelayEvent) =>
+    !AUX.has(event.kind) &&
+    event.id !== rootId &&
+    inChannel(event, channelId) &&
+    threadReference(event)?.rootId === rootId;
+  /** Replies a strict refresh must reach from its newest page. The selected
+   * target is retained beyond traversal by design. */
+  const unverified = () =>
+    new Set(
+      remote
+        .filter((event) => isReply(event) && !(exact && event.id === messageId))
+        .map((event) => event.id),
+    );
+  /** The replies held when the stream dropped, until a refresh completes. The
+   * re-established stream replays its last minutes before refresh; those
+   * replies are newer than any gap, not overlap with it. */
+  let held: Set<string> | undefined;
+  let drops = 0;
   let controller: AbortController | undefined;
   let again = false;
   let snapshot: ThreadSnapshot = Object.freeze({
@@ -347,6 +365,7 @@ export function createThreadView({
       rootId = undefined;
       cursor = undefined;
       pages = 0;
+      held = undefined;
     } else remote = visible(remote);
     publish({
       status: "idle",
@@ -593,23 +612,11 @@ export function createThreadView({
         }
         if (!retain(union(remote, related(root)))) return;
       }
-      const isReply = (event: RelayEvent) =>
-        !AUX.has(event.kind) &&
-        event.id !== rootId &&
-        inChannel(event, channelId) &&
-        threadReference(event)?.rootId === rootId;
       // A strict refresh re-reads from the newest end. Live replay covers
-      // minutes, not a long disconnect, so keep paging until a pre-refresh reply
-      // is reached. The selected target is retained beyond traversal by design.
-      const kept = new Set(
-        replace
-          ? remote
-              .filter(
-                (event) => isReply(event) && !(exact && event.id === messageId),
-              )
-              .map((event) => event.id)
-          : [],
-      );
+      // minutes, not a long disconnect, so keep paging until a reply kept
+      // across the drop is reached.
+      const kept = replace ? (held ?? unverified()) : new Set<string>();
+      const dropsAtStart = drops;
       let reached = !kept.size;
       let more = false;
       // Where the loop passed the range the reader had, so a fill that never
@@ -759,6 +766,8 @@ export function createThreadView({
       rootUnavailable = false;
       cursor = nextCursor;
       pages = nextPages;
+      // A drop during the refresh ran stale() first; the replies now are held.
+      if (replace) held = drops === dropsAtStart ? undefined : unverified();
       publish({
         status: "ready",
         error: undefined,
@@ -794,6 +803,11 @@ export function createThreadView({
     events: () => [...remote, ...staged, ...selectionStaged],
     receive,
     purge,
+    /** The stream dropped: the replies held now are what the next refresh must reach. */
+    stale() {
+      drops++;
+      held ??= unverified();
+    },
     localChanged() {
       const next = localOperations();
       if (

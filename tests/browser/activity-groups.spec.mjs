@@ -1,6 +1,6 @@
 import { test, expect } from "./playwright-test.mjs";
 import { createServer } from "./vite-server.mjs";
-import { virtuaIdle } from "./timeline.mjs";
+import { activate } from "./navigation.mjs";
 
 // The real virtualizer must measure folded zero-height entries, preserve focus
 // and reading position, and reveal a message that was previously unmounted.
@@ -142,11 +142,11 @@ test("Solo activity folds, stays expanded on append/prepend, and reveals exact v
     const detailsToggle = step.getByRole("button", {
       name: /Activity update 0/,
     });
-    // Exact navigation focuses the row before its reveal/scroll has finished.
-    // Virtua suppresses pointer events while scrolling; wait for that boundary
-    // before exercising the disclosure's pointer interaction.
-    await virtuaIdle(page, history);
-    await detailsToggle.click();
+    // The reveal keeps this row in place while the fold expansion is still
+    // measuring, and each correction restarts Virtua's pointer hold and can
+    // move the row between a click's press and release. The disclosure, not
+    // hit testing, is under test here; the pointer path is exercised above.
+    await activate(detailsToggle);
     await expect(detailsToggle).toHaveAttribute("aria-expanded", "true");
     await expect
       .poll(() =>

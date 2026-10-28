@@ -364,7 +364,7 @@ export const fixturePlugins: readonly BundledPlugin[] = [
   {
     manifest: { id: "fixture.delayed", name: "Delayed fixture", apiVersion: 1 },
     module: {
-      inject: ["pages"],
+      inject: ["pages", "agents"],
       async apply(ctx) {
         const gate = window.delayFixture;
         if (gate)
@@ -372,6 +372,18 @@ export const fixturePlugins: readonly BundledPlugin[] = [
             gate.started = true;
             gate.release = resolve;
           });
+        const state = { readiness: "ready" as const };
+        ctx.agents.register({
+          id: "provider",
+          title: "Delayed provider",
+          defaults: () => ({ config: {} }),
+          provider: {
+            snapshot: () => state,
+            subscribe: () => () => {},
+            check() {},
+            DialogBody: () => <p>Delayed provider controls</p>,
+          },
+        });
         ctx.pages.register({
           id: "slow",
           title: "Delayed fixture",

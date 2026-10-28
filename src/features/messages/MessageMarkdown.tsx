@@ -31,14 +31,15 @@ import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { profileKey } from "../profiles/target";
 import referenceStyles from "../../shared/InlineReference.module.css";
-import Markdown, {
+import remarkBreaks from "remark-breaks";
+import { remarkSpoilers } from "./remark-spoilers";
+import {
+  renderMarkdown,
   type Components,
   type ExtraProps,
+  type MarkdownTransform,
   type UrlTransform,
-} from "react-markdown";
-import remarkBreaks from "remark-breaks";
-import { remarkMessageGfm } from "./remark-message-gfm";
-import { remarkSpoilers } from "./remark-spoilers";
+} from "./message-markdown-pipeline";
 import type {
   CodeBlockRenderer,
   ContributionReader,
@@ -60,7 +61,7 @@ import {
   prepareMarkdown,
   type LiteralRange,
 } from "./markdown-preparation";
-import { preparedMarkdown, takeMarkdownTree } from "./markdown-worker";
+import { preparedMarkdown } from "./markdown-worker";
 
 type MarkdownNode = {
   type: string;
@@ -369,16 +370,6 @@ function remarkInlineContent(protectedContent: ProtectedContent) {
     };
     visit(tree);
   };
-}
-
-/** Start from the tree the preparation worker parsed for this exact source. */
-function remarkPreparedTree(this: {
-  parser?: ((document: string, file: never) => unknown) | undefined;
-}) {
-  const parse = this.parser;
-  if (parse)
-    this.parser = (document, file) =>
-      takeMarkdownTree(document) ?? parse(document, file);
 }
 
 const transformUrl: UrlTransform = (value) =>
@@ -749,27 +740,22 @@ function PreparedMessageMarkdown({
   return largeEmoji ? markdown : <div className={styles.text}>{markdown}</div>;
 }
 
+const markdownBreaks = remarkBreaks();
+
 const MarkdownBody = memo(function MarkdownBody({
   protectedContent,
 }: {
   protectedContent: ProtectedContent;
 }) {
-  return (
-    <Markdown
-      remarkPlugins={[
-        remarkPreparedTree,
-        remarkMessageGfm(protectedContent.content),
-        remarkBreaks,
-        [remarkSpoilers, `<${protectedContent.prefix}spoiler\uE002>`],
-        [remarkInlineContent, protectedContent],
-        remarkLiteralHtml,
-      ]}
-      components={markdownComponents}
-      skipHtml
-      urlTransform={transformUrl}
-    >
-      {protectedContent.content}
-    </Markdown>
+  return renderMarkdown(
+    protectedContent.content,
+    [
+      markdownBreaks,
+      remarkSpoilers(`<${protectedContent.prefix}spoiler\uE002>`),
+      remarkInlineContent(protectedContent),
+      remarkLiteralHtml(),
+    ] as MarkdownTransform[],
+    { components: markdownComponents, urlTransform: transformUrl },
   );
 });
 

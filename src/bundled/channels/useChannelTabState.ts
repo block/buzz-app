@@ -671,6 +671,16 @@ export function useChannelTabState(
     ) =>
       update((state) => {
         if (state.visit === visit) return state;
+        const retained =
+          state.routedVisits?.[visit.slice(0, -":thread".length)];
+        // Reconstruct the same address without downgrading its verified root
+        // to the route hint while the successor reader is still resolving.
+        const thread =
+          routed &&
+          retained?.channelId === routed.channelId &&
+          retained.messageId === routed.messageId
+            ? { ...routed, rootId: retained.rootId }
+            : routed;
         const visits = state.left ? state.visits : remember(state);
         const next: State = {
           ...state,
@@ -684,25 +694,25 @@ export function useChannelTabState(
               }
             : state.detailVisits,
           routedVisits:
-            routed && visit.endsWith(":thread")
+            thread && visit.endsWith(":thread")
               ? {
                   ...state.routedVisits,
                   [visit.slice(0, -":thread".length)]: {
-                    channelId: routed.channelId,
-                    messageId: routed.messageId,
-                    rootId: routed.rootId,
+                    channelId: thread.channelId,
+                    messageId: thread.messageId,
+                    rootId: thread.rootId,
                   },
                 }
               : state.routedVisits,
         };
-        if (routed)
+        if (thread)
           return withThread(
             next,
-            routed.channelId,
-            routed.messageId,
-            routed.rootId,
+            thread.channelId,
+            thread.messageId,
+            thread.rootId,
             "select",
-            routed.pane ?? threadPlacementPreference(),
+            thread.pane ?? threadPlacementPreference(),
           );
         const saved = visits?.[visit];
         return saved

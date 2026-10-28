@@ -88,6 +88,9 @@ const report = {
   publications: 0,
 };
 let failMissing = true;
+let replyGate: Promise<void> | undefined;
+let releaseReply = () => {};
+let replyPending = false;
 let data = [
   profile(viewer, { name: "Viewer", about: "Human profile", picture }),
   profile(mic, { name: "Mic", about: "Mic biography" }),
@@ -166,6 +169,13 @@ function session(discoveryGate?: Promise<void>) {
         ) {
           replacementDiscoveryStarted = true;
           await discoveryGate;
+        }
+        if (
+          replyGate &&
+          filters.some((filter) => filter.ids?.includes(reply.id))
+        ) {
+          replyPending = true;
+          await replyGate;
         }
         return filters.flatMap((filter) => {
           if (dmOpened && filter["#d"]?.includes("member-dm"))
@@ -370,6 +380,18 @@ Object.assign(window, {
   profilesFixture: {
     report,
     generation: () => snapshot.generation,
+    messages: { root: root.id, reply: reply.id },
+    holdReply() {
+      replyPending = false;
+      replyGate = new Promise<void>((resolve) => {
+        releaseReply = resolve;
+      });
+    },
+    replyPending: () => replyPending,
+    releaseReply() {
+      replyGate = undefined;
+      releaseReply();
+    },
     navigation: context.navigation,
     contexts,
     dmOpens,

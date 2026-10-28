@@ -11,6 +11,7 @@ import type {
 import {
   channelTabs,
   panelTabId,
+  rootOfTab,
   useChannelTabState,
 } from "./useChannelTabState";
 
@@ -595,6 +596,89 @@ test("successors retain verified roots and page/channel retirement partitions", 
   h.rerender({ session: successor, channel: "alpha", page: "solo" });
   expect(h.result.current.threadVisits("alpha", "verified")).toEqual([]);
 });
+
+test("a rebuilt reply keeps its inherited root before the successor reader resolves", () => {
+  const scope = crypto.randomUUID();
+  const h = renderHook(({ session }) => useChannelTabState(session, "alpha"), {
+    initialProps: { session: { scope, viewer: "viewer" } as RelaySession },
+  });
+  act(() =>
+    h.result.current.enterVisit("root:thread", {
+      channelId: "alpha",
+      messageId: "verified",
+      rootId: "verified",
+    }),
+  );
+  act(() =>
+    h.result.current.enterVisit("reply:thread", {
+      channelId: "alpha",
+      messageId: "reply",
+      rootId: "reply",
+    }),
+  );
+  act(() =>
+    h.result.current.resolveThreadRoot("thread:alpha:reply", "verified"),
+  );
+  h.rerender({ session: { scope, viewer: "viewer" } as RelaySession });
+  act(() =>
+    h.result.current.enterVisit("reply:thread", {
+      channelId: "alpha",
+      messageId: "reply",
+      rootId: "reply",
+    }),
+  );
+  const tab = h.result.current.tabs[0];
+  if (tab?.kind !== "thread") throw new Error("Missing rebuilt thread");
+  // Close reads these identities before any successor resolveThreadRoot call.
+  expect(rootOfTab(tab)).toBe("verified");
+  expect(h.result.current.threadVisits(tab.channelId, rootOfTab(tab))).toEqual([
+    "root",
+    "reply",
+  ]);
+  act(() => h.result.current.closeTabs(""));
+  expect(h.result.current.tabs).toEqual([]);
+});
+
+test.each(["channel", "message"])(
+  "a rebuilt visit cannot reuse a root for a different %s",
+  (change) => {
+    const scope = crypto.randomUUID();
+    const h = renderHook(
+      ({ session }) => useChannelTabState(session, "alpha"),
+      {
+        initialProps: { session: { scope, viewer: "viewer" } as RelaySession },
+      },
+    );
+    const route = { channelId: "alpha", messageId: "reply", rootId: "hint" };
+    act(() => h.result.current.enterVisit("reply:thread", route));
+    act(() =>
+      h.result.current.resolveThreadRoot("thread:alpha:hint", "verified"),
+    );
+    // The restoration branch also hands off the last applied visit. Leave it
+    // before checking a new application with a different address.
+    act(() => h.result.current.enterVisit("between:channel"));
+    h.rerender({ session: { scope, viewer: "viewer" } as RelaySession });
+    const changed = {
+      ...route,
+      ...(change === "channel"
+        ? { channelId: "beta" }
+        : { messageId: "other" }),
+    };
+    act(() => h.result.current.enterVisit("reply:thread", changed));
+    const tab = h.result.current.tabs.find(
+      (item) =>
+        item.kind === "thread" &&
+        item.channelId === changed.channelId &&
+        item.messageId === changed.messageId,
+    );
+    if (tab?.kind !== "thread") throw new Error("Missing rebuilt thread");
+    expect(rootOfTab(tab)).toBe("hint");
+    expect(h.result.current.threadVisits(changed.channelId, "hint")).toEqual([
+      "reply",
+    ]);
+    expect(h.result.current.threadVisits("alpha", "verified")).toEqual([]);
+  },
+);
 
 test.each(["account", "community", "unknown"])(
   "%s scope does not inherit another session's retirement records",

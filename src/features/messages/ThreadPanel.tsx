@@ -444,7 +444,7 @@ function OwnedThreadPanel({
 }
 type ReplyItemProps = { className?: string; "data-layout"?: string };
 // Top-level replies a bottom-following open mounts per commit.
-const replyBatch = 10;
+const replyBatch = 4;
 /** A bottom-following open mounts at most a batch of new top-level replies per
  * commit, newest first, so a long thread never blocks input in one task. Older
  * replies stream in above the pinned viewport as their empty items fill; the

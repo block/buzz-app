@@ -5,7 +5,10 @@ import {
   importLegacyCommunities,
   type LegacyCommunity,
 } from "./legacy-communities";
-import { acknowledge } from "./known-communities";
+import { acknowledge, enqueue } from "./known-communities";
+import { createOAuthSession } from "../../bundled/builderlab/oauth/session";
+import { startKnownCommunitiesSync } from "../../bundled/builderlab/known-communities/sync";
+import type { ListResult } from "../../bundled/builderlab/known-communities/client";
 import { flush } from "../relay/testing";
 
 const viewer = "a".repeat(64);
@@ -13,6 +16,7 @@ const other = "b".repeat(64);
 const record = `buzz-client.v1:${viewer}`;
 const marker = `buzz-legacy-communities.v1:${viewer}`;
 const roots: Context[] = [];
+const approve = async () => true;
 // Old Buzz's list as its reader returns it, in saved order: the viewer's
 // communities, one saved before old Buzz recorded an identity, and one saved
 // for another identity.
@@ -29,10 +33,12 @@ const legacy: LegacyCommunity[] = [
 ];
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => {
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((done, fail) => {
     resolve = done;
+    reject = fail;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 function setup(saved?: unknown, failSave = false) {
@@ -72,6 +78,127 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
+it("requires consent after a removal was acknowledged before migration", async () => {
+  const { storage, start } = setup({
+    sync: {
+      known: ["wss://hive.example.com"],
+      outbox: [{ url: "wss://hive.example.com", removed: true }],
+    },
+  });
+  const client = start();
+  await flush();
+  const [op] = client.snapshot().sync.outbox;
+  assert.exists(op);
+  await client.applySync(acknowledge(client.snapshot().sync, op));
+  expect(client.snapshot().sync).toEqual({ known: [], outbox: [] });
+  const before = storage.get(record);
+  const answer = deferred<boolean>();
+  const consent = vi.fn(() => answer.promise);
+  const read = vi.fn(async () => [
+    { relayUrl: "wss://hive.example.com", pubkey: viewer },
+  ]);
+  const dispose = importLegacyCommunities(client, consent, read);
+  await flush();
+  expect(consent).toHaveBeenCalledWith(["https://hive.example.com"]);
+  expect(storage.get(record)).toBe(before);
+  expect(storage.has(marker)).toBe(false);
+  answer.resolve(false);
+  await flush();
+  expect(storage.get(record)).toBe(before);
+  expect(storage.get(marker)).toBe("1");
+  dispose();
+  importLegacyCommunities(start(), consent, read);
+  await flush();
+  expect(read).toHaveBeenCalledTimes(1);
+});
+
+it.each(["pending", "failed", "empty"])(
+  "does not treat %s account sync as proof that an empty device is untouched",
+  async (syncState) => {
+    const { storage, start } = setup();
+    const client = start();
+    await flush();
+    const list = deferred<ListResult>();
+    const remote = {
+      list: vi.fn(() => list.promise),
+      add: vi.fn(async () => ({ kind: "accepted" as const })),
+      remove: vi.fn(async () => ({ kind: "accepted" as const })),
+    };
+    const session = createOAuthSession(async () => ({
+      value: "fixture",
+      account: {
+        subject: "account",
+        email: "fixture@example.com",
+        canUseRemoteAgents: false,
+      },
+    }));
+    const stop = startKnownCommunitiesSync({
+      client: remote,
+      session,
+      knownCommunities: {
+        snapshot: client.snapshot,
+        subscribe: client.subscribe,
+        pending: client.pendingSync,
+        apply: client.applySync,
+      },
+    });
+    const answer = deferred<boolean>();
+    let dispose = () => {};
+    try {
+      await session.signIn();
+      expect(remote.list).toHaveBeenCalledTimes(1);
+      if (syncState === "failed") list.reject(new Error("Account offline"));
+      if (syncState === "empty")
+        list.resolve({ kind: "listed", communities: [] });
+      await flush();
+      const consent = vi.fn(() => answer.promise);
+      dispose = importLegacyCommunities(client, consent, async () => legacy);
+      await flush();
+      expect(consent).toHaveBeenCalledTimes(1);
+      expect(client.snapshot().memberships).toEqual([]);
+      expect(client.snapshot().sync.outbox).toEqual([]);
+      expect(remote.add).not.toHaveBeenCalled();
+      expect(storage.has(marker)).toBe(false);
+      answer.resolve(false);
+      await flush();
+      expect(storage.get(marker)).toBe("1");
+      expect(remote.add).not.toHaveBeenCalled();
+    } finally {
+      dispose();
+      stop();
+      session.dispose();
+      list.resolve({ kind: "listed", communities: [] });
+      answer.resolve(false);
+    }
+  },
+);
+
+it("uses current membership and sync state after consent, preserving concurrent edits", async () => {
+  const { storage, start } = setup();
+  const client = start();
+  const answer = deferred<boolean>();
+  importLegacyCommunities(
+    client,
+    () => answer.promise,
+    async () => [{ relayUrl: "wss://hive.example.com", pubkey: viewer }],
+  );
+  await flush();
+  await client.applySync(
+    enqueue(client.snapshot().sync, "wss://manual.example.com", false),
+    ["https://manual.example.com"],
+  );
+  answer.resolve(true);
+  await flush();
+  expect(client.snapshot().memberships.map((entry) => entry.id)).toEqual([
+    "https://manual.example.com",
+    "https://hive.example.com",
+  ]);
+  expect(saved(storage).sync.outbox).toEqual([
+    { url: "wss://manual.example.com", removed: false },
+    { url: "wss://hive.example.com", removed: false },
+  ]);
+});
+
 it("adds old Buzz's relays once beside existing settings, keeping queued removals", async () => {
   const { storage, connect, start } = setup({
     profile: { name: "Ada", picture: "", about: "" },
@@ -84,7 +211,7 @@ it("adds old Buzz's relays once beside existing settings, keeping queued removal
   });
   const client = start();
   const read = vi.fn(async () => legacy);
-  importLegacyCommunities(client, read);
+  importLegacyCommunities(client, approve, read);
   await flush();
   expect(read).toHaveBeenCalledTimes(1);
   expect(client.snapshot()).toMatchObject({
@@ -119,7 +246,7 @@ it("adds old Buzz's relays once beside existing settings, keeping queued removal
   // Restart after leaving a migrated community: the marker keeps it gone.
   await client.leave("https://hive.example.com");
   const restarted = start();
-  importLegacyCommunities(restarted, read);
+  importLegacyCommunities(restarted, approve, read);
   await flush();
   expect(read).toHaveBeenCalledTimes(1);
   expect(restarted.snapshot().memberships.map((m) => m.id)).toEqual([
@@ -131,11 +258,13 @@ it("adds old Buzz's relays once beside existing settings, keeping queued removal
 it("marks a viewer with no old Buzz state without changing its record", async () => {
   const { storage, start } = setup();
   const client = start();
-  importLegacyCommunities(client, async () => []);
+  const consent = vi.fn(approve);
+  importLegacyCommunities(client, consent, async () => []);
   await flush();
   expect(client.snapshot()).toMatchObject({ status: "ready", memberships: [] });
   expect(storage.has(record)).toBe(false);
   expect(storage.get(marker)).toBe("1");
+  expect(consent).not.toHaveBeenCalled();
 });
 
 it("retries on the next launch when old Buzz's list could not be read or saved", async () => {
@@ -144,13 +273,13 @@ it("retries on the next launch when old Buzz's list could not be read or saved",
     .fn<() => Promise<LegacyCommunity[]>>()
     .mockRejectedValueOnce("Could not read old Buzz's communities")
     .mockResolvedValue(legacy);
-  const dispose = importLegacyCommunities(unreadable.start(), read);
+  const dispose = importLegacyCommunities(unreadable.start(), approve, read);
   await flush();
   expect(unreadable.storage.has(marker)).toBe(false);
   expect(unreadable.storage.has(record)).toBe(false);
   dispose();
   const restarted = unreadable.start();
-  importLegacyCommunities(restarted, read);
+  importLegacyCommunities(restarted, approve, read);
   await flush();
   expect(read).toHaveBeenCalledTimes(2);
   expect(restarted.snapshot().memberships).toHaveLength(4);
@@ -158,7 +287,7 @@ it("retries on the next launch when old Buzz's list could not be read or saved",
 
   const full = setup(undefined, true);
   const client = full.start();
-  importLegacyCommunities(client, async () => legacy);
+  importLegacyCommunities(client, approve, async () => legacy);
   await flush();
   expect(client.snapshot().memberships).toEqual([]);
   expect(full.storage.has(marker)).toBe(false);
@@ -167,7 +296,8 @@ it("retries on the next launch when old Buzz's list could not be read or saved",
 it("imports nothing for an identity old Buzz did not save them for", async () => {
   const { storage, start } = setup();
   const client = start();
-  importLegacyCommunities(client, async () => [
+  const consent = vi.fn(approve);
+  importLegacyCommunities(client, consent, async () => [
     { relayUrl: "wss://theirs.example.com", pubkey: other },
     { relayUrl: "wss://unattributed.example.com" },
   ]);
@@ -175,6 +305,7 @@ it("imports nothing for an identity old Buzz did not save them for", async () =>
   expect(client.snapshot().memberships).toEqual([]);
   expect(storage.has(record)).toBe(false);
   expect(storage.get(marker)).toBe("1");
+  expect(consent).not.toHaveBeenCalled();
 });
 
 it("keeps a community left and acknowledged while the read was pending gone", async () => {
@@ -186,7 +317,7 @@ it("keeps a community left and acknowledged while the read was pending gone", as
   });
   const client = start();
   const read = deferred<LegacyCommunity[]>();
-  importLegacyCommunities(client, () => read.promise);
+  importLegacyCommunities(client, approve, () => read.promise);
   await flush();
   await client.leave("https://hive.example.com");
   const [op] = client.snapshot().sync.outbox;
@@ -218,7 +349,7 @@ it("keeps a queued removal acknowledged while the read was pending gone", async 
   });
   const client = start();
   const read = deferred<LegacyCommunity[]>();
-  importLegacyCommunities(client, () => read.promise);
+  importLegacyCommunities(client, approve, () => read.promise);
   await flush();
   const [op] = client.snapshot().sync.outbox;
   assert.exists(op);
@@ -242,7 +373,7 @@ it("keeps a removal acknowledged after a failed import gone on the next launch",
     },
   });
   const client = start();
-  importLegacyCommunities(client, async () => {
+  importLegacyCommunities(client, approve, async () => {
     throw new Error("Could not read old Buzz's communities");
   });
   await flush();
@@ -255,7 +386,7 @@ it("keeps a removal acknowledged after a failed import gone on the next launch",
   ]);
 
   const restarted = start();
-  importLegacyCommunities(restarted, async () => [
+  importLegacyCommunities(restarted, approve, async () => [
     { relayUrl: "wss://removed.example.com", pubkey: viewer },
     { relayUrl: "wss://hive.example.com", pubkey: viewer },
   ]);
@@ -287,7 +418,7 @@ it("saves a removal whose first progress write failed once storage recovers", as
   });
   const client = start();
   const read = deferred<LegacyCommunity[]>();
-  const dispose = importLegacyCommunities(client, () => read.promise);
+  const dispose = importLegacyCommunities(client, approve, () => read.promise);
   await flush();
   expect(storage.has(marker)).toBe(false);
   failing = false;
@@ -301,7 +432,7 @@ it("saves a removal whose first progress write failed once storage recovers", as
   dispose();
 
   const restarted = start();
-  importLegacyCommunities(restarted, async () => [
+  importLegacyCommunities(restarted, approve, async () => [
     { relayUrl: "wss://removed.example.com", pubkey: viewer },
     { relayUrl: "wss://hive.example.com", pubkey: viewer },
   ]);
@@ -315,7 +446,7 @@ it("saves a removal whose first progress write failed once storage recovers", as
 it("abandons a pending read once disposed, leaving a replacement's settings", async () => {
   const { storage, start } = setup();
   const read = deferred<LegacyCommunity[]>();
-  const dispose = importLegacyCommunities(start(), () => read.promise);
+  const dispose = importLegacyCommunities(start(), approve, () => read.promise);
   await flush();
   dispose();
   const replacement = start();

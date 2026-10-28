@@ -23,7 +23,7 @@ function pendingRemovals(viewer: string): string[] {
   }
 }
 
-/** Adds the communities installed old Buzz saved to its identity's list once,
+/** Offers the communities installed old Buzz saved for explicit import once,
  * through the same write a known-community list uses: saved without a
  * session or join, so a relay that is unreachable fails only when opened, as
  * any saved community does. Only the communities old Buzz recorded for this
@@ -31,13 +31,17 @@ function pendingRemovals(viewer: string): string[] {
  * records none, is not. Existing memberships stay as they are; a relay
  * already saved, not a secure origin, or saved or queued for removal at any
  * point while this ran is skipped, and each added one is queued for upload
- * as a join would be. A per-viewer marker, written once the list is saved,
+ * as a join would be. Account state cannot prove there were no acknowledged
+ * removals, so every nonempty import requires consent, even with an empty
+ * device record or pending sync. A per-viewer marker, written after declining
+ * or once the list is saved,
  * keeps a later removal from being undone; until then it holds the removals
  * seen, so a failed read or save tries again on the next launch without
  * restoring them. The returned disposer also abandons a read still in
  * flight. */
 export function importLegacyCommunities(
   communities: Pick<Communities, "snapshot" | "subscribe" | "applySync">,
+  confirm: (origins: string[]) => Promise<boolean>,
   read = () => invoke<LegacyCommunity[]>("legacy_communities"),
 ) {
   let disposed = false;
@@ -92,12 +96,11 @@ export function importLegacyCommunities(
     try {
       if (localStorage.getItem(importedKey(viewer)) === imported) return;
       const saved = await read();
-      const current = communities.snapshot();
-      if (disposed || current.status !== "ready" || current.viewer !== viewer)
+      const ready = communities.snapshot();
+      if (disposed || ready.status !== "ready" || ready.viewer !== viewer)
         return;
       const { held, removed } = observe();
-      const add: string[] = [];
-      let sync = current.sync;
+      const candidates = new Set<string>();
       for (const { relayUrl, pubkey } of saved) {
         if (pubkey !== viewer) continue;
         let id: string;
@@ -108,10 +111,21 @@ export function importLegacyCommunities(
         }
         const address = relayAddress(id);
         if (held.has(id) || removed.has(address)) continue;
-        held.add(id);
-        add.push(id);
-        sync = enqueue(sync, address, false);
+        candidates.add(id);
       }
+      const approved = candidates.size ? await confirm([...candidates]) : true;
+      const current = communities.snapshot();
+      if (disposed || current.status !== "ready" || current.viewer !== viewer)
+        return;
+      const latest = observe();
+      const add = approved
+        ? [...candidates].filter(
+            (id) =>
+              !latest.held.has(id) && !latest.removed.has(relayAddress(id)),
+          )
+        : [];
+      let sync = current.sync;
+      for (const id of add) sync = enqueue(sync, relayAddress(id), false);
       if (add.length) await communities.applySync(sync, add);
       localStorage.setItem(importedKey(viewer), imported);
     } catch (error) {

@@ -595,3 +595,46 @@ test("logical global head count, UTF8 bytes, expiry and tied order stay bounded 
   expect(result.after).toEqual(result.before);
   expect(result.counts).toEqual([2, 1, 2]);
 });
+
+test("retain removes a readable head even when its accounting metadata is damaged", async ({
+  page,
+}) => {
+  const result = await page.evaluate(async () => {
+    const f = window.headPersistence,
+      viewer = f.keypair(),
+      cache = f.createHeadPersistence(viewer.pubkey, "relay");
+    try {
+      await cache.write({
+        channelId: "a",
+        savedAt: Date.now(),
+        events: [f.message(viewer, "a", "must purge", 10)],
+        profiles: [],
+      });
+      const db = await new Promise((yes, no) => {
+        const r = indexedDB.open("buzz-channel-heads-v1");
+        r.onsuccess = () => yes(r.result);
+        r.onerror = () => no(r.error);
+      });
+      await new Promise((yes, no) => {
+        const tx = db.transaction("heads", "readwrite"),
+          store = tx.objectStore("heads"),
+          r = store.get(`${viewer.pubkey}:relay:a`);
+        r.onsuccess = () => {
+          const row = r.result;
+          delete row.bytes;
+          store.put(row);
+        };
+        tx.oncomplete = yes;
+        tx.onabort = () => no(tx.error);
+      });
+      db.close();
+      const before = (await cache.read()).map((h) => h.channelId);
+      await cache.retain([]);
+      return { before, after: (await cache.read()).map((h) => h.channelId) };
+    } finally {
+      await cache.clear();
+      cache.close();
+    }
+  });
+  expect(result).toEqual({ before: ["a"], after: [] });
+});

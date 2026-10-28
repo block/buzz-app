@@ -534,15 +534,11 @@ export function createHeadPersistence(
       }),
     retain: (ids) =>
       transact("readwrite", (store, done, then, tx) => {
-        const allowed = new Set(ids);
-        metadata(store, then, (rows) => {
+        const allowed = new Set(ids.map((id) => `${scope}:${id}`));
+        then(store.index("scope").getAllKeys(scope), (keys) => {
           const garbage = new Set<string>();
           removeHeads(
-            rows
-              .filter(
-                (row) => row.scope === scope && !allowed.has(row.channelId),
-              )
-              .map((row) => row.key),
+            keys.filter((key) => typeof key !== "string" || !allowed.has(key)),
             garbage,
             tx,
             then,

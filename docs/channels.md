@@ -723,8 +723,8 @@ Create's Private switch stages a choice behind the existing in-modal consequence
 confirmation. The device-local opt-out applies to that Create warning; Continue
 only stages the choice and Create channel performs the write.
 
-Access management lives in the members dialog. **People with access** retains the
-existing member list, row menus and confirmed role changes. Roles appear as muted
+Access management lives in the members dialog. It retains the existing member
+list, row menus and confirmed role changes. Roles appear as muted
 text before each row’s ellipsis button; Member and Guest are shown as **Contribute**
 and **Read**. The ellipsis menu contains permitted role choices with the verified
 selection checked, alongside profile/removal actions and the existing role
@@ -746,10 +746,10 @@ which reads without republishing. Opening or checking never writes. Private
 channels with a Guest default remain intact when changing unrelated details.
 
 Readers see General access as plain text from verified channel discovery metadata,
-without calling the editing capability. The timeline and members dialog explain
-that they can read messages and threads, and can ask a channel owner or admin for
-contribution or invitation access. Guest-default previews never suggest joining
-to add people or agents.
+without calling the editing capability. Its audience description is followed by
+“Read-only for you. Ask an owner or admin to contribute.” The timeline notice also
+explains reading messages and threads. Guest-default previews never suggest
+joining to add people or agents.
 
 In Edit, visibility is sent only when changed (`private` or `open`);
 text-only edits omit it so they do not reopen the channel in the remaining write race.

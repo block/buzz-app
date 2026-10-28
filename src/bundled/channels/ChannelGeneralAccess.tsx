@@ -52,8 +52,8 @@ export function ChannelGeneralAccess({
                   : "Reading access could not be confirmed."}
             </p>
             <p className="text-caption text-subtle">
-              {channel.joinRole === "guest"
-                ? "New people can only read. People already in the channel keep their access."
+              {channel.viewerRole === "guest" || channel.joinRole === "guest"
+                ? "Read-only for you. Ask an owner or admin to contribute."
                 : channel.joinRole === "member"
                   ? "New people can contribute. People already in the channel keep their access."
                   : "New people’s access could not be confirmed."}

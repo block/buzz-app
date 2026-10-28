@@ -83,7 +83,6 @@ import { useMemberSearch } from "./useMemberSearch";
 import { useMemberOwners } from "./useMemberOwners";
 import { useSoloShare } from "./useSoloShare";
 import { ChannelGeneralAccess } from "./ChannelGeneralAccess";
-import { ReadOnlyAccessNotice } from "../../features/channel-members/ReadOnlyAccessNotice";
 import { avatarMedia } from "../../shared/avatar-source";
 
 /** How a name matches typed text: the shared person name rule, the same as
@@ -1666,8 +1665,6 @@ export function ChannelMembersDialog({
               {administrationError}
             </p>
           )}
-          {readOnlyAccess && <ReadOnlyAccessNotice />}
-          {!solo && <h3 className="text-label-sm">People with access</h3>}
           <section
             ref={scrollport}
             className={`${styles.memberList} buzz-thin-scrollbar`}

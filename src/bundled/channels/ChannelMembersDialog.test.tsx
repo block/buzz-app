@@ -2443,9 +2443,6 @@ it("shows personal contribution roles and General access in the members dialog",
   );
   await h.user.click(screen.getByRole("button", { name: "Access" }));
   expect(
-    await screen.findByRole("heading", { name: "People with access" }),
-  ).toBeVisible();
-  expect(
     await screen.findByRole("region", { name: "General access" }),
   ).toBeVisible();
   await vi.waitFor(() =>
@@ -2555,9 +2552,13 @@ it.each([false, true])(
     );
     await user.click(screen.getByRole("button", { name: "Access" }));
     expect(
-      await screen.findByText("You have read-only access to this channel."),
+      await screen.findByText(
+        "Read-only for you. Ask an owner or admin to contribute.",
+      ),
     ).toBeVisible();
-    expect(screen.getByText(/To contribute or add people/)).toBeVisible();
+    expect(
+      screen.queryByText("You have read-only access to this channel."),
+    ).not.toBeInTheDocument();
     expect(screen.queryByText(/Join this channel/)).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "Reload access" }),
@@ -2565,6 +2566,11 @@ it.each([false, true])(
     expect(
       screen.getByRole("region", { name: "General access" }),
     ).toHaveTextContent("Anyone in the community can read.");
+    expect(
+      screen.getByRole("region", { name: "General access" }),
+    ).toHaveTextContent(
+      "Read-only for you. Ask an owner or admin to contribute.",
+    );
     // Finish the roster read before checking that the dialog cannot invite or mutate.
     await vi.waitFor(() =>
       expect(

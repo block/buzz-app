@@ -975,7 +975,9 @@ it("a landing URL is looked up before sign-in, a tenant's relay signs in at that
 
 /** The connect choice a found community no tenant hosts pauses on. */
 const connectChoiceHeading = () =>
-  screen.getByRole("heading", { name: "Connect to relay.example.com:8443" });
+  screen.getByRole("heading", { name: "Connect to your community" });
+/** The found host, shown under the title rather than in it. */
+const connectChoiceHost = () => screen.getByText("relay.example.com:8443");
 /** Type the non-hosted address (the tenant's host on a non-default port) through to the choice. */
 async function connectChoicePage(
   user: ReturnType<typeof userEvent.setup>,
@@ -989,6 +991,7 @@ async function connectChoicePage(
   expect(relay.relayCalls).toEqual(relay.lookup);
   await act(async () => relay.info.resolve());
   expect(connectChoiceHeading()).toBeVisible();
+  expect(connectChoiceHost()).toBeVisible();
 }
 
 it("a landing URL no tenant hosts pauses on Connect to {host} with no sign-in and no key, and Back keeps the address", async () => {
@@ -1730,19 +1733,19 @@ it.each([
   },
 );
 
-it("a link that fails after the key is created stops setup before the backup, says the key is saved, and Continue without linking lands on Join a community", async () => {
+it("a link that fails after the key is created blocks setup with only Try again, which runs the link again and, once it succeeds, backs the key up and lands on Join a community", async () => {
   vi.mocked(invoke).mockImplementation((command) => {
     if (command === "identity_restore") return Promise.resolve(null);
     if (command === "identity_create") return Promise.resolve(viewer);
     throw new Error(`Unexpected command ${command}`);
   });
-  const bind = vi.fn((_pubkey: string) =>
-    Promise.reject(
+  const bind = vi
+    .fn((_pubkey: string) => Promise.resolve())
+    .mockRejectedValueOnce(
       new Error(
         "This Builderlab account is connected to another Buzz identity.",
       ),
-    ),
-  );
+    );
   const backUp = vi.fn((_pubkey: string) => Promise.resolve());
   const identity = createIdentity();
   const user = userEvent.setup();
@@ -1769,7 +1772,7 @@ it("a link that fails after the key is created stops setup before the backup, sa
     "This Builderlab account is connected to another Buzz identity.",
   );
   expect(screen.getByText(keyUnlinkedNote)).toBeVisible();
-  // Continuing skips the link, not only the backup.
+  // The link, not only the backup, is left undone.
   expect(screen.queryByText(keySavedNote)).toBeNull();
   expect(
     screen.queryByRole("button", { name: "Continue without backup" }),
@@ -1779,21 +1782,25 @@ it("a link that fails after the key is created stops setup before the backup, sa
   expect(identity.snapshot()).toEqual({ status: "ready", viewer });
   expect(backUp).not.toHaveBeenCalled();
   expect(screen.queryByText("Signed in")).toBeNull();
-  // Back would reset to a ready identity and lift the gate with no community,
-  // and a refused link is not one Try again can fix.
+  // Nothing links the key later, so there is no way past a failed link: no
+  // Back (which would lift the gate with an unlinked key) and no Continue,
+  // only Try again, offered even for a refusal Builderlab may repeat.
   expect(screen.queryByRole("button", { name: "Back" })).toBeNull();
-  expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
-  await user.click(
-    screen.getByRole("button", { name: "Continue without linking" }),
-  );
   expect(
-    screen.getByRole("heading", { name: "Join a community" }),
+    screen.queryByRole("button", { name: "Continue without linking" }),
+  ).toBeNull();
+  expect(screen.getByRole("button", { name: "Try again" })).toBeEnabled();
+  await user.click(screen.getByRole("button", { name: "Try again" }));
+  expect(
+    await screen.findByRole("heading", { name: "Join a community" }),
   ).toBeVisible();
   expect(
     screen.getByRole("heading", { name: "Join a community" }),
   ).toHaveFocus();
   expect(screen.queryByText("Signed in")).toBeNull();
-  expect(backUp).not.toHaveBeenCalled();
+  // The link ran again and, once it held, the backup followed.
+  expect(bind.mock.calls).toEqual([[viewer], [viewer]]);
+  expect(backUp.mock.calls).toEqual([[viewer]]);
   expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
     "identity_restore",
     "identity_create",
@@ -2446,9 +2453,10 @@ it("a key imported from Connect to {host} joins with no account to save the comm
   await user.type(urlField(), "relay.example.com:8443{Enter}");
   expect(
     await screen.findByRole("heading", {
-      name: "Connect to relay.example.com:8443",
+      name: "Connect to your community",
     }),
   ).toBeVisible();
+  expect(connectChoiceHost()).toBeVisible();
   await user.click(
     screen.getByRole("button", { name: "I already have a key" }),
   );
@@ -3139,9 +3147,10 @@ it("an invite link pasted on the landing is looked up at its origin, kept throug
   // the code is not sent anywhere before Join.
   expect(
     await screen.findByRole("heading", {
-      name: "Connect to relay.example.com:8443",
+      name: "Connect to your community",
     }),
   ).toBeVisible();
+  expect(connectChoiceHost()).toBeVisible();
   expect(relay.calls).toEqual(lookupCalls(relay));
   await user.click(connectButton());
   await createMyKey(user);
@@ -3615,7 +3624,7 @@ it("Continue with this key imports the pasted nsec behind Importing your key, li
   identity.dispose();
 });
 
-it("a link that fails after a key is imported for a new account offers Continue without linking, which lands on Join a community with no backup offer", async () => {
+it("a link that keeps failing after a key is imported for a new account stays on the failed page: Try again runs the link again, and nothing offers a way past it", async () => {
   vi.mocked(invoke).mockImplementation((command) => {
     if (command === "identity_restore") return Promise.resolve(null);
     if (command === "identity_import") return Promise.resolve(owned.pubkey);
@@ -3640,13 +3649,24 @@ it("a link that fails after a key is imported for a new account offers Continue 
   expect(screen.getByText(keyUnlinkedNote)).toBeVisible();
   expect(bind.mock.calls).toEqual([[owned.pubkey]]);
   expect(screen.queryByRole("button", { name: "Back" })).toBeNull();
-  expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
-  await user.click(
-    screen.getByRole("button", { name: "Continue without linking" }),
+  expect(
+    screen.queryByRole("button", { name: "Continue without linking" }),
+  ).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Try again" }));
+  await waitFor(() => expect(bind).toHaveBeenCalledTimes(2));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "This Builderlab account is connected to another Buzz identity.",
   );
   expect(
-    await screen.findByRole("heading", { name: "Join a community" }),
+    screen.getByRole("heading", { name: "Couldn’t finish setup" }),
   ).toBeVisible();
+  expect(screen.getByRole("button", { name: "Try again" })).toBeEnabled();
+  expect(
+    screen.queryByRole("button", { name: "Continue without linking" }),
+  ).toBeNull();
+  expect(
+    screen.queryByRole("heading", { name: "Join a community" }),
+  ).toBeNull();
   expect(
     screen.queryByRole("heading", { name: "Back up this key?" }),
   ).toBeNull();
@@ -4738,8 +4758,9 @@ it("a transient unlink failure after Start over keeps the new key, and Try again
   );
   expect(screen.getByText(keyUnlinkedNote)).toBeVisible();
   expect(
-    screen.getByRole("button", { name: "Continue without linking" }),
-  ).toBeEnabled();
+    screen.queryByRole("button", { name: "Continue without linking" }),
+  ).toBeNull();
+  expect(screen.queryByRole("button", { name: "Back" })).toBeNull();
   expect(screen.queryByText("Signed in")).toBeNull();
   await user.click(screen.getByRole("button", { name: "Try again" }));
   expect(screen.getByRole("status")).toHaveTextContent(
@@ -4760,7 +4781,7 @@ it("a transient unlink failure after Start over keeps the new key, and Try again
   identity.dispose();
 });
 
-it("an unlink refused after Start over offers only Continue without linking, which lands on Join a community with the new key neither linked nor backed up", async () => {
+it("an unlink refused after Start over offers only Try again, which runs the unlink again and, once it succeeds, links and backs up the new key", async () => {
   const { calls, step } = callLog();
   const unbind = vi.fn(
     step("unbind", [
@@ -4784,19 +4805,25 @@ it("an unlink refused after Start over offers only Continue without linking, whi
     "can't manage Buzz identities right now",
   );
   expect(screen.getByText(keyUnlinkedNote)).toBeVisible();
-  expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
-  await user.click(
-    screen.getByRole("button", { name: "Continue without linking" }),
-  );
+  // A refusal is not one Try again is promised to clear, but with nothing to
+  // link the key later the page offers nothing else.
+  expect(
+    screen.queryByRole("button", { name: "Continue without linking" }),
+  ).toBeNull();
+  expect(screen.queryByRole("button", { name: "Back" })).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Try again" }));
   expect(
     await screen.findByRole("heading", { name: "Join a community" }),
   ).toBeVisible();
-  // Binding never overwrites, so nothing more is sent: the old key still
-  // holds the account.
+  // The unlink ran again from the failed step; binding never overwrites, so
+  // the link waited for it, then the backup followed.
   expect(calls).toEqual([
     "identity_restore",
     "identity_create",
     `unbind ${owned.pubkey}`,
+    `unbind ${owned.pubkey}`,
+    `bind ${viewer}`,
+    `backUp ${viewer}`,
   ]);
   expect(identity.snapshot()).toEqual({ status: "ready", viewer });
   identity.dispose();
@@ -4828,8 +4855,8 @@ it("a transient link failure after a successful unlink retries only the link, ne
   );
   expect(screen.getByText(keyUnlinkedNote)).toBeVisible();
   expect(
-    screen.getByRole("button", { name: "Continue without linking" }),
-  ).toBeEnabled();
+    screen.queryByRole("button", { name: "Continue without linking" }),
+  ).toBeNull();
   await user.click(screen.getByRole("button", { name: "Try again" }));
   expect(
     await screen.findByRole("heading", { name: "Join a community" }),
@@ -5204,12 +5231,17 @@ it("a development seed's unlink status fails Start over's unlink as kgoose would
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Builderlab account unlink failed (HTTP 503).",
   );
-  // A 5xx may clear, so it offers Try again beside Continue without linking.
-  await user.click(screen.getByRole("button", { name: "Try again" }));
-  expect(await screen.findByRole("alert")).toBeVisible();
+  // The failed unlink blocks: Try again is the only action, and the seed
+  // fails it again.
   expect(
-    screen.getByRole("button", { name: "Continue without linking" }),
-  ).toBeEnabled();
+    screen.queryByRole("button", { name: "Continue without linking" }),
+  ).toBeNull();
+  expect(screen.queryByRole("button", { name: "Back" })).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Try again" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Builderlab account unlink failed (HTTP 503).",
+  );
+  expect(screen.getByRole("button", { name: "Try again" })).toBeEnabled();
   expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
     "identity_restore",
     "identity_create",

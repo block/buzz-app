@@ -31,8 +31,13 @@ export function ConnectChoice({
           tabIndex={-1}
           className="text-heading text-standard"
         >
-          Connect to {host}
+          Connect to your community
         </h1>
+        {/* The host stands apart from the title so a long one wraps on its own
+            line and the title reads as one phrase to assistive technology. */}
+        <p className="mt-2 break-all font-mono text-mono-lg text-standard">
+          {host}
+        </p>
         <p className="mt-2 text-body text-subtle">
           Buzz relies on a key for your identity.
         </p>

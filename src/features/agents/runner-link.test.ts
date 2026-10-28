@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { link, type Link } from "./link";
+import { link, type Link, type LinkPort } from "./link";
 import { createLocalAgentActivity } from "./local-activity";
 import type { Member } from "./records";
 import {
@@ -223,4 +223,63 @@ it("settles a wait when its side closes, since nothing decides then", async () =
   const waiting = manager.decided();
   manager.close();
   await expect(waiting).resolves.toBeUndefined();
+  // Nor does it wait on what changes later.
+  show([member("c".repeat(64), "Bo")]);
+  await expect(manager.decided()).resolves.toBeUndefined();
+});
+
+it("waits for the Runner to decide when it could not, rather than forever", async () => {
+  const ada = member("a".repeat(64), "Ada");
+  const { runner, manager, show } = split();
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  runner.members.mockImplementationOnce(() => {
+    throw new Error("broken type");
+  });
+  show([ada]);
+  await manager.decided();
+  expect(error).toHaveBeenCalledWith(
+    "The Runner could not decide what runs",
+    expect.any(Error),
+  );
+  error.mockRestore();
+});
+
+it("does not take what the Runner decided for a page that reloaded as an answer", async () => {
+  const { runner } = fakeRunner();
+  // The Runner's port, which reaches whichever Manager page is loaded.
+  let to: MessagePort | undefined;
+  const port: LinkPort = {
+    onmessage: null,
+    postMessage: (message) => to?.postMessage(message),
+    close() {},
+  };
+  const load = (identities: () => Member[]) => {
+    const channel = new MessageChannel();
+    to = channel.port1;
+    channel.port1.onmessage = (event) => port.onmessage?.(event);
+    const page = managerSide(
+      channel.port2,
+      () => ({ identities: identities(), viewer: owner }),
+      () => {},
+    );
+    closing.push(page);
+    return page;
+  };
+  const ada = member("a".repeat(64), "Ada");
+  const bo = member("c".repeat(64), "Bo");
+  // Its first load sends two revisions.
+  let shown = [ada];
+  const first = load(() => shown);
+  open.push(runnerSide(port, runner));
+  first.changed();
+  shown = [ada, bo];
+  first.changed();
+  await first.decided();
+  expect(runner.members).toHaveBeenLastCalledWith([ada, bo], owner);
+  // The reloaded page's first revision is not the Runner's last one.
+  const second = load(() => [bo]);
+  second.changed();
+  await second.decided();
+  expect(runner.members).toHaveBeenLastCalledWith([bo], owner);
+  expect(second.running().map((agent) => agent.name)).toEqual(["Bo"]);
 });

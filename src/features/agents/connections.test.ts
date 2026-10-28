@@ -91,3 +91,24 @@ it("does not call a session it found live when it began watching renewed", () =>
     false,
   );
 });
+
+it("calls a community joined again renewed, since it may have missed changes", () => {
+  const { relay, set } = community();
+  set(true);
+  let open: RelayData | undefined = relay;
+  const changed = vi.fn();
+  const connections = new RunnerConnections({
+    open: () => open,
+    listen: () => () => {},
+    changed,
+  });
+  connections.watch([identity], viewer);
+  open = undefined;
+  connections.watch([identity], viewer);
+  expect(connections.entries()).toEqual([]);
+  const again = community();
+  again.set(true);
+  open = again.relay;
+  connections.watch([identity], viewer);
+  expect(changed).toHaveBeenLastCalledWith("https://relay.example", true);
+});

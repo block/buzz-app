@@ -69,16 +69,19 @@ export function linkedActivity(runner: Link) {
 }
 
 /** What the Runner decides from: the viewer's memberships, and the viewer,
- * as of the Manager's `revision` of them. */
+ * as of revision `revision` of the Manager page `from`. A page that reloads
+ * counts from 0 again, so a revision means nothing without its page. */
 type Members = Readonly<{
+  from: string;
   revision: number;
   identities: readonly Member[];
   viewer: string | null;
 }>;
-/** What the Runner decided from the Manager's `revision` of the memberships:
- * the agents running here, and the keys of those with turns the app left
- * working last time. */
+/** What the Runner decided from the memberships it was last sent, which
+ * were `revision` of the Manager page `from`: the agents running here, and
+ * the keys of those with turns the app left working last time. */
 type RunnerState = Readonly<{
+  from: string | null;
   revision: number;
   running: readonly Agent[];
   interrupted: readonly AgentKey[];
@@ -93,6 +96,7 @@ export function runnerSide(
     "members" | "running" | "interrupted" | "subscribe"
   >,
 ) {
+  let from: string | null = null;
   let revision = 0;
   const decided = new Set<() => void>();
   const side = link(port, {
@@ -100,6 +104,7 @@ export function runnerSide(
       "runner.state": () => ({
         get: () =>
           ({
+            from,
             revision,
             running: runner.running(),
             interrupted: runner.interrupted().map((agent) => agent.key),
@@ -120,8 +125,14 @@ export function runnerSide(
       | Members
       | undefined;
     if (!members) return;
-    runner.members(members.identities, members.viewer ?? undefined);
-    // Sent even when nothing that runs changed, so the Manager knows.
+    try {
+      runner.members(members.identities, members.viewer ?? undefined);
+    } catch (error) {
+      console.error("The Runner could not decide what runs", error);
+    }
+    // Sent even when nothing that runs changed, or deciding failed, so the
+    // Manager does not wait on it.
+    from = members.from;
     revision = members.revision;
     for (const listener of [...decided]) listener();
   });
@@ -133,10 +144,12 @@ export function runnerSide(
  * sends a change to it. */
 export function managerSide(
   port: LinkPort,
-  members: () => Omit<Members, "revision">,
+  members: () => Omit<Members, "from" | "revision">,
   changed: () => void,
 ) {
+  const from = crypto.randomUUID();
   let revision = 0;
+  let closed = false;
   let sent: string | undefined;
   const listeners = new Set<() => void>();
   let state: Readonly<{
@@ -154,7 +167,11 @@ export function managerSide(
     topics: {
       "manager.members": () => ({
         get: () =>
-          ({ ...members(), revision }) satisfies Members as unknown as Json,
+          ({
+            ...members(),
+            from,
+            revision,
+          }) satisfies Members as unknown as Json,
         subscribe: (listener) => {
           listeners.add(listener);
           return () => {
@@ -181,7 +198,8 @@ export function managerSide(
     const left = new Set(next.interrupted);
     const interrupted = running.filter((agent) => left.has(agent.key));
     state = {
-      revision: next.revision,
+      // What it decided for an earlier load of this page is no answer.
+      revision: next.from === from ? next.revision : 0,
       running: same(running, state.running)
         ? state.running
         : Object.freeze(running),
@@ -207,7 +225,7 @@ export function managerSide(
     },
     /** Settles once the Runner decided from the memberships sent so far. */
     decided() {
-      if (state.revision >= revision) return Promise.resolve();
+      if (closed || state.revision >= revision) return Promise.resolve();
       return new Promise<void>((resolve) => waits.add({ revision, resolve }));
     },
     /** The agents running here, in every community. */
@@ -217,6 +235,7 @@ export function managerSide(
     /** A running agent, in any community. */
     agent: (key: AgentKey) => state.running.find((agent) => agent.key === key),
     close() {
+      closed = true;
       side.close();
       // Nothing decides now.
       for (const wait of waits) wait.resolve();

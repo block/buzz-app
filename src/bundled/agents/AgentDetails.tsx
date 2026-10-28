@@ -353,7 +353,6 @@ export function AgentDetails({
                 agents={agents}
                 communities={communities}
                 finalFocus={identityMenu}
-                initialAvatarPicker
                 onClose={() => setEditingIdentity(false)}
               />
             )}

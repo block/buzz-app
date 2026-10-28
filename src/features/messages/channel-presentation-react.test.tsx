@@ -280,6 +280,18 @@ it("commits the qualified cached verified-owner name before any subscription cat
     expect(commits[0]).toContain(
       `Logan · ${npubEncode(human.pubkey).slice(-4)}’s agent`,
     );
+    await act(async () => {
+      directory.accept([
+        eventDto(profileEvent(viewer, { name: "Other viewer" }, 1_700_000_001)),
+      ]);
+    });
+    expect(screen.getByText("Logan’s agent")).toBeInTheDocument();
+    await act(async () => {
+      directory.accept([
+        eventDto(profileEvent(human, { name: "Morgan" }, 1_700_000_001)),
+      ]);
+    });
+    expect(screen.getByText("Morgan’s agent")).toBeInTheDocument();
   } finally {
     view.unmount();
     names.dispose();

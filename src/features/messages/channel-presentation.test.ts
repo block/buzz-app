@@ -1,6 +1,9 @@
 import { profileTarget } from "../profiles/target";
 import { expect, it } from "vitest";
 import { createChannelPresentation } from "./channel-presentation";
+import { createAgentLibrary } from "../agents/library";
+import { bindNames } from "../identity-names/service";
+import { createAgentDirectory } from "../identity-names/testing";
 
 import { row, fixture } from "./channel-presentation.testing";
 const open = (f: ReturnType<typeof fixture>, chat = false) =>
@@ -259,4 +262,103 @@ it("unregistered name snapshots observe the current published generation before 
   f.metadata({ loadingOlder: true });
   expect(names.snapshot()).toBe(current);
   stop();
+});
+
+it("retires authoritative row access even when a selected name policy fails, and recovers on its next publication", () => {
+  const f = fixture([row("private")]);
+  const names = f.session.names;
+  if (!names) throw new Error("fixture requires names");
+  const scope = names.scope;
+  const failure = new Error("selected policy unavailable");
+  let fail = false;
+  names.scope = (...args) => {
+    const lookup = scope(...args);
+    return (id) => {
+      if (fail && id === "outside") throw failure;
+      return lookup(id);
+    };
+  };
+  f.profile("outside", { name: "Outside" });
+  const owner = open(f);
+  const stopView = owner.subscribeView(() => {});
+  const selected = owner.names(["a", "outside"]);
+  const stopNames = selected.subscribe(() => {});
+  const initial = selected.snapshot();
+  expect(initial.get("outside")).toBe("Outside");
+  fail = true;
+  expect(() => f.emit("names")).not.toThrow();
+  expect(() => selected.snapshot()).toThrow(failure);
+  f.channel({ readOnly: true });
+  expect(owner.row("private")?.permissions.readOnly).toBe(true);
+  f.publish([], { status: "error", error: "Access revoked" });
+  expect(owner.row("private")).toBeUndefined();
+  expect(owner.view().ids).toEqual([]);
+  expect(owner.header().rowCount).toBe(0);
+  expect(owner.header().error).toBe("Access revoked");
+  fail = false;
+  f.profile("outside", { name: "Recovered outside" });
+  expect(selected.snapshot().get("outside")).toBe("Recovered outside");
+  expect(initial.get("outside")).toBe("Outside");
+  stopNames();
+  stopView();
+  expect([...f.sources.values()].every((listeners) => !listeners.size)).toBe(
+    true,
+  );
+});
+
+it("pairs a refreshed library identity with its current label after a live naming-provider replacement", async () => {
+  const key = "cd".repeat(32);
+  let alias = "Original alias";
+  const library = createAgentLibrary(async () => ({
+    definitions: [],
+    identities: [{ pubkey: key, name: alias }],
+  }));
+  const f = fixture([row("agent", { authorId: key })]);
+  f.channel({ members: [key] });
+  let provider = createAgentDirectory();
+  const registry = new Set<() => void>();
+  const names = bindNames(
+    { profiles: f.session.profiles, agentLibrary: library.queries },
+    {
+      snapshot: () => [provider],
+      subscribe(listener) {
+        registry.add(listener);
+        return () => {
+          registry.delete(listener);
+        };
+      },
+    },
+  );
+  await library.queries.refresh();
+  const owner = createChannelPresentation(
+    { ...f.session, agentLibrary: library.queries, names },
+    "room",
+    { chat: false, viewer: "viewer" },
+  );
+  const selected = owner.names([key]);
+  const stopNames = selected.subscribe(() => {});
+  const observed: [string, string | undefined][] = [];
+  const stopRow = owner.subscribeRow("agent", () => {
+    const current = library.queries.snapshot();
+    const identity = owner.row("agent")?.directory.agents[0];
+    if (current.status === "ready" && identity)
+      observed.push([identity.name, selected.snapshot().get(key)]);
+  });
+  try {
+    expect(selected.snapshot().get(key)).toBe(alias);
+    // bindNames reattaches its real library subscription after the owner.
+    provider = createAgentDirectory();
+    for (const changed of [...registry]) changed();
+    await library.queries.refresh();
+    observed.length = 0;
+    alias = "Replacement alias";
+    await library.queries.refresh();
+    expect(observed).toContainEqual([alias, alias]);
+    expect(observed.every(([fact, label]) => fact === label)).toBe(true);
+  } finally {
+    stopRow();
+    stopNames();
+    names.dispose();
+    library.dispose();
+  }
 });

@@ -32,7 +32,10 @@ export function fixture(initial: readonly ChannelMessage[]) {
       set.delete(listener);
     };
   };
+  let namesRevision = 0;
   const emit = (kind: string) => {
+    if (["profiles", "library", "choices", "names"].includes(kind))
+      namesRevision++;
     for (const fn of [...(sources.get(kind) ?? [])]) fn();
   };
   let window: ChannelWindow = Object.freeze({
@@ -68,6 +71,7 @@ export function fixture(initial: readonly ChannelMessage[]) {
     agentChoices: { snapshot: () => library, subscribe: subscribe("choices") },
     agentLibrary: { snapshot: () => library, subscribe: subscribe("library") },
     names: {
+      snapshot: () => namesRevision,
       scope: () => (id: string) => {
         const profile = profiles.get(id);
         return profile ? { name: profile.name } : undefined;

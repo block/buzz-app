@@ -65,10 +65,18 @@ export type ChannelPresentationView = Readonly<{
   agentPubkeys: ReadonlySet<string>;
   activity: readonly ActivityGroup[];
 }>;
+type NameContext = Readonly<{
+  members: readonly string[];
+  revision: number | undefined;
+  profiles: ReadonlyMap<string, Profile>;
+  library: ReturnType<RelaySession["agentLibrary"]["snapshot"]>;
+}>;
+type NameValues = ReadonlyMap<string, string | undefined>;
+type NameCapture = { values: NameValues } | { error: unknown };
 type NameSelection = {
   ids: readonly string[];
-  current: ReadonlyMap<string, string | undefined>;
-  generation: object;
+  current: NameCapture;
+  generation: NameContext;
   listeners: Set<Listener>;
 };
 const sameArray = <T>(a: readonly T[], b: readonly T[]) =>
@@ -135,11 +143,14 @@ function sameMembership(a: TimelineRow | undefined, b: TimelineRow) {
     sameArray(a.membershipRows, b.membershipRows)
   );
 }
-function namesFor(
-  ids: readonly string[],
-  names: ReadonlyMap<string, string | undefined>,
-) {
-  return new Map(ids.map((id) => [id, names.get(id)]));
+function retainNames(previous: NameCapture, next: NameCapture) {
+  return "values" in previous && "values" in next
+    ? sameMap(previous.values, next.values)
+      ? previous
+      : next
+    : "error" in previous && "error" in next && previous.error === next.error
+      ? previous
+      : next;
 }
 
 /** One instance per mounted channel presentation. It holds only its current bounded
@@ -153,8 +164,7 @@ export function createChannelPresentation(
     header: ChannelPresentationHeader;
     view: ChannelPresentationView;
     cells: ReadonlyMap<string, ChannelRowPresentation>;
-    names: ReadonlyMap<string, string | undefined>;
-    members: readonly string[];
+    nameContext: NameContext;
   };
   let reverse = new Map<string, Set<string>>();
   let indexed = false;
@@ -212,7 +222,9 @@ export function createChannelPresentation(
             nextPermissions[key as keyof RowPermissions] !==
             permissions[key as keyof RowPermissions],
         );
-        if (permissionsChanged) permissions = Object.freeze(nextPermissions);
+        const candidatePermissions = permissionsChanged
+          ? Object.freeze(nextPermissions)
+          : permissions;
         const nextChannels = retainReferences(list.channels, channels);
         const joined = new Set(nextChannels.map((entry) => entry.id));
         const taken = new Set(
@@ -234,14 +246,13 @@ export function createChannelPresentation(
           : nextChannels;
         const referencesChanged =
           channels !== nextChannels || named !== nextNamed;
-        channels = nextChannels;
-        named = nextNamed;
         const canonicalChanged =
           !indexed || previousWindow?.rows !== window.rows;
-        if (canonicalChanged)
-          profileIds = new Set(window.rows.flatMap(rowProfileIds));
+        const nextProfileIds = canonicalChanged
+          ? new Set(window.rows.flatMap(rowProfileIds))
+          : profileIds;
         const selected = new Map<string, Profile>();
-        for (const id of profileIds) {
+        for (const id of nextProfileIds) {
           const profile = allProfiles.get(id);
           if (profile) selected.set(id, profile);
         }
@@ -385,14 +396,14 @@ export function createChannelPresentation(
           const directory =
             prior &&
             prior.directory.profiles === rowProfiles &&
-            prior.directory.channels === channels &&
-            prior.directory.named === named &&
+            prior.directory.channels === nextChannels &&
+            prior.directory.named === nextNamed &&
             prior.directory.agents === chosenAgents
               ? prior.directory
               : Object.freeze({
                   profiles: rowProfiles,
-                  channels,
-                  named,
+                  channels: nextChannels,
+                  named: nextNamed,
                   agents: chosenAgents,
                 });
           const previous = rows[index - 1];
@@ -415,7 +426,7 @@ export function createChannelPresentation(
             profiles: rowProfiles,
             agentPubkeys: rowAgents,
             directory,
-            permissions,
+            permissions: candidatePermissions,
           });
           if (
             prior &&
@@ -428,21 +439,23 @@ export function createChannelPresentation(
             continue;
           cells.set(row.id, nextCell);
         }
-        const wantedNames = new Set<string>([
-          ...profileIds,
-          ...(channel?.members ?? []),
-          ...choices.identities.map((entry) => entry.pubkey),
-          ...library.identities.map((entry) => entry.pubkey),
-        ]);
-        for (const ids of rowDependencies.values())
-          for (const id of ids) wantedNames.add(id);
-        for (const selection of selections)
-          for (const id of selection.ids) wantedNames.add(id);
-        const lookup = session.names?.scope(members);
-        const names = new Map<string, string | undefined>();
-        for (const id of wantedNames) names.set(id, lookup?.(id)?.name);
-        const nameValues =
-          root && sameMap(root.names, names) ? root.names : names;
+        // A direct source can notify before the naming view advances its revision
+        // after provider replacement. Include the already-read source identities.
+        // Keep full ambiguity scope; project labels only for real consumers.
+        const revision = session.names?.snapshot();
+        const nameContext =
+          root &&
+          root.nameContext.revision === revision &&
+          root.nameContext.profiles === allProfiles &&
+          root.nameContext.library === library &&
+          sameArray(root.nameContext.members, members)
+            ? root.nameContext
+            : Object.freeze({
+                members,
+                revision,
+                profiles: allProfiles,
+                library,
+              });
         const { rows: _, ...metadata } = window;
         const header: ChannelPresentationHeader = Object.freeze({
           ...metadata,
@@ -478,33 +491,46 @@ export function createChannelPresentation(
             ? root.view
             : view;
         const prior = root;
-        // Every row and every dependent name selection is published before ANY callback.
+        const prepared = (
+          prior?.nameContext === nameContext ? [] : [...selections]
+        ).map((selection) => ({
+          selection,
+          current:
+            selection.generation === nameContext
+              ? selection.current
+              : retainNames(
+                  selection.current,
+                  captureNames(selection.ids, nameContext),
+                ),
+        }));
+        // Publish canonical access/rows and all private label states before ANY
+        // callback. A policy error belongs to its consumer, never row admission.
         root = Object.freeze({
           header: nextHeader,
           view: nextView,
           cells,
-          names: nameValues,
-          members,
+          nameContext,
         });
         const nameCallbacks: {
           selection: NameSelection;
           listener: Listener;
         }[] = [];
-        for (const selection of selections) {
-          if (!prior || prior.names !== nameValues) {
-            const next = namesFor(selection.ids, nameValues);
-            if (!sameMap(selection.current, next)) {
-              selection.current = next;
-              nameCallbacks.push(
-                ...[...selection.listeners].map((listener) => ({
-                  selection,
-                  listener,
-                })),
-              );
-            }
+        for (const { selection, current } of prepared) {
+          if (selection.current !== current) {
+            selection.current = current;
+            nameCallbacks.push(
+              ...[...selection.listeners].map((listener) => ({
+                selection,
+                listener,
+              })),
+            );
           }
-          selection.generation = root;
+          selection.generation = nameContext;
         }
+        permissions = candidatePermissions;
+        channels = nextChannels;
+        named = nextNamed;
+        profileIds = nextProfileIds;
         reverse = nextReverse;
         indexed = true;
         previousWindow = window;
@@ -569,14 +595,20 @@ export function createChannelPresentation(
       release();
     };
   }
-  function captureNames(ids: readonly string[], generation: typeof root) {
-    if (ids.every((id) => generation.names.has(id)))
-      return namesFor(ids, generation.names);
-    // Dynamic verified owners can be outside static row dependencies. Capture
-    // this whole private selection with the published membership scope, then
-    // discard the live lookup. Construction registers/mutates no shared owner.
-    const lookup = session.names?.scope(generation.members);
-    return new Map(ids.map((id) => [id, lookup?.(id)?.name]));
+  function captureNames(
+    ids: readonly string[],
+    context: NameContext,
+  ): NameCapture {
+    try {
+      // Capture this whole private selection with the published full membership
+      // scope, then discard the live lookup. Never retain mutable provider facts.
+      const lookup = session.names?.scope(context.members);
+      return { values: new Map(ids.map((id) => [id, lookup?.(id)?.name])) };
+    } catch (error) {
+      // Preserve the original render-time failure without blocking authoritative
+      // permission changes or access retirement for the rest of the channel.
+      return { error };
+    }
   }
   reconcile();
   return {
@@ -600,21 +632,22 @@ export function createChannelPresentation(
     names(ids: readonly string[]) {
       const selection: NameSelection = {
         ids,
-        current: captureNames(ids, root),
-        generation: root,
+        current: captureNames(ids, root.nameContext),
+        generation: root.nameContext,
         listeners: new Set(),
       };
       const snapshot = () => {
         // An uncommitted selector can miss notifications. Refresh only its
         // private immutable memo for React's consistency recheck; never publish,
         // subscribe, reconcile or notify from a getter.
-        const generation = root;
+        const generation = root.nameContext;
         if (selection.generation !== generation) {
           const next = captureNames(ids, generation);
-          if (!sameMap(selection.current, next)) selection.current = next;
+          selection.current = retainNames(selection.current, next);
           selection.generation = generation;
         }
-        return selection.current;
+        if ("error" in selection.current) throw selection.current.error;
+        return selection.current.values;
       };
       return {
         snapshot,
@@ -622,15 +655,15 @@ export function createChannelPresentation(
           selection.listeners.add(listener);
           selections.add(selection);
           acquire();
-          if (ids.some((id) => !root.names.has(id))) reconcile();
-          else {
-            const current = namesFor(ids, root.names);
-            if (!sameMap(selection.current, current)) {
-              selection.current = current;
-              listener();
-            }
+          const before = selection.current;
+          if (selection.generation !== root.nameContext) {
+            selection.current = retainNames(
+              selection.current,
+              captureNames(ids, root.nameContext),
+            );
+            selection.generation = root.nameContext;
           }
-          selection.generation = root;
+          if (selection.current !== before) listener();
           let active = true;
           return () => {
             if (!active) return;

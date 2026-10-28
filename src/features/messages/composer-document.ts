@@ -365,9 +365,28 @@ export function composerResource(
   return { resource: { uri, label: text }, source };
 }
 
+// A projection depends only on the immutable document, but transaction
+// filters, normalization, render and completion each read it per keystroke.
+const projections = new WeakMap<
+  EditorNode,
+  ReturnType<typeof projectDocument>
+>();
+const snapshots = new WeakMap<object, EditorNode>();
+
 /** Document positions, editable text offsets, and serialized Markdown offsets
  * are distinct. No generated Markdown delimiter enters this map. */
 export function projectComposerDocument(doc: EditorNode) {
+  let projection = projections.get(doc);
+  if (!projection) {
+    projection = projectDocument(doc);
+    projections.set(doc, projection);
+    // Drafts carry this snapshot onward; reading it back yields this document.
+    snapshots.set(projection.draft.document, doc);
+  }
+  return projection;
+}
+
+function projectDocument(doc: EditorNode) {
   let text = "";
   const positions = new Array<number>(doc.content.size + 1).fill(0);
   const recipients: DraftRecipient[] = [];
@@ -549,6 +568,8 @@ export function readComposerSnapshot(value: unknown): EditorNode | undefined {
         pending.push({ node: child, depth: item.depth + 1 });
     }
   }
+  const projected = snapshots.get(value);
+  if (projected) return projected;
   try {
     const doc = composerSchema.nodeFromJSON(value.content);
     if (doc.type !== composerSchema.nodes.doc) return;

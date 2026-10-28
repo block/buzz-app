@@ -1488,27 +1488,48 @@ it.each([
   },
 );
 
-it.each(["bold", "italic"] as const)(
-  "absorbs a pasted `>` that carries %s when `> ` is typed before it",
-  async (format) => {
+it.each([
+  ["bold", false],
+  ["italic", false],
+  // On a later line the previous line's `\n` carries the mark too.
+  ["bold", true],
+  ["italic", true],
+] as const)(
+  "absorbs a pasted `>` that carries %s when `> ` is typed before it (later line: %s)",
+  async (format, later) => {
     const h = mount();
+    if (later) {
+      act(() => h.input.toggleFormat(format));
+      await h.user.keyboard("line{Shift>}{Enter}{/Shift}");
+      act(() => h.input.toggleFormat(format));
+    }
+    const start = h.input.value.length;
+    const wire = later
+      ? format === "bold"
+        ? "**line**\n\n"
+        : "_line_\n\n"
+      : "";
     paste(h.input, "> text");
-    act(() => h.input.setSelectionRange(0, 1));
+    act(() => h.input.setSelectionRange(start, start + 1));
     act(() => h.input.toggleFormat(format));
-    expect(h.input.querySelector("strong, em")).toHaveTextContent(">");
-    act(() => h.input.setSelectionRange(0, 0));
+    expect(
+      [...h.input.querySelectorAll("strong, em")].map(
+        (node) => node.textContent,
+      ),
+    ).toEqual(later ? ["line\n>"] : [">"]);
+    act(() => h.input.setSelectionRange(start, start));
     await h.user.keyboard("> ");
     expect(h.input.querySelectorAll("blockquote")).toHaveLength(1);
     expect(h.input.querySelector(":scope > blockquote > p")).toHaveTextContent(
       "text",
     );
-    expect(h.input.querySelector("strong, em")).toBeNull();
-    expect(h.input).toHaveValue("text");
-    expect(h.markdown()).toBe("> text");
+    expect(h.input.querySelector("blockquote :is(strong, em)")).toBeNull();
+    expect(h.input).toHaveValue(later ? "line\ntext" : "text");
+    expect(h.markdown()).toBe(`${wire}> text`);
     // The absorbed marker's mark leaves with it, not into the next character.
     await h.user.keyboard("x");
-    expect(h.input.querySelector("strong, em")).toBeNull();
-    expect(h.markdown()).toBe("> xtext");
+    expect(h.input.querySelector("blockquote :is(strong, em)")).toBeNull();
+    expect(h.markdown()).toBe(`${wire}> xtext`);
   },
 );
 

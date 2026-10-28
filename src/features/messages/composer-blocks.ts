@@ -497,11 +497,6 @@ export function composerBlockPrefix(
         )?.[0].length ?? 0)
       : 0;
   const tr = state.tr.delete(from, to + absorbed);
-  // The marker's own marks (an explicit Bold typing mode) continue into the
-  // block, as the typed prose already carried them. A typed `> ` before a
-  // literal marker took that marker's marks, which leave with both markers:
-  // typing continues in the marks of the text left on the line.
-  const marks = absorbed ? tr.doc.resolve(from).marks() : $from.marks();
   if (sink) {
     if (!apply(tr, sinkListItem(schema.nodes.list_item))) return;
     // A sunk item joins the previous item's nested list when there is one, as
@@ -524,6 +519,11 @@ export function composerBlockPrefix(
           );
     if (!apply(tr, command)) return;
   }
+  // The marker's own marks (an explicit Bold typing mode) continue into the
+  // block, as the typed prose already carried them. A typed `> ` before a
+  // literal marker took that marker's marks, which leave with both markers:
+  // typing continues in the marks of the text that now starts the quote.
+  const marks = absorbed ? tr.selection.$from.marks() : $from.marks();
   return marks.length ? tr.setStoredMarks(marks) : tr;
 }
 

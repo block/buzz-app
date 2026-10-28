@@ -284,20 +284,25 @@ function Timeline({
       },
     ]),
   );
-  const containedOwners = useMemo(
-    () =>
-      new Map(
-        activity
-          .filter(
-            (group) =>
-              !group.done && group.ids.some((id) => expandedActivity.has(id)),
-          )
-          .flatMap((group) =>
-            group.ids.map((id) => [id, group.ids[0]] as const),
-          ),
-      ),
-    [activity, expandedActivity],
+  const containedOwnerCache = useRef(new Map<string, string | undefined>());
+  const nextContainedOwners = new Map(
+    activity
+      .filter(
+        (group) =>
+          !group.done && group.ids.some((id) => expandedActivity.has(id)),
+      )
+      .flatMap((group) => group.ids.map((id) => [id, group.ids[0]] as const)),
   );
+  // Profile/status refreshes can rebuild the projection without moving rows.
+  // Only restart positioning effects when their virtual ownership changes.
+  if (
+    nextContainedOwners.size !== containedOwnerCache.current.size ||
+    [...nextContainedOwners].some(
+      ([id, owner]) => containedOwnerCache.current.get(id) !== owner,
+    )
+  )
+    containedOwnerCache.current = nextContainedOwners;
+  const containedOwners = containedOwnerCache.current;
   const hiddenActivity = new Set(
     [...disclosures.values()].flatMap((group) =>
       group.expanded ? [] : group.ids,
@@ -906,7 +911,10 @@ function Timeline({
           : -1;
         const row = rows[index];
         if (anchor && row) {
-          restoredAnchor.current = { id: anchor.id, y: anchor.y };
+          restoredAnchor.current = {
+            id: containedOwners.has(anchor.id) ? anchor.id : row.id,
+            y: anchor.y,
+          };
           const element = scroller.current;
           const target = containedOwners.has(anchor.id)
             ? element?.querySelector<HTMLElement>(

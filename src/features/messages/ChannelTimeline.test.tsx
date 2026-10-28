@@ -184,12 +184,15 @@ function setup({
     for (const [callback, targets] of observers)
       if (targets.has(target)) callback();
   };
-  const mutations = new Map<() => void, Map<unknown, MutationObserverInit>>();
+  const mutations = new Map<
+    (records: MutationRecord[]) => void,
+    Map<unknown, MutationObserverInit>
+  >();
   vi.stubGlobal(
     "MutationObserver",
     class {
       targets = new Map<unknown, MutationObserverInit>();
-      constructor(callback: () => void) {
+      constructor(callback: (records: MutationRecord[]) => void) {
         mutations.set(callback, this.targets);
       }
       observe(target: unknown, options: MutationObserverInit) {
@@ -205,7 +208,9 @@ function setup({
     for (const [callback, targets] of mutations) {
       const options = targets.get(list);
       if (options?.attributes && options.attributeFilter?.includes("style"))
-        callback();
+        callback([
+          { type: "attributes", attributeName: "style" } as MutationRecord,
+        ]);
     }
   };
   const element = {

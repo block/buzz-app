@@ -1189,6 +1189,63 @@ it("rejects a deferred header Create section after its navigation origin retires
   preferences.dispose();
 });
 
+it("gates all creation entry points while uncertain creation reconciles, preserving ordinary moves", async () => {
+  const data = { sections: [], assignments: {}, starred: [], muted: [] };
+  let finish!: (value: SidebarPreferences) => void;
+  let entered!: () => void;
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const read = new Promise<SidebarPreferences>((resolve) => {
+    finish = resolve;
+  });
+  const preferences = createSidebarPreferencesStore({
+    read: async () => data,
+    readAfterWrite: () => {
+      entered();
+      return read;
+    },
+    available: true,
+    write: vi.fn().mockRejectedValue(new Error("response lost")),
+    writeStar: vi.fn(async () => []),
+  });
+  await preferences.queries.ensure();
+  const creating = expect(
+    preferences.queries.createSection({ id: "saved", name: "Saved" }),
+  ).rejects.toThrow("response lost");
+  try {
+    await started;
+    const h = fixture(preferences.queries);
+    const user = userEvent.setup();
+    render(h.view("alpha"));
+    const row = await screen.findByRole("button", { name: "beta" });
+    expect(document.querySelector("[data-create-section-trigger]")).toBeNull();
+    fireEvent.keyDown(row, { key: "ContextMenu" });
+    await user.hover(
+      await screen.findByRole("menuitem", { name: "Move channel" }),
+    );
+    expect(
+      await screen.findByRole("menuitem", { name: "Create new…" }),
+    ).toHaveAttribute("aria-disabled", "true");
+    expect(
+      screen.getByRole("menuitemradio", { name: "Starred" }),
+    ).not.toHaveAttribute("aria-disabled", "true");
+    await act(async () => {
+      finish(data);
+      await creating;
+    });
+    await waitFor(() =>
+      expect(
+        document.querySelector("[data-create-section-trigger]"),
+      ).not.toBeNull(),
+    );
+  } finally {
+    finish(data);
+    await creating;
+    preferences.dispose();
+  }
+});
+
 it("clears only the removed section's collapsed intent after confirmation, never on cancel or failure", async () => {
   const user = userEvent.setup();
   const current: SidebarPreferences = {

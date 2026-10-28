@@ -335,42 +335,54 @@ export function createSidebarPreferencesStore({
     }
     if (active) return active.promise;
     const controller = new AbortController();
-    const refreshMutation = mutation;
+    const requestedMutation = mutation;
     const job = { controller, promise: Promise.resolve() };
     active = job;
     job.promise = Promise.resolve().then(async () => {
       if (closed || controller.signal.aborted) return;
+      const current = () =>
+        !closed && !controller.signal.aborted && active === job;
       try {
-        const data = await (creationUncertain ? readAfterWrite : read)(
-          controller.signal,
-        );
-        if (
-          closed ||
-          controller.signal.aborted ||
-          active !== job ||
-          mutation !== refreshMutation
-        )
-          return;
-        readFailure = undefined;
-        creationUncertain = false;
-        confirmed = data;
-        project();
-      } catch (error) {
-        if (
-          !closed &&
-          !controller.signal.aborted &&
-          active === job &&
-          mutation === refreshMutation
-        ) {
-          readFailure = error instanceof Error ? error.message : String(error);
-          readTransient = isTransientFailure(error);
-          const { transient: _transient, ...rest } = snapshot;
-          publish({
-            ...rest,
-            status: "error",
-            error: readFailure,
-            ...(readTransient ? { transient: true as const } : {}),
-          });
+        while (current()) {
+          // Other preference families share the queue. Read after they settle,
+          // and repeat if a write admitted during the read invalidates it.
+          if (creationUncertain) await writeQueue;
+          if (!current()) return;
+          const refreshMutation = creationUncertain
+            ? mutation
+            : requestedMutation;
+          try {
+            const data = await (creationUncertain ? readAfterWrite : read)(
+              controller.signal,
+            );
+            if (!current()) return;
+            if (mutation !== refreshMutation) {
+              if (creationUncertain) continue;
+              return;
+            }
+            readFailure = undefined;
+            creationUncertain = false;
+            confirmed = data;
+            project();
+            return;
+          } catch (error) {
+            if (!current()) return;
+            if (mutation !== refreshMutation) {
+              if (creationUncertain) continue;
+              return;
+            }
+            readFailure =
+              error instanceof Error ? error.message : String(error);
+            readTransient = isTransientFailure(error);
+            const { transient: _transient, ...rest } = snapshot;
+            publish({
+              ...rest,
+              status: "error",
+              error: readFailure,
+              ...(readTransient ? { transient: true as const } : {}),
+            });
+            return;
+          }
         }
       } finally {
         if (active === job) active = undefined;
@@ -401,6 +413,7 @@ export function createSidebarPreferencesStore({
   ): Promise<SidebarPreferences> {
     if (
       !writable() ||
+      (creationUncertain && "createSection" in destination) ||
       !snapshot.data ||
       !confirmed ||
       !write ||
@@ -432,6 +445,8 @@ export function createSidebarPreferencesStore({
       .then(async () => {
         try {
           check();
+          if (creationUncertain && "createSection" in destination)
+            throw new Error("Section creation is unavailable");
           const starring = "starred" in destination;
           // Always check the fresh assignment head on removal, even if cached
           // placement has no assignment. Another device may have changed it.

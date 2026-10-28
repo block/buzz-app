@@ -724,6 +724,7 @@ export function ChannelInventory({
             </MenuRadioGroup>
             <MenuSeparator />
             <MenuItem
+              disabled={!preferences.sectionCreationWritable}
               onClick={() => {
                 if (surface) {
                   surface.close(() => false);
@@ -731,6 +732,7 @@ export function ChannelInventory({
                     if (
                       mounted.current &&
                       !surface.signal?.aborted &&
+                      queries.sidebarPreferences.sectionCreationWritable &&
                       relay.snapshot().session === queries
                     )
                       setCreatingFor({ channel, surface });
@@ -1134,7 +1136,7 @@ export function ChannelInventory({
               if (
                 mounted.current &&
                 channel &&
-                queries.sidebarPreferences.writable
+                queries.sidebarPreferences.sectionCreationWritable
               )
                 setCreatingFor({ channel, position: "first" });
             });
@@ -1202,7 +1204,10 @@ export function ChannelInventory({
           {filteredSections.map((section) => (
             <DroppableSidebarSection
               key={section.key}
-              createSectionTarget={section.key === firstChannelSection}
+              createSectionTarget={
+                section.key === firstChannelSection &&
+                preferences.sectionCreationWritable
+              }
               groupIndex={groupIds.indexOf(section.key.slice("group:".length))}
               disabled={
                 !placementWritable || !isChannelDropSectionKey(section.key)
@@ -1679,7 +1684,7 @@ export function ChannelInventory({
         {creatingFor && !creatingFor.surface?.signal?.aborted && (
           <CreateSidebarSection
             channelName={creatingFor.channel.name}
-            writable={preferences.writable}
+            writable={preferences.sectionCreationWritable}
             refreshing={preferences.status === "loading"}
             retry={preferences.reload}
             create={(section) => {
@@ -1687,7 +1692,7 @@ export function ChannelInventory({
               // the live gate before handing its draft to the optimistic store.
               if (
                 creatingFor.surface?.signal?.aborted ||
-                !queries.sidebarPreferences.writable
+                !queries.sidebarPreferences.sectionCreationWritable
               )
                 return false;
               moveChannel(

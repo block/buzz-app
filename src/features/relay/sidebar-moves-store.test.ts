@@ -761,3 +761,122 @@ it("reconciles an accepted creation against the writer while ordinary reads lag"
     h.owner.dispose();
   }
 });
+
+it("waits for a queued non-move write before reconciling an uncertain creation", async () => {
+  const h = await setup();
+  const mute = deferred<readonly string[]>();
+  const started = deferred<void>();
+  h.assignment.mockRejectedValueOnce(new Error("response lost"));
+  h.mute.mockImplementationOnce(() => {
+    started.resolve();
+    return mute.promise;
+  });
+  const creating = expect(
+    h.prefs.createSection({ id: "accepted", name: "Launch" }),
+  ).rejects.toThrow("response lost");
+  const muting = h.prefs.setMute("alpha", true);
+  try {
+    await started.promise;
+    await flush();
+    expect(h.readAfterWrite).not.toHaveBeenCalled();
+    mute.resolve(["alpha"]);
+    await Promise.all([creating, muting]);
+    expect(h.readAfterWrite).toHaveBeenCalledOnce();
+    expect(h.prefs.sectionCreationWritable).toBe(true);
+  } finally {
+    mute.resolve([]);
+    await Promise.allSettled([creating, muting]);
+    h.owner.dispose();
+  }
+});
+
+it.each(["mute", "sort", "writer-failure"] as const)(
+  "reconciles again when %s invalidates an in-flight writer read",
+  async (kind) => {
+    const h = await setup();
+    const read = deferred<SidebarPreferences>();
+    const entered = deferred<void>();
+    const save = h.assignment.getMockImplementation();
+    assert(save);
+    const authoritative = h.readAfterWrite.getMockImplementation();
+    assert(authoritative);
+    h.assignment.mockImplementationOnce(async (intent) => {
+      await save(intent);
+      throw new Error("response lost");
+    });
+    let first!: SidebarPreferences;
+    h.readAfterWrite.mockImplementationOnce(async () => {
+      first = await authoritative();
+      entered.resolve();
+      return read.promise;
+    });
+    if (kind === "writer-failure")
+      h.readAfterWrite.mockRejectedValueOnce(new Error("writer offline"));
+    const section = { id: "accepted", name: "Launch" };
+    const creating = expect(h.prefs.createSection(section)).rejects.toThrow(
+      "response lost",
+    );
+    try {
+      await entered.promise;
+      if (kind === "sort")
+        await h.prefs.setSort("channels", "recent", ["work", "later"]);
+      else await h.prefs.setMute("alpha", true);
+      read.resolve(first);
+      await creating;
+      expect(h.readAfterWrite).toHaveBeenCalledTimes(2);
+      if (kind === "writer-failure") {
+        expect(h.prefs.snapshot()).toMatchObject({
+          status: "error",
+          error: "writer offline",
+        });
+        expect(h.prefs.sectionCreationWritable).toBe(false);
+        await h.prefs.refresh();
+      }
+      expect(h.prefs.snapshot().data?.sections.at(-1)).toMatchObject(section);
+      expect(h.prefs.snapshot().data).toMatchObject(
+        kind === "sort"
+          ? { sort: { channels: "recent" } }
+          : { muted: ["alpha"] },
+      );
+      expect(h.prefs.sectionCreationWritable).toBe(true);
+      expect(h.assignment).toHaveBeenCalledOnce();
+    } finally {
+      read.resolve(first);
+      await creating;
+      h.owner.dispose();
+    }
+  },
+);
+
+it("gates create-and-move during reconciliation while allowing existing destinations", async () => {
+  const h = await setup();
+  const entered = deferred<void>();
+  const read = deferred<SidebarPreferences>();
+  const authoritative = h.readAfterWrite.getMockImplementation();
+  assert(authoritative);
+  h.assignment.mockRejectedValueOnce(new Error("response lost"));
+  h.readAfterWrite.mockImplementationOnce(() => {
+    entered.resolve();
+    return read.promise;
+  });
+  const creating = expect(
+    h.prefs.createSection({ id: "accepted", name: "Launch" }),
+  ).rejects.toThrow("response lost");
+  try {
+    await entered.promise;
+    expect(h.prefs.writable).toBe(true);
+    await expect(
+      h.prefs.createAndAssign("beta", { id: "duplicate", name: "Launch" }),
+    ).rejects.toThrow("unavailable");
+    expect(h.assignment).toHaveBeenCalledOnce();
+    await h.prefs.assign("beta", "later");
+    read.resolve(await authoritative());
+    await creating;
+    expect(h.prefs.snapshot().data?.assignments.beta).toBe("later");
+    expect(h.prefs.sectionCreationWritable).toBe(true);
+  } finally {
+    read.resolve(await authoritative());
+    await creating;
+    h.owner.dispose();
+  }
+});

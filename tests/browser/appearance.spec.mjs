@@ -479,6 +479,17 @@ test("saved dark document paints before the application module is allowed to exe
     );
     await expect(page.locator("#buzz-launch")).toBeVisible();
     await expect(page.locator("#buzz-launch img")).toBeVisible();
+    const logo = await page.locator("#buzz-launch img").boundingBox();
+    await page.mouse.move(logo.x - 20, logo.y - 20);
+    await page.mouse.down();
+    await page.mouse.move(logo.x + logo.width + 20, logo.y + logo.height + 20, {
+      steps: 20,
+    });
+    await page.mouse.up();
+    expect(await page.evaluate(() => window.getSelection().isCollapsed)).toBe(
+      true,
+    );
+
     // Observe the painted document for two frames with the entire React bundle still withheld.
     await page.evaluate(
       () =>

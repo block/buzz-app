@@ -31,6 +31,7 @@ import { readView, writeView } from "../../shared/view-state";
 import type { ChannelList } from "../../features/relay/contracts";
 import type { ContributionReader } from "../../features/conversation/contracts";
 import type { ChatIcon, ChatMenu } from "../../features/conversation/service";
+import type { SidebarRows } from "../../features/channel-navigation/sidebar-rows-service";
 import type { SidebarSections } from "../../features/channel-navigation/sidebar-sections-service";
 
 const noSubscription = () => () => {};
@@ -49,6 +50,7 @@ type Props = {
   chatIcons?: ContributionReader<ChatIcon> | undefined;
   chatMenus?: ContributionReader<ChatMenu> | undefined;
   sidebarSections?: SidebarSections | undefined;
+  sidebarRows?: SidebarRows | undefined;
   target: OpenTarget;
   children: ReactNode;
 };
@@ -210,6 +212,7 @@ function ScopedSidebar({
           scope={scope}
           viewer={connection.viewer}
           sidebarSections={props.sidebarSections}
+          sidebarRows={props.sidebarRows}
           cached={!!connection.cached}
           layoutReady={filter === "team" || soloReady}
           connectionError={connection.error}

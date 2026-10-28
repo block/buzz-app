@@ -24,6 +24,15 @@ import type {
   RegisteredSidebarSection,
   SidebarSections,
 } from "./sidebar-sections-service";
+import {
+  sidebarRow,
+  sidebarRowSortModes,
+  sortSidebarRows,
+  type SidebarRows,
+  type RegisteredSidebarRows,
+} from "./sidebar-rows-service";
+import { useSidebarRowUnread } from "./useSidebarRowUnread";
+import type { SidebarSortMode } from "../relay/sidebar-sort";
 import type { SidebarFrame } from "./SidebarFrame";
 import { Button } from "../../shared/design-system/ui/Button";
 import {
@@ -108,6 +117,8 @@ type Inventory = {
 const noSubscription = () => () => {};
 const emptyContributions: readonly RegisteredSidebarSection[] = [];
 const noSidebarSections = () => emptyContributions;
+const emptyRowContributions: readonly RegisteredSidebarRows[] = [];
+const noSidebarRows = () => emptyRowContributions;
 const emptySidebarSections: SidebarSections = {
   version: 1,
   snapshot: noSidebarSections,
@@ -128,6 +139,7 @@ export function ChannelInventory({
   scope,
   viewer,
   sidebarSections: contributedSections,
+  sidebarRows: contributedRows,
   render,
 }: {
   relay: RelayData;
@@ -142,12 +154,22 @@ export function ChannelInventory({
   scope: string;
   viewer?: string | undefined;
   sidebarSections?: SidebarSections | undefined;
+  sidebarRows?: SidebarRows | undefined;
   render(inventory: Inventory): ReactNode;
 }) {
   const contributions = useSyncExternalStore(
     contributedSections?.subscribe ?? noSubscription,
     contributedSections?.snapshot ?? noSidebarSections,
     contributedSections?.snapshot ?? noSidebarSections,
+  );
+  const rowContributions = useSyncExternalStore(
+    contributedRows?.subscribe ?? noSubscription,
+    contributedRows?.snapshot ?? noSidebarRows,
+    contributedRows?.snapshot ?? noSidebarRows,
+  );
+  const rowSortModes = useMemo(
+    () => sidebarRowSortModes(rowContributions),
+    [rowContributions],
   );
   const list = useChannelList(queries.channels);
   const recoveryShown = useRecoveryShown(queries.recovery);
@@ -162,6 +184,11 @@ export function ChannelInventory({
   const readAction = useChannelReadAction();
   const readWrite = readAction.state;
   const [rowFocus, setRowFocus] = useState<string>();
+  const pluginHiddenRows = useRef(new Set<string>());
+  const setRowHidden = useCallback((id: string, hidden: boolean) => {
+    if (hidden) pluginHiddenRows.current.add(id);
+    else pluginHiddenRows.current.delete(id);
+  }, []);
   const kitState = useSyncExternalStore(
     queries.channelKit.subscribe,
     queries.channelKit.snapshot,
@@ -242,16 +269,22 @@ export function ChannelInventory({
     target.pluginId === "buzz.channels" &&
     target.route?.params === "new-message";
   const preparingDm = composingMessage ? handoff?.preparingDm : undefined;
-  const sidebarChannels = channels.filter(
-    (channel) =>
-      !channel.huddle &&
-      !channel.metadataPending &&
-      inTeamInventory(channel) &&
-      (!preparingDm ||
-        preparingDm.existing.has(channel.id) ||
-        channel.channelType !== "dm" ||
-        channel.members?.length !== preparingDm.members.size ||
-        !channel.members.every((member) => preparingDm.members.has(member))),
+  const sidebarChannels = useMemo(
+    () =>
+      channels.filter(
+        (channel) =>
+          !channel.huddle &&
+          !channel.metadataPending &&
+          inTeamInventory(channel) &&
+          (!preparingDm ||
+            preparingDm.existing.has(channel.id) ||
+            channel.channelType !== "dm" ||
+            channel.members?.length !== preparingDm.members.size ||
+            !channel.members.every((member) =>
+              preparingDm.members.has(member),
+            )),
+      ),
+    [channels, preparingDm],
   );
   const current = channels.find(
     (channel) =>
@@ -467,15 +500,80 @@ export function ChannelInventory({
         sidebar.toggle(key, true),
       );
   };
-  const sections = startup.ready
-    ? sidebarSections(
-        sidebarChannels,
-        preferences.data,
-        new Set([...hiddenDms.hiddenIds, ...dmVisibility.hidden]),
-      )
-    : [];
+  const sections = useMemo(
+    () =>
+      startup.ready
+        ? sidebarSections(
+            sidebarChannels,
+            preferences.data,
+            new Set([...hiddenDms.hiddenIds, ...dmVisibility.hidden]),
+          )
+        : [],
+    [
+      startup.ready,
+      sidebarChannels,
+      preferences.data,
+      hiddenDms.hiddenIds,
+      dmVisibility.hidden,
+    ],
+  );
+  const sectionSort = useCallback(
+    (key: string): SidebarSortMode => {
+      const saved =
+        preferences.data?.sort?.[
+          key.startsWith("group:") ? `section:${key.slice(6)}` : key
+        ];
+      return saved &&
+        (saved === "recent" || rowSortModes.some((mode) => mode.id === saved))
+        ? saved
+        : "alpha";
+    },
+    [preferences.data, rowSortModes],
+  );
+  const rowUnread = useSidebarRowUnread(
+    queries.unread,
+    JSON.stringify(
+      sections.flatMap((section) =>
+        rowSortModes.some((mode) => mode.id === sectionSort(section.key))
+          ? section.rows.map((channel) => channel.id)
+          : [],
+      ),
+    ),
+  );
+  const sortedSections = useMemo(
+    () =>
+      rowSortModes.length
+        ? sections.map((section) => {
+            const mode = rowSortModes.find(
+              (mode) => mode.id === sectionSort(section.key),
+            );
+            if (!mode) return section;
+            const candidates = section.rows.map((channel) => ({
+              channel,
+              data: sidebarRow(
+                channel,
+                section.key,
+                rowUnread.get(channel.id) ??
+                  queries.unread.snapshot({
+                    kind: "channel",
+                    channelId: channel.id,
+                  }),
+              ),
+            }));
+            const sorted = sortSidebarRows(
+              candidates,
+              mode,
+              ({ data }) => data,
+            );
+            return sorted === candidates
+              ? section
+              : { ...section, rows: sorted.map(({ channel }) => channel) };
+          })
+        : sections,
+    [sections, rowSortModes, sectionSort, rowUnread, queries.unread],
+  );
   const filteredSections = useSidebarFilters(
-    sections,
+    sortedSections,
     Object.fromEntries(
       Object.entries(preferences.data?.filters ?? {}).map(([key, mode]) => [
         key.startsWith("section:") ? `group:${key.slice(8)}` : key,
@@ -615,7 +713,7 @@ export function ChannelInventory({
     ids.splice(to, 0, sectionId);
     void preferences.reorderSections(sectionId, ids).catch(() => {});
   };
-  const setSectionSort = (key: string, mode: "alpha" | "recent") => {
+  const setSectionSort = (key: string, mode: SidebarSortMode) => {
     void preferences
       .setSort(
         key.startsWith("group:") ? `section:${key.slice(6)}` : key,
@@ -989,15 +1087,20 @@ export function ChannelInventory({
     if (!lifecycleCallbacks) return;
     const dialogId = lifecycleDialog?.channel.id;
     if (!dialogId) lifecycleNeighbors.current = undefined;
-    const at = sections.findIndex((section) =>
+    const at = filteredSections.findIndex((section) =>
       section.rows.some((row) => row.id === dialogId),
     );
-    const placement = sections[at];
+    const placement = filteredSections[at];
     if (dialogId && placement) {
       const shown = (section: typeof placement) =>
         sidebar.collapsed.includes(section.key)
           ? []
-          : section.rows.map((row) => row.id);
+          : section.rows
+              .filter(
+                (row) =>
+                  row.id === dialogId || !pluginHiddenRows.current.has(row.id),
+              )
+              .map((row) => row.id);
       const own = shown(placement);
       const index = Math.max(own.indexOf(dialogId), 0);
       lifecycleNeighbors.current = {
@@ -1005,8 +1108,8 @@ export function ChannelInventory({
         ids: [
           ...own.slice(index + 1),
           ...own.slice(0, index).reverse(),
-          ...sections.slice(at + 1).flatMap(shown),
-          ...sections.slice(0, at).flatMap(shown).reverse(),
+          ...filteredSections.slice(at + 1).flatMap(shown),
+          ...filteredSections.slice(0, at).flatMap(shown).reverse(),
         ],
       };
     }
@@ -1032,7 +1135,9 @@ export function ChannelInventory({
               return;
             }
             // Its neighbor takes its place, so the sidebar stays where it is.
-            const listed = sections.flatMap((section) => section.rows);
+            const listed = filteredSections
+              .flatMap((section) => section.rows)
+              .filter((row) => !pluginHiddenRows.current.has(row.id));
             const next =
               (lifecycleNeighbors.current?.id === id
                 ? lifecycleNeighbors.current.ids
@@ -1349,12 +1454,8 @@ export function ChannelInventory({
               sort={
                 preferences.sortWritable
                   ? {
-                      value:
-                        preferences.data?.sort?.[
-                          section.key.startsWith("group:")
-                            ? `section:${section.key.slice(6)}`
-                            : section.key
-                        ] ?? "alpha",
+                      value: sectionSort(section.key),
+                      modes: rowSortModes,
                       change: (mode) => setSectionSort(section.key, mode),
                     }
                   : undefined
@@ -1378,6 +1479,8 @@ export function ChannelInventory({
                     }
                     key={channel.id}
                     channel={channel}
+                    rowContributions={rowContributions}
+                    onHiddenChange={setRowHidden}
                     session={queries}
                     working={workingChannels.has(channel.id)}
                     selected={composingMessage ? undefined : selected}

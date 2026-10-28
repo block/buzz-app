@@ -605,20 +605,21 @@ function Timeline({
     // New rows can leave the initial offset unchanged. Hold through their
     // measurements, but leave ordinary prepend follow-up renders to Virtua.
     correctScrollTop(element, moved);
-    const top = () =>
-      element
-        .querySelector(`[data-message-id="${CSS.escape(id)}"]`)
-        ?.getBoundingClientRect().top;
     // The row's offset from the viewport, as last placed by the reader.
     // A live append must not choose a newly inserted row while the older
     // page is still measuring; keep the reader's original row and offset.
-    let y = reader.current.y;
-    const anchor = { id, y, intent: intent.current };
+    const anchor = { id, y: reader.current.y, intent: intent.current };
     heldReader.current = anchor;
+    const top = () =>
+      element
+        .querySelector(`[data-message-id="${CSS.escape(anchor.id)}"]`)
+        ?.getBoundingClientRect().top;
+    // A drag can carry the reader away from that row, and Virtua unmounts
+    // rows the reader leaves. Hold the row they read instead, or correcting
+    // for the old one would move the rows in view.
     const read = () => {
-      const row = top();
-      if (row !== undefined)
-        anchor.y = y = row - element.getBoundingClientRect().top;
+      const position = positionAt(element, anchor.id).anchor;
+      if (position) Object.assign(anchor, position);
     };
     let height = list.style.height;
     const since = intent.current;
@@ -640,7 +641,7 @@ function Timeline({
       if (row !== undefined && settled.current && !follow.current)
         correctScrollTop(
           element,
-          row - element.getBoundingClientRect().top - y,
+          row - element.getBoundingClientRect().top - anchor.y,
         );
     });
     const release = (keepAnchor = false) => {

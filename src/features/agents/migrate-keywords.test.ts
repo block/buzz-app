@@ -71,6 +71,9 @@ describe("migrateWatchKeywords", () => {
       '"builds" (Build failures) matched only events whose content contained any of ["failed","[release]"]. Buzz removed the keywords and turned the watch off.',
     );
     expect(prompt).toContain('watch_remove id "fix-builds"');
+    expect(prompt).toContain(
+      "If you already handled this, only remove this notice.",
+    );
     // It first runs a minute after startup, not one interval later.
     const saved = read?.timers?.["watch/fix-builds"];
     expect(timerState(timer as never, saved, NOW)).toMatchObject({

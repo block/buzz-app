@@ -127,10 +127,13 @@ export function createBrowserHistory(host: Window): NavigationHistory {
   function readWindow() {
     identities = new Map();
     try {
-      floor = Math.max(
-        floor,
-        Number(host.sessionStorage.getItem(floorKey())) || 0,
-      );
+      const savedFloor = Number(host.sessionStorage.getItem(floorKey()));
+      if (
+        Number.isSafeInteger(savedFloor) &&
+        savedFloor >= 0 &&
+        savedFloor <= end
+      )
+        floor = Math.max(floor, savedFloor);
       const saved: unknown = JSON.parse(
         host.sessionStorage.getItem(visitsKey()) ?? "[]",
       );

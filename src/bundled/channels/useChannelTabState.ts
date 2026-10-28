@@ -398,8 +398,11 @@ export function channelTabs(session: RelaySession, navigation?: Navigation) {
       }));
       // Exact session-owned visit IDs cannot retire a different scope. Inactive
       // close preserves the current destination and its presentation authority.
-      if (navigation)
+      if (navigation) {
         navigation.dismiss(visits, navigation.snapshot().entry.target);
+        const retained = navigation.snapshot().retainedVisits;
+        if (retained) store.prune(new Set(retained));
+      }
       return "closed";
     },
     /** Names thread `rootId`'s tab; an empty name restores its automatic

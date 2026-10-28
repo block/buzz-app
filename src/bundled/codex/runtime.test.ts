@@ -2571,7 +2571,13 @@ it("leaves a failed first startup unbound so the next mention can start fresh", 
   );
   f.complete();
   await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(2));
-  expect(JSON.parse([...f.storage.values()][0] ?? "{}")).toMatchObject({
+  expect(
+    JSON.parse(
+      [...f.storage].find(([key]) =>
+        key.startsWith("buzz.codex.sessions."),
+      )?.[1] ?? "{}",
+    ),
+  ).toMatchObject({
     [JSON.stringify(["channel", root])]: { threadId: "thread-2" },
   });
 });
@@ -2641,7 +2647,13 @@ it.each([
   expect(f.publish.mock.calls[1]?.[0]).toMatchObject({
     content: recover ? "DONE" : expect.stringContaining(error),
   });
-  expect(JSON.parse([...f.storage.values()][0] ?? "{}")).toMatchObject({
+  expect(
+    JSON.parse(
+      [...f.storage].find(([key]) =>
+        key.startsWith("buzz.codex.sessions."),
+      )?.[1] ?? "{}",
+    ),
+  ).toMatchObject({
     [JSON.stringify(["channel", root])]: {
       threadId: recover ? "thread-2" : "thread-1",
     },

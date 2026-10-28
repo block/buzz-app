@@ -56,6 +56,7 @@ import {
   publicKeyLabels,
 } from "../../shared/identity/public-key";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
+import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Select } from "../../shared/design-system/ui/Select";
@@ -1733,11 +1734,11 @@ export function ChannelMembersDialog({
                 aria-label={`Not in this ${place}`}
                 {...highlight.listProps}
               >
-                <h3
-                  className={`${solo ? styles.groupHeading : "pt-2"} px-control-inset pb-2 text-caption text-subtle`}
+                <div
+                  className={`${solo ? styles.groupHeading : "pt-2"} px-control-inset`}
                 >
-                  Not in this {place}
-                </h3>
+                  <InlineHeader title={`Not in this ${place}`} />
+                </div>
                 {teams.length > 0 && (
                   <ul aria-label="Teams">
                     {teams.map(({ team, missing }) => (

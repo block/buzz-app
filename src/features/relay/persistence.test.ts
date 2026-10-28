@@ -11,7 +11,10 @@ function transaction(
   abort: () => void,
   run: (cache: HeadPersistence) => Promise<unknown> = (cache) =>
     cache.remove("channel"),
-  store: Store = { delete: vi.fn() },
+  store: Store = {
+    delete: vi.fn(),
+    index: () => ({ getAllKeys: () => ({}) }) as unknown as IDBIndex,
+  },
 ) {
   const tx = {
     abort: vi.fn(abort),

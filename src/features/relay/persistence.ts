@@ -1,3 +1,5 @@
+import { schnorr } from "@noble/curves/secp256k1.js";
+import { bytesToHex } from "@noble/curves/utils.js";
 import { byteSize } from "./budget";
 import type { SidebarPreferences } from "./sidebar-preferences";
 /** Device-local resume data, never proof of current access or permission to write. */
@@ -31,10 +33,44 @@ export interface HeadPersistence {
 const DB = "buzz-channel-heads-v1";
 const STORE = "heads";
 const STARTUP = "startup";
+const PAYLOADS = "payloads";
+const REFERENCES = "references";
+const RECENCY = "recency";
 const MAX_BYTES = 8 * 1024 * 1024;
 const MAX_HEADS = 64;
 const MAX_AGE = 24 * 60 * 60 * 1000;
 type Record = SavedHead & { key: string; scope: string; bytes: number };
+type Manifest = Omit<Record, "events" | "profiles"> & {
+  version: 3;
+  eventRefs: string[];
+  profileRefs: string[];
+};
+type Metadata = Pick<
+  Record,
+  "key" | "scope" | "bytes" | "savedAt" | "channelId"
+>;
+type Payload = { key: string; scope: string; wire: string };
+const encoder = new TextEncoder();
+
+/** Hash the exact JSON wire, including its signature. A digest is a storage key,
+ * never a verification proof; the store still admits every restored event. */
+function encodeHead(head: SavedHead) {
+  const wires = new Map<string, string>();
+  const encode = (values: unknown[]) =>
+    values.map((value) => {
+      const wire = JSON.stringify(value) ?? "null";
+      const digest = bytesToHex(
+        schnorr.utils.taggedHash("buzz-head-wire-v1", encoder.encode(wire)),
+      );
+      wires.set(digest, wire);
+      return digest;
+    });
+  return {
+    eventRefs: encode(head.events),
+    profileRefs: encode(head.profiles),
+    wires,
+  };
+}
 
 export function createHeadPersistence(
   viewer: string,
@@ -47,7 +83,7 @@ export function createHeadPersistence(
     if (closed || typeof indexedDB === "undefined")
       return Promise.reject(new Error("Cache unavailable"));
     opening ??= new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open(DB, 2);
+      const request = indexedDB.open(DB, 3);
       let expired = false;
       const timeout = setTimeout(() => {
         expired = true;
@@ -57,6 +93,31 @@ export function createHeadPersistence(
         for (const name of [STORE, STARTUP])
           if (!request.result.objectStoreNames.contains(name))
             request.result.createObjectStore(name, { keyPath: "key" });
+        // Legacy bodies stay intact. Index construction is native; no JS getAll
+        // migration blocks the first selected head or discards an old cache.
+        const heads = request.transaction?.objectStore(STORE);
+        if (heads && !heads.indexNames.contains("scope"))
+          heads.createIndex("scope", "scope");
+        if (heads && !heads.indexNames.contains(RECENCY))
+          heads.createIndex(RECENCY, [
+            "savedAt",
+            "key",
+            "bytes",
+            "scope",
+            "channelId",
+          ]);
+        const startup = request.transaction?.objectStore(STARTUP);
+        if (startup && !startup.indexNames.contains(RECENCY))
+          startup.createIndex(RECENCY, ["savedAt", "key", "bytes"]);
+        if (!request.result.objectStoreNames.contains(PAYLOADS))
+          request.result.createObjectStore(PAYLOADS, { keyPath: "key" });
+        if (!request.result.objectStoreNames.contains(REFERENCES)) {
+          const references = request.result.createObjectStore(REFERENCES, {
+            keyPath: "key",
+          });
+          references.createIndex("owner", "owner");
+          references.createIndex("payload", "payload");
+        }
       };
       request.onerror = () => {
         clearTimeout(timeout);
@@ -84,13 +145,18 @@ export function createHeadPersistence(
   type Then = <R>(request: IDBRequest<R>, handler: (result: R) => void) => void;
   async function transact<T>(
     mode: IDBTransactionMode,
-    work: (store: IDBObjectStore, done: (value: T) => void, then: Then) => void,
+    work: (
+      store: IDBObjectStore,
+      done: (value: T) => void,
+      then: Then,
+      tx: IDBTransaction,
+    ) => void,
     name = STORE,
   ): Promise<T> {
     const db = await database();
     if (closed) throw new Error("Cache closed");
     return new Promise<T>((resolve, reject) => {
-      const tx = db.transaction(name, mode);
+      const tx = db.transaction([STORE, STARTUP, PAYLOADS, REFERENCES], mode);
       let result: T;
       let ended = false;
       const timeout = setTimeout(() => {
@@ -118,31 +184,208 @@ export function createHeadPersistence(
         clearTimeout(timeout);
         reject(tx.error ?? new Error("Cache transaction aborted"));
       };
-      work(
-        tx.objectStore(name),
-        (value) => {
-          result = value;
-        },
-        (request, handler) => {
-          request.onsuccess = () => {
-            if (ended) return;
-            try {
-              handler(request.result);
-            } catch (error) {
-              // WebKit delivers a queued success after a browser-initiated abort.
-              if (
-                !(
+      const fail = (error: unknown) => {
+        ended = true;
+        clearTimeout(timeout);
+        try {
+          tx.abort();
+        } catch {
+          /* It may already have aborted. */
+        }
+        reject(error);
+      };
+      try {
+        work(
+          tx.objectStore(name),
+          (value) => {
+            result = value;
+          },
+          (request, handler) => {
+            request.onsuccess = () => {
+              if (ended) return;
+              try {
+                handler(request.result);
+              } catch (error) {
+                // WebKit can deliver a queued success after a native abort.
+                if (
                   error instanceof DOMException &&
                   error.name === "TransactionInactiveError"
                 )
-              )
-                throw error;
-              ended = true;
+                  ended = true;
+                else fail(error);
+              }
+            };
+          },
+          tx,
+        );
+      } catch (error) {
+        fail(error);
+      }
+    });
+  }
+  /** Index keys carry only accounting fields, including for untouched v2 rows. */
+  function metadata(
+    store: IDBObjectStore,
+    then: Then,
+    done: (rows: Metadata[]) => void,
+  ) {
+    const rows: Metadata[] = [];
+    const request = store.index(RECENCY).openKeyCursor();
+    const next = (cursor: IDBCursor | null) => {
+      if (!cursor) {
+        // getAll + stable sort used primary-key ascending order for equal dates.
+        rows.sort(
+          (a, b) =>
+            b.savedAt - a.savedAt ||
+            (a.key < b.key ? -1 : a.key > b.key ? 1 : 0),
+        );
+        done(rows);
+        return;
+      }
+      const [savedAt, key, bytes, rowScope, channelId] = cursor.key as [
+        number,
+        string,
+        number,
+        string,
+        string,
+      ];
+      rows.push({ savedAt, key, bytes, scope: rowScope, channelId });
+      cursor.continue();
+    };
+    then(request, next);
+  }
+  function unlink(
+    owner: string,
+    garbage: Set<string>,
+    tx: IDBTransaction,
+    then: Then,
+    done: () => void,
+  ) {
+    const references = tx.objectStore(REFERENCES);
+    then(references.index("owner").getAllKeys(owner), (keys) => {
+      for (const key of keys) {
+        references.delete(key);
+        const payload = (key as string[])[1];
+        if (payload) garbage.add(payload);
+      }
+      done();
+    });
+  }
+  function collect(garbage: Set<string>, tx: IDBTransaction, then: Then) {
+    for (const key of garbage)
+      then(tx.objectStore(REFERENCES).index("payload").count(key), (count) => {
+        if (!count) tx.objectStore(PAYLOADS).delete(key);
+      });
+  }
+  function removeHeads(
+    keys: IDBValidKey[],
+    garbage: Set<string>,
+    tx: IDBTransaction,
+    then: Then,
+    done: () => void,
+  ) {
+    let remaining = keys.length;
+    if (!remaining) {
+      done();
+      return;
+    }
+    for (const key of keys) {
+      tx.objectStore(STORE).delete(key);
+      unlink(`h:${key}`, garbage, tx, then, () => {
+        if (!--remaining) done();
+      });
+    }
+  }
+  function installWires(
+    owner: string,
+    wires: Map<string, string>,
+    tx: IDBTransaction,
+    then: Then,
+    done: () => void,
+  ) {
+    const payloads = tx.objectStore(PAYLOADS);
+    const references = tx.objectStore(REFERENCES);
+    let remaining = wires.size;
+    if (!remaining) {
+      done();
+      return;
+    }
+    for (const [digest, wire] of wires) {
+      const key = `${scope}:${digest}`;
+      const linked = () => {
+        references.put({ key: [owner, key], owner, payload: key });
+        if (!--remaining) done();
+      };
+      // Only read the payload being reused. A fresh valid write must repair
+      // corrupt disk bytes rather than permanently pinning a poisoned hash key.
+      then(payloads.get(key), (existing: Payload | undefined) => {
+        if (existing?.wire !== wire || existing.scope !== scope)
+          then(payloads.put({ key, scope, wire } satisfies Payload), linked);
+        else linked();
+      });
+    }
+  }
+  function decodeHead(
+    row: Record | Manifest,
+    tx: IDBTransaction,
+    then: Then,
+    done: (head: SavedHead | undefined) => void,
+  ) {
+    if (!("version" in row) || row.version !== 3) {
+      done(row as Record);
+      return;
+    }
+    if (!Array.isArray(row.eventRefs) || !Array.isArray(row.profileRefs)) {
+      done(undefined);
+      return;
+    }
+    const refs = [...new Set([...row.eventRefs, ...row.profileRefs])];
+    if (
+      refs.some(
+        (digest) =>
+          typeof digest !== "string" || !/^[a-f0-9]{64}$/.test(digest),
+      )
+    ) {
+      done(undefined);
+      return;
+    }
+    const values = new Map<string, unknown>();
+    let valid = true;
+    const finish = () =>
+      done(
+        valid
+          ? {
+              channelId: row.channelId,
+              savedAt: row.savedAt,
+              events: row.eventRefs.map((key) => values.get(key)),
+              profiles: row.profileRefs.map((key) => values.get(key)),
             }
-          };
+          : undefined,
+      );
+    let remaining = refs.length;
+    if (!remaining) {
+      finish();
+      return;
+    }
+    for (const digest of refs) {
+      then(
+        tx.objectStore(PAYLOADS).get(`${scope}:${digest}`),
+        (payload: Payload | undefined) => {
+          try {
+            if (
+              !payload ||
+              payload.scope !== scope ||
+              typeof payload.wire !== "string"
+            )
+              valid = false;
+            else values.set(digest, JSON.parse(payload.wire));
+          } catch {
+            valid = false;
+          }
+          if (!--remaining) finish();
         },
       );
-    });
+    }
   }
   return {
     readStartup: () =>
@@ -160,7 +403,7 @@ export function createHeadPersistence(
             const bytes = byteSize(data);
             if (bytes <= MAX_BYTES) {
               store.put({ key: scope, data, bytes, savedAt: Date.now() });
-              then(store.getAll(), (rows) => {
+              metadata(store, then, (rows) => {
                 let total = 0;
                 for (const row of rows.sort((a, b) => b.savedAt - a.savedAt)) {
                   total += row.bytes;
@@ -173,82 +416,118 @@ export function createHeadPersistence(
         STARTUP,
       ),
     read: () =>
-      transact("readonly", (store, done, then) =>
-        then(store.getAll(), (rows: Record[]) =>
-          done(
-            rows
+      transact("readonly", (store, done, then, tx) =>
+        then(
+          store.index("scope").getAll(scope),
+          (rows: (Record | Manifest)[]) => {
+            const retained = rows
               .filter(
                 (row) =>
                   row.scope === scope && Date.now() - row.savedAt < MAX_AGE,
               )
               .sort((a, b) => b.savedAt - a.savedAt)
-              .slice(0, MAX_HEADS),
-          ),
+              .slice(0, MAX_HEADS);
+            const heads: (SavedHead | undefined)[] = new Array(retained.length);
+            let remaining = retained.length;
+            if (!remaining) done([]);
+            retained.forEach((row, index) => {
+              decodeHead(row, tx, then, (head) => {
+                heads[index] = head;
+                if (!--remaining)
+                  done(
+                    heads.filter(
+                      (value): value is SavedHead => value !== undefined,
+                    ),
+                  );
+              });
+            });
+          },
         ),
       ),
     write: (head) =>
-      transact("readwrite", (store, done, then) => {
+      transact("readwrite", (store, done, then, tx) => {
         const bytes = byteSize(head);
         if (bytes > MAX_BYTES) {
           done(undefined);
           return;
         }
-        const row: Record = {
-          ...head,
+        const { wires, ...refs } = encodeHead(head);
+        const row: Manifest = {
+          channelId: head.channelId,
+          savedAt: head.savedAt,
+          version: 3,
+          ...refs,
           scope,
           key: `${scope}:${head.channelId}`,
           bytes,
         };
-        store.put(row);
-        then(store.getAll(), (rows: Record[]) => {
-          // Global disk budget across identities; scope is still required for every read.
-          let total = 0,
-            count = 0;
-          for (const entry of rows.sort((a, b) => b.savedAt - a.savedAt)) {
-            total += entry.bytes;
-            count++;
-            if (
-              total > MAX_BYTES ||
-              count > MAX_HEADS ||
-              Date.now() - entry.savedAt >= MAX_AGE
-            )
-              store.delete(entry.key);
-          }
-          done(undefined);
-        });
+        const garbage = new Set<string>();
+        unlink(`h:${row.key}`, garbage, tx, then, () =>
+          installWires(`h:${row.key}`, wires, tx, then, () => {
+            store.put(row);
+            metadata(store, then, (rows) => {
+              // Global disk budget across identities; scope is still required for every read.
+              let total = 0,
+                count = 0;
+              const removed: IDBValidKey[] = [];
+              for (const entry of rows) {
+                total += entry.bytes;
+                count++;
+                if (
+                  total > MAX_BYTES ||
+                  count > MAX_HEADS ||
+                  Date.now() - entry.savedAt >= MAX_AGE
+                )
+                  removed.push(entry.key);
+              }
+              removeHeads(removed, garbage, tx, then, () => {
+                collect(garbage, tx, then);
+                done(undefined);
+              });
+            });
+          }),
+        );
       }),
     remove: (channelId) =>
-      transact("readwrite", (store, done) => {
-        store.delete(`${scope}:${channelId}`);
-        done(undefined);
-      }),
-    retain: (ids) =>
-      transact("readwrite", (store, done, then) => {
-        const allowed = new Set(ids);
-        then(store.getAll(), (rows: Record[]) => {
-          for (const row of rows)
-            if (row.scope === scope && !allowed.has(row.channelId))
-              store.delete(row.key);
+      transact("readwrite", (_store, done, then, tx) => {
+        const garbage = new Set<string>();
+        removeHeads([`${scope}:${channelId}`], garbage, tx, then, () => {
+          collect(garbage, tx, then);
           done(undefined);
         });
       }),
-    clear: async () => {
-      await transact(
-        "readwrite",
-        (store, done) => {
-          store.delete(scope);
-          done(undefined);
-        },
-        STARTUP,
-      );
-      await transact("readwrite", (store, done, then) =>
-        then(store.getAll(), (rows: Record[]) => {
-          for (const row of rows)
-            if (row.scope === scope) store.delete(row.key);
-          done(undefined);
-        }),
-      );
-    },
+    retain: (ids) =>
+      transact("readwrite", (store, done, then, tx) => {
+        const allowed = new Set(ids);
+        metadata(store, then, (rows) => {
+          const garbage = new Set<string>();
+          removeHeads(
+            rows
+              .filter(
+                (row) => row.scope === scope && !allowed.has(row.channelId),
+              )
+              .map((row) => row.key),
+            garbage,
+            tx,
+            then,
+            () => {
+              collect(garbage, tx, then);
+              done(undefined);
+            },
+          );
+        });
+      }),
+    clear: () =>
+      transact("readwrite", (store, done, then, tx) => {
+        tx.objectStore(STARTUP).delete(scope);
+        then(store.index("scope").getAllKeys(scope), (keys) => {
+          const garbage = new Set<string>();
+          removeHeads(keys, garbage, tx, then, () => {
+            collect(garbage, tx, then);
+            done(undefined);
+          });
+        });
+      }),
     close() {
       closed = true;
       void opening?.then(

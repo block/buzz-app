@@ -65,12 +65,16 @@ export function applyApps(
         label: appName(target),
       });
     if (state.status !== "signed-in")
-      return createElement(Login, {
-        session,
-        cancelOnUnmount: false,
-        available: true,
-        active: () => true,
-      });
+      return createElement(
+        "div",
+        { className: "p-panel-inset" },
+        createElement(Login, {
+          session,
+          cancelOnUnmount: false,
+          available: true,
+          active: () => true,
+        }),
+      );
     return createElement(View, {
       url: target,
       builderlab: session.viewerSession(),

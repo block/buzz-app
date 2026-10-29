@@ -224,7 +224,10 @@ const channelOf = (event: RelayEvent) =>
   event.tags.find(([key]) => key === "h")?.[1];
 /** The key of the catch-up stream that `trigger`'s event is in, for a kind 9
  * watch; others have none. */
-const streamOf = (key: AgentKey, { watch, slug, event }: WatchTrigger) =>
+const streamOf = (
+  key: AgentKey,
+  { watch, slug, event }: Pick<WatchTrigger, "watch" | "slug" | "event">,
+) =>
   watch.kinds.length === 1 && watch.kinds[0] === 9
     ? streamKey(
         key,
@@ -1892,6 +1895,13 @@ export class AgentRunners {
     );
     if (!matches.length) return { triggers: [] };
     if (waiting) {
+      // Not for a stream last seen hidden: Attention was off then, so showing
+      // it wakes nothing from before.
+      const hidden = (match: (typeof matches)[number]) => {
+        const key = streamOf(agent.key, { ...match, event });
+        return !!key && !!this.checkpoints[key]?.hidden;
+      };
+      if (matches.every(hidden)) return { triggers: [] };
       this.heldForStartup = true;
       return { triggers: [], held: true };
     }

@@ -9035,6 +9035,8 @@ it("wakes nothing from the time no plugin showed its attention when it is shown 
       attention: false,
       starting: true,
     });
+    second.emit({ events: [posted("live while hidden", start + 20)] });
+    await settle();
     await showAttention(second.ctx, "two");
     vi.setSystemTime((start + 60) * 1000);
     second.history.push(posted("after", start + 30));

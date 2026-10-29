@@ -1,7 +1,8 @@
 // How a pull request watch looks in Agent Attention.
 import { GitPullRequestIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
-import type { AttentionSource } from "../../features/agents/attention-sources";
+import type { SourcePresentation } from "../../features/agents/attention-sources";
+import type { SourceWatch } from "../../features/agents/attention";
 import type { Navigation } from "../../features/navigation/controller";
 import { pullOf } from "./watch";
 
@@ -9,7 +10,7 @@ import { pullOf } from "./watch";
  * feedback wakes agents. */
 export function presentPull(
   navigation: Pick<Navigation, "open">,
-): NonNullable<AttentionSource["present"]> {
+): (watch: SourceWatch, title: string) => SourcePresentation {
   const Authors = () => (
     <Button
       variant="link"

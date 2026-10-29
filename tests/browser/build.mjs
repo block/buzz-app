@@ -1,3 +1,4 @@
+import { markdownWorkerPlugins } from "../../scripts/markdown-worker.ts";
 import { fixtureAliases } from "../relay-config.ts";
 import { build } from "./vite-server.mjs";
 import react from "@vitejs/plugin-react";
@@ -27,6 +28,7 @@ export async function buildApp(
       mode: "production",
       configFile: false,
       envFile: false, // Never read the developer's live identity configuration.
+      worker: { plugins: markdownWorkerPlugins },
       logLevel: "error",
       plugins: [
         react(),

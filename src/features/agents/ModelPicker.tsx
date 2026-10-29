@@ -16,7 +16,6 @@ import {
   GrokLogoIcon,
   ZaiLogoIcon,
   KimiLogoIcon,
-  RobotIcon,
 } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
@@ -62,8 +61,8 @@ export function ModelIcon({ model }: { model: string }) {
                 ? ZaiLogoIcon
                 : /kimi|moonshot/.test(name)
                   ? KimiLogoIcon
-                  : RobotIcon;
-  return <Icon size={20} aria-hidden="true" />;
+                  : null;
+  return Icon ? <Icon size={20} aria-hidden="true" /> : null;
 }
 
 /** The custom-model form. Create hosts it outside its closing menu; Settings

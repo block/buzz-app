@@ -375,14 +375,36 @@ test("independent packed author consumer and native-installed contribution survi
       page.getByRole("button", { name: "Emoji and GIFS", exact: true }),
     ).toHaveCount(1);
     await expect(historic).toHaveCount(1);
+    await page.clock.install();
+    await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
     await draft.fill("reject :party:");
     await draft.press("Enter");
-    // Delivery feedback intentionally waits 10 seconds; leave time for the UI timer.
-    await expect(page.getByRole("button", { name: /Retry/ })).toBeVisible({
-      timeout: 15_000,
-    });
+    await expect
+      .poll(() =>
+        page.evaluate(() => window.conversationFixture.report.published.length),
+      )
+      .toBe(2);
+    const rejectedId = await page.evaluate(
+      () => window.conversationFixture.report.published[1].id,
+    );
+    const retry = page
+      .locator(`[data-message-id="${rejectedId}"]`)
+      .getByRole("button", { name: "Retry", exact: true });
+    // Keep the unrelated retry present so a page-wide /Retry/ cannot silently
+    // pass on an exiting emoji picker before the delivery grace period ends.
+    await page
+      .getByRole("button", { name: "Emoji and GIFS", exact: true })
+      .click();
+    await expect(
+      page.getByRole("button", { name: "Retry emoji" }),
+    ).toBeVisible();
+    await expect(retry).toHaveCount(0);
+    await page.clock.fastForward(10_000);
+    await expect(retry).toBeVisible();
     await page.evaluate(() => window.conversationFixture.replace());
-    await page.getByRole("button", { name: /Retry/ }).click();
+    await page.keyboard.press("Escape");
+    await retry.click();
+    await page.clock.resume();
     await expect
       .poll(() =>
         page.evaluate(() => window.conversationFixture.report.published.length),

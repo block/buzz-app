@@ -106,7 +106,7 @@ it.each([false, true])(
       name: "Harness availability",
     });
     expect(help).toHaveTextContent(
-      "This agent’s signing key is stored on this device. Buzz can’t move that identity to Builderlab yet. To run hosted, create a new Builderlab agent.",
+      "This agent runs on your device. You can’t switch it to Builderlab yet. To run hosted, create a new Builderlab agent.",
     );
     await user.hover(help);
     expect(screen.getByRole("menu")).toBeVisible();
@@ -139,7 +139,7 @@ it.each([false, true])(
     expect(
       await screen.findByRole("dialog", { name: "Harness availability" }),
     ).toBeVisible();
-    expect(hosted).toHaveAccessibleDescription(/signing key/);
+    expect(hosted).toHaveAccessibleDescription(/runs on your device/);
     await user.keyboard("{ArrowUp}");
     expect(
       screen.getByRole("menuitemradio", {
@@ -231,7 +231,7 @@ it("shows local harnesses as unavailable for a hosted agent and keeps help keybo
   );
   expect(group).toHaveAttribute("tabindex", "-1");
   const copy =
-    "Builderlab holds this agent’s signing key. Buzz can’t move that identity to a local harness yet. To run locally, create a new agent.";
+    "This agent runs on Builderlab. You can’t switch it to a local harness yet. To run locally, create a new agent.";
   expect(
     await screen.findByRole("dialog", { name: "Harness availability" }),
   ).toHaveTextContent(copy);

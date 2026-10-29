@@ -410,15 +410,14 @@ function UnavailableHarnessChoices({
         <PopoverDescription id={description}>
           {source?.remote ? (
             <>
-              {source.title} holds this agent’s signing key. Buzz can’t move
-              that identity to a local harness yet. To run locally, create a new
-              agent.
+              This agent runs on {source.title}. You can’t switch it to a local
+              harness yet. To run locally, create a new agent.
             </>
           ) : (
             <>
-              This agent’s signing key is stored on this device. Buzz can’t move
-              that identity to {hosted?.title} yet. To run hosted, create a new{" "}
-              {hosted?.title} agent.
+              This agent runs on your device. You can’t switch it to{" "}
+              {hosted?.title} yet. To run hosted, create a new {hosted?.title}{" "}
+              agent.
             </>
           )}
         </PopoverDescription>

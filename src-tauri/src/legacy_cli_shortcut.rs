@@ -8,7 +8,7 @@ use std::path::Path;
 
 pub(crate) fn remove_stale(local_bin: &Path) -> std::io::Result<()> {
     let link = local_bin.join("buzz");
-    // Anything that is not an absolute link to an app bundle's `buzz` is not old Buzz's.
+    // Old Buzz linked only to the absolute `buzz` inside its own `Buzz.app`.
     let Ok(target) = std::fs::read_link(&link) else {
         return Ok(());
     };
@@ -17,7 +17,7 @@ pub(crate) fn remove_stale(local_bin: &Path) -> std::io::Result<()> {
     };
     if !target.is_absolute()
         || target.file_name() != Some("buzz".as_ref())
-        || !directory.ends_with("Contents/MacOS")
+        || !directory.ends_with("Buzz.app/Contents/MacOS")
     {
         return Ok(());
     }
@@ -42,8 +42,8 @@ mod tests {
     use std::os::unix::fs::symlink;
     use std::path::Path;
 
-    fn bundle(root: &Path, executables: &[&str]) -> std::path::PathBuf {
-        let directory = root.join("Applications/Buzz.app/Contents/MacOS");
+    fn bundle(root: &Path, name: &str, executables: &[&str]) -> std::path::PathBuf {
+        let directory = root.join("Applications").join(name).join("Contents/MacOS");
         fs::create_dir_all(&directory).unwrap();
         for name in executables {
             fs::write(directory.join(name), "").unwrap();
@@ -65,7 +65,7 @@ mod tests {
     #[test]
     fn removes_a_link_that_reaches_the_app_only_by_case() {
         let root = tempfile::tempdir().unwrap();
-        let local_bin = linked(root.path(), &bundle(root.path(), &["Buzz"]));
+        let local_bin = linked(root.path(), &bundle(root.path(), "Buzz.app", &["Buzz"]));
 
         remove_stale(&local_bin).unwrap();
         assert!(!kept(&local_bin));
@@ -75,7 +75,7 @@ mod tests {
     }
 
     #[test]
-    fn removes_a_dangling_link_into_an_app_bundle() {
+    fn removes_a_dangling_link_into_buzz_app() {
         let root = tempfile::tempdir().unwrap();
         let local_bin = linked(
             root.path(),
@@ -91,7 +91,10 @@ mod tests {
     #[test]
     fn keeps_a_link_to_old_buzz_cli() {
         let root = tempfile::tempdir().unwrap();
-        let local_bin = linked(root.path(), &bundle(root.path(), &["buzz-desktop", "buzz"]));
+        let local_bin = linked(
+            root.path(),
+            &bundle(root.path(), "Buzz.app", &["buzz-desktop", "buzz"]),
+        );
 
         remove_stale(&local_bin).unwrap();
         assert!(kept(&local_bin));
@@ -100,7 +103,7 @@ mod tests {
     #[test]
     fn keeps_links_and_files_old_buzz_did_not_make() {
         let root = tempfile::tempdir().unwrap();
-        bundle(root.path(), &["Buzz"]);
+        bundle(root.path(), "Buzz.app", &["Buzz"]);
         let local_bin = linked(root.path(), &root.path().join("tools/buzz"));
         remove_stale(&local_bin).unwrap();
         assert!(kept(&local_bin));
@@ -120,5 +123,23 @@ mod tests {
         assert!(kept(&local_bin));
 
         remove_stale(&root.path().join("missing")).unwrap();
+    }
+
+    #[test]
+    fn keeps_links_into_other_bundles() {
+        let root = tempfile::tempdir().unwrap();
+        let local_bin = linked(root.path(), &bundle(root.path(), "Other.app", &["Buzz"]));
+        remove_stale(&local_bin).unwrap();
+        assert!(kept(&local_bin));
+
+        fs::remove_file(local_bin.join("buzz")).unwrap();
+        symlink(
+            root.path()
+                .join("Applications/Missing.app/Contents/MacOS/buzz"),
+            local_bin.join("buzz"),
+        )
+        .unwrap();
+        remove_stale(&local_bin).unwrap();
+        assert!(kept(&local_bin));
     }
 }

@@ -239,7 +239,7 @@ export function createAppsClient(
       );
       if (updated.app_id !== id || updated.visibility !== visibility)
         throw new Error(
-          `Apps Platform reported ${String(updated.app_id)} as ${String(updated.visibility)}, not ${id} as ${visibility}; read the app's access before retrying`,
+          `Apps Platform reported ${String(updated.app_id)} as ${String(updated.visibility)}, not ${id} as ${visibility}. Ask your owner to check who can open it in Share & manage before retrying`,
         );
       return updated;
     },
@@ -265,7 +265,15 @@ export function createAppsClient(
       });
       const lifecycle = text(current.lifecycle_id);
       const revision = current.community_grant_revision;
-      if (!lifecycle || typeof revision !== "number") throw undeployed;
+      if (
+        !lifecycle ||
+        typeof revision !== "number" ||
+        !Number.isInteger(revision) ||
+        revision < 0
+      )
+        throw new Error(
+          "Apps Platform returned no valid sharing revision for this app; nothing was changed",
+        );
       return call(
         action === "grant" ? "POST" : "DELETE",
         path,

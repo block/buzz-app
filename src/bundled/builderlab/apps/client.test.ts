@@ -333,6 +333,12 @@ it("switches visibility without sending viewers", async () => {
   await expect(client.visibility("demo", "workspace")).rejects.toThrow(
     /reported demo as restricted, not demo as organization/,
   );
+  const other = await setup([
+    json(200, { ok: true, app_id: "other", visibility: "organization" }),
+  ]);
+  await expect(other.client.visibility("demo", "workspace")).rejects.toThrow(
+    /reported other as organization, not demo as organization/,
+  );
 });
 
 it.each([
@@ -366,7 +372,6 @@ it("tells the agent to deploy before sharing an app with no live version", async
         message: "app sharing state changed; read access and retry",
       },
     }),
-    json(200, { community_grant_revision: 0 }),
   ]) {
     const { client, requests } = await setup([response]);
     await expect(
@@ -376,6 +381,38 @@ it("tells the agent to deploy before sharing an app with no live version", async
     );
     expect(requests).toHaveLength(1);
   }
+});
+
+it("changes nothing when the sharing read has no valid revision", async () => {
+  for (const body of [
+    { community_grant_revision: 0 },
+    { lifecycle_id: "life-1" },
+    { lifecycle_id: "life-1", community_grant_revision: -1 },
+    { lifecycle_id: "life-1", community_grant_revision: 1.5 },
+  ]) {
+    const { client, requests } = await setup([json(200, body)]);
+    await expect(
+      client.community("demo", "buzz-alpha", "grant"),
+    ).rejects.toThrow(/no valid sharing revision.*nothing was changed/);
+    expect(requests).toHaveLength(1);
+  }
+});
+
+it("passes a conflicting community change through unchanged", async () => {
+  const { client } = await setup([
+    json(200, { lifecycle_id: "life-1", community_grant_revision: 7 }),
+    json(409, {
+      error: {
+        code: "community_grant_conflict",
+        message: "app sharing state changed; read access and retry",
+      },
+    }),
+  ]);
+  await expect(
+    client.community("demo", "buzz-alpha", "revoke"),
+  ).rejects.toThrow(
+    "Revoking the community failed (HTTP 409): community_grant_conflict: app sharing state changed; read access and retry",
+  );
 });
 
 it("deploys to the sign-in's own tenant", () => {

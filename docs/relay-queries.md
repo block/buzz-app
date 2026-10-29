@@ -810,12 +810,52 @@ preserving the previous singleton replay allowance. A busy channel cannot consum
 another channel's sample. This reduces REQ frames and route-state publications,
 not historical database queries. Aggregate replay status stays conservative:
 500 received events can mark a batch limited but never prove any channel complete.
-EOSE establishes streaming, **not complete historical replay**. Retained channel
+EOSE establishes streaming, **not complete historical replay**. A first connect
+replays the last five minutes. After a drop, a route that had reached EOSE on that
+connection resumes sixteen minutes (960 s) before the connection last heard the
+relay (a silent stall counts from its last frame, not from when it was detected;
+a frame counts as of the recovery tick before the latest, since one handled after
+a sleep may have waited through it), never earlier than the session's first five-minute window. A renewal, pending or
+failed, that still keeps its established source counts as reached for the channels
+it still covers. The margin is the relay's
+900 s `created_at` tolerance plus 60 s: an event stored just after the close can be
+backdated that far. Every route created later, including one rebuilt mid-connection
+when a batch's membership changes, resumes from the same cursor. The cursor is kept
+across reconnects that never re-establish the route and is dropped when a rebuild no
+longer routes that channel. A route that had
+not reached EOSE, and the observer and presence routes, replay as a first connect
+does. A batch resumes from its slowest channel. Retained channel
 windows get finite, signed-bounds head catch-up after establishment/reconnect;
 unopened channels defer it until demand. `live.snapshot().heads` distinguishes
 pending, verified, deferred and failed obligations. Verification covers the
-bounded current head, not all history or every event missed while disconnected.
-Catch-up merges into paged readers without resetting older pages or their cursor.
+bounded current head and its continuity with the rows the reader kept across
+the drop, not all history. Those rows are snapshotted when the stream drops, or
+at a window's head read before the stream is up (a channel opened before the
+first connection or during a disconnect, a window evicted and reopened while
+down, a restored head revalidated before connecting); the rows the
+re-established stream replays before catch-up (its last five minutes) are newer
+than any gap, so a head overlapping only them is not continuity evidence. The
+healthy renewal is unchanged: a head sharing any row with the snapshot verifies
+the window in that one read, and only a channel with more than a page of rows
+across the drop and replay pays pages. When the head has more history and shares
+no row with the snapshot, catch-up pages back from it (up to five pages),
+merging each page as it lands. Past that bound, or when a page fails or the
+stream drops mid-fill, the snapshotted rows it never reached are dropped and the
+window continues from the last page read (verified at the bound, cached after an
+interruption or a drop mid-fill), so a long disconnect never shows a gap as
+history and the next head's overlap is truthful: a fill the drop interrupted
+leaves the settled rows as the next catch-up's snapshot, and a second drop
+before any catch-up completes keeps the first snapshot. Replayed rows, rows
+the stream delivers meanwhile, and older pages read during the disconnect stay
+(the last below the settled range until paging reaches them). Catch-up merges
+into paged readers without resetting older pages or their cursor. An open
+thread view refreshes the same way: it snapshots its replies at the drop, or
+at its first read before the stream is up, and only the refresh after the
+stream is back clears that snapshot (a refresh completing while it is down
+keeps it); the re-read pages past the retained range until it reaches one of
+them, within the thread page bound. Past it, the replies it never reached go
+and the view settles back on the range the reader had, so later refreshes stay
+proportional to it.
 
 Removing a batch member rebuilds only that batch's survivor scope. One established
 source overlaps its zero-replay replacement until EOSE; another removal supersedes
@@ -895,8 +935,12 @@ outcomes retain their exact signed event and are never transparently re-signed.
 
 The relay WebSocket keeps retrying transient disconnects and authentication
 timeouts while its session is active. Its exponential delay starts at 250–500ms
-and caps at 15–30s, with jitter on each attempt. A full minute authenticated resets
-that backoff; a brief successful authentication does not. Authentication rejection
+and caps at 15–30s, with jitter on each attempt. A full minute authenticated
+resets that backoff; a brief successful authentication does not. After a close with
+code 1012 (Service Restart) or 1001 (Going Away), as a rolling deploy sends to every
+client at once, the first attempt instead waits a uniform random time up to 10 s
+(more once repeated bounces have grown the backoff past that), so a fleet the relay
+closed at once does not return at once. Authentication rejection
 or signing failure keeps its error visible and reconnects on a slow timer, 60 s
 doubling to 10 minutes, because access or a locked signer can change later; a
 signer that does not match the viewer stays terminal. A route the relay CLOSED

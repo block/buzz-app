@@ -374,7 +374,8 @@ export function SoloDraft({
         }
         submission={{
           draftKey: `${draftKey}:new-draft`,
-          initialDraft: source?.link,
+          // The space ends the link, so typing after it writes prose.
+          initialDraft: source && `${source.link} `,
           locked: busy,
           disabled: busy || !available,
           attachments: true,

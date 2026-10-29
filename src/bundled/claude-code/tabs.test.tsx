@@ -1282,6 +1282,7 @@ it.each(["Identity", "Settings"])(
       configHistory: () => undefined,
       addedTabs: () => [],
       registerTab: () => {},
+      controlAttention: () => {},
       memberships: () => [],
       subscribe: () => () => {},
     } as unknown as Agents;

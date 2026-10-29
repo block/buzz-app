@@ -2302,6 +2302,7 @@ export function createRelaySession(
         canRefresh: () => !closed && canReadRemote(channelId),
         visible: (events) => events.filter(visibility(events)),
         notify,
+        dropped: streamDropped,
       });
       threads.add(thread);
       thread.receive(recent.entries().map(([, item]) => item.event));
@@ -2845,6 +2846,9 @@ export function createRelaySession(
   // the sidebar page to mount and observe them.
   if (options.warm) void sidebarPreferences.queries.ensure();
   let refreshedGeneration = -1;
+  /** No route has been established since the stream dropped, or ever: a
+   * thread view opened now reads while it is down. */
+  let streamDropped = true;
   const catchupRunning = new Map<string, Catchup>();
   const catchupQueue = new Set<string>();
   const isChannelHead = (filters: readonly ReadFilter[], channelId: string) =>
@@ -3097,7 +3101,9 @@ export function createRelaySession(
         agentLibrary.clear();
         archives.stale();
         workflows.interrupt();
+        streamDropped = true;
         channels.staleHeads();
+        for (const thread of threads) thread.stale();
         unread.stale();
         inboxFeed.stale();
       }
@@ -3134,6 +3140,7 @@ export function createRelaySession(
     },
     established(channelId) {
       if (closed) return;
+      streamDropped = false;
       if (!channelId) {
         if (refreshedGeneration !== liveGeneration) {
           refreshedGeneration = liveGeneration;
@@ -3165,7 +3172,7 @@ export function createRelaySession(
         : channelId) {
         if (!channels.canAccess(id)) continue;
         for (const thread of threads)
-          if (thread.channelId === id) void thread.view.refresh();
+          if (thread.channelId === id) void thread.established();
         const job = {
           generation: liveGeneration,
           state: "pending" as "pending" | "verified" | "deferred" | "error",

@@ -152,23 +152,27 @@ export async function chooseColorMode(page, name) {
   await expect(choice).toHaveText(name);
 }
 
-// Secondary panels enter with a short horizontal transform. Positions compared
-// across separate reads must wait for that motion: each read sees a different
-// offset, so a fixed gap between two controls can appear to overlap.
+// Secondary panels enter with a transform and a parent grid transition.
+// Positions compared across separate reads must wait for both: each read sees
+// a different offset, so a fixed gap between controls can appear to overlap.
 export async function settlePanelMotion(page) {
-  await page.locator("[data-panel-dock]").evaluateAll((docks) =>
-    Promise.allSettled(
-      docks.flatMap((dock) =>
-        dock
-          .getAnimations({ subtree: true })
-          .filter(
-            (animation) =>
-              animation.effect?.getComputedTiming().endTime !== Infinity,
-          )
-          .map((animation) => animation.finished),
+  await page
+    .locator("[data-panel-dock]")
+    .evaluateAll((docks) =>
+      Promise.allSettled(
+        docks.flatMap((dock) =>
+          [
+            ...dock.getAnimations({ subtree: true }),
+            ...dock.parentElement.getAnimations(),
+          ]
+            .filter(
+              (animation) =>
+                animation.effect?.getComputedTiming().endTime !== Infinity,
+            )
+            .map((animation) => animation.finished),
+        ),
       ),
-    ),
-  );
+    );
 }
 
 // Dialogs enter with a short upward transform (overlays.css). Positions

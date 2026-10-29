@@ -125,6 +125,14 @@ const UNFINISHED =
   "Echo isn't deleted yet and may still be in some channels. It stays stopped; Delete it again to finish.";
 
 type Config = { reply: string };
+/** Turns on a plugin that shows Attention, as the Agent Attention UI does. */
+const showAttention = (ctx: Context, revision: string) =>
+  ctx
+    .extend({ pluginOwner: Object.freeze({ id: "buzz.watching", revision }) })
+    .plugin({
+      inject: ["agents"],
+      apply: (scope: Context) => scope.agents.controlAttention(),
+    });
 async function setup({
   storage = memoryStorage() as AgentStore,
   identities = [] as AgentIdentity[],
@@ -144,11 +152,18 @@ async function setup({
   answer = undefined as AgentType<Config>["run"],
   pluginActive = (): boolean => true,
   subscribePlugin = (_listener: () => void) => () => {},
+  /** Whether the Agent Attention UI plugin is on once startup is over. */
+  attention = true,
+  /** Whether another plugin is still starting after setup, so startup is not
+   * over. */
+  starting = false,
 } = {}) {
   const ctx = new Context();
+  let settled = false;
   ctx.provide("pluginStatus", {
     isActive: pluginActive,
     subscribe: subscribePlugin,
+    settled: () => settled,
   });
   const fake = fakeRelay();
   const second = fakeRelay("https://other.example.test");
@@ -255,6 +270,10 @@ async function setup({
     ...(syncedSettings ? { syncedSettings } : {}),
   };
   plugin.agents.register(type);
+  // The Agent Attention UI plugin starts after the type, then startup is over.
+  const watching = attention ? showAttention(ctx, "one") : undefined;
+  await watching;
+  settled = !starting;
   await vi.waitFor(() => expect(service.snapshot().status).toBe("ready"), {
     // Keep fake-clock advancement unchanged in the timer behavior cases.
     interval: vi.isFakeTimers() ? 50 : 1,
@@ -263,6 +282,10 @@ async function setup({
     activity,
     service,
     typesafe,
+    /** Ends startup, as when the last plugin finishes starting. */
+    settleStartup: () => {
+      settled = true;
+    },
     type,
     native,
     storage,
@@ -281,6 +304,7 @@ async function setup({
     history: fake.history,
     authorize,
     plugin,
+    watching,
     presence: fake.presence,
     second,
     select: client.select,
@@ -3422,8 +3446,7 @@ it("wakes on an unmentioned message only in a one-to-one DM it is in", async () 
   emit({
     events: [
       // Not conversation with it: a stream message, an unmentioned group DM,
-      // DMs it is not known to be in, an edit, a reaction, its own message and
-      // a sibling agent's.
+      // DMs it is not known to be in, an edit, a reaction and its own message.
       event("stream"),
       event("group", { tags: [["h", groupDm]] }),
       event("others", { tags: [["h", "dm-others"]] }),
@@ -3431,7 +3454,6 @@ it("wakes on an unmentioned message only in a one-to-one DM it is in", async () 
       inDm("edit", { kind: 40003 }),
       inDm("like", { kind: 7, tags: [["e", "x".repeat(64)]] }),
       inDm("own", { pubkey: bot }),
-      inDm("sibling", { pubkey: sibling, tags: [auth] }),
     ],
   });
   await settle();
@@ -3455,20 +3477,24 @@ it("wakes on an unmentioned message only in a one-to-one DM it is in", async () 
   });
   // The runner keys on the channel, not the author: someone outside the roster
   // is queued too, and the runtime's `fromOwner` is what turns them away.
+  // Another of the owner's agents is heard like anyone else.
   emit({ events: [inDm("stranger", { pubkey: other })] });
-  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(5));
+  emit({ events: [inDm("sibling", { pubkey: sibling, tags: [auth] })] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(6));
   expect(run.mock.calls.map(([{ trigger }]) => trigger)).toMatchObject([
     { type: "mention", event: { id: "hello".padEnd(64, "0") } },
     { type: "mention", event: { id: "more".padEnd(64, "0") } },
     { type: "mention", event: { id: "about".padEnd(64, "0") } },
     { type: "mention", event: { id: "asked".padEnd(64, "0") } },
     { type: "mention", event: { id: "stranger".padEnd(64, "0") } },
+    { type: "mention", event: { id: "sibling".padEnd(64, "0") } },
   ]);
 });
 
-it("wakes on another of the owner's agents only when it names the agent", async () => {
+it("hears another of the owner's agents like anyone else", async () => {
   const { service, run, emit, native } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
   await service.create({ type: "example/echo", name: "Sibling" });
   run.mockImplementation(async ({ agent, trigger }) => {
     if (trigger.type === "timer") return;
@@ -3488,8 +3514,7 @@ it("wakes on another of the owner's agents only when it names the agent", async 
   const echoMessage = (await published(native, 9))[0]?.id;
   const auth = ["auth", viewer, "", "f".repeat(128)];
   // The sibling replies to Echo's message without naming it, and says "deploy",
-  // which Echo's watch matches. Neither wakes Echo: two agents replying to each
-  // other would otherwise never stop.
+  // which Echo's watch matches: the watch wakes Echo.
   emit({
     events: [
       event("reply", {
@@ -3499,8 +3524,11 @@ it("wakes on another of the owner's agents only when it names the agent", async 
       }),
     ],
   });
-  await settle();
-  expect(run).toHaveBeenCalledTimes(1);
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+  expect(run.mock.calls[1]?.[0].trigger).toMatchObject({
+    type: "watch",
+    event: { pubkey: sibling },
+  });
   // Naming Echo wakes it, even in reply to Echo's own message.
   emit({
     events: [
@@ -3510,10 +3538,63 @@ it("wakes on another of the owner's agents only when it names the agent", async 
       }),
     ],
   });
-  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
-  expect(run.mock.calls[1]?.[0].trigger).toMatchObject({
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(3));
+  expect(run.mock.calls[2]?.[0].trigger).toMatchObject({
     type: "mention",
     event: { pubkey: sibling },
+  });
+});
+
+it("hears a reaction to its own message through a watch", async () => {
+  const { service, run, emit, native } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, {
+    attentionEnabled: true,
+    attention: {
+      "watch/likes": {
+        type: "event",
+        interest_id: "default",
+        enabled: true,
+        since: 1,
+        channels: [channel],
+        kinds: [7],
+      },
+    },
+  });
+  run.mockImplementation(async ({ agent, trigger }) => {
+    if (trigger.type === "mention")
+      await agent.publish({ kind: 9, content: "hi" });
+  });
+  emit({
+    events: [
+      event("start", {
+        tags: [
+          ["h", channel],
+          ["p", bot],
+        ],
+      }),
+    ],
+  });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  const echoMessage = (await published(native, 9))[0]?.id;
+  emit({
+    events: [
+      event("like", {
+        kind: 7,
+        content: "+",
+        tags: [
+          ["h", channel],
+          ["e", echoMessage],
+          ["p", bot],
+        ],
+      }),
+    ],
+  });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+  expect(run.mock.calls[1]?.[0].trigger).toMatchObject({
+    type: "watch",
+    slug: "watch/likes",
+    event: { id: "like".padEnd(64, "0") },
   });
 });
 
@@ -7182,6 +7263,31 @@ it("wakes nothing from the time its attention was off", async () => {
   }
 });
 
+it("wakes nothing from the time no plugin showed its attention", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  try {
+    const { service, run, history, recover, watching, ctx } = await setup({
+      identities: [echo],
+    });
+    const start = nowSeconds();
+    await service.save(bot, { attentionEnabled: true, attention: chat });
+    await settle();
+    vi.setSystemTime((start + 5) * 1000);
+    await watching?.dispose();
+    history.push(posted("while hidden", start + 5));
+    await showAttention(ctx, "two");
+    // A reconnect a minute later catches up from when it was shown again.
+    vi.setSystemTime((start + 60) * 1000);
+    history.push(posted("after", start + 30));
+    recover();
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    await settle();
+    expect(heard(run)).toEqual(["after"]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("wakes nothing from the time its watch was off, also when it is turned on after a restart", async () => {
   vi.useFakeTimers({ toFake: ["Date"] });
   try {
@@ -8931,6 +9037,262 @@ it("stops watches and timers while attention is off, keeps every object, and res
   ]);
 });
 
+it("wakes nothing from the time no plugin showed its attention, across a restart", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  try {
+    const start = nowSeconds();
+    const storage = memoryStorage();
+    const first = await setup({ storage, identities: [echo] });
+    await first.service.save(bot, { attentionEnabled: true, attention: chat });
+    await settle();
+    vi.setSystemTime((start + 5) * 1000);
+    await first.watching?.dispose();
+    await settle();
+    first.connect(false);
+    // The app starts again with the plugin still off, then it is turned on.
+    vi.setSystemTime((start + 20) * 1000);
+    const second = await setup({
+      storage,
+      identities: [echo],
+      history: [...first.history, posted("while hidden", start + 10)],
+      attention: false,
+    });
+    await settle();
+    await showAttention(second.ctx, "two");
+    vi.setSystemTime((start + 60) * 1000);
+    second.history.push(posted("after", start + 30));
+    second.recover();
+    await vi.waitFor(() => expect(second.run).toHaveBeenCalledTimes(1));
+    await settle();
+    expect(heard(second.run)).toEqual(["after"]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("wakes nothing from the time no plugin showed its attention when it is shown during startup", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  try {
+    const start = nowSeconds();
+    const storage = memoryStorage();
+    const first = await setup({ storage, identities: [echo] });
+    await first.service.save(bot, { attentionEnabled: true, attention: chat });
+    await settle();
+    vi.setSystemTime((start + 5) * 1000);
+    await first.watching?.dispose();
+    await settle();
+    first.connect(false);
+    // The app starts again with the plugin off, and it is turned on while
+    // another plugin is still starting.
+    vi.setSystemTime((start + 20) * 1000);
+    const second = await setup({
+      storage,
+      identities: [echo],
+      history: [...first.history, posted("while hidden", start + 10)],
+      attention: false,
+      starting: true,
+    });
+    second.emit({ events: [posted("live while hidden", start + 20)] });
+    await settle();
+    await showAttention(second.ctx, "two");
+    vi.setSystemTime((start + 60) * 1000);
+    second.history.push(posted("after", start + 30));
+    second.recover();
+    await vi.waitFor(() => expect(second.run).toHaveBeenCalledTimes(1));
+    await settle();
+    expect(heard(second.run)).toEqual(["after"]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("wakes only a watch with no hidden stream for an event heard while Attention was off", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  try {
+    const start = nowSeconds();
+    const storage = memoryStorage();
+    // A second watch on several kinds has no catch-up stream, so no record
+    // that Attention was hidden.
+    const attention = {
+      ...chat,
+      "watch/any": { ...chat["watch/chat"], kinds: [9, 7] },
+    };
+    const first = await setup({ storage, identities: [echo] });
+    await first.service.save(bot, { attentionEnabled: true, attention });
+    await settle();
+    await first.watching?.dispose();
+    await settle();
+    first.connect(false);
+    vi.setSystemTime((start + 20) * 1000);
+    const second = await setup({
+      storage,
+      identities: [echo],
+      history: first.history,
+      attention: false,
+      starting: true,
+    });
+    second.emit({ events: [posted("live while hidden", start + 20)] });
+    await settle();
+    await showAttention(second.ctx, "two");
+    await vi.waitFor(() => expect(second.run).toHaveBeenCalled());
+    await settle();
+    expect(
+      second.run.mock.calls.map(([{ trigger }]) =>
+        trigger.type === "watch" ? trigger.slug : trigger.type,
+      ),
+    ).toEqual(["watch/any"]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("wakes nothing from the time Attention was hidden after it was shown during startup", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  try {
+    const start = nowSeconds();
+    // Attention is shown while another plugin is still starting, then hidden
+    // and shown again before its socket recovers.
+    const { service, watching, ctx, history, recover, run } = await setup({
+      identities: [echo],
+      starting: true,
+    });
+    await service.save(bot, { attentionEnabled: true, attention: chat });
+    await settle();
+    vi.setSystemTime((start + 5) * 1000);
+    await watching?.dispose();
+    await settle();
+    history.push(posted("while hidden", start + 10));
+    vi.setSystemTime((start + 20) * 1000);
+    await showAttention(ctx, "two");
+    vi.setSystemTime((start + 60) * 1000);
+    history.push(posted("after", start + 30));
+    recover();
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    await settle();
+    expect(heard(run)).toEqual(["after"]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("wakes a watch for an event heard during startup before Attention is shown", async () => {
+  vi.useFakeTimers({ now: 1_000_000 });
+  const { service, run, emit, ctx } = await setup({
+    attention: false,
+    starting: true,
+  });
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
+  emit({ events: [deploy("w")] });
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(run).not.toHaveBeenCalled();
+  await showAttention(ctx, "two");
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(run.mock.calls.map(([{ trigger }]) => trigger.type)).toEqual([
+    "watch",
+  ]);
+});
+
+it("hears an event held during startup after what it missed while closed", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  try {
+    const start = nowSeconds();
+    const storage = memoryStorage();
+    const first = await setup({ storage, identities: [echo] });
+    await first.service.save(bot, { attentionEnabled: true, attention: chat });
+    await settle();
+    first.connect(false);
+    // The app starts again, and a live message arrives before Attention is
+    // shown while another plugin is still starting.
+    vi.setSystemTime((start + 20) * 1000);
+    const second = await setup({
+      storage,
+      identities: [echo],
+      history: [...first.history, posted("missed", start + 10)],
+      attention: false,
+      starting: true,
+    });
+    second.emit({ events: [posted("live", start + 20)] });
+    await settle();
+    await showAttention(second.ctx, "two");
+    await vi.waitFor(() => expect(heard(second.run)).toHaveLength(2));
+    expect(heard(second.run)).toEqual(["missed", "live"]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("wakes nothing for an event heard during startup when it ends without Attention shown", async () => {
+  vi.useFakeTimers({ now: 1_000_000 });
+  const { service, run, emit, ctx, settleStartup } = await setup({
+    attention: false,
+    starting: true,
+  });
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
+  emit({ events: [deploy("w")] });
+  settleStartup();
+  await vi.advanceTimersByTimeAsync(5_000);
+  await showAttention(ctx, "two");
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(run).not.toHaveBeenCalled();
+});
+
+it("turning the saved switch off cancels a startup-held event", async () => {
+  vi.useFakeTimers({ now: 1_000_000 });
+  const { service, run, emit, ctx } = await setup({
+    attention: false,
+    starting: true,
+  });
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
+  emit({ events: [deploy("held-before-off")] });
+  await vi.advanceTimersByTimeAsync(1_000);
+  await service.save(bot, { attentionEnabled: false });
+  await vi.advanceTimersByTimeAsync(1_000);
+  await service.save(bot, { attentionEnabled: true });
+  await showAttention(ctx, "two");
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(run).not.toHaveBeenCalled();
+});
+
+it("turns every agent's attention off while no plugin shows it, keeps its switch, and resumes it", async () => {
+  vi.useFakeTimers({ now: 1_000_000 });
+  const { service, run, emit, watching, ctx } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
+  await watching?.dispose();
+  expect(service.find(bot)?.attentionEnabled).toBe(false);
+  emit({ events: [deploy("w")] });
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(run).not.toHaveBeenCalled();
+  await showAttention(ctx, "two");
+  expect(service.find(bot)?.attentionEnabled).toBe(true);
+  emit({ events: [deploy("w2")] });
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(run.mock.calls.map(([{ trigger }]) => trigger.type)).toEqual([
+    "watch",
+  ]);
+});
+
+it("keeps timers and the Attention tools off while no plugin shows Attention", async () => {
+  vi.useFakeTimers({ now: 1_000_000 });
+  const { service, run, emit, watching, ctx } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true, attention: tick });
+  await watching?.dispose();
+  await vi.advanceTimersByTimeAsync(120_000);
+  expect(run).not.toHaveBeenCalled();
+  const { attention } = await handleOf(run, emit);
+  expect(attention.enabled()).toBe(false);
+  run.mockClear();
+  await showAttention(ctx, "two");
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(run.mock.calls.map(([{ trigger }]) => trigger.type)).toEqual([
+    "timer",
+  ]);
+});
+
 /** What each presence call said, as `status:agents`. */
 const said = (presence: { mock: { calls: unknown[][] } }) =>
   presence.mock.calls.map(
@@ -9221,6 +9583,30 @@ describe("Attention plugin sources", () => {
         "first\nsecond",
       ),
     );
+    await service.save(bot, { attentionEnabled: false });
+  });
+  it("stops sources while no plugin shows Attention, and starts them again", async () => {
+    const { service, plugin, native, watching, ctx } = await sourceFixture();
+    const started = vi.fn();
+    const stopped = vi.fn();
+    plugin.agents.addAttentionSource({
+      id: "command",
+      run: async ({ signal }) => {
+        started();
+        await new Promise<void>((resolve) =>
+          signal.addEventListener("abort", () => resolve(), { once: true }),
+        );
+        stopped();
+      },
+    });
+    await service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
+    await service.save(bot, { attentionEnabled: true, attention: watches });
+    await vi.waitFor(() => expect(started).toHaveBeenCalledTimes(1));
+    await watching?.dispose();
+    await vi.waitFor(() => expect(stopped).toHaveBeenCalledTimes(1));
+    await showAttention(ctx, "two");
+    await vi.waitFor(() => expect(started).toHaveBeenCalledTimes(2));
     await service.save(bot, { attentionEnabled: false });
   });
   it("starts sources only for active plugin revisions and cancels them on deactivation", async () => {

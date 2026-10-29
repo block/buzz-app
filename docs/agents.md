@@ -57,14 +57,15 @@ servers do not support these operations.
 
 ## Agent Attention
 
-Attention itself (the runtime, tools, storage and sources) is core and runs whether or not anything displays it. Each agent's Settings tab holds the device switch. The bundled Agent Attention UI plugin (`buzz.watching`, on by default) adds a Watching tab to the settings of every agent running on this device, whatever its type. The tab explains Attention, then groups that agent's subscriptions by Interest. It shows instructions, listening and delivery destinations, enabled state and available wake history, and suggests asks while the agent has none. Ask an agent to create watches through its Attention tools; pausing or removing one preserves the other saved objects. Empty Interests remain visible and can be deleted after their watches are removed. Turning the plugin off hides the tab only. The former standalone Agent Attention page is gone, so an old link to `buzz.agents/attention` opens as an unavailable destination.
+Attention itself (the runtime, tools, storage and sources) is core, but it runs on this device only while a plugin that shows it is on. The bundled Agent Attention UI plugin (`buzz.watching`, on by default) adds a Watching tab to the settings of every agent running on this device, whatever its type. The tab explains Attention, holds the switch that lets this device run the agent's watches, then groups that agent's subscriptions by Interest. It shows instructions, listening and delivery destinations, enabled state and available wake history, and suggests asks while the agent has none. Ask an agent to create watches through its Attention tools; pausing or removing one preserves the other saved objects. Empty Interests remain visible and can be deleted after their watches are removed. Turning the plugin off hides the tab and turns every agent's Attention off on this device; mentions still wake agents, and each agent keeps its saved switch for when the plugin is back on. The former standalone Agent Attention page is gone, so an old link to `buzz.agents/attention` opens as an unavailable destination.
 
 ## Agent types and providers
 
 Harness plugins register agent types with the Agents service. An agent type owns
 the defaults, migration policy, per-agent settings tabs, model discovery and run
-behavior for its agents. The host adds the device Attention switch to Settings,
-and plugins can add a tab to every local agent with `ctx.agents.registerTab`.
+behavior for its agents. Plugins can add a tab to every local agent with
+`ctx.agents.registerTab`; the Agent Attention UI plugin's Watching tab holds the
+device Attention switch.
 
 Attention is shared by every harness, and a harness has no attention code.
 `src/buzz-mcp/session-tools.ts` exports `BUZZ_SESSION`: the Buzz tools and the
@@ -914,9 +915,13 @@ the agent would share now, and publishes that, still shared.
 
 **Export agent** saves `{name}.agent.png` or, by **File format**,
 `{name}.agent.json` in the `buzz-agent-snapshot` version 1 format that block/buzz
-and earlier Buzz write, without memory. The PNG is the picture redrawn at
-512×512, or a transparent pixel when it is missing or takes over 5 seconds to
-load, with the manifest in a `buzz_agent_snapshot` tEXt chunk. Desktop saves it
+and earlier Buzz write, without memory. The PNG is an 820×1230 agent card
+(`src/features/agents/share-card.ts`): foil around the picture, the name, and
+its harness and model, with the letter tile when the picture is missing, takes
+over 5 seconds to load, or can't be read back, and a transparent pixel when no
+card can be drawn. The manifest is in a `buzz_agent_snapshot` tEXt chunk.
+Exporting the card previews it first and saves the bytes shown; sending the
+agent uploads the same card. Desktop saves it
 to Downloads through `file_download` (`src-tauri/src/relay.rs`), as media is
 saved, since WKWebView cannot save a `blob:` link cleanly, and returns the
 saved path, which the dialog shows. It takes only

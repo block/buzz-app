@@ -12,6 +12,7 @@ import {
   snapshotPng,
 } from "../../features/agents/agent-share";
 import type { Agent, RegisteredAgentType } from "../../features/agents/service";
+import { cardModel, drawShareCard } from "../../features/agents/share-card";
 import {
   type SharedAgent,
   sharedAgents,
@@ -24,6 +25,7 @@ import { bundledPoster } from "../../features/agents/avatar-packs";
 import { avatarSource } from "../../shared/avatar-source";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
+import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
 import {
   MenuNote,
   MenuRadioGroup,
@@ -33,6 +35,7 @@ import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { SplitButton } from "../../shared/design-system/ui/SplitButton";
 import { SwitchPreferenceRow } from "../../shared/design-system/ui/SwitchPreferenceRow";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
+import { AgentCardPreview } from "./AgentCardPreview";
 import styles from "./AgentShareDialog.module.css";
 import {
   AgentShareRecipients,
@@ -51,9 +54,9 @@ const errorText = (error: unknown) => {
 /** How long export waits for the picture, which keeps the dialog open. */
 const ARTWORK_MS = 5000;
 
-/** The picture redrawn as a 512×512 PNG, as earlier Buzz exported it. Missing,
- * unreadable or slow artwork leaves the snapshot without it. */
-async function artwork(picture: string | undefined, session: RelaySession) {
+/** The agent's picture, decoded. Missing, unreadable or slow artwork is left
+ * out. */
+async function loadPicture(picture: string | undefined, session: RelaySession) {
   const source = avatarSource(picture);
   // Pack art is read from the app's own copy; other pictures go through the
   // session's media path.
@@ -72,13 +75,7 @@ async function artwork(picture: string | undefined, session: RelaySession) {
         timer = setTimeout(reject, ARTWORK_MS);
       }),
     ]);
-    const canvas = document.createElement("canvas");
-    canvas.width = canvas.height = 512;
-    canvas.getContext("2d")?.drawImage(image, 0, 0, 512, 512);
-    const blob = await new Promise<Blob | null>((resolve) =>
-      canvas.toBlob(resolve, "image/png"),
-    );
-    return blob ? new Uint8Array(await blob.arrayBuffer()) : undefined;
+    return image;
   } catch {
     // Stops a load still in flight.
     image.src = "";
@@ -86,6 +83,62 @@ async function artwork(picture: string | undefined, session: RelaySession) {
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** The model the agent runs, as its harness names it, including the default
+ * it runs when none is chosen; its summary when the harness can't say. */
+async function modelOf(agent: Agent, type: RegisteredAgentType | undefined) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const found = await Promise.race([
+      type?.models?.(agent),
+      new Promise<undefined>((resolve) => {
+        timer = setTimeout(() => resolve(undefined), ARTWORK_MS);
+      }),
+    ]);
+    const label = found?.models.find(
+      (model) => model.id === found.current,
+    )?.label;
+    if (label) return label;
+  } catch {
+    // Its summary stands in.
+  } finally {
+    clearTimeout(timer);
+  }
+  try {
+    return type?.summary?.(agent) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+/** The agent's card as PNG bytes. A picture whose origin keeps the card from
+ * being read back gives way to the agent's initial; a card that can't be
+ * drawn at all leaves the snapshot without artwork. */
+async function cardArt(
+  agent: Agent,
+  type: RegisteredAgentType | undefined,
+  session: RelaySession,
+) {
+  const [picture, model] = await Promise.all([
+    loadPicture(agent.picture, session),
+    modelOf(agent, type),
+  ]);
+  const harness = type?.title ?? "";
+  for (const art of picture ? [picture, undefined] : [undefined]) {
+    try {
+      const card = await drawShareCard({
+        name: agent.name,
+        harness,
+        model: cardModel(harness, model),
+        picture: art,
+      });
+      return new Uint8Array(await card.arrayBuffer());
+    } catch {
+      // Try without the picture, then give up.
+    }
+  }
+  return undefined;
 }
 
 /** A plain, bounded file name on every desktop, where Windows reserves device
@@ -162,6 +215,11 @@ export function AgentShareDialog({
   const [failure, setFailure] = useState("");
   const [error, setError] = useState("");
   const [format, setFormat] = useState<"png" | "json">("png");
+  // Export shows the card it will save before saving it.
+  const [previewing, setPreviewing] = useState(false);
+  const [card, setCard] = useState<
+    { bytes: Uint8Array<ArrayBuffer>; url: string } | "failed"
+  >();
   const [targets, setTargets] = useState<ShareTarget[]>([]);
   const [query, setQuery] = useState("");
   const search = useRef<HTMLInputElement>(null);
@@ -250,20 +308,68 @@ export function AgentShareDialog({
   const file = async (as: "png" | "json") =>
     definition &&
     (as === "png"
-      ? snapshotPng(definition, await artwork(agent.picture, session))
+      ? snapshotPng(definition, await cardArt(agent, type, session))
       : new Blob([snapshotJson(definition)], { type: "application/json" }));
-  const save = async () => {
+  // biome-ignore lint/correctness/useExhaustiveDependencies: A changed agent or picture is drawn again.
+  useEffect(() => setCard(undefined), [current, agent.picture]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Drawn once per agent and picture, not again whenever the agent's record re-renders.
+  useEffect(() => {
+    if (!previewing || card) return;
+    let live = true;
+    void cardArt(agent, type, session).then((bytes) => {
+      if (!live) return;
+      setCard(
+        bytes
+          ? {
+              bytes,
+              url: URL.createObjectURL(
+                new Blob([bytes], { type: "image/png" }),
+              ),
+            }
+          : "failed",
+      );
+    });
+    return () => {
+      live = false;
+    };
+  }, [previewing, card, current, agent.picture, session]);
+  useEffect(
+    () => () => {
+      if (card && card !== "failed") URL.revokeObjectURL(card.url);
+    },
+    [card],
+  );
+  const backButton = useRef<HTMLButtonElement>(null);
+  const saveButton = useRef<HTMLButtonElement>(null);
+  const preview = (open: boolean) => {
+    setPreviewing(open);
+    setError("");
+    // Save waits for the card, so Back holds focus until it is drawn.
+    requestAnimationFrame(() => (open ? backButton : search).current?.focus());
+  };
+  const ready = !!card && card !== "failed";
+  useEffect(() => {
+    if (ready && document.activeElement === backButton.current)
+      saveButton.current?.focus();
+  }, [ready]);
+  const save = async (as: "png" | "json") => {
     if (pending || !definition) return;
     setPending("export");
     setError("");
     try {
-      const snapshot = await file(format);
+      // The card saved is the one shown.
+      // A card that couldn't be drawn still saves the agent, without artwork.
+      const snapshot =
+        as === "png"
+          ? card && snapshotPng(definition, ready ? card.bytes : undefined)
+          : await file(as);
       if (!snapshot) return;
-      const path = await saveFile(snapshot, fileName(agent.name, format));
+      const path = await saveFile(snapshot, fileName(agent.name, as));
       notify(
-        `${format === "png" ? "Saved an agent card for" : "Saved"} ${agent.name}${path ? ` to ${path}` : ""}.`,
+        `${as === "png" ? "Saved an agent card for" : "Saved"} ${agent.name}${path ? ` to ${path}` : ""}.`,
         "success",
       );
+      if (as === "png") preview(false);
     } catch (reason) {
       setError(`Couldn’t export ${agent.name}. ${message(reason)}`);
     } finally {
@@ -373,49 +479,86 @@ export function AgentShareDialog({
       open
       headerGap="compact"
       footerGap="compact"
-      title={`Share ${agent.name}`}
-      description="Everyone gets their own copy. Later changes won’t sync."
-      height="stable"
+      title={previewing ? `Export ${agent.name}` : `Share ${agent.name}`}
+      description={
+        previewing
+          ? `Anyone can add ${agent.name} to Buzz with this card. Instructions and settings come along. Memories and chats stay with you.`
+          : "Everyone gets their own copy. Later changes won’t sync."
+      }
+      // Sharing keeps a steady frame for its results. The preview is centred
+      // and only as wide as the card needs, giving it the height instead; the
+      // card is sized to fit whole inside.
+      size={previewing ? "compact" : "default"}
+      height={previewing ? "stable-tall" : "stable"}
       bodyLayout="flex"
       initialFocus={search}
       preventClose={busy}
+      step={
+        previewing
+          ? { key: "export", scale: 0.95 }
+          : { key: "share", scale: 1.05 }
+      }
       onOpenChange={(open) => {
-        if (!open) onClose();
+        // Dismissing the preview goes back to sharing.
+        if (!open) previewing ? preview(false) : onClose();
       }}
       leadingActions={
-        <SplitButton
-          aria-label={`Export ${agent.name} as ${format === "png" ? "an agent card" : "a JSON file"}`}
-          menuLabel="Choose an export format"
-          loading={pending === "export"}
-          disabled={busy || !definition}
-          onClick={() => void save()}
-          menu={
-            <>
-              <MenuNote>
-                An agent card is an image that holds the agent’s setup, so
-                anyone can add it to Buzz.
-              </MenuNote>
-              <MenuRadioGroup
-                value={format}
-                onValueChange={(value: string) =>
-                  setFormat(value as "png" | "json")
-                }
-              >
-                <MenuRadioItem value="png" closeOnClick>
-                  Agent card
-                </MenuRadioItem>
-                <MenuRadioItem value="json" closeOnClick>
-                  JSON file
-                </MenuRadioItem>
-              </MenuRadioGroup>
-            </>
-          }
-        >
-          {format === "png" ? "Export agent card" : "Export JSON"}
-        </SplitButton>
+        !previewing && (
+          <SplitButton
+            aria-label={`Export ${agent.name} as ${format === "png" ? "an agent card" : "a JSON file"}`}
+            menuLabel="Choose an export format"
+            loading={pending === "export"}
+            disabled={busy || !definition}
+            onClick={() =>
+              format === "png" ? preview(true) : void save(format)
+            }
+            menu={
+              <>
+                <MenuNote>
+                  An agent card is an image that holds the agent’s setup, so
+                  anyone can add it to Buzz.
+                </MenuNote>
+                <MenuRadioGroup
+                  value={format}
+                  onValueChange={(value: string) =>
+                    setFormat(value as "png" | "json")
+                  }
+                >
+                  <MenuRadioItem value="png" closeOnClick>
+                    Agent card
+                  </MenuRadioItem>
+                  <MenuRadioItem value="json" closeOnClick>
+                    JSON file
+                  </MenuRadioItem>
+                </MenuRadioGroup>
+              </>
+            }
+          >
+            {format === "png" ? "Export agent card" : "Export JSON"}
+          </SplitButton>
+        )
       }
       actions={
-        targets.length ? (
+        previewing ? (
+          <>
+            <Button
+              ref={backButton}
+              disabled={busy}
+              onClick={() => preview(false)}
+            >
+              Back
+            </Button>
+            <Button
+              ref={saveButton}
+              variant="prominent"
+              loading={pending === "export"}
+              disabled={busy || !card || !definition}
+              onClick={() => void save("png")}
+            >
+              Save card
+            </Button>
+          </>
+        ) : targets.length ? (
           <Button
             ref={primary}
             variant="prominent"
@@ -438,80 +581,128 @@ export function AgentShareDialog({
         )
       }
     >
-      <div className={styles.layout}>
-        {refused && (
-          <p role="alert" className="m-0 text-body-sm text-danger">
-            {agent.name} can’t be shared. {refused}
-          </p>
-        )}
-        <AgentShareRecipients
-          session={session}
-          query={query}
-          chosen={targets}
-          disabled={busy || !definition}
-          inputRef={search}
-          onQueryChange={setQuery}
-          onChange={(next) => {
-            setTargets(next);
-            setError("");
-          }}
-        />
-        {error && (
-          <p role="alert" className="m-0 text-body-sm text-danger">
-            {error}
-          </p>
-        )}
-        <div className="grid gap-2">
-          <SettingsGroup>
-            <SwitchPreferenceRow
-              label={
-                listed ? "Published to Marketplace" : "Publish to Marketplace"
-              }
-              description={
-                unread
-                  ? "Couldn’t check the Marketplace."
-                  : head === null
-                    ? "Checking the Marketplace…"
-                    : listing !== undefined
-                      ? listing
-                        ? "Publishing…"
-                        : "Removing…"
-                      : stale
-                        ? "Your latest changes aren’t in the Marketplace yet."
-                        : "Anyone in this community can add a copy, instructions included. Memories and chats stay with you."
-              }
-              checked={listing ?? wanted ?? listed}
-              disabled={
-                head === null || unread || busy || (!listed && !definition)
-              }
-              onCheckedChange={(on) => {
-                setWanted(on);
-                setFailure("");
-              }}
+      {previewing ? (
+        <div className={styles.preview}>
+          <LoadingRegion
+            pending={!card}
+            label="Drawing the card…"
+            feedback={
+              // A save can still fail after a card couldn’t be drawn, and an
+              // agent can stop being shareable while previewed; say each.
+              refused || card === "failed" || error ? (
+                <div className="grid gap-1">
+                  {refused && (
+                    <p role="alert" className="m-0 text-body-sm text-danger">
+                      {agent.name} can’t be shared. {refused}
+                    </p>
+                  )}
+                  {card === "failed" && (
+                    <p role="alert" className="m-0 text-body-sm text-danger">
+                      Couldn’t draw the card. Saving still keeps the agent’s
+                      setup.{" "}
+                      <Button
+                        size="sm"
+                        onClick={() => {
+                          // Try again leaves while the card is drawn again.
+                          backButton.current?.focus();
+                          setCard(undefined);
+                        }}
+                      >
+                        Try again
+                      </Button>
+                    </p>
+                  )}
+                  {error && (
+                    <p role="alert" className="m-0 text-body-sm text-danger">
+                      {error}
+                    </p>
+                  )}
+                </div>
+              ) : undefined
+            }
+          >
+            <AgentCardPreview
+              src={ready ? card.url : undefined}
+              alt={`${agent.name}’s agent card`}
             />
-          </SettingsGroup>
-          {failure && (
+          </LoadingRegion>
+        </div>
+      ) : (
+        <div className={styles.layout}>
+          {refused && (
             <p role="alert" className="m-0 text-body-sm text-danger">
-              {failure}
+              {agent.name} can’t be shared. {refused}
             </p>
           )}
-          {unread && (
-            <Button size="sm" onClick={() => setUnread(false)}>
-              Try again
-            </Button>
+          <AgentShareRecipients
+            session={session}
+            query={query}
+            chosen={targets}
+            disabled={busy || !definition}
+            inputRef={search}
+            onQueryChange={setQuery}
+            onChange={(next) => {
+              setTargets(next);
+              setError("");
+            }}
+          />
+          {error && (
+            <p role="alert" className="m-0 text-body-sm text-danger">
+              {error}
+            </p>
           )}
-          {stale && (wanted ?? listed) && (
-            <Button
-              size="sm"
-              loading={pending === "update"}
-              disabled={busy || !definition}
-              onClick={() => void share(true, "update")}
-            >
-              Update Marketplace
-            </Button>
-          )}
+          <div className="grid gap-2">
+            <SettingsGroup>
+              <SwitchPreferenceRow
+                label={
+                  listed ? "Published to Marketplace" : "Publish to Marketplace"
+                }
+                description={
+                  unread
+                    ? "Couldn’t check the Marketplace."
+                    : head === null
+                      ? "Checking the Marketplace…"
+                      : listing !== undefined
+                        ? listing
+                          ? "Publishing…"
+                          : "Removing…"
+                        : stale
+                          ? "Your latest changes aren’t in the Marketplace yet."
+                          : "Anyone in this community can add a copy, instructions included. Memories and chats stay with you."
+                }
+                checked={listing ?? wanted ?? listed}
+                disabled={
+                  head === null || unread || busy || (!listed && !definition)
+                }
+                onCheckedChange={(on) => {
+                  setWanted(on);
+                  setFailure("");
+                }}
+              />
+            </SettingsGroup>
+            {failure && (
+              <p role="alert" className="m-0 text-body-sm text-danger">
+                {failure}
+              </p>
+            )}
+            {unread && (
+              <Button size="sm" onClick={() => setUnread(false)}>
+                Try again
+              </Button>
+            )}
+            {stale && (wanted ?? listed) && (
+              <Button
+                size="sm"
+                loading={pending === "update"}
+                disabled={busy || !definition}
+                onClick={() => void share(true, "update")}
+              >
+                Update Marketplace
+              </Button>
+            )}
+          </div>
         </div>
-      </div>
+      )}
     </Dialog>
   );
 }

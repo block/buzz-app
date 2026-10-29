@@ -77,6 +77,7 @@ import { createUserStatuses } from "./user-status";
 import { createEmojiDirectory } from "./emoji-directory";
 import { EMOJI_SET_KIND } from "./emoji";
 import { createProfileDirectory } from "./profile-directory";
+import { rowProfileIds } from "./membership";
 import { createChannelStore, type ChannelStoreOptions } from "./store";
 import { MessageClock } from "./message-order";
 import {
@@ -399,6 +400,16 @@ export function createRelaySession(
       // The relay reapplies access to a new sync; nothing held survives.
       for (const view of artifactSyncs) view.restart();
       commit();
+      // After commit: a store commit may clear profiles again, aborting earlier reads.
+      channels.refetchWindowProfiles();
+      for (const thread of threads)
+        if (canAccess(thread.channelId)) {
+          const { root, replies } = thread.view.snapshot();
+          const rows = root ? [root, ...replies] : replies;
+          void profiles
+            .ensure(rows.flatMap(rowProfileIds), "background")
+            .catch(() => {});
+        }
       unread.purge();
       inboxFeed.purge();
     } finally {

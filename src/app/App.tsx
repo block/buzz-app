@@ -100,6 +100,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
     undefined,
   );
   const discardSettings = useRef(false);
+  const settingsEditorScope = useRef<string | undefined>(undefined);
   useLayoutEffect(() => {
     if (!settingsUnsaved) return;
     return services.navigationHost.guardDeparture((next, decide) => {
@@ -323,6 +324,13 @@ function ConnectedApp({ services }: { services: AppServices }) {
     (!route.state.ingress && !!route.failure) ||
     route.state.status === "failed";
   const settingsBlocked = settingsUnavailable || route.waiting;
+  const settingsScope =
+    route.target.kind === "settings"
+      ? JSON.stringify(route.target.scope)
+      : undefined;
+  // Preserve Settings' completion/focus state across admitted scope changes.
+  // A blocked destination may retain only its own scope's dirty editor.
+  if (settings && !settingsBlocked) settingsEditorScope.current = settingsScope;
   const destinationFailure = (
     <div role="alert" className="notice">
       <h1>This destination couldn’t open</h1>
@@ -529,13 +537,10 @@ function ConnectedApp({ services }: { services: AppServices }) {
               ) : route.waiting ? (
                 <p role="status">Opening destination…</p>
               ) : null}
-              {(!settingsBlocked || settingsUnsaved) && (
+              {(!settingsBlocked ||
+                (settingsUnsaved &&
+                  settingsEditorScope.current === settingsScope)) && (
                 <div
-                  key={
-                    route.target.kind === "settings"
-                      ? JSON.stringify(route.target.scope)
-                      : undefined
-                  }
                   className="h-full"
                   hidden={settingsBlocked}
                   inert={settingsBlocked}

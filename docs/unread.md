@@ -99,7 +99,11 @@ timeline and the thread being read, without reading unopened threads' replies.
   before. Retained evidence only grows between resets, so a bounded read adds what is
   newer to what the earlier reads already returned. Cache clears, access changes,
   capacity overflow and an explicit `refresh()` forget the marks and read every batch
-  in full; a batch that returned nothing is always read in full. Edits and deletions
+  in full. A repair still waiting for its answer when they do installs no mark, and
+  after an overflow it also leaves the error and its refresh offer in place; `refresh()`
+  waits for it, then reads in full. An empty read installs no mark: a batch that has
+  never returned a row is read in full, and an existing mark stays, since its window
+  held nothing newer. Edits and deletions
   of messages older than the window arrive through live traffic, as they do for the
   unbounded read.
   Querying every ID does not mean observing every channel: busy channels can still

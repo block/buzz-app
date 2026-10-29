@@ -1185,3 +1185,92 @@ it("a bounded read that comes back at its limit drops the bound for the next rea
   await vi.waitFor(() => expect(evidenceReads(h)).toHaveLength(4));
   expect(evidenceReads(h)[3]?.since).toBeUndefined();
 });
+
+/** Holds the next repair read until released; later reads answer at once. */
+function holdNextRepair(h: ReturnType<typeof setup>) {
+  const gate = deferred();
+  const answer = h.query.getMockImplementation();
+  assert(answer);
+  let held = false;
+  h.query.mockImplementation(async (filters, signal) => {
+    const filter = filters[0];
+    if (
+      !held &&
+      filter?.kinds?.includes(9) &&
+      filter["#h"] &&
+      !filter.authors &&
+      !filter.ids
+    ) {
+      held = true;
+      await gate.promise;
+    }
+    return answer(filters, signal);
+  });
+  return gate.release;
+}
+
+it("a bounded repair answered after a live overflow restores no mark and keeps the overflow error", async () => {
+  const h = setup();
+  const recent = nowSeconds() - 1000;
+  const row = message(h.peer, "other", "recent", recent);
+  serve(h, () => [row]);
+  await discovered(h);
+  await h.session.unread.ensure();
+  const release = holdNextRepair(h);
+  h.reconnect();
+  await vi.waitFor(() => expect(evidenceReads(h)).toHaveLength(2));
+  expect(evidenceReads(h)[1]?.since).toBe(recent - 960);
+  const running = h.session.unread.ensure();
+  // Live traffic overflows the evidence while the bounded read is out.
+  h.receive(
+    Array.from({ length: 19 }, (_, i) =>
+      message(h.peer, "other", "x".repeat(450000), i + 11),
+    ),
+  );
+  const overflowed = {
+    observedCount: null,
+    freshness: "stale",
+    error: "Unread observation capacity reached; refresh available",
+  };
+  expect(h.snapshot()).toMatchObject(overflowed);
+  release();
+  await running;
+  expect(h.snapshot()).toMatchObject(overflowed);
+  // The next repair reads in full: the late answer did not restore its mark.
+  h.reconnect();
+  await vi.waitFor(() => expect(evidenceReads(h)).toHaveLength(3));
+  expect(evidenceReads(h)[2]?.since).toBeUndefined();
+});
+
+it("an explicit refresh during a bounded repair waits for it, then reads in full", async () => {
+  const h = setup();
+  const recent = nowSeconds() - 1000;
+  const row = message(h.peer, "other", "recent", recent);
+  serve(h, () => [row]);
+  let markers = 0;
+  const answer = h.query.getMockImplementation();
+  assert(answer);
+  h.query.mockImplementation(async (filters, signal) => {
+    const result = await answer(filters, signal);
+    if (filters[0]?.kinds?.includes(30078)) markers++;
+    return result;
+  });
+  await discovered(h);
+  await h.session.unread.ensure();
+  const release = holdNextRepair(h);
+  h.reconnect();
+  await vi.waitFor(() => expect(evidenceReads(h)).toHaveLength(2));
+  expect(evidenceReads(h)[1]?.since).toBe(recent - 960);
+  const answered = markers;
+  const refreshed = h.session.unread.refresh();
+  // The refresh has synced markers and reached the running repair, still held.
+  await vi.waitFor(() => expect(markers).toBe(answered + 1));
+  release();
+  await refreshed;
+  expect(evidenceReads(h)).toHaveLength(3);
+  expect(evidenceReads(h)[2]?.since).toBeUndefined();
+  expect(h.snapshot()).toMatchObject({
+    observedCount: 1,
+    freshness: "observed",
+  });
+});

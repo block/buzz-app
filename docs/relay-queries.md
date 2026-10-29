@@ -809,7 +809,9 @@ EOSE establishes streaming, **not complete historical replay**. A first connect
 replays the last five minutes. After a drop, a route that had reached EOSE on that
 connection resumes sixteen minutes (960 s) before the connection last heard the
 relay (a silent stall counts from its last frame, not from when it was detected),
-never earlier than the session's first five-minute window. The margin is the relay's
+never earlier than the session's first five-minute window. A renewal, pending or
+failed, that still keeps its established source counts as reached for the channels
+it still covers. The margin is the relay's
 900 s `created_at` tolerance plus 60 s: an event stored just after the close can be
 backdated that far. The cursor is kept across reconnects that never re-establish the
 route and is dropped when a rebuild no longer routes that channel. A route that had

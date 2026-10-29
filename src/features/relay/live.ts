@@ -751,11 +751,25 @@ export function subscribeRelayTraffic(
   }
   function clearSocket() {
     if (authenticated) {
-      // EOSE on this connection is the only evidence a route was live.
+      // EOSE on this connection is the only evidence a route was live. A
+      // renewal, pending or failed, still streams through the established wire
+      // it kept, but only for the channels the route still covers.
       const liveUntil = Math.floor(heardAt / 1000);
-      for (const route of routes.values())
-        if (route.status === "live")
-          for (const key of cursorKeys(route)) cursors.set(key, { liveUntil });
+      for (const route of routes.values()) {
+        const { previous } = route;
+        const source =
+          route.status === "live"
+            ? route
+            : previous?.status === "live" &&
+                previous.wire &&
+                wires.get(previous.wire) === previous
+              ? previous
+              : undefined;
+        if (!source) continue;
+        const kept = new Set(cursorKeys(source));
+        for (const key of cursorKeys(route))
+          if (kept.has(key)) cursors.set(key, { liveUntil });
+      }
     }
     generation++;
     authenticated = false;

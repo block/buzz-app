@@ -241,8 +241,14 @@ export function createUnread({
   // Per repair batch (its channel IDs): the newest created_at a complete read of
   // it returned. `events` only grows until a reset below, so a later repair needs
   // just what is newer; every path that empties or shrinks `events` clears this,
-  // and the next repair of every batch reads unbounded again.
+  // and the next repair of every batch reads unbounded again. A repair whose
+  // read spans a reset (`resets` moved) must not answer for the cleared evidence.
   const repaired = new Map<string, number>();
+  let resets = 0;
+  function forget() {
+    repaired.clear();
+    resets++;
+  }
   const known = new Set<string>();
   const listeners = new Map<string, Set<() => void>>();
   const snapshots = new Map<string, UnreadSnapshot>();
@@ -1209,7 +1215,7 @@ export function createUnread({
   function purge() {
     // A revoke/regrant must not revive a transaction accepted under the old access epoch.
     epoch++;
-    repaired.clear();
+    forget();
     for (const channelId of channelReadGenerations.keys())
       if (!allowed(channelId)) channelReadGenerations.delete(channelId);
     for (const [key, lookup] of lookups)
@@ -1611,9 +1617,10 @@ export function createUnread({
     repairAgain = false;
     inboxLoading = true;
     const generation = epoch;
+    const reset = resets;
     refresh = (async () => {
       await reads.ensure();
-      if (closed || generation !== epoch) return;
+      if (closed || generation !== epoch || reset !== resets) return;
       const ids = channels
         .list()
         .channels.filter(
@@ -1653,7 +1660,9 @@ export function createUnread({
             ],
             { signal, priority },
           );
-          if (closed || generation !== epoch) return;
+          // An overflow or refresh while this read was out discarded what the
+          // mark stands for: an overflow waits for refresh, a refresh reads again.
+          if (closed || generation !== epoch || reset !== resets) return;
           if (!accept(result) || closed || generation !== epoch) return;
           // The mark is anchored on what the relay returned, not the clock: a
           // skewed clock or a future-dated event cannot move the window past
@@ -1676,7 +1685,7 @@ export function createUnread({
         publish();
         void findHomes(generation);
       } catch (cause) {
-        if (closed || generation !== epoch) return;
+        if (closed || generation !== epoch || reset !== resets) return;
         freshness = "stale";
         error =
           cause instanceof Error ? cause.message : "Unread observation failed";
@@ -1818,7 +1827,7 @@ export function createUnread({
       const size = new TextEncoder().encode(JSON.stringify(event)).byteLength;
       if (events.size >= 4096 || bytes + size > 8 * 1024 * 1024) {
         events.clear();
-        repaired.clear();
+        forget();
         known.clear();
         bytes = 0;
         error = "Unread observation capacity reached; refresh available";
@@ -1992,9 +2001,12 @@ export function createUnread({
     },
     ensure: () => refresh ?? (requested ? Promise.resolve() : repair()),
     refresh: async () => {
+      // An explicit refresh re-observes everything. The reset fences a running
+      // repair, which the refresh waits out rather than joins.
+      forget();
+      const running = refresh;
       await reads.refresh("foreground");
-      // An explicit refresh re-observes everything.
-      repaired.clear();
+      await running?.catch(() => undefined);
       await repair();
     },
     revision: reads.revision,
@@ -2540,7 +2552,7 @@ export function createUnread({
       repairAgain = false;
       indexed = false;
       events.clear();
-      repaired.clear();
+      forget();
       known.clear();
       forcedMessages.clear();
       entered.clear();

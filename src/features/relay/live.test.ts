@@ -1458,6 +1458,121 @@ it("resumes from when a silent socket last answered, not from when it was replac
   }
 });
 
+/** A joined batch of "a" and "b", established, then renewed by the recovery tick. */
+async function renewing(h: ReturnType<typeof setup>) {
+  age();
+  h.owner.update(["a", "b"], ["a", "b"]);
+  await h.first.auth();
+  await vi.advanceTimersByTimeAsync(750);
+  for (const [, id] of h.first.requests()) await h.first.receive(["EOSE", id]);
+  const heard = Math.floor(Date.now() / 1000);
+  await vi.advanceTimersByTimeAsync(60_000);
+  const renewal = h.first
+    .requests()
+    .find((r) => scopeOf(r).includes("a") && filtersOf(r)[0]?.limit === 0);
+  assert.exists(renewal);
+  return { heard, renewal };
+}
+const batchSince = (socket: Socket, id: string) =>
+  sinceOf(socket, (r) => scopeOf(r).includes(id));
+async function rebuilt(h: ReturnType<typeof setup>) {
+  await vi.advanceTimersByTimeAsync(1000);
+  const next = h.sockets[1];
+  assert.exists(next);
+  await next.auth();
+  await vi.advanceTimersByTimeAsync(750);
+  return next;
+}
+
+it("resumes a joined batch closed during its renewal from the source it kept", async () => {
+  vi.useFakeTimers({ now: 1_700_000_000_000 });
+  const h = setup([], undefined, () => 0.5);
+  try {
+    const { heard } = await renewing(h);
+    h.first.close();
+    expect(batchSince(await rebuilt(h), "a")).toEqual([
+      heard - 960,
+      heard - 960,
+    ]);
+  } finally {
+    h.owner.dispose();
+  }
+});
+
+it("resumes a joined batch whose renewal failed but kept its source", async () => {
+  vi.useFakeTimers({ now: 1_700_000_000_000 });
+  const h = setup([], undefined, () => 0.5);
+  try {
+    const { renewal } = await renewing(h);
+    await h.first.receive(["CLOSED", renewal[1], "error: busy"]);
+    const heard = Math.floor(Date.now() / 1000);
+    h.first.close();
+    expect(batchSince(await rebuilt(h), "a")).toEqual([
+      heard - 960,
+      heard - 960,
+    ]);
+  } finally {
+    h.owner.dispose();
+  }
+});
+
+it("resumes a silent joined batch from its last frame, though its renewal never answered", async () => {
+  vi.useFakeTimers({ now: 1_700_000_000_000 });
+  const h = setup([], undefined, () => 0.5);
+  try {
+    age();
+    h.owner.update(["a", "b"], ["a", "b"]);
+    await h.first.auth();
+    await vi.advanceTimersByTimeAsync(750);
+    for (const [, id] of h.first.requests())
+      await h.first.receive(["EOSE", id]);
+    const heard = Math.floor(Date.now() / 1000);
+    h.first.silent = true;
+    for (let i = 0; i < 300 && h.sockets.length < 2; i++)
+      await vi.advanceTimersByTimeAsync(1000);
+    // The recovery tick renewed the batch before the stall was found.
+    expect(
+      h.first
+        .requests()
+        .some((r) => scopeOf(r).includes("a") && filtersOf(r)[0]?.limit === 0),
+    ).toBe(true);
+    const next = h.sockets[1];
+    assert.exists(next);
+    await next.auth();
+    await vi.advanceTimersByTimeAsync(750);
+    expect(batchSince(next, "a")).toEqual([heard - 960, heard - 960]);
+  } finally {
+    h.owner.dispose();
+  }
+});
+
+it("gives a renewal's kept source no cursor for a channel the renewal dropped", async () => {
+  vi.useFakeTimers({ now: 1_700_000_000_000 });
+  const h = setup([], undefined, () => 0.5);
+  try {
+    age();
+    h.owner.update(["a", "b"], ["a", "b"]);
+    await h.first.auth();
+    await vi.advanceTimersByTimeAsync(750);
+    for (const [, id] of h.first.requests())
+      await h.first.receive(["EOSE", id]);
+    const heard = Math.floor(Date.now() / 1000);
+    // "b" leaves: the survivor renewal for "a" keeps the source of both.
+    h.owner.update(["a"], ["a"]);
+    await vi.advanceTimersByTimeAsync(0);
+    h.first.close();
+    // "b" is back before the rebuild, on its own route, without having
+    // streamed since it left.
+    h.owner.update(["a", "b"], ["a"]);
+    const next = await rebuilt(h);
+    expect(batchSince(next, "a")).toEqual([heard - 960]);
+    const [since] = batchSince(next, "b");
+    expect(since).toBeGreaterThanOrEqual(heard - 300);
+  } finally {
+    h.owner.dispose();
+  }
+});
+
 it("keeps a route's cursor through a connection that never established it", async () => {
   vi.useFakeTimers({ now: 1_700_000_000_000 });
   const h = setup(["a"], undefined, () => 0.5);

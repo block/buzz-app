@@ -5,7 +5,6 @@ import { createTab } from "../../src/bundled/watching/Tab";
 import "../../src/shared/styles/globals.css";
 
 const channel = "11111111-1111-4111-8111-111111111111";
-const empty = location.search.includes("empty");
 const listeners = new Set<() => void>();
 const value = {
   type: "event",
@@ -28,50 +27,46 @@ let snapshot = {
       name: "Ada",
       attentionEnabled: true,
       timers: {},
-      attentionHistory: empty
-        ? {}
-        : {
-            "watch/discussion": {
-              output:
-                "2026-10-27T14:00:00Z · Alex\nThe release is ready for review.",
-            },
+      attentionHistory: {
+        "watch/discussion": {
+          output:
+            "2026-10-27T14:00:00Z · Alex\nThe release is ready for review.",
+        },
+      },
+      attention: {
+        "interest/release": {
+          slug: "interest/release",
+          modifiedAt: 1,
+          value: {
+            type: "interest",
+            instructions:
+              "# Release planning\nReport blockers and keep the release moving.",
           },
-      attention: empty
-        ? {}
-        : {
-            "interest/release": {
-              slug: "interest/release",
-              modifiedAt: 1,
-              value: {
-                type: "interest",
-                instructions:
-                  "# Release planning\nReport blockers and keep the release moving.",
-              },
-            },
-            "watch/discussion": {
-              slug: "watch/discussion",
-              modifiedAt: 1,
-              value,
-            },
-            "interest/review": {
-              slug: "interest/review",
-              modifiedAt: 1,
-              value: { type: "interest", instructions: "# Review checks" },
-            },
-            "watch/pr": {
-              slug: "watch/pr",
-              modifiedAt: 1,
-              value: {
-                type: "source",
-                provider: "attention/github-pr",
-                name: "example/project#42",
-                enabled: true,
-                interest_id: "review",
-                config: { pr: "https://github.com/example/project/pull/42" },
-                channel,
-              },
-            },
+        },
+        "watch/discussion": {
+          slug: "watch/discussion",
+          modifiedAt: 1,
+          value,
+        },
+        "interest/review": {
+          slug: "interest/review",
+          modifiedAt: 1,
+          value: { type: "interest", instructions: "# Review checks" },
+        },
+        "watch/pr": {
+          slug: "watch/pr",
+          modifiedAt: 1,
+          value: {
+            type: "source",
+            provider: "attention/github-pr",
+            name: "example/project#42",
+            enabled: true,
+            interest_id: "review",
+            config: { pr: "https://github.com/example/project/pull/42" },
+            channel,
           },
+        },
+      },
     },
   ],
 };

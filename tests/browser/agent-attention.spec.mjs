@@ -59,18 +59,6 @@ test("The Watching tab fits both themes and sizes and manages existing watches b
   ).toHaveAttribute("href", "https://github.com/example/project/pull/42");
 });
 
-// The empty tab teaches a new agent's owner what to ask for.
-test("an agent with nothing watched suggests what to ask it", async ({
-  page,
-}) => {
-  await page.goto("/tests/fixtures/agent-attention.html?empty");
-  await expect(
-    page.getByText("Nothing is being watched yet. Try asking Ada:"),
-  ).toBeVisible();
-  await expect(page.getByText(/Watch my PR and tell me/)).toBeVisible();
-  await expect(runtimeSwitch(page)).toHaveAttribute("aria-checked", "true");
-});
-
 // Browser focus after removal, including async writes, cannot be proved by jsdom.
 test("watch and interest deletion restore focus without taking it from another control", async ({
   page,

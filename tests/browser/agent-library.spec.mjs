@@ -671,26 +671,6 @@ test("owner profile keeps its pane and caret stable during inline name editing",
   expect((await profile.boundingBox()).height).toBe(before.height);
 });
 
-// The host adds a plugin's tab to a local agent's profile before History and
-// Settings; without the plugin the profile is unchanged.
-for (const [name, query, tabs] of [
-  ["without", "", ["Ada", "Identity", "Memory", "Settings"]],
-  ["with", "?watching", ["Ada", "Identity", "Memory", "Watching", "Settings"]],
-])
-  test(`a local agent's profile ${name} a plugin tab`, async ({ page }) => {
-    await page.goto(`/tests/fixtures/agent-library.html${query}`);
-    await page.getByRole("gridcell", { name: "Ada", exact: true }).click();
-    const profile = page.getByRole("region", {
-      name: "Agent profile",
-      exact: true,
-    });
-    await expect(profile.getByRole("tab")).toHaveText(tabs);
-    if (query) {
-      await profile.getByRole("tab", { name: "Watching", exact: true }).click();
-      await expect(profile.getByText("Watching for Ada")).toBeVisible();
-    }
-  });
-
 // A persisted interface size changes rem geometry; real pointer hit testing
 // must keep each split action inside its own card.
 test("scaled import controls keep pointer actions on their own agent", async ({

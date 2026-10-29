@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { AgentSaveButton } from "../../../features/agents/AgentSaveButton";
 import { ModelFamilyMenu } from "../../../features/agents/ModelFamilyMenu";
+import { CaretDownIcon } from "../../../shared/design-system/icons";
 import { Button } from "../../../shared/design-system/ui/Button";
 import { Field } from "../../../shared/design-system/ui/Field";
 import { PreferenceRow } from "../../../shared/design-system/ui/PreferenceRow";
@@ -167,7 +168,25 @@ export function ModelSettings({
         </p>
       )}
       <SettingsGroup>
-        <PreferenceRow title="Harness" trailing="Builderlab" />
+        <PreferenceRow
+          title="Harness"
+          trailing={
+            <div className="buzz-select" data-variant="compact">
+              <Button
+                variant="outline"
+                shape="control"
+                size="sm"
+                disabled
+                focusableWhenDisabled
+                aria-label="Harness: Builderlab"
+                title="This agent can’t currently be moved out of its Builderlab instance."
+              >
+                Builderlab
+                <CaretDownIcon size={14} aria-hidden="true" />
+              </Button>
+            </div>
+          }
+        />
         {!!models?.length && (
           <>
             <ModelFamilyMenu

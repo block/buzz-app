@@ -128,6 +128,35 @@ async function choose(label: string, value: string) {
     await user.click(await screen.findByRole("option", { name: value }));
   }
 }
+it("explains the disabled harness selector on hover and keyboard focus without offering migration", async () => {
+  const h = await fixture();
+  const user = userEvent.setup();
+  const harness = screen.getByRole("button", { name: "Harness: Builderlab" });
+  expect(harness).toHaveAttribute("aria-disabled", "true");
+  await user.hover(harness);
+  expect(await screen.findByRole("tooltip")).toHaveTextContent(
+    "This agent can’t currently be moved out of its Builderlab instance.",
+  );
+  await user.unhover(harness);
+  await waitFor(() => expect(screen.queryByRole("tooltip")).toBeNull());
+  await user.tab();
+  expect(harness).toHaveFocus();
+  expect(await screen.findByRole("tooltip")).toHaveTextContent(
+    "Builderlab instance",
+  );
+  expect(harness).toHaveAccessibleDescription(
+    "This agent can’t currently be moved out of its Builderlab instance.",
+  );
+  await user.keyboard("{Enter}");
+  await user.click(harness);
+  expect(screen.queryByRole("menu")).toBeNull();
+  expect(
+    h.request.mock.calls.filter(([request]) =>
+      request.url.endsWith("/update-agent"),
+    ),
+  ).toHaveLength(0);
+});
+
 it("requires an explicit supported pair, clears effort when the model changes, and reads back server validity", async () => {
   const h = await fixture({ instructions: "Saved instructions." });
   expect(screen.getByRole("button", { name: /^Model:/ })).toHaveTextContent(

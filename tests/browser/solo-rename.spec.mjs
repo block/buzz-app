@@ -492,8 +492,10 @@ test("composable rows retain narrow rename and immediate keyboard/touch activati
     await expect(regionRow(page, alpha)).toBeFocused();
   }
   // The ordinary row and source row share the same pending mouse selection.
-  await page.clock.install();
-  await page.clock.pauseAt(new Date());
+  // Anchor both calls to the same clock: runner/browser wall clocks can differ.
+  const clockStart = Date.now();
+  await page.clock.install({ time: clockStart });
+  await page.clock.pauseAt(clockStart + 60_000);
   await regionRow(page, alpha).click();
   await row(page, beta).click();
   await page.clock.runFor(500);

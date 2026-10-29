@@ -239,6 +239,8 @@ it("shows local harnesses as unavailable for a hosted agent and keeps help keybo
   expect(next).toHaveAccessibleDescription(copy);
   const help = screen.getByRole("dialog", { name: "Harness availability" });
   expect(group).toHaveAttribute("aria-controls", help.id);
+  expect(group).toHaveAttribute("aria-haspopup", "false");
+  expect(group).not.toHaveAttribute("aria-expanded");
   expect(local).not.toHaveAttribute("aria-haspopup", "dialog");
   expect(next).not.toHaveAttribute("aria-haspopup", "dialog");
   await user.keyboard("{ArrowDown}");

@@ -142,10 +142,9 @@ function TypeField({
   selected: string;
   onSelect(type: { key: string; config: unknown } | undefined): void;
 }) {
-  const available = types;
-  const others = available.filter((item) => item.key !== agent.type);
+  const others = types.filter((item) => item.key !== agent.type);
   const unavailable = others.filter((item) => type?.remote || item.remote);
-  const selectedType = available.find((item) => item.key === selected) ?? type;
+  const selectedType = types.find((item) => item.key === selected) ?? type;
   const TypeIcon = selectedType?.icon;
   const [error, setError] = useState("");
   const providerButton = useRef<HTMLButtonElement>(null);
@@ -162,7 +161,7 @@ function TypeField({
       onSelect(undefined);
       return;
     }
-    const target = available.find((item) => item.key === next);
+    const target = types.find((item) => item.key === next);
     if (!target || target.remote) return;
     setError("");
     try {
@@ -230,7 +229,7 @@ function TypeField({
                     value={selected}
                     onValueChange={(next) => choose(String(next))}
                   >
-                    {available
+                    {types
                       .filter((item) => !unavailable.includes(item))
                       .map((item) => {
                         const Icon = item.icon;
@@ -334,6 +333,7 @@ function UnavailableHarnessChoices({
   const trigger = useRef<HTMLDivElement>(null);
   const description = useId();
   const [open, setOpen] = useState(false);
+  // Builderlab is currently the only registered remote harness.
   const hosted = types[0];
   return (
     <PopoverRoot
@@ -360,6 +360,8 @@ function UnavailableHarnessChoices({
         nativeButton={false}
         role="group"
         aria-label="Unavailable harnesses"
+        aria-haspopup={false}
+        aria-expanded={undefined}
         tabIndex={-1}
         onFocus={(event) => {
           if (

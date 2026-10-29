@@ -9218,6 +9218,24 @@ it("turns every agent's attention off while no plugin shows it, keeps its switch
   ]);
 });
 
+it("keeps timers and the Attention tools off while no plugin shows Attention", async () => {
+  vi.useFakeTimers({ now: 1_000_000 });
+  const { service, run, emit, watching, ctx } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true, attention: tick });
+  await watching?.dispose();
+  await vi.advanceTimersByTimeAsync(120_000);
+  expect(run).not.toHaveBeenCalled();
+  const { attention } = await handleOf(run, emit);
+  expect(attention.enabled()).toBe(false);
+  run.mockClear();
+  await showAttention(ctx, "two");
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(run.mock.calls.map(([{ trigger }]) => trigger.type)).toEqual([
+    "timer",
+  ]);
+});
+
 /** What each presence call said, as `status:agents`. */
 const said = (presence: { mock: { calls: unknown[][] } }) =>
   presence.mock.calls.map(
@@ -9508,6 +9526,30 @@ describe("Attention plugin sources", () => {
         "first\nsecond",
       ),
     );
+    await service.save(bot, { attentionEnabled: false });
+  });
+  it("stops sources while no plugin shows Attention, and starts them again", async () => {
+    const { service, plugin, native, watching, ctx } = await sourceFixture();
+    const started = vi.fn();
+    const stopped = vi.fn();
+    plugin.agents.addAttentionSource({
+      id: "command",
+      run: async ({ signal }) => {
+        started();
+        await new Promise<void>((resolve) =>
+          signal.addEventListener("abort", () => resolve(), { once: true }),
+        );
+        stopped();
+      },
+    });
+    await service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
+    await service.save(bot, { attentionEnabled: true, attention: watches });
+    await vi.waitFor(() => expect(started).toHaveBeenCalledTimes(1));
+    await watching?.dispose();
+    await vi.waitFor(() => expect(stopped).toHaveBeenCalledTimes(1));
+    await showAttention(ctx, "two");
+    await vi.waitFor(() => expect(started).toHaveBeenCalledTimes(2));
     await service.save(bot, { attentionEnabled: false });
   });
   it("starts sources only for active plugin revisions and cancels them on deactivation", async () => {

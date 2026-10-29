@@ -1167,6 +1167,9 @@ export function createRelaySession(
   }
   /** Guest admission is rechecked for signed retries and after async preparation. */
   function validateChannelWrite(event: Pick<EventData, "kind" | "tags">) {
+    // Membership commands have their own relay authorization, including a
+    // Guest removing an owned agent. They are not channel contributions.
+    if ([9000, 9001, 9022].includes(event.kind)) return;
     const id = event.tags.find(([key]) => key === "h")?.[1];
     if (!id || channels.queries.get?.(id)?.viewerRole !== "guest") return;
     // The relay permits a verified owner to edit/delete their agent's messages.

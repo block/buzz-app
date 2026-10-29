@@ -6,6 +6,7 @@ import { matchesEvent } from "./projection";
 import { keypair, message, signed } from "./testing";
 import type { RelayEvent } from "./events";
 import type { AttachmentUpload } from "./attachments";
+import { removeAgentFromChannels } from "../agents/relay-removal";
 
 const id = "11111111-1111-4111-8111-111111111111";
 const owners: ReturnType<typeof createRelaySession>[] = [];
@@ -25,11 +26,13 @@ async function setup(
 ) {
   const viewer = keypair(),
     relay = keypair(),
-    peer = keypair();
+    peer = keypair(),
+    agent = keypair();
   let role = initialRole,
     member = true,
     joinRole = "guest",
-    time = 1700000000;
+    time = 1700000000,
+    agentJoined = true;
   const own = message(viewer, id, "Earlier message", time);
   const root = message(peer, id, "Announcement", time);
   const events = () => [
@@ -62,6 +65,7 @@ async function setup(
         ["d", id],
         ["p", peer.pubkey, "", "owner"],
         ...(member ? [["p", viewer.pubkey, "", role]] : []),
+        ...(agentJoined ? [["p", agent.pubkey, "", "bot"]] : []),
       ],
     }),
     own,
@@ -71,6 +75,13 @@ async function setup(
   const publish = vi.fn(async (event: RelayEvent) => {
     if (event.kind === 9022) {
       member = false;
+      time++;
+    }
+    if (
+      event.kind === 9001 &&
+      event.tags.some(([key, value]) => key === "p" && value === agent.pubkey)
+    ) {
+      agentJoined = false;
       time++;
     }
   });
@@ -106,6 +117,7 @@ async function setup(
     root,
     viewer,
     peer,
+    agent,
     async role(next: string) {
       role = next;
       time++;
@@ -138,7 +150,7 @@ it("rejects a guest's direct message operations before signing and restores them
   await vi.waitFor(() => expect(h.publish).toHaveBeenCalledOnce());
 });
 
-it.each([9, 7, 40003, 5, 40100, 9000, 30620, 46020])(
+it.each([9, 7, 40003, 5, 40100, 30620, 46020])(
   "blocks kind %s sent directly through a guest's outbox",
   async (kind) => {
     const h = await setup("guest");
@@ -169,6 +181,46 @@ it.each([9, 7, 40003, 5, 40100, 9000, 30620, 46020])(
     expect(h.publish).not.toHaveBeenCalled();
   },
 );
+
+it.each([9000, 9022])(
+  "leaves Guest membership command %s authorization to the relay",
+  async (kind) => {
+    const h = await setup("guest");
+    const outbox = h.session.outbox;
+    assert.exists(outbox);
+    const eventId = outbox.send({
+      kind,
+      content: "",
+      tags: [["h", id], ...(kind === 9022 ? [] : [["p", h.peer.pubkey]])],
+    });
+    await vi.waitFor(() =>
+      expect(
+        outbox.snapshot().find((entry) => entry.event.id === eventId),
+      ).toMatchObject({ delivery: "accepted" }),
+    );
+    expect(h.sign).toHaveBeenCalledOnce();
+    expect(h.publish).toHaveBeenCalledOnce();
+    expect(h.publish.mock.calls[0]?.[0]).toMatchObject({ kind });
+  },
+);
+
+it("lets a Guest remove an agent through the existing removal workflow and confirm its fresh roster", async () => {
+  const h = await setup("guest");
+  await removeAgentFromChannels(
+    h.session,
+    h.agent.pubkey,
+    new AbortController().signal,
+  );
+  expect(h.sign).toHaveBeenCalledOnce();
+  expect(h.publish.mock.calls[0]?.[0]).toMatchObject({
+    kind: 9001,
+    tags: expect.arrayContaining([
+      ["h", id],
+      ["p", h.agent.pubkey],
+    ]),
+  });
+  expect(h.session.outbox?.snapshot()).toHaveLength(0);
+});
 
 it("blocks a message demoted while signing without publishing it", async () => {
   const h = await setup();

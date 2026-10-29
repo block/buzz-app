@@ -125,7 +125,7 @@ describe("the tool list", () => {
       /^<attention>\nHandle the work/,
     );
     expect(turnNote({ attention: agent({ enabled: false }).api })).toMatch(
-      /^<attention>\nYour owner has attention off/,
+      /^<attention>\nAttention is off on this device/,
     );
     // A client whose host keeps no attention gets no note.
     expect(turnNote({})).toBeUndefined();

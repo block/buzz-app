@@ -370,7 +370,7 @@ export function AgentDetails({
             {!type && (
               <p className="m-0 mb-4 text-body-sm text-secondary">
                 Enable the plugin that provides this agent's type to change its
-                settings. Its attention can still be edited.
+                settings.
               </p>
             )}
             <AgentTabs

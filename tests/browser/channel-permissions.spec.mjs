@@ -22,7 +22,7 @@ const permalink = (app, messageId) =>
     }),
   )}`;
 
-async function readPermalink(page, app, messageId) {
+async function readPermalink(page, app, messageId, joined = false) {
   await page.goto(permalink(app, messageId));
   const thread = page.getByRole("region", {
     name: "Thread messages",
@@ -55,6 +55,32 @@ async function readPermalink(page, app, messageId) {
   await expect(
     page.getByRole("button", { name: /^(React|Add reaction)/ }),
   ).toHaveCount(0);
+  const readAction = page.getByRole("menuitem", {
+    name: /^(Mark read|Mark unread)$/,
+  });
+  const followAction = page.getByRole("menuitem", {
+    name: /^(Follow thread|Unfollow thread)$/,
+  });
+  if (joined) {
+    await expect(readAction).toBeVisible();
+    const wasFollowing = (await followAction.textContent()).includes(
+      "Unfollow",
+    );
+    await followAction.click();
+    await hoverMessage(row);
+    await row
+      .getByRole("button", { name: "More message actions", exact: true })
+      .click();
+    await expect(
+      page.getByRole("menuitem", {
+        name: wasFollowing ? "Follow thread" : "Unfollow thread",
+        exact: true,
+      }),
+    ).toBeVisible();
+  } else {
+    await expect(readAction).toHaveCount(0);
+    await expect(followAction).toHaveCount(0);
+  }
   await page.keyboard.press("Escape");
 }
 
@@ -99,7 +125,7 @@ test.describe("Guest-default permalinks", () => {
     page,
     app,
   }) => {
-    await readPermalink(page, app, app.exact.target.id);
+    await readPermalink(page, app, app.exact.target.id, true);
     await page
       .getByRole("button", { name: "Channel actions", exact: true })
       .click();

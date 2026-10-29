@@ -328,6 +328,28 @@ it("does not advance delta progress or clear its error on a current read", async
   expect(h.collection.completeRefresh).not.toHaveBeenCalled();
   expect(h.collection.checkpoint).not.toHaveBeenCalled();
 });
+it.each(["delta", "current"] as const)(
+  "reports unsupported scope on the first %s failure and preserves progress",
+  async (operation) => {
+    const h = setup();
+    const error = new ArtifactIncrementalError(
+      "incremental_unsupported_scope",
+      "Unsupported scope",
+    );
+    h.reader[operation].mockRejectedValue(error);
+    await expect(
+      operation === "delta" ? h.delta() : h.current([id]),
+    ).rejects.toBe(error);
+    expect(h.reader[operation]).toHaveBeenCalledOnce();
+    expect(h.collection.setRefreshError).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ generation: "generation" }),
+      "Could not refresh saved data",
+      h.controller.signal,
+    );
+    expect(h.collection.completeRefresh).not.toHaveBeenCalled();
+    expect(await h.collection.checkpoint()).toBe(old);
+  },
+);
 it("splits a current batch on capacity and rejects an oversized single result", async () => {
   const h = setup();
   h.reader.current.mockImplementation(async (_query, ids) => {

@@ -202,7 +202,11 @@ async function reportFailure(
 ) {
   const permanent =
     error instanceof ArtifactIncrementalError &&
-    ["incremental_limit", "incremental_invalid"].includes(error.code);
+    [
+      "incremental_limit",
+      "incremental_invalid",
+      "incremental_unsupported_scope",
+    ].includes(error.code);
   if (!signal.aborted && (requested || permanent))
     await collection.setRefreshError(
       refresh,

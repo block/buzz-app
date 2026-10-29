@@ -102,6 +102,50 @@ test("cold Settings provider waits for its plugin activation", async ({
   }
 });
 
+// Native Forward must retain the actual editor node while its destination fails;
+// owner tests cover pending activation and Save/Discard decision ordering.
+test("native Settings traversal retains a dirty Profile behind an unavailable provider", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const profile = { version: 1, kind: "settings", section: "profile" };
+  expect(
+    await page.evaluate(
+      (target) => window.fixtureNavigation.open(target),
+      profile,
+    ),
+  ).toEqual({ status: "opened" });
+  expect(
+    await page.evaluate((target) => window.fixtureNavigation.open(target), {
+      ...profile,
+      section: "agents",
+      provider: "missing/provider",
+    }),
+  ).toEqual({ status: "failed", reason: "unavailable" });
+  await page.goBack();
+  const name = page
+    .getByRole("dialog", { name: "Settings", exact: true })
+    .getByRole("textbox", { name: "Display name", exact: true });
+  await expect(name).toBeEnabled();
+  await name.fill("Keep this Profile draft");
+  await name.evaluate((element) => {
+    window.retainedDraftEditor = element;
+  });
+  await page.goForward();
+  await expect(
+    page.getByText("This destination couldn’t open", { exact: true }),
+  ).toBeVisible();
+  expect(
+    await page.evaluate(() => window.retainedDraftEditor.isConnected),
+  ).toBe(true);
+  await page.goBack();
+  await expect(name).toHaveValue("Keep this Profile draft");
+  expect(
+    await name.evaluate((element) => element === window.retainedDraftEditor),
+  ).toBe(true);
+});
+
 test("Messages default resolution returns opened to cold and warm callers without an extra visit", async ({
   page,
   app,

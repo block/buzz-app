@@ -903,6 +903,43 @@ it.each(["pending", "unavailable"] as const)(
   },
 );
 
+it("drops the retained draft after an accepted departure to another account's unavailable Settings", async () => {
+  const user = await setup();
+  if (!services) throw new Error("Missing app services");
+  const current = services;
+  await act(async () => {
+    void current.navigation.open({
+      version: 1,
+      kind: "settings",
+      section: "profile",
+    });
+  });
+  const name = await screen.findByRole("textbox", { name: "Display name" });
+  await waitFor(() => expect(name).toHaveValue("Community name"));
+  await user.clear(name);
+  await user.type(name, "Discard this draft");
+  act(() => {
+    void current.navigation.open({
+      version: 1,
+      kind: "settings",
+      section: "profile",
+      scope: { viewer: "a".repeat(64), communityOrigin: origin },
+    });
+  });
+  const prompt = await screen.findByRole("alertdialog", {
+    name: "Discard changes?",
+  });
+  await user.click(
+    within(prompt).getByRole("button", { name: "Discard changes" }),
+  );
+  await screen.findByText("This destination couldn’t open");
+  expect(name).not.toBeInTheDocument();
+  act(() => current.navigation.back());
+  expect(
+    await screen.findByRole("textbox", { name: "Display name" }),
+  ).toHaveValue("Community name");
+});
+
 it.each(["Close", "Back"] as const)(
   "clears the %s discard prompt when the pending save is sent",
   async (exit) => {

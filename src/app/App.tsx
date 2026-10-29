@@ -531,6 +531,11 @@ function ConnectedApp({ services }: { services: AppServices }) {
               ) : null}
               {(!settingsBlocked || settingsUnsaved) && (
                 <div
+                  key={
+                    route.target.kind === "settings"
+                      ? JSON.stringify(route.target.scope)
+                      : undefined
+                  }
                   className="h-full"
                   hidden={settingsBlocked}
                   inert={settingsBlocked}

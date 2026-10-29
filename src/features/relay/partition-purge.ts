@@ -2,7 +2,7 @@ import { purgeOutboxStorage } from "./outbox-storage";
 import { relayPartition } from "./partition";
 import { createHeadPersistence } from "./persistence";
 import { purgeReadStateStorage } from "./read-state-storage";
-import { purgeThreadParticipation } from "./thread-participation";
+import { purgeUnreadStorage } from "./unread-storage";
 
 /** Clears the relay's durable stores for one partition, each through the
  * caller's `attempt` so an unavailable store neither keeps the others nor goes
@@ -25,8 +25,6 @@ export async function purgeRelayPartition(
     }
   });
   await attempt("read state", () => purgeReadStateStorage(partition));
-  await attempt("thread participation", () =>
-    purgeThreadParticipation(partition),
-  );
+  await attempt("unread state", () => purgeUnreadStorage(partition));
   await attempt("outbox", () => purgeOutboxStorage(partition));
 }

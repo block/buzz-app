@@ -138,7 +138,13 @@ export type SoloRegionHandle = Readonly<{
   label: string;
   openDraft(
     binding: SoloRegionBinding,
-    input: Readonly<{ mode: "task"; seed?: Readonly<{ primary?: string }> }>,
+    input: Readonly<{
+      mode: "task";
+      seed?: Readonly<
+        | { primary?: string; project?: never }
+        | { primary?: never; project: Readonly<{ id: string; label: string }> }
+      >;
+    }>,
   ): void;
   createChat(binding: SoloRegionBinding, input: SoloChatInput): Promise<void>;
   classify(binding: SoloRegionBinding, channelId: string): Promise<void>;

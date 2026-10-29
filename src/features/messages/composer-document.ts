@@ -8,7 +8,10 @@ import { bulletList, orderedList, listItem } from "prosemirror-schema-list";
 import { composerLinkUrl } from "./composer-link";
 import { scanMarkdown } from "../relay/message-content";
 import type { MentionDraft, DraftRecipient } from "./mention-draft";
-import type { ComposerResource } from "../conversation/contracts";
+import type {
+  ComposerResource,
+  ComposerToken,
+} from "../conversation/contracts";
 import { composerToken } from "./composer-token";
 
 /** The document owns editable marks and exact source tokens. Unimplemented
@@ -198,6 +201,21 @@ export function markdownRanges(text: string) {
     pending.push(...(node.children ?? []));
   }
   return { literal };
+}
+
+/** Seed a selected identity through the same semantic atom as editor insertion. */
+export function composerTokenDraft(
+  value: ComposerToken,
+): MentionDraft | undefined {
+  const token = composerToken(value);
+  if (!token) return;
+  const paragraph = composerSchema.nodes.paragraph.create(null, [
+    composerSchema.nodes.token.create({ source: token.label, semantic: token }),
+    composerSchema.text(" "),
+  ]);
+  return projectComposerDocument(
+    composerSchema.nodes.doc.create(null, paragraph),
+  ).draft;
 }
 
 /** Draft text stays the editing/completion coordinate space. Formatting metadata

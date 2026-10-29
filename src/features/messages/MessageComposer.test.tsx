@@ -81,6 +81,7 @@ import { ResourcePicker } from "../../bundled/repos/ResourcePicker";
 import { entityHref } from "../repos/routes";
 import type { Entity, RepositoryHome } from "../repos/destinations";
 import { HELPFUL_HINT_REST_MS } from "../../shared/design-system/ui/hoverIntent";
+import { composerTokenDraft } from "./composer-document";
 
 composerDOMFixture();
 
@@ -494,6 +495,84 @@ function mount(
     },
   };
 }
+
+it.each(["locked", "inactive", "unmounted"])(
+  "refuses captured task-draft token controls while %s",
+  (state) => {
+    const project = {
+      kind: "nexus.project" as const,
+      id: "project",
+      label: "Project",
+    };
+    let controls!: import("../channel-navigation/solo-navigation-contract").TaskDraftTokenControls;
+    const submission: NonNullable<MessageComposerProps["submission"]> = {
+      draftKey: "task-edit-guard",
+      initialDraft: composerTokenDraft(project),
+      locked: false,
+      disabled: false,
+      submit: () => {},
+      header: (_draft, next) => {
+        controls = next;
+        return null;
+      },
+    };
+    const h = mount({
+      ownSoloConversation: true,
+      taskDraft: { region: "tasks" },
+      submission,
+    });
+    const captured = controls;
+    const before = h.input().value;
+    if (state === "locked")
+      h.retarget({ submission: { ...submission, locked: true } });
+    else if (state === "inactive") h.present(false);
+    else h.unmount();
+    act(() => {
+      expect(captured.removeToken(project.id)).toBe(false);
+      expect(captured.changeToken(project.id)).toBe(false);
+    });
+    expect(readView("scope", submission.draftKey, null)).toBeNull();
+    if (state === "locked") expect(h.input()).toHaveValue(before);
+  },
+);
+
+it.each(["missing", "stream"] as const)(
+  "taskDraft without submission cannot bypass %s own-Solo send admission",
+  async (channelType) => {
+    const h = mount({
+      ownSoloConversation: true,
+      taskDraft: { region: "tasks" },
+    });
+    const list = {
+      status: "ready",
+      channels:
+        channelType === "missing" ? [] : [{ id: "channel", channelType }],
+    };
+    const refreshMembership = vi.fn(async () => ({
+      id: "channel",
+      members: [first.pubkey],
+    }));
+    const addAgents = vi.fn();
+    h.retarget({
+      session: {
+        ...h.session,
+        channels: { ...h.session.channels, list: () => list },
+        channelWrites: { refreshMembership, addAgents },
+      } as unknown as RelaySession,
+    });
+    act(() => {
+      h.input().insertText("@Honey ", first, { start: 0, end: 0 });
+      h.input().insertText("Keep existing-channel guards");
+    });
+    h.submit();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "session changed",
+    );
+    expect(refreshMembership).toHaveBeenCalledOnce();
+    expect(addAgents).not.toHaveBeenCalled();
+    expect(h.messages.send).not.toHaveBeenCalled();
+  },
+);
 
 it("publishes typing for text edits but not caret-driven token expansion", () => {
   const text = `[Honey](${profileTarget(first.pubkey)})`;

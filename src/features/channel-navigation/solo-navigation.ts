@@ -1,6 +1,12 @@
 import { Service, type Context } from "@deepseek-ai/cordis";
 import { createContributions } from "../../plugins/contributions";
-import { readView, viewRevision, writeView } from "../../shared/view-state";
+import {
+  readView,
+  replaceView,
+  viewRevision,
+  writeView,
+} from "../../shared/view-state";
+import { composerTokenDraft } from "../messages/composer-document";
 import type { RelayData, RelaySnapshot } from "../relay/service";
 import type { RelaySession } from "../relay/session";
 import type { JsonValue } from "../navigation/targets";
@@ -428,9 +434,33 @@ export class SoloNavigationService extends Service implements SoloNavigation {
         const primary = input.seed?.primary;
         if (primary !== undefined && !/^[0-9a-f]{64}$/.test(primary))
           throw new Error("Invalid primary agent");
+        const project = input.seed?.project;
+        if (project && primary)
+          throw new Error("Project and primary seeds cannot be combined.");
+        const draft =
+          project &&
+          composerTokenDraft({
+            kind: "nexus.project",
+            id: project.id,
+            label: project.label,
+          });
+        if (project !== undefined && !draft) throw new Error("Invalid project");
+        const draftId = crypto.randomUUID();
+        current(binding);
+        if (
+          draft &&
+          replaceView(
+            binding.scope,
+            `solo:task:${draftId}:new-draft`,
+            null,
+            draft,
+          ) !== "saved"
+        )
+          throw new Error("The task draft could not be saved. Try again.");
+        current(binding);
         void host.ctx.navigation?.open(
           soloDraftTarget(binding.scope, {
-            task: { region: label, draftId: crypto.randomUUID() },
+            task: { region: label, draftId },
             ...(primary ? { agent: primary } : {}),
           }),
         );

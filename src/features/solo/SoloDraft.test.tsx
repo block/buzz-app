@@ -28,6 +28,7 @@ import { mentionDraft } from "../messages/mention-draft";
 import { composerMarkdown } from "../messages/composer-markdown";
 import { taskTokenTags, taskTokenFallback } from "../messages/task-tokens";
 import * as soloNavigation from "../channel-navigation/solo-navigation";
+import { soloDraft } from "../channel-navigation/routes";
 
 composerDOMFixture();
 afterEach(cleanup);
@@ -1534,6 +1535,129 @@ it("keeps an edited linked draft instead of reinserting its removed source", asy
     "@Member agent Changed request",
   );
 });
+
+it.each(["remove", "change"] as const)(
+  "restores project-only openDraft and never reseeds a %s edit",
+  async (action) => {
+    const f = setup();
+    const region = createSoloRegionFixture(f.session.viewer);
+    const agent = "a".repeat(64);
+    const project = { id: "selected-project", label: "Selected project" };
+    const prepare = vi.fn<
+      import("../channel-navigation/solo-navigation-contract").SoloTaskMode["prepare"]
+    >(async () => ({ ok: false, reason: "Review this task" }));
+    const source = await region.register({
+      task: {
+        prepare,
+        markChannelStarted: async () => "start",
+        recordFirstEvent: async () => {},
+        participants: {
+          eligible: (key) => key === agent,
+          defaultRecipient: () => agent,
+          makePrimary: async () => {},
+        },
+        header: (props) =>
+          "draft" in props ? (
+            <button
+              type="button"
+              onClick={() => {
+                const token = props.draft.tokens.find(
+                  (item) => item.kind === "nexus.project",
+                );
+                if (token)
+                  (action === "remove" ? props.removeToken : props.changeToken)(
+                    token.id,
+                  );
+              }}
+            >
+              {action} selected project
+            </button>
+          ) : null,
+      },
+    });
+    const lookup = vi
+      .spyOn(soloNavigation, "soloNavigationFor")
+      .mockReturnValue(region.service);
+    try {
+      source.handle.openDraft(source.binding(), {
+        mode: "task",
+        seed: { project },
+      });
+      const target = region.navigator.snapshot().entry.target;
+      if (target.kind !== "page") throw new Error("Missing task route");
+      const route = soloDraft(target.route?.params);
+      if (!route?.task) throw new Error("Missing task draft identity");
+      const mount = () =>
+        render(
+          <SoloDraft
+            session={f.session}
+            scope={region.scope}
+            agent={route.agent}
+            task={route.task}
+            onStarted={vi.fn()}
+          />,
+        );
+      let view = mount();
+      const user = userEvent.setup();
+      expect(
+        screen.getByLabelText("Project Selected project"),
+      ).toBeInTheDocument();
+      expect(route.agent).toBeUndefined();
+      const input = screen.getByRole(
+        "textbox",
+      ) as import("../messages/composer-dom").ComposerInputElement;
+      act(() =>
+        input.insertText(
+          "@Member agent ",
+          { pubkey: agent, name: "Member agent" },
+          { start: 0, end: 0 },
+        ),
+      );
+      await user.click(input);
+      await user.type(input, "Do the task");
+      await user.keyboard("{Enter}");
+      await waitFor(() => expect(prepare).toHaveBeenCalledOnce());
+      expect(prepare.mock.calls[0]?.[0]).toMatchObject({
+        primary: agent,
+        recipients: [agent],
+        tokens: [{ kind: "nexus.project", ...project }],
+      });
+      expect(f.channelWrites.start).not.toHaveBeenCalled();
+      view.unmount();
+      view = mount();
+      expect(
+        screen.getByLabelText("Project Selected project"),
+      ).toBeInTheDocument();
+      await user.click(
+        screen.getByRole("button", { name: `${action} selected project` }),
+      );
+      await waitFor(() =>
+        expect(
+          screen.queryByLabelText("Project Selected project"),
+        ).not.toBeInTheDocument(),
+      );
+      view.unmount();
+      mount();
+      expect(
+        screen.queryByLabelText("Project Selected project"),
+      ).not.toBeInTheDocument();
+      const saved = mentionDraft(
+        readView(
+          region.scope,
+          `solo:task:${route.task.draftId}:new-draft`,
+          null,
+        ),
+      );
+      expect(saved.tokens).toBeUndefined();
+      expect(saved.recipients.map((item) => item.pubkey)).toEqual([agent]);
+      expect(screen.getByRole("textbox")).toHaveTextContent("Do the task");
+    } finally {
+      cleanup();
+      lookup.mockRestore();
+      await region.dispose();
+    }
+  },
+);
 
 it("prepares a task before starting it, keeps a refused draft and signs only its primary recipient", async () => {
   const f = setup();

@@ -1455,6 +1455,7 @@ function Composer({
     permitted.current &&
     !sendAttempt.current?.signal.aborted &&
     (!ownSoloConversation ||
+      !!(taskDraft && submission) ||
       session.channels.list().channels.find((item) => item.id === channelId)
         ?.channelType === "solo");
   const editTaskToken = (id: string, replace: boolean) => {

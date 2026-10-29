@@ -1143,7 +1143,9 @@ export type Agents = {
   /** Whether a watch's classifier can run on this device now. */
   classifier(): ClassifierAvailability;
   /** Creates a team, or replaces the one with `id`. Members, by pubkey, must
-   * be agents on this device. Each community has the members that are in it. */
+   * be agents on this device or, for a synced team, its home community's
+   * hosted agents whose setup finished. Each community has the members that
+   * are in it. */
   saveTeam(team: TeamChange): Promise<Team>;
   /** Deletes the team; its agents are untouched. */
   removeTeam(id: string): Promise<void>;
@@ -3853,8 +3855,8 @@ export class AgentsService extends Service implements Agents {
     const labels = publicKeyLabels(new Set([...team.members, ...opened]));
     const name = (pubkey: string) =>
       this.liveRows(pubkey)[0]?.name || (labels.get(pubkey) ?? pubkey);
-    // Members the team already has may run on another device; the roster
-    // proves them.
+    // New members must be here or hosted in the home community. Ones the team
+    // already has may run on another device; the roster proves them.
     const members = new Set(this.teamAgents(home).map((agent) => agent.pubkey));
     const outside = team.members.find(
       (pubkey) => !opened.includes(pubkey) && !members.has(pubkey),
@@ -4243,14 +4245,16 @@ export class AgentsService extends Service implements Agents {
         (pubkey === undefined || identity.pubkey === pubkey),
     );
   }
-  /** The agents a team in `origin` can have: the ones here, and the listed
-   * ones whose setup finished, such as hosted ones. */
+  /** The agents a team in `origin` can have: its agents here, and its hosted
+   * ones whose setup finished. */
   private teamAgents(origin: string) {
     return [
       ...this.liveRows().filter(
         (identity) => originOf(identity.relay) === origin,
       ),
-      ...this.listedAgents(origin).filter((agent) => !agent.unfinished),
+      ...this.listedAgents(origin).filter(
+        (agent) => agent.place === "hosted" && !agent.unfinished,
+      ),
     ];
   }
   /** The membership of this key, unless it was deleted. */

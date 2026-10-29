@@ -11625,9 +11625,10 @@ describe("synced teams", () => {
   async function ready(
     identities: AgentIdentity[],
     storage?: ReturnType<typeof memoryStorage>,
+    listed: RelayEvent[] = [],
   ) {
     const channels = teamChannels();
-    const f = await setup({ identities, storage });
+    const f = await setup({ identities, storage, listed });
     await vi.waitFor(() => expect(channels.made.has(home)).toBe(true));
     return { ...f, ...channels };
   }
@@ -11739,6 +11740,29 @@ describe("synced teams", () => {
     const roster = f.run.mock.calls.at(-1)?.[0].team;
     expect(roster).toContain(`- Sky (${npubEncode(hostedKey)})\n`);
     expect(roster).not.toContain(npubEncode(unfinished));
+  });
+
+  it("refuses a new member on another device, and leaves it out of rosters", async () => {
+    const team = stored(viewer, [bot, hostedKey, sibling]);
+    const f = await ready([], team.storage, [record(sibling)]);
+    f.plugin.agents.register(cloud().type);
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    await f.service.create({ type: "example/cloud", name: "Sky" });
+    await vi.waitFor(() =>
+      expect(f.service.find(sibling)?.place).toBe("elsewhere"),
+    );
+    await expect(f.service.saveTeam(crew([bot, sibling]))).rejects.toThrow(
+      /^Add npub…\w+ to relay\.example\.test first$/,
+    );
+    expect(f.saveTeam).not.toHaveBeenCalled();
+    team.confirm(f.stores.get(home));
+    await vi.waitFor(() =>
+      expect(f.service.snapshot().teams.map((t) => t.name)).toEqual(["Crew"]),
+    );
+    await handleOf(f.run, f.emit);
+    const roster = f.run.mock.calls.at(-1)?.[0].team;
+    expect(roster).toContain(`- Sky (${npubEncode(hostedKey)})\n`);
+    expect(roster).not.toContain(npubEncode(sibling));
   });
 
   it("shows only the signed-in account's synced teams", async () => {

@@ -79,7 +79,11 @@ export function createPluginManager(
       storage.readModule,
     ),
     undefined,
-    () => configuration.status === "loading",
+    // Reading, or retrying a read that failed: recovery the user must act on
+    // is settled.
+    () =>
+      configuration.status === "loading" ||
+      (configuration.status === "recovery" && !configuration.canReset),
   );
   let configuration: ConfigurationState = { status: "loading" };
   let busy = false;

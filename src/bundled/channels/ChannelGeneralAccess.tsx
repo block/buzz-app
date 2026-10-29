@@ -212,7 +212,7 @@ function ChannelGeneralAccessEditor({
     >
       <div className={styles.accessRow}>
         <span
-          className={styles.accessIcon}
+          className={`${styles.accessIcon} ${styles.accessEditableIcon}`}
           aria-hidden={!pending || undefined}
           role="status"
           aria-label={pending ? "Saving access" : undefined}

@@ -193,6 +193,10 @@
 .accessRow > .accessIcon {
   width: 100%;
 }
+/* The 24px link target extends 4px above its 20px text line. */
+.accessEditableIcon {
+  translate: 0 var(--space-half);
+}
 .accessAudience {
   display: grid;
   min-width: 0;

@@ -311,7 +311,7 @@ export class DiscoveryState {
     // The relay tags a system roster too, so a roster that arrives before its
     // metadata (the full pass reads names later) never lists as a channel.
     const roster = this.rosters.get(id);
-    const viewerRole = this.viewerRole(id);
+    const viewerRole = this.authorized(id) ? this.viewerRole(id) : undefined;
     const type = this.isSolo(id)
       ? "solo"
       : event

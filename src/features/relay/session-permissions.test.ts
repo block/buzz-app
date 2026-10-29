@@ -84,6 +84,11 @@ async function setup(
       member = false;
       time++;
     }
+    if (event.kind === 9021) {
+      member = true;
+      role = joinRole;
+      time++;
+    }
     if (
       event.kind === 9001 &&
       event.tags.some(([key, value]) => key === "p" && value === agent.pubkey)
@@ -290,6 +295,25 @@ it("retains guest history, details and Leave", async () => {
   await h.session.channelLifecycle.run("leave", id);
   expect(h.publish.mock.calls[0]?.[0].kind).toBe(9022);
   expect(h.session.channels.list().channels).toHaveLength(0);
+});
+
+it("drops a departed Guest's role when a newer public preview permits rejoining in the same session", async () => {
+  const h = await setup("guest");
+  await h.session.channelLifecycle.run("leave", id);
+  // Advance metadata independently of the equal-version preview regression.
+  await h.default("member");
+  await h.session.channels.resolve?.([id]);
+  const preview = h.session.channels.get?.(id);
+  expect(preview).toMatchObject({ readOnly: true, joinRole: "member" });
+  expect(preview?.viewerRole).toBeUndefined();
+  expect(h.session.channels.list().channels).toHaveLength(0);
+  await h.session.channelLifecycle.run("join", id);
+  expect(h.publish.mock.calls.map(([event]) => event.kind)).toEqual([
+    9022, 9021,
+  ]);
+  expect(h.session.channels.get?.(id)).toMatchObject({ viewerRole: "member" });
+  h.session.messages.send(id, "Rejoined participant");
+  await vi.waitFor(() => expect(h.publish).toHaveBeenCalledTimes(3));
 });
 
 it("lets a Guest read canvas content and history without granting save access", async () => {

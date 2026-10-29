@@ -1761,16 +1761,6 @@ export function ChannelMembersDialog({
             className={`${styles.memberList} buzz-thin-scrollbar`}
             aria-label="Member list"
           >
-            {generalAccess && (
-              <ChannelGeneralAccess
-                communityReader={communities}
-                communityScope={communityScope}
-                key={channelId}
-                capability={session.channelDetails}
-                channelId={channelId}
-                channel={channel}
-              />
-            )}
             {!canAdd && !readOnlyAccess && !(solo && rosterBusy) && (
               <p className="px-control-inset text-body-sm text-subtle">
                 {channel?.channelType === "dm"
@@ -2177,6 +2167,16 @@ export function ChannelMembersDialog({
                 </p>
               ) : null)}
           </section>
+          {generalAccess && (
+            <ChannelGeneralAccess
+              communityReader={communities}
+              communityScope={communityScope}
+              key={channelId}
+              capability={session.channelDetails}
+              channelId={channelId}
+              channel={channel}
+            />
+          )}
         </div>
       )}
     </Dialog>

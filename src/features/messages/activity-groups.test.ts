@@ -132,15 +132,6 @@ it.each([1, 2])(
     expect(
       activityDisplayRows(rows, completed.groups).map((row) => row.id),
     ).toEqual(["reply"]);
-    expect([...completed.completedReplies]).toEqual(["reply"]);
-    const request = { ...reply, id: "request", authorId: "human" };
-    expect([
-      ...activityPresentation(
-        [request, ...history],
-        undefined,
-        new Set(["agent"]),
-      ).completedReplies,
-    ]).toEqual([]);
     const otherReply = { ...reply, authorId: "human" };
     const pending = [...history, otherReply];
     expect(

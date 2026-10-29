@@ -3083,8 +3083,7 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 .message[data-layout="timeline"] {
   padding-block: var(--space-2);
 }
-.message[data-stack-next],
-.message[data-activity-follows] {
+.message[data-stack-next] {
   padding-bottom: 0;
 }
 .message[data-stack-previous] {
@@ -3522,10 +3521,6 @@ html[data-keyboard-navigation] .activityExpansion {
   position: absolute;
   inset: 0;
   cursor: pointer;
-}
-
-.audienceRow[data-completed] .audienceLine {
-  padding-block: 0;
 }
 
 /* Standalone activity uses the normal incoming identity and bubble geometry. */

@@ -3,6 +3,7 @@ import { useReplacedTypers } from "../conversation/typing-presentation";
 import { useChannelIdentityNames } from "../identity-names/react";
 import {
   useCallback,
+  useContext,
   useEffect,
   useRef,
   useMemo,
@@ -29,7 +30,9 @@ import {
   OctagonIcon,
 } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
-import { useToastNotification } from "../../shared/design-system/ui/Toast";
+import { AgentsContext, useAgentsSnapshot } from "../agents/react";
+import { conversationWorkStops } from "../agents/work-stop";
+import { useWorkStops } from "../agents/use-work-stops";
 import activityStyles from "../agents/ActivityRows.module.css";
 import {
   PopoverRoot,
@@ -123,6 +126,24 @@ export function TypingIndicator({
     knownAgents,
   } = useConversationAgents(session, channelId, threadRootId);
   const agents = audience === "humans" ? [] : activeAgents;
+  const hostedAgents = useContext(AgentsContext);
+  useAgentsSnapshot(hostedAgents);
+  const controls = new Map(
+    agents.map((agent) => [
+      agent,
+      conversationWorkStops(
+        activity,
+        agent,
+        channelId,
+        threadRootId,
+        session.agentActivity,
+        hostedAgents,
+      ),
+    ]),
+  );
+  const { pending, stop } = useWorkStops(
+    [...controls.values()].flatMap((rows) => rows.map((row) => row.control)),
+  );
   const resolveName = useChannelIdentityNames(session, channelId);
   const profiles = useSyncExternalStore(
     session.profiles.subscribe,
@@ -158,9 +179,9 @@ export function TypingIndicator({
   );
   const name = (pubkey: string) =>
     resolveName(pubkey, profiles.get(pubkey)?.name ?? pubkey.slice(0, 10));
-  const scopeLabel = (pubkey: string) => {
+  const scopeLabel = (pubkey: string, workRoot?: string) => {
     if (threadRootId) return undefined;
-    const roots = details.get(pubkey)?.roots ?? [];
+    const roots = workRoot ? [workRoot] : (details.get(pubkey)?.roots ?? []);
     const labels = roots.slice(0, 2).map((root) => {
       if (root === null) return "Channel conversation";
       if (!root) return "Work with unconfirmed thread";
@@ -195,8 +216,17 @@ export function TypingIndicator({
     pubkey: string,
     navigate: (target: string, origin?: MessageLinkOrigin) => void,
     work?: LocalWork,
+    workRoot?: string,
   ) => {
-    const detail = details.get(pubkey);
+    const detail = workRoot
+      ? currentActivity(
+          activity,
+          entries,
+          knownAgents,
+          channelId,
+          workRoot,
+        ).get(pubkey)
+      : details.get(pubkey);
     if (!detail) return null;
     const target = activityTarget(pubkey);
     const canOpen = !!target && !!openActivity && !!canOpenActivity?.(target);
@@ -204,6 +234,7 @@ export function TypingIndicator({
       (value) => typeof value === "string",
     );
     const conversationRoot =
+      workRoot ??
       work?.threadRootId ??
       threadRootId ??
       (knownRoots.length === 1 ? knownRoots[0] : undefined);
@@ -221,7 +252,7 @@ export function TypingIndicator({
     const scope =
       detail.roots.length === 1 && detail.roots[0] === null
         ? undefined
-        : scopeLabel(pubkey);
+        : scopeLabel(pubkey, workRoot);
     const viewActivity =
       canOpen && target
         ? () => navigate(target, activityOrigin(pubkey))
@@ -341,36 +372,33 @@ export function TypingIndicator({
               >
                 {(navigate) =>
                   agents.flatMap((pubkey) => {
-                    const controls = session.agentActivity;
-                    const requests = (activity?.local ?? []).filter(
-                      (work) =>
-                        work.agent === pubkey &&
-                        work.channelId === channelId &&
-                        (!threadRootId || work.threadRootId === threadRootId) &&
-                        work.stoppable &&
-                        (work.state === "working" || work.state === "waiting"),
-                    );
-                    if (!controls || !requests.length)
+                    const requests = controls.get(pubkey) ?? [];
+                    if (!requests.length)
                       return (
                         <div key={pubkey}>{agentStatus(pubkey, navigate)}</div>
                       );
-                    return requests.map((work) => (
-                      <NavigationCard key={`${pubkey}:${work.messageId}`}>
-                        {agentStatus(pubkey, navigate, work)}
-                        <span className={styles.stopAction}>
-                          <RequestStop
-                            name={name(pubkey)}
-                            stop={() =>
-                              controls.interrupt(
-                                pubkey,
-                                channelId,
-                                work.messageId,
-                              )
-                            }
-                          />
-                        </span>
-                      </NavigationCard>
-                    ));
+                    return requests.map(
+                      ({ control, work, threadRootId: root }) => (
+                        <NavigationCard key={control.key}>
+                          {agentStatus(pubkey, navigate, work, root)}
+                          <span className={styles.stopAction}>
+                            <Button
+                              size="sm"
+                              variant="plain"
+                              aria-label={`Stop ${name(pubkey)}${root && !threadRootId ? ` in ${scopeLabel(pubkey, root)}` : ""}`}
+                              loading={pending.has(control.key)}
+                              onClick={() => void stop(control, name(pubkey))}
+                            >
+                              <OctagonIcon
+                                className={styles.stopIcon}
+                                aria-hidden="true"
+                              />
+                              {pending.has(control.key) ? "Stopping…" : "Stop"}
+                            </Button>
+                          </span>
+                        </NavigationCard>
+                      ),
+                    );
                   })
                 }
               </AgentChooser>
@@ -389,46 +417,6 @@ export function TypingIndicator({
         </div>
       )}
     </>
-  );
-}
-
-function RequestStop({
-  name,
-  stop,
-}: {
-  name: string;
-  stop: () => Promise<void>;
-}) {
-  const [stopping, setStopping] = useState(false);
-  const pending = useRef(false);
-  const notify = useToastNotification();
-  return (
-    <Button
-      size="sm"
-      variant="plain"
-      aria-label={`Stop ${name}`}
-      loading={stopping}
-      onClick={async () => {
-        if (pending.current) return;
-        pending.current = true;
-        setStopping(true);
-        try {
-          await stop();
-          notify(`Stopped ${name}`, "success");
-        } catch (error) {
-          notify(
-            `Couldn’t stop ${name}. ${error instanceof Error ? error.message : String(error)}`,
-            "error",
-          );
-        } finally {
-          pending.current = false;
-          setStopping(false);
-        }
-      }}
-    >
-      <OctagonIcon className={styles.stopIcon} aria-hidden="true" />
-      {stopping ? "Stopping…" : "Stop"}
-    </Button>
   );
 }
 

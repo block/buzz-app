@@ -19,7 +19,6 @@ export type ActivityPresentation = ActivityRun & {
   done: boolean;
   working: boolean;
   standalone: boolean;
-  completedReply: ChannelMessage | undefined;
 };
 export type ActivityRowPresentation = {
   requestId: string | undefined;
@@ -166,15 +165,9 @@ export function activityPresentation(
       done,
       working: working.size > 0,
       standalone,
-      completedReply,
     });
   }
-  const completedReplies = new Set(
-    groups.flatMap((group) =>
-      group.completedReply ? [group.completedReply.id] : [],
-    ),
-  );
-  return { groups, byRow, representedAgents, bubbleAnchors, completedReplies };
+  return { groups, byRow, representedAgents, bubbleAnchors };
 }
 export function useActivityPresentation(
   rows: readonly ChannelMessage[],
@@ -193,9 +186,12 @@ export function useActivityPresentation(
 export function activityDisplayRows<T extends ChannelMessage>(
   rows: readonly T[],
   groups: readonly ActivityPresentation[],
+  revealedId?: string,
 ): readonly T[] {
   const completed = new Set(
     groups.filter((group) => group.done).flatMap((group) => group.ids),
   );
-  return completed.size ? rows.filter((row) => !completed.has(row.id)) : rows;
+  return completed.size
+    ? rows.filter((row) => row.id === revealedId || !completed.has(row.id))
+    : rows;
 }

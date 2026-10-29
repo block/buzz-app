@@ -61,7 +61,7 @@ function fixture() {
     },
   };
 }
-it("keeps a closed sequence completed when another request starts in the same thread", () => {
+it("keeps a closed sequence hidden when another request starts in the same thread", () => {
   const f = fixture();
   try {
     const { audience: _audience, ...publicStep } = step;
@@ -94,7 +94,7 @@ it("keeps a closed sequence completed when another request starts in the same th
       );
     }
     render(<Preview />);
-    expect(screen.getByText("2 completed steps")).toBeVisible();
+    expect(screen.queryByRole("button")).toBeNull();
     act(() => {
       f.local
         .begin({
@@ -106,10 +106,7 @@ it("keeps a closed sequence completed when another request starts in the same th
         })
         .started();
     });
-    expect(screen.getByText("2 completed steps")).toBeVisible();
-    expect(screen.getByText("2 completed steps")).not.toHaveAttribute(
-      "data-active",
-    );
+    expect(screen.queryByRole("button")).toBeNull();
   } finally {
     f.dispose();
   }

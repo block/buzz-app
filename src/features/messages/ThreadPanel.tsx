@@ -1280,14 +1280,18 @@ function ThreadMessages({
     const groups = presentation.groups.filter((group) =>
       group.ids.every((id) => !tree.children.get(id)?.length),
     );
-    const siblings = activityDisplayRows(chronologicalSiblings, groups);
-    const groupsByFirst = new Map(groups.map((group) => [group.ids[0], group]));
-    const groupedIds = new Set(groups.flatMap((group) => group.ids));
-    const containedActivity = new Set(
-      groups.filter((group) => !group.done).flatMap((group) => group.ids),
+    const siblings = activityDisplayRows(
+      chronologicalSiblings,
+      groups,
+      messageId,
     );
+    const activeGroups = groups.filter((group) => !group.done);
+    const groupsByFirst = new Map(
+      activeGroups.map((group) => [group.ids[0], group]),
+    );
+    const groupedIds = new Set(activeGroups.flatMap((group) => group.ids));
     const hidden = new Set(
-      groups.flatMap((group) =>
+      activeGroups.flatMap((group) =>
         expandedActivity.has(group.ids[0] ?? "") ? [] : group.ids,
       ),
     );
@@ -1373,7 +1377,7 @@ function ThreadMessages({
       };
       const message = (
         <ActivityExpansion
-          open={!hidden.has(row.id) && !containedActivity.has(row.id)}
+          open={!hidden.has(row.id) && !groupedIds.has(row.id)}
           enabled={row.audience === "agents"}
         >
           {renderMessage(row)}
@@ -1383,7 +1387,7 @@ function ThreadMessages({
         <li
           key={row.id}
           ref={
-            row.id === messageId && !containedActivity.has(row.id)
+            row.id === messageId && !groupedIds.has(row.id)
               ? selectedBranchRef
               : undefined
           }

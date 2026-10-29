@@ -39,20 +39,17 @@ export function ActivityGroupPreview({
     participants,
     group.requestId,
   );
+  if (done) return null;
   const primary = history[0]?.authorId ?? row.authorId;
   const profile = profiles.get(primary);
   const name = profile?.name ?? primary.slice(0, 10);
   const text = Array.from(messagePreviewText(row.content).replace(/\s+/g, " "));
-  const preview = done
-    ? `${history.length} completed ${history.length === 1 ? "step" : "steps"}`
-    : text.length > 280
-      ? `${text.slice(0, 279).join("")}…`
-      : text.join("");
+  const preview =
+    text.length > 280 ? `${text.slice(0, 279).join("")}…` : text.join("");
   const content = (
     <div
       className={styles.audienceRow}
       data-layout={layout}
-      data-completed={done || undefined}
       data-collapse={expanded || undefined}
     >
       <div className={styles.audienceEntry}>
@@ -68,7 +65,7 @@ export function ActivityGroupPreview({
             onToggle();
           }}
         >
-          {!done && expanded && (
+          {expanded && (
             <span className={styles.audienceAvatar}>
               <Avatar
                 alt=""
@@ -85,7 +82,7 @@ export function ActivityGroupPreview({
             </span>
           )}
           <span className={styles.audiencePreviewText}>
-            {expanded && !done ? (
+            {expanded ? (
               "Collapse"
             ) : (
               <ShimmerText active={working || live}>{preview}</ShimmerText>
@@ -95,28 +92,21 @@ export function ActivityGroupPreview({
       </div>
     </div>
   );
-  return !done || group.standalone ? (
+  return (
     <AgentResponsePreview
       name={name}
-      participants={
-        done
-          ? []
-          : participants.map((id) => ({
-              id,
-              name: profiles.get(id)?.name ?? id.slice(0, 10),
-              picture: avatarMedia(profiles.get(id)?.picture, media),
-            }))
-      }
+      participants={participants.map((id) => ({
+        id,
+        name: profiles.get(id)?.name ?? id.slice(0, 10),
+        picture: avatarMedia(profiles.get(id)?.picture, media),
+      }))}
       stackPrevious={!group.standalone}
       picture={avatarMedia(profile?.picture, media)}
       layout={layout}
     >
-      <div
-        className={styles.standaloneActivity}
-        data-contained-history={!done || undefined}
-      >
+      <div className={styles.standaloneActivity} data-contained-history="">
         {content}
-        {!done && expanded && renderHistory && (
+        {expanded && renderHistory && (
           <div className={styles.containedActivityHistory}>
             {history.map((entry) => (
               <div key={entry.id}>{renderHistory(entry)}</div>
@@ -125,7 +115,5 @@ export function ActivityGroupPreview({
         )}
       </div>
     </AgentResponsePreview>
-  ) : (
-    content
   );
 }

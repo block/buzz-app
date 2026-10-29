@@ -257,9 +257,19 @@ function Timeline({
     channelId,
     undefined,
   );
+  const targetId =
+    inlineTarget?.messageId ??
+    (navigation?.target.kind === "conversation"
+      ? navigation.target.messageId
+      : undefined);
   const rows = useMemo(
-    () => activityDisplayRows(chronologicalRows, activity),
-    [chronologicalRows, activity],
+    () =>
+      activityDisplayRows(
+        chronologicalRows,
+        activity,
+        targetId ?? revealMessageId,
+      ),
+    [chronologicalRows, activity, targetId, revealMessageId],
   );
   const lastPublicMessage = publicMessageNeighbor(rows, rows.length, -1);
   // Resolve a saved anchor once, before measuring initial geometry. A bottom
@@ -276,13 +286,15 @@ function Timeline({
       setExpandedActivity((expanded) => new Set([...expanded, ...older]));
   }
   const disclosures = new Map(
-    activity.map((group) => [
-      group.ids[0],
-      {
-        ...group,
-        expanded: group.ids.some((id) => expandedActivity.has(id)),
-      },
-    ]),
+    activity
+      .filter((group) => !group.done)
+      .map((group) => [
+        group.ids[0],
+        {
+          ...group,
+          expanded: group.ids.some((id) => expandedActivity.has(id)),
+        },
+      ]),
   );
   const containedOwnerCache = useRef(new Map<string, string | undefined>());
   const nextContainedOwners = new Map(
@@ -528,11 +540,6 @@ function Timeline({
     });
   }, [rows.length]);
   const inlineSignal = inlineTarget?.signal;
-  const targetId =
-    inlineTarget?.messageId ??
-    (navigation?.target.kind === "conversation"
-      ? navigation.target.messageId
-      : undefined);
   const targetIndex = rows.findIndex(
     (row) => row.id === (containedOwners.get(targetId ?? "") ?? targetId),
   );

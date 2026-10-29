@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import {
-  act,
   cleanup,
   fireEvent,
   render,
@@ -11,8 +10,6 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
-import type { RelaySession } from "../relay/session";
-import type { TypingEntry } from "../relay/typing";
 import {
   profileActivityViewTarget,
   claimProfileTranscript,
@@ -27,141 +24,16 @@ import { TypingIndicator } from "./TypingIndicator";
 import { stubAvatarBrowserApis } from "../agents/avatar-testing";
 stubAvatarBrowserApis();
 afterEach(cleanup);
-const agent = "a".repeat(64),
-  human = "b".repeat(64),
-  other = "c".repeat(64);
-const root = "d".repeat(64),
-  secondRoot = "e".repeat(64);
-type Snapshot = ReturnType<RelaySession["agentActivity"]["snapshot"]>;
-function fixture() {
-  const listeners = new Set<() => void>();
-  let typing: readonly TypingEntry[] = [];
-  let activity: Snapshot = {
-    status: "listening",
-    typing: [],
-    records: [],
-    turns: [],
-    trimmed: 0,
-  };
-  const subscribe = (listener: () => void) => {
-    listeners.add(listener);
-    return () => {
-      listeners.delete(listener);
-    };
-  };
-  const profiles = new Map([
-    [agent, { name: "Agent" }],
-    [human, { name: "Human" }],
-    [
-      "public-agent",
-      { name: "Sam’s assistant", isAgent: true, ownerPubkey: "sam" },
-    ],
-    [other, { name: "Other" }],
-  ]);
-  const library = { identities: [{ pubkey: agent }, { pubkey: other }] };
-  const rows = [
-    { id: root, content: "First task" },
-    { id: secondRoot, content: "Second task" },
-  ];
-  const ensure = vi.fn();
-  const session = {
-    viewer: "viewer",
-    typing: { snapshot: () => typing, subscribe },
-    agentActivity: { snapshot: () => activity, subscribe },
-    profiles: { snapshot: () => profiles, subscribe, ensure },
-    agentChoices: { snapshot: () => library, subscribe },
-    channels: {
-      window: () => ({ rows }),
-      subscribeWindow: (_id: string, fn: () => void) => subscribe(fn),
-      ensure,
-    },
-  } as unknown as RelaySession;
-  return {
-    session,
-    ensure,
-    update(entries: readonly TypingEntry[], patch: Partial<Snapshot> = {}) {
-      act(() => {
-        typing = entries;
-        activity = { ...activity, ...patch };
-        for (const listener of listeners) listener();
-      });
-    },
-  };
-}
-const entry = (
-  pubkey = agent,
-  threadRootId: string | undefined = root,
-): TypingEntry => ({ pubkey, channelId: "channel", threadRootId });
-
-it("stops the exact controllable request from the general popover and permits retry after failure", async () => {
-  const f = fixture();
-  const user = userEvent.setup();
-  let rejectStop!: (error: Error) => void;
-  const pending = new Promise<void>((_resolve, reject) => {
-    rejectStop = reject;
-  });
-  const interrupt = vi
-    .fn()
-    .mockReturnValueOnce(pending)
-    .mockResolvedValue(undefined);
-  const session = {
-    ...f.session,
-    agentActivity: { ...f.session.agentActivity, interrupt },
-  };
-  f.update([], {
-    local: [
-      {
-        scope: "test",
-        agent,
-        channelId: "channel",
-        threadRootId: root,
-        messageId: "request-to-stop",
-        startedAt: 1,
-        state: "working",
-        stoppable: true,
-      },
-      {
-        scope: "test",
-        agent: other,
-        channelId: "channel",
-        threadRootId: secondRoot,
-        messageId: "other-request",
-        startedAt: 1,
-        state: "working",
-        stoppable: true,
-      },
-    ],
-  });
-  render(
-    <TypingIndicator
-      session={session}
-      channelId="channel"
-      threadRootId={root}
-    />,
-  );
-  await user.click(
-    screen.getByRole("button", { name: "Activity: Agent working" }),
-  );
-  const stop = screen.getByRole("button", { name: "Stop Agent" });
-  expect(screen.queryByRole("button", { name: "Stop Other" })).toBeNull();
-  try {
-    await user.click(stop);
-    expect(interrupt).toHaveBeenCalledExactlyOnceWith(
-      agent,
-      "channel",
-      "request-to-stop",
-    );
-    expect(stop).toHaveAttribute("aria-disabled", "true");
-  } finally {
-    await act(async () => {
-      rejectStop(new Error("Try again"));
-    });
-  }
-  await user.click(stop);
-  expect(interrupt).toHaveBeenCalledTimes(2);
-  f.update([entry()], { local: [] });
-  expect(screen.queryByRole("button", { name: "Stop Agent" })).toBeNull();
-});
+import {
+  agent,
+  human,
+  other,
+  root,
+  secondRoot,
+  fixture,
+  entry,
+  type Snapshot,
+} from "./typing-indicator-testing";
 
 it("shows an incoming typing preview without invented details, retaining navigation and focus return", async () => {
   const f = fixture(),

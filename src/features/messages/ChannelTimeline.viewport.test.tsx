@@ -956,3 +956,33 @@ it("hides historical steps after the agent returns to a public reply without liv
     owner.dispose();
   }
 });
+
+it("reveals a directly linked completed step without restoring the completed summary", () => {
+  const f = activityFixture();
+  const steps = f.updates(2);
+  const first = steps[0];
+  if (!first) throw new Error("Missing step");
+  const { audience: _audience, ...publicRow } = first;
+  const rows = [
+    ...steps,
+    {
+      ...publicRow,
+      id: "reply",
+      content: "Finished",
+      createdAt: 110,
+    },
+  ];
+  const view = render(f.content(rows));
+  expect(screen.queryByText("Update 1")).toBeNull();
+  view.rerender(
+    f.content(rows, {
+      messageId: "activity-1",
+      signal: new AbortController().signal,
+    }),
+  );
+  expect(screen.getByText("Update 1")).toBeVisible();
+  expect(screen.queryByText("Update 0")).toBeNull();
+  expect(screen.queryByRole("button", { name: /activity history/ })).toBeNull();
+  view.unmount();
+  f.owner.dispose();
+});

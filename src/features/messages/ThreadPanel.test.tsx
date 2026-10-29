@@ -1826,3 +1826,38 @@ it("releases bottom following after a jump that included child-only resizing", (
   h.render();
   expect(h.element.scrollTop).toBe(2000);
 });
+
+it("reveals a completed step selected by an exact thread link", async () => {
+  const h = messagesHarness();
+  const target = {
+    ...row,
+    id: "d".repeat(64),
+    content: "Completed tool result",
+    audience: "agents" as const,
+    threadRootId: row.id,
+    replyParentId: row.id,
+    createdAt: 2,
+  };
+  h.snapshot.replies = [
+    target,
+    {
+      ...row,
+      id: "e".repeat(64),
+      content: "Final response",
+      threadRootId: row.id,
+      replyParentId: row.id,
+      createdAt: 3,
+    },
+  ];
+  h.snapshot.target = target;
+  h.snapshot.targetStatus = "ready";
+  Object.assign(h.props, {
+    messageId: target.id,
+    retainThread: true,
+    revealSelected: true,
+    revealRequest: 1,
+  });
+  h.render();
+  expect(await screen.findByText("Completed tool result")).toBeVisible();
+  expect(screen.queryByRole("button", { name: /activity history/ })).toBeNull();
+});

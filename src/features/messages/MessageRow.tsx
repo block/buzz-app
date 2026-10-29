@@ -101,7 +101,6 @@ export type MessageLinkOrigin = Readonly<{ rootId: string }>;
 export type MessageRowProps = {
   row: ChannelMessage;
   recordedActivity?: ActivityRowPresentation | undefined;
-  activityFollows?: boolean | undefined;
   representedAgents?: readonly string[] | undefined;
   staticMentions?: boolean | undefined;
   getThreadRoot?: (() => ChannelMessage | undefined) | undefined;
@@ -196,7 +195,6 @@ function MessageRowContent({
   viewer = session?.viewer,
   stackPrevious = layout === "continuation",
   stackNext = false,
-  activityFollows = false,
   representedAgents,
   alignViewer = true,
 
@@ -897,7 +895,6 @@ function MessageRowContent({
         className={styles.message}
         data-layout={layout}
         data-stack-previous={stackPrevious || undefined}
-        data-activity-follows={activityFollows || undefined}
         data-stack-next={stackNext || undefined}
         data-viewer-message={
           alignViewer && !row.workflowOwnerId && row.authorId === viewer

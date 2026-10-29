@@ -35,6 +35,8 @@ import { CodexProvider, createTabs, transcripts } from "./tabs";
 import { CodexRuntime } from "./runtime";
 import type { Wire } from "./rpc";
 import { CodexSetup } from "./setup";
+import { linkCodex, serveCodex } from "./exposed";
+import { delivered, runtimeLink } from "../../features/agents/plugin-testing";
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((done) => {
@@ -58,6 +60,26 @@ afterEach(() => {
   vi.unstubAllGlobals();
   localStorage.clear();
 });
+/** The tabs, reaching the runtime over a link as from another page. */
+function linkedTabs(
+  provider: CodexProvider,
+  runtime: CodexRuntime,
+  spawn: Parameters<typeof transcripts>[0],
+  setup: CodexSetup,
+) {
+  const {
+    provider: shown,
+    runtime: activity,
+    transcript,
+    setup: login,
+  } = linkCodex(
+    runtimeLink(
+      serveCodex(provider, setup, runtime, transcripts(spawn, runtime)),
+    ),
+  );
+  return createTabs(shown, activity, transcript, login);
+}
+
 function fixture({
   signedIn = true,
   requiresOpenaiAuth = true,
@@ -183,12 +205,17 @@ function fixture({
   });
   const setup = new CodexSetup(spawn);
   const provider = new CodexProvider(spawn, storage, setup);
+  const relisted = new Set<() => void>();
   const relay = {
     snapshot: () => ({
       status: "ready",
       session: {
         channels: {
           list: () => ({ channels }),
+          subscribeList: (listener: () => void) => {
+            relisted.add(listener);
+            return () => relisted.delete(listener);
+          },
         },
       },
     }),
@@ -204,12 +231,7 @@ function fixture({
     sessions,
     (raw) => provider.resolve(raw),
   );
-  const tabs = createTabs(
-    provider,
-    runtime,
-    transcripts(spawn, runtime),
-    setup,
-  );
+  const tabs = linkedTabs(provider, runtime, spawn, setup);
   const props = (settings = defaults, save = vi.fn(async () => {})) =>
     ({
       agent: {
@@ -230,6 +252,10 @@ function fixture({
     props,
     disk,
     logins,
+    /** The community lists its channels anew, as `channels` has them now. */
+    relist: () => {
+      for (const listener of [...relisted]) listener();
+    },
   };
 }
 it("lists saved conversations and shows one's Codex thread, or that Codex no longer has it", async () => {
@@ -279,6 +305,8 @@ it("lists saved conversations and shows one's Codex thread, or that Codex no lon
   });
   const save = vi.fn();
   render(<f.tabs.ActivityTab {...f.props(defaults, save)} />);
+  // What the runtime sends arrives over the link.
+  await act(delivered);
   const viewButton = (index: number) =>
     screen.getAllByRole("button", { name: /^View transcript/ })[
       index
@@ -303,7 +331,7 @@ it("lists saved conversations and shows one's Codex thread, or that Codex no lon
   expect(save).not.toHaveBeenCalled();
 });
 
-it("sets the conversation the profile was opened from apart from recent conversations", () => {
+it("sets the conversation the profile was opened from apart from recent conversations", async () => {
   const root = "e".repeat(64);
   const f = fixture({
     saved: {
@@ -325,6 +353,8 @@ it("sets the conversation the profile was opened from apart from recent conversa
       conversation={{ channelId: "channel", rootId: root }}
     />,
   );
+  // What the runtime sends arrives over the link.
+  await act(delivered);
   const opened = screen.getByRole("region", { name: "This thread" });
   expect(
     within(opened).getByRole("button", { name: /^View transcript/ }),
@@ -368,6 +398,8 @@ it("brings an open transcript's tab back, and closes it when the profile moves",
   const view = render(
     <Panel conversation={{ channelId: "channel", rootId: root }} />,
   );
+  // What the runtime sends arrives over the link.
+  await act(delivered);
   const tab = (name: string) => screen.getByRole("tab", { name });
   const viewHere = () =>
     user.click(
@@ -578,6 +610,8 @@ it("finds the thread's Codex session another build started", async () => {
       conversation={{ channelId: "channel", rootId: root }}
     />,
   );
+  // What the runtime sends arrives over the link.
+  await act(delivered);
   const opened = screen.getByRole("region", { name: "This thread" });
   fireEvent.click(
     await within(opened).findByRole("button", { name: /^View transcript/ }),
@@ -609,17 +643,23 @@ it("shows the channel's current kind for a session another build started", async
     />
   );
   const view = render(shown());
-  const here = screen.getByRole("region", { name: "This thread" });
+  const here = await screen.findByRole("region", { name: "This thread" });
   await within(here).findByRole("button", { name: /^View transcript/ });
-  expect(within(here).getByTitle("general").querySelector("svg")).toHaveClass(
-    "tabler-icon-lock",
+  // The channel's label comes from the runtime too.
+  await waitFor(() =>
+    expect(within(here).getByTitle("general").querySelector("svg")).toHaveClass(
+      "tabler-icon-lock",
+    ),
   );
 
   // Made public, the lock found with the session does not stay.
   channels[0] = { id: "channel", name: "general", channelType: "stream" };
+  f.relist();
   view.rerender(shown());
-  expect(within(here).getByTitle("general").querySelector("svg")).toHaveClass(
-    "tabler-icon-hash",
+  await waitFor(() =>
+    expect(within(here).getByTitle("general").querySelector("svg")).toHaveClass(
+      "tabler-icon-hash",
+    ),
   );
 });
 
@@ -776,6 +816,8 @@ it("selects a model in the Settings dropdown without changing local Codex prefer
   const f = fixture({ configured });
   await f.provider.check();
   render(<f.tabs.DefaultControl onConfigure={vi.fn()} />);
+  // What the runtime sends arrives over the link.
+  await act(delivered);
   const user = userEvent.setup();
   const control = screen.getByRole("button", { name: /^Codex default model:/ });
   expect(control).toHaveTextContent("Model A");
@@ -786,9 +828,11 @@ it("selects a model in the Settings dropdown without changing local Codex prefer
     await screen.findByRole("menuitemradio", { name: "Model B" }),
   );
   fireEvent.click(await screen.findByRole("menuitemradio", { name: "Medium" }));
-  expect(
-    new CodexProvider(f.spawn, localStore()).resolve(defaults),
-  ).toMatchObject({ model: "model-b", effort: "medium" });
+  await waitFor(() =>
+    expect(
+      new CodexProvider(f.spawn, localStore()).resolve(defaults),
+    ).toMatchObject({ model: "model-b", effort: "medium" }),
+  );
   await waitFor(() => expect(control).toHaveTextContent("Medium"));
   fireEvent.click(control);
   fireEvent.click(
@@ -855,6 +899,8 @@ it("shows a provider model recheck inside a focusable inactive picker", async ()
   const f = fixture();
   await f.provider.check();
   render(<f.tabs.DefaultControl onConfigure={vi.fn()} />);
+  // What the runtime sends arrives over the link.
+  await act(delivered);
   const picker = screen.getByRole("button", { name: /^Codex default model:/ });
   expect(picker).toHaveTextContent("Model A");
   const spawn = f.spawn.getMockImplementation();
@@ -896,6 +942,8 @@ it("keeps model-default provider thinking dynamic across save and reopen", async
   await f.provider.saveDefaults({ model: "", effort: "high" });
   const onClose = vi.fn();
   const view = render(<f.tabs.ProviderDialogBody onClose={onClose} />);
+  // What the runtime sends arrives over the link.
+  await act(delivered);
   const user = userEvent.setup();
 
   expect(screen.getByLabelText("Default thinking")).toHaveTextContent(/^High$/);
@@ -915,6 +963,8 @@ it("keeps model-default provider thinking dynamic across save and reopen", async
   view.unmount();
   const reopened = fixture();
   render(<reopened.tabs.ProviderDialogBody onClose={vi.fn()} />);
+  // What the runtime sends arrives over the link.
+  await act(delivered);
   await waitFor(() =>
     expect(screen.getByLabelText("Default thinking")).toBeEnabled(),
   );
@@ -1286,6 +1336,8 @@ it("replaces sign-in with available models after Codex login succeeds", async ()
       />
     </>,
   );
+  // What the runtime sends arrives over the link.
+  await act(delivered);
   await waitFor(() =>
     expect(screen.getAllByRole("button", { name: "Sign in" })).toHaveLength(2),
   );
@@ -1294,11 +1346,14 @@ it("replaces sign-in with available models after Codex login succeeds", async ()
   fireEvent.click(buttons[0]);
   if (!buttons[1]) throw new Error("Missing second sign-in");
   fireEvent.click(buttons[1]);
-  expect(
+  const logins = () =>
     f.spawn.mock.calls.filter(
       ([id, options]) => id === "codex" && options?.args?.join(" ") === "login",
-    ),
-  ).toHaveLength(1);
+    );
+  await waitFor(() =>
+    expect(buttons[1]).toHaveAttribute("aria-disabled", "true"),
+  );
+  expect(logins()).toHaveLength(1);
   expect(
     screen.queryByRole("combobox", { name: "Model" }),
   ).not.toBeInTheDocument();
@@ -1476,10 +1531,10 @@ it("moves the card from Install Codex to Sign in once the install succeeds", asy
 it("installs and signs in Buzz's copy of Codex from its provider settings", async () => {
   const f = fixture({ installed: false, signedIn: false });
   const provider = new CodexProvider(f.spawn, localStore(), f.setup);
-  const { ProviderDialogBody } = createTabs(
+  const { ProviderDialogBody } = linkedTabs(
     provider,
     f.runtime,
-    transcripts(f.spawn, f.runtime),
+    f.spawn,
     f.setup,
   );
   render(<ProviderDialogBody onClose={vi.fn()} />);
@@ -1660,6 +1715,8 @@ it("keeps the recommended model inherited when only effort changes", async () =>
   const f = fixture();
   await f.provider.check();
   render(<f.tabs.DefaultControl onConfigure={vi.fn()} />);
+  // What the runtime sends arrives over the link.
+  await act(delivered);
   const control = screen.getByRole("button", { name: /^Codex default model:/ });
   expect(control).toHaveTextContent("Model A · Default");
   fireEvent.click(control);
@@ -1676,7 +1733,7 @@ it("keeps the recommended model inherited when only effort changes", async () =>
   );
 });
 
-it("keeps same-channel recent threads visibly distinguishable", () => {
+it("keeps same-channel recent threads visibly distinguishable", async () => {
   const saved = Object.fromEntries(
     ["e", "f"].map((char) => [
       JSON.stringify(["channel", char.repeat(64)]),
@@ -1685,6 +1742,8 @@ it("keeps same-channel recent threads visibly distinguishable", () => {
   );
   const f = fixture({ saved });
   render(<f.tabs.ActivityTab {...f.props()} />);
+  // What the runtime sends arrives over the link.
+  await act(delivered);
   const rows = screen.getAllByRole("listitem");
   expect(rows).toHaveLength(2);
   expect(rows.map((row) => row.textContent)).toEqual(
@@ -1697,12 +1756,14 @@ it("keeps same-channel recent threads visibly distinguishable", () => {
 
 it.each(["Needs attention", "Session could not be saved"])(
   "keeps %s diagnostics visible and multiline",
-  (status) => {
+  async (status) => {
     const f = fixture();
     vi.spyOn(f.runtime, "sessions").mockReturnValue([
       { key: "unbound", status, detail: "First line\nSecond line" },
     ]);
     render(<f.tabs.ActivityTab {...f.props()} />);
+    // What the runtime sends arrives over the link.
+    await act(delivered);
     const diagnostic = screen.getByText("First line Second line");
     expect(diagnostic.closest("details")).toBeNull();
     expect(diagnostic.textContent).toBe("First line\nSecond line");
@@ -1710,12 +1771,14 @@ it.each(["Needs attention", "Session could not be saved"])(
   },
 );
 
-it("collapses Working command details", () => {
+it("collapses Working command details", async () => {
   const f = fixture();
   vi.spyOn(f.runtime, "sessions").mockReturnValue([
     { key: "unbound", status: "Working", detail: "git status" },
   ]);
   render(<f.tabs.ActivityTab {...f.props()} />);
+  // What the runtime sends arrives over the link.
+  await act(delivered);
   expect(screen.getByText("git status").closest("details")).not.toHaveAttribute(
     "open",
   );

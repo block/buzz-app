@@ -43,12 +43,16 @@ export type ConnectionsHost = Readonly<{
     origin: string,
     connection: Connection,
   ): () => void;
-  /** The community's live session started, was replaced or ended. */
-  changed(origin: string): void;
+  /** The community's connection changed. `renewed` for a new live session
+   * of a community it watched before, joined again or not, which may have
+   * missed changes made elsewhere since. */
+  changed(origin: string, renewed: boolean): void;
 }>;
 
 export class RunnerConnections {
   private readonly bound = new Map<string, Entry>();
+  /** Each community it has watched, joined again or not. */
+  private readonly watched = new Set<string>();
 
   constructor(private readonly host: ConnectionsHost) {}
 
@@ -98,6 +102,7 @@ export class RunnerConnections {
   }
   clear() {
     for (const origin of [...this.bound.keys()]) this.unbind(origin);
+    this.watched.clear();
   }
 
   private unbind(origin: string) {
@@ -110,6 +115,8 @@ export class RunnerConnections {
   private bind(origin: string) {
     const entry = this.bound.get(origin);
     if (!entry) return;
+    const known = this.watched.has(origin);
+    this.watched.add(origin);
     const snapshot = entry.relay.snapshot();
     const live =
       snapshot.status === "ready" &&
@@ -128,8 +135,11 @@ export class RunnerConnections {
     if (
       entry.binding?.session === live?.session &&
       entry.binding?.scope === live?.scope
-    )
+    ) {
+      // Disconnecting stops its agents even when no binding changed.
+      this.host.changed(origin, false);
       return;
+    }
     entry.binding?.stopLive();
     entry.binding?.controller.abort();
     const connection: Connection = {
@@ -141,6 +151,6 @@ export class RunnerConnections {
       connection,
       stopLive: this.host.listen(live.session, origin, connection),
     };
-    this.host.changed(origin);
+    this.host.changed(origin, known && !!entry.binding);
   }
 }

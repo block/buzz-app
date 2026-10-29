@@ -65,10 +65,13 @@ export function useAppNavigation(
         ? services.agents.subscribe(listener)
         : () => {},
     () =>
-      !!provider &&
-      !!services.agents
-        ?.types()
-        .some((type) => type.key === provider && type.provider),
+      !provider || !services.agents
+        ? false
+        : services.agents.typePending(provider)
+          ? "pending"
+          : services.agents
+              .types()
+              .some((type) => type.key === provider && !!type.provider),
   );
   const visibility = useSyncExternalStore(
     services.settingsCards.subscribe,
@@ -194,7 +197,8 @@ export function useAppNavigation(
     const owner = provider.split("/")[0] ?? "";
     if (
       startup === "loading" ||
-      plugins.activation[owner]?.status === "starting"
+      plugins.activation[owner]?.status === "starting" ||
+      providerAvailable === "pending"
     )
       waiting = true;
     else if (!providerAvailable) failure = "unavailable";

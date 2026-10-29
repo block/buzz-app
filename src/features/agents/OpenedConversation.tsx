@@ -25,9 +25,9 @@ type Place = Readonly<{ channelId: string; root?: string }>;
  * session comes first; `find` looks in the type's own history for one another
  * build of the app started, since each build saves its own. That one has no
  * channel name or kind; `label` gives it the channel's current ones each
- * render. */
+ * render. Until `saved` is known it is searching, and looks nowhere else. */
 export function useOpenedSession<T extends Saved>(
-  saved: readonly T[],
+  saved: readonly T[] | undefined,
   conversation: AgentConversation | undefined,
   find: (place: Place, signal: AbortSignal) => Promise<T | undefined>,
   label?: (channelId: string) => ChannelLabel | undefined,
@@ -41,7 +41,7 @@ export function useOpenedSession<T extends Saved>(
       ]
     : [];
   const bound = (place: Place) =>
-    saved.find(
+    saved?.find(
       (item) => item.channelId === place.channelId && item.root === place.root,
     );
   const exact = places[0] && bound(places[0]);
@@ -55,9 +55,10 @@ export function useOpenedSession<T extends Saved>(
   }>();
   const latest = useRef({ bound, find });
   latest.current = { bound, find };
+  const known = saved !== undefined;
   // biome-ignore lint/correctness/useExhaustiveDependencies: places follow key; bound and find are read when it runs.
   useEffect(() => {
-    if (!key || exact) return;
+    if (!key || exact || !known) return;
     const abort = new AbortController();
     void (async () => {
       for (const place of places) {
@@ -79,9 +80,10 @@ export function useOpenedSession<T extends Saved>(
       setFound({ key });
     })();
     return () => abort.abort();
-  }, [key, !!exact]);
+  }, [key, !!exact, known]);
   if (!conversation) return {};
   if (exact) return { session: exact };
+  if (!known) return { searching: true };
   if (found?.key !== key) return { searching: true };
   // The place found stays; its row is the one saved now, since a type gives
   // each render its channel's current name and kind, else the one found,

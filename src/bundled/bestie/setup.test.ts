@@ -3,7 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { MAX_INSTRUCTIONS_LENGTH } from "../builderlab/agents/client";
 import { bestieInstructions, promptVersion } from "./prompt";
 import { BUILDERLAB_TYPE } from "./setup";
-import { bestieFixture, cleanups, HOME, MODEL } from "./testing";
+import { bestieFixture, cleanups, HOME, MODEL, stubHome } from "./testing";
 
 const native = vi.hoisted(() => ({ isTauri: () => true, invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => native);
@@ -28,12 +28,7 @@ beforeEach(() => {
       },
     },
   });
-  let next = 0;
-  const randomUUID = crypto.randomUUID.bind(crypto);
-  // The first UUID is Bestie's home; the rest stay random.
-  vi.spyOn(crypto, "randomUUID").mockImplementation(() =>
-    next++ === 0 ? HOME : randomUUID(),
-  );
+  stubHome();
   // Builderlab doesn't support profile() yet; silence its warning.
   vi.spyOn(console, "warn").mockImplementation(() => {});
 });

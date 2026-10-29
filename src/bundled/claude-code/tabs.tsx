@@ -11,6 +11,7 @@ import { ProviderDialogActions } from "../../features/agents/ProviderDialogActio
 import {
   useEffect,
   useRef,
+  useReducer,
   useId,
   useState,
   useSyncExternalStore,
@@ -68,11 +69,18 @@ type ActivityHandle = Pick<
   ClaudeRuntime,
   | "subscribe"
   | "sessions"
-  | "conversations"
   | "find"
   | "transcript"
   | "channelLabel"
->;
+  | "subscribeChannels"
+> &
+  Readonly<{
+    /** The same list until `subscribe` tells of a change. */
+    conversations(agent: string): readonly SavedConversation[];
+    /** Whether the runtime's list for the agent has reached this page yet;
+     * always, without it. */
+    loaded?(agent: string): boolean;
+  }>;
 import { type ClaudeTranscript, TURN_LIMIT } from "./transcript";
 
 const message = (error: unknown) =>
@@ -741,17 +749,30 @@ export function createTabs({
       (listener) => runtime.subscribe(listener),
       () => runtime.sessions(agent.key),
     );
-    const conversations = runtime.conversations(agent.key);
+    const conversations = useSyncExternalStore(
+      (listener) => runtime.subscribe(listener),
+      () => runtime.conversations(agent.key),
+    );
+    // Until its saved conversations arrive, it neither searches other builds'
+    // history nor offers the transcript asked for, which is one of them.
+    const loaded = useSyncExternalStore(
+      (listener) => runtime.subscribe(listener),
+      () => runtime.loaded?.(agent.key) ?? true,
+    );
     const busy = new Map(
       sessions.map((session) => [session.key, session.busy]),
     );
+    // A session found in another build's history shows its channel's name
+    // and kind as the community has them now.
+    const [, relabel] = useReducer((count: number) => count + 1, 0);
+    useEffect(() => runtime.subscribeChannels(agent.key, relabel), [agent.key]);
     const workspace = readConfig(agent.config).workspace;
     const {
       session: here,
       searching,
       error: lookupError,
     } = useOpenedSession(
-      conversations,
+      loaded ? conversations : undefined,
       conversation,
       (place, signal) => runtime.find(agent.key, place, workspace, signal),
       (channelId) => runtime.channelLabel(agent.key, channelId),
@@ -766,7 +787,9 @@ export function createTabs({
     const { open, show, back } = useOpenTranscript(
       conversation,
       label,
-      initialTranscript && { initial: here, searching, ...initialTranscript },
+      loaded && initialTranscript
+        ? { initial: here, searching, ...initialTranscript }
+        : undefined,
       close,
     );
     return (

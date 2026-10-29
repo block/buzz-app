@@ -153,7 +153,12 @@ export function createTabs({
   history,
 }: Readonly<{
   setup: SetupHandle;
-  runtime: Pick<GooseRuntime, "subscribe" | "sessions">;
+  runtime: Pick<GooseRuntime, "subscribe" | "sessions"> &
+    Readonly<{
+      /** Whether the runtime's sessions for the agent have reached this page
+       * yet; always, without it. */
+      loaded?(agent: string): boolean;
+    }>;
   history: Pick<GooseHistory, "find" | "recent" | "transcript">;
 }>) {
   function DefaultControl({ onConfigure }: { onConfigure(): void }) {
@@ -836,6 +841,12 @@ export function createTabs({
       (listener) => runtime.subscribe(listener),
       () => runtime.sessions(agent.key),
     );
+    // Until its sessions arrive, it neither searches the history nor offers
+    // the transcript asked for, which may be one of them.
+    const loaded = useSyncExternalStore(
+      (listener) => runtime.subscribe(listener),
+      () => runtime.loaded?.(agent.key) ?? true,
+    );
     const running = live.map(
       (session): Row => ({
         key: session.key,
@@ -849,7 +860,7 @@ export function createTabs({
       searching,
       error: lookupError,
     } = useOpenedSession(
-      running.filter((row) => row.sessionId),
+      loaded ? running.filter((row) => row.sessionId) : undefined,
       conversation,
       async (place, signal) => {
         const found = await history.find(agent.key, workspace, place, signal);
@@ -881,7 +892,9 @@ export function createTabs({
     const { open, show, back } = useOpenTranscript(
       conversation,
       label,
-      initialTranscript && { initial: here, searching, ...initialTranscript },
+      loaded && initialTranscript
+        ? { initial: here, searching, ...initialTranscript }
+        : undefined,
       close,
     );
     const rows = (recent.value ?? [])

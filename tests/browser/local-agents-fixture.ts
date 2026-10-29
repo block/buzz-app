@@ -98,12 +98,45 @@ export const localAgentPlugin: BundledPlugin = {
   enabledByDefault: true,
   module: {
     inject: ["agents", "relay"],
+    // What runs is the agent entry's; what the screens show is the UI's.
+    agent: {
+      inject: ["agents"],
+      apply(ctx) {
+        ctx.agents.register({
+          id: "tester",
+          title: "Local tester",
+          defaults: () => ({ config: {} }),
+          run(delivery) {
+            if (delivery.trigger.type !== "mention")
+              throw new Error("Unexpected trigger");
+            let handover!: () => void, finish!: (result: WorkOutcome) => void;
+            const done = new Promise<WorkOutcome>((resolve) => {
+              finish = resolve;
+            });
+            delivery.workingUntil?.(done);
+            const transferred = new Promise<void>((resolve) => {
+              handover = resolve;
+            });
+            const id = delivery.trigger.event.id;
+            // Like a harness, the stop ends the turn as it settles.
+            delivery.interruptible?.(async () => {
+              stopped.push(id);
+              finish({ ok: true, stopped: true });
+            });
+            pending.push({
+              id,
+              handover,
+              step: (tool, target) => delivery.step?.(tool, target),
+              finish,
+            });
+            return transferred;
+          },
+        });
+      },
+    },
     apply(ctx) {
-      ctx.agents.register({
-        id: "tester",
-        title: "Local tester",
-        defaults: () => ({ config: {} }),
-        // The remote agent type's Activity tab, so published turns can be seen.
+      // The remote agent type's Activity tab, so published turns can be seen.
+      ctx.agents.present("tester", () => ({
         tabs: [
           {
             id: "activity",
@@ -112,38 +145,17 @@ export const localAgentPlugin: BundledPlugin = {
             component: createActivityTab(ctx.relay),
           },
         ],
-        run(delivery) {
-          if (delivery.trigger.type !== "mention")
-            throw new Error("Unexpected trigger");
-          let handover!: () => void, finish!: (result: WorkOutcome) => void;
-          const done = new Promise<WorkOutcome>((resolve) => {
-            finish = resolve;
-          });
-          delivery.workingUntil?.(done);
-          const transferred = new Promise<void>((resolve) => {
-            handover = resolve;
-          });
-          const id = delivery.trigger.event.id;
-          // Like a harness, the stop ends the turn as it settles.
-          delivery.interruptible?.(async () => {
-            stopped.push(id);
-            finish({ ok: true, stopped: true });
-          });
-          pending.push({
-            id,
-            handover,
-            step: (tool, target) => delivery.step?.(tool, target),
-            finish,
-          });
-          return transferred;
-        },
-      });
+      }));
       let creating = false;
       const ensure = () => {
         if (
           creating ||
           ctx.relay.snapshot().status !== "ready" ||
           ctx.agents.snapshot().status !== "ready" ||
+          // The type is shown once the Runner says it runs here.
+          !ctx.agents
+            .types()
+            .some((type) => type.key === "fixture.local-agent/tester") ||
           ctx.agents.find(localAgentKey)
         )
           return;

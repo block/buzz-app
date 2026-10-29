@@ -45,6 +45,18 @@ import {
 
 export const COMMUNITY = "https://community.example";
 export const HOME = "11111111-1111-4111-8111-111111111111";
+let homeNext = false;
+/** Makes the first UUID asked for once a fixture is ready Bestie's home; the
+ * rest, and those the app asks for while it starts, stay random. */
+export function stubHome() {
+  homeNext = false;
+  const randomUUID = crypto.randomUUID.bind(crypto);
+  vi.spyOn(crypto, "randomUUID").mockImplementation(() => {
+    if (!homeNext) return randomUUID();
+    homeNext = false;
+    return HOME;
+  });
+}
 export const cleanups: (() => Promise<void> | void)[] = [];
 
 /** The fake catalog's model and an effort it supports. */
@@ -396,6 +408,7 @@ export async function bestieFixture(invoke: Mock) {
   });
   const provided = root.get("builderlab");
   if (!provided) throw new Error("Builderlab not provided");
+  homeNext = true;
   const raw = createRemoteBestie(provided, agents, relay);
   // The owner picks this model whenever setup asks; `raw` stops at the choice.
   const bestie: RemoteBestie = {

@@ -648,6 +648,11 @@ export class CodexRuntime {
   channelLabel(agent: AgentKey, channelId: string) {
     return this.reads(agent)?.channelLabel(channelId);
   }
+  /** Tells `listener` when the channel list `channelLabel` reads now
+   * changes. */
+  subscribeChannels(agent: AgentKey, listener: () => void) {
+    return this.reads(agent)?.subscribeChannels(listener) ?? (() => {});
+  }
   private storageKey(scope: string, agent: AgentKey) {
     // Resume restores the persisted tool schema, so a binding from before a
     // tool change starts fresh. v5 added channel and member management; v6

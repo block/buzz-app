@@ -133,6 +133,53 @@ export const apply: PluginModule["apply"] = (ctx) => {
       fallback={fallback}
     />
   ));
+  // What the github_link_pr tool needs of the screens: a link an agent wrote shows
+  // in the sidebar without reading it back.
+  ctx.agents.share({
+    commands: {
+      linked: (args) => {
+        const { scope, channel, url } = args as Readonly<{
+          scope: string | null;
+          channel: string;
+          url: string | null;
+        }>;
+        // The sidebar reads the selected community through its own session.
+        const shown = ctx.relay.snapshot();
+        if (shown.status === "ready" && shown.scope === (scope ?? undefined))
+          pullsFor(shown.session).linked(channel, url);
+        return null;
+      },
+    },
+  });
+  // How a pull request watch shows in Agent Attention.
+  ctx.inject(["navigation"], (scope) =>
+    ctx.agents.presentSource("github-pr", presentPull(scope.navigation)),
+  );
+  // Whose comments and reviews wake them.
+  ctx.inject(["settingsCards"], (scope) => {
+    scope.settingsCards.register({
+      id: "authors",
+      title: "GitHub comment authors",
+      group: "Plugins",
+      icon: GithubLogoIcon,
+      component: ({ active }) => <AuthorSettings active={active} />,
+    });
+  });
+};
+// Agents can read, link and watch pull requests where the app runs them.
+export const agent: NonNullable<PluginModule["agent"]> = {
+  inject: ["agents", "host"],
+  apply(ctx) {
+    const gh = gitHubCli(ctx.host);
+    const states = createPullStates(gh);
+    addPullStateTool(ctx.agents, states);
+    watchPulls(ctx, states, gh);
+    addLinkTool(ctx);
+  },
+};
+
+function addLinkTool(ctx: Parameters<PluginModule["apply"]>[0]) {
+  const shared = ctx.agents.shared();
   ctx.agents.addTool({
     name: "github_link_pr",
     description:
@@ -174,41 +221,18 @@ export const apply: PluginModule["apply"] = (ctx) => {
         throw new Error("Only a Solo chat can be linked to a pull request");
       const link = url === null ? null : url.url;
       await writeLink(session, channel, link);
-      pullsFor(session).linked(channel, link);
-      // The sidebar reads the selected community through its own session.
-      const shown = ctx.relay.snapshot();
-      if (shown.status === "ready" && shown.scope === relay?.scope)
-        pullsFor(shown.session).linked(channel, link);
+      // Best effort: without it, the sidebar shows the link once it reads
+      // the chat's link again.
+      await shared
+        .call("linked", { scope: relay?.scope ?? null, channel, url: link })
+        .catch(() => {});
       return link
         ? `Linked ${link}. The sidebar shows its state for this chat.`
         : "Unlinked this chat's pull request.";
     },
   });
-  // How a pull request watch shows in Agent Attention.
-  ctx.inject(["navigation"], (scope) =>
-    ctx.agents.presentSource("github-pr", presentPull(scope.navigation)),
-  );
-  // Whose comments and reviews wake them.
-  ctx.inject(["settingsCards"], (scope) => {
-    scope.settingsCards.register({
-      id: "authors",
-      title: "GitHub comment authors",
-      group: "Plugins",
-      icon: GithubLogoIcon,
-      component: ({ active }) => <AuthorSettings active={active} />,
-    });
-  });
-};
-// Agents can read and watch pull requests where the app runs them.
-export const agent: NonNullable<PluginModule["agent"]> = {
-  inject: ["agents", "host"],
-  apply(ctx) {
-    const gh = gitHubCli(ctx.host);
-    const states = createPullStates(gh);
-    addPullStateTool(ctx.agents, states);
-    watchPulls(ctx, states, gh);
-  },
-};
+}
+
 /** A repository, issue or commit, read when the panel opens. */
 function useGitHubObject(
   reference: GitHubReference,

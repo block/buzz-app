@@ -161,7 +161,7 @@ export function useMentionModels(
                 const type =
                   agent && types?.find((item) => item.key === agent.type);
                 if (!agent || !type) return [];
-                const session = type.sessionControls?.scope(agent);
+                const session = type.sessionControls?.scope?.(agent);
                 let found: Models = { current: "", models: [] };
                 try {
                   if (type.models) found = await type.models(agent);
@@ -201,7 +201,7 @@ export function useMentionModels(
     : key.split(":").flatMap((pubkey) => {
         const agent = snapshot?.agents.find((item) => item.pubkey === pubkey);
         const type = agent && types?.find((item) => item.key === agent.type);
-        const session = agent && type?.sessionControls?.scope(agent);
+        const session = agent && type?.sessionControls?.scope?.(agent);
         return agent && (type?.models || session)
           ? [
               {

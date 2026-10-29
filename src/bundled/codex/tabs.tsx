@@ -14,6 +14,7 @@ import { AgentSaveButton } from "../../features/agents/AgentSaveButton";
 import {
   useEffect,
   useRef,
+  useReducer,
   useId,
   useState,
   useSyncExternalStore,
@@ -70,8 +71,8 @@ type Read =
 type Catalog = {
   models: Model[];
 };
-type ProviderDefaults = Readonly<{ model: string; effort: string }>;
-type ProviderState = AgentProviderSnapshot &
+export type ProviderDefaults = Readonly<{ model: string; effort: string }>;
+export type ProviderState = AgentProviderSnapshot &
   Readonly<{
     checking: boolean;
     data: Catalog | undefined;
@@ -99,6 +100,32 @@ async function catalog(spawn: Spawn, signal: AbortSignal) {
     signal.removeEventListener("abort", abort);
     await rpc.close();
   }
+}
+
+/** `raw` with the provider's defaults for what it leaves unset. */
+export function resolveConfig(
+  state: Pick<ProviderState, "defaults" | "data">,
+  raw: unknown,
+): Config {
+  const explicit = readConfig(raw);
+  const inheritedModel = state.defaults.model;
+  const unavailable = Boolean(
+    inheritedModel && state.data && !catalogModel(inheritedModel, state.data),
+  );
+  const model = explicit.model || (unavailable ? "" : inheritedModel);
+  if (explicit.effort) return { ...explicit, model };
+  const selected = catalogModel(model, state.data);
+  const preferred = unavailable && !explicit.model ? "" : state.defaults.effort;
+  const effort = !preferred
+    ? ""
+    : !state.data
+      ? preferred
+      : selected?.supportedReasoningEfforts.some(
+            (choice) => choice.reasoningEffort === preferred,
+          )
+        ? preferred
+        : (selected?.defaultReasoningEffort ?? "");
+  return { ...explicit, model, effort };
 }
 
 /** Codex's one device-wide health/catalog view and versioned default store. */
@@ -215,26 +242,7 @@ export class CodexProvider {
     this.set({ defaults });
   }
   resolve(raw: unknown): Config {
-    const explicit = readConfig(raw);
-    const inheritedModel = this.state.defaults.model;
-    const unavailable = Boolean(
-      inheritedModel && this.state.data && !this.model(inheritedModel),
-    );
-    const model = explicit.model || (unavailable ? "" : inheritedModel);
-    if (explicit.effort) return { ...explicit, model };
-    const selected = this.model(model);
-    const preferred =
-      unavailable && !explicit.model ? "" : this.state.defaults.effort;
-    const effort = !preferred
-      ? ""
-      : !this.state.data
-        ? preferred
-        : selected?.supportedReasoningEfforts.some(
-              (choice) => choice.reasoningEffort === preferred,
-            )
-          ? preferred
-          : (selected?.defaultReasoningEffort ?? "");
-    return { ...explicit, model, effort };
+    return resolveConfig(this.state, raw);
   }
   dispose() {
     this.offSetup?.();
@@ -426,8 +434,15 @@ type ProviderHandle = Pick<
 >;
 type ActivityHandle = Pick<
   CodexRuntime,
-  "subscribe" | "sessions" | "conversations" | "find" | "channelLabel"
->;
+  "subscribe" | "sessions" | "find" | "channelLabel" | "subscribeChannels"
+> &
+  Readonly<{
+    /** The same list until `subscribe` tells of a change. */
+    conversations(agent: string): readonly SavedConversation[];
+    /** Whether the runtime's list for the agent has reached this page yet;
+     * always, without it. */
+    loaded?(agent: string): boolean;
+  }>;
 type SetupHandle = Pick<
   CodexSetup,
   "snapshot" | "subscribe" | "run" | "cancel"
@@ -855,16 +870,30 @@ export function createTabs(
     initialTranscript?: AgentViewProps<Config>["initialTranscript"];
     close?: AgentViewProps<Config>["close"];
   }) {
-    const sessions = useSyncExternalStore(runtime.subscribe, () =>
-      runtime.sessions(agent.key),
+    const sessions = useSyncExternalStore(
+      (listener) => runtime.subscribe(listener),
+      () => runtime.sessions(agent.key),
     );
-    const conversations = runtime.conversations(agent.key);
+    const conversations = useSyncExternalStore(
+      (listener) => runtime.subscribe(listener),
+      () => runtime.conversations(agent.key),
+    );
+    // Until its saved conversations arrive, it neither searches other builds'
+    // history nor offers the transcript asked for, which is one of them.
+    const loaded = useSyncExternalStore(
+      (listener) => runtime.subscribe(listener),
+      () => runtime.loaded?.(agent.key) ?? true,
+    );
+    // A session found in another build's history shows its channel's name
+    // and kind as the community has them now.
+    const [, relabel] = useReducer((count: number) => count + 1, 0);
+    useEffect(() => runtime.subscribeChannels(agent.key, relabel), [agent.key]);
     const {
       session: here,
       searching,
       error: lookupError,
     } = useOpenedSession(
-      conversations,
+      loaded ? conversations : undefined,
       conversation,
       (place, signal) =>
         runtime.find({ key: agent.key, name: agent.name }, place, signal),
@@ -876,7 +905,9 @@ export function createTabs(
     const { open, show, back } = useOpenTranscript(
       conversation,
       label,
-      initialTranscript && { initial: here, searching, ...initialTranscript },
+      loaded && initialTranscript
+        ? { initial: here, searching, ...initialTranscript }
+        : undefined,
       close,
     );
     const saved = new Set(conversations.map((row) => row.key));

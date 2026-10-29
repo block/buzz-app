@@ -27,7 +27,7 @@ import { HostedCommunities } from "./communities/HostedCommunities";
 import { brokerApi, createApi } from "./communities/api";
 import { createNativeBackend } from "./communities/native";
 import { hostedAgentSettings } from "./service";
-import { applyApps } from "./apps";
+import { applyApps, applyAppTools } from "./apps";
 
 export const inject = [
   "host",
@@ -40,6 +40,11 @@ export const inject = [
   "decisions",
   ...(nativeBuilderlab() ? ["federatedIdentity", "navigation"] : []),
 ];
+// The app tools run where agents do, with the sign-in the UI shares.
+export const agent: NonNullable<PluginModule["agent"]> = {
+  inject: ["agents", "host"],
+  apply: (ctx) => applyAppTools(ctx, ctx.agents.shared()),
+};
 export const apply: PluginModule["apply"] = (ctx) => {
   let unavailable = "";
   try {
@@ -86,7 +91,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
           kind: "settings",
           section: "identity",
         });
-  applyApps(ctx, session, loginAvailable, legacy);
+  ctx.agents.share(applyApps(ctx, session, loginAvailable, legacy));
   const handoff = (signedIn: boolean) =>
     legacy
       ? handoffBackupSession(

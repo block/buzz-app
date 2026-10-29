@@ -52,6 +52,9 @@ vi.mock("../bundled", async () => ({
             component: () => <p>Gated card body</p>,
           });
           const state = { readiness: "ready" as const };
+          ctx.agents.present("provider", () => ({
+            provider: { DialogBody: () => <p>Gated provider controls</p> },
+          }));
           ctx.agents.register({
             id: "provider",
             title: "Gated provider",
@@ -60,7 +63,6 @@ vi.mock("../bundled", async () => ({
               snapshot: () => state,
               subscribe: () => () => {},
               check() {},
-              DialogBody: () => <p>Gated provider controls</p>,
             },
           });
         },

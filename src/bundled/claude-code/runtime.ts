@@ -367,6 +367,11 @@ export class ClaudeRuntime {
   channelLabel(agent: AgentKey, channelId: string) {
     return this.reads(agent)?.channelLabel(channelId);
   }
+  /** Tells `listener` when the channel list `channelLabel` reads now
+   * changes. */
+  subscribeChannels(agent: AgentKey, listener: () => void) {
+    return this.reads(agent)?.subscribeChannels(listener) ?? (() => {});
+  }
   subscribe(listener: () => void) {
     this.listeners.add(listener);
     return () => {

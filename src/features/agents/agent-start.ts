@@ -77,49 +77,79 @@ export const isSynced = (
 ): boolean =>
   !!side && (side.mode === "synced" || store.hadVersion(side.subject));
 
+/** What a start takes from the synced store, apart from the local row: the
+ * confirmed copy of each synced side, and the revisions they are, or why the
+ * agent can't start. It is JSON, so it can cross to the Runner's page, which
+ * lays it over the row it keeps (`applySynced`). */
+export type Synced =
+  | Readonly<{
+      ok: true;
+      /** The synced settings, which the type's `withSynced` lays over the
+       * row. */
+      settings?: Readonly<Record<string, string>>;
+      instructions?: string;
+      teams?: readonly Team[];
+      revisions: readonly string[];
+    }>
+  | Readonly<{ ok: false; state: ArtifactState; reason: string }>;
+
+/** What starts with the agent's row, `local`. */
+export function resolveStart<C extends object>(input: StartInput<C>): Start<C> {
+  return applySynced(
+    input.local,
+    resolveSynced(input),
+    input.settings?.withSynced,
+  );
+}
+
 /** Pure over storage: never reads the relay. Once this device has had any
  * synced revision of a type, its local field is never a launch source again.
  * A transport failure never changes a stored state, so a confirmed `present`
  * head keeps serving while the relay is unreachable (offline rule, §4.4);
  * `invalid`, `deleted` and lost access block. */
-export function resolveStart<C extends object>(input: StartInput<C>): Start<C> {
+export function resolveSynced(
+  input: Omit<StartInput<object>, "local" | "settings"> &
+    Readonly<{
+      settings?: Omit<
+        NonNullable<StartInput<object>["settings"]>,
+        "withSynced"
+      >;
+    }>,
+): Synced {
   const { store } = input;
   const synced = (
-    side: StartInput<C>["instructions"],
+    side: StartInput<object>["instructions"],
   ): side is Readonly<{ mode: Mode; subject: Subject }> =>
     isSynced(store, side);
   const revisions: string[] = [];
-  let config = input.local;
-  let applied: Readonly<Record<string, string>> | undefined;
+  let settings: Readonly<Record<string, string>> | undefined;
+  let instructions: string | undefined;
 
-  const { settings } = input;
-  if (settings && synced(settings)) {
-    const entry = store.state(settings.subject);
+  if (input.settings && synced(input.settings)) {
+    const entry = store.state(input.settings.subject);
     if (entry.state !== "present" || !entry.head)
       return blocked(entry.state, entry.problem, "Settings");
     const read = syncedSettings(
       entry.head.content,
       input.agentType,
-      settings.schema,
+      input.settings.schema,
     );
     if ("problem" in read) return blocked("invalid", read.problem, "Settings");
-    config = settings.withSynced(config, read.settings);
-    applied = read.settings;
+    settings = read.settings;
     revisions.push(entry.head.id);
   }
-  const { instructions } = input;
-  if (synced(instructions)) {
-    const entry = store.state(instructions.subject);
-    const text = store.instructions(instructions.subject);
+  if (synced(input.instructions)) {
+    const entry = store.state(input.instructions.subject);
+    const text = store.instructions(input.instructions.subject);
     if (!text.ok) return blocked(text.state, text.problem, "Instructions");
-    config = { ...config, instructions: text.text };
+    instructions = text.text;
     if (entry.head) revisions.push(entry.head.id);
   }
   const done = {
     ok: true as const,
-    config,
     revisions,
-    ...(applied && { synced: applied }),
+    ...(settings && { settings }),
+    ...(instructions !== undefined && { instructions }),
   };
   if (!input.teams) return done;
 
@@ -153,6 +183,35 @@ export function resolveStart<C extends object>(input: StartInput<C>): Start<C> {
     revisions.push(entry.head.id);
   }
   return { ...done, teams };
+}
+
+/** What the agent starts with: its row, `local`, with `synced` over it.
+ * Synced settings need the type's `withSynced`. */
+export function applySynced<C extends object>(
+  local: C,
+  synced: Synced,
+  withSynced?: (config: C, settings: Readonly<Record<string, string>>) => C,
+): Start<C> {
+  if (!synced.ok) return synced;
+  const { settings, instructions, teams, revisions } = synced;
+  let config = local;
+  if (settings) {
+    if (!withSynced)
+      return {
+        ok: false,
+        state: "invalid",
+        reason: "This agent type has no synced settings",
+      };
+    config = withSynced(config, settings);
+  }
+  if (instructions !== undefined) config = { ...config, instructions };
+  return {
+    ok: true,
+    config,
+    revisions,
+    ...(settings && { synced: settings }),
+    ...(teams && { teams }),
+  };
 }
 
 function teamName(content: string) {

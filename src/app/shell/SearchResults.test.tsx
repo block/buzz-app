@@ -62,6 +62,61 @@ afterEach(() => {
   Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
 });
 
+it("keeps a joined private Guest channel in recents without calling it public or unjoined", async () => {
+  const relay = keypair(),
+    viewer = keypair();
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  const discovery = [
+    metadata(relay, "guest", "Private updates", 1700000000, [["private"]]),
+    signed(relay, {
+      kind: 39002,
+      content: "",
+      tags: [
+        ["d", "guest"],
+        ["p", viewer.pubkey, "", "guest"],
+      ],
+    }),
+  ];
+  const owner = createRelaySession({
+    ...wire.transport,
+    query: async (filters) =>
+      discovery.filter((event) =>
+        filters.some((filter) => matchFilter(filter as Filter, event)),
+      ),
+  });
+  const props = {
+    session: owner.session,
+    onQueryChange() {},
+    input: createRef<HTMLInputElement>(),
+    pages: [],
+    openConversation: vi.fn(),
+  };
+  try {
+    const mounted = render(<SearchResults {...props} query="" />);
+    const recent = await screen.findByRole("group", {
+      name: "Recent activity",
+    });
+    expect(
+      within(recent).getByRole("option", { name: /Private updates/ }),
+    ).toBeVisible();
+    mounted.rerender(<SearchResults {...props} query="Private" />);
+    expect(
+      await screen.findByRole("option", { name: /Private updates/ }),
+    ).toHaveTextContent("Conversation");
+    expect(
+      screen.queryByText("Public channel · not joined"),
+    ).not.toBeInTheDocument();
+    expect(owner.session.channels.get?.("guest")).toMatchObject({
+      readOnly: true,
+      viewerRole: "guest",
+      visibility: "private",
+    });
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
 it("opens with a conversation action and recent channels in activity order", async () => {
   const relay = keypair();
   const viewer = keypair();

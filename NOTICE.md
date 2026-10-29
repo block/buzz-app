@@ -89,12 +89,16 @@ cropped the border, padded it to square, resized to 64×64 and quantised it to
 Nous Research copyright notice.
 
 Builderlab: the Builderlab Event 2026 mark was supplied by Taylor Ho as native
-Figma SVG exports on October 29, 2026. `public/builderlab-mark.svg` is the
-small-size adaptation used at 24px on the sign-in callback page. It preserves
-the rounded outline and soft letter from the harness artwork, uses a transparent
-luminance-mask cutout and `currentColor`, and omits procedural grain and
-displacement for legibility at this size. No open-source license is asserted
-for this supplied brand asset; the mark remains its owner's property.
+Figma SVG exports on October 29, 2026. Builderlab is a mark of Block, Inc.
+The small-size adaptation is used for 16–32px harness choices and agent cards
+and the 24px sign-in callback. It broadens the silhouette's top-right and
+bottom-left corner curves for legibility at small sizes, preserves the letter
+geometry and Gaussian blur, pads the viewBox to square, and converts the letter
+to a transparent luminance-mask cutout so the mark follows `currentColor`.
+Procedural grain and displacement are omitted because they alias at small sizes
+and render differently from the source texture. Larger branded surfaces should
+use a dedicated textured asset. No open-source license is asserted for this
+supplied brand asset.
 
 ## Model-family brand marks
 

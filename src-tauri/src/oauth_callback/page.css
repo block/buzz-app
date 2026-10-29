@@ -14,6 +14,8 @@
   --texture-dots-color: color-mix(in srgb, var(--bg-app) 94%, black);
   --space-panel-inset: 1.5rem;
   --radius-container: 1.5rem;
+  --duration-settle: 220ms;
+  --easing-enter: cubic-bezier(0.23, 1, 0.32, 1);
   --shadow-panel:
     0 0 0 1px rgb(0 0 0 / 6%), 0 1px 2px -1px rgb(0 0 0 / 6%),
     0 2px 4px rgb(0 0 0 / 4%);
@@ -69,6 +71,27 @@ main {
   background: var(--surface-panel);
   box-shadow: var(--shadow-panel);
   overflow-wrap: anywhere;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  body[data-complete="true"] main {
+    animation: arrive var(--duration-settle) var(--easing-enter) both;
+  }
+}
+
+@keyframes arrive {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+  65% {
+    opacity: 1;
+    transform: scale(1.012);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 p {

@@ -103,7 +103,9 @@ the verified-login policy independently.
   stylesheet and close-window script by hash, with no external assets or network
   requests. A valid callback shows the headline **You're now signed in.** and a
   spinner for three seconds before trying to close its page; **Close now** skips
-  the wait. No supporting copy appears unless closing is blocked or JavaScript
+  the wait. Its branded panel fades and scales in with a small bounce over the
+  shared 220ms settle duration; reduced motion and error pages stay immediate.
+  No supporting copy appears unless closing is blocked or JavaScript
   is disabled. The spinner respects reduced motion
   and stops if closing is blocked, leaving manual-close guidance. The
   reading delay and native focus-return delay share one native constant. Error

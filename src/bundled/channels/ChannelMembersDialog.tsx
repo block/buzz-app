@@ -1099,18 +1099,23 @@ export function ChannelMembersDialog({
     ...visibleCandidates.map((person) => label(person.pubkey, person.name)),
   ])
     shownNames.set(name, (shownNames.get(name) ?? 0) + 1);
-  // A confirmed addition replaces its focused Add button with a member row.
+  // A confirmation can replace its Add button or retire another pending row.
   // DOM removal does not emit blur, so restore focus only if it was not moved elsewhere.
   useLayoutEffect(() => {
     const previous = focusedAdd.current;
-    if (!previous || !memberKey.split(":").includes(previous.key)) return;
+    if (
+      !previous ||
+      (!memberKey.split(":").includes(previous.key) &&
+        (offering || previous.button.isConnected))
+    )
+      return;
     focusedAdd.current = null;
     if (
       document.activeElement === previous.button ||
       document.activeElement === document.body
     )
       input.current?.focus();
-  }, [memberKey]);
+  }, [memberKey, offering]);
   const add = useCallback(
     async (key: string) => {
       const signal = lifetime.current?.signal;

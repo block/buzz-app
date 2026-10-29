@@ -155,6 +155,70 @@ test("identity menus preserve modal focus and addition returns focus only to its
   expect(errors).toEqual([]);
 });
 
+// Browser-only: retiring the idle section removes another pending Add button
+// from the native dialog focus trap. Each publish has its own explicit gate.
+test("overlapping idle additions restore focus when the suggestion list retires", async ({
+  page,
+}) => {
+  const { errors } = watchPageErrors(page);
+  for (const moved of [false, true]) {
+    for (const rejected of [false, true]) {
+      await page.goto(`${url}?idle-overlap`);
+      await page.getByRole("button", { name: "Access" }).click();
+      const dialog = page.getByRole("dialog", { name: "Manage members" });
+      const search = dialog.getByRole("searchbox");
+      const refresh = dialog.getByRole("button", {
+        name: "Refresh member data",
+      });
+      await expect(refresh).toHaveAttribute("aria-busy", "false");
+      const invitations = dialog.getByRole("region", {
+        name: "Not in this channel",
+        exact: true,
+      });
+      for (const index of [1, 2]) {
+        const add = invitations.getByRole("button", {
+          name: new RegExp(`^Add Agent ${index} `),
+        });
+        await add.focus();
+        await page.keyboard.press("Enter");
+        await expect
+          .poll(() => page.evaluate(() => window.focusFixture.additions.length))
+          .toBe(index);
+        await expect(add).toBeFocused();
+        await expect(add).toHaveAttribute("aria-disabled", "true");
+      }
+      const close = dialog.getByRole("button", { name: "Close", exact: true });
+      if (moved) await close.focus();
+      await page.evaluate(() => window.focusFixture.settleAddition(0));
+      await expect(
+        dialog.getByText("Agent 1 is in the channel.", { exact: true }),
+      ).toBeVisible();
+      await expect(invitations).toHaveCount(0);
+      await expect(moved ? close : search).toBeFocused();
+      await page.evaluate(
+        (failure) => window.focusFixture.settleAddition(1, failure),
+        rejected,
+      );
+      if (rejected) {
+        const recovery = dialog.getByRole("alert").filter({
+          hasText: "Agent 2: Addition rejected",
+        });
+        await expect(recovery).toBeVisible();
+        await expect(
+          recovery.getByRole("button", { name: "Retry", exact: true }),
+        ).toBeEnabled();
+      } else {
+        await expect(
+          dialog.getByText("Agent 2 is in the channel.", { exact: true }),
+        ).toBeVisible();
+      }
+      await expect(moved ? close : search).toBeFocused();
+      await expect(invitations).toHaveCount(0);
+    }
+  }
+  expect(errors).toEqual([]);
+});
+
 // Real hit testing cannot be checked in jsdom. Hover the identity, then
 // move straight to the visible Add label without locator retries.
 test("multiword candidate Add actions stay clickable", async ({ page }) => {

@@ -238,7 +238,6 @@ async function setup(
     relay,
     person,
     viewer,
-    relay,
     delayRoster: () => {
       applyAddition = false;
     },

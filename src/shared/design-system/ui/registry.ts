@@ -471,7 +471,6 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "medium leading icon + label: 12px leading / 16px trailing inset (proposed)",
       "shape: capsule (default) | control (12px) | icon (square, 10px)",
       "SurfaceButton: artwork layout with shared activation and focus (proposed)",
-      "SplitButton: primary action with a separately named related-action menu",
       "loading",
     ],
     status: "proposed",
@@ -485,14 +484,14 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     slug: "split-button",
     name: "SplitButton",
     purpose:
-      "Run an action with a chosen option, and change the option from the attached menu. The label names the current choice, so what the action does is always visible.",
+      "Run a primary action and open its options or related actions from an attached menu.",
     behavior:
-      "Composes Buzz Button and Menu as one joined capsule, including while the menu is open. Choosing in the menu changes the option without running the action; the menu is unavailable while the action loads.",
+      "Composes Buzz Button and Menu as one joined capsule, including while the menu is open. The caller owns option changes and related actions; the menu is unavailable while the action loads.",
     variants: [
       "subtle (default)",
       "outline: halves share one stroke",
       "prominent",
-      "size: sm | md (default)",
+      "size: xs | sm | md (default)",
       "loading",
       "disabled",
     ],

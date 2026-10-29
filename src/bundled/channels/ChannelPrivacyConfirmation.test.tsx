@@ -119,7 +119,7 @@ it.each(["private", "public"] as const)(
       await screen.findByRole("option", {
         name:
           choice === "private"
-            ? "Invited people only"
+            ? "Channel members only"
             : "Anyone in the community",
       }),
     );

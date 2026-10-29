@@ -3,7 +3,10 @@ import type { ReactNode } from "react";
 import { Button, type ButtonProps } from "./Button";
 import { MenuPopup, MenuRoot, MenuTrigger } from "./Menu";
 
-export type SplitButtonProps = Pick<ButtonProps, "onClick" | "onBlur" | "aria-label" | "aria-disabled"> & {
+export type SplitButtonProps = Pick<
+  ButtonProps,
+  "onClick" | "onBlur" | "aria-label" | "aria-disabled"
+> & {
   /** The main action's label, which names the menu's current choice. */
   children: ReactNode;
   /** Names the menu button, such as "Choose agent type". */

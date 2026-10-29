@@ -239,6 +239,7 @@ function renderAudiencePicker(
 ) {
   const only = vi.fn(),
     toggle = vi.fn(),
+    focusDraft = vi.fn(),
     select = vi.fn(() => true);
   const view = render(
     <MentionPicker
@@ -249,9 +250,10 @@ function renderAudiencePicker(
       inviteAgents
       audience={{ recipients, named: false, only, toggle }}
       select={select}
+      focusDraft={focusDraft}
     />,
   );
-  return { view, only, toggle, select };
+  return { view, only, toggle, focusDraft, select };
 }
 const outsideRow = (test: ReturnType<typeof setup>) =>
   screen.findByRole("button", { name: `Outside agent ${test.key}` });
@@ -340,6 +342,58 @@ it("picking an addressed row while several agents are addressed toggles it", asy
   await user.click(await outsideRow(test));
   expect(toggle).toHaveBeenCalledExactlyOnceWith(agent);
   expect(screen.getByRole("searchbox")).toBeInTheDocument();
+  view.unmount();
+  test.library.dispose();
+});
+
+it("closing the pill menu resumes typing in the draft, unless the click went elsewhere", async () => {
+  const test = setup(),
+    user = userEvent.setup();
+  const { view, focusDraft } = renderAudiencePicker(test, []);
+  const pill = screen.getByRole("button", { name: "Choose agent" });
+  await user.click(pill);
+  await outsideRow(test);
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("searchbox")).toBeNull());
+  await waitFor(() => expect(focusDraft).toHaveBeenCalledOnce());
+  await user.click(pill);
+  await outsideRow(test);
+  await user.click(document.body);
+  await waitFor(() => expect(screen.queryByRole("searchbox")).toBeNull());
+  expect(focusDraft).toHaveBeenCalledOnce();
+  view.unmount();
+  test.library.dispose();
+});
+
+it("the pill changing shape while its menu is open leaves focus in the menu", async () => {
+  const test = setup(),
+    user = userEvent.setup(),
+    focusDraft = vi.fn();
+  const picker = (recipients: readonly { pubkey: string; name: string }[]) => (
+    <MentionPicker
+      scope="scope"
+      session={test.session}
+      channelId="parent"
+      disabled={false}
+      inviteAgents
+      audience={{ recipients, named: false, only: vi.fn(), toggle: vi.fn() }}
+      select={() => true}
+      focusDraft={focusDraft}
+    />
+  );
+  const agent = { pubkey: test.key, name: "Outside agent" };
+  const view = render(picker([agent]));
+  await user.click(
+    screen.getByRole("button", {
+      name: "Sending to Outside agent. Change agents",
+    }),
+  );
+  await outsideRow(test);
+  view.rerender(picker([agent, { pubkey: "c".repeat(64), name: "Another" }]));
+  await outsideRow(test);
+  expect(focusDraft).not.toHaveBeenCalled();
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(focusDraft).toHaveBeenCalledOnce());
   view.unmount();
   test.library.dispose();
 });

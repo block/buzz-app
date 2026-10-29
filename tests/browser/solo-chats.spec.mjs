@@ -1047,8 +1047,7 @@ test.describe("Solo composer caret", () => {
     // where the caret was.
     await pick(brain);
     await expect.poll(caret).toEqual(["first", 5, 5]);
-    // Closing the menu returns focus to the pill; the draft keeps its caret.
-    await composer.focus();
+    await expect(composer).toBeFocused();
     await page.keyboard.insertText(" again");
     await expect(composer).toHaveText("first again");
 

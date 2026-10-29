@@ -31,7 +31,8 @@ export async function newChat(page) {
 }
 
 // The agents-only composer pill's menu adds and removes agents, never the
-// last, and stays open: add this agent, drop the rest, then dismiss it.
+// last, and stays open: add this agent, drop the rest, then dismiss it, which
+// returns typing to the draft.
 export async function sendOnlyTo(page, pill, agent) {
   await pill.click();
   const menu = page.getByRole("dialog", { name: "Mention a member or agent" });

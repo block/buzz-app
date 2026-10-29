@@ -38,6 +38,7 @@ export function MentionPicker({
   audience,
   select,
   selectTeam,
+  focusDraft,
 }: {
   session: ComposerSession;
   scope: string;
@@ -47,6 +48,8 @@ export function MentionPicker({
   audience?: ComposerToolProps["audience"];
   select: ComposerToolProps["insertMention"];
   selectTeam?: ComposerToolProps["insertMentions"];
+  /** Return typing to the draft when the agent menu closes. */
+  focusDraft?: ComposerToolProps["focus"];
 }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -54,6 +57,8 @@ export function MentionPicker({
   const trigger = useRef<HTMLButtonElement>(null);
   const controls = useRef<HTMLFieldSetElement>(null);
   const accepted = useRef(false);
+  // How the agent menu last closed: undefined while open.
+  const closedBy = useRef<"outside" | "inside">(undefined);
   const searchInput = useRef<HTMLElement>(null);
   // The picker stays mounted while closed; each opening is its own lifetime.
   const [opening, setOpening] = useState(0);
@@ -171,8 +176,13 @@ export function MentionPicker({
   return (
     <PopoverRoot
       open={open && !disabled}
-      onOpenChange={(next) => {
+      onOpenChange={(next, details) => {
         setOpen(next);
+        closedBy.current = next
+          ? undefined
+          : details.reason === "outside-press"
+            ? "outside"
+            : "inside";
         if (next) {
           setOpening((value) => value + 1);
           accepted.current = false;
@@ -260,7 +270,17 @@ export function MentionPicker({
             display: "flex",
           }}
           aria-label="Mention a member or agent"
-          finalFocus={!accepted.current}
+          finalFocus={
+            // The agent menu stays open across picks; closing it resumes
+            // typing in the draft, unless the click went somewhere else. The
+            // popup also asks while open, when the trigger changes shape.
+            audience && focusDraft
+              ? () => {
+                  if (closedBy.current === "inside") focusDraft();
+                  return false;
+                }
+              : !accepted.current
+          }
         >
           <div className={styles.mentionContent}>
             <SearchField

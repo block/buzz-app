@@ -19,6 +19,8 @@ import {
 } from "../../features/shortcuts/preferences";
 import { ShortcutsService } from "../../features/shortcuts/service";
 import { isApplePlatform } from "../../features/shortcuts/format";
+import { createRelaySession } from "../../features/relay/session";
+import { keypair, scriptedTransport } from "../../features/relay/testing";
 
 // jsdom lacks scrollIntoView; the palette reveals its typed-text selection.
 beforeEach(() => {
@@ -386,6 +388,113 @@ it("opens conversation-scoped search with Command F and returns to overall searc
     expect(screen.getByRole("dialog", { name: "Search Buzz" })).toBeVisible();
   } finally {
     cleanup();
+    bindings.dispose();
+    await root.fiber.dispose();
+  }
+});
+
+it("does not open a DM that finishes starting after search closed", async () => {
+  const root = new Context();
+  root.provide("pluginStatus", {
+    isActive: () => true,
+    subscribe: () => () => {},
+  });
+  const bindings = createShortcutBindings(window);
+  const shortcuts = new ShortcutsService(root, window, bindings);
+  const relay = keypair(),
+    viewer = keypair(),
+    bob = keypair();
+  const owner = createRelaySession({
+    ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+    query: async () => [],
+  });
+  let started!: (channelId: string) => void;
+  const session = {
+    ...owner.session,
+    channels: {
+      ...owner.session.channels,
+      // The started DM is known, so only the closed palette stops it.
+      get: (id: string) =>
+        id === "bob-dm"
+          ? { id, name: "", channelType: "dm" }
+          : owner.session.channels.get?.(id),
+    },
+    directMessages: {
+      ...owner.session.directMessages,
+      available: true,
+      people: async () => ({
+        people: [{ pubkey: bob.pubkey, name: "Bob" }],
+        hasMore: false,
+      }),
+      open: () => new Promise<string>((resolve) => (started = resolve)),
+    },
+  } as unknown as typeof owner.session;
+  const connection = { status: "ready", generation: 0, session, scope: "s" };
+  const community = {
+    selected: "wss://relay.example",
+    viewer: viewer.pubkey,
+  };
+  const open = vi.fn(async () => {});
+  const services = {
+    shortcuts,
+    shortcutBindings: bindings,
+    navigation: {
+      subscribe: () => () => {},
+      snapshot: () => ({ entry: { target: null } }),
+      open,
+    },
+    communities: {
+      subscribe: () => () => {},
+      snapshot: () => community,
+      relay: { subscribe: () => () => {}, snapshot: () => connection },
+    },
+  } as unknown as SearchServices;
+  const user = userEvent.setup();
+  try {
+    render(
+      <PageSearch
+        pages={[
+          {
+            key: "buzz.channels/channels",
+            pluginId: "buzz.channels",
+            id: "channels",
+            title: "Channels",
+            revision: "bundled",
+            component: () => null,
+          },
+        ]}
+        onSelect={vi.fn()}
+        services={services}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Search Buzz" }));
+    const input = await screen.findByRole("combobox", { name: "Search Buzz" });
+    await user.type(input, "bob");
+    await user.click(await screen.findByRole("option", { name: /Bob/ }));
+    expect(
+      await screen.findByText("Opening your conversation with Bob…"),
+    ).toBeVisible();
+    // Hold the dialog's close animation, so the DM resolves while the
+    // closing palette is still mounted.
+    let release!: () => void;
+    const finished = new Promise<void>((resolve) => (release = resolve));
+    const animations = vi.fn(() => [{ finished }]);
+    const dialog = screen.getByRole("dialog", { name: "Search Buzz" });
+    Object.defineProperty(dialog, "getAnimations", { value: animations });
+    try {
+      fireEvent.keyDown(input, { key: "Escape" });
+      await vi.waitFor(() => expect(animations).toHaveBeenCalled());
+      expect(
+        screen.getByText("Opening your conversation with Bob…"),
+      ).toBeInTheDocument();
+      await act(async () => started("bob-dm"));
+      expect(open).not.toHaveBeenCalled();
+    } finally {
+      await act(async () => release());
+    }
+  } finally {
+    cleanup();
+    owner.dispose();
     bindings.dispose();
     await root.fiber.dispose();
   }

@@ -238,6 +238,7 @@ export function PageSearch({
                 setScopedChannelId(channelId);
                 input.current?.focus();
               }}
+              isOpen={() => openRef.current}
               close={(channelId) => {
                 composerChannel.current = channelId;
                 returnFocus.current = document.getElementById("main-content");
@@ -267,6 +268,7 @@ function CommunitySearch({
   scopedChannelId,
   currentChannelId,
   onScopeChange,
+  isOpen,
   close,
 }: {
   services: SearchServices;
@@ -275,6 +277,9 @@ function CommunitySearch({
   scopedChannelId?: string | undefined;
   currentChannelId?: string | undefined;
   onScopeChange: (channelId?: string) => void;
+  /** Whether the palette is still open. A choice that resolves after it
+   * closed, such as a DM still opening, must not navigate. */
+  isOpen: () => boolean;
   close: (channelId?: string) => void;
 } & SearchInputProps) {
   const inlineSettings = useSearchSettings({
@@ -380,6 +385,7 @@ function CommunitySearch({
       openConversation={(channelId, messageId) => {
         const current = services.communities.snapshot();
         if (
+          !isOpen() ||
           current.viewer !== scope.viewer ||
           current.selected !== client.selected ||
           services.communities.relay.snapshot().session !==
@@ -400,6 +406,7 @@ function CommunitySearch({
         const current = services.communities.snapshot();
         const relay = services.communities.relay.snapshot();
         if (
+          !isOpen() ||
           current.viewer !== scope.viewer ||
           current.selected !== client.selected ||
           relay.session !== connection.session ||

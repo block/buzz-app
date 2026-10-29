@@ -421,8 +421,13 @@ export type AgentHandle = Readonly<{
    * header that authorizes it there as the agent for a minute. */
   gitAuth(owner: string, repo: string): Promise<GitAuth>;
   /** Writes memory entry `slug`, newer than the entry it replaces (`after`,
-   * that entry's `createdAt`, or 0). The owner reads it back. */
-  remember(slug: string, body: string, after: number): Promise<RelayEvent>;
+   * that entry's `createdAt`, or 0); a `null` body deletes it. The owner
+   * reads it back. */
+  remember(
+    slug: string,
+    body: string | null,
+    after: number,
+  ): Promise<RelayEvent>;
   /** The owner's channel templates on this device, each with the agents it
    * adds that are the owner's agents in this agent's community. */
   templates(): readonly Readonly<{

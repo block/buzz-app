@@ -475,7 +475,7 @@ export type RunnerHost = {
     signal: AbortSignal,
   ): Promise<boolean>;
   /** The agent wrote this memory through its handle. */
-  remembered(key: AgentKey, slug: string, body: string): void;
+  remembered(key: AgentKey, slug: string, body: string | null): void;
   woke?(
     key: AgentKey,
     object: AttentionObject,
@@ -2404,7 +2404,7 @@ export class AgentRunners {
         lifetime.throwIfAborted();
         return this.require().gitAuth(agent, owner, repo);
       },
-      remember: async (slug: string, body: string, after: number) => {
+      remember: async (slug: string, body: string | null, after: number) => {
         lifetime.throwIfAborted();
         const event = await this.require().remember(agent, slug, body, after);
         this.host.remembered(agent.key, slug, body);

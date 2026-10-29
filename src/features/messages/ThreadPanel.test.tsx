@@ -89,7 +89,6 @@ vi.mock("./MessageComposer", () => ({
     scope,
     onSend,
     ownSoloConversation,
-    activityClickOpensPanel,
     disabled,
     placeholder,
     focusRequest,
@@ -102,7 +101,6 @@ vi.mock("./MessageComposer", () => ({
       data-channel={channelId}
       data-scope={scope}
       data-own-solo={ownSoloConversation}
-      data-direct-activity={activityClickOpensPanel}
       data-disabled={disabled}
       data-placeholder={placeholder}
       data-focus-request={focusRequest}
@@ -1377,20 +1375,14 @@ it("names the conversation a thread lives in as a link, only when its host can o
   expect(within(thread).queryByText("#Alpha")).toBeNull();
 });
 
-it("passes readiness and direct Activity through to thread composition, and gives a Solo thread none", () => {
+it("passes readiness through to thread composition, and gives a Solo thread none", () => {
   const h = messagesHarness();
-  const view = render(
-    <ThreadPanel {...h.props} activityClickOpensPanel disabled />,
-  );
+  const view = render(<ThreadPanel {...h.props} disabled />);
   const composer = screen.getByRole("region", { name: "Composer" });
-  expect(composer).toHaveAttribute("data-direct-activity", "true");
   expect(composer).toHaveAttribute("data-disabled", "true");
-  view.rerender(
-    <ThreadPanel {...h.props} activityClickOpensPanel disabled={false} />,
-  );
+  view.rerender(<ThreadPanel {...h.props} disabled={false} />);
   expect(composer).toHaveAttribute("data-disabled", "false");
   view.rerender(<ThreadPanel {...h.props} />);
-  expect(composer).not.toHaveAttribute("data-direct-activity");
   // Solo agents answer at top level: its threads are read-only.
   view.rerender(<ThreadPanel {...h.props} soloConversation />);
   expect(

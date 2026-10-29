@@ -279,7 +279,7 @@ it("reveals an older folded message for an exact visit, then permits folding it 
 });
 
 it.each([1, 4])(
-  "keeps a %i-step completed disclosure below its public reply in channels",
+  "hides a %i-step completed run while keeping subsequent work in channels",
   (count) => {
     const { owner, updates, content } = activityFixture();
     try {
@@ -299,25 +299,13 @@ it.each([1, 4])(
       );
       expect(screen.queryByText("Update 0")).toBeNull();
       const label = `${count} completed ${count === 1 ? "step" : "steps"}`;
-      expect(screen.getByText(label)).toBeVisible();
-      const completed = screen.getByRole("button", {
-        name: new RegExp(`Show activity history.*${label}`),
-      });
-      expect(completed.querySelector("[data-avatar-motion-key]")).toBeNull();
+      expect(screen.queryByText(label)).toBeNull();
       const reply = screen.getByText("Main reply");
       expect(reply).toBeVisible();
-      expect(
-        reply.compareDocumentPosition(completed) &
-          Node.DOCUMENT_POSITION_FOLLOWING,
-      ).toBeTruthy();
-      fireEvent.click(completed);
-      expect(screen.getByText("Update 0")).toBeVisible();
-      expect(completed).toHaveAttribute("aria-expanded", "true");
-      fireEvent.click(completed);
       expect(screen.getByText(`Update ${count * 2}`)).toBeVisible();
       expect(
         screen.getAllByRole("button", { name: /Show activity history/ }),
-      ).toHaveLength(2);
+      ).toHaveLength(1);
     } finally {
       owner.dispose();
     }
@@ -361,7 +349,7 @@ it("keeps ongoing typing in the reply group after completed history", () => {
         queries,
       ),
     );
-    expect(screen.getByText("2 completed steps")).toBeVisible();
+    expect(screen.queryByText("2 completed steps")).toBeNull();
     expect(
       screen.getByRole("button", { name: /Activity: .*working/ }),
     ).toBeVisible();
@@ -945,7 +933,7 @@ it.each([
   }
 });
 
-it("summarizes historical steps after the agent returns to a public reply without live completion state", () => {
+it("hides historical steps after the agent returns to a public reply without live completion state", () => {
   const { owner, updates, content } = activityFixture();
   try {
     const rows = updates(3);
@@ -961,11 +949,9 @@ it("summarizes historical steps after the agent returns to a public reply withou
     const view = render(content([...rows, { ...response, authorId: "human" }]));
     expect(screen.queryByText("3 completed steps")).toBeNull();
     view.rerender(content([...rows, response]));
-    expect(screen.getByText("3 completed steps")).toBeVisible();
-    fireEvent.click(
-      screen.getByRole("button", { name: /Show activity history/ }),
-    );
-    expect(screen.getByText("Update 2")).toBeVisible();
+    expect(screen.queryByText("3 completed steps")).toBeNull();
+    expect(screen.queryByText("Update 2")).toBeNull();
+    expect(screen.getByText("Here is the result.")).toBeVisible();
   } finally {
     owner.dispose();
   }

@@ -59,7 +59,9 @@ function activityStatus(group: ActivityRun, snapshot: Snapshot | undefined) {
       work.some(
         (entry) =>
           entry.agent === agent &&
-          (entry.state === "done" || entry.state === "ended"),
+          (entry.state === "done" ||
+            entry.state === "ended" ||
+            entry.state === "superseded"),
       ),
     );
   const working = new Set(
@@ -187,22 +189,13 @@ export function useActivityPresentation(
   );
 }
 
-/** Keep a finished run's disclosure and expanded history below its reply. */
+/** Finished work stays in Activity rather than the conversation flow. */
 export function activityDisplayRows<T extends ChannelMessage>(
   rows: readonly T[],
   groups: readonly ActivityPresentation[],
 ): readonly T[] {
-  const byId = new Map(rows.map((row) => [row.id, row]));
-  const replies = new Map<string, T>();
-  for (const group of groups) {
-    const first = group.ids[0];
-    const reply = group.completedReply && byId.get(group.completedReply.id);
-    if (first && reply) replies.set(first, reply);
-  }
-  if (!replies.size) return rows;
-  const moved = new Set([...replies.values()].map((row) => row.id));
-  return rows.flatMap((row) => {
-    const reply = replies.get(row.id);
-    return reply ? [reply, row] : moved.has(row.id) ? [] : [row];
-  });
+  const completed = new Set(
+    groups.filter((group) => group.done).flatMap((group) => group.ids),
+  );
+  return completed.size ? rows.filter((row) => !completed.has(row.id)) : rows;
 }

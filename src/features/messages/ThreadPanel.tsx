@@ -67,7 +67,6 @@ export type ThreadPanelProps = {
   channelId: string;
   /** Solo agents answer at top level, so a Solo thread is read-only. */
   soloConversation?: boolean | undefined;
-  activityClickOpensPanel?: boolean | undefined;
   disabled?: boolean | undefined;
   messageId: string;
   /** Channel workspaces retain the editor across same-thread link navigation. */
@@ -379,7 +378,6 @@ function OwnedThreadPanel({
   onOpenMediaReview,
   canOpenLink,
   soloConversation,
-  activityClickOpensPanel,
   disabled,
   replyRequest,
   focusRequest,
@@ -439,7 +437,6 @@ function OwnedThreadPanel({
   ) : view ? (
     <ThreadMessages
       soloConversation={soloConversation}
-      activityClickOpensPanel={activityClickOpensPanel}
       disabled={disabled}
       extensions={extensions}
       session={session}
@@ -476,7 +473,6 @@ function ThreadMessages({
   onOpenMediaReview,
   canOpenLink,
   soloConversation,
-  activityClickOpensPanel,
   disabled,
   replyRequest,
   focusRequest,
@@ -493,7 +489,6 @@ function ThreadMessages({
   selectionFailure?: SelectionFailure | undefined;
   /** Solo agents answer at top level, so a Solo thread is read-only. */
   soloConversation?: boolean | undefined;
-  activityClickOpensPanel?: boolean | undefined;
   disabled?: boolean | undefined;
   extensions?: ConversationExtensions | undefined;
   session: RelaySession;
@@ -1332,7 +1327,6 @@ function ThreadMessages({
         const recordedActivity = presentation.byRow.get(row.id);
         return (
           <MessageRow
-            activityFollows={presentation.completedReplies.has(row.id)}
             representedAgents={presentation.representedAgents.get(row.id)}
             recordedActivity={
               recordedActivity && {
@@ -1707,7 +1701,6 @@ function ThreadMessages({
             previousAuthor={joinsLive ? lastMessage?.authorId : undefined}
             openActivity={onOpenLink}
             canOpenActivity={canOpenLink}
-            clickOpensPanel={activityClickOpensPanel}
           />
         )}
         {positioning || (snapshot.status === "loading" && !rows.length) ? (
@@ -1771,7 +1764,6 @@ function ThreadMessages({
       )}
       {composerRoot && (
         <MessageComposer
-          activityClickOpensPanel={activityClickOpensPanel}
           key={`${scope}:${channelId}:${composerRoot.id}`}
           extensions={extensions}
           session={session}

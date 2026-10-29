@@ -19,6 +19,7 @@ import {
   OctagonIcon,
   WarningCircleIcon,
   XIcon,
+  ArrowUpRightIcon,
 } from "../../shared/design-system/icons";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { ShimmerText } from "../../shared/design-system/ui/ShimmerText";
@@ -512,10 +513,6 @@ function ActivityBubble({
             event.preventBaseUIHandler();
             return;
           }
-          if (props.openThread?.()) {
-            event.preventBaseUIHandler();
-            setExpanded(false);
-          }
         }}
         render={
           <button
@@ -524,7 +521,7 @@ function ActivityBubble({
             type="button"
             className={messageStyles.activityBubbleTrigger}
             data-activity-summary=""
-            aria-label={`${props.openThread ? "Open thread" : "View agent activity"}: ${entries.map((entry) => `${entry.name}, ${label(entry)}`).join("; ")}`}
+            aria-label={`View agent activity: ${entries.map((entry) => `${entry.name}, ${label(entry)}`).join("; ")}`}
           >
             {content}
           </button>
@@ -539,6 +536,24 @@ function ActivityBubble({
       >
         {expanded && (
           <div className={styles.previews}>
+            <NavigationItem
+              variant="option"
+              label="Activity"
+              aria-label="View full activity"
+              trailing={<ArrowUpRightIcon aria-hidden="true" />}
+              disabled={
+                !entries[0] ||
+                !props.canOpen(
+                  profileActivityViewTarget(entries[0].agent) ?? "",
+                )
+              }
+              onClick={() => {
+                const target =
+                  entries[0] && profileActivityViewTarget(entries[0].agent);
+                if (target && props.canOpen(target) && props.open(target))
+                  setExpanded(false);
+              }}
+            />
             {entries.map((entry) => {
               // Opens the agent's profile on its Activity tab.
               const target = profileActivityViewTarget(entry.agent);

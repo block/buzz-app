@@ -19,6 +19,8 @@ import { currentActivity } from "../agents/current-activity";
 import { AgentResponsePreview } from "./AgentResponsePreview";
 import { ActivityStepPreview } from "./ActivityStepPreview";
 import { AgentActivityRow } from "../agents/AgentActivityRow";
+import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
+import { ArrowUpRightIcon } from "../../shared/design-system/icons";
 import activityStyles from "../agents/ActivityRows.module.css";
 import {
   PopoverRoot,
@@ -86,7 +88,6 @@ export function TypingIndicator({
   channelId,
   threadRootId,
   canOpenActivity,
-  clickOpensPanel = false,
   openActivity,
   previousAuthor,
   inFlow = false,
@@ -95,7 +96,6 @@ export function TypingIndicator({
   audience?: "all" | "humans" | "agents";
   previousAuthor?: string | undefined;
   inFlow?: boolean;
-  clickOpensPanel?: boolean | undefined;
   session: ComposerSession & Partial<Pick<RelaySession, "agentActivity">>;
   channelId: string;
   threadRootId?: string | undefined;
@@ -179,10 +179,7 @@ export function TypingIndicator({
       (roots.length === 1 && (roots[0] === null || !!roots[0]));
     return profileActivityViewTarget(pubkey, { transcript: known });
   };
-  const directTarget =
-    clickOpensPanel && agents.length === 1 && firstAgent
-      ? activityTarget(firstAgent)
-      : undefined;
+  const directTarget = firstAgent ? activityTarget(firstAgent) : undefined;
   const agentStatus = (
     pubkey: string,
     navigate: (target: string, origin?: MessageLinkOrigin) => void,
@@ -414,10 +411,6 @@ function AgentChooser({
       modal={false}
       open={open}
       onOpenChange={(nextOpen, details) => {
-        if (directTarget && details.reason === "trigger-press") {
-          details.cancel();
-          return;
-        }
         // Base UI tracks compositionstart/end; also honor the native key flags
         // when composition began before this hover popup mounted.
         if (
@@ -466,12 +459,6 @@ function AgentChooser({
               setOpen(true);
               popup.current?.focus();
             }}
-            onClick={(event) => {
-              if (!directTarget) return;
-              // Keep hover preview separate from explicit click/keyboard activation.
-              event.preventDefault();
-              navigate(directTarget, directOrigin);
-            }}
           >
             {content}
           </button>
@@ -490,6 +477,16 @@ function AgentChooser({
           className={activityStyles.activityList}
           aria-label="Agents working now"
         >
+          <NavigationItem
+            variant="option"
+            label="Activity"
+            aria-label="View full activity"
+            trailing={<ArrowUpRightIcon aria-hidden="true" />}
+            disabled={!directTarget || !openTarget}
+            onClick={() => {
+              if (directTarget) navigate(directTarget, directOrigin);
+            }}
+          />
           {children(navigate)}
         </section>
       </PopoverPopup>

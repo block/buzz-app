@@ -298,7 +298,6 @@ export function ConversationComposer(props: Own<MessageComposerProps>) {
             label: withPeople
               ? "Message this conversation"
               : "Message your agents",
-            activityClickOpensPanel: true,
           }
         : {})}
       chatPresentation={shared.ownSoloConversation}

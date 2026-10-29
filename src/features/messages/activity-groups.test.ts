@@ -26,6 +26,53 @@ const activity = (
 const run = (prefix: string, count = 6) =>
   Array.from({ length: count }, (_, index) => activity(`${prefix}${index}`));
 
+it("retires superseded tool updates while the steered request keeps working", () => {
+  const { audience: _audience, ...request } = activity("request", {
+    authorId: "human",
+  });
+  const steer = { ...request, id: "steer" };
+  const oldStep = activity("old-step", { replyParentId: request.id });
+  const newStep = activity("new-step", { replyParentId: steer.id });
+  const rows = [request, oldStep, steer, newStep];
+  const presentation = activityPresentation(
+    rows,
+    {
+      status: "listening",
+      typing: [],
+      records: [],
+      turns: [],
+      trimmed: 0,
+      local: [
+        {
+          scope: "test",
+          agent: "agent",
+          channelId: "solo",
+          threadRootId: "request",
+          messageId: "request",
+          startedAt: 1,
+          state: "superseded",
+        },
+        {
+          scope: "test",
+          agent: "agent",
+          channelId: "solo",
+          threadRootId: "request",
+          messageId: "steer",
+          startedAt: 2,
+          state: "working",
+        },
+      ],
+    },
+    new Set(["agent"]),
+  );
+  expect(activityDisplayRows(rows, presentation.groups)).toEqual([
+    request,
+    steer,
+    newStep,
+  ]);
+  expect(presentation.byRow.get(newStep.id)?.active).toBe(true);
+});
+
 it("folds consecutive activity into one preview and includes different agents in a run", () => {
   const single = run("a", 1);
   expect(activityRuns(single)).toEqual([single]);
@@ -76,7 +123,7 @@ it("splits groups across local days and channels", () => {
 });
 
 it.each([1, 2])(
-  "places %i completed steps after its agent reply while keeping unfinished work in place",
+  "hides %i completed steps while keeping the reply and unfinished work in place",
   (count) => {
     const history = run("step", count);
     const { audience: _, ...reply } = activity("reply");
@@ -84,7 +131,7 @@ it.each([1, 2])(
     const completed = activityPresentation(rows, undefined, new Set(["agent"]));
     expect(
       activityDisplayRows(rows, completed.groups).map((row) => row.id),
-    ).toEqual(["reply", ...history.map((row) => row.id)]);
+    ).toEqual(["reply"]);
     expect([...completed.completedReplies]).toEqual(["reply"]);
     const request = { ...reply, id: "request", authorId: "human" };
     expect([

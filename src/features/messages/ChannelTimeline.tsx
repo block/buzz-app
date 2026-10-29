@@ -1266,7 +1266,6 @@ function Timeline({
               const recordedActivity = presentation.byRow.get(row.id);
               return (
                 <MessageRow
-                  activityFollows={presentation.completedReplies.has(row.id)}
                   representedAgents={presentation.representedAgents.get(row.id)}
                   recordedActivity={
                     recordedActivity && {

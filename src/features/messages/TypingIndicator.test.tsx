@@ -276,7 +276,9 @@ it("keeps a non-navigable status when the plugin is unavailable and does not clo
   expect(
     within(dialog).getByText("Only typing updates are reaching this app."),
   ).toBeVisible();
-  expect(within(dialog).queryByRole("button")).toBeNull();
+  expect(
+    within(dialog).getByRole("button", { name: "View full activity" }),
+  ).toBeDisabled();
   view.rerender(
     <TypingIndicator
       session={f.session}
@@ -325,7 +327,7 @@ it("never chooses one thread from simultaneous work and deduplicates public and 
   );
   const dialog = await screen.findByRole("dialog");
   // The channel conversation is already shown, so the one row opens activity.
-  expect(within(dialog).getAllByRole("button")).toHaveLength(1);
+  expect(within(dialog).getAllByRole("button")).toHaveLength(2);
   await user.click(
     within(dialog).getByRole("button", { name: "View Agent activity" }),
   );
@@ -572,7 +574,7 @@ it("hands navigation a retained trigger instead of the disposable popup action",
 });
 
 it.each(["click", "Enter", "Space"])(
-  "Solo chat single-agent %s opens Activity directly while hover retains its preview",
+  "Solo chat single-agent %s opens the popover before full Activity",
   async (activation) => {
     const f = fixture(),
       user = userEvent.setup(),
@@ -582,7 +584,6 @@ it.each(["click", "Enter", "Space"])(
       <TypingIndicator
         session={f.session}
         channelId="channel"
-        clickOpensPanel
         canOpenActivity={() => true}
         openActivity={open}
       />,
@@ -600,6 +601,10 @@ it.each(["click", "Enter", "Space"])(
       trigger.focus();
       await user.keyboard(activation === "Enter" ? "{Enter}" : " ");
     }
+    expect(open).not.toHaveBeenCalled();
+    await user.click(
+      screen.getByRole("button", { name: "View full activity" }),
+    );
     expect(open).toHaveBeenCalledExactlyOnceWith(
       profileActivityViewTarget(agent, { transcript: true }),
       { rootId: root },
@@ -620,7 +625,6 @@ it("Solo chat multiple-agent activation keeps the chooser and unavailable Activi
     <TypingIndicator
       session={f.session}
       channelId="channel"
-      clickOpensPanel
       canOpenActivity={() => true}
       openActivity={open}
     />,
@@ -638,7 +642,6 @@ it("Solo chat multiple-agent activation keeps the chooser and unavailable Activi
     <TypingIndicator
       session={f.session}
       channelId="channel"
-      clickOpensPanel
       canOpenActivity={() => false}
       openActivity={open}
     />,
@@ -661,7 +664,6 @@ it("Solo chat ArrowDown exposes retained thread navigation without opening Activ
     <TypingIndicator
       session={f.session}
       channelId="channel"
-      clickOpensPanel
       canOpenActivity={() => true}
       openActivity={open}
     />,
@@ -676,6 +678,10 @@ it("Solo chat ArrowDown exposes retained thread navigation without opening Activ
   const dialog = await screen.findByRole("dialog", { name: "Working now" });
   await waitFor(() => expect(dialog).toHaveFocus());
   expect(open).not.toHaveBeenCalled();
+  await user.tab();
+  expect(
+    within(dialog).getByRole("button", { name: "View full activity" }),
+  ).toHaveFocus();
   await user.tab();
   expect(
     within(dialog).getByRole("button", { name: "Open thread for Agent" }),

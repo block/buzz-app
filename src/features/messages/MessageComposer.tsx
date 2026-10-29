@@ -237,7 +237,6 @@ export type MessageComposerProps = {
   /** Sending needs at least one tagged recipient. */
   requireMention?: boolean | undefined;
   chatPresentation?: boolean | undefined;
-  activityClickOpensPanel?: boolean | undefined;
   trailingTool?: ReactNode;
   inviteAgents?: boolean | undefined;
   onSend?: (id: string) => void;

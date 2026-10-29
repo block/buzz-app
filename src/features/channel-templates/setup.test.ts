@@ -352,7 +352,8 @@ it.each(["group", "starred"] as const)(
   },
 );
 /** A real relay session with one saved "Work" group whose Creates are readable
- * at once. `state` can fail the new channel's reads or the preference reads. */
+ * at once. `state` can fail or hold the new channel's reads or the preference
+ * reads. */
 function placementSession(published?: () => Promise<void>) {
   const relay = keypair();
   const events: RelayEvent[] = [];
@@ -362,6 +363,8 @@ function placementSession(published?: () => Promise<void>) {
     created: undefined as string | undefined,
     failChannel: false,
     failPreferences: false,
+    readChannel: undefined as (() => Promise<void>) | undefined,
+    readPreferences: undefined as Promise<void> | undefined,
   };
   const owner = createRelaySession(
     {
@@ -374,18 +377,20 @@ function placementSession(published?: () => Promise<void>) {
           filters.some((filter) => matchesEvent(event, filter)),
         );
         if (
-          state.failChannel &&
           found.some((event) =>
             event.tags.some(
               ([tag, value]) => tag === "d" && value === state.created,
             ),
           )
-        )
-          throw new Error("Channel read failed");
+        ) {
+          if (state.failChannel) throw new Error("Channel read failed");
+          await state.readChannel?.();
+        }
         return found;
       },
       channelKit: { prepare: async () => "", decode: async () => [] },
       decodeSidebarPreferences: async () => {
+        await state.readPreferences;
         if (state.failPreferences) throw new Error("Preferences unavailable");
         return {
           sections,
@@ -446,6 +451,61 @@ it("re-reads sidebar preferences before placement once the preflight read no lon
       data: { assignments: { [id]: "work" } },
     });
   } finally {
+    owner.dispose();
+  }
+});
+it("places without waiting on another preference refresh still in flight", async () => {
+  // The first read of the new channel's metadata or roster is the re-read.
+  const listed = hold();
+  const listing = hold();
+  const reread = hold();
+  let inFlight: unknown;
+  const { owner, state } = placementSession(async () => {
+    // Another reader refreshes after preflight; its snapshot still stands.
+    state.readPreferences = reread.promise;
+    void owner.session.sidebarPreferences.refresh();
+    inFlight = {
+      status: owner.session.sidebarPreferences.snapshot().status,
+      writable: owner.session.sidebarPreferences.writable,
+    };
+  });
+  state.readChannel = () => {
+    listed.release();
+    return listing.promise;
+  };
+  try {
+    let admitted = false;
+    const creation = owner.session.channelCreation
+      .create(placed)
+      .finally(() => {
+        admitted = true;
+      });
+    // Awaited below; a failed assertion before then must not leave it unhandled.
+    creation.catch(() => {});
+    await listed.promise;
+    const id = state.created;
+    assert.exists(id);
+    expect(inFlight).toEqual({ status: "loading", writable: true });
+    await vi.waitFor(() =>
+      expect(
+        owner.session.sidebarPreferences.snapshot().data?.assignments[id],
+      ).toBe("work"),
+    );
+    expect(admitted).toBe(false);
+    reread.release();
+    listing.release();
+    expect(await creation).toBe(id);
+    const receipt = `buzz-channel-setup.v2:https://placement.example.test:${viewer.pubkey}:${id}`;
+    await vi.waitFor(() => expect(localStorage.getItem(receipt)).toBeNull());
+    expect(owner.session.channelCreation.notices()).toEqual([]);
+    expect(state.assignments).toEqual({ [id]: "work" });
+    expect(owner.session.sidebarPreferences.snapshot()).toMatchObject({
+      status: "ready",
+      data: { assignments: { [id]: "work" } },
+    });
+  } finally {
+    reread.release();
+    listing.release();
     owner.dispose();
   }
 });

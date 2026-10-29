@@ -1555,10 +1555,11 @@ export function createRelaySession(
       listener();
     });
   // Create's preflight has just read sidebar preferences. Placement re-reads
-  // only once that read no longer stands (loading, failed or cleared), so it
-  // normally projects before the new channel first lists.
+  // only once that read no longer stands (failed or cleared); another refresh
+  // in flight leaves it writable. So placement normally projects before the
+  // new channel first lists.
   const settledPreferences = async () => {
-    if (sidebarPreferences.queries.snapshot().status !== "ready")
+    if (!sidebarPreferences.queries.writable)
       await sidebarPreferences.queries.refresh();
   };
   const channelSetup =

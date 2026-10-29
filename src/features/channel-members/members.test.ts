@@ -48,6 +48,7 @@ function setup(
     person = keypair();
   const id = "11111111-1111-4111-8111-111111111111";
   let members = [viewer.pubkey];
+  let personRole: string | undefined;
   let clock = 1700000000;
   let fail = "";
   let unknown = false;
@@ -106,7 +107,21 @@ function setup(
                 ["name", "Design"],
               ],
             }),
-            roster(foreign ? person : relay, id, members, clock),
+            personRole
+              ? signed(relay, {
+                  kind: 39002,
+                  content: "",
+                  created_at: clock,
+                  tags: [
+                    ["d", id],
+                    ...members.map((key) =>
+                      key === person.pubkey && personRole
+                        ? ["p", key, personRole]
+                        : ["p", key],
+                    ),
+                  ],
+                })
+              : roster(foreign ? person : relay, id, members, clock),
           ].filter((event) =>
             filters.some((filter) => matchesEvent(event, filter)),
           );
@@ -171,8 +186,9 @@ function setup(
       members = [viewer.pubkey];
       clock++;
     },
-    confirmPerson: () => {
+    confirmPerson: (role?: string) => {
       members = [viewer.pubkey, person.pubkey];
+      personRole = role;
       clock++;
     },
     managedAdd: () => owner.session.memberAdditions.add(id, person.pubkey),
@@ -253,6 +269,29 @@ it("does not resend an addition for someone already in the private channel", asy
   await t.managedAdd();
   expect(t.publish).not.toHaveBeenCalled();
 });
+it.each(["guest", "admin"])(
+  "does not replay a failed private addition over a newer %s admission after restart",
+  async (role) => {
+    const t = setup();
+    await t.ready();
+    t.setFail("Not committed");
+    await expect(t.managedAdd()).rejects.toThrow(/Not committed/);
+    const original = t.records()[0]?.event.id;
+    t.confirmPerson(role);
+    t.setFail("");
+    t.restart();
+    await t.ready();
+    await t.managedAdd();
+    expect(t.publish).toHaveBeenCalledOnce();
+    expect(t.records()[0]).toMatchObject({
+      event: { id: original },
+      acknowledged: true,
+    });
+    expect(t.session.channels.list().channels[0]?.members).toContain(
+      t.person.pubkey,
+    );
+  },
+);
 it("preserves a rejected operation and retries its exact identity", async () => {
   const t = setup();
   await t.ready();

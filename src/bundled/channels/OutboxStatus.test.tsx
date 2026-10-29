@@ -31,6 +31,7 @@ const invitation = {
 } as OutgoingEvent;
 function show(item: OutgoingEvent) {
   const retry = vi.fn();
+  const add = vi.fn(async () => {});
   const items = [item];
   const outbox = {
     snapshot: () => items,
@@ -38,13 +39,19 @@ function show(item: OutgoingEvent) {
     retry,
     dismiss: vi.fn(),
   } as unknown as Outbox;
-  render(<OutboxStatus outbox={outbox} profiling={createRelayProfiler()} />);
+  render(
+    <OutboxStatus
+      outbox={outbox}
+      profiling={createRelayProfiler()}
+      memberAdditions={{ add }}
+    />,
+  );
   fireEvent.click(screen.getByText("Outbox · 1 items"));
-  return retry;
+  return { retry, add };
 }
 
 it("does not offer generic retry for guarded invitations from either profile or composer", () => {
-  const retry = show({ ...invitation, guarded: true });
+  const { retry } = show({ ...invitation, guarded: true });
   expect(
     screen.queryByRole("button", { name: "Retry" }),
   ).not.toBeInTheDocument();
@@ -71,7 +78,13 @@ it("does not show private feedback body or generic retry in the channel outbox",
     retry,
     dismiss: vi.fn(),
   } as unknown as Outbox;
-  render(<OutboxStatus outbox={outbox} profiling={createRelayProfiler()} />);
+  render(
+    <OutboxStatus
+      outbox={outbox}
+      profiling={createRelayProfiler()}
+      memberAdditions={{ add: vi.fn(async () => {}) }}
+    />,
+  );
   fireEvent.click(screen.getByText("Outbox · 0 items"));
   expect(screen.queryByText(/private report/)).not.toBeInTheDocument();
   expect(
@@ -81,9 +94,29 @@ it("does not show private feedback body or generic retry in the channel outbox",
 });
 
 it("preserves generic retry for legacy unguarded invitations", () => {
-  const retry = show(invitation);
+  const { retry } = show(invitation);
   fireEvent.click(screen.getByRole("button", { name: "Retry" }));
   expect(retry).toHaveBeenCalledWith("invite");
+});
+
+it("routes an ordinary addition retry through fresh membership checks", async () => {
+  const { retry, add } = show({
+    ...invitation,
+    event: {
+      ...invitation.event,
+      tags: [
+        ["h", "channel"],
+        ["p", "person"],
+        ["role", "member"],
+      ],
+    },
+    recovery: { key: "member-add:channel:person", value: "1" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  await waitFor(() =>
+    expect(add).toHaveBeenCalledExactlyOnceWith("channel", "person"),
+  );
+  expect(retry).not.toHaveBeenCalled();
 });
 
 // The recovery page deliberately has no source inventory or encoder: deleted
@@ -158,7 +191,11 @@ it.each(["agent", "team", "solo", "agent-share"] as const)(
       await restored.outbox.ready();
       const outbox = restored.outbox;
       render(
-        <OutboxStatus outbox={outbox} profiling={createRelayProfiler()} />,
+        <OutboxStatus
+          outbox={outbox}
+          profiling={createRelayProfiler()}
+          memberAdditions={{ add: vi.fn(async () => {}) }}
+        />,
       );
       fireEvent.click(screen.getByText("Outbox · 1 items"));
       fireEvent.click(

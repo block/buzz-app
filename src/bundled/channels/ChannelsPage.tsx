@@ -1647,7 +1647,11 @@ function ChannelWorkspace({
         </Button>
       )}
       {queries.outbox ? (
-        <OutboxStatus outbox={queries.outbox} profiling={queries.profiling} />
+        <OutboxStatus
+          outbox={queries.outbox}
+          profiling={queries.profiling}
+          memberAdditions={queries.memberAdditions}
+        />
       ) : (
         <RelayTimings profiling={queries.profiling} />
       )}

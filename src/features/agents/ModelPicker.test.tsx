@@ -3,10 +3,63 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
-import { StrictMode } from "react";
+import { StrictMode, useState } from "react";
 import { ModelPicker, type ModelChoice } from "./ModelPicker";
+import {
+  DeepSeekLogoIcon,
+  GrokLogoIcon,
+  ZaiLogoIcon,
+  KimiLogoIcon,
+} from "../../shared/design-system/icons";
 
 afterEach(cleanup);
+
+it.each([
+  ["DeepSeek", "deepseek/deepseek-v3", DeepSeekLogoIcon],
+  ["Grok", "xai/grok-4", GrokLogoIcon],
+  ["GLM", "zhipu/glm-4.6", ZaiLogoIcon],
+  ["Kimi", "moonshot/kimi-k2", KimiLogoIcon],
+] as const)(
+  "uses the %s mark for catalog families and inferred model IDs",
+  async (family, modelId, Icon) => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const reference = render(<Icon size={20} />);
+    const artwork = reference.container.querySelector("svg")?.innerHTML;
+    function Picker() {
+      const [value, setValue] = useState("opaque-catalog-id");
+      return (
+        <ModelPicker
+          groupByFamily
+          includeDefault={false}
+          models={[
+            { id: "opaque-catalog-id", label: "Catalog model", family },
+            { id: modelId, label: "Provider model" },
+          ]}
+          value={value}
+          defaultLabel="Choose model"
+          onChange={(id) => {
+            onChange(id);
+            setValue(id);
+          }}
+        />
+      );
+    }
+    render(<Picker />);
+    const trigger = screen.getByRole("button", { name: /^Model:/ });
+    expect(trigger.querySelector("svg")?.innerHTML).toBe(artwork);
+    await user.click(trigger);
+    const submenu = await screen.findByRole("menuitem", { name: family });
+    expect(submenu.querySelector("svg")?.innerHTML).toBe(artwork);
+    submenu.focus();
+    await user.keyboard("{ArrowRight}");
+    await user.click(
+      await screen.findByRole("menuitemradio", { name: "Provider model" }),
+    );
+    expect(onChange).toHaveBeenCalledExactlyOnceWith(modelId);
+    expect(trigger.querySelector("svg")?.innerHTML).toBe(artwork);
+  },
+);
 
 const models: ModelChoice[] = [
   { id: "sonnet", label: "Sonnet" },

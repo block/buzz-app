@@ -12,6 +12,10 @@ import {
   GoogleLogoIcon,
   MetaLogoIcon,
   CodexLogoIcon,
+  DeepSeekLogoIcon,
+  GrokLogoIcon,
+  ZaiLogoIcon,
+  KimiLogoIcon,
   RobotIcon,
 } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -50,7 +54,15 @@ export function ModelIcon({ model }: { model: string }) {
         ? GoogleLogoIcon
         : /llama/.test(name)
           ? MetaLogoIcon
-          : RobotIcon;
+          : /deepseek/.test(name)
+            ? DeepSeekLogoIcon
+            : /grok/.test(name)
+              ? GrokLogoIcon
+              : /(?:^|[\s/._-])glm(?:[\s/._-]|\d|$)|zhipu|z[.-]ai/.test(name)
+                ? ZaiLogoIcon
+                : /kimi|moonshot/.test(name)
+                  ? KimiLogoIcon
+                  : RobotIcon;
   return <Icon size={20} aria-hidden="true" />;
 }
 

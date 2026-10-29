@@ -30,6 +30,7 @@ export function modelFamily(model: ModelChoice): string {
     ["Llama", /llama/],
     ["Mistral", /mistral|mixtral|codestral/],
     ["Grok", /grok/],
+    ["GLM", /(?:^|[\s/._-])glm(?:[\s/._-]|\d|$)|zhipu|z[.-]ai/],
   ] as const)
     if (pattern.test(name)) return family;
   return "Other";

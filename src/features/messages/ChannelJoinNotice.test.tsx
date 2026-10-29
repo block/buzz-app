@@ -16,6 +16,30 @@ import { ChannelJoinNotice } from "./ChannelJoinNotice";
 
 afterEach(cleanup);
 
+it.each([false, true])(
+  "keeps Guest-default previews read-only with stored Guest membership %s",
+  (guest) => {
+    const run = vi.fn();
+    const started = vi.fn();
+    render(
+      <ChannelJoinNotice
+        channelId="open"
+        lifecycle={lifecycle(run)}
+        joinable
+        guest={guest}
+        joinRole="guest"
+        onJoin={started}
+      />,
+    );
+    expect(
+      screen.getByRole("region", { name: "Read-only channel" }),
+    ).toHaveTextContent("This channel is read-only.");
+    expect(screen.queryByRole("button", { name: "Join" })).toBeNull();
+    expect(run).not.toHaveBeenCalled();
+    expect(started).not.toHaveBeenCalled();
+  },
+);
+
 function lifecycle(
   run: ChannelLifecycleCapability["run"],
   available = true,

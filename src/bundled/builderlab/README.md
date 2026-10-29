@@ -7,8 +7,8 @@ One Builderlab account for communities and agents that Builderlab hosts for you,
 1. Go to **Settings → Plugins → Builderlab** and choose **Sign in with Builderlab**.
 2. To host a community, choose **Create community** under **Communities**, then **Copy address**, open the community picker and choose **Join a community**.
 3. To host an agent, in **Agents** choose **New agent** and pick **Builderlab (hosted)** as the **Harness**.
-4. Choose a model and reasoning effort, optionally add instructions, then create the agent.
-5. Edit instructions later in **Identity**, and model settings in **Settings**.
+4. Choose a model and thinking level, optionally add instructions, then create the agent.
+5. Edit model settings and instructions later in **Identity**.
 
 ---
 
@@ -22,6 +22,11 @@ tenant's runtimes and schema location. Creation checks that contract and support
 `static` and `fetch-js`; it repeats the selected runtime through reservation and
 initialization. The executable profile returns the required asset manifest and
 bindings, even when its handler serves all content itself.
+
+Sharing follows the one-workspace model: `apps_visibility` switches an app
+between everyone in the owner's workspace and only the owner, and
+`apps_community` grants or revokes a Buzz community at the grant revision it just
+read. `apps_visibility` keeps existing viewers and community grants.
 
 BBBlock is the employee pilot. BBPublic uses the same authenticated control-plane
 boundary: the server must grant Builderlab access to the current workspace/account.
@@ -81,17 +86,28 @@ The agent's Identity tab reads its current instructions from Builderlab and
 saves changes directly to the provider. Loading and saving use the same login;
 failed saves keep the draft, and switching accounts requires the original
 account before saving. Empty instructions can be saved to clear them.
-The Settings tab loads a separate model catalog from Builderlab. Choose a model
-and one of that model's reasoning efforts, then save the pair for new tasks.
+The Identity tab also loads a separate model catalog from Builderlab. Choose a
+model and one of that model's thinking levels, then save the pair for new tasks.
 There is no default or fallback selection. Missing or unavailable saved choices
 show the server's setup status and require a supported pair. Changing the model
-clears the effort choice. Instructions and model settings save independently.
+clears the effort choice. One shared Save action sits in the agent pane's bottom
+footer and saves the Identity draft. When model settings and instructions both
+change, they are sent in one update. Instructions alone remain editable when the
+model catalog is unavailable; a changed model requires a supported effort before
+the draft can be saved.
+The model control uses the same family submenus as Goose. Builderlab's catalog
+aliases are mapped to families in `adapter-type/models.ts`; update that mapping
+with Builderlab's catalog information until its API supplies family metadata.
+The server still owns available choices, names and thinking levels. Unmapped
+aliases use shared family inference from the model ID and name; unrecognized
+models remain selectable under Other. Families without a shared brand mark use
+the generic model icon.
 Creation offers the same catalog choices and optional instructions. The provider
 registers and activates the agent before saving the settings together. Unfinished
 setup retains these values on this device so retry continues the same agent,
 including after a restart. Setup completes only once the settings save succeeds.
-Settings shows the fixed remote workspace and per-thread session behavior. Both
-tabs link to the configured Builderlab site for remote runtime management.
+Settings shows the fixed remote workspace and per-thread session behavior, with
+a link to the configured Builderlab site for remote runtime management.
 Activity shows the turns the agent published to its owner while Buzz has been
 open, across all of its conversations. It doesn't scope to the conversation it
 was opened from, because hosted frames don't always name their thread. It needs

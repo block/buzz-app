@@ -11,8 +11,10 @@ import {
 } from "../../features/agents/attention-sources";
 import type { Agent, AgentAttention } from "../../features/agents/service";
 import type { AttentionValue } from "../../features/agents/attention";
+import { GitHubError, type GitHubCli } from "./gh";
+import { createPullStates } from "./pull-states";
 import { POLL_MS, watchPulls } from "./watcher";
-import { pullOf, pullRequest, QUIET_MS, WAKE_LIMIT } from "./watch";
+import { QUIET_MS, WAKE_LIMIT } from "./watch";
 import { savePolicy } from "./authors";
 import { AuthorSettings } from "./AuthorSettings";
 
@@ -31,11 +33,13 @@ const answer = ({
   state = "OPEN",
 } = {}) => ({ head, checks, comments, reviews, state });
 
-/** What gh answers for `input`, a listing or a text read of `pull`. */
-function respond(pull: Pull, input: string) {
-  const { variables } = JSON.parse(input) as {
-    variables: { ids?: string[] };
-  };
+/** What gh answers the store for every pull request in `variables`, all
+ * `pull`, or for the text of feedback `ids`. */
+function respond(
+  pull: Pull,
+  query: string,
+  variables: { ids?: string[] } & Record<string, unknown>,
+) {
   if (variables.ids) {
     const all = [
       ...pull.comments.map((item) => ({ ...item, __typename: "IssueComment" })),
@@ -47,64 +51,66 @@ function respond(pull: Pull, input: string) {
         })),
       ]),
     ];
-    return JSON.stringify({
-      data: {
-        nodes: variables.ids.map((id) => {
-          const found = all.find((item) => item.id === id);
-          if (!found) return null;
-          const { login, ...node } = found;
-          return { ...node, author: { login }, url: `${url}#${id}` };
-        }),
-      },
-    });
+    return {
+      nodes: variables.ids.map((id) => {
+        const found = all.find((item) => item.id === id);
+        if (!found) return null;
+        const { login, ...node } = found;
+        return { ...node, author: { login }, url: `${url}#${id}` };
+      }),
+    };
   }
   const { checks } = pull;
-  return JSON.stringify({
-    data: {
-      viewer: { login: "baxen" },
-      repository: {
-        pullRequest: {
-          state: pull.state,
-          headRefOid: pull.head,
-          commits: {
-            nodes: [
-              {
-                commit: {
-                  statusCheckRollup: {
-                    state: checks.some((check) => !check.conclusion)
-                      ? "PENDING"
-                      : "SUCCESS",
-                    contexts: {
-                      totalCount: checks.length,
-                      nodes: checks.map(({ name, conclusion }) => ({
-                        __typename: "CheckRun",
-                        name,
-                        status: conclusion ? "COMPLETED" : "IN_PROGRESS",
-                        conclusion,
-                      })),
-                    },
+  const data: Record<string, unknown> = query.includes("viewer{login}")
+    ? { viewer: { login: "baxen" } }
+    : {};
+  for (let i = 0; `n${i}` in variables; i++)
+    data[`r${i}`] = {
+      pullRequest: {
+        state: pull.state,
+        isDraft: false,
+        mergeStateStatus: "CLEAN",
+        headRefOid: pull.head,
+        commits: {
+          nodes: [
+            {
+              commit: {
+                statusCheckRollup: {
+                  state: checks.some((check) => !check.conclusion)
+                    ? "PENDING"
+                    : "SUCCESS",
+                  contexts: {
+                    totalCount: checks.length,
+                    nodes: checks.map(({ name, conclusion }) => ({
+                      __typename: "CheckRun",
+                      name,
+                      status: conclusion ? "COMPLETED" : "IN_PROGRESS",
+                      conclusion,
+                    })),
                   },
                 },
               },
-            ],
-          },
-          reviews: {
-            nodes: pull.reviews.map((review) => ({
-              id: review.id,
-              comments: { nodes: review.inline.map(({ id }) => ({ id })) },
-            })),
-          },
-          comments: { nodes: pull.comments.map(({ id }) => ({ id })) },
+            },
+          ],
         },
+        reviews: {
+          nodes: pull.reviews.map((review) => ({
+            id: review.id,
+            comments: { nodes: review.inline.map(({ id }) => ({ id })) },
+          })),
+        },
+        comments: { nodes: pull.comments.map(({ id }) => ({ id })) },
       },
-    },
-  });
+    };
+  return data;
 }
+
+/** Whether `query` is a membership read rather than the store's. */
+const membershipRead = (query: string) => query.startsWith("query{\nu");
 
 /** What gh answers a membership read, when `members` are in every
  * organization, or `login@org` in that one. */
-function membership(members: readonly string[], input: string) {
-  const { query } = JSON.parse(input) as { query: string };
+function membership(members: readonly string[], query: string) {
   const users = [...query.matchAll(/(u\d+):user\(login:"([^"]+)"\)/g)];
   const orgs = [
     ...new Map(
@@ -114,42 +120,48 @@ function membership(members: readonly string[], input: string) {
     ),
   ];
   // GitHub has no user for a mannequin, which fails the whole read.
-  if (users.some(([, , login]) => login === "mannequin")) return null;
-  return JSON.stringify({
-    data: Object.fromEntries(
-      users.map(([, alias, login]) => [
-        alias,
-        Object.fromEntries(
-          orgs.map(([org, name]) => [
-            org,
-            members.includes(login as string) ||
-            members.includes(`${login}@${name}`)
-              ? { id: "O" }
-              : null,
-          ]),
-        ),
-      ]),
-    ),
-  });
+  if (users.some(([, , login]) => login === "mannequin"))
+    throw new GitHubError("Could not resolve to a User", "NOT_FOUND");
+  return Object.fromEntries(
+    users.map(([, alias, login]) => [
+      alias,
+      Object.fromEntries(
+        orgs.map(([org, name]) => [
+          org,
+          members.includes(login as string) ||
+          members.includes(`${login}@${name}`)
+            ? { id: "O" }
+            : null,
+        ]),
+      ),
+    ]),
+  );
 }
 
 /** How many membership reads asked GitHub about `login`. */
 const asks = (app: ReturnType<typeof setup>, login: string) =>
-  app.runCommand.mock.calls.filter(([, input]) =>
-    (JSON.parse(input) as { query: string }).query.includes(`login:"${login}"`),
+  app.github.mock.calls.filter(
+    ([query]) => membershipRead(query) && query.includes(`login:"${login}"`),
   ).length;
 
 function setup(initial: Pull | null = answer()) {
   let gh = initial;
   let texts = true;
   let members: readonly string[] | null = [];
-  const runCommand = vi.fn(async (_id: string, input: string) => {
-    if (!("variables" in JSON.parse(input)))
-      return members && membership(members, input);
-    return !gh || (!texts && "ids" in JSON.parse(input).variables)
-      ? null
-      : respond(gh, input);
-  });
+  /** GitHub through gh, as the store reads it. */
+  const github = vi.fn(
+    async (query: string, variables: Record<string, unknown>) => {
+      if (membershipRead(query)) {
+        if (!members) throw new Error("gh did not answer");
+        return membership(members, query);
+      }
+      if (!gh) throw new GitHubError("Could not resolve to a Repository");
+      if (!texts && "ids" in variables)
+        throw new GitHubError("Something went wrong");
+      return respond(gh, query, variables);
+    },
+  );
+  const states = createPullStates(github as unknown as GitHubCli);
   const woke = vi.fn();
   const records: Record<string, Record<string, AttentionValue>> = JSON.parse(
     localStorage.getItem("test.attention") ?? "{}",
@@ -258,7 +270,6 @@ function setup(initial: Pull | null = answer()) {
   const tools: AddedTool[] = [];
   const disposers: (() => void)[] = [];
   const ctx = {
-    host: { runCommand },
     agents: {
       addAttentionSource,
       snapshot: () => ({ running: snapshot() }),
@@ -275,7 +286,7 @@ function setup(initial: Pull | null = answer()) {
     },
     effect: (fn: () => () => void) => disposers.push(fn()),
   } as unknown as Context;
-  watchPulls(ctx);
+  watchPulls(ctx, states, github as unknown as GitHubCli);
   const tool = tools[0] as AddedTool;
   const call = (
     args: Record<string, unknown>,
@@ -310,7 +321,11 @@ function setup(initial: Pull | null = answer()) {
     /** The text of each wake, in order. */
     texts: () =>
       woke.mock.calls.map(([, wake]) => (wake as { text: string }).text),
-    runCommand,
+    github,
+    /** GitHub's listings of pull requests, not feedback text. */
+    listings: () =>
+      github.mock.calls.filter(([, variables]) => !("ids" in variables)).length,
+    states,
     gh: (value: Pull | null) => {
       gh = value;
     },
@@ -443,10 +458,10 @@ describe("github_watch_pr", () => {
     await app.call({ url });
     app.attentionEnabled(false);
     await vi.advanceTimersByTimeAsync(0);
-    const count = app.runCommand.mock.calls.length;
+    const count = app.github.mock.calls.length;
     app.gh(answer({ checks: [{ name: "unit", conclusion: "SUCCESS" }] }));
     await vi.advanceTimersByTimeAsync(3 * POLL_MS);
-    expect(app.runCommand).toHaveBeenCalledTimes(count);
+    expect(app.github).toHaveBeenCalledTimes(count);
     expect(app.woke).not.toHaveBeenCalled();
     await expect(app.call({ url })).rejects.toThrow(/Turn on Attention/);
     app.attentionEnabled(true);
@@ -490,7 +505,7 @@ describe("github_watch_pr", () => {
     await vi.advanceTimersByTimeAsync(POLL_MS);
     expect(localStorage.getItem("buzz.github.pull-watches.v1")).toBeNull();
     expect(app.records).toEqual({});
-    expect(app.runCommand).not.toHaveBeenCalled();
+    expect(app.github).not.toHaveBeenCalled();
     app.dispose();
   });
 
@@ -502,7 +517,7 @@ describe("github_watch_pr", () => {
     await expect(app.call({ url, interest: "missing" })).rejects.toThrow(
       /Interest missing does not exist.*interest_set/,
     );
-    expect(app.runCommand).not.toHaveBeenCalled();
+    expect(app.github).not.toHaveBeenCalled();
     await app.call({ url });
     const sources = () =>
       Object.entries(app.records[agent] ?? {}).filter(
@@ -640,7 +655,11 @@ describe("github_watch_pr", () => {
     );
     await vi.advanceTimersByTimeAsync(POLL_MS);
     expect(app.woke).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(QUIET_MS + POLL_MS);
+    // It wakes once the feedback read has been quiet long enough, not on a
+    // later minute.
+    await vi.advanceTimersByTimeAsync(QUIET_MS - 1);
+    expect(app.woke).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
     expect(app.woke.mock.calls).toEqual([
       [
         agent,
@@ -667,6 +686,32 @@ describe("github_watch_pr", () => {
     );
     await vi.advanceTimersByTimeAsync(0);
     expect(next.woke).toHaveBeenCalledTimes(1);
+    next.dispose();
+  });
+
+  it("reads, after a restart, the text of only the feedback the watch has not seen", async () => {
+    const before = [{ id: "R1", login: "wes", body: "Looks off", inline: [] }];
+    const app = setup(answer({ reviews: before }));
+    await app.call({ url });
+    app.dispose();
+    const next = setup(
+      answer({
+        reviews: [
+          ...before,
+          { id: "R2", login: "wes", body: "Still off", inline: [] },
+        ],
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(QUIET_MS + 2 * POLL_MS);
+    expect(next.texts().join("\n")).toContain("Still off");
+    expect(next.texts().join("\n")).not.toContain("Looks off");
+    expect(
+      [app, next].flatMap((one) =>
+        one.github.mock.calls
+          .map(([, variables]) => variables.ids)
+          .filter(Boolean),
+      ),
+    ).toEqual([["R2"]]);
     next.dispose();
   });
 
@@ -717,9 +762,12 @@ describe("github_watch_pr", () => {
   it("lets a read still in flight when the plugin stops do nothing", async () => {
     const old = setup();
     await old.call({ url });
-    let finish: (value: string) => void = () => {};
-    old.runCommand.mockImplementationOnce(
-      () => new Promise<string>((resolve) => (finish = resolve)),
+    let finish: (value: unknown) => void = () => {};
+    old.github.mockImplementationOnce(
+      () =>
+        new Promise<Record<string, unknown>>(
+          (resolve) => (finish = (value) => resolve(value as never)),
+        ),
     );
     await vi.advanceTimersByTimeAsync(POLL_MS);
     old.dispose();
@@ -730,7 +778,8 @@ describe("github_watch_pr", () => {
     finish(
       respond(
         answer({ checks: [{ name: "unit", conclusion: "SUCCESS" }] }),
-        pullRequest(pullOf(url) as NonNullable<ReturnType<typeof pullOf>>),
+        "viewer{login}",
+        { o0: "block", n0: "buzz-app", p0: 7 },
       ),
     );
     await vi.advanceTimersByTimeAsync(0);
@@ -805,12 +854,32 @@ describe("github_watch_pr", () => {
         "  > Still broken",
       ].join("\n"),
     ]);
-    // Only the new review and its comment were read in full.
+    // What was there when the watch started is never read in full; only the
+    // new review and its comment are.
     expect(
-      app.runCommand.mock.calls
-        .map(([, input]) => JSON.parse(input).variables.ids)
+      app.github.mock.calls
+        .map(([, variables]) => variables.ids)
         .filter(Boolean),
     ).toEqual([["R40", "C40"]]);
+    app.dispose();
+  });
+
+  it("reads a pull request both watched and shown once a minute, for both", async () => {
+    const app = setup(answer({ checks: [{ name: "unit", conclusion: null }] }));
+    await app.call({ url });
+    const shown = vi.fn();
+    const unwatch = app.states.watch(url, shown);
+    await vi.advanceTimersByTimeAsync(0);
+    const before = app.listings();
+    app.gh(answer({ checks: [{ name: "unit", conclusion: "SUCCESS" }] }));
+    await vi.advanceTimersByTimeAsync(3 * POLL_MS);
+    // The watch asks for the feedback the link does not need, and the one
+    // read serves both: the link shows the checks, the agent is woken.
+    expect(app.listings() - before).toBe(3);
+    expect(app.states.get(url)).toMatchObject({ checks: "success" });
+    expect(shown).toHaveBeenCalled();
+    expect(app.texts()).toEqual([`CI passed on 111111111 for ${url}.`]);
+    unwatch();
     app.dispose();
   });
 
@@ -953,13 +1022,13 @@ describe("github_watch_pr", () => {
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
-    const run = app.runCommand.getMockImplementation();
-    app.runCommand.mockImplementation(async (id, input) => {
-      if (!("variables" in JSON.parse(input))) {
+    const run = app.github.getMockImplementation();
+    app.github.mockImplementation(async (query, variables) => {
+      if (membershipRead(query)) {
         asked = true;
         await gate;
       }
-      return run?.(id, input) ?? null;
+      return run?.(query, variables);
     });
     app.gh(
       answer({
@@ -985,10 +1054,10 @@ describe("github_watch_pr", () => {
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
-    const run = app.runCommand.getMockImplementation();
-    app.runCommand.mockImplementation(async (id, input) => {
-      if (!("variables" in JSON.parse(input))) await gate;
-      return run?.(id, input) ?? null;
+    const run = app.github.getMockImplementation();
+    app.github.mockImplementation(async (query, variables) => {
+      if (membershipRead(query)) await gate;
+      return run?.(query, variables);
     });
     app.gh(
       answer({
@@ -1046,7 +1115,7 @@ describe("github_watch_pr", () => {
     app.dispose();
   });
 
-  it("keeps membership reads under the command's input limit", async () => {
+  it("keeps each membership read under its size limit", async () => {
     const organizations = Array.from(
       { length: 8 },
       (_, index) => `organization-${index}-with-a-long-name`,
@@ -1069,12 +1138,12 @@ describe("github_watch_pr", () => {
       }),
     );
     await vi.advanceTimersByTimeAsync(POLL_MS + QUIET_MS + POLL_MS);
-    const reads = app.runCommand.mock.calls
-      .map(([, input]) => input as string)
-      .filter((input) => !("variables" in JSON.parse(input)));
+    const reads = app.github.mock.calls
+      .map(([query]) => query)
+      .filter(membershipRead);
     expect(reads.length).toBeGreaterThan(1);
-    for (const input of reads)
-      expect(new TextEncoder().encode(input).length).toBeLessThanOrEqual(4096);
+    for (const query of reads)
+      expect(new TextEncoder().encode(query).length).toBeLessThanOrEqual(4096);
     expect(app.texts()[0]).toContain("30 new comments");
     app.dispose();
   });
@@ -1188,13 +1257,13 @@ describe("github_watch_pr", () => {
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
-    const run = app.runCommand.getMockImplementation();
+    const run = app.github.getMockImplementation();
     const asked: string[] = [];
-    app.runCommand.mockImplementation(async (id, input) => {
-      if ("variables" in JSON.parse(input)) return run?.(id, input) ?? null;
-      asked.push(input);
+    app.github.mockImplementation(async (query, variables) => {
+      if (!membershipRead(query)) return run?.(query, variables);
+      asked.push(query);
       await gate;
-      return null;
+      throw new Error("gh did not answer");
     });
     app.gh(
       answer({
@@ -1233,9 +1302,7 @@ describe("github_watch_pr", () => {
     expect(app.texts()[0]).not.toContain("body-agent");
     // No membership is read when no rule names an organization.
     expect(
-      app.runCommand.mock.calls.filter(
-        ([, input]) => !("variables" in JSON.parse(input as string)),
-      ),
+      app.github.mock.calls.filter(([query]) => membershipRead(query)),
     ).toEqual([]);
     app.dispose();
   });

@@ -173,7 +173,7 @@ it("gives agents a github_link_pr tool for the Solo chat they work in", async ()
     relay,
     agents: {
       addTool: (added: AddedTool) => {
-        tool = added;
+        if (added.name === "github_link_pr") tool = added;
       },
       relay: () => relay,
     },

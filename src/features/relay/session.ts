@@ -106,6 +106,7 @@ import { relayPartition, transportPartition } from "./partition";
 import { browserThreadFollows } from "./thread-follows";
 import { createMessages } from "./messages";
 import { retryRead } from "./read-retry";
+import { messageAuthor } from "./fold";
 import { createThreadView } from "./threads";
 import { ByteLru } from "./budget";
 import { createRelayProfiler } from "./profiling";
@@ -249,6 +250,7 @@ export function createRelaySession(
           {
             ...writer,
             async sign(template, signal) {
+              validateChannelWrite(template);
               validateMentionEvent(template);
               validateCanvasWrite(template);
               workflows.validate({
@@ -288,6 +290,7 @@ export function createRelaySession(
               return ready;
             },
             preparePublish: async (event, signal) => {
+              validateChannelWrite(event);
               workflows.validate(event);
               if (event.kind === 40100) {
                 const id = event.tags.find((t) => t[0] === "h")?.[1];
@@ -301,6 +304,7 @@ export function createRelaySession(
                 signal,
               );
               return () => {
+                validateChannelWrite(event);
                 workflows.validate(event);
                 validateCanvasWrite(event);
                 checkMentions?.();
@@ -1164,7 +1168,7 @@ export function createRelaySession(
       .channels.find((item) => item.id === channelId);
     if (
       closed ||
-      !channels.canParticipate(channelId) ||
+      !channels.canWrite(channelId) ||
       !channel?.members ||
       channel.archived ||
       (transport?.subscribe && liveSnapshot.status !== "connected")
@@ -1178,8 +1182,38 @@ export function createRelaySession(
   function validateCanvasWrite(event: Pick<EventData, "kind" | "tags">) {
     if (event.kind !== 40100) return;
     const id = event.tags.find((t) => t[0] === "h")?.[1];
-    if (!id || closed || !channels.canParticipate(id))
+    if (!id || closed || !channels.canWrite(id))
       throw new Error("Canvas access changed; your draft is kept");
+  }
+  /** Guest admission is rechecked for signed retries and after async preparation. */
+  function validateChannelWrite(event: Pick<EventData, "kind" | "tags">) {
+    // Membership commands have their own relay authorization, including a
+    // Guest removing an owned agent. They are not channel contributions.
+    if ([9000, 9001, 9022].includes(event.kind)) return;
+    const id = event.tags.find(([key]) => key === "h")?.[1];
+    if (!id || channels.queries.get?.(id)?.viewerRole !== "guest") return;
+    // The relay permits a verified owner to edit/delete their agent's messages.
+    const targets = event.tags.filter(([key]) => key === "e");
+    if (
+      (event.kind === 40003 || event.kind === 5) &&
+      targets.length &&
+      targets.every(([, target]) => {
+        const original =
+          local().find((item) => item.event.id === target)?.event ??
+          recent.peek(target ?? "")?.event ??
+          retainedEvent(target ?? "");
+        return (
+          original &&
+          [9, 40002].includes(original.kind) &&
+          original.tags.some(([key, value]) => key === "h" && value === id) &&
+          profiles.queries.owner?.(
+            messageAuthor(original, transport?.archiveAuthority),
+          ) === transport?.viewer
+        );
+      })
+    )
+      return;
+    throw new Error("You have read-only access to this channel.");
   }
   function validateMentionEvent(event: Pick<EventData, "kind" | "tags">) {
     if (event.kind !== 9) return;
@@ -1377,7 +1411,8 @@ export function createRelaySession(
     viewer: transport?.viewer ?? "",
     community: transport?.scope ?? "",
     signal: lifetime.signal,
-    canWrite: (id) => !closed && channels.canParticipate(id),
+    canWrite: (id) => !closed && channels.canWrite(id),
+    canRead: (id) => !closed && channels.canParticipate(id),
     delivered: channelWrites.delivered,
   });
   const soloPreferences = createSoloPreferences(
@@ -1994,7 +2029,7 @@ export function createRelaySession(
           !closed &&
           !signal.aborted &&
           liveSnapshot.status === "connected" &&
-          channels.canParticipate(channelId) &&
+          channels.canWrite(channelId) &&
           channels.queries
             .list()
             .channels.some(
@@ -2118,11 +2153,11 @@ export function createRelaySession(
                 uploadLifetime.signal,
               ]);
               combined.throwIfAborted();
-              if (!channelId || closed || !channels.canParticipate(channelId))
+              if (!channelId || closed || !channels.canWrite(channelId))
                 throw new UploadError("denied");
               const result = await uploadAttachment(file, combined, progress);
               combined.throwIfAborted();
-              if (!channels.canParticipate(channelId))
+              if (!channels.canWrite(channelId))
                 throw new UploadError("denied");
               return result;
             },
@@ -2177,68 +2212,96 @@ export function createRelaySession(
             },
           })
         : undefined,
-    messages: createMessages(
-      writes?.outbox,
-      transport?.viewer,
-      (id) =>
-        local().find((item) => item.event.id === id)?.event ??
-        recent.peek(id)?.event ??
-        retainedEvent(id),
-      emoji.tags,
-      validateMentions,
-      (id) => !closed && channels.canParticipate(id),
-      transport?.scope,
-      writer && (!writer.kinds || writer.kinds.includes(1984))
-        ? async (template) => {
-            if (closed) throw new Error("Relay session closed");
-            const signal = AbortSignal.any([
-              lifetime.signal,
-              AbortSignal.timeout(10_000),
-            ]);
-            // Race each step so the deadline holds even if the writer ignores `signal`.
-            const aborted = new Promise<never>((_, reject) => {
-              const fail = () => reject(signal.reason);
-              if (signal.aborted) fail();
-              else signal.addEventListener("abort", fail, { once: true });
-            });
-            const signed = await Promise.race([
-              writer.sign(template, signal),
-              aborted,
-            ]);
-            signal.throwIfAborted();
-            await Promise.race([writer.publish(signed, signal), aborted]);
-          }
-        : undefined,
-      transport?.archiveAuthority,
-      profiles.queries,
-      (channelId) => {
+    messages: Object.freeze({
+      ...createMessages(
+        writes?.outbox,
+        transport?.viewer,
+        (id) =>
+          local().find((item) => item.event.id === id)?.event ??
+          recent.peek(id)?.event ??
+          retainedEvent(id),
+        emoji.tags,
+        validateMentions,
+        (id, owner) =>
+          !closed &&
+          (channels.canWrite(id) ||
+            // editOwnedAgent and messages.remove supply owner evidence;
+            // validateChannelWrite rechecks it before signing and publication.
+            (!!owner && channels.canParticipate(id))),
+        transport?.scope,
+        writer && (!writer.kinds || writer.kinds.includes(1984))
+          ? async (template) => {
+              if (closed) throw new Error("Relay session closed");
+              const signal = AbortSignal.any([
+                lifetime.signal,
+                AbortSignal.timeout(10_000),
+              ]);
+              // Race each step so the deadline holds even if the writer ignores `signal`.
+              const aborted = new Promise<never>((_, reject) => {
+                const fail = () => reject(signal.reason);
+                if (signal.aborted) fail();
+                else signal.addEventListener("abort", fail, { once: true });
+              });
+              const signed = await Promise.race([
+                writer.sign(template, signal),
+                aborted,
+              ]);
+              signal.throwIfAborted();
+              await Promise.race([writer.publish(signed, signal), aborted]);
+            }
+          : undefined,
+        transport?.archiveAuthority,
+        profiles.queries,
+        (channelId) => {
+          const channel = channels.queries
+            .list()
+            .channels.find((item) => item.id === channelId);
+          return channel?.channelType === "dm" &&
+            channel.members?.length === 2 &&
+            transport?.viewer &&
+            channel.members.includes(transport.viewer)
+            ? channel.members.filter((key) => key !== transport.viewer)
+            : [];
+        },
+        (id) => [
+          ...new Map(
+            [
+              ...local().map((item) => item.event),
+              ...recent.entries().map(([, item]) => item.event),
+              ...retainedThreadEvents(),
+              ...retainedChannelEvents(),
+            ]
+              .filter((event) =>
+                event.tags.some(
+                  ([name, value]) => name === "buzz:copy-of" && value === id,
+                ),
+              )
+              .map((event) => [event.id, event]),
+          ).values(),
+        ],
+      ),
+      /** UI eligibility only; signing/publication recheck the same role proof. */
+      canRetry(event: Pick<EventData, "kind" | "tags">) {
+        const id = event.tags.find(([key]) => key === "h")?.[1];
         const channel = channels.queries
           .list()
-          .channels.find((item) => item.id === channelId);
-        return channel?.channelType === "dm" &&
-          channel.members?.length === 2 &&
-          transport?.viewer &&
-          channel.members.includes(transport.viewer)
-          ? channel.members.filter((key) => key !== transport.viewer)
-          : [];
+          .channels.find((item) => item.id === id);
+        if (
+          closed ||
+          !channel ||
+          channel.archived ||
+          channel.cached ||
+          !channels.canParticipate(channel.id)
+        )
+          return false;
+        try {
+          validateChannelWrite(event);
+          return true;
+        } catch {
+          return false;
+        }
       },
-      (id) => [
-        ...new Map(
-          [
-            ...local().map((item) => item.event),
-            ...recent.entries().map(([, item]) => item.event),
-            ...retainedThreadEvents(),
-            ...retainedChannelEvents(),
-          ]
-            .filter((event) =>
-              event.tags.some(
-                ([name, value]) => name === "buzz:copy-of" && value === id,
-              ),
-            )
-            .map((event) => [event.id, event]),
-        ).values(),
-      ],
-    ),
+    }),
     /** An owned bounded thread reader. Dispose on close; the session retains access/lifetime authority. */
     thread(
       channelId: string,
@@ -2687,7 +2750,7 @@ export function createRelaySession(
   }
   const held = (id: string) => {
     const summary = channels.queries.get?.(id);
-    return !!summary && !summary.readOnly;
+    return !!summary && !summary.cached && channels.canParticipate(id);
   };
   /** Retire every queued and in-flight exact confirmation. Retirement is
    * intentional, so unlike a failed lookup it schedules no fallback; the
@@ -3131,6 +3194,7 @@ export function createRelaySession(
             revoked(route) &&
             !previous.has(route.id) &&
             route.channelId &&
+            !channels.canParticipate(route.channelId) &&
             channels.queries.get?.(route.channelId)?.readOnly,
         )
         .map((route) => route.channelId as string);

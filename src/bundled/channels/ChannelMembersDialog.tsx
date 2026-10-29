@@ -41,8 +41,7 @@ import styles from "./ChannelMembersDialog.module.css";
 import { SoloOwnerAvatar, soloOwnerLabel } from "./ChatSharedMark";
 import { MEMBER_SEARCH_PAGE_SIZE } from "../../features/channel-members/search";
 import {
-  canManageMember,
-  canRemoveMember,
+  authorizeMemberChange,
   type MemberChange,
 } from "../../features/channel-members/administration-protocol";
 import {
@@ -58,7 +57,14 @@ import {
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
-import { Button } from "../../shared/design-system/ui/Button";
+import { Button, type ButtonProps } from "../../shared/design-system/ui/Button";
+import { SplitButton } from "../../shared/design-system/ui/SplitButton";
+import {
+  MenuGroup,
+  MenuGroupLabel,
+  MenuItem,
+} from "../../shared/design-system/ui/Menu";
+import { ChoiceRow } from "../../shared/design-system/ui/ChoiceRow";
 import { Select } from "../../shared/design-system/ui/Select";
 import { SearchField } from "../../shared/design-system/ui/SearchField";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
@@ -81,6 +87,7 @@ import { MemberRow, useMemberAdministration } from "./MemberAdministration";
 import { useMemberSearch } from "./useMemberSearch";
 import { useMemberOwners } from "./useMemberOwners";
 import { useSoloShare } from "./useSoloShare";
+import { ChannelGeneralAccess } from "./ChannelGeneralAccess";
 import { avatarMedia } from "../../shared/avatar-source";
 import {
   type ChannelLabel,
@@ -94,6 +101,27 @@ const typedMatch = (name: string, needle: string) =>
   needle ? matchPerson(name, needle) : undefined;
 
 const INVITATION_GROUP_SIZE = 4;
+
+const additionRoles = [
+  {
+    role: "member",
+    label: "Participant",
+    action: "Add as participant",
+    description: "Send messages, reply, and react.",
+  },
+  {
+    role: "guest",
+    label: "View only",
+    action: "Add with view-only access",
+    description: "Read messages and threads.",
+  },
+  {
+    role: "admin",
+    label: "Admin",
+    action: "Add as admin",
+    description: "Manage this channel and its members.",
+  },
+] as const;
 
 /** Mounted rows share the same bounded presence owner as message bylines. */
 function MemberAvatar({
@@ -160,6 +188,7 @@ const MemberIdentityRow = memo(function MemberIdentityRow({
   add,
   busy,
   addDisabled,
+  canAddWithRole,
   highlightId,
   highlighted,
   onHighlightMove,
@@ -197,11 +226,30 @@ const MemberIdentityRow = memo(function MemberIdentityRow({
   add(key: string): Promise<void>;
   busy: boolean;
   addDisabled: boolean;
+  canAddWithRole: boolean;
   /** Set on rows the search highlight can choose. */
   highlightId?: string | undefined;
   highlighted?: boolean | undefined;
   onHighlightMove?: ((key: string, event: PointerEvent) => void) | undefined;
 }) {
+  const addButtonProps = {
+    variant: "prominent",
+    size: "xs",
+    "aria-label": `Add ${name} (${keyLabel})`,
+    "aria-disabled": busy || undefined,
+    disabled: addDisabled,
+    onBlur: (event) => {
+      if (focusedAdd.current?.button === event.currentTarget)
+        focusedAdd.current = null;
+    },
+    onClick: (event) => {
+      if (busy) return;
+      if (document.activeElement === event.currentTarget)
+        focusedAdd.current = { key: pubkey, button: event.currentTarget };
+      void add(pubkey);
+    },
+    children: busy ? "Adding…" : "Add",
+  } satisfies ButtonProps;
   const avatar = (
     <MemberAvatar
       session={session}
@@ -240,11 +288,6 @@ const MemberIdentityRow = memo(function MemberIdentityRow({
             {qualified && keyLabel && (
               <span className="shrink-0 text-caption text-subtle">
                 {keyLabel}
-              </span>
-            )}
-            {!adding && (roleLabel === "owner" || roleLabel === "admin") && (
-              <span className="shrink-0 text-caption text-subtle">
-                {roleLabel === "owner" ? "Owner" : "Admin"}
               </span>
             )}
           </span>
@@ -298,30 +341,42 @@ const MemberIdentityRow = memo(function MemberIdentityRow({
       }
       invitationAction={
         adding ? (
-          <span className={styles.addAction}>
-            <Button
-              variant="prominent"
-              size="xs"
-              aria-label={`Add ${name} (${keyLabel})`}
-              aria-disabled={busy || undefined}
-              disabled={addDisabled}
-              onBlur={(event) => {
-                if (focusedAdd.current?.button === event.currentTarget)
-                  focusedAdd.current = null;
-              }}
-              onClick={(event) => {
-                if (busy) return;
-                if (document.activeElement === event.currentTarget)
-                  focusedAdd.current = {
-                    key: pubkey,
-                    button: event.currentTarget,
-                  };
-                void add(pubkey);
-              }}
-            >
-              {busy ? "Adding…" : "Add"}
-            </Button>
-          </span>
+          <div
+            className={styles.addAction}
+            data-split={canAddWithRole || undefined}
+          >
+            {canAddWithRole ? (
+              <SplitButton
+                {...addButtonProps}
+                menuLabel={`Add ${name} (${keyLabel}) as`}
+                menuDisabled={busy}
+                menu={
+                  <MenuGroup>
+                    <MenuGroupLabel>Add as</MenuGroupLabel>
+                    {additionRoles.map((option) => (
+                      <MenuItem
+                        key={option.role}
+                        onClick={() =>
+                          onChange({
+                            pubkey,
+                            expectedRole: "absent",
+                            role: option.role,
+                          })
+                        }
+                      >
+                        <ChoiceRow
+                          label={option.label}
+                          description={option.description}
+                        />
+                      </MenuItem>
+                    ))}
+                  </MenuGroup>
+                }
+              />
+            ) : (
+              <Button {...addButtonProps} />
+            )}
+          </div>
         ) : undefined
       }
     >
@@ -461,6 +516,7 @@ function TeamRow({
 /** The one access dialog. Any conversation lists and adds members; a Solo chat
  * adds people under its share rule and can also be shared to a channel. */
 export function ChannelMembersDialog({
+  communityScope,
   session,
   channelId,
   close,
@@ -475,6 +531,7 @@ export function ChannelMembersDialog({
   navigator,
   signal,
 }: {
+  communityScope?: string | undefined;
   session: RelaySession;
   channelId: string;
   close(): void;
@@ -640,6 +697,16 @@ export function ChannelMembersDialog({
     session.channelWrites.available;
   const canAddPeople = solo ? share.eligible : canAddMembers(session, channel);
   const canAdd = canAddPeople || canAddSoloAgents;
+  const readOnlyAccess =
+    !solo &&
+    (channel?.viewerRole === "guest" ||
+      (channel?.readOnly && channel.joinRole === "guest"));
+  const generalAccess =
+    channel &&
+    (channel.channelType === "stream" || channel.channelType === "forum") &&
+    !channel.cached &&
+    !channel.archived &&
+    (channel.readOnly || session.channelDetails.available);
   // Solo access is verified by the sharing roster read; channels read 39002.
   const rosterBusy = solo ? share.rosterState === "loading" : rosterReading;
   const rosterError = solo
@@ -725,6 +792,11 @@ export function ChannelMembersDialog({
     memberKey,
     !!channel && !channel.cached,
   );
+  if (
+    administration.operation?.change.expectedRole === "absent" &&
+    administration.operation.status === "pending"
+  )
+    busy.add(administration.operation.change.pubkey);
   // biome-ignore lint/correctness/useExhaustiveDependencies: refresh retries missing names with the other dialog reads.
   useEffect(() => {
     setNameError("");
@@ -931,7 +1003,11 @@ export function ChannelMembersDialog({
     !initialLoading &&
     canAdd &&
     roleFilter === "All" &&
-    (!!text || (!solo && available.length > 0));
+    (!!text ||
+      (!solo &&
+        members.size === 1 &&
+        members.has(session.viewer ?? "") &&
+        available.length > 0));
   const invitationGroups = [
     "Your agents",
     "People",
@@ -989,11 +1065,13 @@ export function ChannelMembersDialog({
       next: ordered[size]?.pubkey,
     };
   });
-  const visibleCandidates = solo
-    ? roleFilter === "All"
-      ? available.slice(0, invitationSize)
-      : []
-    : invitationGroups.flatMap((group) => group.people);
+  const visibleCandidates = !offering
+    ? []
+    : solo
+      ? roleFilter === "All"
+        ? available.slice(0, invitationSize)
+        : []
+      : invitationGroups.flatMap((group) => group.people);
   const agentsByMention =
     offering &&
     solo &&
@@ -1015,25 +1093,27 @@ export function ChannelMembersDialog({
     .sort()
     .join(":");
   const ownership = useMemberOwners(session, agentKeys, refresh);
-  const changePermitted =
+  let changePermitted = false;
+  if (
     selection &&
+    (selection.expectedRole !== "absent" ||
+      !archiveHides(session.archives, selection.pubkey, session.viewer)) &&
     administration.status === "ready" &&
-    administration.authority.roles[selection.pubkey] ===
-      selection.expectedRole &&
     administration.operation?.status !== "pending" &&
-    administration.operation?.status !== "uncertain" &&
-    (selection.role === "remove"
-      ? canRemoveMember(
-          administration.authority,
-          session.viewer ?? "",
-          selection.pubkey,
-          ownership.owners.get(selection.pubkey),
-        )
-      : canManageMember(
-          administration.authority,
-          session.viewer ?? "",
-          selection.pubkey,
-        ));
+    administration.operation?.status !== "uncertain"
+  ) {
+    try {
+      authorizeMemberChange(
+        administration.authority,
+        session.viewer ?? "",
+        selection,
+        ownership.owners.get(selection.pubkey),
+      );
+      changePermitted = true;
+    } catch {
+      // A changed roster or authority leaves the confirmation read-only.
+    }
+  }
   const refreshing =
     ownership.busy ||
     rosterBusy ||
@@ -1097,18 +1177,23 @@ export function ChannelMembersDialog({
     ...visibleCandidates.map((person) => label(person.pubkey, person.name)),
   ])
     shownNames.set(name, (shownNames.get(name) ?? 0) + 1);
-  // A confirmed addition replaces its focused Add button with a member row.
+  // A confirmation can replace its Add button or retire another pending row.
   // DOM removal does not emit blur, so restore focus only if it was not moved elsewhere.
   useLayoutEffect(() => {
     const previous = focusedAdd.current;
-    if (!previous || !memberKey.split(":").includes(previous.key)) return;
+    if (
+      !previous ||
+      (!memberKey.split(":").includes(previous.key) &&
+        (offering || previous.button.isConnected))
+    )
+      return;
     focusedAdd.current = null;
     if (
       document.activeElement === previous.button ||
       document.activeElement === document.body
     )
       input.current?.focus();
-  }, [memberKey]);
+  }, [memberKey, offering]);
   const add = useCallback(
     async (key: string) => {
       const signal = lifetime.current?.signal;
@@ -1357,7 +1442,20 @@ export function ChannelMembersDialog({
         messagePending={openingMessage}
         add={add}
         busy={busy.has(key)}
-        addDisabled={rosterBusy || !!rosterError}
+        addDisabled={
+          rosterBusy ||
+          !!rosterError ||
+          administration.operation?.status === "pending" ||
+          administration.operation?.status === "uncertain"
+        }
+        canAddWithRole={
+          !solo &&
+          session.memberAdministration.available &&
+          administration.status === "ready" &&
+          administration.authority.canManage &&
+          administration.operation?.status !== "pending" &&
+          administration.operation?.status !== "uncertain"
+        }
         highlightId={adding ? highlight.rowId(key) : undefined}
         highlighted={adding && highlight.active === key}
         onHighlightMove={adding ? moveHighlight : undefined}
@@ -1369,6 +1467,13 @@ export function ChannelMembersDialog({
     (known.has(selection.pubkey) || profiles.get(selection.pubkey)?.isAgent);
   const removalTarget = selectedAgent ? "agent" : "member";
   const selectedPicture = selection && profiles.get(selection.pubkey)?.picture;
+  const selectedName =
+    selection &&
+    label(selection.pubkey, candidates.get(selection.pubkey)?.name);
+  const selectedAddition =
+    selection?.expectedRole === "absent"
+      ? additionRoles.find((option) => option.role === selection.role)
+      : undefined;
   /** A name in a channel share's audience; access actions stay on member rows. */
   const audienceRow = (key: string) => (
     <li key={key} className={styles.stagedRow}>
@@ -1419,10 +1524,17 @@ export function ChannelMembersDialog({
         selection
           ? selection.role === "remove"
             ? `Remove ${removalTarget} from ${place}`
-            : "Change member role?"
-          : (title ?? (solo ? "Share access" : "Manage members"))
+            : selection.expectedRole === "absent"
+              ? "Add member?"
+              : "Change member role?"
+          : (title ??
+            (solo
+              ? "Share access"
+              : readOnlyAccess
+                ? "Channel access"
+                : "Manage members"))
       }
-      height={selection ? "content" : "stable"}
+      height={selection ? "content" : generalAccess ? "stable-tall" : "stable"}
       bodyLayout={selection ? "flow" : "flex"}
       headerGap={
         !selection || selection.role === "remove" ? "compact" : "default"
@@ -1435,14 +1547,12 @@ export function ChannelMembersDialog({
           <span className="flex min-w-0 items-center gap-2">
             <Avatar
               alt=""
-              fallback={label(selection.pubkey)}
+              fallback={selectedName ?? ""}
               src={avatarMedia(selectedPicture, session.media)}
               size="small"
               shape={selectedAgent ? "squircle" : "circle"}
             />
-            <span className="min-w-0 break-words">
-              {label(selection.pubkey)}
-            </span>
+            <span className="min-w-0 break-words">{selectedName}</span>
           </span>
         ) : (
           description
@@ -1492,7 +1602,9 @@ export function ChannelMembersDialog({
             >
               {selection.role === "remove"
                 ? `Remove ${removalTarget}`
-                : `Make ${selection.role}`}
+                : selectedAddition
+                  ? selectedAddition.action
+                  : `Make ${selection.role}`}
             </Button>
           </>
         ) : solo ? (
@@ -1553,7 +1665,8 @@ export function ChannelMembersDialog({
       {selection ? (
         selection.role !== "remove" && (
           <p className="text-body-sm">
-            {`Change this member’s role from ${selection.expectedRole} to ${selection.role}. ${selection.role === "admin" ? `Admins can manage this ${place} and its members.` : `This changes their authority in this ${place}.`}`}
+            {selectedAddition?.description ??
+              `Change this member’s role from ${selection.expectedRole} to ${selection.role}. ${selection.role === "admin" ? `Admins can manage this ${place} and its members.` : `This changes their authority in this ${place}.`}`}
           </p>
         )
       ) : (
@@ -1666,7 +1779,7 @@ export function ChannelMembersDialog({
             className={`${styles.memberList} buzz-thin-scrollbar`}
             aria-label="Member list"
           >
-            {!canAdd && !(solo && rosterBusy) && (
+            {!canAdd && !readOnlyAccess && !(solo && rosterBusy) && (
               <p className="px-control-inset text-body-sm text-subtle">
                 {channel?.channelType === "dm"
                   ? "DM membership cannot be changed here."
@@ -2075,6 +2188,16 @@ export function ChannelMembersDialog({
                 </p>
               ) : null)}
           </section>
+          {generalAccess && (
+            <ChannelGeneralAccess
+              communityReader={communities}
+              communityScope={communityScope}
+              key={channelId}
+              capability={session.channelDetails}
+              channelId={channelId}
+              channel={channel}
+            />
+          )}
         </div>
       )}
     </Dialog>

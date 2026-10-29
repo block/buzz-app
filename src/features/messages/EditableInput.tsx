@@ -91,6 +91,7 @@ import { macWebKit, webKit } from "./mac-webkit";
 import { composerLinkUrl } from "./composer-link";
 import { messageLinkParts } from "./message-link-parts";
 import { updatePlainLinks, type PlainLink } from "./composer-link-edit";
+import { InlineChip } from "../../shared/design-system/ui/InlineChip";
 import "prosemirror-view/style/prosemirror.css";
 import styles from "./EditableInput.module.css";
 
@@ -354,6 +355,9 @@ function crossTokenLine(
   }
   return false;
 }
+type PendingChip = { id: string; name: string };
+// Pending chip ids outlive an editor: a host keeps its resolvers across remounts.
+let pendingChips = 0;
 export type EditableInputProps = Omit<
   HTMLAttributes<ComposerInputElement>,
   "onChange" | "onInput"
@@ -423,6 +427,7 @@ export function EditableInput({
       {
         source: string;
         resource: ComposerResource | null;
+        pending: PendingChip | null;
         position(): number | undefined;
       }
     >(),
@@ -430,6 +435,11 @@ export function EditableInput({
   const [, refresh] = useState(0);
   const scrollAfterTokens = useRef(false);
   const composing = useRef(false);
+  /** Pending-chip settles and extensions that landed during an IME
+   * composition, applied when it ends. */
+  const heldSettles = useRef<
+    { apply(): boolean; resolve(applied: boolean): void }[]
+  >([]);
   const pointing = useRef(false);
   const nativeEditing = useRef(false);
   const plain = useRef<PlainLink[]>([]);
@@ -437,6 +447,8 @@ export function EditableInput({
   const emitted = useRef(draft);
   const api = useRef<{
     sync(draft: MentionDraft, reset?: boolean): void;
+    /** Applies the settles held through the composition that has just ended. */
+    settleHeld(): void;
   } | null>(null);
 
   useLayoutEffect(() => {
@@ -464,6 +476,10 @@ export function EditableInput({
     );
     let editor: EditorView;
     let separateHistory = false;
+    // Mod+Shift+V (and Apple's ⌥⇧⌘V) pastes plain text verbatim. The native
+    // command fires the paste event; the held chord, or the desktop menu's
+    // `buzz:paste-plain` sent just before its command, marks it as raw.
+    let plainPaste = false;
     const editable = () => !current.current.disabled && !locked.current;
     // A projection depends only on the immutable document, but selection events
     // and completion read value/selection several times per keystroke.
@@ -590,9 +606,10 @@ export function EditableInput({
             ),
           );
         }
-        // Keep semantic recipient/resource atoms, but demote presentation-only
-        // tokens when their renderer disappears so the source is editable again.
-        // Mention-boundary edits also remove invalidated recipient provenance.
+        // Keep semantic recipient/resource/pending-mention atoms, but demote
+        // presentation-only tokens when their renderer disappears so the source
+        // is editable again. Mention-boundary edits also remove invalidated
+        // recipient provenance, and return a pending mention to its typed query.
         for (const token of next.tokens) {
           if (
             token.node.attrs.recipient
@@ -601,6 +618,8 @@ export function EditableInput({
                     item.start === token.start && item.end === token.end,
                 )
               : token.node.attrs.resource ||
+                (token.node.attrs.pending &&
+                  mentionBoundary(next.draft.text, token.end)) ||
                 decorations.some(
                   // A larger decoration has already adopted any tokens inside it.
                   (item) => item.start <= token.start && item.end >= token.end,
@@ -934,6 +953,153 @@ export function EditableInput({
       const before = editor.state;
       editor.dispatch(tr);
       return editor.state !== before;
+    };
+    /** The typed `@name` becomes one atom the host resolves later: one undo
+     * step, like a selected mention, and the caret moves past its space. */
+    const insertPendingMention = (
+      name: string,
+      range: { start: number; end: number },
+    ): string | false => {
+      if (!editable() || composing.current || editor.composing) return false;
+      const source = projection();
+      const from = source.position(range.start),
+        to = source.position(range.end, -1);
+      const $from = editor.state.doc.resolve(from);
+      if (
+        !editor.state.selection.empty ||
+        source.source(editor.state.selection.from) !== range.end ||
+        source.draft.text.slice(range.start, range.end) !== `@${name}` ||
+        $from.parent.type.spec.code
+      )
+        return false;
+      const marks = $from.parent.type
+        .allowedMarks(editor.state.storedMarks ?? $from.marks())
+        .filter((mark) => mark.type !== composerSchema.marks.recipient);
+      const id = `pending-${++pendingChips}`;
+      const tr = closeHistory(editor.state.tr).replaceWith(
+        from,
+        to,
+        Fragment.fromArray([
+          composerSchema.nodes.token.create(
+            { source: `@${name}`, pending: { id, name }, editAsText: false },
+            null,
+            marks,
+          ),
+          composerSchema.text(" ", marks),
+        ]),
+      );
+      tr.setSelection(
+        Selection.near(tr.doc.resolve(tr.mapping.map(to, 1)), -1),
+      );
+      if (
+        composerMarkdown(projectComposerDocument(tr.doc).draft).length >
+        current.current.maxLength
+      )
+        return false;
+      const before = editor.state;
+      editor.dispatch(tr.scrollIntoView());
+      if (editor.state === before) return false;
+      separateHistory = true;
+      editor.focus();
+      return id;
+    };
+    const pendingToken = (id: string) =>
+      projection().tokens.find((token) => token.node.attrs.pending?.id === id);
+    /** Settling is not an edit: it happens outside history, while sending too,
+     * and a later undo still restores the typed text through it. */
+    const settlePendingMention = (
+      id: string,
+      recipient: MentionRecipient | null,
+    ): boolean | Promise<boolean> => {
+      if (!pendingToken(id)) return false;
+      // A document change under a composition can drop or commit it early,
+      // and this runs from a promise at any time. Hold it until compositionend
+      // and answer with the replay's outcome, so the host does not treat a
+      // chip that is still in the draft as settled. Only React's flag decides:
+      // the event that clears it is the one that replays, while ProseMirror's
+      // `composing` stays set after a composition that ended while the view
+      // was not editable (a Send under the IME), and a settle held on it
+      // would wait for a compositionend that never comes.
+      if (composing.current) return hold(() => applySettle(id, recipient));
+      return applySettle(id, recipient);
+    };
+    const hold = (apply: () => boolean) =>
+      new Promise<boolean>((resolve) => {
+        heldSettles.current.push({ apply, resolve });
+      });
+    const applySettle = (id: string, recipient: MentionRecipient | null) => {
+      const token = pendingToken(id);
+      if (!token) return false;
+      const convert = (person: MentionRecipient | null) =>
+        editor.state.tr
+          .replaceWith(
+            token.from,
+            token.to,
+            person
+              ? composerSchema.nodes.token.create(
+                  { source: `@${person.name}`, recipient: person },
+                  null,
+                  token.node.marks,
+                )
+              : composerSchema.text(token.node.attrs.source, token.node.marks),
+          )
+          .setMeta("composer-normalized", true)
+          .setMeta("addToHistory", false);
+      let tr = convert(recipient);
+      // A longer current name can overrun the limit; the typed text then stands.
+      if (
+        recipient &&
+        composerMarkdown(projectComposerDocument(tr.doc).draft).length >
+          current.current.maxLength
+      )
+        tr = convert(null);
+      editor.dispatch(tr);
+      return true;
+    };
+    /** The words typed after a pending chip that complete a longer known name
+     * join the chip, which the host then resolves under the whole name. Like a
+     * settle: outside history, while sending too, held under a composition. */
+    const extendPendingMention = (
+      id: string,
+      remainder: string,
+    ): boolean | Promise<boolean> => {
+      if (!remainder || !pendingToken(id)) return false;
+      if (composing.current) return hold(() => applyExtend(id, remainder));
+      return applyExtend(id, remainder);
+    };
+    const applyExtend = (id: string, remainder: string) => {
+      const token = pendingToken(id);
+      if (!token) return false;
+      const pending: PendingChip = token.node.attrs.pending;
+      const after = editor.state.doc.resolve(token.to).nodeAfter;
+      // The host read the words at a name boundary; they, or what follows
+      // them, may have changed since (an IME can commit ` Examples`).
+      if (
+        !after?.isText ||
+        !after.text?.startsWith(remainder) ||
+        !mentionBoundary(projection().draft.text, token.end + remainder.length)
+      )
+        return false;
+      const name = pending.name + remainder;
+      // Two steps, so the typed text stays the undo target: the chip changes
+      // in place (one atom for one atom, as a settle does) and the words after
+      // it leave separately.
+      editor.dispatch(
+        editor.state.tr
+          .replaceWith(
+            token.from,
+            token.to,
+            composerSchema.nodes.token.create(
+              { source: `@${name}`, pending: { id, name }, editAsText: false },
+              null,
+              token.node.marks,
+            ),
+          )
+          .delete(token.to, token.to + remainder.length)
+          .setMeta("composer-normalized", true)
+          .setMeta("addToHistory", false),
+      );
+      return true;
     };
     /** True, or the reason shown by the host. The link must survive its context. */
     const insertResource = (value: ComposerResource): true | string => {
@@ -1554,6 +1720,7 @@ export function EditableInput({
             hosts.current.set(dom, {
               source: node.attrs.source,
               resource: node.attrs.resource,
+              pending: node.attrs.pending,
               position: getPos,
             });
             return {
@@ -1651,6 +1818,10 @@ export function EditableInput({
             : event.ctrlKey && !event.metaKey;
           const named = keyboardKey(event);
           const key = named.toLowerCase();
+          plainPaste =
+            primary &&
+            event.shiftKey &&
+            (key === "v" || (event.altKey && event.code === "KeyV"));
           if (primary && !event.altKey && !event.shiftKey && key === "a")
             return selectAll(editor.state, editor.dispatch);
           const format =
@@ -1750,6 +1921,18 @@ export function EditableInput({
             syncNativeSelection();
             return false;
           },
+          keyup() {
+            plainPaste = false;
+            return false;
+          },
+          mousedown() {
+            plainPaste = false;
+            return false;
+          },
+          "buzz:paste-plain"() {
+            plainPaste = true;
+            return true;
+          },
           click(_view, event) {
             // Composer links are editable text, never navigation targets.
             if (event.target instanceof Element && event.target.closest("a"))
@@ -1834,6 +2017,8 @@ export function EditableInput({
           },
           paste(_view, event) {
             event.preventDefault();
+            const raw = plainPaste;
+            plainPaste = false;
             // File paste belongs to the host attachment capture; never replace text.
             if (
               Array.from(event.clipboardData?.items ?? []).some(
@@ -1841,10 +2026,16 @@ export function EditableInput({
               )
             )
               return true;
+            const plain = event.clipboardData?.getData("text/plain") ?? "";
+            // Raw text replaces the selection with the caret's marks: no copied
+            // structure, links, selection linking, URL spacing or recipients.
+            if (raw) {
+              if (plain) insert(plain);
+              return true;
+            }
             const code = editor.state.selection.$from.parent.type.spec.code;
             // Code takes visible text verbatim; prose preserves copied web links.
             const html = event.clipboardData?.getData("text/html") ?? "";
-            const plain = event.clipboardData?.getData("text/plain") ?? "";
             const hasPlain =
               !!plain || event.clipboardData?.types?.includes("text/plain");
             const copy = code ? undefined : buzzCopyDocument(html);
@@ -2016,6 +2207,18 @@ export function EditableInput({
       setSelectionRange: { configurable: true, value: setRange },
       insertText: { configurable: true, value: insert },
       replaceRecipients: { configurable: true, value: replaceRecipients },
+      insertPendingMention: {
+        configurable: true,
+        value: insertPendingMention,
+      },
+      settlePendingMention: {
+        configurable: true,
+        value: settlePendingMention,
+      },
+      extendPendingMention: {
+        configurable: true,
+        value: extendPendingMention,
+      },
       insertResource: { configurable: true, value: insertResource },
       toggleFormat: { configurable: true, value: toggleFormat },
       insertLineBreak: {
@@ -2087,6 +2290,14 @@ export function EditableInput({
       },
     });
     api.current = {
+      settleHeld() {
+        // ProseMirror skips its own compositionend handler while the view is
+        // not editable, as during a send, and leaves its `composing` set until
+        // the next click. The composition has ended all the same, so the
+        // replay, like the hold above, does not consult that flag.
+        for (const held of heldSettles.current.splice(0))
+          held.resolve(held.apply());
+      },
       sync(next, reset = false) {
         if (
           !reset &&
@@ -2123,6 +2334,7 @@ export function EditableInput({
       ref.current = null;
       view.current = null;
       api.current = null;
+      for (const held of heldSettles.current.splice(0)) held.resolve(false);
       editor.destroy();
     };
   }, [ref]);
@@ -2231,6 +2443,11 @@ export function EditableInput({
         }}
         onCompositionEnd={(event) => {
           composing.current = false;
+          // ProseMirror reads the composition's final DOM records in a
+          // microtask queued by its own compositionend handler, which ran
+          // first; a settle dispatched before that flush would rewrite the
+          // text node those records point at and lose the committed text.
+          queueMicrotask(() => api.current?.settleHeld());
           events.onCompositionEnd?.(event as never);
         }}
       />
@@ -2244,8 +2461,18 @@ export function EditableInput({
             item.end === (source ?? 0) + host.source.length,
         );
         return createPortal(
-          host.resource ? (
-            // Host-owned artwork: restore never depends on the providing plugin.
+          // Host-owned artwork: restore never depends on the providing plugin.
+          host.pending ? (
+            <InlineChip
+              address={{ kind: "person", id: host.pending.id }}
+              face={{
+                label: host.pending.name,
+                loading: true,
+                resolved: false,
+              }}
+              interactive={false}
+            />
+          ) : host.resource ? (
             <>
               <span className="sr-only">Resource: </span>
               <span className={styles.resource}>{host.resource.label}</span>

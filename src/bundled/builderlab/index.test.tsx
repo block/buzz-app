@@ -899,10 +899,10 @@ it.each([
       );
       await user.click(
         within(createDialog).getByRole("combobox", {
-          name: "Reasoning effort",
+          name: "Thinking",
         }),
       );
-      await user.click(await screen.findByRole("option", { name: "high" }));
+      await user.click(await screen.findByRole("option", { name: "High" }));
       await user.type(
         within(createDialog).getByRole("textbox", {
           name: "Instructions Optional",
@@ -978,9 +978,9 @@ it.each([
       name: "Instructions",
     });
     expect(instructions).toHaveValue("Be concise.");
-    const save = screen.getByRole("button", { name: "Save instructions" });
     await user.clear(instructions);
     await user.type(instructions, "New direction.");
+    const save = screen.getByRole("button", { name: "Save" });
     instructionsSave = deferred();
     const updatesBeforeEdit = requestsTo("update-agent").length;
     try {
@@ -1014,8 +1014,10 @@ it.each([
     await waitFor(() => expect(instructions).toBeEnabled());
     expect(browserInstructions).toBe("");
 
+    await screen.findByRole("button", { name: /^Model:/ });
     await user.click(screen.getByRole("tab", { name: "Settings" }));
-    await screen.findByRole("combobox", { name: "Model" });
+    expect(screen.queryByRole("button", { name: /^Model:/ })).toBeNull();
+    expect(screen.getByText("Workspace")).toBeVisible();
     // Confirmed deletion waits for login before provider or community removal.
     await user.click(screen.getByRole("button", { name: "Sign out" }));
     await user.click(screen.getByRole("button", { name: "Delete agent" }));

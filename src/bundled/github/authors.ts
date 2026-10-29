@@ -6,7 +6,7 @@
 // edited in Settings; each poll reads them again, so a change applies to
 // running watches.
 import { Pattern } from "./pattern";
-import { BODY_CHARS, type Feedback } from "./watch";
+import { BODY_CHARS, type Feedback } from "./pull-states";
 
 export type Rule = Readonly<{
   effect: "allow" | "deny";
@@ -40,8 +40,7 @@ export const DEFAULT_RULES = `deny author:${ME} prefix:🤖`;
 const ORGANIZATION = /^[A-Za-z0-9][A-Za-z0-9-]*$/;
 // Enterprise Managed Users' logins end in `_shortcode`.
 const LOGIN = /^[A-Za-z0-9][A-Za-z0-9_-]*(?:\[bot\])?$/i;
-/** The `pull` command's input limit, in bytes, which a membership read keeps
- * under. */
+/** The most one membership read asks, in bytes, so each stays small. */
 export const INPUT_BYTES = 4096;
 /** More than a GitHub login's 39 characters, for room. */
 const LOGIN_CHARS = 100;
@@ -124,7 +123,7 @@ export function parse(
   }
   const policy = { text: lines.join("\n"), rules, fallback };
   // At worst each commenter is asked about alone, so that read must fit.
-  const alone = membershipRequest(
+  const alone = membershipQuery(
     ["x".repeat(LOGIN_CHARS)],
     organizations(policy),
   );
@@ -233,10 +232,10 @@ export function admit(
   return policy.fallback === "allow";
 }
 
-/** The `gh api graphql --input -` body asking which of `organizations` each of
- * `logins` belongs to. Each is inlined as a JSON string, so it stays a
- * string; organizations are validated logins, commenters' come from GitHub. */
-export function membershipRequest(
+/** The query asking which of `organizations` each of `logins` belongs to.
+ * Each is inlined as a JSON string, so it stays a string; organizations are
+ * validated logins, commenters' come from GitHub. */
+export function membershipQuery(
   logins: readonly string[],
   organizations: readonly string[],
 ) {
@@ -252,23 +251,18 @@ export function membershipRequest(
         `u${index}:user(login:${JSON.stringify(login)}){${fields}}`,
     )
     .join("\n");
-  return JSON.stringify({ query: `query{\n${users}\n}` });
+  return `query{\n${users}\n}`;
 }
 
-/** For each of `logins`, which of `organizations` a membershipRequest answer
+/** For each of `logins`, which of `organizations` a membershipQuery answer
  * puts it in, case aside, or undefined when the answer is unreadable. */
 export function parseMembership(
-  output: string,
+  answer: unknown,
   logins: readonly string[],
   organizations: readonly string[],
 ): Map<string, ReadonlySet<string>> | undefined {
-  let data: Record<string, Record<string, unknown> | null> | undefined;
-  try {
-    data = (JSON.parse(output) as { data?: typeof data }).data;
-  } catch {
-    return undefined;
-  }
-  if (!data || typeof data !== "object") return undefined;
+  if (!answer || typeof answer !== "object") return undefined;
+  const data = answer as Record<string, Record<string, unknown> | null>;
   return new Map(
     logins.map((login, index) => {
       const user = data[`u${index}`];

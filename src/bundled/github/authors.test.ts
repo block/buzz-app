@@ -4,7 +4,7 @@ import {
   admit,
   DEFAULT_RULES,
   loadPolicy,
-  membershipRequest,
+  membershipQuery,
   open,
   organizations,
   parse,
@@ -13,7 +13,7 @@ import {
   savePolicy,
   type AuthorPolicy,
 } from "./authors";
-import { BODY_CHARS, type Feedback } from "./watch";
+import { BODY_CHARS, type Feedback } from "./pull-states";
 
 const rules = (text: string) => parse(text) as AuthorPolicy;
 const by = (author: string, body = "", bot = false): Feedback => ({
@@ -233,18 +233,13 @@ allow org:Block body:/bug/s`);
   });
 
   it("ask which organizations each author is in, and read the answer", () => {
-    const body = JSON.parse(
-      membershipRequest(["alice", "bob"], ["block", "squareup"]),
-    ) as { query: string };
-    expect(body.query).toContain(
+    expect(membershipQuery(["alice", "bob"], ["block", "squareup"])).toContain(
       'u1:user(login:"bob"){o0:organization(login:"block"){id} o1:organization(login:"squareup"){id}}',
     );
-    const answer = JSON.stringify({
-      data: {
-        u0: { o0: null, o1: { id: "O" } },
-        u1: { o0: null, o1: null },
-      },
-    });
+    const answer = {
+      u0: { o0: null, o1: { id: "O" } },
+      u1: { o0: null, o1: null },
+    };
     expect(
       parseMembership(answer, ["Alice", "bob"], ["block", "SquareUp"]),
     ).toEqual(
@@ -253,6 +248,6 @@ allow org:Block body:/bug/s`);
         ["bob", new Set()],
       ]),
     );
-    expect(parseMembership("not json", ["alice"], ["block"])).toBeUndefined();
+    expect(parseMembership(null, ["alice"], ["block"])).toBeUndefined();
   });
 });

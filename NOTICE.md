@@ -129,6 +129,6 @@ trademarks of OpenAI; goose is a trademark of LF Projects; GitHub and Octocat
 are trademarks of GitHub, Inc. Their inclusion identifies the corresponding
 integrations and does not imply endorsement.
 
-The Huddles, Voice Notes, Usage, Mermaid diagrams and Pi illustrations were supplied
+The Huddles, Voice Notes, Usage, Mermaid diagrams, Pi and TypeSafe illustrations were supplied
 separately by Taylor Ho and resized for the catalog; the generation attribution
-above does not cover these five assets.
+above does not cover these six assets.

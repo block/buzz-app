@@ -77,7 +77,12 @@ export function ChannelGeneralAccess({
             {channel.visibility === "public" ? (
               communityAvatar("default")
             ) : (
-              <LockIcon size={24} />
+              <Avatar
+                alt=""
+                fallback=""
+                fallbackContent={<LockIcon size={24} />}
+                shape="squircle"
+              />
             )}
           </span>
           <div className="min-w-0">
@@ -221,7 +226,12 @@ function ChannelGeneralAccessEditor({
           ) : base?.visibility === "public" ? (
             communityAvatar("default")
           ) : (
-            <LockIcon size={24} />
+            <Avatar
+              alt=""
+              fallback=""
+              fallbackContent={<LockIcon size={24} />}
+              shape="squircle"
+            />
           )}
         </span>
         <div className={styles.accessAudience}>

@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { useSearchHighlight } from "./use-search-highlight";
 
@@ -30,9 +36,9 @@ function Picker(props: {
       <input aria-label="Search" onKeyDown={highlight.keyDown} />
       <div data-testid="rows" {...highlight.listProps}>
         {props.keys.map((key) => (
-          <div key={key} {...highlight.rowProps(key)}>
+          <button type="button" key={key} {...highlight.rowProps(key)}>
             {key}
-          </div>
+          </button>
         ))}
       </div>
     </>
@@ -92,24 +98,33 @@ it.each([
     "de",
   ],
   [
-    "a pointer move",
+    "a row hover",
     () => {
-      const rows = screen.getByTestId("rows");
-      fireEvent.pointerMove(rows, { clientX: 1, clientY: 1 });
-      fireEvent.pointerMove(rows, { clientX: 2, clientY: 1 });
+      // The list sees the same move after the row does.
+      const row = screen.getByText("more");
+      fireEvent.pointerMove(row, { clientX: 1, clientY: 1 });
+      fireEvent.pointerMove(row, { clientX: 2, clientY: 1 });
     },
+    "de",
+  ],
+  [
+    "Tab focusing a row",
+    () => act(() => screen.getByText("message").focus()),
     "de",
   ],
 ] as const)("lets %s cancel a waiting Enter", (_, cancel, query) => {
   const onChoose = vi.fn();
-  const props = { pending: true, onChoose };
-  const { rerender } = render(<Picker {...props} query="de" keys={[]} />);
+  const props = { onChoose, keys: ["design", "message", "more"] };
+  const { rerender } = render(
+    <Picker {...props} query="de" pending keys={[]} />,
+  );
   fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
+  // Rows that land while a better one may still arrive keep it waiting.
+  rerender(<Picker {...props} query="de" pending keys={["message", "more"]} />);
   cancel();
-  rerender(<Picker {...props} query={query} keys={[]} />);
-  rerender(<Picker {...props} query={query} keys={["design"]} />);
+  rerender(<Picker {...props} query={query} pending={false} />);
   // Returning to the text does not revive it either.
-  rerender(<Picker {...props} query="de" keys={["design"]} />);
+  rerender(<Picker {...props} query="de" pending={false} />);
   expect(onChoose).not.toHaveBeenCalled();
 });
 

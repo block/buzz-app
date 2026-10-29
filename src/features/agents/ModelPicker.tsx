@@ -16,6 +16,7 @@ import {
   GrokLogoIcon,
   ZaiLogoIcon,
   KimiLogoIcon,
+  RobotIcon,
 } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
@@ -42,14 +43,8 @@ const CUSTOM_MODEL_ACTION: ModelChoice = {
   description: "Enter a model ID",
 };
 
-/** Recognizes the vendor from a model's ID or name. */
-export function ModelIcon({
-  model,
-  className,
-}: {
-  model: string;
-  className?: string;
-}) {
+/** Resolve artwork before passing an optional leading slot to a control. */
+export function modelLogo(model: string, className?: string) {
   const name = model.toLowerCase();
   const Icon = /claude|anthropic|opus|sonnet|haiku/.test(name)
     ? ClaudeLogoIcon
@@ -71,6 +66,11 @@ export function ModelIcon({
   return Icon ? (
     <Icon className={className} size={20} aria-hidden="true" />
   ) : null;
+}
+
+/** Browse surfaces retain the generic mark when the vendor is unknown. */
+export function ModelIcon({ model }: { model: string }) {
+  return modelLogo(model) ?? <RobotIcon size={20} aria-hidden="true" />;
 }
 
 /** The custom-model form. Create hosts it outside its closing menu; Settings
@@ -278,7 +278,7 @@ export function ModelPicker({
             valueLabel={discovering ? "Loading models…" : selected.label}
             valueSuffix={!discovering && inherited ? " · Default" : undefined}
             valueTitle={discovering ? "Loading models…" : selectedLabel}
-            leading={<ModelIcon model={`${selected.id} ${selected.label}`} />}
+            leading={modelLogo(`${selected.id} ${selected.label}`)}
             variant={compact ? "compact" : "preference"}
             appearance={appearance}
             {...(appearance === "glass-ghost" ? { size: "xs" as const } : {})}
@@ -293,7 +293,7 @@ export function ModelPicker({
                       ? `${model.label} · Default`
                       : model.label,
                   description: model.description,
-                  leading: <ModelIcon model={`${model.id} ${model.label}`} />,
+                  leading: modelLogo(`${model.id} ${model.label}`),
                 })),
               },
             ]}

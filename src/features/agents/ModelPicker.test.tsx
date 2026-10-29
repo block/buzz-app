@@ -117,6 +117,34 @@ function setup(value = "", props: { allowCustomModel?: boolean } = {}) {
 
 const control = () => screen.getByRole("combobox", { name: "Model" });
 
+it("omits unknown artwork slots from the ungrouped trigger and options", async () => {
+  const user = userEvent.setup();
+  render(
+    <ModelPicker
+      models={[
+        { id: "opaque", label: "Unknown vendor" },
+        { id: "claude", label: "Claude" },
+      ]}
+      value="opaque"
+      defaultLabel="Choose model"
+      includeDefault={false}
+      onChange={vi.fn()}
+    />,
+  );
+  expect(control().querySelector(".buzz-select-leading")).toBeNull();
+  await user.click(control());
+  expect(
+    (
+      await screen.findByRole("option", { name: "Unknown vendor" })
+    ).querySelector(".buzz-select-leading"),
+  ).toBeNull();
+  expect(
+    screen
+      .getByRole("option", { name: "Claude" })
+      .querySelector(".buzz-select-leading svg"),
+  ).toBeInTheDocument();
+});
+
 it("picks a listed model", async () => {
   const { onChange, user } = setup("");
   await user.click(control());
@@ -246,6 +274,7 @@ it("keeps loading inside the disabled picker and restores the selected value", (
   const picker = control();
   expect(picker).toBeDisabled();
   expect(picker).toContainElement(screen.getByText("Loading models…"));
+  expect(picker.querySelector(".buzz-select-leading")).toBeNull();
   view.rerender(
     <ModelPicker
       models={models}

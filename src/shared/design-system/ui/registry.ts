@@ -118,7 +118,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "Keep read feedback quiet when fast and content stable while pending.",
     behavior:
       "One-second delayed status, immediate ready content and aria-busy. The caller owns stable child geometry, scope and errors.",
-    variants: ["initial read", "refresh"],
+    variants: ["initial read", "refresh", "screen-reader status"],
     status: "proposed",
     collection: "components",
     source: "shared/design-system/ui/LoadingRegion.tsx",

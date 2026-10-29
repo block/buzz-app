@@ -162,7 +162,8 @@ it.each([false, true])(
         ),
       );
       expect(region).toHaveAttribute("aria-busy", "true");
-      expect(screen.getByText("Loading settings…")).toHaveClass("sr-only");
+      expect(region?.querySelector(".sr-only")).toBeInTheDocument();
+      expect(region?.querySelector(".buzz-loading-region-feedback")).toBeNull();
       expect(model).toBeDisabled();
       expect(model.querySelector(".buzz-select-leading")).toBeNull();
       expect(thinking).toBeDisabled();
@@ -185,7 +186,7 @@ it.each([false, true])(
       expect(screen.getByRole("textbox", { name: "Instructions" })).toBe(field);
       expect(field).toHaveValue("First instructions.");
       expect(region).toHaveAttribute("aria-busy", "true");
-      expect(screen.getByText("Loading models…")).toHaveClass("sr-only");
+      expect(region?.querySelector(".sr-only")).toBeInTheDocument();
       expect(model).toBeDisabled();
       expect(thinking).toBeDisabled();
       await user.type(field, " Draft.");

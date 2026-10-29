@@ -168,11 +168,11 @@ export function ModelSettings({
   };
   const pending = "pending" in settings ? settings.pending : loading;
   const placeholder = pending ? "…" : "Unavailable";
-  const loadingLabel = agent ? "Loading models…" : "Loading settings…";
   return (
     <LoadingRegion
       pending={pending}
-      label={loadingLabel}
+      label={agent ? "Loading models…" : "Loading settings…"}
+      statusVisibility="screen-reader"
       feedback={
         "error" in settings && settings.error ? (
           <div className="grid gap-2">
@@ -183,11 +183,7 @@ export function ModelSettings({
               <Button onClick={settings.retry}>Retry</Button>
             </div>
           </div>
-        ) : (
-          <span role={pending ? "status" : undefined} className="sr-only">
-            {pending ? loadingLabel : ""}
-          </span>
-        )
+        ) : undefined
       }
     >
       <form

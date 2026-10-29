@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import { ModelIcon, type ModelChoice } from "./ModelPicker";
+import { ModelIcon, modelLogo, type ModelChoice } from "./ModelPicker";
 import { CaretDownIcon, CheckIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
@@ -104,10 +104,7 @@ export function ModelFamilyMenu({
                 {leading}
               </span>
             )}
-            <ModelIcon
-              className="buzz-select-leading"
-              model={modelFamily(selected)}
-            />
+            {modelLogo(modelFamily(selected), "buzz-select-leading")}
             {/* Card labels keep Default accessible without crowding the model. */}
             <span className={styles.value}>
               <span className={`buzz-select-value ${styles.model}`}>

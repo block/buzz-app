@@ -352,7 +352,12 @@ export function channelTabs(session: RelaySession, navigation?: Navigation) {
       const channel = session.channels
         .list()
         .channels.find((item) => item.id === channelId);
-      if (!channel || channel.readOnly || channel.archived || channel.cached)
+      if (
+        !channel ||
+        (channel.readOnly && channel.viewerRole !== "guest") ||
+        channel.archived ||
+        channel.cached
+      )
         throw new Error("Your owner cannot open threads in this channel.");
       if (threads(channelId).some((thread) => thread.root === rootId))
         return false;

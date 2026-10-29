@@ -1,0 +1,47 @@
+:root {
+  color-scheme: light dark;
+  font:
+    100% / 1.5 system-ui,
+    sans-serif;
+  background: Canvas;
+  color: CanvasText;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  min-block-size: 100svh;
+  margin: 0;
+  padding: 2rem 1rem;
+  display: grid;
+  place-items: center;
+}
+
+main {
+  inline-size: 100%;
+  max-inline-size: 30rem;
+  overflow-wrap: anywhere;
+}
+
+p {
+  margin: 1rem 0 0;
+}
+
+.eyebrow {
+  margin: 0 0 1rem;
+  font-weight: 600;
+}
+
+h1 {
+  margin: 0;
+  font-size: 1.75rem;
+  line-height: 1.2;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.hint {
+  font-size: 0.875rem;
+}

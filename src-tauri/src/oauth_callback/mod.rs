@@ -2,6 +2,7 @@
 //! RFC 8252 §§7.3, 8.3, 8.4, 8.9; RFC 6749 §§4.1.2, 4.1.2.1; RFC 9700 §2.1.
 //! See this folder's README.md for the command contract, ownership, and limits.
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use sha2::{Digest, Sha256};
 use std::{
     sync::{Arc, Mutex},
     time::Duration,
@@ -337,13 +338,24 @@ fn parse_callback(
 }
 
 async fn reply(stream: &mut TcpStream, status: u16, message: &str) {
-    let body = format!("<!doctype html><title>Sign-in callback</title><p>{message}</p>");
+    // All copy comes from the fixed responses above, never from callback values.
+    let heading = match status {
+        200 => "Return to Buzz",
+        404 => "Page not found",
+        _ => "Sign-in needs attention",
+    };
+    let style = include_str!("page.css");
+    let style_hash = base64::engine::general_purpose::STANDARD.encode(Sha256::digest(style));
+    let body = include_str!("page.html")
+        .replace("{{style}}", style)
+        .replace("{{heading}}", heading)
+        .replace("{{message}}", message);
     let reason = match status {
         200 => "OK",
         404 => "Not Found",
         _ => "Bad Request",
     };
-    let response = format!("HTTP/1.1 {status} {reason}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\nCache-Control: no-store\r\nContent-Security-Policy: default-src 'none'; base-uri 'none'; frame-ancestors 'none'\r\nReferrer-Policy: no-referrer\r\n\r\n{body}", body.len());
+    let response = format!("HTTP/1.1 {status} {reason}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\nCache-Control: no-store\r\nContent-Security-Policy: default-src 'none'; style-src 'sha256-{style_hash}'; base-uri 'none'; frame-ancestors 'none'\r\nReferrer-Policy: no-referrer\r\n\r\n{body}", body.len());
     let _ = stream.write_all(response.as_bytes()).await;
     let _ = stream.shutdown().await;
 }

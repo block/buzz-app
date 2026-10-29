@@ -79,8 +79,11 @@ browser or cancel separate host HTTP requests.
   listener available.
 - Bounds paths to 1,024 bytes, request reads to 8,192 bytes, each connection to
   five seconds, and the overall attempt to ten minutes.
-- Returns static HTML with `no-store`, a restrictive Content Security Policy,
-  and `no-referrer`.
+- Returns a static, responsive page with browser light/dark colors, `no-store`,
+  and `no-referrer`. Its Content Security Policy permits only the exact embedded
+  stylesheet by hash, with no scripts or external assets. Receipt of a callback
+  does not establish successful account verification; users return to Buzz for
+  that result.
 
 ## Standards scope
 

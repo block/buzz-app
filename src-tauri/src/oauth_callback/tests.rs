@@ -195,8 +195,26 @@ async fn real_listener_preserves_callback_parameters_and_closes_after_completion
         assert!(response.starts_with("HTTP/1.1 200"));
         assert!(response.contains("Cache-Control: no-store"));
         assert!(response.contains("Referrer-Policy: no-referrer"));
-        assert!(response.contains("<title>Sign-in callback</title>"));
+        assert!(response.contains("<title>Buzz sign-in</title>"));
+        assert!(response.contains("<h1 id=\"heading\">Return to Buzz</h1>"));
         assert!(response.contains("Return to the app"));
+        assert!(response.contains("finish verification"));
+        assert!(!response.contains("{{"));
+        let (headers, body) = response.split_once("\r\n\r\n").unwrap();
+        let style = body
+            .split_once("<style>")
+            .unwrap()
+            .1
+            .split_once("</style>")
+            .unwrap()
+            .0;
+        let hash = base64::engine::general_purpose::STANDARD.encode(Sha256::digest(style));
+        assert!(headers.contains(&format!("style-src 'sha256-{hash}'")));
+        assert!(headers.contains("default-src 'none'"));
+        assert!(headers.contains("base-uri 'none'; frame-ancestors 'none'"));
+        assert!(headers.contains(&format!("Content-Length: {}\r\n", body.len())));
+        assert!(!headers.contains("unsafe-inline"));
+        assert!(!body.contains("<script"));
         assert!(!response.contains("one+time"));
         assert!(!response.contains("attempt"));
         assert!(!response.contains("one%2Btime"));
@@ -376,6 +394,7 @@ async fn default_state_rejects_invalid_success_and_error_callbacks_then_complete
             let html = send(&url, &format!("{}?{response}{suffix}", url.path()), "").await;
             assert!(html.starts_with("HTTP/1.1 400"));
             assert!(html.contains("Invalid callback"));
+            assert!(html.contains("<h1 id=\"heading\">Sign-in needs attention</h1>"));
             assert!(!html.contains(&state));
             assert!(!html.contains("access_denied"));
             assert!(host.0.lock().unwrap().is_some());
@@ -416,6 +435,7 @@ async fn default_state_rejects_invalid_success_and_error_callbacks_then_complete
         ]))
     );
     assert!(html.starts_with("HTTP/1.1 400"));
+    assert!(html.contains("<h1 id=\"heading\">Sign-in needs attention</h1>"));
     assert!(!html.contains("access_denied"));
     assert!(!html.contains(&next_state));
     assert!(!html.contains("private detail"));

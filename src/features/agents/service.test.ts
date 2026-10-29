@@ -154,6 +154,9 @@ async function setup({
   subscribePlugin = (_listener: () => void) => () => {},
   /** Whether the Agent Attention UI plugin is on once startup is over. */
   attention = true,
+  /** Whether another plugin is still starting after setup, so startup is not
+   * over. */
+  starting = false,
 } = {}) {
   const ctx = new Context();
   let settled = false;
@@ -270,7 +273,7 @@ async function setup({
   // The Agent Attention UI plugin starts after the type, then startup is over.
   const watching = attention ? showAttention(ctx, "one") : undefined;
   await watching;
-  settled = true;
+  settled = !starting;
   await vi.waitFor(() => expect(service.snapshot().status).toBe("ready"), {
     // Keep fake-clock advancement unchanged in the timer behavior cases.
     interval: vi.isFakeTimers() ? 50 : 1,
@@ -8994,6 +8997,40 @@ it("wakes nothing from the time no plugin showed its attention, across a restart
       attention: false,
     });
     await settle();
+    await showAttention(second.ctx, "two");
+    vi.setSystemTime((start + 60) * 1000);
+    second.history.push(posted("after", start + 30));
+    second.recover();
+    await vi.waitFor(() => expect(second.run).toHaveBeenCalledTimes(1));
+    await settle();
+    expect(heard(second.run)).toEqual(["after"]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("wakes nothing from the time no plugin showed its attention when it is shown during startup", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  try {
+    const start = nowSeconds();
+    const storage = memoryStorage();
+    const first = await setup({ storage, identities: [echo] });
+    await first.service.save(bot, { attentionEnabled: true, attention: chat });
+    await settle();
+    vi.setSystemTime((start + 5) * 1000);
+    await first.watching?.dispose();
+    await settle();
+    first.connect(false);
+    // The app starts again with the plugin off, and it is turned on while
+    // another plugin is still starting.
+    vi.setSystemTime((start + 20) * 1000);
+    const second = await setup({
+      storage,
+      identities: [echo],
+      history: [...first.history, posted("while hidden", start + 10)],
+      attention: false,
+      starting: true,
+    });
     await showAttention(second.ctx, "two");
     vi.setSystemTime((start + 60) * 1000);
     second.history.push(posted("after", start + 30));

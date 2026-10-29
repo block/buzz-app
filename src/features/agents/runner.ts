@@ -1097,7 +1097,8 @@ export class AgentRunners {
     // catch-up still reads what the app missed while closed. After that, no
     // plugin showing Attention is like turning it off.
     this.settled ||= this.host.pluginsSettled();
-    const held = !this.host.attentionShown() && !this.settled;
+    const shown = this.host.attentionShown();
+    const held = !shown && !this.settled;
     for (const runner of this.runners.values()) {
       this.resumeTurns(runner);
       const agent = this.host.agent(runner.key);
@@ -1105,15 +1106,20 @@ export class AgentRunners {
       const on = !!agent?.attentionEnabled && !!runner.type?.run;
       const reading: Stream[] = [];
       for (const stream of agent && !held ? streamsOf(agent) : []) {
+        const checkpoint = this.checkpoints[stream.key];
         if (!on || !stream.enabled) {
           // Saved too, so one turned on after a restart starts from about
-          // when this copy last saw it off.
+          // when this copy last saw it off, or from when Attention is shown.
           this.quiet.add(stream.key);
-          if ((this.checkpoints[stream.key]?.through ?? 0) < now)
-            move(stream.key, { through: now });
+          if (
+            (checkpoint?.through ?? 0) < now ||
+            (!shown && !checkpoint?.hidden)
+          )
+            move(stream.key, { through: now, ...(!shown && { hidden: true }) });
         } else if (
           this.quiet.delete(stream.key) ||
-          !this.checkpoints[stream.key]
+          !checkpoint ||
+          checkpoint.hidden
         )
           // A stream new to catch-up, as every one is on an upgrade, starts
           // now: an earlier `since` does not replay older events.

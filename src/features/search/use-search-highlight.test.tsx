@@ -21,6 +21,7 @@ function Picker(props: {
   query: string;
   keys: readonly string[];
   pending: boolean;
+  open?: boolean;
   onChoose: (key: string) => void;
 }) {
   const highlight = useSearchHighlight(props);
@@ -38,20 +39,32 @@ function Picker(props: {
   );
 }
 
-it("chooses the first row to arrive after Enter while results are pending", () => {
+it("chooses the first row once results stop pending after Enter", () => {
   const onChoose = vi.fn();
   const props = { query: "de", pending: true, onChoose };
   const { rerender } = render(<Picker {...props} keys={[]} />);
   expect(fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" })).toBe(
     false,
   );
+  // A row that lands while a better one may still arrive is not chosen.
+  rerender(<Picker {...props} keys={["message"]} />);
   expect(onChoose).not.toHaveBeenCalled();
-  rerender(<Picker {...props} keys={["design", "design-team"]} />);
+  rerender(<Picker {...props} keys={["design", "message"]} pending={false} />);
   expect(onChoose).toHaveBeenCalledExactlyOnceWith("design");
-  rerender(
-    <Picker {...props} keys={["design", "design-team"]} pending={false} />,
-  );
+  rerender(<Picker {...props} keys={["message"]} pending={false} />);
   expect(onChoose).toHaveBeenCalledOnce();
+});
+
+it("drops a waiting Enter when the picker closes", () => {
+  const onChoose = vi.fn();
+  const props = { query: "de", onChoose };
+  const { rerender } = render(<Picker {...props} pending keys={[]} />);
+  fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
+  rerender(<Picker {...props} pending open={false} keys={[]} />);
+  rerender(
+    <Picker {...props} pending={false} open={false} keys={["design"]} />,
+  );
+  expect(onChoose).not.toHaveBeenCalled();
 });
 
 it.each([

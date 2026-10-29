@@ -15,9 +15,9 @@ import {
  * results arrive: a row inserted above cannot redirect Enter. When the
  * highlighted row leaves, the highlight returns to the first row rather than
  * reviving the old one. Enter before any row arrives, while results are
- * pending, chooses the first row that does, unless an edit, an arrow key,
- * Escape or a pointer move comes first. The hook draws nothing; rows keep
- * their own markup. */
+ * pending, chooses the first row once they are not, unless an edit, an arrow
+ * key, Escape, a pointer move or closing comes first. The hook draws nothing;
+ * rows keep their own markup. */
 export function useSearchHighlight({
   query,
   keys,
@@ -44,7 +44,7 @@ export function useSearchHighlight({
   /** Up from the first row goes to the last, and Down from the last row
    * goes to the first. */
   wrap?: boolean;
-  /** Rows may still arrive for this text. */
+  /** A row that should lead may still arrive for this text. */
   pending?: boolean;
 }) {
   const id = useId();
@@ -82,7 +82,7 @@ export function useSearchHighlight({
   const waiting = open && awaiting === query;
   const first = keys[0];
   useEffect(() => {
-    if (!waiting || (!first && pending)) return;
+    if (!waiting || pending) return;
     setAwaiting(undefined);
     if (first) onChoose(first);
   }, [waiting, first, pending, onChoose]);

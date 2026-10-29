@@ -33,7 +33,11 @@ import {
   MenuRoot,
   MenuTrigger,
 } from "../../shared/design-system/ui/Menu";
-import type { SearchDestination, SearchInputProps } from "./SearchChoices";
+import type {
+  SearchDestination,
+  SearchGroup,
+  SearchInputProps,
+} from "./SearchChoices";
 import { SearchChoices } from "./SearchChoices";
 import { MatchRank, matchName, matchRank } from "../../features/search/match";
 import {
@@ -91,6 +95,7 @@ export function SearchResults({
   query,
   onQueryChange,
   input,
+  open,
   pages,
   scopedChannelId,
   currentChannelId,
@@ -949,7 +954,10 @@ export function SearchResults({
             label: `Search ${currentChannel.channelType === "dm" ? "conversation with" : "in"} ${names.get(currentChannel.id) ?? currentChannel.name}`,
             detail: "Search messages in this conversation",
             icon: ChatCircleIcon,
-            run: () => onScopeChange(currentChannel.id),
+            run: () => {
+              cancelPersonOpen();
+              onScopeChange(currentChannel.id);
+            },
           },
         ]
       : [];
@@ -999,7 +1007,7 @@ export function SearchResults({
         ? "Message search is unavailable."
         : query.trim()
           ? directoryPending
-            ? "Searching…"
+            ? undefined
             : "No matching messages in accessible conversations."
           : scopedChannelId
             ? "Type to search messages in this conversation."
@@ -1010,7 +1018,7 @@ export function SearchResults({
     input.current?.focus();
     retry();
   };
-  const groups =
+  const groups: readonly SearchGroup[] =
     pickerPrompt || showAmbiguousPicker
       ? [
           {
@@ -1220,7 +1228,15 @@ export function SearchResults({
           : undefined
       }
       groups={groups}
-      pending={directoryPending}
+      open={open}
+      // Enter before any row waits for a channel or person row, or for the
+      // lookups to settle, rather than opening a message that lands first.
+      pending={
+        (directoryPending || search.loading) &&
+        !groups.some(
+          (group) => group.rank !== Infinity && group.destinations.length,
+        )
+      }
     >
       <div
         className="space-y-2 px-3 text-body-sm text-subtle"

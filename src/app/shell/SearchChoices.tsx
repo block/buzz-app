@@ -55,6 +55,8 @@ export type SearchInputProps = {
     | undefined;
   displayQuery?: string | undefined;
   onDisplayQueryChange?: ((value: string) => void) | undefined;
+  /** False while the palette closes, so a held Enter chooses nothing. */
+  open?: boolean | undefined;
 };
 
 export function SearchChoices({
@@ -70,11 +72,13 @@ export function SearchChoices({
   scopeAction,
   children,
   inlineSettings,
+  open = true,
   pending = false,
 }: SearchInputProps & {
   groups: readonly SearchGroup[];
   children?: ReactNode;
-  /** Rows may still arrive, so Enter before the first one waits for it. */
+  /** A row that should lead may still arrive, so Enter before any row
+   * waits until it has. */
   pending?: boolean;
 }) {
   const resultsViewport = useRef<HTMLDivElement>(null);
@@ -140,6 +144,7 @@ export function SearchChoices({
     query,
     keys: destinations.map(({ key }) => key),
     onChoose: (key) => destinations.find((row) => row.key === key)?.run(),
+    open,
     pending,
   });
   const selected = highlight.active;

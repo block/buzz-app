@@ -238,6 +238,7 @@ export function PageSearch({
                 setScopedChannelId(channelId);
                 input.current?.focus();
               }}
+              open={open}
               isOpen={() => openRef.current}
               close={(channelId) => {
                 composerChannel.current = channelId;
@@ -264,6 +265,7 @@ function CommunitySearch({
   query,
   onQueryChange,
   input,
+  open,
   enabled,
   scopedChannelId,
   currentChannelId,
@@ -376,6 +378,7 @@ function CommunitySearch({
       query={query}
       onQueryChange={onQueryChange}
       input={input}
+      open={open}
       pages={pages}
       scopedChannelId={scopedChannelId}
       currentChannelId={currentChannelId}

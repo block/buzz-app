@@ -9181,6 +9181,24 @@ it("wakes nothing for an event heard during startup when it ends without Attenti
   expect(run).not.toHaveBeenCalled();
 });
 
+it("turning the saved switch off cancels a startup-held event", async () => {
+  vi.useFakeTimers({ now: 1_000_000 });
+  const { service, run, emit, ctx } = await setup({
+    attention: false,
+    starting: true,
+  });
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
+  emit({ events: [deploy("held-before-off")] });
+  await vi.advanceTimersByTimeAsync(1_000);
+  await service.save(bot, { attentionEnabled: false });
+  await vi.advanceTimersByTimeAsync(1_000);
+  await service.save(bot, { attentionEnabled: true });
+  await showAttention(ctx, "two");
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(run).not.toHaveBeenCalled();
+});
+
 it("turns every agent's attention off while no plugin shows it, keeps its switch, and resumes it", async () => {
   vi.useFakeTimers({ now: 1_000_000 });
   const { service, run, emit, watching, ctx } = await setup();

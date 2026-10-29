@@ -608,7 +608,8 @@ export class AgentRunners {
 
   /** Keeps one runner for each saved agent: a deleted one's is retired, and a
    * replaced type aborts its run. Turning attention off voids the watch work
-   * it queued, even if it is turned on again before that work would run. */
+   * it queued or held, even if it is turned on again before that work would
+   * run. */
   reconcile(
     identities: readonly RunnerMember[],
     types: ReadonlyMap<string, RegisteredAgentType>,
@@ -621,13 +622,13 @@ export class AgentRunners {
     for (const identity of identities) {
       const type = types.get(identity.type);
       const runner = this.runners.get(identity.key);
-      if (
-        runner &&
-        (this.host.saved(identity.key)?.attentionEnabled !== true ||
-          !this.host.attentionShown())
-      ) {
+      const off = this.host.saved(identity.key)?.attentionEnabled !== true;
+      if (runner && (off || !this.host.attentionShown())) {
         runner.epoch++;
         this.dropWatchWork(runner);
+        // A startup hold keeps its events until Attention is shown, but not
+        // past the switch being turned off.
+        if (off) runner.held.clear();
       }
       if (!runner) this.runners.set(identity.key, this.runner(identity, type));
       else if (runner.type !== type) {

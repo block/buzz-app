@@ -735,7 +735,12 @@ icon, a compact audience Select (**Who can read**) with **Public** / **Private**
 labels, a hint explaining the audience and, for public channels, the selected participation default,
 and a public-only trailing **New people can** Select (Participate / View only), with short
 descriptions of the permitted actions. Audience options show the community avatar and
-lock icon inside the dropdown. The audience Select uses the shared text-link
+lock icon inside the dropdown. When making a private channel public, the confirmation
+includes the same **New people can** dropdown. It starts with the saved public default
+(Participate if absent); the selected role and public visibility publish in a single
+details update after confirmation. Cancel saves neither. Both choices make the full
+history readable by the community; View only limits new people's contributions.
+The audience Select uses the shared text-link
 treatment; the participation Select is outlined and vertically centered against
 the audience row, with its popup aligned to the trigger’s right edge. On narrow screens the role control wraps
 under the audience. The confirmation explains “People already in the channel keep

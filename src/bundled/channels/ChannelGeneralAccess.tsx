@@ -16,6 +16,7 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
 import { Select } from "../../shared/design-system/ui/Select";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
+import { Field } from "../../shared/design-system/ui/Field";
 import type { CommunityReader } from "../../features/communities/service";
 import { communityName } from "../../features/communities/names";
 import { communityFromScope } from "../../features/relay/gifs";
@@ -29,6 +30,23 @@ import styles from "./ChannelMembersDialog.module.css";
 import { privacyConsequence } from "./ChannelPrivacyConfirmation";
 
 const noCommunitySubscription = () => () => {};
+const participationOptions = [
+  {
+    label: "",
+    options: [
+      {
+        value: "member",
+        label: "Participate",
+        description: "Send messages, reply, and react.",
+      },
+      {
+        value: "guest",
+        label: "View only",
+        description: "Read messages and threads.",
+      },
+    ],
+  },
+];
 
 /** General access uses the same signed save/readback owner as channel details.
  * Choices are confirmed individually, like the member rows above this section. */
@@ -288,23 +306,7 @@ function ChannelGeneralAccessEditor({
               value={base ? (base.joinRole ?? "member") : ""}
               placeholder={loading ? "Loading access…" : "Access unavailable"}
               disabled={locked}
-              groups={[
-                {
-                  label: "",
-                  options: [
-                    {
-                      value: "member",
-                      label: "Participate",
-                      description: "Send messages, reply, and react.",
-                    },
-                    {
-                      value: "guest",
-                      label: "View only",
-                      description: "Read messages and threads.",
-                    },
-                  ],
-                },
-              ]}
+              groups={participationOptions}
               onValueChange={(joinRole) => {
                 if (
                   (joinRole === "member" || joinRole === "guest") &&
@@ -371,7 +373,28 @@ function ChannelGeneralAccessEditor({
               </Button>
             </>
           }
-        />
+        >
+          {base.visibility === "private" && choice.visibility === "public" && (
+            <Field
+              label={<span className="text-caption">New people can</span>}
+              nativeLabel={false}
+            >
+              <Select
+                variant="compact"
+                appearance="outlined"
+                size="md"
+                label="New people can"
+                value={choice.joinRole ?? "member"}
+                disabled={locked}
+                groups={participationOptions}
+                onValueChange={(joinRole) => {
+                  if (joinRole === "member" || joinRole === "guest")
+                    setChoice((current) => current && { ...current, joinRole });
+                }}
+              />
+            </Field>
+          )}
+        </AlertDialog>
       )}
     </section>
   );

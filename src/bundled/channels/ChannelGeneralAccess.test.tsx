@@ -235,6 +235,56 @@ it.each(["member", "guest"] as const)(
     expect(h.save).not.toHaveBeenCalled();
   },
 );
+it.each(["member", "guest", undefined] as const)(
+  "stages public participation from the private %s default until confirmation",
+  async (joinRole) => {
+    const h = harness();
+    const current = { ...base, visibility: "private" as const, joinRole };
+    h.load.mockResolvedValue(current);
+    const user = userEvent.setup();
+    render(
+      <ChannelGeneralAccess capability={h.capability} channelId="alpha" />,
+    );
+    const label = joinRole === "guest" ? "View only" : "Participate";
+    const nextRole = joinRole === "guest" ? "member" : "guest";
+    const nextLabel = nextRole === "guest" ? "View only" : "Participate";
+    const control = await select(user, "Who can read", "Public");
+    expect(
+      screen.getByRole("combobox", { name: "New people can" }),
+    ).toHaveTextContent(label);
+    await select(user, "New people can", nextLabel);
+    expect(
+      screen.getByRole("combobox", { name: "New people can" }),
+    ).toHaveTextContent(nextLabel);
+    expect(h.save).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(control).toHaveFocus());
+    expect(control).toHaveTextContent("Private");
+    expect(h.save).not.toHaveBeenCalled();
+
+    await select(user, "Who can read", "Public");
+    expect(
+      screen.getByRole("combobox", { name: "New people can" }),
+    ).toHaveTextContent(label);
+    await select(user, "New people can", nextLabel);
+    const next: ChannelDetails = {
+      ...current,
+      visibility: "public",
+      joinRole: nextRole,
+    };
+    h.load.mockResolvedValue(next);
+    await user.click(screen.getByRole("button", { name: "Change access" }));
+    await waitFor(() => expect(control).toHaveTextContent("Public"));
+    expect(h.save).toHaveBeenCalledExactlyOnceWith(
+      current,
+      next,
+      expect.any(AbortSignal),
+    );
+    expect(
+      screen.getByRole("combobox", { name: "New people can" }),
+    ).toHaveTextContent(nextLabel);
+  },
+);
 it("confirms new people's View only/Participate access independently of public reading access", async () => {
   const h = harness();
   const user = userEvent.setup();

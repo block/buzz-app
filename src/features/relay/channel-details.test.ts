@@ -140,6 +140,48 @@ it.each([undefined, "member"] as const)(
   },
 );
 
+it.each(["member", "guest"] as const)(
+  "publishes public visibility and the %s admission choice together and verifies both",
+  async (joinRole) => {
+    const h = harness();
+    const initialRole = joinRole === "member" ? "guest" : "member";
+    const metadata = (visibility: string, role: string) =>
+      h.record(39000, [
+        ...h.metadata("original", "Old description", visibility).tags.slice(1),
+        ["join_role", role],
+      ]);
+    h.set([metadata("private", initialRole), ...h.events().slice(1)]);
+    const roster = h.entry(2);
+    const base = await h.owner.capability.load(id);
+    const next = { ...base, visibility: "public" as const, joinRole };
+    // A readback confirming visibility alone cannot confirm this combined intent.
+    h.publish.mockImplementationOnce(async () => {
+      h.set([metadata("public", initialRole), ...h.events().slice(1)]);
+    });
+    await expect(h.owner.capability.save(base, next)).rejects.toThrow(
+      "may have been saved",
+    );
+    expect(h.sign).toHaveBeenCalledOnce();
+    expect(h.sign.mock.calls[0]?.[0].tags).toEqual([
+      ["h", id],
+      ["name", base.name],
+      ["about", base.description],
+      ["visibility", "open"],
+      ["join_role", joinRole],
+    ]);
+    expect(h.publish).toHaveBeenCalledOnce();
+    expect(h.owner.capability.snapshot(id)).toEqual({
+      draft: next,
+      status: "unconfirmed",
+    });
+    h.set([metadata("public", joinRole), ...h.events().slice(1)]);
+    await h.owner.capability.check(id);
+    expect(h.owner.capability.snapshot(id)).toBeUndefined();
+    expect(h.entry(2)).toBe(roster);
+    expect(h.publish).toHaveBeenCalledOnce();
+  },
+);
+
 it.each([undefined, "member", "guest"])(
   "only sends a changed admission role (base %s)",
   (joinRole) => {

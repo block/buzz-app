@@ -123,7 +123,11 @@ beforeEach(() => {
   Object.defineProperty(navigator, "locks", {
     configurable: true,
     value: {
-      request: async (_name: string, run: () => unknown) => run(),
+      request: async (
+        _name: string,
+        options: unknown,
+        callback?: (lock: unknown) => unknown,
+      ) => (callback ? callback({}) : (options as () => unknown)()),
     },
   });
   vi.stubGlobal(
@@ -9696,9 +9700,11 @@ it.each([
       fireEvent.click(
         screen.getByRole("button", { name: "Remove queued message" }),
       );
-      expect(
-        screen.queryByRole("region", { name: "Queued follow-ups" }),
-      ).toBeNull();
+      await waitFor(() =>
+        expect(
+          screen.queryByRole("region", { name: "Queued follow-ups" }),
+        ).toBeNull(),
+      );
       expect(h.messages.send).not.toHaveBeenCalled();
       return;
     }

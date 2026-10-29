@@ -1,4 +1,5 @@
 // Installed fixture code only; app composition, manager, contributions and UI remain production.
+import { soloRegionFixture } from "./solo-region-fixture";
 import { companionPlugins } from "./companion-fixture";
 import * as shortcutCounter from "../../examples/plugins/shortcut-counter/plugin.js";
 import shortcutManifest from "../../examples/plugins/shortcut-counter/manifest.json";
@@ -131,6 +132,7 @@ function SidebarWorkIcon() {
 }
 
 export const fixturePlugins: readonly BundledPlugin[] = [
+  soloRegionFixture,
   {
     manifest: {
       id: "fixture.sidebar-sections",

@@ -215,12 +215,24 @@ function setup(initial: Pull | null = answer()) {
   } as unknown as Context;
   watchPulls(ctx);
   const tool = tools[0] as AddedTool;
-  const call = (args: Record<string, unknown>, topLevel = false, key = agent) =>
-    tool.call(
+  /** Calls the tool, for the agent's Interest `pr` unless `args` names one. */
+  const call = async (
+    args: Record<string, unknown>,
+    topLevel = false,
+    key = agent,
+  ) => {
+    if (!records[key]?.["interest/pr"])
+      await save(key, {
+        attention: {
+          "interest/pr": { type: "interest", instructions: "Land the PR" },
+        },
+      });
+    return tool.call(
       { key, pubkey: agent, attention: attention(key) } as BuzzClient,
       topLevel ? { channel: "c", topLevel } : { channel: "c", root },
-      args,
+      { interest: "pr", ...args },
     );
+  };
   return {
     call,
     records,
@@ -377,54 +389,50 @@ describe("github_watch_pr", () => {
     app.dispose();
   });
 
-  it("imports saved watches once with their cursor and conversation", async () => {
+  it("adds the watch to the Interest the agent names, and creates none", async () => {
+    const app = setup();
+    await app.call({ url });
+    const objects = app.records[agent] ?? {};
+    expect(
+      Object.keys(objects).filter((id) => id.startsWith("interest/")),
+    ).toEqual(["interest/pr"]);
+    expect(Object.values(objects)).toContainEqual(
+      expect.objectContaining({ type: "source", interest_id: "pr" }),
+    );
+    app.dispose();
+  });
+
+  it("needs an Interest the agent has", async () => {
+    const app = setup();
+    await expect(app.call({ url, interest: undefined })).rejects.toThrow(
+      /interest must name/,
+    );
+    await expect(app.call({ url, interest: "missing" })).rejects.toThrow(
+      /no Interest missing/,
+    );
+    expect(
+      Object.values(app.records[agent] ?? {}).filter(
+        (value) => value.type === "source",
+      ),
+    ).toEqual([]);
+    expect(app.runCommand).not.toHaveBeenCalled();
+    app.dispose();
+  });
+
+  it("drops watches saved before Attention", async () => {
     localStorage.setItem("test.attention", JSON.stringify({ [agent]: {} }));
     localStorage.setItem(
       "buzz.github.pull-watches.v1",
-      JSON.stringify([
-        {
-          agent,
-          url,
-          channel: "c",
-          root,
-          wakes: 2,
-          seen: [],
-          reported: "1111111111:passed",
-        },
-      ]),
+      JSON.stringify([{ agent, url, channel: "c", root, wakes: 2, seen: [] }]),
     );
     const app = setup(
       answer({ checks: [{ name: "unit", conclusion: "SUCCESS" }] }),
     );
-    await vi.advanceTimersByTimeAsync(0);
-    await vi.waitFor(() =>
-      expect(Object.values(app.records[agent] ?? {})).toContainEqual(
-        expect.objectContaining({
-          type: "source",
-          provider: "attention/github-pr",
-          channel: "c",
-          root,
-          config: expect.objectContaining({
-            initial: expect.objectContaining({ wakes: 2 }),
-          }),
-        }),
-      ),
-    );
-    expect(
-      JSON.parse(localStorage.getItem("buzz.github.pull-watches.v1") ?? "[]"),
-    ).toEqual([]);
-    expect(app.woke).not.toHaveBeenCalled();
-    await app.call({ url, stop: true });
-    app.dispose();
-    const next = setup();
     await vi.advanceTimersByTimeAsync(POLL_MS);
-    expect(
-      Object.values(next.records[agent] ?? {}).filter(
-        (value) => value.type === "source",
-      ),
-    ).toEqual([]);
-    expect(next.runCommand).not.toHaveBeenCalled();
-    next.dispose();
+    expect(app.records[agent]).toEqual({});
+    expect(localStorage.getItem("buzz.github.pull-watches.v1")).toBeNull();
+    expect(app.runCommand).not.toHaveBeenCalled();
+    app.dispose();
   });
 
   it("starts fresh after the owner deletes a watch outside the tool", async () => {

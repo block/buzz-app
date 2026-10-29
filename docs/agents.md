@@ -107,8 +107,9 @@ tool's name, description or schema changes, so edit those deliberately.
 tools, and their `load`, that it started with.
 
 On desktop the GitHub plugin adds `github_watch_pr`, so an agent can wait on a pull
-request without a model checking it. An agent calls it with a pull request URL,
-from a thread or a Solo chat. While the app is open the plugin reads the pull
+request without a model checking it. An agent calls it with a pull request URL
+and the id of one of its Interests, from a thread or a Solo chat. The watch
+serves that Interest; the plugin creates no Interest. While the app is open the plugin reads the pull
 request through the signed-in `gh` CLI once a minute. It wakes the agent when CI
 settles on the head commit, once per commit and result, or when new feedback has
 been quiet for 90 seconds. The tool creates an Attention source subscription. Attention delivers the wake
@@ -117,7 +118,7 @@ is told its text is data. It quotes the failed checks' names and the new
 comments, line by line, each clipped, with GitHub's links. Agents comment as the
 `gh` account, as their owner does, so GitHub cannot tell them apart: a comment of
 that account that starts with 🤖, as an agent's do, wakes nobody, and the owner's
-other comments wake the agent. A watch is saved in Attention on the device and respects its on/off switch. Existing device-local GitHub watches are imported once with their feedback cursor and destination. It ends when the
+other comments wake the agent. A watch is saved in Attention on the device and respects its on/off switch. Device-local GitHub watches saved before Attention are dropped. It ends when the
 pull request merges or closes, after 20 wakes, after 30 failed polls in a row,
 or when the agent calls it with `stop: true`.
 

@@ -132,6 +132,13 @@ fn normalized_bundle_path(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
+/// Whether the installed copy at `installed` is the running bundle itself, as
+/// when `/Applications/Buzz.app` is a symlink to it. Launching the installed
+/// copy then already launches this one, so there is nothing to move it over.
+fn is_running_bundle(bundle_path: &Path, installed: &Path) -> bool {
+    normalized_bundle_path(bundle_path) == normalized_bundle_path(installed)
+}
+
 /// Where a move stages its copy before renaming it over `target`:
 /// `/Applications/.Buzz.app.staging`. Beside the target, so the final rename
 /// is same-volume and atomic; hidden, and not an `.app`, so Launch Services
@@ -438,6 +445,17 @@ mod macos {
         if !location.should_prompt_move() {
             return;
         }
+        // The classification only looks at this copy's path; if the installed
+        // copy resolves to this same bundle, this copy is the installed one,
+        // and a move would replace it with a copy of itself.
+        if is_running_bundle(&bundle_path, &target) {
+            eprintln!(
+                "{} resolves to this copy of Buzz ({}); not prompting to move it",
+                target.display(),
+                bundle_path.display()
+            );
+            return;
+        }
 
         // Respect a prior "Do not show this message again" choice.
         let marker = suppression_marker_path(app);
@@ -714,12 +732,19 @@ mod macos {
     /// force-quitting it after any fixed wait could orphan agents that nothing
     /// would ever clean up. Only a copy that doesn't accept the request is
     /// force-quit. The outcome is logged and the move continues regardless.
+    ///
+    /// This process is never asked to quit, even if `target` resolves to its
+    /// own bundle.
     fn terminate_running_copies(target: &Path) {
         use objc2_app_kit::NSWorkspace;
 
         let target = normalized_bundle_path(target);
+        let own_pid = std::process::id();
         let running = NSWorkspace::sharedWorkspace().runningApplications();
         for app in running.iter() {
+            if u32::try_from(app.processIdentifier()) == Ok(own_pid) {
+                continue;
+            }
             let Some(path) = app.bundleURL().and_then(|url| url.path()) else {
                 continue;
             };
@@ -948,6 +973,27 @@ mod tests {
             normalized_bundle_path(Path::new("/Applications/Missing.app")),
             PathBuf::from("/Applications/Missing.app")
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn installed_copy_symlinked_to_the_running_bundle_is_the_running_bundle() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let running = dir.path().join("Downloads/Buzz.app");
+        std::fs::create_dir_all(&running).expect("create running bundle");
+        let installed = dir.path().join("Applications/Buzz.app");
+        std::fs::create_dir(installed.parent().expect("parent")).expect("create Applications");
+        std::os::unix::fs::symlink(&running, &installed).expect("symlink");
+        assert!(is_running_bundle(&running, &installed));
+
+        // A real installed copy, or none at all, is a different bundle.
+        let other = dir.path().join("Other/Buzz.app");
+        std::fs::create_dir_all(&other).expect("create other copy");
+        assert!(!is_running_bundle(&running, &other));
+        assert!(!is_running_bundle(
+            &running,
+            &dir.path().join("Missing/Buzz.app")
+        ));
     }
 
     #[test]

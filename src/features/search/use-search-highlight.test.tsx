@@ -55,6 +55,18 @@ it("chooses the first row once results stop pending after Enter", () => {
   expect(onChoose).toHaveBeenCalledOnce();
 });
 
+it("drops a waiting Enter once Enter chooses a row", () => {
+  const onChoose = vi.fn();
+  const props = { query: "de", onChoose };
+  const { rerender } = render(<Picker {...props} pending keys={[]} />);
+  fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
+  rerender(<Picker {...props} pending keys={["more"]} />);
+  fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
+  expect(onChoose).toHaveBeenCalledExactlyOnceWith("more");
+  rerender(<Picker {...props} pending={false} keys={["design", "more"]} />);
+  expect(onChoose).toHaveBeenCalledOnce();
+});
+
 it("drops a waiting Enter when the picker closes", () => {
   const onChoose = vi.fn();
   const props = { query: "de", onChoose };

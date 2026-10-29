@@ -89,6 +89,9 @@ function conversationName(
 /** The most rows the People and Agents groups each show. */
 const PERSON_ROWS = 6;
 
+/** "Search in this conversation" narrows the search; it is not a result. */
+const isScopeAction = (key: string) => key.startsWith("scope:");
+
 export function SearchResults({
   session,
   inlineSettings,
@@ -1229,14 +1232,19 @@ export function SearchResults({
       }
       groups={groups}
       open={open}
-      // Enter before any row waits for a channel or person row, or for the
-      // lookups to settle, rather than opening a message that lands first.
+      // Enter before any row, or on the scope action alone, waits for a
+      // channel or person row, or for the lookups to settle, rather than
+      // opening a message that lands first.
       pending={
-        (directoryPending || search.loading) &&
+        (directoryPending || operatorLookupPending || search.loading) &&
         !groups.some(
-          (group) => group.rank !== Infinity && group.destinations.length,
+          (group) =>
+            group.rank !== Infinity &&
+            group.destinations !== scopeAction &&
+            group.destinations.length,
         )
       }
+      isAction={isScopeAction}
     >
       <div
         className="space-y-2 px-3 text-body-sm text-subtle"

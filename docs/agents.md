@@ -694,9 +694,10 @@ in its home record and applies everywhere.
   local fields. Changes and Delete (which archives the home channel) run online,
   one at a time per team, and report anything left part way. Existing local
   teams are not migrated.
-- **Hosted agents** stay in one community, as their provider holds the key. A
-  synced team in that community can have them as members, but they do not get
-  its instructions.
+- **Hosted agents** stay in one community, as their provider holds the key.
+  Only a synced team homed there can have them as members, so the team editor
+  offers them only for such a team, or for a new one that will sync there. They
+  do not get its instructions.
 
 `removeRelayAgent` applies the same steps to a relay-only agent: archive when
 consent exists, delete the owner's kind 30177 record (NIP-09), then remove it from

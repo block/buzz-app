@@ -11725,6 +11725,7 @@ describe("synced teams", () => {
     await expect(
       f.service.create({ type: "example/cloud", name: "Bo" }),
     ).rejects.toThrow("provider down");
+    expect(f.service.teamHere({ draft })).toBe(true);
     await f.service.saveTeam(crew([bot, hostedKey]));
     expect(f.saveTeam).toHaveBeenCalledWith(
       expect.objectContaining({ members: [bot, hostedKey] }),
@@ -11763,6 +11764,39 @@ describe("synced teams", () => {
     const roster = f.run.mock.calls.at(-1)?.[0].team;
     expect(roster).toContain(`- Sky (${npubEncode(hostedKey)})\n`);
     expect(roster).not.toContain(npubEncode(sibling));
+  });
+
+  it("keeps a new team, hosted agents and all, off a relay without config channels", async () => {
+    const make = vi.fn((_community: string) => null);
+    coordinators.make = make;
+    const f = await setup();
+    f.plugin.agents.register(cloud().type);
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    await f.service.create({ type: "example/cloud", name: "Sky" });
+    await vi.waitFor(() =>
+      expect(make).toHaveBeenCalledWith(home, expect.anything()),
+    );
+    await settle();
+    expect(f.service.teamHere({ draft })).toBe(false);
+    await expect(f.service.saveTeam(crew([bot, hostedKey]))).rejects.toThrow(
+      "A member is not an agent on this device",
+    );
+  });
+
+  it("puts a synced team in the selected community only while it is home", async () => {
+    const team = stored(viewer, [alder]);
+    const local = { id: "local", name: "Local", instructions: "", members: [] };
+    writeTeams(team.storage, [local]);
+    const f = await ready([here(alder)], team.storage);
+    team.confirm(f.stores.get(home));
+    expect(f.service.snapshot().teams.map((t) => t.id)).toEqual([
+      "local",
+      draft,
+    ]);
+    expect(f.service.teamHere({ id: draft })).toBe(true);
+    expect(f.service.teamHere({ id: "local" })).toBe(false);
+    f.select(f.second.origin);
+    expect(f.service.teamHere({ id: draft })).toBe(false);
   });
 
   it("shows only the signed-in account's synced teams", async () => {

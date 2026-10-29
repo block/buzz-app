@@ -2091,12 +2091,7 @@ function Teams({
       <TeamEditor
         key={editing}
         agents={agents}
-        // A team kept on this device can have only agents here.
-        saved={
-          team && !team.revision
-            ? saved.filter((agent) => agent.place === "here")
-            : saved
-        }
+        saved={saved}
         {...(team ? { team } : {})}
         onDone={() => onEdit(undefined)}
       />
@@ -2151,14 +2146,18 @@ function TeamEditor({
   // What a synced Save revises, and a new team's id for every retry.
   const [opened] = useState(team);
   const [draft] = useState(() => crypto.randomUUID());
+  // Only a team Save puts in this community can have its hosted agents.
+  const choices = agents.teamHere(opened ? { id: opened.id } : { draft })
+    ? saved
+    : saved.filter((agent) => agent.place === "here");
   // Members not in this community, which it doesn't list but keeps.
   const away = members.filter(
     (pubkey) =>
-      !saved.some((agent) => agent.pubkey === pubkey) &&
+      !choices.some((agent) => agent.pubkey === pubkey) &&
       agents.memberships(pubkey).length > 0,
   ).length;
   // Their provider runs them, so they may not get the team's instructions.
-  const remote = saved.filter(
+  const remote = choices.filter(
     (agent) => agent.place === "hosted" && members.includes(agent.pubkey),
   );
   const act = async (work: () => Promise<unknown>) => {
@@ -2237,9 +2236,9 @@ function TeamEditor({
         />
       </Field>
       <Section title="Members">
-        {saved.length ? (
+        {choices.length ? (
           <div className="grid gap-2">
-            {saved.map((agent) => (
+            {choices.map((agent) => (
               <Checkbox
                 key={agent.pubkey}
                 label={agent.name}

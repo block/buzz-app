@@ -1147,6 +1147,10 @@ export type Agents = {
    * hosted agents whose setup finished. Each community has the members that
    * are in it. */
   saveTeam(team: TeamChange): Promise<Team>;
+  /** Whether Save puts the team with `id`, or the new team `draft`, in the
+   * selected community: a synced team homed there, or a new team where it
+   * syncs. Only such a team can have that community's hosted agents. */
+  teamHere(team: Pick<TeamChange, "id" | "draft">): boolean;
   /** Deletes the team; its agents are untouched. */
   removeTeam(id: string): Promise<void>;
 };
@@ -3694,15 +3698,7 @@ export class AgentsService extends Service implements Agents {
   }: TeamChange) {
     if (!this.native) throw new Error("Agents run only in the desktop app");
     if (!name.trim()) throw new Error("Name the team");
-    const synced = id && this.synced().find((entry) => entry.team.id === id);
-    const selected = this.selectedOrigin();
-    // A new team is synced where its community syncs config, and stays in
-    // the community its first Save chose.
-    const home = synced
-      ? synced.community
-      : !id && draft
-        ? (this.teamDrafts.get(draft) ?? this.newTeamHome(selected))
-        : undefined;
+    const home = this.teamHome(id, draft);
     const teamId = id ?? draft;
     if (home && teamId) {
       if (draft) this.teamDrafts.set(draft, home);
@@ -3738,6 +3734,27 @@ export class AgentsService extends Service implements Agents {
         : [...this.teamList, team],
     );
     return team;
+  }
+
+  teamHere({ id, draft }: Pick<TeamChange, "id" | "draft">) {
+    const selected = this.selectedOrigin();
+    try {
+      return !!selected && this.teamHome(id, draft) === selected;
+    } catch {
+      // Save refuses a new team while it can't tell where that syncs.
+      return false;
+    }
+  }
+
+  /** Where Save puts the team with `id`, or the new team `draft`: a synced
+   * team's home, or where a new one syncs, staying in the community its
+   * first Save chose. Undefined keeps the team on this device. */
+  private teamHome(id: string | undefined, draft: string | undefined) {
+    if (id)
+      return this.synced().find((entry) => entry.team.id === id)?.community;
+    return draft
+      ? (this.teamDrafts.get(draft) ?? this.newTeamHome(this.selectedOrigin()))
+      : undefined;
   }
 
   /** Where a new team made with `selected` selected syncs: nowhere only

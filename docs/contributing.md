@@ -1,8 +1,9 @@
 # Contribution workflow
 
 The repository pins just 1.58.0, Node.js 24.18.0, pnpm 11.8.0, Lefthook 2.2.2,
-and Rust 1.98.1
-(including Cargo, rustfmt, and Clippy) with [Hermit](https://cashapp.github.io/hermit/).
+and rustup with [Hermit](https://cashapp.github.io/hermit/). `rust-toolchain.toml`
+pins Rust 1.98.1 (including Cargo, rustfmt, and Clippy), which rustup installs
+under `~/.rustup` on first use.
 No global tool installation is required: `bin/hermit` bootstraps Hermit and tools
 are downloaded on first use. Desktop development still requires the
 [Tauri platform prerequisites](https://v2.tauri.app/start/prerequisites/).
@@ -240,7 +241,7 @@ Buzz library are described in [Agents](agents.md#community-inventory).
 
 ## Running the app
 
-Hermit pins just, Node.js 24, pnpm 11.8.0, and Rust in `bin/`; no global tool
+Hermit pins just, Node.js 24, pnpm 11.8.0, and rustup in `bin/`; no global tool
 installation is needed. From the repository root, activate the pinned environment:
 
 ```sh

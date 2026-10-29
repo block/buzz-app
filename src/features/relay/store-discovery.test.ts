@@ -575,11 +575,12 @@ it("keeps coverage partial when exact discovery overflows during omission confir
 });
 
 it("marks metadata byte overflow as partial without discarding membership", async () => {
-  const member = memberships[1000];
+  const initial = [...names.keys()].slice(0, 500).map(named);
+  const retained = new Set(initial.map((event) => tag(event, "d")));
+  const member = memberships.find((event) => !retained.has(tag(event, "d")));
   assert.exists(member);
   const id = tag(member, "d");
   assert.exists(id);
-  const initial = [...names.keys()].slice(0, 500).map(named);
   const maxDiscoveryBytes =
     byteSize(member) +
     initial.reduce((bytes, event) => bytes + byteSize(event), 0);

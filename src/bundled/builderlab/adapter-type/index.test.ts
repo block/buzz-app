@@ -44,6 +44,9 @@ async function fixture(subject = "account-a") {
   await session.signIn();
   const request = vi.fn<Host["request"]>();
   const host: Host = {
+    repositoriesFolder: async () => {
+      throw new Error("Repositories folder is unavailable in this fixture");
+    },
     runCommand: vi.fn(),
     request: async (input) =>
       input.url.endsWith("/get-model-catalog")
@@ -290,7 +293,16 @@ it("rejects a stop at once when signed out, without signing in or reaching Build
   }));
   const session = createOAuthSession(acquire);
   const request = vi.fn<Host["request"]>();
-  const client = createAgentClient({ runCommand: vi.fn(), request }, session);
+  const client = createAgentClient(
+    {
+      repositoriesFolder: async () => {
+        throw new Error("Repositories folder is unavailable in this fixture");
+      },
+      runCommand: vi.fn(),
+      request,
+    },
+    session,
+  );
   const remote = builderlabType(client, session, relay).remote;
   if (!remote?.interrupt) throw new Error("Missing hosted adapter");
   await expect(remote.interrupt(interruption)).rejects.toThrow(

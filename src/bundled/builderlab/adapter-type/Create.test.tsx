@@ -53,7 +53,13 @@ async function fixture(signedIn = true) {
     };
   });
   const client = createAgentClient(
-    { request, runCommand: vi.fn() },
+    {
+      request,
+      repositoriesFolder: async () => {
+        throw new Error("Repositories folder is unavailable in this fixture");
+      },
+      runCommand: vi.fn(),
+    },
     session,
     null,
   );
@@ -162,7 +168,13 @@ it("can cancel a pending shared sign-in even while the creation form is disabled
   });
   const request = vi.fn<Host["request"]>();
   const client = createAgentClient(
-    { request, runCommand: vi.fn() },
+    {
+      request,
+      repositoriesFolder: async () => {
+        throw new Error("Repositories folder is unavailable in this fixture");
+      },
+      runCommand: vi.fn(),
+    },
     session,
     null,
   );

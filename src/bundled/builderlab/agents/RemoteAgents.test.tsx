@@ -37,7 +37,16 @@ async function fixture() {
   }));
   await session.signIn();
   const request = vi.fn(async (_input: HostRequest) => response([row]));
-  const client = createAgentClient({ request, runCommand: vi.fn() }, session);
+  const client = createAgentClient(
+    {
+      request,
+      repositoriesFolder: async () => {
+        throw new Error("Repositories folder is unavailable in this fixture");
+      },
+      runCommand: vi.fn(),
+    },
+    session,
+  );
   return { session, client, request };
 }
 it("loads automatically, refreshes and hides account data on sign-out", async () => {

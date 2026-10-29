@@ -368,8 +368,11 @@ type Asked = Readonly<{
   details: boolean;
   /** Someone wants what the public API can read: its state or details. */
   publicly: boolean;
-  /** Someone in the app asked for it, so its public checks are read again. */
-  checks: boolean;
+  /** Which public checks to read, at two or more requests each time: `again`
+   * for a read someone in the app asked for; `missing`, for another read apart
+   * from the links' share, when none are held for its head; `held` keeps only
+   * those held for its head, so a read the links' share counts spends one. */
+  checks: "again" | "missing" | "held";
   /** Whether a reader wants the text of feedback `id`. */
   wantsText: WantsText;
   /** The feedback held already, so only new text is read. */
@@ -502,13 +505,12 @@ async function readText(
   }
 }
 
-/** `url` from the public API, with its details when `withDetails`. Its
- * checks cost two more reads, so they are read only when `checks` or for a
- * new head; a poll keeps the public ones `held` for the same head. */
+/** `url` from the public API, with its details when `withDetails`, and its
+ * public checks as `checks` says. */
 async function readPublicState(
   url: string,
   withDetails: boolean,
-  checks: boolean,
+  checks: Asked["checks"],
   held: PullDetails | undefined,
   signal: AbortSignal,
 ): Promise<PullState> {
@@ -531,9 +533,14 @@ async function readPublicState(
         signedIn: false,
         publicChecks: !sha
           ? undefined
-          : checks || !held || held.signedIn || held.details.headSha !== sha
-            ? await loadGitHubChecks(reference.repository, sha, signal)
-            : held.publicChecks,
+          : checks !== "again" &&
+              held?.publicChecks &&
+              !held.signedIn &&
+              held.details.headSha === sha
+            ? held.publicChecks
+            : checks === "held"
+              ? undefined
+              : await loadGitHubChecks(reference.repository, sha, signal),
       },
     }),
   };
@@ -732,6 +739,8 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
     const asked = new Map(requests);
     requests.clear();
     asking = asked.size;
+    // A read someone waits for tries gh again; polls wait for its retry.
+    if (asked.size) publicUntil = 0;
     // Public reads cannot stand in for feedback, which needs gh.
     if (readsPublic())
       for (const [url, request] of asked)
@@ -772,7 +781,7 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
         feedback: at(url, "feedback"),
         details: at(url, "details"),
         publicly: at(url, "state") || at(url, "details"),
-        checks: interactive(url),
+        checks: interactive(url) ? "again" : own(url) ? "missing" : "held",
         wantsText: (id) =>
           [
             ...[...(listeners.get(url) ?? [])]
@@ -887,8 +896,8 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
             resolve({ state, readAt: at, error });
           else reject(reason);
       }
-      asking = 0;
       if (controller === current) {
+        asking = 0;
         controller = undefined;
         if (requests.size) schedule();
         else if (listeners.size) later();

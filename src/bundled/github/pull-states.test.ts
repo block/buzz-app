@@ -1091,14 +1091,102 @@ it.each([
       ([url]) => !url.includes("/commits/"),
     );
     const checks = fetch.mock.calls.length - pulls.length;
-    // Within the links' share, with the checks read once for the one head
-    // (check runs and statuses), rather than three requests a minute.
+    // Within the links' share, rather than three requests a minute; only the
+    // panel's own read reads checks (check runs and statuses).
     expect(pulls.length).toBeLessThanOrEqual(
       Number(open) + PUBLIC_READS_PER_POLL + PUBLIC_READS_PER_HOUR,
     );
-    expect(checks).toBe(2);
+    expect(checks).toBe(open ? 2 : 0);
   },
 );
+
+it("spends only the links' share on an agent's lookups of many pull requests without gh", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const fetch = vi.fn(async (url: string) =>
+    url.includes("/commits/")
+      ? new Response(JSON.stringify({ total_count: 0, check_runs: [] }))
+      : new Response(
+          JSON.stringify({ title: "A", state: "open", head: { sha: url } }),
+        ),
+  );
+  vi.stubGlobal("fetch", fetch);
+  const states = createPullStates(undefined);
+  // An agent looks at the details of another pull request, with its own
+  // head, every minute for an hour.
+  for (let minute = 0; minute < 60; minute++) {
+    await states
+      .read(`https://github.com/block/buzz-app/pull/${100 + minute}`, {
+        maxAge: 0,
+        level: "details",
+      })
+      .catch(() => {});
+    await vi.advanceTimersByTimeAsync(PULL_REFRESH_MS);
+  }
+  // Each read spends one request of the links' share, and no more for checks.
+  expect(fetch.mock.calls.length).toBeLessThanOrEqual(
+    PUBLIC_READS_PER_POLL + PUBLIC_READS_PER_HOUR,
+  );
+  expect(fetch.mock.calls.some(([url]) => url.includes("/commits/"))).toBe(
+    false,
+  );
+});
+
+it("tries gh again for a read someone waits for, while polls still wait for it", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => new Response(JSON.stringify({ state: "open" }))),
+  );
+  let signedIn = false;
+  const gh = mockGh(async () => {
+    if (!signedIn) throw new GhUnavailable();
+    return { r0: rollup("OPEN", {}, "SUCCESS") };
+  });
+  const states = createPullStates(gh);
+  states.watch(pull, () => {});
+  await vi.waitFor(() => expect(states.get(pull)).toEqual({ state: "open" }));
+  expect(gh).toHaveBeenCalledOnce();
+  // Back online within the minute: a read someone waits for uses gh at once.
+  signedIn = true;
+  const { state } = await states.read(pull, { maxAge: 0 });
+  expect(gh).toHaveBeenCalledTimes(2);
+  expect(state).toMatchObject({ checks: "success" });
+});
+
+it("keeps a reader's read when a refresh given up on before it finishes late", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const ends: (() => void)[] = [];
+  const gh = mockGh(
+    (_query: string, _variables: unknown, signal?: AbortSignal) =>
+      new Promise((resolve, reject) => {
+        const read = gh.mock.calls.length;
+        // The first read ends only some time after it is given up on.
+        ends.push(() =>
+          read === 1
+            ? reject(signal?.reason)
+            : resolve({ r0: rollup("OPEN", {}, "SUCCESS") }),
+        );
+        signal?.addEventListener("abort", () => {
+          if (read > 1) reject(signal.reason);
+        });
+      }),
+  );
+  const states = createPullStates(gh);
+  const stop = states.watch(pull, () => {});
+  await vi.waitFor(() => expect(gh).toHaveBeenCalledOnce());
+  // The only link goes away, so its read is given up on.
+  stop();
+  // A reader asks while another pull request is shown.
+  const shown = states.watch(second, () => {});
+  const read = states.read(pull, { maxAge: 0 });
+  await vi.waitFor(() => expect(gh).toHaveBeenCalledTimes(2));
+  // The first read ends late, then the other pull request stops being shown.
+  ends[0]?.();
+  await vi.advanceTimersByTimeAsync(0);
+  shown();
+  ends[1]?.();
+  await expect(read).resolves.toMatchObject({ state: { checks: "success" } });
+});
 
 it("lets the panel's own read try GitHub while its public limit holds the links", async () => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });

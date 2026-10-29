@@ -79,11 +79,15 @@ browser or cancel separate host HTTP requests.
   listener available.
 - Bounds paths to 1,024 bytes, request reads to 8,192 bytes, each connection to
   five seconds, and the overall attempt to ten minutes.
-- Returns a static, responsive page with browser light/dark colors, `no-store`,
+- Returns a static, responsive page with Buzz's existing mark and design-system
+  shell/panel, spacing and type roles, browser light/dark mode, `no-store`,
   and `no-referrer`. Its Content Security Policy permits only the exact embedded
   stylesheet by hash, with no scripts or external assets. Receipt of a callback
   does not establish successful account verification; users return to Buzz for
   that result.
+  The standalone stylesheet mirrors the shared roles without loading the app;
+  Inter uses the system fallback when unavailable locally. It does not inherit
+  the app's Appearance preference.
 
 ## Standards scope
 

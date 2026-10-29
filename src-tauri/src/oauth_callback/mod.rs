@@ -348,6 +348,7 @@ async fn reply(stream: &mut TcpStream, status: u16, message: &str) {
     let style_hash = base64::engine::general_purpose::STANDARD.encode(Sha256::digest(style));
     let body = include_str!("page.html")
         .replace("{{style}}", style)
+        .replace("{{brand}}", include_str!("../../../public/buzz-mark.svg"))
         .replace("{{heading}}", heading)
         .replace("{{message}}", message);
     let reason = match status {

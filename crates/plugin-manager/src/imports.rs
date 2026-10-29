@@ -690,7 +690,10 @@ impl Git {
             "--",
             url.host_str().ok_or("Missing SSH host")?,
         ]);
-        let output = self.run_command(command, 64 * 1024)?;
+        // Git can use the inherited agent even when local SSH configuration is invalid.
+        let Ok(output) = self.run_command(command, 64 * 1024) else {
+            return Ok(());
+        };
         let config = std::str::from_utf8(&output).map_err(err)?;
         self.ssh_agent = configured_agent(config, |key| std::env::var_os(key))?;
         Ok(())
@@ -1012,6 +1015,22 @@ fn directory_size(root: &Path) -> Result<u64> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn failed_ssh_lookup_preserves_the_inherited_agent() {
+        let mut git = Git::new().unwrap();
+        // OpenSSH rejects port zero before it reads configuration or connects.
+        git.configure_ssh_agent("ssh://git@example.invalid:0/repo")
+            .unwrap();
+        assert!(git.ssh_agent.is_none());
+        let command = git.command();
+        let socket = command
+            .get_envs()
+            .find(|(key, _)| *key == "SSH_AUTH_SOCK")
+            .and_then(|(_, value)| value);
+        assert_eq!(socket, std::env::var_os("SSH_AUTH_SOCK").as_deref());
+        assert!(git.run(&["--version"], LIMIT).is_ok());
+    }
+
     #[test]
     fn configured_agent_selects_only_the_agent_socket() {
         use super::configured_agent;

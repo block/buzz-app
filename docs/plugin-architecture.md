@@ -1186,7 +1186,8 @@ pane, using the remembered repository and branch/tag with fresh authorization;
 credentials/tokens are never saved with source metadata. SSH accepts explicit URLs
 and `user@host:owner/repository.git` shorthand, including organization-specific
 usernames. Buzz reads `IdentityAgent` through `ssh -G` and passes that socket to
-the transport. Without that setting, it uses the inherited `SSH_AUTH_SOCK`.
+the transport. If the lookup fails or has no setting, it uses the inherited
+`SSH_AUTH_SOCK`.
 The transport uses existing known hosts and disables interactive prompts.
 Each check reads metadata from its own temporary clone; only Update retains an
 immutable installation preview. The source

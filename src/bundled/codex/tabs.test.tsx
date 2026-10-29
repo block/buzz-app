@@ -26,6 +26,7 @@ import {
 } from "../../features/agents/state";
 import type { AgentViewProps } from "../../features/agents/service";
 import type { HostProcessOptions } from "../../features/host/service";
+import type { ChannelSummary } from "../../features/relay/contracts";
 import type { RelayData } from "../../features/relay/service";
 import { PanelWorkspace } from "../../features/panels/PanelWorkspace";
 import { defaults, type Config } from "./config";
@@ -66,9 +67,12 @@ function fixture({
   threads = [],
   configured = {},
   storage = localStore(),
+  channels = [{ id: "channel", name: "general" }],
 }: {
   /** Agent storage, which keeps the provider defaults. */
   storage?: AgentStore;
+  /** The community's channels, read each time they are listed. */
+  channels?: readonly ChannelSummary[];
   signedIn?: boolean;
   /** Whether the configured model provider needs an OpenAI sign-in. */
   requiresOpenaiAuth?: boolean;
@@ -184,7 +188,7 @@ function fixture({
       status: "ready",
       session: {
         channels: {
-          list: () => ({ channels: [{ id: "channel", name: "general" }] }),
+          list: () => ({ channels }),
         },
       },
     }),
@@ -274,7 +278,7 @@ it("lists saved conversations and shows one's Codex thread, or that Codex no lon
     screen.getAllByRole("button", { name: /^View transcript/ })[
       index
     ] as HTMLElement;
-  expect(screen.getByTitle("#general · thread eeeeeeee")).toBeVisible();
+  expect(screen.getByTitle("general · thread eeeeeeee")).toBeVisible();
   fireEvent.click(viewButton(0));
   expect(await screen.findByText("what changed?")).toBeVisible();
   expect(screen.getByText("Two files.")).toBeVisible();
@@ -320,7 +324,7 @@ it("sets the conversation the profile was opened from apart from recent conversa
   expect(
     within(opened).getByRole("button", { name: /^View transcript/ }),
   ).toBeVisible();
-  expect(screen.getByTitle("#general · channel")).toBeVisible();
+  expect(screen.getByTitle("general · channel")).toBeVisible();
   expect(screen.queryByText(/thread eeeeeeee/)).toBeNull();
 });
 
@@ -367,7 +371,7 @@ it("brings an open transcript's tab back, and closes it when the profile moves",
         { name: /^View transcript/ },
       ),
     );
-  const transcript = "#general · thread eeeeeeee";
+  const transcript = "general · thread eeeeeeee";
   await viewHere();
   expect(tab(transcript)).toHaveAttribute("aria-selected", "true");
   await user.click(tab("Sol"));
@@ -386,7 +390,7 @@ it("brings an open transcript's tab back, and closes it when the profile moves",
 
 describe("opened from activity", () => {
   const root = "e".repeat(64);
-  const transcript = "#general · thread eeeeeeee";
+  const transcript = "general · thread eeeeeeee";
   const opened = () => {
     const f = fixture({
       saved: {
@@ -535,6 +539,44 @@ it("finds the thread's Codex session another build started", async () => {
     await within(opened).findByRole("button", { name: /^View transcript/ }),
   );
   expect(await screen.findByText("what changed?")).toBeVisible();
+});
+
+it("shows the channel's current kind for a session another build started", async () => {
+  const root = "f".repeat(64);
+  const tag = sessionTag("a".repeat(64), { channelId: "channel", root });
+  const channels: ChannelSummary[] = [
+    { id: "channel", name: "general", channelType: "stream", private: true },
+  ];
+  const f = fixture({
+    threads: [
+      {
+        id: "elsewhere",
+        name: `Buzz general · Sol · ${tag}`,
+        updatedAt: 5,
+      },
+    ],
+    channels,
+  });
+  // A new element each time, so that rerendering renders the tab again.
+  const shown = () => (
+    <f.tabs.ActivityTab
+      {...f.props()}
+      conversation={{ channelId: "channel", rootId: root }}
+    />
+  );
+  const view = render(shown());
+  const here = screen.getByRole("region", { name: "This thread" });
+  await within(here).findByRole("button", { name: /^View transcript/ });
+  expect(within(here).getByTitle("general").querySelector("svg")).toHaveClass(
+    "tabler-icon-lock",
+  );
+
+  // Made public, the lock found with the session does not stay.
+  channels[0] = { id: "channel", name: "general", channelType: "stream" };
+  view.rerender(shown());
+  expect(within(here).getByTitle("general").querySelector("svg")).toHaveClass(
+    "tabler-icon-hash",
+  );
 });
 
 it("reports when looking for another build's Codex session fails", async () => {
@@ -1517,6 +1559,8 @@ it.each(["Identity", "Settings"])(
     const agents = {
       save,
       configHistory: () => undefined,
+      addedTabs: () => [],
+      registerTab: () => {},
       memberships: () => [],
       subscribe: () => () => {},
     } as unknown as Agents;

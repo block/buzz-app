@@ -8310,6 +8310,44 @@ it("reserves a tool name while its plugin is still starting", async () => {
   owner("buzz.other").agents.addTool(tool);
 });
 
+it("adds a plugin's tab to every agent's settings until the plugin goes", async () => {
+  const { service, ctx } = await setup();
+  const owner = (id: string) =>
+    ctx.extend({ pluginOwner: Object.freeze({ id, revision: "bundled" }) });
+  const tab = { id: "watching", title: "Watching", component: () => null };
+  const before = service.snapshot();
+  const listener = vi.fn();
+  service.subscribe(listener);
+  const first = owner("buzz.watching").plugin({
+    inject: ["agents"],
+    apply: (plugin: Context) => plugin.agents.registerTab(tab),
+  });
+  await first;
+  expect(service.addedTabs()).toMatchObject([
+    {
+      key: "buzz.watching/watching",
+      pluginId: "buzz.watching",
+      title: "Watching",
+    },
+  ]);
+  // Views that read the tabs render again.
+  expect(service.snapshot()).not.toBe(before);
+  expect(listener).toHaveBeenCalled();
+  for (const bad of [
+    { ...tab, id: "Not An Id" },
+    { ...tab, title: "" },
+    { ...tab, component: undefined as never },
+  ])
+    expect(() => owner("buzz.other").agents.registerTab(bad)).toThrow(
+      /Agent tabs need/,
+    );
+  expect(() => owner("buzz.watching").agents.registerTab(tab)).toThrow(
+    /already registered/,
+  );
+  await first.dispose();
+  expect(service.addedTabs()).toEqual([]);
+});
+
 it("refuses a hosted type that also runs here", async () => {
   const { plugin } = await setup();
   const { type } = cloud();

@@ -31,7 +31,7 @@ import { privacyConsequence } from "./ChannelPrivacyConfirmation";
 const noCommunitySubscription = () => () => {};
 
 /** General access uses the same signed save/readback owner as channel details.
- * Choices are confirmed individually, like the member rows that follow. */
+ * Choices are confirmed individually, like the member rows above this section. */
 export function ChannelGeneralAccess({
   communityReader,
   communityScope,

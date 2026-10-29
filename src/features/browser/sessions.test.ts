@@ -234,6 +234,25 @@ it.each([undefined, "a"])(
   },
 );
 
+it.each([undefined, "a"])(
+  "closes a guest whose hide failed (park %j) and reports the hide error",
+  async (park) => {
+    const browserPlatform = platform();
+    const failure = new Error("hide failed");
+    vi.mocked(browserPlatform.attach).mockResolvedValue("a");
+    vi.mocked(browserPlatform.setBounds).mockRejectedValueOnce(failure);
+    const sessions = new BrowserSessions(browserPlatform);
+    await sessions.attach("https://a.example", bounds, () => true, "s", "a");
+    await expect(sessions.detach("a", park)).rejects.toBe(failure);
+    expect(browserPlatform.detach).toHaveBeenCalledWith("a");
+    expect(sessions.owns("a")).toBe(false);
+    await expect(
+      sessions.attach("https://a.example", bounds, () => true, "s", "a"),
+    ).resolves.toBe("a");
+    expect(browserPlatform.attach).toHaveBeenCalledTimes(2);
+  },
+);
+
 it("does not re-adopt a parked guest before its previous hide completes", async () => {
   const browserPlatform = platform();
   const hidden = deferred<void>();

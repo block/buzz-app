@@ -83,8 +83,13 @@ export class BrowserSessions {
       : Promise.resolve();
     this.shown.delete(sessionId);
     const detached = this.enqueue(async () => {
-      // Re-adoption must not overtake the old view's in-flight hide.
-      await hidden;
+      // Re-adoption must not overtake the old view's in-flight hide. A guest
+      // that failed to hide still closes rather than staying live or parked.
+      try {
+        await hidden;
+      } catch {
+        return this.close(sessionId);
+      }
       if (park === undefined || !this.owns(sessionId))
         return this.close(sessionId);
       this.shown.delete(sessionId);

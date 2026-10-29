@@ -356,7 +356,7 @@ function UnavailableHarnessChoices({
     >
       <PopoverTrigger
         id={triggerId}
-        openOnHover="preview"
+        openOnHover="control"
         nativeButton={false}
         role="group"
         aria-label="Unavailable harnesses"

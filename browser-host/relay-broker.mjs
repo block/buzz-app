@@ -631,16 +631,21 @@ function validAgentRecord(event, viewer) {
     !/^[0-9a-f]{64}$/.test(coordinates[0][1])
   )
     return false;
-  // Match the native signer's 64 KiB NIP-01 commitment bound.
-  const commitment = [
-    0,
-    viewer,
-    event.created_at,
-    event.kind,
-    event.tags,
-    event.content,
+  // Admission must fit the complete socket frame, including the fixed-width
+  // hash and signature. This also fits the HTTP body and native signing bounds.
+  const frame = [
+    "EVENT",
+    {
+      id: "0".repeat(64),
+      pubkey: viewer,
+      created_at: event.created_at,
+      kind: event.kind,
+      tags: event.tags,
+      content: event.content,
+      sig: "0".repeat(128),
+    },
   ];
-  if (Buffer.byteLength(JSON.stringify(commitment)) > 64 * 1024) return false;
+  if (Buffer.byteLength(JSON.stringify(frame)) > 64 * 1024) return false;
   try {
     const body = JSON.parse(event.content);
     return (

@@ -2147,7 +2147,7 @@ test("agent record signing refuses malformed coordinates, content and timestamps
 });
 
 test.each(["a", "é"])(
-  "agent records match the native UTF-8 signing bound with %s content",
+  "agent record signing admits publishable UTF-8 boundary frames with %s content",
   async (character) => {
     const h = await harness(success);
     try {
@@ -2165,44 +2165,28 @@ test.each(["a", "é"])(
         content: content(""),
         tags: [["d", "ab".repeat(32)]],
       };
-      // Match Key::sign_bounded in src-tauri/src/identity.rs: the NIP-01
-      // commitment is bounded, not just content or the signed event envelope.
+      const baseline = await h.post("sign", template);
+      expect(baseline.status).toBe(200);
+      const signedTemplate = await baseline.json();
       const size = (event) =>
-        Buffer.byteLength(
-          JSON.stringify([
-            0,
-            h.event.pubkey,
-            event.created_at,
-            event.kind,
-            event.tags,
-            event.content,
-          ]),
-        );
-      const room = 64 * 1024 - size(template);
+        Buffer.byteLength(JSON.stringify(["EVENT", event]));
+      const room = 64 * 1024 - size(signedTemplate);
       const bytes = Buffer.byteLength(character);
       const prompt =
         character.repeat(Math.floor(room / bytes)) + "a".repeat(room % bytes);
       const largest = { ...template, content: content(prompt) };
-      expect(size(largest)).toBe(64 * 1024);
       const signed = await h.post("sign", largest);
       expect(signed.status).toBe(200);
       const event = await signed.json();
       expect(verifyEvent(event)).toBe(true);
-      // The shared socket separately bounds the complete publication frame.
-      // A 40 KiB prompt fits that bound while exceeding the old content cap.
-      const publishable = {
-        ...template,
-        content: content(character.repeat(Math.floor((40 * 1024) / bytes))),
-      };
-      const publication = await h.post("sign", publishable);
-      expect(publication.status).toBe(200);
-      const published = await publication.json();
-      expect(verifyEvent(published)).toBe(true);
-      expect((await h.post("publish", published)).status).toBe(200);
-      expect(h.publications).toHaveLength(1);
+      expect(size(event)).toBe(64 * 1024);
+      expect((await h.post("publish", event)).status).toBe(200);
+      expect(h.publications).toEqual([JSON.parse(JSON.stringify(event))]);
 
       const oversized = { ...template, content: content(`${prompt}a`) };
-      expect(size(oversized)).toBe(64 * 1024 + 1);
+      expect(size({ ...event, content: oversized.content })).toBe(
+        64 * 1024 + 1,
+      );
       expect((await h.post("sign", oversized)).status).toBe(400);
       expect(h.publications).toHaveLength(1);
     } finally {

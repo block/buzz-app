@@ -1759,3 +1759,74 @@ it("cancels a guarded Solo create after signing starts and requires a fresh gate
     owner.dispose();
   }
 });
+
+it("confirms a restored Solo create with a lost acknowledgement before attempting any resend", async () => {
+  const viewer = keypair(),
+    relay = keypair();
+  let records: readonly OutgoingEvent[] = [];
+  const storage = {
+    load: () => structuredClone(records),
+    save: (next: readonly OutgoingEvent[]) => {
+      records = structuredClone(next);
+    },
+  };
+  const blocked = new Promise<void>(() => {});
+  const sign = vi.fn(async (input: Parameters<typeof signed>[1]) =>
+    signed(viewer, input),
+  );
+  const transport = {
+    viewer: viewer.pubkey,
+    relayAuthor: relay.pubkey,
+    channelIdentity: true as const,
+    media: () => undefined,
+    query: async () => [],
+    writer: { kinds: [9007], sign, publish: async () => blocked },
+  };
+  const first = createRelaySession(transport, { outboxStorage: storage });
+  let second: ReturnType<typeof createRelaySession> | undefined;
+  try {
+    assert.exists(first.session.outbox);
+    await first.session.outbox.ready();
+    const channelId = "11111111-1111-4111-8111-111111111111";
+    const create = first.session.channelWrites.create(
+      channelId,
+      "Saved task",
+      undefined,
+      false,
+      [viewer.pubkey],
+      () => true,
+    );
+    await vi.waitFor(() => expect(records[0]?.signed).toBeDefined());
+    const saved = records[0]?.signed;
+    assert.exists(saved);
+    first.dispose();
+    const publish = vi.fn(async () => {});
+    const query = vi.fn(async (filters: readonly ReadFilter[]) =>
+      filters.some((filter) => filter.ids?.includes(create)) ? [saved] : [],
+    );
+    second = createRelaySession(
+      { ...transport, query, writer: { ...transport.writer, publish } },
+      { outboxStorage: storage },
+    );
+    assert.exists(second.session.outbox);
+    await second.session.outbox.ready();
+    const resumed = second.session.channelWrites.resumeStart(
+      create,
+      channelId,
+      viewer.pubkey,
+      () => true,
+    );
+    await resumed.ready;
+    expect(query).toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+    expect(sign).toHaveBeenCalledTimes(1);
+    expect(
+      second.session.channels
+        .list()
+        .channels.find((item) => item.id === channelId),
+    ).toMatchObject({ name: "Saved task" });
+  } finally {
+    first.dispose();
+    second?.dispose();
+  }
+});

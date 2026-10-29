@@ -106,6 +106,7 @@ export function ComposerCompletions({
     registry.snapshot,
   );
   const observation = editor.observation;
+  context = { ...context, composerSignal: editor.composerSignal };
   const document = readComposerSnapshot(resolved.document);
   if (context.draft && observation)
     context = {

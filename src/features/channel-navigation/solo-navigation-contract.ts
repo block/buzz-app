@@ -1,6 +1,74 @@
 // FOUNDATION: Public Solo region contract. Ownership stays label-based and host-enforced.
 import type { ComponentType, ReactElement, ReactNode } from "react";
 import type { JsonValue } from "../navigation/targets";
+import type { ComposerToken } from "../conversation/contracts";
+import type { UploadedAttachment } from "../relay/attachments";
+
+export type TaskDraft = Readonly<{
+  draftId: string;
+  revision: number;
+  binding: SoloRegionBinding;
+  text: string;
+  recipients: readonly string[];
+  primary?: string;
+  tokens: readonly ComposerToken[];
+  attachments: readonly UploadedAttachment[];
+}>;
+export type TaskPrepareResult =
+  | Readonly<{
+      ok: true;
+      channelId: string;
+      members: readonly string[];
+      revision: number;
+      preparationId: string;
+      title?: string;
+    }>
+  | Readonly<{ ok: false; reason: string; field?: "agent" | "token" | "text" }>;
+export type ParticipantPolicy = Readonly<{
+  eligible(pubkey: string): boolean;
+  defaultRecipient(channelId: string): string | undefined;
+  makePrimary(channelId: string, pubkey: string): Promise<void>;
+  maxRecipients?: number;
+}>;
+export type SoloTaskMode = Readonly<{
+  prepare(draft: TaskDraft, signal: AbortSignal): Promise<TaskPrepareResult>;
+  recordFirstEvent(
+    input: Readonly<{
+      draftId: string;
+      revision: number;
+      preparationId: string;
+      channelId: string;
+      eventId: string;
+      binding: SoloRegionBinding;
+    }>,
+    signal: AbortSignal,
+  ): Promise<void>;
+  participants: ParticipantPolicy;
+  header?: ComponentType<
+    (
+      | ({ draft: TaskDraft } & TaskDraftTokenControls)
+      | { channelId: string; binding: SoloRegionBinding }
+    ) & { ui: TaskHeaderUI }
+  >;
+}>;
+
+/** Editor actions retain focus and undo; they grant no access. */
+export type TaskDraftTokenControls = Readonly<{
+  changeToken(id: string): boolean;
+  removeToken(id: string): boolean;
+}>;
+export type TaskHeaderTitleProps = Readonly<{
+  title: string;
+  actions?: readonly Readonly<{
+    id: string;
+    label: string;
+    disabled?: boolean;
+    onSelect(): void | Promise<void>;
+  }>[];
+}>;
+export type TaskHeaderUI = Readonly<{
+  Title: ComponentType<TaskHeaderTitleProps>;
+}>;
 
 export type SoloRegionBinding = Readonly<{
   scope: string;
@@ -32,6 +100,8 @@ export type SoloRegionSource = Readonly<{
   title: string;
   icon: ReactNode;
   order?: number;
+  /** Opt in to task-home drafts. Ordinary region chats keep their policy. */
+  task?: SoloTaskMode;
   bind(binding: SoloRegionBinding, signal: AbortSignal): void;
   subscribe(listener: () => void): () => void;
   read(binding: SoloRegionBinding): SoloRegionSnapshot;
@@ -47,6 +117,10 @@ export type SoloChatInput = Readonly<{
 }>;
 export type SoloRegionHandle = Readonly<{
   label: string;
+  openDraft(
+    binding: SoloRegionBinding,
+    input: Readonly<{ mode: "task"; seed?: Readonly<{ primary?: string }> }>,
+  ): void;
   createChat(binding: SoloRegionBinding, input: SoloChatInput): Promise<void>;
   classify(binding: SoloRegionBinding, channelId: string): Promise<void>;
 }>;

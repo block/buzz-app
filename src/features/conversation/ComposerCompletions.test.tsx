@@ -34,6 +34,7 @@ function mount(text: string, caret = text.length, document?: ComposerSnapshot) {
     invalidate: () => {},
     keys: { current: undefined },
     composing: { current: false },
+    composerSignal: undefined,
   } as CompletionEditor;
   return render(
     <ComposerCompletions

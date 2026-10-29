@@ -237,6 +237,9 @@ export type CompletionContext = Pick<
   Readonly<{
     draft?: Readonly<{ mode: "task"; region: string; revision: number }>;
     channelRegion?: string;
+    /** One mounted composer, distinct from each query publication. Providers
+     * must dispose owned work on abort; absence does not permit concurrent search. */
+    composerSignal?: AbortSignal | undefined;
   }>;
 /** Semantic editor atoms are separate from notification recipients. Extra JSON
  * fields belong to the provider and round-trip without host interpretation. */

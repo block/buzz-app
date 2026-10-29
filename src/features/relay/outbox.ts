@@ -110,11 +110,19 @@ export function createOutbox(
     profiling = createRelayProfiler(),
     notifyListener = (listener: () => void) => listener(),
     preparePublish,
+    afterSigned,
     holdPublish,
     needsReceipt = () => false,
     onReceipt = (_event: EventData, _message: string | undefined) => {},
     clock = new MessageClock(),
   }: {
+    /** Runs after signed persistence and before local consumers or publication.
+     * Restored retries use the original event and recovery bytes. */
+    afterSigned?: (
+      event: RelayEvent,
+      recovery: OutboxRecovery | undefined,
+      signal: AbortSignal,
+    ) => Promise<undefined | (() => void)>;
     /** The session's send clock, shared with its rendered views. */
     clock?: MessageClock;
     timeoutMs?: number;
@@ -518,6 +526,14 @@ export function createOutbox(
       replace({ ...current, signed });
       await Promise.race([persist(id), aborted]);
       if (closed || signal.aborted || !find(id)) return;
+      const beforeLocal = afterSigned
+        ? await Promise.race([
+            afterSigned(signed, find(id)?.recovery, signal),
+            aborted,
+          ])
+        : undefined;
+      if (closed || signal.aborted || !find(id)) return;
+      beforeLocal?.();
       const hold = holdPublish?.(signed);
       if (hold) {
         attempt.held = true;

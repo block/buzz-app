@@ -128,6 +128,8 @@ import { avatarMedia } from "../../shared/avatar-source";
 import { followUpBehaviorPreference } from "./follow-up-preference";
 import { followUpQueue } from "./follow-up-queue";
 import { QueuedFollowUps } from "./QueuedFollowUps";
+import type { ParticipantPolicy } from "../channel-navigation/solo-navigation-contract";
+import type { TaskDraftTokenControls } from "../channel-navigation/solo-navigation-contract";
 
 const noChannels: ReturnType<ComposerSession["channels"]["list"]> = {
   status: "idle",
@@ -220,6 +222,10 @@ function recoveryFor(session: ComposerSession) {
 }
 
 export type MessageComposerProps = {
+  /** Before a task channel exists, its region supplies the same admission policy. */
+  taskDraft?:
+    | { region: string; policy?: ParticipantPolicy | undefined }
+    | undefined;
   extensions?: ConversationExtensions | undefined;
   scope: string;
   session: ComposerSession | RelaySession;
@@ -274,12 +280,16 @@ export type MessageComposerProps = {
     /** Files upload before the conversation exists; submit sends them. */
     attachments?: boolean;
     submit: (draft: MentionDraft, attachments: AttachmentDraft) => void;
+    changed?: ((draft: MentionDraft) => void) | undefined;
+    header?:
+      | ((draft: MentionDraft, controls: TaskDraftTokenControls) => ReactNode)
+      | undefined;
   };
 };
 
 /** Safe to retarget through ordinary props; callers do not own internal remount keys. */
 export function MessageComposer(props: MessageComposerProps) {
-  const key = `${props.submission?.draftKey ?? ""}:${messageViewKey(
+  const key = `${props.taskDraft?.region ?? ""}:${props.submission?.draftKey ?? ""}:${messageViewKey(
     props.session,
     props.scope,
     props.channelId,
@@ -367,6 +377,7 @@ function sameAttachmentSelection(
 
 function Composer({
   session,
+  taskDraft,
   extensions,
   scope,
   channelId,
@@ -598,13 +609,21 @@ function Composer({
   /** Who a draft may address here now, the owner's agents from their other
    * communities included. */
   const admits = () =>
-    mentionAdmission(
-      session,
-      channelId,
-      agentChoices,
-      mentionRoster,
-      new Set((agents?.joinable() ?? []).map((agent) => agent.pubkey)),
-    );
+    taskDraft
+      ? (key: string) => {
+          try {
+            return taskDraft.policy?.eligible(key) === true;
+          } catch {
+            return false;
+          }
+        }
+      : mentionAdmission(
+          session,
+          channelId,
+          agentChoices,
+          mentionRoster,
+          new Set((agents?.joinable() ?? []).map((agent) => agent.pubkey)),
+        );
   const sessionPlace = useMemo(
     () => ({
       channelId,
@@ -785,6 +804,13 @@ function Composer({
     return result;
   }
   const [error, setError] = useState<string>();
+  useEffect(() => {
+    try {
+      submission?.changed?.(value);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    }
+  }, [submission?.changed, value]);
   const [attachmentError, setAttachmentError] = useState<string>();
   const focusRestoredDraft = useRef(false);
   const beforeEdit = useRef<
@@ -1369,6 +1395,26 @@ function Composer({
     (!ownSoloConversation ||
       session.channels.list().channels.find((item) => item.id === channelId)
         ?.channelType === "solo");
+  const editTaskToken = (id: string, replace: boolean) => {
+    if (
+      !taskDraft ||
+      !currentAdmission() ||
+      submission?.locked ||
+      !input.current
+    )
+      return false;
+    const span = valueRef.current.tokens?.find((item) => item.token.id === id);
+    if (!span) return false;
+    const text = !replace
+      ? ""
+      : span.token.kind === "nexus.project"
+        ? "#"
+        : span.token.kind === "nexus.repository"
+          ? "@"
+          : "/";
+    completion.invalidate();
+    return input.current.insertText(text, undefined, span);
+  };
   // A new Solo chat is seeded with its default agent each time it is shown,
   // while its draft is empty and untagged; a saved chat seeds from its window
   // like every other composer. Once it has content, respect edits and
@@ -2146,6 +2192,10 @@ function Composer({
     );
   return (
     <SelectedMentionContext.Provider value={value.recipients}>
+      {submission?.header?.(value, {
+        changeToken: (id) => editTaskToken(id, true),
+        removeToken: (id) => editTaskToken(id, false),
+      })}
       {context}
       {active && bringing.dialog}
       {active && nonmembers.dialog}
@@ -2222,6 +2272,15 @@ function Composer({
             channelId={channelId}
             threadRootId={threadRootId}
             inviteAgents={agentChoices && !editing.target}
+            {...(taskDraft
+              ? {
+                  draft: {
+                    mode: "task" as const,
+                    region: taskDraft.region,
+                    revision: 0,
+                  },
+                }
+              : {})}
             replace={replaceCompletion}
             resolved={value}
           />

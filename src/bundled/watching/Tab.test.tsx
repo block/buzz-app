@@ -156,7 +156,7 @@ it("shows one agent's watches, reacts to changes and surfaces save errors", asyn
   expect(within(ada).getByText("Paused")).toBeTruthy();
   expect(
     within(ada).getByRole("switch", {
-      name: "Watching for Ada on this device",
+      name: "Run Ada’s watches on this device",
     }),
   ).toBeTruthy();
   fireEvent.click(within(ada).getByRole("switch", { name: "Watch task" }));
@@ -178,10 +178,10 @@ it("shows one agent's watches, reacts to changes and surfaces save errors", asyn
     };
     changed();
   });
-  expect(within(ada).getByText("Watching paused on this device")).toBeTruthy();
   const toggle = within(ada).getByRole("switch", {
-    name: "Watching for Ada on this device",
+    name: "Run Ada’s watches on this device",
   });
+  expect(toggle.getAttribute("aria-checked")).toBe("false");
   fireEvent.click(toggle);
   await waitFor(() =>
     expect(save).toHaveBeenCalledWith("membership-a", {
@@ -470,7 +470,9 @@ it("explains Watching to a new agent and switches it on this device", async () =
   render(
     React.createElement(createTab(ctx), { agent: { key: "membership-b" } }),
   );
-  expect(screen.getByText(/Agents can ask to be woken later/)).toBeTruthy();
+  expect(
+    screen.getByText(/Agents can watch for events and automatically wake/),
+  ).toBeTruthy();
   expect(
     screen.getByText("Watches only run while Buzz is open on this device."),
   ).toBeTruthy();
@@ -485,10 +487,10 @@ it("explains Watching to a new agent and switches it on this device", async () =
     "\u201cCheck this channel every morning at 9\u201d",
   ]);
   expect(screen.queryByRole("button")).toBeNull();
-  expect(screen.getByText("Watching paused on this device")).toBeTruthy();
   const toggle = screen.getByRole("switch", {
-    name: "Watching for Bo on this device",
+    name: "Run Bo’s watches on this device",
   });
+  expect(toggle.getAttribute("aria-checked")).toBe("false");
   fireEvent.click(toggle);
   await waitFor(() =>
     expect(screen.getByRole("alert").textContent).toBe("Enable failed"),

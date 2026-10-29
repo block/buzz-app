@@ -1,7 +1,7 @@
 import { test, expect } from "./source-fixture.mjs";
 
 const runtimeSwitch = (page) =>
-  page.getByRole("switch", { name: "Watching for Ada on this device" });
+  page.getByRole("switch", { name: "Run Ada’s watches on this device" });
 
 // Real browser focus and scroll geometry are outside jsdom.
 test("The Watching tab fits both themes and sizes and manages existing watches by keyboard", async ({
@@ -31,12 +31,12 @@ test("The Watching tab fits both themes and sizes and manages existing watches b
     }
   }
   const runtime = page.getByRole("switch", {
-    name: "Watching for Ada on this device",
+    name: "Run Ada’s watches on this device",
   });
   await runtime.focus();
   await page.keyboard.press("Space");
   await expect(runtime).toHaveAttribute("aria-checked", "false");
-  await expect(page.getByText("Watching paused on this device")).toBeVisible();
+  await expect(page.getByText("Paused on this device").first()).toBeVisible();
   await expect(
     page.getByRole("switch", { name: "Watch Release discussion" }),
   ).toBeVisible();
@@ -124,14 +124,14 @@ test("watch and interest deletion restore focus without taking it from another c
       .poll(() => page.evaluate(() => window.attentionFixture.saveStarted))
       .toBe(true);
     await page
-      .getByRole("switch", { name: "Watching for Ada on this device" })
+      .getByRole("switch", { name: "Run Ada’s watches on this device" })
       .focus();
   } finally {
     await page.evaluate(() => window.attentionFixture.releaseSave());
   }
   await expect(remove).toHaveCount(0);
   await expect(
-    page.getByRole("switch", { name: "Watching for Ada on this device" }),
+    page.getByRole("switch", { name: "Run Ada’s watches on this device" }),
   ).toBeFocused();
 });
 

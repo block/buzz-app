@@ -691,11 +691,9 @@ export function createTab({
         h(
           "label",
           { className: "attention-agent-toggle text-caption text-subtle" },
-          agent.attentionEnabled
-            ? "Watching on this device"
-            : "Watching paused on this device",
+          "Run watches on this device",
           h(SharedSwitch, {
-            "aria-label": `Watching for ${agent.name} on this device`,
+            "aria-label": `Run ${agent.name}’s watches on this device`,
             checked: agent.attentionEnabled,
             disabled: action.pending,
             onCheckedChange: (attentionEnabled) =>
@@ -923,7 +921,7 @@ export function createTab({
         h(
           "p",
           { className: "text-body-sm text-subtle" },
-          "Agents can ask to be woken later: when someone posts, at a set time, or when something changes, like CI finishing on a pull request. Each Interest is something an agent is keeping track of, with instructions for what to do. Its watches are what wake it.",
+          "Agents can watch for events and automatically wake to handle them. For example, you can ask your agent to watch a channel or thread for replies, or watch a GitHub PR for CI changes and reviews. Each Interest is something an agent is keeping track of, with instructions for what to do. Its watches are what wake it.",
         ),
         h(
           "p",

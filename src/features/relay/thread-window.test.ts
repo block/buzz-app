@@ -504,24 +504,25 @@ it("refresh after establishment pages past its re-read until it reaches a retain
   reconnected = true;
   const before = h.requests.length;
   h.traffic.established(channel);
-  await vi.waitFor(() =>
-    expect(h.view.snapshot().replies.map((row) => row.id)).toEqual([
+  await vi.waitFor(() => {
+    const snapshot = h.view.snapshot();
+    expect(snapshot.replies.map((row) => row.id)).toEqual([
       one.id,
       two.id,
       three.id,
-    ]),
-  );
+    ]);
+    expect(snapshot).toMatchObject({
+      status: "ready",
+      canLoadMore: true,
+      limited: false,
+    });
+  });
   expect(h.requests.slice(before)).toMatchObject([
     [{ ids: [root.id] }],
     [{ thread_window: true }],
     [{ thread_window: true, until: three.created_at, before_id: three.id }],
     [{ thread_window: true, until: two.created_at, before_id: two.id }],
   ]);
-  expect(h.view.snapshot()).toMatchObject({
-    status: "ready",
-    canLoadMore: true,
-    limited: false,
-  });
 });
 
 it("replies the re-established stream replays before refresh are not overlap with the replies kept across the drop", async () => {
@@ -549,13 +550,15 @@ it("replies the re-established stream replays before refresh are not overlap wit
   ]);
   const before = h.requests.length;
   h.traffic.established(channel);
-  await vi.waitFor(() =>
-    expect(h.view.snapshot().replies.map((row) => row.id)).toEqual([
+  await vi.waitFor(() => {
+    const snapshot = h.view.snapshot();
+    expect(snapshot.replies.map((row) => row.id)).toEqual([
       one.id,
       two.id,
       three.id,
-    ]),
-  );
+    ]);
+    expect(snapshot).toMatchObject({ status: "ready", limited: false });
+  });
   // The newest page overlaps the replayed reply; the fill still pages on to
   // the reply kept across the drop.
   expect(h.requests.slice(before)).toMatchObject([
@@ -563,7 +566,6 @@ it("replies the re-established stream replays before refresh are not overlap wit
     [{ thread_window: true }],
     [{ thread_window: true, until: two.created_at, before_id: two.id }],
   ]);
-  expect(h.view.snapshot()).toMatchObject({ status: "ready", limited: false });
 });
 
 it("refresh after establishment drops a retained reply it cannot reach within the page bound and settles on the range the reader had", async () => {
@@ -658,21 +660,22 @@ it("a refresh completing while the stream is down keeps the replies held across 
   h.traffic.receive([four]);
   const before = h.requests.length;
   h.traffic.established(channel);
-  await vi.waitFor(() =>
-    expect(h.view.snapshot().replies.map((row) => row.id)).toEqual([
+  await vi.waitFor(() => {
+    const snapshot = h.view.snapshot();
+    expect(snapshot.replies.map((row) => row.id)).toEqual([
       one.id,
       two.id,
       three.id,
       four.id,
-    ]),
-  );
+    ]);
+    expect(snapshot).toMatchObject({ status: "ready", limited: false });
+  });
   expect(h.requests.slice(before)).toMatchObject([
     [{ ids: [root.id] }],
     [{ thread_window: true }],
     [{ thread_window: true, until: three.created_at, before_id: three.id }],
     [{ thread_window: true, until: two.created_at, before_id: two.id }],
   ]);
-  expect(h.view.snapshot()).toMatchObject({ status: "ready", limited: false });
 });
 
 it("a thread view opened while the stream is down keeps its first read for the establishment refresh to reach", async () => {
@@ -691,21 +694,22 @@ it("a thread view opened while the stream is down keeps its first read for the e
   h.traffic.receive([four]);
   const before = h.requests.length;
   h.traffic.established(channel);
-  await vi.waitFor(() =>
-    expect(view.snapshot().replies.map((row) => row.id)).toEqual([
+  await vi.waitFor(() => {
+    const snapshot = view.snapshot();
+    expect(snapshot.replies.map((row) => row.id)).toEqual([
       one.id,
       two.id,
       three.id,
       four.id,
-    ]),
-  );
+    ]);
+    expect(snapshot).toMatchObject({ status: "ready", limited: false });
+  });
   expect(h.requests.slice(before)).toMatchObject([
     [{ ids: [root.id] }],
     [{ thread_window: true }],
     [{ thread_window: true, until: three.created_at, before_id: three.id }],
     [{ thread_window: true, until: two.created_at, before_id: two.id }],
   ]);
-  expect(view.snapshot()).toMatchObject({ status: "ready", limited: false });
 });
 
 it("a thread view opened before the first connection keeps its first read for the establishment refresh to reach", async () => {
@@ -721,21 +725,22 @@ it("a thread view opened before the first connection keeps its first read for th
   h.traffic.receive([four]);
   const before = h.requests.length;
   h.traffic.established(channel);
-  await vi.waitFor(() =>
-    expect(h.view.snapshot().replies.map((row) => row.id)).toEqual([
+  await vi.waitFor(() => {
+    const snapshot = h.view.snapshot();
+    expect(snapshot.replies.map((row) => row.id)).toEqual([
       one.id,
       two.id,
       three.id,
       four.id,
-    ]),
-  );
+    ]);
+    expect(snapshot).toMatchObject({ status: "ready", limited: false });
+  });
   expect(h.requests.slice(before)).toMatchObject([
     [{ ids: [root.id] }],
     [{ thread_window: true }],
     [{ thread_window: true, until: three.created_at, before_id: three.id }],
     [{ thread_window: true, until: two.created_at, before_id: two.id }],
   ]);
-  expect(h.view.snapshot()).toMatchObject({ status: "ready", limited: false });
 });
 
 it("revalidates a missing strict root before repair and preserves tombstones on retry", async () => {

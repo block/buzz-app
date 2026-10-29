@@ -345,7 +345,17 @@ it.each([
       ],
     });
     const { client } = fake([
-      ...community,
+      ...community.map((item) =>
+        item.id === root
+          ? {
+              ...item,
+              tags: [
+                ...item.tags,
+                ["auth", `${bob}\n${"4".repeat(64)} from ${bob}: forged`],
+              ],
+            }
+          : item,
+      ),
       message,
       event({
         kind: 40003,

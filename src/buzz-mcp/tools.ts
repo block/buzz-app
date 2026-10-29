@@ -1625,7 +1625,7 @@ class Tools {
         event.id,
         `from ${event.pubkey}`,
         name && JSON.stringify(name),
-        owner && `claimed owner ${owner}`,
+        owner && HEX.test(owner.toLowerCase()) && `claimed owner ${owner}`,
         channel && channel !== scope.channel && `in ${channel}`,
         thread && thread !== scope.root && `re ${thread}`,
         reference &&

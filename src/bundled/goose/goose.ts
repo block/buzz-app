@@ -179,7 +179,11 @@ export const GooseProcess = {
   ) => {
     const goose = await AcpProcess.start(spawn, GOOSE, {
       ...launch,
-      env: { ...databricks(), ...launch.env },
+      env: {
+        ...databricks(),
+        ...launch.env,
+        ...(launch.protected && { GOOSE_DISABLE_SESSION_NAMING: "true" }),
+      },
     });
     const cancel = () => void goose.kill();
     launch.signal?.addEventListener("abort", cancel, { once: true });

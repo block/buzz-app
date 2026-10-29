@@ -95,6 +95,7 @@ describe("GooseSetup", () => {
             if (request.method !== "_buzz/security/review")
               return process.write(data);
             expect(request.params).toEqual({
+              provider: "ollama",
               id: "qwen3",
               prompt: { system: "Review", input: "Evidence" },
             });
@@ -111,9 +112,10 @@ describe("GooseSetup", () => {
         };
       };
       let settled = false;
+      const model = { runtime: "buzz.goose", provider: "ollama", id: "qwen3" };
       const result = goose
         .review(
-          { id: "qwen3" },
+          model,
           {
             system: "Review",
             input: "Evidence",

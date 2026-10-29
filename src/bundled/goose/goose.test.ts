@@ -73,6 +73,26 @@ afterEach(() => {
 });
 
 describe("GooseProcess", () => {
+  it.each([false, true])(
+    "suppresses auxiliary title inference only for protected workers (%s)",
+    async (protectedWorker) => {
+      const fake = fakeSpawn();
+      const goose = await GooseProcess.start(fake.spawn, {
+        cwd: "/work",
+        protected: protectedWorker,
+        env: { GOOSE_DISABLE_SESSION_NAMING: "false" },
+      });
+      try {
+        expect(fake.geese[0]?.env.GOOSE_DISABLE_SESSION_NAMING).toBe(
+          protectedWorker ? "true" : "false",
+        );
+      } finally {
+        await goose.kill();
+        await goose.exited;
+      }
+    },
+  );
+
   it("starts goose-acp without the app's Buzz identity or goose choice", async () => {
     const { process } = await start();
     expect(process.options.cwd).toBe("/work");

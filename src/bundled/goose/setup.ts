@@ -338,7 +338,11 @@ export class GooseSetup {
         signal.throwIfAborted();
         const result = (await goose.request(
           "_buzz/security/review",
-          { ...model, prompt: { system: prompt.system, input: prompt.input } },
+          {
+            provider: model.provider,
+            id: model.id,
+            prompt: { system: prompt.system, input: prompt.input },
+          },
           65_000,
         )) as { text: string; model: { provider: string; id: string } };
         signal.throwIfAborted();

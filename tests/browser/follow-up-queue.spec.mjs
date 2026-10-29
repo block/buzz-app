@@ -238,6 +238,7 @@ test("queue focus survives preview release and pointer removal", async ({
   await expect(queue).toContainText("Remove last row");
   await expect(queue.getByRole("listitem")).toHaveCount(2);
   const remove = queue.getByRole("button", { name: "Remove queued message" });
+  await expect(remove).toHaveCount(2);
   await queue.getByRole("listitem").last().hover();
   // WebKit does not focus clicked buttons; focus explicitly to cover the same
   // pointer-modality handoff on both engines.

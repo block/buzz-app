@@ -1198,3 +1198,19 @@ it("observes a channel again when the viewer regains access to it", async () => 
   h.receive([roster(h.relay, "other", [h.viewer.pubkey], 30)]);
   await vi.waitFor(() => expect(h.snapshot().observedCount).toBe(1));
 });
+
+it("a cache clear reports an Inbox record it could not wipe", async () => {
+  const h = setup();
+  await h.session.unread.ensure();
+  vi.stubGlobal("indexedDB", {
+    open() {
+      throw new Error("IndexedDB unavailable");
+    },
+  });
+  try {
+    await expect(h.clearCache()).rejects.toThrow("IndexedDB unavailable");
+  } finally {
+    vi.unstubAllGlobals();
+  }
+  expect(h.snapshot().observedCount).toBeNull();
+});

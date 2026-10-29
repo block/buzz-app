@@ -590,6 +590,19 @@ pub fn repository_url(input: &str) -> Result<String> {
             "Use an HTTPS or SSH repository URL without a password, query or fragment".into(),
         );
     }
+    if url.scheme() == "ssh"
+        && (!url
+            .host_str()
+            .unwrap_or_default()
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b".-_:[]".contains(&byte))
+            || !url
+                .username()
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte)))
+    {
+        return Err("Use an SSH host and username without shell characters or URL escapes".into());
+    }
     if url.host_str() == Some("github.com") && url.path().trim_matches('/').split('/').count() != 2
     {
         return Err("Use the GitHub repository URL, not a tree/file URL. Enter the branch or tag separately, then select a plugin folder.".into());
@@ -699,6 +712,8 @@ impl Git {
         Ok(())
     }
     fn run_command(&self, mut command: Command, limit: u64) -> Result<Vec<u8>> {
+        #[cfg(unix)]
+        crate::cli::interrupt::check()?;
         let output = tempfile::tempfile().map_err(err)?;
         let errors = tempfile::tempfile().map_err(err)?;
         command
@@ -714,6 +729,8 @@ impl Git {
             .spawn()
             .map_err(|e| format!("Could not start Git: {e}. Install Git to load repositories."))?;
         let result = (|| loop {
+            #[cfg(unix)]
+            crate::cli::interrupt::check()?;
             if Instant::now() >= self.deadline {
                 return Err("Repository import exceeded 60 seconds".into());
             }
@@ -1740,6 +1757,19 @@ mod tests {
             "ssh://dev.user@git.example.org/team/repo.git"
         );
         assert!(repository_url("https://git.example.org/team/repo.git").is_ok());
+        for authority in [
+            "git@host;command",
+            "git@host`command`",
+            "git@host$(command)",
+            "git@host&command",
+            "git@host|command",
+            "git@host'command'",
+            "git@host%3bcommand",
+            "git%3bcommand@example.invalid",
+            "git;command@example.invalid",
+        ] {
+            assert!(repository_url(&format!("ssh://{authority}/owner/repo")).is_err());
+        }
         for input in [
             "/tmp/repo",
             "file:///tmp/repo",

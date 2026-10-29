@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import test from "node:test";
+import { createServer } from "node:net";
+import { once } from "node:events";
 import { Context } from "@deepseek-ai/cordis";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
@@ -213,4 +215,99 @@ test("failed source builds preserve the installed revision", async () => {
       assert.equal(await readFile(registryPath, "utf8"), before);
     }
   });
+});
+
+test("Ctrl-C stops Git descendants and removes the temporary clone", {
+  skip: process.platform === "win32",
+  timeout: 15000,
+}, async (t) => {
+  const directory = await mkdtemp(path.join(tmpdir(), "bz-interrupt-"));
+  const socketPath = path.join(directory, "s");
+  const sockets = [];
+  const transports = [];
+  const server = createServer();
+  const ready = new Promise((resolve) =>
+    server.on("connection", (socket) => {
+      sockets.push(socket);
+      let data = "";
+      socket.on("data", (chunk) => {
+        data += chunk;
+        if (data.includes("\n")) {
+          transports.push(JSON.parse(data));
+          if (transports.length === 2) resolve();
+        }
+      });
+    }),
+  );
+  server.listen(socketPath);
+  await once(server, "listening", { signal: t.signal });
+  const fixture = path.join(directory, "git");
+  await writeFile(
+    fixture,
+    `#!/usr/bin/env node
+const net = require("node:net");
+if (!process.argv.includes("--descendant")) {
+  require("node:child_process").spawn(process.execPath, [__filename, "--descendant"], { stdio: "ignore" });
+}
+const socket = net.connect(${JSON.stringify(socketPath)}, () => {
+  socket.write(JSON.stringify({ pid: process.pid, cwd: process.cwd(), descendant: process.argv.includes("--descendant") }) + "\\n");
+});
+`,
+    { mode: 0o700 },
+  );
+  const child = spawn(
+    binary,
+    ["plugin", "install-git", "https://example.invalid/repo", "main"],
+    {
+      cwd: root,
+      env: {
+        ...process.env,
+        PATH: `${directory}${path.delimiter}${process.env.PATH}`,
+        BUZZODZ_HOME: directory,
+      },
+    },
+  );
+  let errors = "";
+  child.stderr.on("data", (chunk) => {
+    errors += chunk;
+  });
+  const exited = once(child, "exit", { signal: t.signal });
+  try {
+    await Promise.race([
+      ready,
+      exited.then(() => {
+        throw new Error(errors || "CLI exits before Git starts");
+      }),
+    ]);
+    const closed = sockets.map((socket) =>
+      once(socket, "close", { signal: t.signal }),
+    );
+    child.kill("SIGINT");
+    const [code, signal] = await exited;
+    await Promise.all(closed);
+    assert.equal(code, 1, errors);
+    assert.equal(signal, null);
+    assert.match(errors, /Plugin installation interrupted/);
+    const transport = transports.find((entry) => !entry.descendant);
+    assert.throws(() => process.kill(transport.pid, 0), { code: "ESRCH" });
+    assert.equal(existsSync(transport.cwd), false);
+    assert.equal(
+      existsSync(path.join(directory, "profiles/default/registry.json")),
+      false,
+    );
+  } finally {
+    child.kill("SIGKILL");
+    const transport = transports.find((entry) => !entry.descendant);
+    if (transport) {
+      try {
+        process.kill(-transport.pid, "SIGKILL");
+      } catch (error) {
+        assert.equal(error.code, "ESRCH");
+      }
+      await rm(transport.cwd, { recursive: true, force: true });
+    }
+    for (const socket of sockets) socket.destroy();
+    await new Promise((resolve) => server.close(resolve));
+    await rm(directory, { recursive: true, force: true });
+  }
 });

@@ -633,7 +633,7 @@ fn default_home() -> Result<PathBuf> {
     };
     let home = data.join(home);
     if !home.exists() && older.iter().any(|old| data.join(old).exists()) {
-        return Err(format!("{open}, then try again, or pass --home."));
+        return Err(format!("{open}, then try again, or set BUZZODZ_HOME."));
     }
     Ok(home)
 }

@@ -11,7 +11,14 @@ pub fn install_git(manager: &Manager, args: &[String]) -> Result<()> {
         return Err(USAGE.into());
     };
     let (path, enable) = git_options(options)?;
-    let source = prepare_git(repository, reference, None)?;
+    let source = {
+        #[cfg(unix)]
+        let _interrupt = interrupt::Handler::install()?;
+        let source = prepare_git(repository, reference, None)?;
+        #[cfg(unix)]
+        interrupt::check()?;
+        source
+    };
     let candidate = source
         .preview
         .candidates
@@ -32,6 +39,50 @@ pub fn install_git(manager: &Manager, args: &[String]) -> Result<()> {
         candidate.manifest.id, manager.profile
     );
     Ok(())
+}
+
+#[cfg(unix)]
+pub(crate) mod interrupt {
+    use crate::Result;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    static INTERRUPTED: AtomicBool = AtomicBool::new(false);
+
+    extern "C" fn handle(_: libc::c_int) {
+        INTERRUPTED.store(true, Ordering::Relaxed);
+    }
+
+    pub fn check() -> Result<()> {
+        if INTERRUPTED.load(Ordering::Relaxed) {
+            Err("Plugin installation interrupted".into())
+        } else {
+            Ok(())
+        }
+    }
+
+    pub struct Handler(libc::sigaction);
+
+    impl Handler {
+        pub fn install() -> Result<Self> {
+            INTERRUPTED.store(false, Ordering::Relaxed);
+            unsafe {
+                let mut action: libc::sigaction = std::mem::zeroed();
+                let mut previous = std::mem::zeroed();
+                action.sa_sigaction = handle as *const () as usize;
+                libc::sigemptyset(&mut action.sa_mask);
+                if libc::sigaction(libc::SIGINT, &action, &mut previous) != 0 {
+                    return Err(std::io::Error::last_os_error().to_string());
+                }
+                Ok(Self(previous))
+            }
+        }
+    }
+
+    impl Drop for Handler {
+        fn drop(&mut self) {
+            unsafe { libc::sigaction(libc::SIGINT, &self.0, std::ptr::null_mut()) };
+        }
+    }
 }
 
 fn git_options(options: &[String]) -> Result<(&str, bool)> {

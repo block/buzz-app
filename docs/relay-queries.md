@@ -903,13 +903,13 @@ budget: other processes/clients can still cause a refusal. Ambiguous publication
 outcomes retain their exact signed event and are never transparently re-signed.
 
 The relay WebSocket keeps retrying transient disconnects and authentication
-timeouts while its session is active. Its exponential delay starts at 375–625ms
-and caps at 22.5–37.5s (±25% jitter on each attempt). A full minute authenticated
+timeouts while its session is active. Its exponential delay starts at 250–500ms
+and caps at 15–30s, with jitter on each attempt. A full minute authenticated
 resets that backoff; a brief successful authentication does not. After a close with
 code 1012 (Service Restart) or 1001 (Going Away), as a rolling deploy sends to every
 client at once, the first attempt instead waits a uniform random time up to 10 s
-(more once repeated bounces have grown the backoff past that) so arrivals spread as
-widely as the closes. Authentication rejection
+(more once repeated bounces have grown the backoff past that), so a fleet the relay
+closed at once does not return at once. Authentication rejection
 or signing failure keeps its error visible and reconnects on a slow timer, 60 s
 doubling to 10 minutes, because access or a locked signer can change later; a
 signer that does not match the viewer stays terminal. A route the relay CLOSED

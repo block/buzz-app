@@ -1,3 +1,4 @@
+import type {} from "../navigation/service";
 import { appClient } from "../../buzz-mcp/app-client";
 import { respond } from "../../buzz-mcp/rpc";
 import { connectMcp } from "../../buzz-mcp/connection";
@@ -1747,7 +1748,7 @@ export class AgentsService extends Service implements Agents {
       },
       tabs: (agent) => {
         const session = this.bindingOf(agent)?.session;
-        return session && channelTabs(session);
+        return session && channelTabs(session, ctx.navigation);
       },
       classifier: () => this.classifier(),
       decisions: () => this.decisions,

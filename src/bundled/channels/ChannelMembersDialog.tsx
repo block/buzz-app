@@ -96,19 +96,16 @@ const INVITATION_GROUP_SIZE = 4;
 const additionRoles = [
   {
     role: "member",
-    label: "Participate",
-    action: "Add to channel",
+    action: "Add as participant",
     description: "Participants can send messages, reply, and react.",
   },
   {
     role: "guest",
-    label: "View only",
     action: "Add with view-only access",
     description: "Viewing only allows reading messages and threads.",
   },
   {
     role: "admin",
-    label: "Admin",
     action: "Add as admin",
     description: "Admins can manage this channel and its members.",
   },
@@ -352,7 +349,7 @@ const MemberIdentityRow = memo(function MemberIdentityRow({
                       })
                     }
                   >
-                    {option.label}
+                    {option.action}
                   </MenuItem>
                 ))}
               />

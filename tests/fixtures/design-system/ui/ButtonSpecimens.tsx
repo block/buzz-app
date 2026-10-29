@@ -160,9 +160,9 @@ export function ButtonSpecimen() {
           menuLabel="Other add options"
           menu={
             <>
-              <MenuItem>Participate</MenuItem>
-              <MenuItem>View only</MenuItem>
-              <MenuItem>Admin</MenuItem>
+              <MenuItem>Add as participant</MenuItem>
+              <MenuItem>Add with view-only access</MenuItem>
+              <MenuItem>Add as admin</MenuItem>
             </>
           }
         >

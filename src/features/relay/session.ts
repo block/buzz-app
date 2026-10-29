@@ -399,6 +399,8 @@ export function createRelaySession(
       // The relay reapplies access to a new sync; nothing held survives.
       for (const view of artifactSyncs) view.restart();
       commit();
+      // After commit: a store commit may clear profiles again, aborting earlier reads.
+      channels.refetchWindowProfiles();
       unread.purge();
       inboxFeed.purge();
     } finally {

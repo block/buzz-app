@@ -4,6 +4,7 @@ import type { ChannelStoreOptions } from "./store";
 import { createRelaySession } from "./session";
 import type { RelayEvent } from "./events";
 import {
+  type Key,
   bounds,
   flush,
   keypair,
@@ -17,7 +18,8 @@ import {
 
 const relay = keypair(),
   viewer = keypair(),
-  alice = keypair();
+  alice = keypair(),
+  bob = keypair();
 const owners: ReturnType<typeof createRelaySession>[] = [];
 afterEach(() => {
   for (const owner of owners.splice(0)) owner.dispose();
@@ -500,6 +502,84 @@ it("late persisted heads/profiles cannot repopulate after revoke and regrant", a
   expect(h.session.observe(filters).snapshot().events).toEqual([]);
   expect(disk.retain).toHaveBeenCalledWith([]);
   expect(disk.clear).not.toHaveBeenCalled();
+});
+
+/** Opens `channelId` with one message from `author` and loads their profile. */
+async function openNamed(
+  h: ReturnType<typeof setup>,
+  channelId: string,
+  author: Key,
+) {
+  h.session.channels.ensure(channelId);
+  h.next().respond([
+    message(author, channelId, "hello", 10),
+    bounds(relay, channelId, "head", { has_more: false, next_cursor: null }),
+  ]);
+  await vi.waitFor(() => expect(h.pending).toHaveLength(1));
+  h.next().respond([profile(author, { name: channelId })]);
+  await vi.waitFor(() =>
+    expect(h.session.profiles.snapshot().get(author.pubkey)?.name).toBe(
+      channelId,
+    ),
+  );
+}
+const profileRead = (key: Key) => [
+  { kinds: [0], authors: [key.pubkey], limit: 500 },
+];
+
+it("rereads a retained window's names after another channel's roster revokes access", async () => {
+  const h = setup();
+  h.emit(["a", "b"].map((id) => roster(relay, id, [viewer.pubkey], 10)));
+  await openNamed(h, "b", alice);
+  h.emit([roster(relay, "a", [], 11)]);
+  expect(h.session.profiles.snapshot().size).toBe(0);
+  await vi.waitFor(() => expect(h.pending).toHaveLength(1));
+  const reread = h.next();
+  expect(reread.filters).toEqual(profileRead(alice));
+  reread.respond([profile(alice, { name: "Alice again" })]);
+  await vi.waitFor(() =>
+    expect(h.session.profiles.snapshot().get(alice.pubkey)?.name).toBe(
+      "Alice again",
+    ),
+  );
+});
+
+it("a denied read's second profile clear does not abort the retained window's reread", async () => {
+  const h = setup();
+  h.emit(["a", "b"].map((id) => roster(relay, id, [viewer.pubkey], 10)));
+  await openNamed(h, "b", alice);
+  h.session.channels.ensure("a");
+  h.next().fail(new Error("Relay read failed (403)"));
+  await vi.waitFor(() =>
+    expect(h.session.channels.window("a").status).toBe("error"),
+  );
+  expect(h.session.profiles.snapshot().size).toBe(0);
+  await vi.waitFor(() =>
+    expect(h.pending.filter((read) => !read.signal?.aborted)).toHaveLength(1),
+  );
+  const reread = h.pending.find((read) => !read.signal?.aborted);
+  assert.exists(reread);
+  expect(reread.filters).toEqual(profileRead(alice));
+  reread.respond([profile(alice, { name: "Alice again" })]);
+  await vi.waitFor(() =>
+    expect(h.session.profiles.snapshot().get(alice.pubkey)?.name).toBe(
+      "Alice again",
+    ),
+  );
+});
+
+it("does not reread names whose only evidence was in the revoked channel", async () => {
+  const h = setup();
+  h.emit(["a", "b"].map((id) => roster(relay, id, [viewer.pubkey], 10)));
+  await openNamed(h, "b", bob);
+  await openNamed(h, "a", alice);
+  h.emit([roster(relay, "a", [], 11)]);
+  expect(h.session.profiles.snapshot().size).toBe(0);
+  // Bob's reread is the barrier: the purge's one profile pass has run.
+  await vi.waitFor(() => expect(h.pending).toHaveLength(1));
+  expect(h.next().filters).toEqual(profileRead(bob));
+  await flush();
+  expect(h.pending).toEqual([]);
 });
 
 it("an ambiguous multi-channel read failure does not revoke unrelated evidence", async () => {

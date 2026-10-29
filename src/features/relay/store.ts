@@ -2971,6 +2971,13 @@ export function createChannelStore(
     canAccess: authorized,
     canParticipate: (id: string) => discovery?.canParticipate(id) ?? false,
     purgeAccess,
+    /** After an access purge's commit, reread names for retained authorized rows.
+     * One read per window, so one window over the directory budget spares the others. */
+    refetchWindowProfiles() {
+      for (const state of windows.values())
+        if (authorized(state.channelId))
+          void fetchProfiles(state.snapshot.rows);
+    },
     denyChannel,
     suspendPreviews(ids: readonly string[]) {
       let changed = false;

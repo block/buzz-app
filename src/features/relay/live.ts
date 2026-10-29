@@ -1,4 +1,8 @@
 import { getLogger } from "../developer/logging.ts";
+import {
+  communityDestination,
+  configuredRelayPolicy,
+} from "../communities/destination.ts";
 import { logSocketFrame, relayLabel } from "../developer/traffic.ts";
 
 import {
@@ -291,6 +295,7 @@ export function subscribeRelayTraffic(
   setupTimeoutMs = SETUP_TIMEOUT_MS,
   random: () => number = Math.random,
 ): LiveSubscription {
+  if (configuredRelayPolicy) communityDestination(url);
   const log = getLogger("relay-ws");
   const peer = relayLabel(url);
   let closed = false;

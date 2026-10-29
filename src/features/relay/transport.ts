@@ -44,7 +44,7 @@ import {
   type SidebarPreferences,
 } from "./sidebar-preferences";
 import { createHostAdmission } from "./host-admission";
-import { relayOrigin } from "../communities/destination";
+import { communityDestination, relayOrigin } from "../communities/destination";
 import {
   admittedApiRequest,
   ApiPaused,
@@ -1316,8 +1316,8 @@ export async function connectSignedTransport(
   relayAuthor: string,
   socketFactory?: (url: string) => LiveSocket,
 ): Promise<ReadTransport> {
+  httpOrigin = communityDestination(httpOrigin).url;
   const viewer = await signer.getPublicKey();
-  httpOrigin = relayOrigin(httpOrigin);
   const principal = () => signedAdmissions(httpOrigin, viewer);
   const profiling = createRelayProfiler();
   const verify = createEventVerifier();

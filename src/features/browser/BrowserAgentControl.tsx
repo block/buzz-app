@@ -4,7 +4,7 @@ import { useAgentChoices } from "../agents/use-choices";
 import { useChannelList, useRelayConnection } from "../relay/react";
 import type { RelayData } from "../relay/service";
 import type { BrowserViewProps } from "./api";
-import type { BrowserAccess } from "./control-access";
+import type { BrowserInitialShare, BrowserAccess } from "./control-access";
 import type { BrowserStatus } from "./platform";
 import { BrowserControlBar } from "./BrowserControlBar";
 
@@ -15,6 +15,7 @@ export type BrowserAgentHost = {
 };
 
 export function BrowserAgentControl(props: {
+  initialShare?: BrowserInitialShare | undefined;
   host?: BrowserAgentHost | undefined;
   conversation: BrowserViewProps["conversation"];
   sessionId: string;
@@ -48,7 +49,9 @@ function ConversationControl({
   status,
   prepare,
   onError,
+  initialShare,
 }: {
+  initialShare?: BrowserInitialShare | undefined;
   host: BrowserAgentHost;
   conversation: NonNullable<BrowserViewProps["conversation"]>;
   sessionId: string;
@@ -96,6 +99,7 @@ function ConversationControl({
   return (
     <BrowserControlBar
       key={`${scope}:${conversation.channel}:${root ?? ""}`}
+      initialShare={initialShare}
       recipients={recipients}
       complete={choices.complete}
       sessionId={sessionId}

@@ -13,6 +13,7 @@ import type {
   BrowserControlGrant,
   BrowserStatus,
 } from "./platform";
+import type { BrowserInitialShare } from "./control-access";
 import styles from "./BrowserHostView.module.css";
 
 export type BrowserControlRecipient = Readonly<{
@@ -23,15 +24,17 @@ export type BrowserControlRecipient = Readonly<{
   control: BrowserControl;
 }>;
 
-/** The owner picks a recipient; closing the menu never grants access by itself. */
+/** Uses an owner choice or a one-time host assignment for a newly opened page. */
 export function BrowserControlBar({
   recipients,
+  initialShare,
   complete = true,
   sessionId,
   status,
   prepare,
   onError,
 }: {
+  initialShare?: BrowserInitialShare | undefined;
   recipients: readonly BrowserControlRecipient[];
   complete?: boolean;
   sessionId: string;
@@ -46,18 +49,28 @@ export function BrowserControlBar({
   const [menuOpen, setMenuOpen] = useState(false);
   const queued = useRef<BrowserControlRecipient | undefined>(undefined);
   const generation = useRef(0);
+  const initial = useRef(initialShare);
+  const starting = useRef(false);
+  const mounted = useRef(false);
   const report = useRef(onError);
   report.current = onError;
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      queueMicrotask(() => {
+        if (!mounted.current)
+          initial.current?.complete(
+            new Error("Browser opening was cancelled."),
+          );
+      });
       generation.current++;
       queued.current = undefined;
       void active.current?.control.revoke(sessionId).catch(() => undefined);
       active.current = undefined;
       report.current(undefined);
-    },
-    [sessionId],
-  );
+    };
+  }, [sessionId]);
 
   useEffect(() => {
     if (
@@ -77,6 +90,7 @@ export function BrowserControlBar({
       current &&
       !recipients.some((item) => item.id === current.id && item.eligible)
     ) {
+      initial.current?.complete(new Error("Browser opening was cancelled."));
       generation.current++;
       queued.current = undefined;
       active.current = undefined;
@@ -86,7 +100,46 @@ export function BrowserControlBar({
     }
   }, [recipients, sessionId]);
 
-  async function share(next: BrowserControlRecipient) {
+  useEffect(() => {
+    const request = initial.current;
+    const next = recipients.find(
+      (item) => item.id === request?.agent && item.eligible,
+    );
+    if (request && !starting.current && status?.error) {
+      request.complete(new Error(status.error));
+      return;
+    }
+    let current = true;
+    // Wait until StrictMode's mount probe has finished before consuming the request.
+    queueMicrotask(() => {
+      if (
+        current &&
+        !status?.loading &&
+        !starting.current &&
+        request &&
+        next &&
+        request.claim()
+      ) {
+        starting.current = true;
+        void share(next, request);
+      }
+    });
+    return () => {
+      current = false;
+    };
+  });
+
+  async function share(
+    next: BrowserControlRecipient,
+    opening?: BrowserInitialShare,
+  ) {
+    if (!opening && initial.current) {
+      starting.current = true;
+      initial.current.complete(
+        new Error("Browser opening was cancelled by a manual sharing choice."),
+      );
+      initial.current = undefined;
+    }
     const current = ++generation.current;
     active.current = next;
     setRecipient(next);
@@ -94,10 +147,25 @@ export function BrowserControlBar({
     report.current(undefined);
     try {
       await prepare();
-      if (generation.current !== current) return;
+      if (opening) {
+        if (!opening.valid()) throw new Error("Browser opening was cancelled.");
+        await opening.prepare();
+      }
+      if (generation.current !== current)
+        throw new Error("Browser opening was cancelled.");
+      if (opening && !opening.valid())
+        throw new Error("Browser opening was cancelled.");
       const granted = await next.control.grant(sessionId);
-      if (generation.current === current) setGrant(granted);
+      if (opening && !opening.valid()) {
+        await next.control.revoke(sessionId);
+        throw new Error("Browser opening was cancelled.");
+      }
+      if (generation.current !== current)
+        throw new Error("Browser opening was cancelled.");
+      setGrant(granted);
+      opening?.complete();
     } catch (failure) {
+      opening?.complete(failure);
       if (generation.current === current) report.current(String(failure));
     } finally {
       if (generation.current === current) setPending(false);
@@ -105,6 +173,7 @@ export function BrowserControlBar({
   }
 
   async function takeControl() {
+    initial.current?.complete(new Error("Browser opening was cancelled."));
     const current = ++generation.current;
     queued.current = undefined;
     setPending(true);

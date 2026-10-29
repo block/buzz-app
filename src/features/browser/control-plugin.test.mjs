@@ -9,6 +9,7 @@ function fixture(enabled) {
       View: () => null,
       control: {
         available: async () => enabled,
+        open: vi.fn(async () => ({ opened: true })),
         execute: vi.fn(async () => ({ ok: true })),
       },
     },
@@ -60,4 +61,24 @@ it("passes only validated action fields and authenticated caller context to the 
   ).rejects.toThrow();
   expect(test.tool().inputSchema.properties.token).toBeUndefined();
   expect(test.context.browser.control.execute).toHaveBeenCalledTimes(1);
+});
+
+it("opens a page using host-provided identity and conversation, without requesting a UI share", async () => {
+  const test = fixture(true);
+  await apply(test.context);
+  await expect(
+    test
+      .tool()
+      .call(
+        { key: "agent" },
+        { channel: "chat", root: "thread" },
+        { action: "open", url: "https://example.org/" },
+      ),
+  ).resolves.toBe('{"opened":true}');
+  expect(test.context.browser.control.open).toHaveBeenCalledWith(
+    "agent",
+    { channel: "chat", root: "thread" },
+    { url: "https://example.org/", storage: "browser-control-preview" },
+  );
+  expect(test.context.browser.control.execute).not.toHaveBeenCalled();
 });

@@ -24,6 +24,15 @@ export interface Browser {
   readonly control?:
     | Readonly<{
         available(): Promise<boolean>;
+        readonly View: ComponentType<{
+          target: string;
+          conversation?: BrowserViewProps["conversation"];
+        }>;
+        open(
+          agent: string,
+          context: ToolContext,
+          options: Pick<BrowserViewProps, "url" | "storage">,
+        ): Promise<unknown>;
         execute(
           agent: string,
           context: ToolContext,

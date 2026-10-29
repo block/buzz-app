@@ -99,6 +99,9 @@ An optional macOS Cargo feature, `experimental-browser-control`, adds explicit
 per-view grants and a **Take control** action. Default builds do not compile its
 native implementation or register its action handlers. The website guest keeps
 its existing IPC isolation. A manually loaded example plugin registers the agent
-tool; no agent tool can grant itself control. See
+tool. Its `open` action creates a new page beside the current conversation and
+assigns it to the authenticated local agent, without an owner Share click.
+Existing user-opened pages still require Share. Take control revokes the page's
+access, and reopening that tab cannot renew it. See
 [Browser control preview](../examples/plugins/browser-control/README.md) for setup,
 automatic agent/conversation sharing, limitations, and disposable native acceptance.

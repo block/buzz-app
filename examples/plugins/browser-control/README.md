@@ -14,6 +14,16 @@ The panel uses the existing Browser controls and a dedicated named website store
 macOS 14 or later, as described in [the browser documentation](../../../docs/browser.md).
 A more specific panel, such as GitHub, still wins link resolution.
 
+An agent can open its own browser directly with
+`browser_control` and `{ "action": "open", "url": "https://example.org/" }`.
+Buzz opens a new page beside the current conversation and assigns it to that
+local agent automatically. The tool returns after access is ready, so the agent
+can immediately observe, click, fill or navigate. Keep the conversation visible.
+**Take control** revokes access; reopening the same tab does not renew it.
+Opening another page switches that agent's browser to the new page.
+
+To share a page you opened yourself:
+
 1. Open the website beside the conversation with a local agent running in this Buzz instance.
 2. Click **Share with <agent>**, or open **Share…** and choose an agent.
 3. Ask that agent to use `browser_control` with `action: "observe"`. There is no token to copy.
@@ -33,7 +43,7 @@ and suppresses late results; it cannot undo an action already sent to WebKit.
 The UI stays usable while control is allowed. Share only one browser with the
 same agent in the same conversation at a time; ambiguous requests are rejected.
 
-The one tool supports `observe`, `click`, `fill`, and `navigate`. Observe returns
+The one tool supports `open`, `observe`, `click`, `fill`, and `navigate`. Observe returns
 up to 20,000 characters of page text and 100 visible controls, without input values.
 Click/fill require exactly one visible match. Fill supports ordinary text inputs
 and textareas, and rejects password, file, hidden, read-only and disabled fields.

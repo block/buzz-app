@@ -45,7 +45,7 @@ import {
   signReadState,
   // @ts-expect-error Exercise the production codec with disposable identities.
 } from "../../../browser-host/read-state.mjs";
-import type { RelayEvent } from "../relay/events";
+import { eventDto, type RelayEvent } from "../relay/events";
 
 composerDOMFixture();
 const owners: ReturnType<typeof createRelaySession>[] = [];
@@ -117,30 +117,32 @@ async function fixture(
   );
   const agentProfile =
     agent && agentOwnerKey
-      ? signed(agent, {
-          kind: 0,
-          content: JSON.stringify({ name: "Test agent" }),
-          tags: [
-            [
-              "auth",
-              agentOwnerKey.pubkey,
-              "kind=0&created_at<1700000001",
-              bytesToHex(
-                schnorr.sign(
-                  new Uint8Array(
-                    await crypto.subtle.digest(
-                      "SHA-256",
-                      new TextEncoder().encode(
-                        `nostr:agent-auth:${agent.pubkey}:kind=0&created_at<1700000001`,
+      ? eventDto(
+          signed(agent, {
+            kind: 0,
+            content: JSON.stringify({ name: "Test agent" }),
+            tags: [
+              [
+                "auth",
+                agentOwnerKey.pubkey,
+                "kind=0&created_at<1700000001",
+                bytesToHex(
+                  schnorr.sign(
+                    new Uint8Array(
+                      await crypto.subtle.digest(
+                        "SHA-256",
+                        new TextEncoder().encode(
+                          `nostr:agent-auth:${agent.pubkey}:kind=0&created_at<1700000001`,
+                        ),
                       ),
                     ),
+                    agentOwnerKey.secret,
                   ),
-                  agentOwnerKey.secret,
                 ),
-              ),
+              ],
             ],
-          ],
-        })
+          }),
+        )
       : undefined;
   const publications: {
     event: RelayEvent;
@@ -356,32 +358,78 @@ it("edits in the composer, retains a rejected change and retries the same operat
   );
 });
 
-it("offers a confirmed NIP-09 deletion for an agent owned by the viewer", async () => {
-  const h = await fixture(false, false, false, false, false, "viewer");
-  const item = await screen.findByRole("menuitem", { name: "Delete message" });
-  expect(item).toBeVisible();
-  fireEvent.click(item);
-  const confirmation = await screen.findByRole("alertdialog", {
-    name: "Delete message?",
-  });
-  expect(confirmation).toHaveTextContent(
-    "This requests removal of this message from Buzz’s relay.",
-  );
-  expect(confirmation).toHaveTextContent("People may still have copies.");
-  expect(h.publications).toHaveLength(0);
-  fireEvent.click(screen.getByRole("button", { name: "Delete" }));
-  await waitFor(() => expect(h.publications).toHaveLength(1));
-  expect(h.publication(0).event.kind).toBe(5);
-  expect(h.publication(0).event.pubkey).toBe(h.owner.session.viewer);
-  expect(h.publication(0).event.tags).toContainEqual(["e", h.original.id]);
-  await act(async () => h.publication(0).result.resolve());
-});
+it.each(["member", "guest"] as const)(
+  "offers confirmed owner-agent deletion and retry to a joined %s",
+  async (role) => {
+    const h = await fixture(
+      false,
+      false,
+      false,
+      false,
+      false,
+      "viewer",
+      false,
+      undefined,
+      role,
+    );
+    const item = await screen.findByRole("menuitem", {
+      name: "Delete message",
+    });
+    await waitFor(() =>
+      expect(h.owner.session.profiles.owner?.(h.original.pubkey)).toBe(
+        h.owner.session.viewer,
+      ),
+    );
+    expect(item).toBeVisible();
+    fireEvent.click(item);
+    const confirmation = await screen.findByRole("alertdialog", {
+      name: "Delete message?",
+    });
+    expect(confirmation).toHaveTextContent(
+      "This requests removal of this message from Buzz’s relay.",
+    );
+    expect(confirmation).toHaveTextContent("People may still have copies.");
+    expect(h.publications).toHaveLength(0);
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(h.publications).toHaveLength(1));
+    expect(h.publication(0).event.kind).toBe(5);
+    expect(h.publication(0).event.pubkey).toBe(h.owner.session.viewer);
+    expect(h.publication(0).event.tags).toContainEqual(["e", h.original.id]);
+    if (role === "guest") {
+      await act(async () =>
+        h.publication(0).result.reject(new PublishRejected("Deletion refused")),
+      );
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "Deletion refused",
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+      await waitFor(() => expect(h.publications).toHaveLength(2));
+      expect(h.publication(1).event.id).toBe(h.publication(0).event.id);
+      await act(async () => h.publication(1).result.resolve());
+    } else await act(async () => h.publication(0).result.resolve());
+  },
+);
 
-it("does not offer agent-message deletion to a non-owner", async () => {
-  await fixture(false, false, false, false, false, "other");
-  await screen.findByRole("menuitem", { name: /Mark (unread|read)/ });
-  expect(screen.queryByRole("menuitem", { name: "Delete message" })).toBeNull();
-});
+it.each(["member", "guest"] as const)(
+  "does not offer agent-message deletion to a %s non-owner",
+  async (role) => {
+    await fixture(
+      false,
+      false,
+      false,
+      false,
+      false,
+      "other",
+      false,
+      undefined,
+      role,
+    );
+    await screen.findByRole("menuitem", { name: /Mark (unread|read)/ });
+    expect(
+      screen.queryByRole("menuitem", { name: "Delete message" }),
+    ).toBeNull();
+  },
+);
 
 it("does not expose edit or delete for another person's message", async () => {
   await fixture(false);

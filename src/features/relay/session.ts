@@ -2224,7 +2224,8 @@ export function createRelaySession(
       (id, owner) =>
         !closed &&
         (channels.canWrite(id) ||
-          // This authorization is supplied only by editOwnedAgent after verification.
+          // editOwnedAgent and messages.remove supply owner evidence;
+          // validateChannelWrite rechecks it before signing and publication.
           (!!owner && channels.canParticipate(id))),
       transport?.scope,
       writer && (!writer.kinds || writer.kinds.includes(1984))

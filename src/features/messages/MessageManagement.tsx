@@ -143,7 +143,10 @@ export function MessageManagement({
     ((!channelId || channelId === selection.row.channelId) &&
       channels.channels.some(
         (channel) =>
-          channel.id === selection.row.channelId && !channel.readOnly,
+          channel.id === selection.row.channelId &&
+          !channel.cached &&
+          (!channel.readOnly ||
+            (channel.viewerRole === "guest" && !!selection.authorization)),
       ));
   useEffect(() => {
     if (!available) setSelection(undefined);
@@ -360,7 +363,7 @@ export function MessageManagementItems({
       ? { agentId: row.authorId, ownerId: session.viewer }
       : undefined;
   const canDelete =
-    writable && (own || !!authorization) && session.outbox?.supports(5);
+    ((writable && own) || !!authorization) && session.outbox?.supports(5);
   const act = (action: () => void) =>
     afterClose ? afterClose(action) : action();
   return (
@@ -486,7 +489,9 @@ function DeleteMessageDialog({
             (channel) =>
               channel.id === row.channelId &&
               !channel.archived &&
-              !channel.readOnly,
+              !channel.cached &&
+              (!channel.readOnly ||
+                (channel.viewerRole === "guest" && !!authorization)),
           )
       )
         throw new Error(
@@ -578,7 +583,13 @@ export function MessageManagementStatus() {
             </p>
           )}
           <Button
-            disabled={!channel || channel.archived || channel.readOnly}
+            disabled={
+              !channel ||
+              channel.archived ||
+              channel.cached ||
+              (channel.readOnly &&
+                !(channel.viewerRole === "guest" && item.event.kind === 5))
+            }
             onClick={() => session.outbox?.retry(item.event.id)}
           >
             Retry message update

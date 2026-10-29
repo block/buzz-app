@@ -1769,7 +1769,19 @@ test("member addition works without channel creation, while role elevation remai
       ).toBe("accepted"),
     );
     expect(h.publications).toHaveLength(1);
-    for (const role of ["owner", "admin", "member"]) {
+    const participantId = owner.outbox.send({
+      kind: 9000,
+      content: "",
+      tags: [...tags, ["role", "member"]],
+    });
+    await vi.waitFor(() =>
+      expect(
+        owner.local.snapshot().find((row) => row.event.id === participantId)
+          ?.delivery,
+      ).toBe("accepted"),
+    );
+    expect(h.publications).toHaveLength(2);
+    for (const role of ["owner", "admin", "guest"]) {
       const denied = await h.post("sign", {
         kind: 9000,
         content: "",
@@ -3464,7 +3476,20 @@ test("details routes are narrow, require the live owner, and do not widen lifecy
       expect(signed).toMatchObject(change);
       await transport.channelDetails.publish(signed, signal);
     }
+    for (const role of ["member", "guest"]) {
+      const change = {
+        ...template,
+        tags: [...template.tags, ["join_role", role]],
+      };
+      expect((await h.post("sign", change)).status).toBe(400);
+      expect((await h.post("channel-lifecycle-sign", change)).status).toBe(400);
+      const signed = await transport.channelDetails.sign(change, signal);
+      expect(signed).toMatchObject(change);
+      await transport.channelDetails.publish(signed, signal);
+    }
     for (const tags of [
+      [...template.tags, ["join_role", "admin"]],
+      [...template.tags, ["join_role", "guest"], ["join_role", "member"]],
       [...template.tags.slice(0, 3), ["ttl", "+1"]],
       [...template.tags.slice(0, 3), ["ttl", "1\n"]],
       [...template.tags.slice(0, 3), ["ttl", "1"], ["ttl", ""]],
@@ -3493,13 +3518,13 @@ test("details routes are narrow, require the live owner, and do not widen lifecy
     expect(reopened).toMatchObject(reopening);
     expect((await h.post("publish", reopened)).status).toBe(400);
     await transport.channelDetails.publish(reopened, signal);
-    expect(h.publications).toHaveLength(4);
+    expect(h.publications).toHaveLength(6);
     const foreign = finalizeEvent(
       structuredClone(template),
       new Uint8Array(32).fill(5),
     );
     expect((await h.post("channel-details-publish", foreign)).status).toBe(400);
-    expect(h.publications).toHaveLength(4);
+    expect(h.publications).toHaveLength(6);
   } finally {
     live?.dispose();
     await h.close();

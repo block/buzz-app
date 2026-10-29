@@ -36,6 +36,11 @@
 .memberList > * {
   flex-shrink: 0;
 }
+/* Let the scrollport meet the fixed access divider without a blank gutter. */
+.memberList:has(+ .generalAccess) {
+  padding-block-end: 0;
+  margin-block-end: calc(-1 * var(--space-4));
+}
 /* Headings already provide their top inset; tighten only adjacent member groups. */
 .memberList > section + section:not(.memberGroup) {
   margin-block-start: calc(-1 * var(--space-2));
@@ -159,5 +164,70 @@
 @media (max-width: 480px) {
   .stagedRow {
     flex-wrap: wrap;
+  }
+}
+
+.generalAccess {
+  border-top: 1px solid var(--border-standard);
+  padding: var(--space-2) 0 0 var(--space-row-gap);
+}
+.generalAccess > :where(.accessRow) ~ * {
+  margin-block-start: var(--space-3);
+}
+.accessRow {
+  display: grid;
+  grid-template-columns:
+    var(--size-control-sm) minmax(0, 1fr)
+    auto;
+  align-items: start;
+  gap: var(--space-row-gap);
+  padding-block: var(--space-half);
+}
+.accessIcon {
+  display: flex;
+  align-self: center;
+  align-items: center;
+  justify-content: center;
+  width: var(--size-control-sm);
+  min-height: var(--size-control-sm);
+  color: var(--text-subtle);
+}
+.accessRow > .accessIcon {
+  width: 100%;
+}
+/* The 24px link target extends 4px above its 20px text line. */
+.accessEditableIcon {
+  translate: 0 var(--space-half);
+}
+.accessAudience {
+  display: grid;
+  min-width: 0;
+  justify-items: start;
+  gap: var(--space-1);
+}
+.accessAudience > * {
+  max-width: 100%;
+}
+.accessRole {
+  min-width: 0;
+  align-self: center;
+  margin-inline-start: var(--space-2);
+}
+@media (max-width: 480px) {
+  .member:has(> .addAction[data-split]) .staticProfile > span > span {
+    flex-direction: column;
+    align-items: start;
+    gap: 0;
+  }
+  .member:has(> .addAction[data-split]) .name {
+    max-width: 100%;
+  }
+  .accessRow {
+    grid-template-columns: var(--size-control-sm) minmax(0, 1fr);
+  }
+  .accessRole {
+    grid-column: 2;
+    justify-self: start;
+    margin-inline-start: 0;
   }
 }

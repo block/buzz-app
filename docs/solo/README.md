@@ -116,27 +116,27 @@ behavior on the label, so a rename touches copy only.
   recipient tags for both owners and guests. Saved chats offer the chat's people
   and your available agents; an untagged message never infers an agent recipient.
   Only available agents can be enrolled through tagging—outside humans must
-  already have been shared into the chat. Empty new-chat drafts start tagged with the main
-  agent for this account/community. **Agents → right-click or "..." → Make main
-  agent** changes that choice; its card shows **Main agent**. That choice is saved
-  to the account as a private `main-agent` record, so every install adopts it once
-  per session. Only this choice writes the record; a deleted agent left on it is
-  stood in for until the next choice. The choice stays
-  until it is changed or the agent is deleted, and it is still tagged when its
-  runtime is signed out or broken. Without a choice, or after the chosen agent
-  is deleted, the first managed agent, then the first selectable agent,
-  becomes the main agent and is saved on this device only, after the account
-  record has been read, agent evidence is complete and the requested archive
-  read has settled. A chosen agent missing for another reason
-  is stood in for without replacing the choice. Until the main agent is saved to
-  the account, including an automatic pick, a stand-in or a failed save, Make main
-  agent stays offered. Nothing is picked until the account record has been read
+  already have been shared into the chat. Empty new-chat drafts start tagged with
+  the default agent for this account/community. **Agents → right-click or "..." →
+  Make my bestie** explicitly saves that agent as the bestie; its card then shows
+  **Bestie**. That choice is saved to the account as a private `main-agent` record,
+  so every install adopts it once per session. Only this explicit choice writes
+  the record; a deleted agent left on it is stood in for until the next choice.
+  The choice stays until it is changed or the agent is deleted, and it is still
+  tagged when its runtime is signed out or broken. Without a choice, or after the
+  chosen agent is deleted, the first managed agent, then the first selectable
+  agent, becomes the default agent and is saved on this device only, after the
+  account record has been read, agent evidence is complete and the requested
+  archive read has settled. A chosen agent missing for another reason is stood in
+  for without replacing the choice. Until an agent is explicitly saved as the
+  bestie, including for an automatic pick, a stand-in or a failed save, **Make my
+  bestie** stays offered. Nothing is picked until the account record has been read
   and its archive read has settled, so a new chat is never tagged for a stale
-  pick. A new chat tags the main agent once each time it is shown; the tag isn't
-  saved until the draft is edited, so showing an untouched new chat again tags
-  the current main agent. Archive rereads, failed
-  rereads and reconnects keep the last known archives, so a known deletion
-  is never forgotten and a live choice never disappears.
+  pick. A new chat tags the current default once each time it is shown; the tag
+  isn't saved until the draft is edited, so showing an untouched new chat again
+  uses the current default. Archive rereads, failed rereads and reconnects keep
+  the last known archives, so a known deletion is never forgotten and a live
+  choice never disappears.
   Follow-ups keep all exact agents notified by the previous send, just like
   Team threads, including the shared Remember mentioned agents preference.
   The account default never replaces recipients in an existing chat.

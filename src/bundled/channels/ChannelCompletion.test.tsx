@@ -108,6 +108,11 @@ it("offers joined streams/forums, including private and still-confirming channel
     channel("stream"),
     channel("forum", { channelType: "forum" }),
     channel("private", { private: true }),
+    channel("private-guest", {
+      private: true,
+      readOnly: true,
+      viewerRole: "guest",
+    }),
     channel("huddle", { huddle: true }),
     channel("archived", { archived: true }),
     // The real store's shape for a joined channel restored from cache.
@@ -126,6 +131,7 @@ it("offers joined streams/forums, including private and still-confirming channel
     "cached",
     "forum",
     "private",
+    "private-guest",
     "stream",
     "unknown",
   ]);

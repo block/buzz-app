@@ -21,6 +21,8 @@ import {
   MenuTrigger,
   MenuPopup,
   MenuSeparator,
+  MenuRadioGroup,
+  MenuRadioItem,
 } from "../../shared/design-system/ui/Menu";
 import { DotsThreeIcon } from "../../shared/design-system/icons";
 import styles from "./ChannelMembersDialog.module.css";
@@ -126,6 +128,16 @@ export function MemberRow({
       pubkey,
       verifiedOwner,
     );
+  const roleCaption =
+    role === "member" || role === "bot"
+      ? "Participating"
+      : role === "guest"
+        ? "Viewing only"
+        : role === "owner"
+          ? "Owner"
+          : role === "admin"
+            ? "Admin"
+            : undefined;
   const locked =
     state.operation?.status === "pending" ||
     state.operation?.status === "uncertain";
@@ -166,15 +178,27 @@ export function MemberRow({
       {(canEdit || canRemove) && !locked && (
         <>
           <MenuSeparator />
-          {canEdit &&
-            editableMemberRoles
-              // Guest assignment is hidden until its permission contract is settled.
-              .filter((next) => next !== role && next !== "guest")
-              .map((next) => (
-                <MenuItem key={next} onClick={() => choose(next)}>
-                  Make {next}
-                </MenuItem>
+          {canEdit && (
+            <MenuRadioGroup
+              value={role === "bot" ? "member" : role}
+              onValueChange={(next) => {
+                const target = editableMemberRoles.find(
+                  (value) => value === next,
+                );
+                if (target && target !== role) choose(target);
+              }}
+            >
+              {editableMemberRoles.map((next) => (
+                <MenuRadioItem key={next} value={next}>
+                  {next === "member"
+                    ? "Participating"
+                    : next === "guest"
+                      ? "Viewing only"
+                      : "Admin"}
+                </MenuRadioItem>
               ))}
+            </MenuRadioGroup>
+          )}
           {canEdit && <MenuSeparator />}
           {canRemove && (
             <MenuItem tone="danger" onClick={() => choose("remove")}>
@@ -231,6 +255,11 @@ export function MemberRow({
         {invitationAction}
         {!invitationAction && (
           <span className={styles.memberActions}>
+            {roleCaption && (
+              <span className="self-center px-2 text-body-sm text-subtle">
+                {roleCaption}
+              </span>
+            )}
             {/* A regular trigger needs its own root: registering it on the
                   context root replaces Base UI's context-menu interaction owner. */}
             <MenuRoot

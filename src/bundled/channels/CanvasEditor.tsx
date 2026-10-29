@@ -247,9 +247,7 @@ export function CanvasEditor({
   const body = (
     <>
       <div className={styles.stack}>
-        {readOnly && (
-          <p role="status">Archived channel. Canvas is read-only.</p>
-        )}
+        {readOnly && <p role="status">Canvas is read-only.</p>}
         <Tabs
           variant="panel"
           label="Canvas views"

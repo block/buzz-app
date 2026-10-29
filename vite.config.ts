@@ -1,5 +1,5 @@
 import { fileURLToPath } from "node:url";
-import { markdownWorkerPlugins } from "./scripts/markdown-worker";
+import { markdownWorkerPlugins } from "./scripts/markdown-worker.ts";
 import { defineConfig, loadEnv, type PluginOption } from "vite";
 import react from "@vitejs/plugin-react";
 import { worktreePort } from "./scripts/worktree-port.mjs";

@@ -85,7 +85,7 @@ export function ChannelGeneralAccess({
               />
             )}
           </span>
-          <div className="min-w-0">
+          <div className={styles.accessAudience}>
             <p className="text-body-sm">
               {channel.visibility === "public"
                 ? "Anyone in the community can read."

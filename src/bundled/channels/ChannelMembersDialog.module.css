@@ -34,6 +34,11 @@
 .memberList > * {
   flex-shrink: 0;
 }
+/* Let the scrollport meet the fixed access divider without a blank gutter. */
+.memberList:has(+ .generalAccess) {
+  padding-block-end: 0;
+  margin-block-end: calc(-1 * var(--space-4));
+}
 /* Headings already provide their top inset; tighten only adjacent member groups. */
 .memberList > section + section:not(.memberGroup) {
   margin-block-start: calc(-1 * var(--space-2));
@@ -192,7 +197,7 @@
   display: grid;
   min-width: 0;
   justify-items: start;
-  gap: 0;
+  gap: var(--space-1);
 }
 .accessAudience > * {
   max-width: 100%;

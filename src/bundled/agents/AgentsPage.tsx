@@ -64,6 +64,7 @@ import {
 } from "../../features/agents/agent-share";
 import {
   chooseDefaultAgent,
+  restoreDefaultAgent,
   useDefaultAgent,
   useSavedAgent,
 } from "../../features/solo/default-agent";
@@ -802,7 +803,15 @@ function DefaultAgentInventory({
           {...replacement}
           pending={savingBestie}
           error={error}
-          onClose={() => setReplacement(undefined)}
+          onClose={() => {
+            if (error)
+              restoreDefaultAgent(
+                scope,
+                replacement.replacing.pubkey,
+                replacement.current.pubkey,
+              );
+            setReplacement(undefined);
+          }}
           onChoose={() => {
             // A choice changed elsewhere while this dialog was open wins.
             if (saved === replacement.current.pubkey)

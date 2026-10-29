@@ -34,7 +34,7 @@ import type {
 import type { OldTeam, PortableAgent } from "../../features/agents/native";
 import { localStore } from "../../features/agents/state";
 import { setDefaultAgent } from "../../features/solo/default-agent";
-import { writeView } from "../../shared/view-state";
+import { readView, writeView } from "../../shared/view-state";
 import type { RelayData } from "../../features/relay/service";
 import type { CommunityReader } from "../../features/communities/service";
 import type { Navigation } from "../../features/navigation/controller";
@@ -3731,9 +3731,32 @@ it("keeps a failed Bestie replacement visible and retries the account save", asy
     "Your bestie couldn't be saved to your account. Try again.",
   );
   expect(confirmation).toBeVisible();
+  expect(readView(connection.scope, "solo:default-agent", null)).toBe(
+    bea.pubkey,
+  );
 
   await user.click(
-    within(confirmation).getByRole("button", { name: "Switch to Bea" }),
+    within(confirmation).getByRole("button", { name: "Keep Ada" }),
+  );
+  expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  expect(readView(connection.scope, "solo:default-agent", null)).toBe(
+    ada.pubkey,
+  );
+  expect(screen.getByRole("gridcell", { name: "Ada, Bestie" })).toBeVisible();
+
+  await user.click(
+    within(screen.getByRole("gridcell", { name: "Bea" })).getByRole("button", {
+      name: "Actions for Bea",
+    }),
+  );
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Make my bestie" }),
+  );
+  const retry = await screen.findByRole("alertdialog", {
+    name: "Make Bea your bestie?",
+  });
+  await user.click(
+    within(retry).getByRole("button", { name: "Switch to Bea" }),
   );
   await act(async () => writes[1]?.());
   expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();

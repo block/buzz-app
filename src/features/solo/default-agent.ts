@@ -45,6 +45,17 @@ export function setDefaultAgent(scope: string, pubkey: string) {
   return cache(scope, /^[0-9a-f]{64}$/.test(pubkey) ? pubkey : null);
 }
 
+/** Abandon a failed account replacement without overwriting a newer device
+ * choice made while its confirmation remained open. */
+export function restoreDefaultAgent(
+  scope: string,
+  replacing: string,
+  previous: string,
+) {
+  if (chosenAgent(scope) !== replacing) return false;
+  return setDefaultAgent(scope, previous);
+}
+
 /** The viewer's own choice: saved here, then to their account. */
 export async function chooseDefaultAgent(
   session: RelaySession,
@@ -122,6 +133,13 @@ export function useSavedAgent(session: RelaySession, scope: string) {
   return session.mainAgent ? account.agent : local;
 }
 
+function chosenAgent(scope: string) {
+  const value = unsaved.has(scope)
+    ? unsaved.get(scope)
+    : readView<unknown>(scope, KEY, null);
+  return typeof value === "string" ? value : undefined;
+}
+
 /** The agent explicitly saved as main, whether or not it can be tagged now. */
 export function useChosenAgent(scope: string) {
   return useSyncExternalStore(
@@ -136,12 +154,7 @@ export function useChosenAgent(scope: string) {
       },
       [scope],
     ),
-    () => {
-      const value = unsaved.has(scope)
-        ? unsaved.get(scope)
-        : readView<unknown>(scope, KEY, null);
-      return typeof value === "string" ? value : undefined;
-    },
+    () => chosenAgent(scope),
   );
 }
 

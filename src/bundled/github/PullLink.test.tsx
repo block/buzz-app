@@ -43,6 +43,8 @@ function fakeStates(initial?: PullState | "failed") {
       };
     }),
     get: () => value,
+    readAt: () => undefined,
+    read: () => Promise.reject(new Error("Links do not read")),
     unwatch,
     set(next: PullState | "failed" | undefined) {
       value = next;

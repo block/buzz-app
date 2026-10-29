@@ -128,14 +128,19 @@ function useAdopted(session: RelaySession, scope: string) {
   useEffect(() => {
     if (account) void adopt(account, scope);
   }, [account, scope]);
-  const read = useSyncExternalStore(subscribeSaved, () =>
-    account ? saved.has(account) : true,
+  const readSnapshot = () => (account ? saved.has(account) : true);
+  const agentSnapshot = () => (account ? saved.get(account) : undefined);
+  const errorSnapshot = () => (account ? readErrors.get(account) : undefined);
+  const read = useSyncExternalStore(subscribeSaved, readSnapshot, readSnapshot);
+  const agent = useSyncExternalStore(
+    subscribeSaved,
+    agentSnapshot,
+    agentSnapshot,
   );
-  const agent = useSyncExternalStore(subscribeSaved, () =>
-    account ? saved.get(account) : undefined,
-  );
-  const error = useSyncExternalStore(subscribeSaved, () =>
-    account ? readErrors.get(account) : undefined,
+  const error = useSyncExternalStore(
+    subscribeSaved,
+    errorSnapshot,
+    errorSnapshot,
   );
   return {
     read,
@@ -176,6 +181,7 @@ function chosenAgent(scope: string) {
 
 /** The agent explicitly saved as main, whether or not it can be tagged now. */
 export function useChosenAgent(scope: string) {
+  const snapshot = useCallback(() => chosenAgent(scope), [scope]);
   return useSyncExternalStore(
     useCallback(
       (notify) => {
@@ -188,7 +194,8 @@ export function useChosenAgent(scope: string) {
       },
       [scope],
     ),
-    () => chosenAgent(scope),
+    snapshot,
+    snapshot,
   );
 }
 

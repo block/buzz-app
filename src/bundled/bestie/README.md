@@ -5,7 +5,9 @@ selection is the private `main-agent` record shared with Solo's default-agent
 owner; this plugin adds presentation and a conversation destination, not another
 selection store.
 
-## Pinned conversation
+## Getting started
+
+### Pinned conversation
 
 When the account has a saved eligible Bestie, the sidebar row adopts that
 agent's name and avatar and opens their canonical direct message. The canonical
@@ -27,7 +29,7 @@ page as **Bestie**. Searching the agent's name therefore keeps the same New chat
 chat and Direct messages results as every other agent instead of adding a second
 route to the same DM.
 
-## Hosted setup fallback
+### Hosted setup fallback
 
 The account choice is read before the page decides what to show. With a saved
 Bestie, reconnecting, inventory failures and missing-agent states remain on the
@@ -42,7 +44,7 @@ the canonical DM. Connecting hosted setup to the shared selection owner is a
 separate follow-up; until then, setup and an explicitly account-saved Bestie are
 parallel entry paths.
 
-## Changing hosted Bestie's instructions
+### Changing hosted Bestie's instructions
 
 When `prompt.ts` differs from the instructions on a set-up hosted Bestie, the
 setup page offers **Update Bestie's instructions**. **Bestie's instructions** on

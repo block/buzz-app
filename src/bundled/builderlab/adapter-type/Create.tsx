@@ -9,6 +9,7 @@ import {
   validInstructions,
 } from "../agents/client";
 import type { OAuthSession } from "../oauth/session";
+import { effortLabel } from "./models";
 
 export type CreationConfig = {
   instructions: string;
@@ -34,7 +35,7 @@ export function creationConfig(value: unknown): CreationConfig {
     typeof config.subject !== "string"
   )
     throw new Error(
-      "Choose a model and reasoning effort and check the instructions.",
+      "Choose a model and thinking level and check the instructions.",
     );
   return config as CreationConfig;
 }
@@ -83,7 +84,7 @@ export function createCreationFields(
             <p role="status" className="m-0 text-body-sm text-secondary">
               {login.status === "pending"
                 ? "Finish sign-in in your browser, then choose a model."
-                : "Sign in to choose a model and reasoning effort."}
+                : "Sign in to choose a model and thinking level."}
             </p>
             {login.error && (
               <p role="alert" className="m-0 text-body-sm text-danger">
@@ -131,18 +132,18 @@ export function createCreationFields(
               }
             />
             <Select
-              label="Reasoning effort"
+              label="Thinking"
               variant="field"
               name="builderlab-effort"
               required
               value={supported ? draft.reasoningEffort : ""}
-              placeholder="Choose reasoning effort"
+              placeholder="Choose thinking"
               disabled={disabled || !model || !!wrongAccount}
               groups={[
                 {
                   label: "",
                   options: (model?.supportedReasoningEfforts ?? []).map(
-                    (value) => ({ value, label: value }),
+                    (value) => ({ value, label: effortLabel(value) }),
                   ),
                 },
               ]}
@@ -153,7 +154,7 @@ export function createCreationFields(
             {wrongAccount && (
               <p role="status" className="m-0 text-body-sm text-secondary">
                 These choices belong to another Builderlab account. Choose a
-                model and reasoning effort again.
+                model and thinking level again.
               </p>
             )}
           </>

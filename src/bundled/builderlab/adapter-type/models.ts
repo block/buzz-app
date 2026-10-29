@@ -1,6 +1,9 @@
 import type { ModelChoice } from "../../../features/agents/ModelPicker";
 import type { RemoteAgentModel } from "../agents/client";
 
+export const effortLabel = (id: string) =>
+  id === "xhigh" ? "Extra high" : `${id.charAt(0).toUpperCase()}${id.slice(1)}`;
+
 // Builderlab owns these catalog aliases. Keep this mapping in sync with its
 // catalog information until the API supplies a model-family field. Unknown
 // names fall through to shared inference; labels, IDs and efforts remain server-owned.

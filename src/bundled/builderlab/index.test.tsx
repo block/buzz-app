@@ -899,10 +899,10 @@ it.each([
       );
       await user.click(
         within(createDialog).getByRole("combobox", {
-          name: "Reasoning effort",
+          name: "Thinking",
         }),
       );
-      await user.click(await screen.findByRole("option", { name: "high" }));
+      await user.click(await screen.findByRole("option", { name: "High" }));
       await user.type(
         within(createDialog).getByRole("textbox", {
           name: "Instructions Optional",

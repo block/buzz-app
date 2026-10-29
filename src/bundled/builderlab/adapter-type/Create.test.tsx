@@ -22,7 +22,7 @@ const catalog = [
   {
     id: "one",
     display_name: "Model One",
-    supported_reasoning_efforts: ["low", "high"],
+    supported_reasoning_efforts: ["low", "high", "xhigh"],
   },
   {
     id: "two",
@@ -92,9 +92,7 @@ it("loads the catalog and keeps instructions alongside explicit model and effort
   await act(async () => h.pending.resolve());
   const model = await screen.findByRole("combobox", { name: "Model" });
   expect(model).toHaveTextContent("Choose a model");
-  expect(
-    screen.getByRole("combobox", { name: "Reasoning effort" }),
-  ).toBeDisabled();
+  expect(screen.getByRole("combobox", { name: "Thinking" })).toBeDisabled();
   await userEvent
     .setup()
     .type(
@@ -102,13 +100,14 @@ it("loads the catalog and keeps instructions alongside explicit model and effort
       "Be precise.",
     );
   await choose("Model", "Model One");
-  await choose("Reasoning effort", "high");
+  await choose("Thinking", "Extra high");
+  expect(h.draft().reasoningEffort).toBe("xhigh");
   await choose("Model", "Model Two");
   expect(h.draft().reasoningEffort).toBe("");
   expect(
     screen.getByRole("textbox", { name: "Instructions Optional" }),
   ).toHaveValue("Be precise.");
-  await choose("Reasoning effort", "none");
+  await choose("Thinking", "None");
   expect(h.draft()).toEqual({
     instructions: "Be precise.",
     modelId: "two",

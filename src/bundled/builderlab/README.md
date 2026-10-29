@@ -7,7 +7,7 @@ One Builderlab account for communities and agents that Builderlab hosts for you,
 1. Go to **Settings → Plugins → Builderlab** and choose **Sign in with Builderlab**.
 2. To host a community, choose **Create community** under **Communities**, then **Copy address**, open the community picker and choose **Join a community**.
 3. To host an agent, in **Agents** choose **New agent** and pick **Builderlab (hosted)** as the **Harness**.
-4. Choose a model and reasoning effort, optionally add instructions, then create the agent.
+4. Choose a model and thinking level, optionally add instructions, then create the agent.
 5. Edit model settings and instructions later in **Identity**.
 
 ---
@@ -82,7 +82,7 @@ saves changes directly to the provider. Loading and saving use the same login;
 failed saves keep the draft, and switching accounts requires the original
 account before saving. Empty instructions can be saved to clear them.
 The Identity tab also loads a separate model catalog from Builderlab. Choose a
-model and one of that model's reasoning efforts, then save the pair for new tasks.
+model and one of that model's thinking levels, then save the pair for new tasks.
 There is no default or fallback selection. Missing or unavailable saved choices
 show the server's setup status and require a supported pair. Changing the model
 clears the effort choice. One shared Save action sits in the agent pane's bottom

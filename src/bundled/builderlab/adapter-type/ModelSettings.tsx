@@ -23,19 +23,16 @@ import {
   type RemoteAgentModel,
 } from "../agents/client";
 import type { OAuthSession } from "../oauth/session";
-import { modelChoice } from "./models";
-
-const effortLabel = (id: string) =>
-  id === "xhigh" ? "Extra high" : `${id.charAt(0).toUpperCase()}${id.slice(1)}`;
+import { effortLabel, modelChoice } from "./models";
 
 const statuses = {
-  "setup-required": "Choose a model and reasoning effort to finish setup.",
+  "setup-required": "Choose a model and thinking level to finish setup.",
   "model-unavailable":
-    "The saved model is no longer available. Choose another model and reasoning effort.",
+    "The saved model is no longer available. Choose another model and thinking level.",
   "effort-unsupported":
-    "The saved reasoning effort is no longer supported. Choose a supported effort.",
+    "The saved thinking level is no longer supported. Choose a supported level.",
   unknown:
-    "The server has not confirmed the saved model selection. Choose a model and reasoning effort.",
+    "The server has not confirmed the saved model selection. Choose a model and thinking level.",
 };
 const message = (reason: unknown) =>
   reason instanceof Error ? reason.message : "Could not load model settings.";
@@ -172,7 +169,7 @@ export function ModelSettings({
           {saved.modelId &&
             ` Saved model: ${models?.find((choice) => choice.id === saved.modelId)?.displayName ?? saved.modelId}.`}
           {saved.reasoningEffort &&
-            ` Saved effort: ${effortLabel(saved.reasoningEffort)}.`}
+            ` Saved thinking: ${effortLabel(saved.reasoningEffort)}.`}
         </p>
       )}
       <SettingsGroup>

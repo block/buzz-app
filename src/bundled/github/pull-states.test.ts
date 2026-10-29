@@ -121,14 +121,17 @@ it("keys a pull request by its canonical URL, so pasted variants share one entry
     r1: rollup("MERGED"),
   }));
   const states = createPullStates(gh);
-  const changed = [vi.fn(), vi.fn(), vi.fn()] as const;
-  // As pasted from a GitHub email, from the address bar, and plain.
+  const changed = [vi.fn(), vi.fn(), vi.fn(), vi.fn()] as const;
+  // As pasted from a GitHub email, from the address bar, with GitHub's own
+  // casing, and plain, as a watch gives it.
   const query = `${pull}?notification_referrer_id=abc&diff=split`;
   const slash = `${pull}/`;
+  const cased = "https://github.com/Block/Buzz-App/pull/7";
   const stop = [
     states.watch(query, changed[0]),
     states.watch(slash, changed[1]),
     states.watch(second, changed[2]),
+    states.watch(cased, changed[3]),
   ];
   await vi.waitFor(() => expect(states.get(second)).toBeDefined());
   // One query, with the numbers GitHub needs, not `null` or 0 for the
@@ -147,6 +150,7 @@ it("keys a pull request by its canonical URL, so pasted variants share one entry
   expect(states.get(query)).toEqual(state);
   expect(states.get(slash)).toBe(states.get(query));
   expect(states.get(pull)).toBe(states.get(query));
+  expect(states.get(cased)).toBe(states.get(query));
   expect(states.get(second)).toEqual({ state: "merged", conflicts: false });
   for (const unwatch of stop) unwatch();
 });

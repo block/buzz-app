@@ -573,9 +573,11 @@ const holds = (state: PullState | "failed" | undefined, level: PullLevel) =>
 /** The pull request `url` names, as the store keys it: its canonical URL, so
  * a link pasted with a query string or trailing slash shares the entry, and
  * the read, of the plain one. Undefined for a URL that is not a pull request's. */
+/** GitHub names are not case-sensitive, so one key holds every casing a
+ * link, the panel or a watch gives. */
 const keyOf = (url: string) => {
   const reference = parseGitHubReference(url);
-  return reference?.kind === "pull" ? reference.url : undefined;
+  return reference?.kind === "pull" ? reference.url.toLowerCase() : undefined;
 };
 
 type Listener = Readonly<{

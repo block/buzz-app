@@ -38,7 +38,11 @@ it.each([
 afterEach(() => {
   for (const cleanup of cleanups.splice(0)) cleanup();
 });
-function setup(type = "stream") {
+function setup(
+  type = "stream",
+  visibility: "private" | "public" = "private",
+  joinRole: "member" | "guest" = "member",
+) {
   const viewer = keypair(),
     relay = keypair(),
     person = keypair();
@@ -94,7 +98,13 @@ function setup(type = "stream") {
             signed(relay, {
               kind: 39000,
               content: "",
-              tags: [["d", id], ["t", type], ["private"], ["name", "Design"]],
+              tags: [
+                ["d", id],
+                ["t", type],
+                [visibility],
+                ["join_role", joinRole],
+                ["name", "Design"],
+              ],
             }),
             roster(foreign ? person : relay, id, members, clock),
           ].filter((event) =>
@@ -194,7 +204,7 @@ function setup(type = "stream") {
       addChannelMember(owner.session, id, person.pubkey, signal),
   };
 }
-it("adds a person without changing roles and confirms the live roster using membership capability alone", async () => {
+it("adds a private-channel participant explicitly and confirms the live roster using membership capability alone", async () => {
   const t = setup();
   await t.ready();
   await t.add();
@@ -205,9 +215,7 @@ it("adds a person without changing roles and confirms the live roster using memb
       ["p", t.person.pubkey],
     ]),
   );
-  expect(
-    t.publish.mock.calls[0]?.[0].tags.some(([tag]) => tag === "role"),
-  ).toBe(false);
+  expect(t.publish.mock.calls[0]?.[0].tags).toContainEqual(["role", "member"]);
   expect(t.session.channels.list().channels[0]?.members).toContain(
     t.person.pubkey,
   );
@@ -220,6 +228,30 @@ it("uses the bot role for an existing library agent", async () => {
   await t.setAgent();
   await t.add();
   expect(t.publish.mock.calls[0]?.[0].tags).toContainEqual(["role", "bot"]);
+});
+it("adds a participant despite a private channel's saved Guest default", async () => {
+  const t = setup("stream", "private", "guest");
+  await t.ready();
+  await t.managedAdd();
+  expect(t.publish.mock.calls[0]?.[0].tags).toContainEqual(["role", "member"]);
+});
+it.each(["member", "guest"] as const)(
+  "leaves the public %s admission default to the relay",
+  async (joinRole) => {
+    const t = setup("stream", "public", joinRole);
+    await t.ready();
+    await t.add();
+    expect(
+      t.publish.mock.calls[0]?.[0].tags.some(([tag]) => tag === "role"),
+    ).toBe(false);
+  },
+);
+it("does not resend an addition for someone already in the private channel", async () => {
+  const t = setup("stream", "private", "guest");
+  await t.ready();
+  t.confirmPerson();
+  await t.managedAdd();
+  expect(t.publish).not.toHaveBeenCalled();
 });
 it("preserves a rejected operation and retries its exact identity", async () => {
   const t = setup();

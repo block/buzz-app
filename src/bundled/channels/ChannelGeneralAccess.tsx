@@ -275,44 +275,46 @@ function ChannelGeneralAccessEditor({
                 : "Channel access could not be confirmed."
               : base.visibility === "public"
                 ? `Anyone in the community can find and ${base.joinRole === "guest" ? "view" : "participate"}.`
-                : `New channel members can ${base.joinRole === "guest" ? "view" : "participate"}.`}
+                : "Only people you add can read this channel."}
           </p>
         </div>
-        <div className={styles.accessRole}>
-          <Select
-            variant="compact"
-            appearance="outlined"
-            label="New people can"
-            align="end"
-            value={base ? (base.joinRole ?? "member") : ""}
-            placeholder={loading ? "Loading access…" : "Access unavailable"}
-            disabled={locked}
-            groups={[
-              {
-                label: "",
-                options: [
-                  {
-                    value: "member",
-                    label: "Participate",
-                    description: "Send messages, reply, and react.",
-                  },
-                  {
-                    value: "guest",
-                    label: "View only",
-                    description: "Read messages and threads.",
-                  },
-                ],
-              },
-            ]}
-            onValueChange={(joinRole) => {
-              if (
-                (joinRole === "member" || joinRole === "guest") &&
-                joinRole !== (base?.joinRole ?? "member")
-              )
-                choose({ joinRole }, 1);
-            }}
-          />
-        </div>
+        {base?.visibility !== "private" && (
+          <div className={styles.accessRole}>
+            <Select
+              variant="compact"
+              appearance="outlined"
+              label="New people can"
+              align="end"
+              value={base ? (base.joinRole ?? "member") : ""}
+              placeholder={loading ? "Loading access…" : "Access unavailable"}
+              disabled={locked}
+              groups={[
+                {
+                  label: "",
+                  options: [
+                    {
+                      value: "member",
+                      label: "Participate",
+                      description: "Send messages, reply, and react.",
+                    },
+                    {
+                      value: "guest",
+                      label: "View only",
+                      description: "Read messages and threads.",
+                    },
+                  ],
+                },
+              ]}
+              onValueChange={(joinRole) => {
+                if (
+                  (joinRole === "member" || joinRole === "guest") &&
+                  joinRole !== (base?.joinRole ?? "member")
+                )
+                  choose({ joinRole }, 1);
+              }}
+            />
+          </div>
+        )}
       </div>
       {error && (
         <p role="alert" className="text-body-sm text-danger">

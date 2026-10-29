@@ -1769,7 +1769,19 @@ test("member addition works without channel creation, while role elevation remai
       ).toBe("accepted"),
     );
     expect(h.publications).toHaveLength(1);
-    for (const role of ["owner", "admin", "member"]) {
+    const participantId = owner.outbox.send({
+      kind: 9000,
+      content: "",
+      tags: [...tags, ["role", "member"]],
+    });
+    await vi.waitFor(() =>
+      expect(
+        owner.local.snapshot().find((row) => row.event.id === participantId)
+          ?.delivery,
+      ).toBe("accepted"),
+    );
+    expect(h.publications).toHaveLength(2);
+    for (const role of ["owner", "admin", "guest"]) {
       const denied = await h.post("sign", {
         kind: 9000,
         content: "",

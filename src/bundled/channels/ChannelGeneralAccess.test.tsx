@@ -112,7 +112,7 @@ const base: ChannelDetails = {
   version: "v1",
   name: "Alpha",
   description: "Description",
-  visibility: "private",
+  visibility: "public",
   joinRole: "guest",
   canEdit: true,
 };
@@ -171,7 +171,7 @@ it.each(["public", "private"] as const)(
       await screen.findByText(
         visibility === "public"
           ? "Anyone in the community can find and view."
-          : "New channel members can view.",
+          : "Only people you add can read this channel.",
       ),
     ).toBeVisible();
     const option = visibility === "public" ? "Private" : "Public";
@@ -207,9 +207,35 @@ it.each(["public", "private"] as const)(
       next,
       expect.any(AbortSignal),
     );
+    if (visibility === "public") {
+      expect(
+        screen.queryByRole("combobox", { name: "New people can" }),
+      ).not.toBeInTheDocument();
+    } else {
+      expect(
+        screen.getByRole("combobox", { name: "New people can" }),
+      ).toHaveTextContent("View only");
+    }
   },
 );
-it("confirms new people's View only/Participate access independently of private reading access", async () => {
+it.each(["member", "guest"] as const)(
+  "hides the private %s admission default without rewriting it",
+  async (joinRole) => {
+    const h = harness();
+    h.load.mockResolvedValue({ ...base, visibility: "private", joinRole });
+    render(
+      <ChannelGeneralAccess capability={h.capability} channelId="alpha" />,
+    );
+    expect(
+      await screen.findByText("Only people you add can read this channel."),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("combobox", { name: "New people can" }),
+    ).not.toBeInTheDocument();
+    expect(h.save).not.toHaveBeenCalled();
+  },
+);
+it("confirms new people's View only/Participate access independently of public reading access", async () => {
   const h = harness();
   const user = userEvent.setup();
   render(<ChannelGeneralAccess capability={h.capability} channelId="alpha" />);
@@ -227,9 +253,9 @@ it("confirms new people's View only/Participate access independently of private 
   );
   expect(
     screen.getByRole("combobox", { name: "Who can read" }),
-  ).toHaveTextContent("Private");
+  ).toHaveTextContent("Public");
   expect(
-    screen.getByText("New channel members can participate."),
+    screen.getByText("Anyone in the community can find and participate."),
   ).toBeVisible();
 });
 it("shows the absent Member default without saving, and a declined save reloads current access", async () => {

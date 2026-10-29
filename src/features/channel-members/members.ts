@@ -160,7 +160,8 @@ export async function addChannelMember(
                 ([tag, value]) => tag === "p" && value === pubkey,
               ) &&
               !event.tags.some(
-                ([tag, value]) => tag === "role" && value !== "bot",
+                ([tag, value]) =>
+                  tag === "role" && value !== "bot" && value !== "member",
               ),
         );
   if (pending?.guarded && !channel()?.members?.includes(pubkey))
@@ -194,6 +195,16 @@ export async function addChannelMember(
       .snapshot()
       .identities.some((agent) => agent.pubkey === pubkey) ||
     session.profiles.snapshot().get(pubkey)?.isAgent;
+  const current = channel();
+  // Private channel additions grant participation explicitly, even if an older
+  // saved admission default is Guest. Solo and system admission stay separate.
+  const role = isAgent
+    ? "bot"
+    : !soloParticipant &&
+        current?.visibility === "private" &&
+        (current.channelType === "stream" || current.channelType === "forum")
+      ? "member"
+      : undefined;
   beforeDispatch?.();
   const id =
     pending?.event.id ??
@@ -204,7 +215,7 @@ export async function addChannelMember(
         tags: [
           ["h", channelId],
           ["p", pubkey],
-          ...(isAgent ? [["role", "bot"]] : []),
+          ...(role ? [["role", role]] : []),
         ],
       },
       recovery,

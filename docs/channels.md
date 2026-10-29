@@ -732,8 +732,8 @@ confirmation. Immutable roles such as Owner and self remain protected.
 The access row stays below and outside the scrolling member list, without a visible
 section heading. It uses the same avatar slot and type sizes as member rows: a community avatar/lock
 icon, a compact audience Select (**Who can read**) with **Public** / **Private**
-labels, a hint explaining the audience and selected participation default,
-and the trailing **New people can** Select (Participate / View only), with short
+labels, a hint explaining the audience and, for public channels, the selected participation default,
+and a public-only trailing **New people can** Select (Participate / View only), with short
 descriptions of the permitted actions. Audience options show the community avatar and
 lock icon inside the dropdown. The audience Select uses the shared text-link
 treatment; the participation Select is outlined and vertically centered against
@@ -751,6 +751,15 @@ access check that failed, retaining the underlying error. No request is retried.
 Uncertain results survive closing the dialog and offer **Check save status**,
 which reads without republishing. Opening or checking never writes. Private
 channels with a Guest default remain intact when changing unrelated details.
+
+In the private-channel experiment, the footer omits **New people can** and says
+"Only people you add can read this channel." Ordinary human additions explicitly
+request Member (Participate), including when an older saved admission default is
+Guest. Existing roles are not changed; **Add as** still permits an individual
+View only or Admin choice. Public additions keep their admission-default behavior,
+agents retain Bot, and Solo/system admission is unchanged. The saved default is
+preserved so it reappears when the channel becomes public and the experiment can
+be reverted without a metadata migration.
 
 Readers see General access as plain text from verified channel discovery metadata,
 without calling the editing capability. Its audience description is followed by

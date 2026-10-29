@@ -2072,12 +2072,7 @@ function ChannelWorkspace({
                       {
                         id: "conversation",
                         label: current?.name ?? "Channels",
-                        icon:
-                          current?.channelType === "dm" ? (
-                            <ChatCircleIcon size="1rem" />
-                          ) : (
-                            <CurrentChannelIcon size="1rem" />
-                          ),
+                        icon: <CurrentChannelIcon size="1rem" />,
                         content: (
                           <div
                             ref={channelConversation}

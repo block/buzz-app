@@ -34,6 +34,8 @@ import {
   type AgentStore,
 } from "../../features/agents/state";
 import type { HostProcessOptions } from "../../features/host/service";
+import type { ChannelSummary } from "../../features/relay/contracts";
+import type { RelayData } from "../../features/relay/service";
 import { ClaudeLogoIcon } from "../../shared/design-system/icons";
 import { manifestProcesses } from "./claude-testing";
 import { apply, inject } from "./index";
@@ -129,9 +131,12 @@ function applied({
   files = {},
   catalog = { listed: true },
   storage,
+  channels,
 }: {
   /** Agent storage; this page's localStorage without it. */
   storage?: AgentStore;
+  /** The community's channels; no community connection without them. */
+  channels?: readonly ChannelSummary[];
   loggedIn?: boolean;
   available?: boolean;
   version?: string;
@@ -255,7 +260,14 @@ function applied({
         type = registered;
       },
       snapshot: () => ({ status: "ready", agents: [], running: [] }),
-      relay: () => undefined,
+      relay: () =>
+        channels &&
+        ({
+          snapshot: () => ({
+            status: "ready",
+            session: { channels: { list: () => ({ channels }) } },
+          }),
+        } as unknown as RelayData),
       subscribe: () => () => undefined,
     },
     effect: vi.fn(),
@@ -282,6 +294,48 @@ async function choose(label: string, option: string) {
   await user.click(screen.getByRole("combobox", { name: label }));
   await user.click(await screen.findByRole("option", { name: option }));
 }
+
+it("shows each saved conversation's channel with the sidebar's icon", () => {
+  localStorage.setItem(
+    "buzz.claude-code.sessions.v1",
+    JSON.stringify({
+      [agent().key]: {
+        public: { id: "s1", seen: 0, at: 4 },
+        private: { id: "s2", seen: 0, at: 3 },
+        dm: { id: "s3", seen: 0, at: 2 },
+        solo: { id: "s4", seen: 0, at: 1 },
+      },
+    }),
+  );
+  const Activity = tab(
+    installed({
+      channels: [
+        { id: "public", name: "general", channelType: "stream" },
+        { id: "private", name: "plans", channelType: "stream", private: true },
+        { id: "dm", name: "Pinky", channelType: "dm", hidden: true },
+        { id: "solo", name: "Notes", channelType: "solo", private: true },
+      ],
+    }).type,
+    1,
+  );
+  render(<Activity agent={agent()} save={vi.fn()} />);
+  const shown = (row: HTMLElement) => {
+    const name = within(row).getByTitle(/ · channel$/);
+    const icon = name.querySelector("svg")?.getAttribute("class");
+    return `${icon?.match(/tabler-icon-[\w-]+/)?.[0]} ${name.textContent}`;
+  };
+  expect(
+    screen.getAllByRole("listitem").map((row) => shown(row as HTMLElement)),
+  ).toEqual([
+    "tabler-icon-hash general",
+    "tabler-icon-lock plans",
+    "tabler-icon-message-circle Pinky",
+    "tabler-icon-message-circle Notes",
+  ]);
+  expect(
+    screen.getByRole("button", { name: "View transcript: plans · channel" }),
+  ).toBeVisible();
+});
 
 it("lists saved conversations and shows one's transcript, or that it is gone", async () => {
   const thread = `channel/${"e".repeat(64)}`;
@@ -470,6 +524,11 @@ it("sets the conversation the profile was opened from apart from recent conversa
   expect(
     screen.getByRole("button", { name: "View transcript: channel · channel" }),
   ).toBeVisible();
+  // Unlisted by the community, their kind is unknown: no icon claims one.
+  expect(within(opened).getByTitle("channel").querySelector("svg")).toBeNull();
+  expect(
+    screen.getByTitle("channel · channel").querySelector("svg"),
+  ).toBeNull();
 });
 
 it("finds the thread's Claude session another build started", async () => {
@@ -509,6 +568,55 @@ it("finds the thread's Claude session another build started", async () => {
   await open();
   expect(searched).toBeGreaterThan(0);
   expect(searches()).toBe(searched);
+});
+
+it("shows the channel's current kind for a session another build started", async () => {
+  const root = "f".repeat(64);
+  const started = JSON.stringify({
+    type: "user",
+    uuid: "u1",
+    timestamp: "2026-10-09T10:00:00Z",
+    message: {
+      content: `<context>\nScope: thread\nSession scope: thread\nChannel: dev (#channel)\nThread root: ${root}\nAgent: ${agent().key}\n</context>\n\n<buzz-event>\nEvent ID: e\nContent: what changed?\nTags: []\n</buzz-event>`,
+    },
+  });
+  const channels: ChannelSummary[] = [
+    { id: "channel", name: "dev", channelType: "stream" },
+  ];
+  const { type, spawn } = installed({
+    files: { "./-Users-me--buzz/elsewhere.jsonl": started },
+    channels,
+  });
+  const Activity = tab(type, 1);
+  // A new element each time, so that rerendering renders the tab again.
+  const shown = () => (
+    <Activity
+      agent={agent()}
+      save={vi.fn()}
+      conversation={{ channelId: "channel", rootId: root }}
+    />
+  );
+  const view = render(shown());
+  const here = screen.getByRole("region", { name: "This thread" });
+  await within(here).findByRole("button", { name: /^View transcript/ });
+  expect(within(here).getByTitle("dev").querySelector("svg")).toHaveClass(
+    "tabler-icon-hash",
+  );
+  const searched = spawn.mock.calls.filter(([id]) => id === "starts").length;
+
+  channels[0] = {
+    id: "channel",
+    name: "plans",
+    channelType: "stream",
+    private: true,
+  };
+  view.rerender(shown());
+  expect(within(here).getByTitle("plans").querySelector("svg")).toHaveClass(
+    "tabler-icon-lock",
+  );
+  expect(spawn.mock.calls.filter(([id]) => id === "starts").length).toBe(
+    searched,
+  );
 });
 
 it("is an agent type on the desktop app", () => {

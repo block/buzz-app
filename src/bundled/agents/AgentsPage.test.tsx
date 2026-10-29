@@ -2465,6 +2465,7 @@ it("offers hosted agents as members, warning that they may not get the instructi
   setup([
     agent("Ada", 1),
     { ...agent("Sky", 2), place: "hosted" },
+    { ...agent("Kai", 5), place: "hosted" },
     { ...agent("Bo", 3), place: "hosted", unfinished: true },
     { ...agent("Cy", 4), place: "elsewhere" },
   ]);
@@ -2478,12 +2479,19 @@ it("offers hosted agents as members, warning that they may not get the instructi
   );
   expect(members.map(Boolean)).toEqual([true, true, false, false]);
   const instructions = screen.getByRole("textbox", { name: "Instructions" });
-  const warning = /Remote agents on this team/;
+  const warning = /remotely/;
   await user.click(screen.getByRole("checkbox", { name: "Ada" }));
   expect(instructions).not.toHaveAccessibleDescription(warning);
   await user.click(screen.getByRole("checkbox", { name: "Sky" }));
-  expect(instructions).toHaveAccessibleDescription(warning);
+  expect(instructions).toHaveAccessibleDescription(
+    /Sky runs remotely and may not get these instructions\.$/,
+  );
+  await user.click(screen.getByRole("checkbox", { name: "Kai" }));
+  expect(instructions).toHaveAccessibleDescription(
+    /Sky and Kai run remotely and may not get these instructions\.$/,
+  );
   await user.click(screen.getByRole("checkbox", { name: "Sky" }));
+  await user.click(screen.getByRole("checkbox", { name: "Kai" }));
   expect(instructions).not.toHaveAccessibleDescription(warning);
 });
 

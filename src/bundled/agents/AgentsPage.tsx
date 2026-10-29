@@ -79,6 +79,7 @@ import {
   PlusIcon,
   RobotIcon,
   StarFilledIcon,
+  WarningCircleIcon,
   XIcon,
 } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -116,6 +117,10 @@ import { agentProviderRoute, agentProviderTarget, agentRoute } from "./routes";
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 const noSubscribe = () => () => {};
+const names = (agents: readonly Agent[]) =>
+  new Intl.ListFormat(undefined, { type: "conjunction" }).format(
+    agents.map((agent) => agent.name),
+  );
 const importReminderKey = "agent-community-import:dismissed";
 
 /** The type's one-line summary of an agent; its title when it has none. */
@@ -2145,7 +2150,7 @@ function TeamEditor({
       agents.memberships(pubkey).length > 0,
   ).length;
   // Their provider runs them, so they may not get the team's instructions.
-  const remote = saved.some(
+  const remote = saved.filter(
     (agent) => agent.place === "hosted" && members.includes(agent.pubkey),
   );
   const act = async (work: () => Promise<unknown>) => {
@@ -2202,9 +2207,10 @@ function TeamEditor({
         description={
           <>
             Every member follows these after its own instructions.
-            {remote && (
-              <span className="mt-1 block text-warning">
-                Remote agents on this team may not get these instructions.
+            {remote.length > 0 && (
+              <span className="mt-1 flex items-start gap-1 text-warning">
+                <WarningCircleIcon className="mt-0.5 shrink-0" aria-hidden />
+                {`${names(remote)} ${remote.length === 1 ? "runs" : "run"} remotely and may not get these instructions.`}
               </span>
             )}
           </>

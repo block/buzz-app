@@ -61,6 +61,8 @@ credential loader is copied into the plugin.
   The check reads before it writes, so two writes racing that one read can
   still both land. `mem_rm` deletes an entry with a NIP-AE tombstone and
   always needs the version; it refuses `core`, which has no tombstone.
+  Listings report each tombstone's slug and time apart from the entries, so
+  `mem_set` dates a recreated entry after it.
   `mem_get q` searches the whole listing client side, so it is subject to
   the same limits and partial mark.
 - Ten-second incoming upload deadline.

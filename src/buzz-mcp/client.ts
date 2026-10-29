@@ -49,6 +49,8 @@ export type ChannelTemplate = Readonly<{
  * limit, a deadline or the relay's rate limit. */
 export type Memories = Readonly<{
   entries: readonly Memory[];
+  /** Deleted entries' tombstones, which a write recreating one must follow. */
+  deleted?: readonly Readonly<{ slug: string; createdAt: number }>[];
   partial: boolean;
 }>;
 

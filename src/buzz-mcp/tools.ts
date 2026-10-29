@@ -908,7 +908,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       );
     // A write must be dated after the entry it replaces, so it waits for a
     // read that finds the entry or confirms there is none.
-    const { entries, partial } = await tools.client.memories(key);
+    const { entries, deleted, partial } = await tools.client.memories(key);
     const current = entries.find((entry) => entry.slug === key);
     if (!current && partial)
       throw new Error(`Memory ${key} could not be read; try again.`);
@@ -927,7 +927,13 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       throw new Error(
         `${key} changed since version ${expected}. Read it again with mem_get, merge your change into it, and pass the new version as expected.`,
       );
-    await tools.client.remember(key, body, current?.createdAt ?? 0);
+    // Recreating a deleted entry follows its tombstone.
+    const tombstone = deleted?.find((entry) => entry.slug === key);
+    await tools.client.remember(
+      key,
+      body,
+      current?.createdAt ?? tombstone?.createdAt ?? 0,
+    );
     const saved = `saved; version ${await memoryVersion(body)}`;
     if (key !== "core") return saved;
     const size = new TextEncoder().encode(body).length;

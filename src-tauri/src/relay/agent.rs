@@ -605,13 +605,20 @@ struct MemoryDecoder {
 
 impl MemoryDecoder {
     fn listing(&self) -> Value {
-        let entries: Vec<_> = self
+        let (deleted, entries): (Vec<_>, Vec<_>) = self
             .heads
             .values()
             .map(|(_, _, entry)| entry)
-            .filter(|entry| !entry["body"].is_null())
-            .collect();
-        json!({"entries": entries, "partial": self.partial})
+            .partition(|entry| entry["body"].is_null());
+        let mut listing = json!({"entries": entries, "partial": self.partial});
+        // A write that recreates a deleted slug must be dated after its tombstone.
+        if !deleted.is_empty() {
+            listing["deleted"] = deleted
+                .into_iter()
+                .map(|entry| json!({"slug": entry["slug"], "createdAt": entry["createdAt"]}))
+                .collect();
+        }
+        listing
     }
 }
 
@@ -960,7 +967,44 @@ mod tests {
         assert_eq!(listing["partial"], false);
         assert_eq!(listing["entries"][0]["body"], "private fixture core");
         assert_eq!(listing["entries"][1]["body"], "private fixture entry");
+        assert!(listing.get("deleted").is_none());
         assert_ne!(agent, owner);
+    }
+
+    #[test]
+    fn a_deleted_entry_reports_its_tombstone_so_a_recreation_can_follow_it() {
+        let agent_key = buzz_agent_controller::Secret::generate().unwrap();
+        let agent = agent_key.pubkey().to_owned();
+        let owner_bytes = [2; 32];
+        let owner = signed_event(&owner_bytes, 1, vec![], String::new()).pubkey;
+        let event = |body, created_at| {
+            Some(
+                agent_key
+                    .memory_event(&owner, "mem/one", body, created_at)
+                    .unwrap(),
+            )
+        };
+        let read = |events: &[Option<Value>]| {
+            decode_memories_with_key(&owner_bytes, &owner, &owner, &agent, events, || false)
+                .unwrap()
+        };
+        // An entry dated ahead of the clock, then the tombstone that follows it.
+        let mut events = vec![
+            event(Some("kept"), 4_000_000_000),
+            event(None, 4_000_000_001),
+        ];
+        let listing = read(&events);
+        assert_eq!(listing["entries"], json!([]));
+        assert_eq!(
+            listing["deleted"],
+            json!([{"slug": "mem/one", "createdAt": 4_000_000_001u64}])
+        );
+        // A recreation dated after the reported tombstone is the entry again.
+        let after = listing["deleted"][0]["createdAt"].as_u64().unwrap();
+        events.push(event(Some("again"), after + 1));
+        let listing = read(&events);
+        assert_eq!(listing["entries"][0]["body"], "again");
+        assert!(listing.get("deleted").is_none());
     }
 
     #[test]

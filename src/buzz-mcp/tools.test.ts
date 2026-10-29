@@ -657,6 +657,14 @@ it("deletes memory only at the version it was shown, and never core", async () =
   await expect(
     callTool(client, {}, "mem_rm", { slug: "gone", expected: "0".repeat(16) }),
   ).rejects.toThrow("No memory mem/gone.");
+  // Recreating a deleted entry is dated after its tombstone.
+  vi.mocked(client.memories).mockResolvedValue({
+    entries: [],
+    deleted: [{ slug: "mem/gone", createdAt: 70 }],
+    partial: false,
+  });
+  await callTool(client, {}, "mem_set", { slug: "gone", text: "back" });
+  expect(client.remember).toHaveBeenLastCalledWith("mem/gone", "back", 70);
 });
 
 it("refuses to overwrite core that another session changed since this one read it", async () => {

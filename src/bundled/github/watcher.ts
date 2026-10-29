@@ -95,8 +95,9 @@ export function watchPulls(ctx: Context) {
   /** Which organizations rules name each login is in, by the organizations
    * and login. */
   const members = new Map<string, { orgs: ReadonlySet<string>; at: number }>();
-  /** Failed reads of a login's membership, by the same key. */
-  const misses = new Map<string, number>();
+  /** Failed reads of a login's membership, by the same key, counted once a
+   * poll however many watches read it, and when the last was. */
+  const misses = new Map<string, { count: number; at: number }>();
   const memberKey = (orgs: readonly string[], login: string) =>
     `${orgs.join(" ")} ${login.toLowerCase()}`;
   /** Whether `login` is in `org`, as last read, or undefined when it has not
@@ -163,9 +164,11 @@ export function watchPulls(ctx: Context) {
       for (const login of batch) {
         const key = memberKey(orgs, login);
         if (members.get(key)?.at === now) continue;
-        const missed = (misses.get(key) ?? 0) + 1;
-        misses.set(key, missed);
-        if (missed >= LOOKUP_FAILURES) {
+        const last = misses.get(key);
+        if (last && now - last.at < POLL_MS) continue;
+        const count = (last?.count ?? 0) + 1;
+        misses.set(key, { count, at: now });
+        if (count >= LOOKUP_FAILURES) {
           members.set(key, { orgs: new Set(), at: now });
           misses.delete(key);
         }

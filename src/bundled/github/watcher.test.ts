@@ -1050,6 +1050,24 @@ describe("github_watch_pr", () => {
     app.dispose();
   });
 
+  it("counts a login's failed membership reads once a poll, however many watches read it", async () => {
+    savePolicy("allow org:block");
+    const app = setup();
+    const urls = [7, 8, 9].map((pull) => url.replace(/\d+$/, `${pull}`));
+    for (const pull of urls) await app.call({ url: pull });
+    app.members(null);
+    app.gh(
+      answer({ comments: [{ id: "I1", login: "wes", body: "body-wes" }] }),
+    );
+    await vi.advanceTimersByTimeAsync(4 * POLL_MS);
+    expect(app.texts()).toHaveLength(0);
+    app.members(["wes"]);
+    await vi.advanceTimersByTimeAsync(POLL_MS + QUIET_MS + POLL_MS);
+    expect(app.texts()).toHaveLength(3);
+    for (const text of app.texts()) expect(text).toContain("body-wes");
+    app.dispose();
+  });
+
   it("stops asking each login alone once the watch stops", async () => {
     savePolicy("allow org:block");
     const app = setup();

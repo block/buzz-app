@@ -317,6 +317,10 @@ function ConnectedApp({ services }: { services: AppServices }) {
         : { scope: null }),
     });
   };
+  const settingsUnavailable =
+    (!route.state.ingress && !!route.failure) ||
+    route.state.status === "failed";
+  const settingsBlocked = settingsUnavailable || route.waiting;
   const destinationFailure = (
     <div role="alert" className="notice">
       <h1>This destination couldn’t open</h1>
@@ -518,45 +522,51 @@ function ConnectedApp({ services }: { services: AppServices }) {
             }}
           >
             <div id="settings-content" className="h-full" tabIndex={-1}>
-              {(!route.state.ingress && route.failure) ||
-              route.state.status === "failed" ? (
+              {settingsUnavailable ? (
                 destinationFailure
               ) : route.waiting ? (
                 <p role="status">Opening destination…</p>
-              ) : (
-                <Settings
-                  agents={services.agents}
-                  decisions={services.decisions}
-                  plugins={plugins}
-                  cards={services.settingsCards}
-                  adminAccess={services.adminAccess}
-                  communities={services.communities}
-                  identity={services.identity}
-                  appearance={services.appearance}
-                  shortcuts={services.shortcuts}
-                  shortcutBindings={services.shortcutBindings}
-                  notifications={services.notifications}
-                  updates={services.updates}
-                  navigation={route.request}
-                  navigationPane
-                  onDeparturePending={(pending) => {
-                    const client = services.communities.snapshot();
-                    const attempt = route.state.attempt;
-                    if (pending && client.viewer && client.selected)
-                      setDeparture({
-                        attempt,
-                        viewer: client.viewer,
-                        communityId: client.selected,
-                      });
-                    else if (!pending)
-                      setDeparture((current) =>
-                        current?.attempt === attempt ? null : current,
-                      );
-                  }}
-                  onSection={openSettingsSection}
-                  onProvider={route.setSettingsProvider}
-                  onUnsavedChange={setSettingsUnsaved}
-                />
+              ) : null}
+              {(!settingsBlocked || settingsUnsaved) && (
+                <div
+                  className="h-full"
+                  hidden={settingsBlocked}
+                  inert={settingsBlocked}
+                >
+                  <Settings
+                    agents={services.agents}
+                    decisions={services.decisions}
+                    plugins={plugins}
+                    cards={services.settingsCards}
+                    adminAccess={services.adminAccess}
+                    communities={services.communities}
+                    identity={services.identity}
+                    appearance={services.appearance}
+                    shortcuts={services.shortcuts}
+                    shortcutBindings={services.shortcutBindings}
+                    notifications={services.notifications}
+                    updates={services.updates}
+                    navigation={route.request}
+                    navigationPane
+                    onDeparturePending={(pending) => {
+                      const client = services.communities.snapshot();
+                      const attempt = route.state.attempt;
+                      if (pending && client.viewer && client.selected)
+                        setDeparture({
+                          attempt,
+                          viewer: client.viewer,
+                          communityId: client.selected,
+                        });
+                      else if (!pending)
+                        setDeparture((current) =>
+                          current?.attempt === attempt ? null : current,
+                        );
+                    }}
+                    onSection={openSettingsSection}
+                    onProvider={route.setSettingsProvider}
+                    onUnsavedChange={setSettingsUnsaved}
+                  />
+                </div>
               )}
             </div>
             {confirmSettingsDiscard && settings && settingsUnsaved && (

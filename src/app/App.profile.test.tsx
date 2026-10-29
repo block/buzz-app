@@ -844,6 +844,65 @@ it("asks before any Settings dismissal discards unsaved profile edits", async ()
   ).toBeNull();
 }, 15_000);
 
+it.each(["pending", "unavailable"] as const)(
+  "retains a dirty Profile through a same-scope %s Settings destination",
+  async (state) => {
+    const user = await setup();
+    if (!services) throw new Error("Missing app services");
+    const current = services;
+    const profile = {
+      version: 1,
+      kind: "settings",
+      section: "profile",
+    } as const;
+    await act(async () => {
+      void current.navigation.open(profile);
+    });
+    await screen.findByRole("textbox", { name: "Display name" });
+    await act(async () => {
+      void current.navigation.open({
+        ...profile,
+        section: "agents",
+        provider: "test.sidebar/missing",
+      });
+    });
+    await screen.findByText("This destination couldn’t open");
+    act(() => current.navigation.back());
+    const name = await screen.findByRole("textbox", { name: "Display name" });
+    await waitFor(() => expect(name).toHaveValue("Community name"));
+    await user.clear(name);
+    await user.type(name, "Keep this draft");
+    if (state === "pending") {
+      const snapshot = current.plugins.snapshot();
+      const sidebar = snapshot.activation["test.sidebar"];
+      if (!sidebar) throw new Error("Missing sidebar plugin");
+      vi.spyOn(current.plugins, "snapshot").mockReturnValue({
+        ...snapshot,
+        activation: {
+          ...snapshot.activation,
+          "test.sidebar": {
+            ...sidebar,
+            status: "starting",
+          },
+        },
+      });
+    }
+    act(() => current.navigation.forward());
+    await screen.findByText(
+      state === "pending"
+        ? "Opening destination…"
+        : "This destination couldn’t open",
+    );
+    expect(name).toBeInTheDocument();
+    expect(name).not.toBeVisible();
+    act(() => current.navigation.back());
+    expect(await screen.findByRole("textbox", { name: "Display name" })).toBe(
+      name,
+    );
+    expect(name).toHaveValue("Keep this draft");
+  },
+);
+
 it("retires an open discard prompt once the pending save is sent", async () => {
   const user = await setup();
   let release = () => {};

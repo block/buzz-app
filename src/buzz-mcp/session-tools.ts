@@ -128,7 +128,7 @@ export async function callSessionTool(
   // The owner can turn attention off while the session runs.
   if (!attention.enabled())
     throw new Error(
-      `Attention is off for you: your owner turned it off, so these tools do nothing now.\n(classifier: ${attention.classifier()})`,
+      `Attention is off for you on this device, so these tools do nothing now.\n(classifier: ${attention.classifier()})`,
     );
   return callAttentionTool(attention, name, args);
 }

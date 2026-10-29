@@ -1765,7 +1765,9 @@ it("always offers attention tools, on search, and says in each turn whether atte
   expect(await names(off, 2)).toContain("watch_add");
   expect(systemPromptOf(off)).toBe(systemPromptOf(on));
   // Only the turn says that attention is off, and the tools refuse.
-  expect(off?.prompts[0]).toMatch(/<attention>\nYour owner has attention off/);
+  expect(off?.prompts[0]).toMatch(
+    /<attention>\nAttention is off on this device/,
+  );
   expect(off?.prompts[0]).not.toContain("Handle the work");
   const refused = (await mcp(off, 3, "tools/call", {
     name: "interest_list",

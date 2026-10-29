@@ -266,6 +266,7 @@ export function createChannelDetails({
           throw new Error(uncertain);
         }
         attempts.delete(id);
+        if (error instanceof Error && error.name === "AbortError") throw error;
         if (!publicationStarted)
           throw new Error(
             `${phase}: ${error instanceof Error ? error.message : String(error)}`,

@@ -181,7 +181,7 @@ export function watchPulls(ctx: Context) {
     const feedback = text === null ? undefined : parseFeedback(text);
     const policy = loadPolicy();
     if (feedback) await lookUp(feedback, policy, snapshot.viewer);
-    const member = membership(organizations(policy));
+    const member = membership(organizations(policy), MEMBERSHIP_MS);
     const admitted = new Map(
       (feedback ?? []).map((item) => [
         item.id,
@@ -199,6 +199,21 @@ export function watchPulls(ctx: Context) {
       ids: snapshot.ids.filter((id) => known.has(id) || got.has(id)),
       // Feedback the rules deny is seen but not told.
       feedback: (feedback ?? []).filter((item) => admitted.get(item.id)),
+    };
+  };
+
+  /** `watch` without the waiting feedback the rules now deny, as they may
+   * have changed since it was read. */
+  const recheck = async (watch: Watch, viewer: string): Promise<Watch> => {
+    if (!watch.pending?.length) return watch;
+    const policy = loadPolicy();
+    await lookUp(watch.pending, policy, viewer);
+    const member = membership(organizations(policy), MEMBERSHIP_MS);
+    return {
+      ...watch,
+      pending: watch.pending.filter(
+        (item) => admit(item, policy, viewer, member) !== false,
+      ),
     };
   };
 
@@ -240,6 +255,8 @@ export function watchPulls(ctx: Context) {
           const snapshot = await read(pull.url, watch.seen);
           if (signal.aborted || disposed) return;
           if (!snapshot) throw new Error("gh could not read it");
+          watch = await recheck(watch, snapshot.viewer);
+          if (signal.aborted || disposed) return;
           const next = step(watch, snapshot, Date.now());
           if (next.wake)
             emit(
@@ -366,7 +383,11 @@ export function watchPulls(ctx: Context) {
       const moved =
         prior && (prior.channel !== watch.channel || prior.root !== watch.root);
       // What is already there is answered now rather than by a wake.
-      const first = step(watch, snapshot, Date.now());
+      const first = step(
+        await recheck(watch, snapshot.viewer),
+        snapshot,
+        Date.now(),
+      );
       if (first.ended && first.ended !== "limit")
         return `${pull.url} is ${first.ended}; nothing to watch.`;
       const fields = subscription({ ...first.watch, wakes: watch.wakes });

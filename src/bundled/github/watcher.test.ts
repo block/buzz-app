@@ -832,6 +832,51 @@ describe("github_watch_pr", () => {
     app.dispose();
   });
 
+  it("tells waiting feedback only if the rules still allow it", async () => {
+    const app = setup();
+    await app.call({ url });
+    app.gh(
+      answer({
+        comments: [
+          { id: "I1", login: "wes", body: "body-wes" },
+          { id: "I2", login: "stranger", body: "body-stranger" },
+        ],
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+    savePolicy("allow author:wes");
+    await vi.advanceTimersByTimeAsync(QUIET_MS + POLL_MS);
+    expect(app.texts()).toHaveLength(1);
+    expect(app.texts()[0]).toContain("body-wes");
+    expect(app.texts()[0]).not.toContain("body-stranger");
+    app.dispose();
+  });
+
+  it("does not trust an expired membership it could not read again", async () => {
+    savePolicy("allow org:block");
+    const app = setup();
+    await app.call({ url });
+    app.members(["alice"]);
+    const first = { id: "I1", login: "alice", body: "body-first" };
+    app.gh(answer({ comments: [first] }));
+    await vi.advanceTimersByTimeAsync(POLL_MS + QUIET_MS + POLL_MS);
+    expect(app.texts()).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(60 * POLL_MS);
+    app.members(null);
+    app.gh(
+      answer({
+        comments: [first, { id: "I2", login: "alice", body: "body-later" }],
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(POLL_MS + QUIET_MS + POLL_MS);
+    expect(app.texts()).toHaveLength(1);
+    app.members(["alice"]);
+    await vi.advanceTimersByTimeAsync(POLL_MS + QUIET_MS + POLL_MS);
+    expect(app.texts()).toHaveLength(2);
+    expect(app.texts()[1]).toContain("body-later");
+    app.dispose();
+  });
+
   it("keeps membership reads under the command's input limit", async () => {
     const organizations = Array.from(
       { length: 8 },

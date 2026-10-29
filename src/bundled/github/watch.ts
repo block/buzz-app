@@ -88,11 +88,15 @@ export type Step = Readonly<{
 
 /** The watch after `snapshot` at `now`, and what to tell its agent. */
 export function step(watch: Watch, snapshot: PullSnapshot, now: number): Step {
-  if (snapshot.state !== "OPEN")
+  if (snapshot.state !== "OPEN") {
+    const ended = snapshot.state === "MERGED" ? "merged" : "closed";
+    // The agent's last turn for this pull request, to finish its Interest.
     return {
       watch,
-      ended: snapshot.state === "MERGED" ? "merged" : "closed",
+      wake: `${watch.url} was ${ended}, so this watch has ended. Do what its Interest says to do now. If nothing remains for that Interest, remove this watch with watch_remove, then the Interest with interest_remove.`,
+      ended,
     };
+  }
   const { ids } = snapshot;
   // The first read only learns what was already there.
   const seen = new Set(watch.seen ?? ids);

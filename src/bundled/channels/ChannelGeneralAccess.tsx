@@ -14,7 +14,11 @@ import type {
 import { Button } from "../../shared/design-system/ui/Button";
 import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
 import { Select } from "../../shared/design-system/ui/Select";
-import { LockIcon, UsersIcon } from "../../shared/design-system/icons";
+import {
+  CircleNotchIcon,
+  LockIcon,
+  UsersIcon,
+} from "../../shared/design-system/icons";
 import styles from "./ChannelMembersDialog.module.css";
 import { privacyConsequence } from "./ChannelPrivacyConfirmation";
 
@@ -164,8 +168,19 @@ function ChannelGeneralAccessEditor({
     >
       <h3 className="text-label-sm">General access</h3>
       <div className={styles.accessRow}>
-        <span className={styles.accessIcon} aria-hidden="true">
-          {base?.visibility === "public" ? (
+        <span
+          className={styles.accessIcon}
+          aria-hidden={!pending || undefined}
+          role="status"
+          aria-label={pending ? "Saving access" : undefined}
+        >
+          {pending ? (
+            <CircleNotchIcon
+              size={24}
+              aria-hidden="true"
+              className="motion-safe:animate-spin"
+            />
+          ) : base?.visibility === "public" ? (
             <UsersIcon size={24} />
           ) : (
             <LockIcon size={24} />
@@ -219,6 +234,7 @@ function ChannelGeneralAccessEditor({
             variant="compact"
             appearance="ghost"
             label="New people can"
+            align="end"
             value={base ? (base.joinRole ?? "member") : ""}
             placeholder={loading ? "Loading access…" : "Access unavailable"}
             disabled={locked}
@@ -249,11 +265,6 @@ function ChannelGeneralAccessEditor({
           />
         </div>
       </div>
-      {pending && (
-        <p role="status" className="text-body-sm text-subtle">
-          Saving access…
-        </p>
-      )}
       {error && (
         <p role="alert" className="text-body-sm text-danger">
           {error}

@@ -224,6 +224,8 @@ it("locks both choices while saving and recovers an uncertain save after remount
   try {
     await user.click(screen.getByRole("button", { name: "Change access" }));
     await waitFor(() => expect(h.save).toHaveBeenCalledOnce());
+    expect(screen.getByRole("status", { name: "Saving access" })).toBeVisible();
+    expect(screen.queryByText("Saving access…")).not.toBeInTheDocument();
     for (const control of screen.getAllByRole("combobox"))
       expect(control).toBeDisabled();
     await waitFor(() =>
@@ -238,6 +240,9 @@ it("locks both choices while saving and recovers an uncertain save after remount
     });
   }
   await screen.findByRole("button", { name: "Check save status" });
+  expect(
+    screen.queryByRole("status", { name: "Saving access" }),
+  ).not.toBeInTheDocument();
   view.unmount();
   render(<ChannelGeneralAccess capability={h.capability} channelId="alpha" />);
   const check = await screen.findByRole("button", {

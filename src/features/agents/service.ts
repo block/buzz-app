@@ -64,6 +64,7 @@ import { ownerReads } from "./reads";
 // can show it: as here, hosted, or on another device.
 import { migrateAgentStorage } from "./migrate-storage";
 import { migrateWatchFilters } from "./migrate-filter";
+import { migrateWatchKeywords } from "./migrate-keywords";
 import { agentStorage, type AgentStore } from "./state";
 import { Service, type Context } from "@deepseek-ai/cordis";
 import { npubEncode } from "nostr-tools/nip19";
@@ -248,10 +249,19 @@ export type AgentConversation = Readonly<{
   channelId: string;
   rootId?: string;
 }>;
+/** A panel's ask for a conversation's transcript. `opening` identifies it: a
+ * new number is a new opening, even of the conversation already shown. */
+export type TranscriptRequest = Readonly<{ opening: number; done(): void }>;
 export type AgentViewProps<Config = unknown> = {
   agent: Agent<Config>;
   /** Where the agent was opened from, when it was opened from a conversation. */
   conversation?: AgentConversation;
+  /** Present while the panel asks to show that conversation's transcript
+   * first: an Activity tab does so, if it knows it then, and calls `done`
+   * once it has, so the panel asks only once. */
+  initialTranscript?: TranscriptRequest;
+  /** Closes the panel showing the tab. */
+  close?: () => void;
   /** Replaces the type's whole config. Spread `agent.config` to change one
    * field, or tabs that each save a part will erase each other's fields. A
    * hosted type's tabs save to its provider instead; for them this rejects. */
@@ -1537,6 +1547,7 @@ export class AgentsService extends Service implements Agents {
     // Each changes the copy at once and logs a failed save itself.
     void migrateAgentStorage(storage);
     void migrateWatchFilters(storage);
+    void migrateWatchKeywords(storage);
     this.records = readRecords(storage);
     void splitLegacyRecords(storage, this.records);
     void splitLegacyCheckpoints(storage);

@@ -351,15 +351,21 @@ it("keeps joined matches when open-channel search fails", async () => {
 
 it("uses the channel pickers' name rule, without scattered-letter matches", () => {
   const t = fixture([
-    channel("prs", { name: "buzz-github-prs" }),
-    channel("hub", { name: "agithub" }),
+    channel("plan", { name: "team-launch-planning" }),
+    channel("re", { name: "relaunch" }),
+    channel("tags", { name: "debounce-tags" }),
   ]);
-  const view = render(t.element("github"));
+  const view = render(t.element("launch"));
   // A word start (after "-") ranks before a match inside a word.
-  expect(t.result().items.map((item) => item.id)).toEqual(["prs", "hub"]);
-  // Command-K finds "bgp" by word initials; inline completion does not,
-  // because Enter would turn prose into a channel link.
-  view.rerender(t.element("bgp"));
+  expect(t.result().items.map((item) => item.id)).toEqual(["plan", "re"]);
+  // Letter runs that each begin a word match, as in Command-K.
+  view.rerender(t.element("tlp"));
+  expect(t.result().items.map((item) => item.id)).toEqual(["plan"]);
+  view.rerender(t.element("team-pl"));
+  expect(t.result().items.map((item) => item.id)).toEqual(["plan"]);
+  // Letters merely in order do not, because Enter would turn prose into a
+  // channel link: "dtg" is in debounce-tags only as scattered letters.
+  view.rerender(t.element("dtg"));
   expect(t.result().items).toEqual([]);
 });
 it("lists open channels after joined ones, each ranked by match", async () => {

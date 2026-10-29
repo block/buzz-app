@@ -1052,8 +1052,6 @@ The bundled Agents plugin owns the command producer and discovery tool. The GitH
 
 ## Attention delivery destinations
 
-Event watches can filter content with `keywords`: 1 to 32 nonblank literal strings, up to 256 bytes each. Matching is case-insensitive and passes when any keyword occurs anywhere in the event content. Keywords combine with the other deterministic selectors and do not require a classifier.
-
 Event watches and timers accept an optional delivery `channel` and thread `root`. The event watch's `channels` still selects where to listen. With an address, the wake continues that conversation with the Interest's instructions. A thread root must be readable by the agent in that destination channel; a missing or mismatched root stops delivery before the harness builds context. Claude, Codex, Goose and Pi accept these Attention triggers. A channel without a root defaults to channel-level posting, while explicit reporting instructions in the Interest can direct another thread or channel within the agent's existing authority. Solo chats retain their personal-chat framing and reply restriction. The address owns the execution conversation and default destination; the Interest owns explicit reporting policy.
 
 Without an address, the subscription runs an independent turn in its Interest's lane. Timers retain their occurrence and expiry budgets. An addressed timer waits without spending an occurrence while destination membership is unconfirmed or absent. `watch_show` reports delivery as held or blocked with a reason; delivery resumes once membership is confirmed. Expiry still applies while held. Membership checks never join channels. The Attention panel shows listening channels separately from the delivery destination.

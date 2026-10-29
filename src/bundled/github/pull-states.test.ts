@@ -1188,37 +1188,48 @@ it("keeps a reader's read when a refresh given up on before it finishes late", a
   await expect(read).resolves.toMatchObject({ state: { checks: "success" } });
 });
 
-it("lets the panel's own read try GitHub while its public limit holds the links", async () => {
-  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
-  const fetch = vi
-    .fn()
-    .mockResolvedValueOnce(limited(Date.now() + 60 * 60_000))
-    .mockResolvedValueOnce(limited(Date.now() + 60 * 60_000))
-    .mockResolvedValue(
-      new Response(JSON.stringify({ title: "Recovered", state: "open" })),
+it.each([
+  ["without gh", false],
+  ["while gh is unavailable", true],
+])(
+  "lets the panel's own read try GitHub while its public limit holds the links, %s",
+  async (_, withGh) => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(limited(Date.now() + 60 * 60_000))
+      .mockResolvedValueOnce(limited(Date.now() + 60 * 60_000))
+      .mockResolvedValue(
+        new Response(JSON.stringify({ title: "Recovered", state: "open" })),
+      );
+    vi.stubGlobal("fetch", fetch);
+    const gh = mockGh(async () => {
+      throw new GhUnavailable();
+    });
+    const states = createPullStates(withGh ? gh : undefined);
+    states.watch(pull, () => {});
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+    // A link's state waits for the reset; asking for it does not read.
+    await expect(states.read(pull, { maxAge: 0 })).rejects.toBeInstanceOf(
+      GitHubRateLimited,
     );
-  vi.stubGlobal("fetch", fetch);
-  const states = createPullStates(undefined);
-  states.watch(pull, () => {});
-  await vi.waitFor(() => expect(fetch).toHaveBeenCalledOnce());
-  // A link's state waits for the reset; asking for it does not read.
-  await expect(states.read(pull, { maxAge: 0 })).rejects.toBeInstanceOf(
-    GitHubRateLimited,
-  );
-  expect(fetch).toHaveBeenCalledOnce();
-  // The open panel asks GitHub each time: refused, then read.
-  states.watch(pull, () => {}, "details");
-  await expect(
-    states.read(pull, { maxAge: 0, level: "details", interactive: true }),
-  ).rejects.toBeInstanceOf(GitHubRateLimited);
-  const { state } = await states.read(pull, {
-    maxAge: 0,
-    level: "details",
-    interactive: true,
-  });
-  expect(state).toMatchObject({ details: { details: { title: "Recovered" } } });
-  expect(fetch).toHaveBeenCalledTimes(3);
-});
+    expect(fetch).toHaveBeenCalledOnce();
+    // The open panel asks GitHub each time: refused, then read.
+    states.watch(pull, () => {}, "details");
+    await expect(
+      states.read(pull, { maxAge: 0, level: "details", interactive: true }),
+    ).rejects.toBeInstanceOf(GitHubRateLimited);
+    const { state } = await states.read(pull, {
+      maxAge: 0,
+      level: "details",
+      interactive: true,
+    });
+    expect(state).toMatchObject({
+      details: { details: { title: "Recovered" } },
+    });
+    expect(fetch).toHaveBeenCalledTimes(3);
+  },
+);
 
 it("keeps the latest state, and when it was read, when a later read fails", async () => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });

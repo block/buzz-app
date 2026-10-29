@@ -914,6 +914,7 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
     free: number,
     signal: AbortSignal,
   ): Promise<readonly (PullState | Error | undefined)[]> {
+    let publicly = urls;
     if (gh && !readsPublic())
       try {
         return await readStates(gh, urls, asks, signal);
@@ -921,8 +922,10 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
         // Offline or signed out for now; gh is tried again next public read.
         if (!(error instanceof GhUnavailable)) throw error;
         publicUntil = Date.now() + PULL_SLOW_REFRESH_MS;
-        // GitHub may still be refusing public reads from the last time.
-        if (Date.now() < publicHeldUntil) return [];
+        // GitHub may still be refusing public reads from the last time: only
+        // those someone in the app asked for try it.
+        if (Date.now() < publicHeldUntil)
+          publicly = urls.filter((url) => asks(url).checks === "again");
       }
     // Whole reads only, so nothing drifts; a clock set back earns none, and
     // its time is earned again once the clock passes where it was.
@@ -932,7 +935,7 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
     publicReads = Math.min(PUBLIC_READS_PER_POLL, publicReads + earned);
     publicEarnedTo += earned * PUBLIC_READ_EARNED_MS;
     // Public data has no feedback, so a read for feedback alone is not spent.
-    const reading = urls
+    const reading = publicly
       .filter((url) => asks(url).publicly)
       .slice(0, free + publicReads);
     publicReads -= reading.length - Math.min(free, reading.length);

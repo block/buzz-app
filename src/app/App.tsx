@@ -159,8 +159,10 @@ function ConnectedApp({ services }: { services: AppServices }) {
     client.memberships.length === 0;
   // The prompt is stale once Settings ends another way or nothing is left to
   // discard, such as when a pending save is sent behind it.
-  if (confirmSettingsDiscard && (!settings || !settingsUnsaved))
+  if (confirmSettingsDiscard && (!settings || !settingsUnsaved)) {
+    settingsTraversal.current = undefined;
     setConfirmSettingsDiscard(false);
+  }
   const settingsFocus = useRef<HTMLElement | null>(null);
   const wasSettings = useRef(false);
   const workspaceEntry = useRef<string | undefined>(undefined);

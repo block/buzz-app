@@ -903,51 +903,78 @@ it.each(["pending", "unavailable"] as const)(
   },
 );
 
-it("retires an open discard prompt once the pending save is sent", async () => {
-  const user = await setup();
-  let release = () => {};
-  const read = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  const inspect = communityApi.inspectProfile;
-  let holding = false;
-  vi.spyOn(communityApi, "inspectProfile").mockImplementation(
-    async (...args) => {
-      if (holding) await read;
-      return inspect(...args);
-    },
-  );
-  const publish = vi
-    .spyOn(communityApi, "publishProfile")
-    .mockImplementation(() => new Promise(() => {}));
-  await act(async () => {
-    void services?.navigation.open({
-      version: 1,
-      kind: "settings",
-      section: "profile",
+it.each(["Close", "Back"] as const)(
+  "clears the %s discard prompt when the pending save is sent",
+  async (exit) => {
+    const user = await setup();
+    let release = () => {};
+    const read = new Promise<void>((resolve) => {
+      release = resolve;
     });
-  });
-  const settings = await screen.findByRole("dialog", { name: "Settings" });
-  const name = await within(settings).findByRole("textbox", {
-    name: "Display name",
-  });
-  await waitFor(() => expect(name).toHaveValue("Community name"));
-  await user.clear(name);
-  await user.type(name, "Pending name");
-  holding = true;
-  await user.click(within(settings).getByRole("button", { name: "Save" }));
-  await user.click(
-    within(settings).getByRole("button", { name: "Close Settings" }),
-  );
-  await screen.findByRole("alertdialog", { name: "Discard changes?" });
-  // The save is sent behind the prompt; nothing is left to discard.
-  holding = false;
-  await act(async () => release());
-  await waitFor(() => expect(publish).toHaveBeenCalledOnce());
-  await waitFor(() =>
-    expect(
-      screen.queryByRole("alertdialog", { name: "Discard changes?" }),
-    ).toBeNull(),
-  );
-  expect(screen.getByRole("dialog", { name: "Settings" })).toBe(settings);
-}, 15_000);
+    const inspect = communityApi.inspectProfile;
+    let holding = false;
+    vi.spyOn(communityApi, "inspectProfile").mockImplementation(
+      async (...args) => {
+        if (holding) await read;
+        return inspect(...args);
+      },
+    );
+    const publish = vi
+      .spyOn(communityApi, "publishProfile")
+      .mockImplementation(async (_id, next) => {
+        vi.mocked(communityApi.inspectProfile).mockResolvedValue({
+          exists: true,
+          profile: next,
+          existing: {},
+        });
+      });
+    await act(async () => {
+      void services?.navigation.open({
+        version: 1,
+        kind: "settings",
+        section: "profile",
+      });
+    });
+    const settings = await screen.findByRole("dialog", { name: "Settings" });
+    const name = await within(settings).findByRole("textbox", {
+      name: "Display name",
+    });
+    await waitFor(() => expect(name).toHaveValue("Community name"));
+    await user.clear(name);
+    await user.type(name, "Pending name");
+    holding = true;
+    await user.click(within(settings).getByRole("button", { name: "Save" }));
+    if (exit === "Back") act(() => services?.navigation.back());
+    else
+      await user.click(
+        within(settings).getByRole("button", { name: "Close Settings" }),
+      );
+    await screen.findByRole("alertdialog", { name: "Discard changes?" });
+    // The save is sent behind the prompt; nothing is left to discard.
+    holding = false;
+    await act(async () => release());
+    await waitFor(() => expect(publish).toHaveBeenCalledOnce());
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("alertdialog", { name: "Discard changes?" }),
+      ).toBeNull(),
+    );
+    expect(screen.getByRole("dialog", { name: "Settings" })).toBe(settings);
+    await waitFor(() => expect(name).toBeEnabled());
+    await user.clear(name);
+    await user.type(name, "Another draft");
+    await user.click(
+      within(settings).getByRole("button", { name: "Close Settings" }),
+    );
+    const prompt = await screen.findByRole("alertdialog", {
+      name: "Discard changes?",
+    });
+    await user.click(
+      within(prompt).getByRole("button", { name: "Discard changes" }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Settings" })).toBeNull(),
+    );
+  },
+  15_000,
+);

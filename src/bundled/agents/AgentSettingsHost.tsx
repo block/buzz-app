@@ -89,7 +89,8 @@ export function useAgentSettingsHost({
       }
     : undefined;
   const showTypeControl =
-    (agent?.place === "here" || agent?.place === "hosted") &&
+    (agent?.place === "here" ||
+      (agent?.place === "hosted" && Boolean(type?.remote))) &&
     types.some((item) => item.key !== agent.type);
   return {
     agent: settingsAgent,

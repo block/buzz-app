@@ -18,6 +18,7 @@ function fixture({
   anotherLocal = true,
   place = "here",
   remoteSource = false,
+  registered = true,
 } = {}) {
   const agent = {
     key: "a".repeat(64),
@@ -70,7 +71,7 @@ function fixture({
     const host = useAgentSettingsHost({
       agents,
       agent,
-      type: remoteSource ? remote : local,
+      type: registered ? (remoteSource ? remote : local) : undefined,
       types,
     });
     return (
@@ -270,6 +271,19 @@ it("shows local harnesses as unavailable for a hosted agent and keeps help keybo
   );
   await user.click(local);
   expect(screen.getByRole("menu")).toBeVisible();
+  expect(previewRetype).not.toHaveBeenCalled();
+  expect(retype).not.toHaveBeenCalled();
+});
+
+it("withholds the harness control for a hosted agent whose type is unregistered", () => {
+  const { previewRetype, retype } = fixture({
+    place: "hosted",
+    remoteSource: true,
+    hosted: false,
+    registered: false,
+  });
+  expect(screen.queryByRole("button", { name: /Change harness/ })).toBeNull();
+  expect(screen.getByLabelText("Pending change")).toHaveTextContent("false");
   expect(previewRetype).not.toHaveBeenCalled();
   expect(retype).not.toHaveBeenCalled();
 });

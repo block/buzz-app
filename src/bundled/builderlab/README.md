@@ -43,7 +43,8 @@ cookie before opening the original app URL. The guest never receives the CLI
 credential. App authorization and consent still run at ingress.
 Opening a different tenant's app never forwards the current account's credential.
 
-Each sign-in has separate website storage. Signing out or changing accounts closes
+Each account has its own website storage, kept across sign-ins and restarts, so
+an app's browser login persists while native exchange is unavailable. Signing out or changing accounts closes
 live and retained guests; deliberate sign-out also requests revocation of the server CLI parent.
 Canceling sign-in or disposing the plugin closes its local guests without logging
 out an existing server session. Other platforms do not expose the app panel.

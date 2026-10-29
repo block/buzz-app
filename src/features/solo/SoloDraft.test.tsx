@@ -11,6 +11,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { RelaySession } from "../relay/session";
@@ -158,6 +159,7 @@ function setup(available = true) {
     },
     outbox: {
       ready: async () => {},
+      whenPrepared: vi.fn(async () => ({})),
       supports: () => true,
       snapshot: () => noOperations,
       subscribe: () => () => {},
@@ -1553,6 +1555,7 @@ it("prepares a task before starting it, keeps a refused draft and signs only its
   const source = await region.register({
     task: {
       prepare,
+      markChannelStarted: async () => "start",
       recordFirstEvent: async () => {},
       participants: {
         eligible: (key) => key === agent,
@@ -1623,6 +1626,7 @@ it("rejects multiple task targets before preparation or creation and retains the
   const source = await region.register({
     task: {
       prepare,
+      markChannelStarted: async () => "start",
       recordFirstEvent: async () => {},
       participants: {
         eligible: () => true,
@@ -1700,6 +1704,7 @@ it.each([false, true])(
     const source = await region.register({
       task: {
         prepare,
+        markChannelStarted: async () => "start",
         recordFirstEvent: async () => {},
         participants: {
           eligible: () => eligible,
@@ -1971,3 +1976,289 @@ it("disposes the real completion lifetime when a task composer retargets region 
     observe.mockRestore();
   }
 });
+
+it.each(["resume", "already_sent"])(
+  "permits one start across already-open drafts and preserves unresolved payload (%s)",
+  async (response) => {
+    const a = setup(),
+      b = setup();
+    const region = createSoloRegionFixture(a.session.viewer);
+    let claimed = false;
+    const mark = vi.fn(async () => {
+      if (claimed) return "resume" as const;
+      claimed = true;
+      return "start" as const;
+    });
+    const source = await region.register({
+      task: {
+        prepare: async (input) =>
+          claimed && response === "already_sent"
+            ? {
+                ok: false,
+                reason: "already_sent",
+                channelId: "22222222-2222-4222-8222-222222222222",
+              }
+            : {
+                ok: true,
+                channelId: "22222222-2222-4222-8222-222222222222",
+                preparationId: "frozen",
+                revision: input.revision,
+                members: input.recipients,
+              },
+        markChannelStarted: mark,
+        recordFirstEvent: async () => {},
+        participants: {
+          eligible: () => true,
+          defaultRecipient: () => "a".repeat(64),
+          makePrimary: async () => {},
+        },
+      },
+    });
+    const existingChannel = {
+      channels: [
+        {
+          id: "22222222-2222-4222-8222-222222222222",
+          creator: b.session.viewer,
+          channelType: "solo",
+          members: [b.session.viewer, "a".repeat(64)],
+          labels: [SOLO_LABEL, source.handle.label, "solo-task-mode:v1"],
+        },
+      ],
+    };
+    Object.assign(b.session.channels, { list: () => existingChannel });
+    const lookup = vi
+      .spyOn(soloNavigation, "soloNavigationFor")
+      .mockReturnValue(region.service);
+    let release = () => {};
+    const binding = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    assert.exists(a.session.outbox);
+    Object.assign(a.session.outbox, { whenPrepared: () => binding });
+    const route = {
+      region: source.handle.label,
+      draftId: "33333333-3333-4333-8333-333333333333",
+    };
+    const startedA = vi.fn(),
+      startedB = vi.fn();
+    try {
+      const first = render(
+        <SoloDraft
+          session={a.session}
+          scope="window-a"
+          agent={"a".repeat(64)}
+          task={route}
+          onStarted={startedA}
+        />,
+      );
+      const second = render(
+        <SoloDraft
+          session={b.session}
+          scope="window-b"
+          agent={"a".repeat(64)}
+          task={route}
+          onStarted={startedB}
+        />,
+      );
+      const user = userEvent.setup();
+      await user.type(
+        within(first.container).getByRole("textbox"),
+        "Frozen request",
+      );
+      await user.click(
+        within(first.container).getByRole("button", { name: "Send message" }),
+      );
+      await waitFor(() => expect(a.messages.send).toHaveBeenCalledOnce());
+      expect(
+        readView("window-a", `solo:task:${route.draftId}:new-draft`, null),
+      ).toMatchObject({ text: expect.stringContaining("Frozen request") });
+      expect(startedA).not.toHaveBeenCalled();
+      await user.type(
+        within(second.container).getByRole("textbox"),
+        "Different request",
+      );
+      await user.click(
+        within(second.container).getByRole("button", { name: "Send message" }),
+      );
+      await waitFor(() =>
+        expect(within(second.container).getByRole("alert")).toHaveTextContent(
+          "Finish creating",
+        ),
+      );
+      expect(b.channelWrites.start).not.toHaveBeenCalled();
+      expect(b.messages.send).not.toHaveBeenCalled();
+      expect(startedB).not.toHaveBeenCalled();
+      release();
+      await waitFor(() => expect(startedA).toHaveBeenCalledOnce());
+      expect(
+        readView("window-a", `solo:task:${route.draftId}:new-draft`, null),
+      ).toBe("");
+      expect(
+        readView("window-b", `solo:task:${route.draftId}:new-draft`, null),
+      ).toMatchObject({ text: expect.stringContaining("Different request") });
+    } finally {
+      release();
+      cleanup();
+      lookup.mockRestore();
+      await region.dispose();
+    }
+  },
+);
+
+it.each([false, true])(
+  "same-ID attachment recovery transfers only actual file edits (changed=%s)",
+  async (modified) => {
+    const f = setup(),
+      region = createSoloRegionFixture(f.session.viewer);
+    const viewer = f.session.viewer;
+    assert.exists(viewer);
+    const prepare = vi.fn(
+      async (
+        input: import("../channel-navigation/solo-navigation-contract").TaskDraft,
+      ) => ({
+        ok: true as const,
+        channelId: "22222222-2222-4222-8222-222222222222",
+        revision: input.revision,
+        preparationId: "frozen",
+        members: input.recipients,
+      }),
+    );
+    const source = await region.register({
+      task: {
+        prepare,
+        markChannelStarted: async () => "start",
+        recordFirstEvent: async () => {},
+        participants: {
+          eligible: () => true,
+          defaultRecipient: () => "a".repeat(64),
+          makePrimary: async () => {},
+        },
+      },
+    });
+    const lookup = vi
+      .spyOn(soloNavigation, "soloNavigationFor")
+      .mockReturnValue(region.service);
+    const route = {
+      region: source.handle.label,
+      draftId: "33333333-3333-4333-8333-333333333333",
+    };
+    const channelId = "22222222-2222-4222-8222-222222222222";
+    const { attachmentMessage } = await import("../relay/attachments");
+    const upload = vi.fn(async () => notes);
+    Object.assign(f.session, { attachments: { uploadForNewChat: upload } });
+    const files = attachmentDraft(
+      f.session,
+      `files:solo:task:${route.draftId}:new-draft`,
+      route.draftId,
+    );
+    files.addUploaded(notes);
+    writeView(
+      "files",
+      `solo:task:${route.draftId}:new-draft`,
+      taggedDraft("See attached"),
+    );
+    const eventId = "d".repeat(64),
+      retry = vi.fn();
+    let operations: readonly import("../relay/outbox").OutgoingEvent[] = [];
+    const whenPrepared = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Binding interrupted"))
+      .mockResolvedValue(undefined);
+    assert.exists(f.session.outbox);
+    Object.assign(f.session.outbox, {
+      snapshot: () => operations,
+      retry,
+      whenPrepared,
+    });
+    Object.assign(f.session.channelWrites, {
+      resumeStart: () => ({ create: "c".repeat(64), ready: Promise.resolve() }),
+    });
+    f.messages.send.mockImplementation(
+      (id, content, recipients, uploaded, recovery) => {
+        const message = attachmentMessage(content, uploaded ?? [], notes.url);
+        const event = {
+          id: eventId,
+          kind: 9,
+          pubkey: viewer,
+          content: message.content,
+          created_at: 1,
+          tags: [
+            ["h", id],
+            ...(recipients ?? []).map((key) => ["p", key]),
+            ...message.tags,
+          ],
+        };
+        operations = [{ event, recovery, delivery: "failed" }];
+        return eventId;
+      },
+    );
+    const started = vi.fn();
+    try {
+      render(
+        <SoloDraft
+          session={f.session}
+          scope="files"
+          task={route}
+          onStarted={started}
+        />,
+      );
+      await userEvent
+        .setup()
+        .click(screen.getByRole("button", { name: "Send message" }));
+      await waitFor(() =>
+        expect(screen.getByRole("alert")).toHaveTextContent(
+          "Binding interrupted",
+        ),
+      );
+      expect(files.snapshot()).toHaveLength(1);
+      expect(started).not.toHaveBeenCalled();
+      const listed = {
+        channels: [
+          {
+            id: channelId,
+            channelType: "solo",
+            creator: f.session.viewer,
+            members: [f.session.viewer, "a".repeat(64)],
+            labels: [SOLO_LABEL, source.handle.label, "solo-task-mode:v1"],
+          },
+        ],
+      };
+      Object.assign(f.session.channels, { list: () => listed });
+      if (modified)
+        act(() =>
+          files.addUploaded({
+            ...notes,
+            name: "other.txt",
+            sha256: "e".repeat(64),
+            url: `https://relay.test/media/${"e".repeat(64)}.txt`,
+          }),
+        );
+      await userEvent
+        .setup()
+        .click(screen.getByRole("button", { name: "Send message" }));
+      await waitFor(() => expect(started).toHaveBeenCalledWith(channelId));
+      expect(prepare).toHaveBeenCalledTimes(1);
+      expect(f.messages.send).toHaveBeenCalledTimes(1);
+      expect(retry).toHaveBeenCalledWith(eventId, expect.any(Function));
+      expect(upload).not.toHaveBeenCalled();
+      expect(files.snapshot()).toHaveLength(0);
+      const target = attachmentDraft(
+        f.session,
+        `files:draft:${channelId}`,
+        channelId,
+      );
+      expect(target.snapshot()).toHaveLength(modified ? 2 : 0);
+      expect(readView("files", `draft:${channelId}`, null)).toEqual(
+        modified
+          ? expect.objectContaining({
+              text: expect.stringContaining("See attached"),
+            })
+          : null,
+      );
+    } finally {
+      cleanup();
+      lookup.mockRestore();
+      await region.dispose();
+    }
+  },
+);

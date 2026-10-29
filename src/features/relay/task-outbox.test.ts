@@ -198,6 +198,7 @@ it("restores the guarded create and first message with fresh policy and their or
   const source = await region.register({
     task: {
       prepare: async () => ({ ok: false, reason: "Unused" }),
+      markChannelStarted: async () => "start",
       recordFirstEvent,
       participants: {
         eligible: (key) => eligible && key === agent.pubkey,
@@ -360,4 +361,164 @@ it("restores the guarded create and first message with fresh policy and their or
     lookup.mockRestore();
     await region.dispose();
   }
+});
+
+it("whenPrepared ends after durable binding and synchronous policy, without waiting for relay ACK", async () => {
+  const viewer = keypair(),
+    bound = deferred(),
+    releaseBinding = deferred(),
+    ack = deferred();
+  let durable: readonly OutgoingEvent[] = [];
+  const owner = createOutbox(
+    viewer.pubkey,
+    {
+      sign: async (event) => signed(viewer, event),
+      publish: async () => ack.promise,
+    },
+    {
+      load: () => [],
+      save: (next) => {
+        durable = structuredClone(next);
+      },
+    },
+    {
+      afterSigned: async (event) => {
+        expect(
+          JSON.stringify(
+            durable.find((item) => item.event.id === event.id)?.signed,
+          ),
+        ).toBe(JSON.stringify(event));
+        bound.resolve();
+        await releaseBinding.promise;
+        return () => {};
+      },
+    },
+  );
+  owners.push(owner);
+  await owner.ready;
+  const id = owner.outbox.send({
+    kind: 9,
+    content: "task",
+    tags: [["h", "task"]],
+  });
+  let finished = false;
+  const prepared = owner.outbox.whenPrepared(id).then((event) => {
+    finished = true;
+    return event;
+  });
+  await bound.promise;
+  expect(finished).toBe(false);
+  releaseBinding.resolve();
+  expect((await prepared).id).toBe(id);
+  expect(owner.outbox.snapshot()[0]?.delivery).toBe("sending");
+  ack.resolve();
+});
+
+it.each(["sign", "persist", "hook", "policy", "dispose"])(
+  "whenPrepared rejects %s failure and retains the saved operation",
+  async (failure) => {
+    const viewer = keypair(),
+      entered = deferred(),
+      held = deferred();
+    const owner = createOutbox(
+      viewer.pubkey,
+      {
+        sign: async (event) => {
+          if (failure === "sign") throw new Error("sign failed");
+          if (failure === "dispose") {
+            entered.resolve();
+            await held.promise;
+          }
+          return signed(viewer, event);
+        },
+        publish: async () => {},
+      },
+      {
+        load: () => [],
+        save: (next) => {
+          if (failure === "persist" && next.some((item) => item.signed))
+            throw new Error("persist failed");
+        },
+      },
+      {
+        afterSigned: async () => {
+          if (failure === "hook") throw new Error("hook failed");
+          return () => {
+            if (failure === "policy") throw new Error("policy failed");
+          };
+        },
+      },
+    );
+    owners.push(owner);
+    await owner.ready;
+    const id = owner.outbox.send({
+      kind: 9,
+      content: "task",
+      tags: [["h", "task"]],
+    });
+    const prepared = expect(owner.outbox.whenPrepared(id)).rejects.toThrow();
+    if (failure === "dispose") {
+      await entered.promise;
+      owner.dispose();
+      held.resolve();
+    }
+    await prepared;
+    expect(owner.outbox.snapshot().some((item) => item.event.id === id)).toBe(
+      true,
+    );
+  },
+);
+
+it("a verified echo settles a queued whenPrepared wait without claiming local binding", async () => {
+  const viewer = keypair(),
+    release = deferred();
+  const saved = signed(viewer, {
+    kind: 9,
+    content: "queued",
+    tags: [["h", "task"]],
+  });
+  const publish = vi.fn(async () => release.promise);
+  const afterSigned = vi.fn(async () => undefined);
+  const owner = createOutbox(
+    viewer.pubkey,
+    { sign: async (event) => signed(viewer, event), publish },
+    {
+      load: () => [
+        {
+          event: saved,
+          delivery: "unknown",
+          recovery: taskFirstEventRecovery({
+            draftId: "queued-draft",
+            revision: 1,
+            preparationId: "frozen",
+            channelId: "task",
+            regionLabel: "buzz.region:example:work",
+          }),
+        },
+      ],
+      save: () => {},
+    },
+    { afterSigned },
+  );
+  owners.push(owner);
+  await owner.ready;
+  for (let i = 0; i < 3; i++)
+    owner.outbox.send({
+      kind: 9,
+      content: `occupied ${i}`,
+      tags: [["h", "task"]],
+    });
+  await vi.waitFor(() => expect(publish).toHaveBeenCalledTimes(3));
+  const id = saved.id;
+  owner.outbox.retry(id);
+  const prepared = expect(owner.outbox.whenPrepared(id)).rejects.toThrow(
+    /reload to verify/,
+  );
+  const queued = owner.outbox.snapshot().find((item) => item.event.id === id);
+  assert.exists(queued);
+  expect(queued.signed).toBeUndefined();
+  owner.observe([signed(viewer, queued.event)]);
+  await prepared;
+  expect(afterSigned).toHaveBeenCalledTimes(3);
+  release.resolve();
 });

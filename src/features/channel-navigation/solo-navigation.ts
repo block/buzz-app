@@ -399,6 +399,7 @@ export class SoloNavigationService extends Service implements SoloNavigation {
     if (
       source.task &&
       (typeof source.task.prepare !== "function" ||
+        typeof source.task.markChannelStarted !== "function" ||
         typeof source.task.recordFirstEvent !== "function" ||
         typeof source.task.participants?.eligible !== "function" ||
         typeof source.task.participants.defaultRecipient !== "function" ||

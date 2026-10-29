@@ -23,7 +23,12 @@ export type TaskPrepareResult =
       preparationId: string;
       title?: string;
     }>
-  | Readonly<{ ok: false; reason: string; field?: "agent" | "token" | "text" }>;
+  | Readonly<{
+      ok: false;
+      reason: string;
+      channelId?: string;
+      field?: "agent" | "token" | "text";
+    }>;
 export type ParticipantPolicy = Readonly<{
   eligible(pubkey: string): boolean;
   defaultRecipient(channelId: string): string | undefined;
@@ -32,6 +37,17 @@ export type ParticipantPolicy = Readonly<{
 }>;
 export type SoloTaskMode = Readonly<{
   prepare(draft: TaskDraft, signal: AbortSignal): Promise<TaskPrepareResult>;
+  /** Atomic exact-preparation claim. Only "start" permits a new first event. */
+  markChannelStarted(
+    input: Readonly<{
+      draftId: string;
+      revision: number;
+      preparationId: string;
+      channelId: string;
+      binding: SoloRegionBinding;
+    }>,
+    signal: AbortSignal,
+  ): Promise<"start" | "resume">;
   recordFirstEvent(
     input: Readonly<{
       draftId: string;

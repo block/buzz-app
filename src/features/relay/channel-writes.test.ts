@@ -716,6 +716,9 @@ function setup(
     observeDismiss: () => () => {},
     observeSend: () => () => {},
     ready: async () => {},
+    whenPrepared: async () => {
+      throw new Error("No active preparation in this fixture");
+    },
     recover: async () => {},
     acknowledge: async () => {},
     snapshot: () => [],
@@ -1325,6 +1328,9 @@ it.each([true, false])(
         observeDismiss: () => () => {},
         observeSend: () => () => {},
         ready: async () => {},
+        whenPrepared: async () => {
+          throw new Error("No active preparation in this fixture");
+        },
         recover: async () => {},
         acknowledge: async () => {},
         supports: () => true,

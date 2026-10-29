@@ -27,6 +27,7 @@ async function fixture() {
   const source = await h.register({
     task: {
       prepare: async () => ({ ok: false, reason: "unused" }),
+      markChannelStarted: async () => "start",
       recordFirstEvent,
       participants: {
         eligible: (key) => eligible.has(key),

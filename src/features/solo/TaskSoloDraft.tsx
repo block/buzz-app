@@ -16,6 +16,7 @@ import {
   taskFirstEventRecovery,
   readTaskFirstEventRecovery,
   validateTaskPublication,
+  recordTaskFirstEvent,
 } from "./task-mode";
 import { SoloDraftView } from "./SoloPresentation";
 import { MessageComposer } from "../messages/MessageComposer";
@@ -41,6 +42,7 @@ import {
   viewRevision,
   replaceView,
 } from "../../shared/view-state";
+import { attachmentMessage } from "../relay/attachments";
 import { startingChatTitle } from "./chat-title";
 import type { SoloDraft as DraftRoute } from "../channel-navigation/routes";
 import { ChatNotStarted } from "../relay/channel-writes";
@@ -247,14 +249,30 @@ export function TaskSoloDraft({
         ]
           .filter(Boolean)
           .join("\n\n");
+        const retained = files.snapshot();
+        const uploaded = retained.flatMap((item) =>
+          item.uploaded ? [item.uploaded] : [],
+        );
+        let outgoing: ReturnType<typeof attachmentMessage> | undefined;
+        if (uploaded.length === retained.length) {
+          try {
+            outgoing = attachmentMessage(content, uploaded, uploaded[0]?.url);
+          } catch {
+            /* Changed/invalid files remain editable; never re-upload recovery. */
+          }
+        }
         const edited =
-          content !== saved.event.content ||
+          !outgoing ||
+          outgoing.content !== saved.event.content ||
+          JSON.stringify(outgoing.tags) !==
+            JSON.stringify(
+              saved.event.tags.filter(([name]) => name === "imeta"),
+            ) ||
           JSON.stringify(draft.tokens?.map((item) => item.token) ?? []) !==
             JSON.stringify(tokens) ||
           JSON.stringify(
             [...new Set(draft.recipients.map((item) => item.pubkey))].sort(),
-          ) !== JSON.stringify([...new Set(recipients)].sort()) ||
-          files.snapshot().length > 0;
+          ) !== JSON.stringify([...new Set(recipients)].sort());
         const targetFiles = attachmentDraft(
           session,
           `${scope}:${targetKey}`,
@@ -289,6 +307,22 @@ export function TaskSoloDraft({
           });
         }
         validateTaskPublication(session, saved.event);
+        if (saved.delivery === "accepted" || saved.delivery === "seen") {
+          if (!saved.signed)
+            throw new Error(
+              "Reload to inspect the saved task receipt before finishing.",
+            );
+          await recordTaskFirstEvent(
+            session,
+            saved.signed,
+            saved.recovery,
+            signal,
+          );
+        } else {
+          session.outbox.retry(saved.event.id, active);
+          await session.outbox.whenPrepared(saved.event.id);
+        }
+        signal.throwIfAborted();
         if (edited) {
           if (replaceView(scope, targetKey, targetRevision, draft) !== "saved")
             throw new Error(
@@ -298,8 +332,10 @@ export function TaskSoloDraft({
             transferAttachmentDraft(files, targetFiles);
           writeView(scope, `${key}:new-draft`, "");
         }
-        if (saved.delivery !== "accepted" && saved.delivery !== "seen")
-          session.outbox.retry(saved.event.id, active);
+        if (!edited) {
+          files.clear();
+          writeView(scope, `${key}:new-draft`, "");
+        }
         onStarted(recovery.channelId);
         return;
       }
@@ -328,7 +364,12 @@ export function TaskSoloDraft({
         throw new Error("Select a skill for the primary agent.");
       const result = await context.mode.prepare(input, signal);
       signal.throwIfAborted();
-      if (!result.ok) throw new Error(result.reason);
+      if (!result.ok)
+        throw new Error(
+          result.reason === "already_sent"
+            ? "Finish creating this task after reloading. Your draft and files are kept here."
+            : result.reason,
+        );
       if (!Array.isArray(result.members))
         throw new Error("The prepared task has invalid participants.");
       const prepared = Object.freeze({
@@ -351,6 +392,21 @@ export function TaskSoloDraft({
         throw new Error(
           "The prepared task has changed. Review its agents and retry.",
         );
+      const claim = await context.mode.markChannelStarted(
+        {
+          draftId: input.draftId,
+          revision: input.revision,
+          preparationId: prepared.preparationId,
+          channelId: prepared.channelId,
+          binding: input.binding,
+        },
+        signal,
+      );
+      signal.throwIfAborted();
+      if (claim !== "start")
+        throw new Error(
+          "Finish creating this task after reloading. Your draft and files are kept here.",
+        );
       const title = prepared.title || startingChatTitle(draft);
       const start = session.channelWrites.start(
         prepared.channelId,
@@ -372,10 +428,14 @@ export function TaskSoloDraft({
             ),
         },
       );
+      void start.ready.catch((reason: unknown) => {
+        if (reason instanceof ChatNotStarted)
+          onFailed?.(prepared.channelId, reason.message);
+      });
       const content = [input.text, taskTokenFallback(input.tokens)]
         .filter(Boolean)
         .join("\n\n");
-      session.messages.send(
+      const firstEvent = session.messages.send(
         prepared.channelId,
         content,
         [input.primary],
@@ -391,13 +451,11 @@ export function TaskSoloDraft({
         {},
         input.tokens,
       );
+      await session.outbox.whenPrepared(firstEvent);
+      signal.throwIfAborted();
       files.clear();
       writeView(scope, `${key}:new-draft`, "");
       onStarted(prepared.channelId);
-      void start.ready.catch((reason: unknown) => {
-        if (reason instanceof ChatNotStarted)
-          onFailed?.(prepared.channelId, reason.message);
-      });
     } catch (reason) {
       if (!controller.signal.aborted)
         setError(reason instanceof Error ? reason.message : String(reason));

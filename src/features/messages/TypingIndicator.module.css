@@ -19,6 +19,16 @@
   text-overflow: ellipsis;
 }
 
+.stopAction {
+  align-self: center;
+  flex-shrink: 0;
+  padding: var(--space-1);
+}
+
+.stopIcon {
+  transform: rotate(22.5deg);
+}
+
 .typing > [data-agent-response-preview] {
   width: min(100%, var(--timeline-measure, 52rem));
 }

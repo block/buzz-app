@@ -93,6 +93,76 @@ const entry = (
   threadRootId: string | undefined = root,
 ): TypingEntry => ({ pubkey, channelId: "channel", threadRootId });
 
+it("stops the exact controllable request from the general popover and permits retry after failure", async () => {
+  const f = fixture();
+  const user = userEvent.setup();
+  let rejectStop!: (error: Error) => void;
+  const pending = new Promise<void>((_resolve, reject) => {
+    rejectStop = reject;
+  });
+  const interrupt = vi
+    .fn()
+    .mockReturnValueOnce(pending)
+    .mockResolvedValue(undefined);
+  const session = {
+    ...f.session,
+    agentActivity: { ...f.session.agentActivity, interrupt },
+  };
+  f.update([], {
+    local: [
+      {
+        scope: "test",
+        agent,
+        channelId: "channel",
+        threadRootId: root,
+        messageId: "request-to-stop",
+        startedAt: 1,
+        state: "working",
+        stoppable: true,
+      },
+      {
+        scope: "test",
+        agent: other,
+        channelId: "channel",
+        threadRootId: secondRoot,
+        messageId: "other-request",
+        startedAt: 1,
+        state: "working",
+        stoppable: true,
+      },
+    ],
+  });
+  render(
+    <TypingIndicator
+      session={session}
+      channelId="channel"
+      threadRootId={root}
+    />,
+  );
+  await user.click(
+    screen.getByRole("button", { name: "Activity: Agent working" }),
+  );
+  const stop = screen.getByRole("button", { name: "Stop Agent" });
+  expect(screen.queryByRole("button", { name: "Stop Other" })).toBeNull();
+  try {
+    await user.click(stop);
+    expect(interrupt).toHaveBeenCalledExactlyOnceWith(
+      agent,
+      "channel",
+      "request-to-stop",
+    );
+    expect(stop).toHaveAttribute("aria-disabled", "true");
+  } finally {
+    await act(async () => {
+      rejectStop(new Error("Try again"));
+    });
+  }
+  await user.click(stop);
+  expect(interrupt).toHaveBeenCalledTimes(2);
+  f.update([entry()], { local: [] });
+  expect(screen.queryByRole("button", { name: "Stop Agent" })).toBeNull();
+});
+
 it("shows an incoming typing preview without invented details, retaining navigation and focus return", async () => {
   const f = fixture(),
     user = userEvent.setup(),
@@ -127,8 +197,11 @@ it("shows an incoming typing preview without invented details, retaining navigat
   ).toBeVisible();
   f.update([entry()], { status: "listening" });
   expect(within(dialog).getByText("Thread · First task")).toBeVisible();
+  expect(
+    within(dialog).queryByRole("button", { name: "View Agent activity" }),
+  ).toBeNull();
   await user.click(
-    within(dialog).getByRole("button", { name: "View Agent activity" }),
+    within(dialog).getByRole("button", { name: "View full activity" }),
   );
   const transcript = profileActivityViewTarget(agent, { transcript: true });
   expect(open).toHaveBeenLastCalledWith(transcript, {
@@ -357,7 +430,7 @@ it("opens activity for the composer's explicit thread", async () => {
   expect(
     screen.queryByRole("button", { name: "Open thread for Agent" }),
   ).toBeNull();
-  await user.click(screen.getByRole("button", { name: "View Agent activity" }));
+  await user.click(screen.getByRole("button", { name: "View full activity" }));
   expect(open).toHaveBeenLastCalledWith(
     profileActivityViewTarget(agent, { transcript: true }),
     {
@@ -494,7 +567,7 @@ it("opens the sole known conversation without attributing unknown telemetry to t
       "No current step details received.",
     ),
   ).toBeVisible();
-  await user.click(screen.getByRole("button", { name: "View Agent activity" }));
+  await user.click(screen.getByRole("button", { name: "View full activity" }));
   expect(open).toHaveBeenLastCalledWith(
     profileActivityViewTarget(agent),
     undefined,
@@ -568,7 +641,7 @@ it("hands navigation a retained trigger instead of the disposable popup action",
     name: "Activity: Agent working",
   });
   await user.click(trigger);
-  await user.click(screen.getByRole("button", { name: "View Agent activity" }));
+  await user.click(screen.getByRole("button", { name: "View full activity" }));
   expect(captured).toEqual([trigger]);
   expect(captured[0]).toBeInTheDocument();
 });

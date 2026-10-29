@@ -11,7 +11,10 @@ import { AvatarStack } from "../../shared/design-system/ui/AvatarStack";
 import type { ComposerAccessoryProps } from "../../features/conversation/contracts";
 import { useChannelIdentityNames } from "../../features/identity-names/react";
 import type { activityRecords } from "../../features/agents/activity-records";
-import { profileActivityViewTarget } from "../../features/profiles/target";
+import {
+  openProfileTranscript,
+  profileActivityViewTarget,
+} from "../../features/profiles/target";
 import { publicKeyLabels } from "../../shared/identity/public-key";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
@@ -21,7 +24,10 @@ import {
   XIcon,
   ArrowUpRightIcon,
 } from "../../shared/design-system/icons";
-import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
+import {
+  NavigationCard,
+  NavigationItem,
+} from "../../shared/design-system/ui/NavigationItem";
 import { ShimmerText } from "../../shared/design-system/ui/ShimmerText";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { ActivityStepPreview } from "../../features/messages/ActivityStepPreview";
@@ -544,13 +550,22 @@ function ActivityBubble({
               disabled={
                 !entries[0] ||
                 !props.canOpen(
-                  profileActivityViewTarget(entries[0].agent) ?? "",
+                  profileActivityViewTarget(entries[0].agent, {
+                    transcript: true,
+                  }) ?? "",
                 )
               }
               onClick={() => {
                 const target =
-                  entries[0] && profileActivityViewTarget(entries[0].agent);
-                if (target && props.canOpen(target) && props.open(target))
+                  entries[0] &&
+                  profileActivityViewTarget(entries[0].agent, {
+                    transcript: true,
+                  });
+                if (
+                  target &&
+                  props.canOpen(target) &&
+                  openProfileTranscript(target, props.open)
+                )
                   setExpanded(false);
               }}
             />
@@ -562,7 +577,7 @@ function ActivityBubble({
                 : undefined;
               const stopping = stops.has(entry.agent);
               return (
-                <div key={entry.agent} className={styles.row}>
+                <NavigationCard key={entry.agent}>
                   <NavigationItem
                     variant="option"
                     aria-label={`View activity for ${entry.name}`}
@@ -632,7 +647,7 @@ function ActivityBubble({
                     <span className={styles.action}>
                       <Button
                         size="sm"
-                        variant="subtle"
+                        variant="plain"
                         aria-label={`Stop ${entry.name}`}
                         loading={stopping}
                         onClick={(event) => {
@@ -648,7 +663,7 @@ function ActivityBubble({
                       </Button>
                     </span>
                   ) : undefined}
-                </div>
+                </NavigationCard>
               );
             })}
           </div>

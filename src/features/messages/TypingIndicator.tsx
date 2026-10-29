@@ -16,11 +16,20 @@ import {
   profileActivityViewTarget,
 } from "../profiles/target";
 import { currentActivity } from "../agents/current-activity";
+import { localWorkLabel, type LocalWork } from "../agents/local-activity";
 import { AgentResponsePreview } from "./AgentResponsePreview";
 import { ActivityStepPreview } from "./ActivityStepPreview";
 import { AgentActivityRow } from "../agents/AgentActivityRow";
-import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
-import { ArrowUpRightIcon } from "../../shared/design-system/icons";
+import {
+  NavigationCard,
+  NavigationItem,
+} from "../../shared/design-system/ui/NavigationItem";
+import {
+  ArrowUpRightIcon,
+  OctagonIcon,
+} from "../../shared/design-system/icons";
+import { Button } from "../../shared/design-system/ui/Button";
+import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import activityStyles from "../agents/ActivityRows.module.css";
 import {
   PopoverRoot,
@@ -74,6 +83,7 @@ export function useConversationAgents(
   );
   const agents = [...details.keys()].filter((key) => !replaced.has(key)).sort();
   return {
+    activity,
     details,
     entries,
     replaced,
@@ -105,6 +115,7 @@ export function TypingIndicator({
     | undefined;
 }) {
   const {
+    activity,
     details,
     entries,
     replaced,
@@ -183,6 +194,7 @@ export function TypingIndicator({
   const agentStatus = (
     pubkey: string,
     navigate: (target: string, origin?: MessageLinkOrigin) => void,
+    work?: LocalWork,
   ) => {
     const detail = details.get(pubkey);
     if (!detail) return null;
@@ -192,13 +204,16 @@ export function TypingIndicator({
       (value) => typeof value === "string",
     );
     const conversationRoot =
-      threadRootId ?? (knownRoots.length === 1 ? knownRoots[0] : undefined);
+      work?.threadRootId ??
+      threadRootId ??
+      (knownRoots.length === 1 ? knownRoots[0] : undefined);
     const conversation = conversationRoot
       ? `buzz://message?${new URLSearchParams({ channel: channelId, id: conversationRoot, thread: conversationRoot })}`
       : `buzz://channel/${encodeURIComponent(channelId)}`;
     const picture = profiles.get(pubkey)?.picture;
-    const status =
-      detail.detailAvailability === "available"
+    const status = work
+      ? localWorkLabel(work)
+      : detail.detailAvailability === "available"
         ? detail.label
         : detail.detailAvailability === "no-current-step"
           ? "No current step details received."
@@ -232,7 +247,6 @@ export function TypingIndicator({
         scope={scope}
         openLabel={`Open ${conversationRoot ? "thread" : "conversation"} for ${name(pubkey)}`}
         onOpen={openActivity ? () => navigate(conversation) : undefined}
-        onOpenActivity={viewActivity}
       />
     );
   };
@@ -326,9 +340,38 @@ export function TypingIndicator({
                 }
               >
                 {(navigate) =>
-                  agents.map((pubkey) => (
-                    <div key={pubkey}>{agentStatus(pubkey, navigate)}</div>
-                  ))
+                  agents.flatMap((pubkey) => {
+                    const controls = session.agentActivity;
+                    const requests = (activity?.local ?? []).filter(
+                      (work) =>
+                        work.agent === pubkey &&
+                        work.channelId === channelId &&
+                        (!threadRootId || work.threadRootId === threadRootId) &&
+                        work.stoppable &&
+                        (work.state === "working" || work.state === "waiting"),
+                    );
+                    if (!controls || !requests.length)
+                      return (
+                        <div key={pubkey}>{agentStatus(pubkey, navigate)}</div>
+                      );
+                    return requests.map((work) => (
+                      <NavigationCard key={`${pubkey}:${work.messageId}`}>
+                        {agentStatus(pubkey, navigate, work)}
+                        <span className={styles.stopAction}>
+                          <RequestStop
+                            name={name(pubkey)}
+                            stop={() =>
+                              controls.interrupt(
+                                pubkey,
+                                channelId,
+                                work.messageId,
+                              )
+                            }
+                          />
+                        </span>
+                      </NavigationCard>
+                    ));
+                  })
                 }
               </AgentChooser>
             </AgentResponsePreview>
@@ -346,6 +389,46 @@ export function TypingIndicator({
         </div>
       )}
     </>
+  );
+}
+
+function RequestStop({
+  name,
+  stop,
+}: {
+  name: string;
+  stop: () => Promise<void>;
+}) {
+  const [stopping, setStopping] = useState(false);
+  const pending = useRef(false);
+  const notify = useToastNotification();
+  return (
+    <Button
+      size="sm"
+      variant="plain"
+      aria-label={`Stop ${name}`}
+      loading={stopping}
+      onClick={async () => {
+        if (pending.current) return;
+        pending.current = true;
+        setStopping(true);
+        try {
+          await stop();
+          notify(`Stopped ${name}`, "success");
+        } catch (error) {
+          notify(
+            `Couldn’t stop ${name}. ${error instanceof Error ? error.message : String(error)}`,
+            "error",
+          );
+        } finally {
+          pending.current = false;
+          setStopping(false);
+        }
+      }}
+    >
+      <OctagonIcon className={styles.stopIcon} aria-hidden="true" />
+      {stopping ? "Stopping…" : "Stop"}
+    </Button>
   );
 }
 

@@ -3684,6 +3684,16 @@ html[data-keyboard-navigation] .activityExpansion {
   cursor: pointer;
 }
 
+/* The painted bubble and its interactive area must have the same bounds. */
+.messageBubble:has(> .activityBubbleTrigger) {
+  padding: 0;
+}
+.messageBubble > .activityBubbleTrigger {
+  width: 100%;
+  padding: var(--space-2) var(--space-4);
+  border-radius: inherit;
+}
+
 /* Activity interactions paint their shared bubble, never a second pill inside it. */
 .message[data-agent-response-preview] .audienceLine:hover {
   background: none;

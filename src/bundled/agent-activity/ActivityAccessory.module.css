@@ -8,19 +8,6 @@
   flex-direction: column;
   gap: var(--space-1);
 }
-/* Dismiss and Stop are sibling actions, never buttons nested in NavigationItem. */
-.row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-}
-.row > :first-child {
-  min-width: 0;
-  flex: 1;
-}
-.row > :not(:first-child) {
-  flex-shrink: 0;
-}
 
 /* One glanceable line each, ending in an ellipsis; the profile's Activity tab
  * has the full text. NavigationItem's label truncation applies per line. */
@@ -70,6 +57,8 @@
 }
 
 .action {
+  align-self: center;
+  flex-shrink: 0;
   display: inline-flex;
   align-items: center;
   padding: var(--space-1);

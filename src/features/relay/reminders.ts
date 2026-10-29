@@ -126,6 +126,11 @@ function randomD() {
   ).join("");
 }
 
+// Status is encrypted, so every head must be read to find the pending ones, and
+// handled ones stay live until they expire. Past the bound the read is partial.
+const PAGE = 200;
+const MAX_PAGES = 10;
+
 const now = () => Math.floor(Date.now() / 1000);
 /** Completed records expire 30–90 days out, randomized (NIP-ER). */
 const expiration = () => now() + (30 + Math.floor(Math.random() * 60)) * 86_400;
@@ -251,21 +256,52 @@ export function createReminders(options: {
       let read: Promise<void> | undefined;
       read = (async () => {
         try {
-          const events = await retryRead(
-            (signal) =>
-              options.query(
-                [{ kinds: [REMINDER_KIND], authors: [viewer], limit: 200 }],
-                signal,
-              ),
-            readSignal,
-          );
-          // A disposed session's late reply, even an empty one, proves nothing.
-          if (signal.aborted) return;
-          const changed = await accept(events);
-          if (signal.aborted || current !== generation) return;
-          if (!offline) publishState({ status: "ready" }, true);
-          else if (changed || !state.hydrated)
-            publishState({ status: "loading" }, true);
+          let cursor: { until: number; before_id: string } | undefined;
+          for (let pages = 1; ; pages++) {
+            const events = await retryRead(
+              (signal) =>
+                options.query(
+                  [
+                    {
+                      kinds: [REMINDER_KIND],
+                      authors: [viewer],
+                      limit: PAGE,
+                      ...cursor,
+                    },
+                  ],
+                  signal,
+                ),
+              readSignal,
+            );
+            // A disposed session's late reply, even an empty one, proves nothing.
+            if (signal.aborted) return;
+            const changed = await accept(events);
+            if (signal.aborted || current !== generation) return;
+            // Earlier pages show while later ones load; only the last can end it.
+            const more = events.length >= PAGE;
+            if (!more && !offline) publishState({ status: "ready" }, true);
+            else if (changed || !state.hydrated)
+              publishState({ status: "loading" }, true);
+            if (!more) return;
+            if (pages === MAX_PAGES)
+              throw new Error("Too many reminders to load");
+            // Relay query order is time descending, then ID ascending (also at ties).
+            const last = [...events]
+              .sort(
+                (a, b) =>
+                  b.created_at - a.created_at || a.id.localeCompare(b.id),
+              )
+              .at(-1);
+            if (
+              !last ||
+              (cursor &&
+                (last.created_at > cursor.until ||
+                  (last.created_at === cursor.until &&
+                    last.id <= cursor.before_id)))
+            )
+              throw new Error("Reminder paging did not advance");
+            cursor = { until: last.created_at, before_id: last.id };
+          }
         } catch (error) {
           if (signal.aborted || current !== generation) return;
           publishState({

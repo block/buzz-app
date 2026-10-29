@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { RelayEvent } from "./events";
+import type { ReadFilter, RelayEvent } from "./events";
 import {
   createReminders,
   parseNotBefore,
@@ -240,4 +240,155 @@ it("does not mark a session ready when it is disposed while an empty reply is ac
   queueMicrotask(() => controller.abort());
   await read;
   expect(model.capability.snapshot().status).toBe("loading");
+});
+
+describe("reminder history paging", () => {
+  // Distinct coordinates, newest first, as the relay returns heads.
+  const heads = (prefix: string, count: number, newest: number) =>
+    Array.from({ length: count }, (_, i) =>
+      wire(
+        `${prefix}${String(i).padStart(3, "0")}`,
+        newest - i,
+        "done",
+        `${prefix}${i}`,
+      ),
+    );
+  function paged(...replies: (RelayEvent[] | Promise<RelayEvent[]>)[]) {
+    const filters: ReadFilter[] = [];
+    const statuses: string[] = [];
+    const model = createReminders({
+      viewer,
+      signal: new AbortController().signal,
+      host: {
+        decode: async (events) =>
+          events.map((e) => ({
+            eventId: e.id,
+            content: JSON.parse(e.content),
+          })),
+        sign: async () => wire("e", 1, "pending", "d"),
+      },
+      query: async ([filter]) => {
+        if (filter) filters.push(filter);
+        return (await replies.shift()) ?? [];
+      },
+      publish: async () => {},
+    });
+    model.capability.subscribe(() =>
+      statuses.push(model.capability.snapshot().status),
+    );
+    return { model, filters, statuses, snapshot: model.capability.snapshot };
+  }
+  function deferred() {
+    let resolve: (events: RelayEvent[]) => void = () => {};
+    let reject: (error: Error) => void = () => {};
+    const promise = new Promise<RelayEvent[]>((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    return { promise, resolve, reject };
+  }
+
+  it("reads one page when the list is shorter than a page", async () => {
+    const h = paged(heads("a", 199, 1_000));
+    await h.model.recover();
+    expect(h.filters).toEqual([
+      { kinds: [30300], authors: [viewer], limit: 200 },
+    ]);
+    expect(h.snapshot()).toMatchObject({ status: "ready", hydrated: true });
+  });
+
+  it("pages from the last head until a short page, staying loading until then", async () => {
+    // The oldest time is tied, so the cursor is its highest ID.
+    const first = [
+      ...heads("a", 198, 1_000),
+      wire("f1", 802, "done", "t1"),
+      wire("f0", 802, "done", "t0"),
+    ];
+    const rest = deferred();
+    const h = paged(first, rest.promise);
+    const read = h.model.recover();
+    await vi.waitFor(() => expect(h.filters).toHaveLength(2));
+    expect(h.statuses).toEqual(["loading"]);
+    expect(h.snapshot()).toMatchObject({ status: "loading", hydrated: true });
+    expect(h.snapshot().reminders).toHaveLength(200);
+    expect(h.filters[1]).toEqual({
+      kinds: [30300],
+      authors: [viewer],
+      limit: 200,
+      until: 802,
+      before_id: "f1",
+    });
+    rest.resolve([wire("old", 10, "pending", "old")]);
+    await read;
+    expect(h.statuses).toEqual(["loading", "ready"]);
+    expect(h.snapshot()).toMatchObject({ status: "ready", hydrated: true });
+    expect(h.snapshot().reminders).toHaveLength(201);
+    expect(h.snapshot().reminders.find((r) => r.id === "old")?.status).toBe(
+      "pending",
+    );
+  });
+
+  it("keeps landed pages when a later page fails and restarts from the top", async () => {
+    const h = paged(
+      heads("a", 200, 1_000),
+      Promise.reject(new Error("rejected")),
+      [wire("old", 10, "pending", "old")],
+    );
+    await h.model.recover();
+    expect(h.snapshot()).toMatchObject({
+      status: "ready",
+      hydrated: true,
+      error: "rejected",
+    });
+    expect(h.snapshot().reminders).toHaveLength(200);
+    await h.model.capability.refresh();
+    expect(h.filters[2]).not.toHaveProperty("until");
+    expect(h.snapshot()).toMatchObject({ status: "ready", hydrated: true });
+    expect(h.snapshot().error).toBeUndefined();
+  });
+
+  it("abandons a walk when recovery restarts it", async () => {
+    const stale = deferred();
+    const fresh = deferred();
+    const h = paged(heads("a", 200, 1_000), stale.promise, fresh.promise);
+    const abandoned = h.model.recover();
+    await vi.waitFor(() => expect(h.filters).toHaveLength(2));
+    const restarted = h.model.recover();
+    await vi.waitFor(() => expect(h.filters).toHaveLength(3));
+    expect(h.filters[2]).not.toHaveProperty("until");
+    stale.resolve([wire("old", 10, "pending", "old")]);
+    await abandoned;
+    expect(h.snapshot().status).toBe("loading");
+    expect(h.snapshot().reminders.some((r) => r.id === "old")).toBe(false);
+    fresh.resolve([]);
+    await restarted;
+    expect(h.snapshot().status).toBe("ready");
+  });
+
+  it("stops at the page bound and reports the list as partial", async () => {
+    const h = paged(
+      ...Array.from({ length: 11 }, (_, page) =>
+        heads(`p${page}-`, 200, 10_000 - page * 200),
+      ),
+    );
+    await h.model.recover();
+    expect(h.filters).toHaveLength(10);
+    expect(h.snapshot()).toMatchObject({
+      status: "ready",
+      hydrated: true,
+      error: "Too many reminders to load",
+    });
+    expect(h.snapshot().reminders).toHaveLength(2_000);
+  });
+
+  it("fails a page that does not advance the cursor", async () => {
+    const first = heads("a", 200, 1_000);
+    const h = paged(first, first);
+    await h.model.recover();
+    expect(h.filters).toHaveLength(2);
+    expect(h.snapshot()).toMatchObject({
+      status: "ready",
+      error: "Reminder paging did not advance",
+    });
+  });
 });

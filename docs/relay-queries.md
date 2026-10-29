@@ -459,6 +459,9 @@ The timeline, channel-list preview and filtered plugin views share that operatio
   are visible; unconfirmed operations are never silently evicted. Plugins can
   explicitly `dismiss(id)` to remove an operation's local contribution.
 - Reactive filtered views: at most 64 owned handles; dispose with the plugin.
+- Reminders: the viewer's list is read in pages, newest first, until the relay
+  runs out, up to 2,000 reminders. A longer list loads as partial, with Retry,
+  rather than complete.
 - Existing fetched channel history, profile, media and disk budgets remain in place.
   Local overlays have their separate journal budget and can extend a visible window.
   Shared verified observations retain up to 4,096 events / 8 MiB; owned filtered views

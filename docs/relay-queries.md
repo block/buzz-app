@@ -813,8 +813,10 @@ never earlier than the session's first five-minute window. A renewal, pending or
 failed, that still keeps its established source counts as reached for the channels
 it still covers. The margin is the relay's
 900 s `created_at` tolerance plus 60 s: an event stored just after the close can be
-backdated that far. The cursor is kept across reconnects that never re-establish the
-route and is dropped when a rebuild no longer routes that channel. A route that had
+backdated that far. Every route created later, including one rebuilt mid-connection
+when a batch's membership changes, resumes from the same cursor. The cursor is kept
+across reconnects that never re-establish the route and is dropped when a rebuild no
+longer routes that channel. A route that had
 not reached EOSE, and the observer and presence routes, replay as a first connect
 does. A batch resumes from its slowest channel. Retained channel
 windows get finite, signed-bounds head catch-up after establishment/reconnect;

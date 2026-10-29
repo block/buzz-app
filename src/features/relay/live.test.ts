@@ -1573,6 +1573,37 @@ it("gives a renewal's kept source no cursor for a channel the renewal dropped", 
   }
 });
 
+it("resumes a batch rebuilt before its EOSE from the cursor, not the last five minutes", async () => {
+  vi.useFakeTimers({ now: 1_700_000_000_000 });
+  const h = setup([], undefined, () => 0.5);
+  try {
+    age();
+    h.owner.update(["a", "b", "c"], ["a", "b", "c"]);
+    await h.first.auth();
+    await vi.advanceTimersByTimeAsync(750);
+    for (const [, id] of h.first.requests())
+      await h.first.receive(["EOSE", id]);
+    const heard = Math.floor(Date.now() / 1000);
+    h.first.close();
+    // Ten minutes offline, so five minutes back from the reconnect misses a gap.
+    vi.setSystemTime(Date.now() + 600_000);
+    const next = await rebuilt(h);
+    expect(new Set(batchSince(next, "a"))).toEqual(new Set([heard - 960]));
+    // "c" leaves the joined set before the batch's EOSE, so the batch is rebuilt.
+    h.owner.update(["a", "b", "c"], ["a", "b"]);
+    await vi.advanceTimersByTimeAsync(750);
+    const batches = next.requests().filter((r) => scopeOf(r).includes("a"));
+    expect(batches).toHaveLength(2);
+    const [, survivor] = batches as [WireRequest, WireRequest];
+    expect(new Set(scopeOf(survivor))).toEqual(new Set(["a", "b"]));
+    expect(new Set(filtersOf(survivor).map((f) => f.since))).toEqual(
+      new Set([heard - 960]),
+    );
+  } finally {
+    h.owner.dispose();
+  }
+});
+
 it("keeps a route's cursor through a connection that never established it", async () => {
   vi.useFakeTimers({ now: 1_700_000_000_000 });
   const h = setup(["a"], undefined, () => 0.5);

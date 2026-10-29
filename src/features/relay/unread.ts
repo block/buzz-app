@@ -1618,9 +1618,10 @@ export function createUnread({
     inboxLoading = true;
     const generation = epoch;
     const reset = resets;
+    const current = () => !closed && generation === epoch && reset === resets;
     refresh = (async () => {
       await reads.ensure();
-      if (closed || generation !== epoch || reset !== resets) return;
+      if (!current()) return;
       const ids = channels
         .list()
         .channels.filter(
@@ -1662,8 +1663,9 @@ export function createUnread({
           );
           // An overflow or refresh while this read was out discarded what the
           // mark stands for: an overflow waits for refresh, a refresh reads again.
-          if (closed || generation !== epoch || reset !== resets) return;
-          if (!accept(result) || closed || generation !== epoch) return;
+          if (!current()) return;
+          // Accepting notifies subscribers, and one may refresh from there.
+          if (!accept(result) || !current()) return;
           // The mark is anchored on what the relay returned, not the clock: a
           // skewed clock or a future-dated event cannot move the window past
           // unseen history. Only a read that returned fewer than its limit saw
@@ -1685,7 +1687,7 @@ export function createUnread({
         publish();
         void findHomes(generation);
       } catch (cause) {
-        if (closed || generation !== epoch || reset !== resets) return;
+        if (!current()) return;
         freshness = "stale";
         error =
           cause instanceof Error ? cause.message : "Unread observation failed";

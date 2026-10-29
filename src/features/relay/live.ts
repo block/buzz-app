@@ -49,9 +49,8 @@ export const LIVE_RESTART_SPREAD_MS = 10_000;
 export type LiveCursor = Readonly<{ liveUntil: number }>;
 /** Where a route with a cursor resumes: `LIVE_RESUME_LAG` before its connection
  * last heard the relay, never before `original`, the first window of the session.
- * The cursor exists only for a route that reached EOSE, so everything stored
- * before the EOSE was replayed and everything after it was delivered live until
- * `liveUntil`; the lag keeps the overlap. */
+ * The cursor exists only for a route that reached EOSE, so everything after the
+ * EOSE was delivered live until `liveUntil`; the lag keeps the overlap. */
 export function liveResumeSince(original: number, cursor: LiveCursor): number {
   return Math.max(original, cursor.liveUntil - LIVE_RESUME_LAG);
 }
@@ -320,6 +319,16 @@ export function subscribeRelayTraffic(
     scope(route).length
       ? scope(route).map((id) => `channel:${id}`)
       : [route.id];
+  // A new route replays the last five minutes; one over channels a connection
+  // established resumes from their cursors instead, whenever it is created. A
+  // batch needs every channel, so it starts at the earliest.
+  const resumeSince = (route: Route) =>
+    Math.min(
+      ...cursorKeys(route).map((key) => {
+        const cursor = cursors.get(key);
+        return cursor ? liveResumeSince(original, cursor) : route.since;
+      }),
+    );
   type SyncWire = {
     filter: ArtifactSyncFilter;
     sink: ArtifactSyncSink;
@@ -524,6 +533,7 @@ export function subscribeRelayTraffic(
         quotaRetries: 0,
         since: Math.floor(Date.now() / 1000) - 300,
       };
+      route.since = resumeSince(route);
       routes.set(id, route);
       return route;
     };
@@ -797,20 +807,7 @@ export function subscribeRelayTraffic(
     connection = "connecting";
     connectionError = undefined;
     sync();
-    // Rebuilt routes replay the last five minutes; a route that a connection
-    // established resumes from its cursor instead. A batch needs every channel,
-    // so it starts at the earliest.
-    const used = new Set<string>();
-    for (const route of routes.values()) {
-      const keys = cursorKeys(route);
-      for (const key of keys) used.add(key);
-      route.since = Math.min(
-        ...keys.map((key) => {
-          const cursor = cursors.get(key);
-          return cursor ? liveResumeSince(original, cursor) : route.since;
-        }),
-      );
-    }
+    const used = new Set([...routes.values()].flatMap(cursorKeys));
     for (const key of cursors.keys()) if (!used.has(key)) cursors.delete(key);
     const current = generation;
     const valid = () => !closed && current === generation;

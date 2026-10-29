@@ -1274,3 +1274,32 @@ it("an explicit refresh during a bounded repair waits for it, then reads in full
     freshness: "observed",
   });
 });
+
+it("a refresh asked while a repair's answer is being accepted still reads in full", async () => {
+  const h = setup();
+  const recent = nowSeconds() - 1000;
+  let rows = [message(h.peer, "other", "recent", recent)];
+  serve(h, () => rows);
+  await discovered(h);
+  await h.session.unread.ensure();
+  rows = [...rows, message(h.peer, "other", "newer", recent + 10)];
+  let refreshed: Promise<void> | undefined;
+  // Accepting the repair's answer notifies subscribers synchronously.
+  const stop = h.session.unread.subscribe(
+    { kind: "channel", channelId: "other" },
+    () => {
+      if (!refreshed && h.snapshot().observedCount === 2)
+        refreshed = h.session.unread.refresh();
+    },
+  );
+  try {
+    h.reconnect();
+    await vi.waitFor(() => expect(refreshed).toBeDefined());
+    await refreshed;
+  } finally {
+    stop();
+  }
+  expect(evidenceReads(h)).toHaveLength(3);
+  expect(evidenceReads(h)[1]?.since).toBe(recent - 960);
+  expect(evidenceReads(h)[2]?.since).toBeUndefined();
+});

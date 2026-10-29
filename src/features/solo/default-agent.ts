@@ -16,13 +16,18 @@ import {
 const KEY = "solo:default-agent";
 type Account = NonNullable<RelaySession["mainAgent"]>;
 const adopted = new WeakMap<Account, Promise<void>>();
-// The account's saved choice once read: undefined when never saved or
-// unreadable.
+// The account's saved choice once read: undefined only when a successful read
+// found no record. Read failures are tracked separately.
 const saved = new WeakMap<Account, string | undefined>();
+const readErrors = new WeakMap<Account, string>();
 const listeners = new Set<() => void>();
+function notifySaved() {
+  for (const listener of listeners) listener();
+}
 function remember(account: Account, agent: string | undefined) {
   saved.set(account, agent);
-  for (const listener of listeners) listener();
+  readErrors.delete(account);
+  notifySaved();
 }
 function subscribeSaved(listener: () => void) {
   listeners.add(listener);
@@ -37,7 +42,7 @@ function cache(scope: string, agent: string | null) {
   const saves = writeView(scope, KEY, agent);
   if (saves) unsaved.delete(scope);
   else unsaved.set(scope, agent);
-  for (const listener of listeners) listener();
+  notifySaved();
   return saves;
 }
 /** Makes an agent the one new Berd messages are tagged for, on this device. */
@@ -85,7 +90,7 @@ export function forgetDefaultAgent(pubkey: string) {
   clearViewValue(KEY, pubkey);
   for (const [scope, agent] of unsaved)
     if (agent === pubkey) unsaved.delete(scope);
-  for (const listener of listeners) listener();
+  notifySaved();
 }
 
 /** Adopts the account's saved choice once per session. Settles even when the
@@ -99,9 +104,17 @@ function adopt(account: Account, scope: string) {
         if (adopts && agent !== undefined) cache(scope, agent);
         remember(account, adopts ? agent : saved.get(account));
       },
-      () => {
+      (cause) => {
         adopted.delete(account);
-        remember(account, saved.get(account));
+        readErrors.set(
+          account,
+          cause instanceof Error
+            ? cause.message
+            : "Your Bestie couldn't be read from your account.",
+        );
+        // Solo still settles and can choose a device fallback while offline.
+        saved.set(account, saved.get(account));
+        notifySaved();
       },
     );
     adopted.set(account, pending);
@@ -109,8 +122,7 @@ function adopt(account: Account, scope: string) {
   return pending;
 }
 
-/** Whether the account's saved choice has been read (or couldn't be), and
- * what it is. */
+/** Whether the account read settled, its saved choice, and recoverable failure. */
 function useAdopted(session: RelaySession, scope: string) {
   const account = session.mainAgent;
   useEffect(() => {
@@ -122,15 +134,31 @@ function useAdopted(session: RelaySession, scope: string) {
   const agent = useSyncExternalStore(subscribeSaved, () =>
     account ? saved.get(account) : undefined,
   );
-  return { read, agent };
+  const error = useSyncExternalStore(subscribeSaved, () =>
+    account ? readErrors.get(account) : undefined,
+  );
+  return {
+    read,
+    agent,
+    error,
+    retry: () => {
+      if (!account) return;
+      readErrors.delete(account);
+      saved.delete(account);
+      notifySaved();
+      void adopt(account, scope);
+    },
+  };
 }
 
-/** The account-saved choice and whether its first read settled. Without an
- * account capability, the local explicit choice is already authoritative. */
+/** The account-saved choice and its read state. Without an account capability,
+ * the local explicit choice is already authoritative. */
 export function useSavedAgentState(session: RelaySession, scope: string) {
   const local = useChosenAgent(scope);
   const account = useAdopted(session, scope);
-  return session.mainAgent ? account : { read: true, agent: local };
+  return session.mainAgent
+    ? account
+    : { read: true, agent: local, error: undefined, retry: () => {} };
 }
 
 /** The agent saved as main on the viewer's account, when it has one; without

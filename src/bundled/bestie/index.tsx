@@ -106,7 +106,7 @@ function BestieDestination({
 }) {
   const connection = useRelayConnection(relay);
   const saved = useSavedAgentState(connection.session, connection.scope ?? "");
-  if (!saved.read)
+  if (!saved.read || saved.error)
     return (
       <div className="h-full min-h-0">
         <FullPageSurface aria-label="Bestie">
@@ -120,9 +120,13 @@ function BestieDestination({
               }
             />
             <Intro>
-              <p className="m-0 text-body-sm text-muted" role="status">
-                Loading your Bestie…
+              <p
+                className="m-0 text-body-sm text-muted"
+                role={saved.error ? "alert" : "status"}
+              >
+                {saved.error ?? "Loading your Bestie…"}
               </p>
+              {saved.error && <Button onClick={saved.retry}>Try again</Button>}
             </Intro>
           </div>
         </FullPageSurface>

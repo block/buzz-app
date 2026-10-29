@@ -103,6 +103,38 @@ it("waits for the account choice before deciding whether to show setup", async (
   ).toBeVisible();
 });
 
+it("keeps setup hidden when the account choice read fails and retries it", async () => {
+  const first = deferred<string | undefined>();
+  const second = deferred<string | undefined>();
+  let reads = 0;
+  const h = await bestieFixture(native.invoke, {
+    mainAgent: {
+      read: () => (reads++ ? second.promise : first.promise),
+      write: async () => {},
+    },
+  });
+  await h.bestie.setup();
+  renderPage(h);
+  await act(async () => first.reject(new Error("Account temporarily offline")));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Account temporarily offline",
+  );
+  expect(
+    screen.queryByRole("button", { name: "Set up Bestie" }),
+  ).not.toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+  expect(await screen.findByRole("status")).toHaveTextContent(
+    "Loading your Bestie…",
+  );
+  await act(async () => second.resolve(h.agent));
+  expect(
+    await screen.findByText("This connection cannot start direct messages."),
+  ).toBeVisible();
+  expect(
+    screen.queryByRole("button", { name: "Set up Bestie" }),
+  ).not.toBeInTheDocument();
+});
+
 it("routes an account-saved Bestie to its canonical DM instead of hosted setup", async () => {
   const choice = deferred<string | undefined>();
   const h = await bestieFixture(native.invoke, {

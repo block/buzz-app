@@ -32,9 +32,10 @@ route to the same DM.
 The account choice is read before the page decides what to show. With a saved
 Bestie, reconnecting, inventory failures and missing-agent states remain on the
 pinned destination with their own recovery; they never fall through to setup.
-When the account read settles with no saved Bestie, Riley's existing Builderlab
-setup remains the page: it creates a hosted agent, gives it the instructions in
-`prompt.ts`, creates its private Solo home and sends the introduction.
+Only a successful account read with no saved Bestie shows Riley's existing
+Builderlab setup. A failed read remains on the Bestie page with Retry. Setup
+creates a hosted agent, gives it the instructions in `prompt.ts`, creates its
+private Solo home and sends the introduction.
 
 Builderlab setup does **not** yet write that agent to `main-agent` or hand off to
 the canonical DM. Connecting hosted setup to the shared selection owner is a

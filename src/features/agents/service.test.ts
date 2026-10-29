@@ -11711,6 +11711,36 @@ describe("synced teams", () => {
     expect(error).not.toContain(away);
   });
 
+  it("puts set-up hosted agents on a team and names them in its roster", async () => {
+    const unfinished = "d".repeat(64);
+    const team = stored(viewer, [bot, hostedKey, unfinished]);
+    const f = await ready([], team.storage);
+    const { type, remote } = cloud();
+    f.plugin.agents.register(type);
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    await f.service.create({ type: "example/cloud", name: "Sky" });
+    remote.provision.mockResolvedValueOnce({ pubkey: unfinished });
+    remote.activate.mockRejectedValueOnce(new Error("provider down"));
+    await expect(
+      f.service.create({ type: "example/cloud", name: "Bo" }),
+    ).rejects.toThrow("provider down");
+    await f.service.saveTeam(crew([bot, hostedKey]));
+    expect(f.saveTeam).toHaveBeenCalledWith(
+      expect.objectContaining({ members: [bot, hostedKey] }),
+    );
+    await expect(f.service.saveTeam(crew([unfinished]))).rejects.toThrow(
+      /^Add .+ to relay\.example\.test first$/,
+    );
+    team.confirm(f.stores.get(home));
+    await vi.waitFor(() =>
+      expect(f.service.snapshot().teams.map((t) => t.name)).toEqual(["Crew"]),
+    );
+    await handleOf(f.run, f.emit);
+    const roster = f.run.mock.calls.at(-1)?.[0].team;
+    expect(roster).toContain(`- Sky (${npubEncode(hostedKey)})\n`);
+    expect(roster).not.toContain(npubEncode(unfinished));
+  });
+
   it("shows only the signed-in account's synced teams", async () => {
     const team = stored(other, []);
     const f = await ready([here(alder)], team.storage);

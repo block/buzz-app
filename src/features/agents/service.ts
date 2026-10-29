@@ -1635,15 +1635,8 @@ export class AgentsService extends Service implements Agents {
         const member = this.liveMember(key);
         const origin = member && originOf(member.relay);
         // Only teammates in the same community, where it can reach them.
-        return member
-          ? teamPrompt(
-              this.allTeams(),
-              this.identities.filter(
-                (identity) =>
-                  !identity.deleted && originOf(identity.relay) === origin,
-              ),
-              member.pubkey,
-            )
+        return member && origin
+          ? teamPrompt(this.allTeams(), this.teamAgents(origin), member.pubkey)
           : "";
       },
       agentTypes: () =>
@@ -3862,10 +3855,9 @@ export class AgentsService extends Service implements Agents {
       this.liveRows(pubkey)[0]?.name || (labels.get(pubkey) ?? pubkey);
     // Members the team already has may run on another device; the roster
     // proves them.
+    const members = new Set(this.teamAgents(home).map((agent) => agent.pubkey));
     const outside = team.members.find(
-      (pubkey) =>
-        !opened.includes(pubkey) &&
-        !this.liveRows(pubkey).some((row) => originOf(row.relay) === home),
+      (pubkey) => !opened.includes(pubkey) && !members.has(pubkey),
     );
     if (outside) throw new Error(`Add ${name(outside)} to ${host} first`);
     const config = this.communityConfigs.get(home);
@@ -4250,6 +4242,16 @@ export class AgentsService extends Service implements Agents {
         !identity.deleted &&
         (pubkey === undefined || identity.pubkey === pubkey),
     );
+  }
+  /** The agents a team in `origin` can have: the ones here, and the listed
+   * ones whose setup finished, such as hosted ones. */
+  private teamAgents(origin: string) {
+    return [
+      ...this.liveRows().filter(
+        (identity) => originOf(identity.relay) === origin,
+      ),
+      ...this.listedAgents(origin).filter((agent) => !agent.unfinished),
+    ];
   }
   /** The membership of this key, unless it was deleted. */
   private liveMember(key: AgentKey) {

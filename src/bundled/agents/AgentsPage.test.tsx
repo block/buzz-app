@@ -2460,6 +2460,33 @@ it("makes a team of chosen agents and lists it with its members", async () => {
   expect(screen.queryByRole("list", { name: "Teams" })).not.toBeInTheDocument();
 });
 
+it("offers hosted agents as members, warning that they may not get the instructions", async () => {
+  const user = userEvent.setup();
+  setup([
+    agent("Ada", 1),
+    { ...agent("Sky", 2), place: "hosted" },
+    { ...agent("Bo", 3), place: "hosted", unfinished: true },
+    { ...agent("Cy", 4), place: "elsewhere" },
+  ]);
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  await user.click(screen.getByRole("button", { name: "New team" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Create a new team" }),
+  );
+  const members = ["Ada", "Sky", "Bo", "Cy"].map((name) =>
+    screen.queryByRole("checkbox", { name }),
+  );
+  expect(members.map(Boolean)).toEqual([true, true, false, false]);
+  const instructions = screen.getByRole("textbox", { name: "Instructions" });
+  const warning = /Remote agents on this team/;
+  await user.click(screen.getByRole("checkbox", { name: "Ada" }));
+  expect(instructions).not.toHaveAccessibleDescription(warning);
+  await user.click(screen.getByRole("checkbox", { name: "Sky" }));
+  expect(instructions).toHaveAccessibleDescription(warning);
+  await user.click(screen.getByRole("checkbox", { name: "Sky" }));
+  expect(instructions).not.toHaveAccessibleDescription(warning);
+});
+
 it("closes the team editor when leaving Your teams", async () => {
   const user = userEvent.setup();
   const { agents } = setup([agent("Ada", 1)]);

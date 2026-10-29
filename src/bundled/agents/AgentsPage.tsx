@@ -545,7 +545,9 @@ export function AgentsPage({
           ) : (
             <Teams
               agents={agents}
-              saved={snapshot.agents.filter((agent) => agent.place === "here")}
+              saved={snapshot.agents.filter(
+                (agent) => agent.place !== "elsewhere" && !agent.unfinished,
+              )}
               teams={teams}
               editing={editing}
               onEdit={setEditingTeam}
@@ -2142,6 +2144,10 @@ function TeamEditor({
       !saved.some((agent) => agent.pubkey === pubkey) &&
       agents.memberships(pubkey).length > 0,
   ).length;
+  // Their provider runs them, so they may not get the team's instructions.
+  const remote = saved.some(
+    (agent) => agent.place === "hosted" && members.includes(agent.pubkey),
+  );
   const act = async (work: () => Promise<unknown>) => {
     if (pending) return;
     setPending(true);
@@ -2193,7 +2199,16 @@ function TeamEditor({
       </Field>
       <Field
         label="Instructions"
-        description="Every member follows these after its own instructions."
+        description={
+          <>
+            Every member follows these after its own instructions.
+            {remote && (
+              <span className="mt-1 block text-warning">
+                Remote agents on this team may not get these instructions.
+              </span>
+            )}
+          </>
+        }
       >
         <Textarea
           rows={5}

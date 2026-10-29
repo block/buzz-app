@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useAgentSaveState } from "../../../features/agents/AgentSaveButton";
+import { ModelIcon } from "../../../features/agents/ModelPicker";
 import { Button } from "../../../shared/design-system/ui/Button";
-import { InlineHeader } from "../../../shared/design-system/ui/Header";
+import { PreferenceRow } from "../../../shared/design-system/ui/PreferenceRow";
 import { Select } from "../../../shared/design-system/ui/Select";
 import { SettingsGroup } from "../../../shared/design-system/ui/SettingsGroup";
 import { useToastNotification } from "../../../shared/design-system/ui/Toast";
@@ -11,6 +12,9 @@ import type {
   RemoteAgentModel,
 } from "../agents/client";
 import type { OAuthSession } from "../oauth/session";
+
+const effortLabel = (id: string) =>
+  id === "xhigh" ? "Extra high" : `${id.charAt(0).toUpperCase()}${id.slice(1)}`;
 
 const statuses = {
   "setup-required": "Choose a model and reasoning effort to finish setup.",
@@ -109,99 +113,108 @@ export function ModelSettings({
     }
   };
   return (
-    <div className="grid gap-3">
-      <InlineHeader title="Model" />
-      <SettingsGroup layout="form">
-        {saved.modelSelectionStatus !== "valid" && (
-          <p role="status" className="m-0 text-body-sm text-warning">
-            {statuses[saved.modelSelectionStatus ?? "unknown"]}
-            {saved.modelId &&
-              ` Saved model: ${models?.find((choice) => choice.id === saved.modelId)?.displayName ?? saved.modelId}.`}
-            {saved.reasoningEffort &&
-              ` Saved effort: ${saved.reasoningEffort}.`}
-          </p>
-        )}
-        {models ? (
-          models.length ? (
-            <>
-              <Select
-                label="Model"
-                variant="field"
-                value={model ? modelId : ""}
-                placeholder="Choose a model"
-                disabled={busy}
-                groups={[
-                  {
-                    label: "Models",
-                    options: models.map((choice) => ({
-                      value: choice.id,
-                      label: choice.displayName,
-                    })),
-                  },
-                ]}
-                onValueChange={(next) => {
-                  setModelId(next);
-                  setEffort("");
-                }}
-              />
-              <Select
-                label="Reasoning effort"
-                variant="field"
-                value={valid ? effort : ""}
-                placeholder="Choose reasoning effort"
-                disabled={busy || !model}
-                groups={[
-                  {
-                    label: "Supported reasoning efforts",
-                    options: (model?.supportedReasoningEfforts ?? []).map(
-                      (value) => ({ value, label: value }),
-                    ),
-                  },
-                ]}
-                onValueChange={setEffort}
-              />
-              <div>
-                <Button
-                  variant="prominent"
-                  loading={busy}
-                  disabled={
-                    !valid ||
-                    (!changed && saved.modelSelectionStatus === "valid")
-                  }
-                  onClick={() => void save()}
-                >
-                  Save model
-                </Button>
-              </div>
-            </>
-          ) : (
-            <p className="m-0 text-body-sm text-secondary">
-              No models are available. Retry when the catalog is available.
-            </p>
-          )
-        ) : (
-          busy && (
-            <p className="m-0 text-body-sm text-secondary">Loading models…</p>
-          )
-        )}
-        {(catalogError || error) && (
-          <p role="alert" className="m-0 text-body-sm text-danger">
-            {catalogError || error}
-          </p>
-        )}
-        {(catalogError || error || models?.length === 0) && (
-          <div>
-            <Button
+    <div className="grid gap-4">
+      {saved.modelSelectionStatus !== "valid" && (
+        <p role="status" className="m-0 text-body-sm text-warning">
+          {statuses[saved.modelSelectionStatus ?? "unknown"]}
+          {saved.modelId &&
+            ` Saved model: ${models?.find((choice) => choice.id === saved.modelId)?.displayName ?? saved.modelId}.`}
+          {saved.reasoningEffort &&
+            ` Saved effort: ${effortLabel(saved.reasoningEffort)}.`}
+        </p>
+      )}
+      <SettingsGroup>
+        <PreferenceRow title="Harness" trailing="Builderlab" />
+        {!!models?.length && (
+          <>
+            <Select
+              label="Model"
+              variant="preference"
+              value={model ? modelId : ""}
+              placeholder="Choose a model"
+              leading={
+                model ? (
+                  <ModelIcon model={`${model.id} ${model.displayName}`} />
+                ) : undefined
+              }
               disabled={busy}
-              onClick={() => setRevision((value) => value + 1)}
-            >
-              {catalogError || models?.length === 0
-                ? "Retry models"
-                : "Refresh models"}
-            </Button>
-          </div>
+              groups={[
+                {
+                  label: "Models",
+                  options: models.map((choice) => ({
+                    value: choice.id,
+                    label: choice.displayName,
+                    leading: (
+                      <ModelIcon model={`${choice.id} ${choice.displayName}`} />
+                    ),
+                  })),
+                },
+              ]}
+              onValueChange={(next) => {
+                setModelId(next);
+                setEffort("");
+              }}
+            />
+            <Select
+              label="Thinking"
+              variant="preference"
+              value={valid ? effort : ""}
+              placeholder="Choose thinking"
+              disabled={busy || !model}
+              groups={[
+                {
+                  label: "Supported reasoning efforts",
+                  options: (model?.supportedReasoningEfforts ?? []).map(
+                    (value) => ({ value, label: effortLabel(value) }),
+                  ),
+                },
+              ]}
+              onValueChange={setEffort}
+            />
+          </>
         )}
       </SettingsGroup>
+      {models ? (
+        models.length ? (
+          <div>
+            <Button
+              variant="prominent"
+              loading={busy}
+              disabled={
+                !valid || (!changed && saved.modelSelectionStatus === "valid")
+              }
+              onClick={() => void save()}
+            >
+              Save model
+            </Button>
+          </div>
+        ) : (
+          <p className="m-0 text-body-sm text-secondary">
+            No models are available. Retry when the catalog is available.
+          </p>
+        )
+      ) : (
+        busy && (
+          <p className="m-0 text-body-sm text-secondary">Loading models…</p>
+        )
+      )}
+      {(catalogError || error) && (
+        <p role="alert" className="m-0 text-body-sm text-danger">
+          {catalogError || error}
+        </p>
+      )}
+      {(catalogError || error || models?.length === 0) && (
+        <div>
+          <Button
+            disabled={busy}
+            onClick={() => setRevision((value) => value + 1)}
+          >
+            {catalogError || models?.length === 0
+              ? "Retry models"
+              : "Refresh models"}
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

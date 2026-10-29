@@ -189,9 +189,7 @@ it("keeps hosted instructions on cancellation and resets a confirmed discard", a
   );
   const field = await screen.findByRole("textbox", { name: "Instructions" });
   expect(await screen.findByRole("combobox", { name: "Model" })).toBeVisible();
-  expect(
-    screen.getByRole("combobox", { name: "Reasoning effort" }),
-  ).toBeVisible();
+  expect(screen.getByRole("combobox", { name: "Thinking" })).toBeVisible();
   expect(screen.queryByText("Workspace")).toBeNull();
   expect(screen.getByRole("link", { name: "Builderlab" })).toHaveAttribute(
     "href",
@@ -236,9 +234,7 @@ it("keeps hosted instructions on cancellation and resets a confirmed discard", a
   expect(screen.getByText("One session per thread")).toBeVisible();
   expect(screen.getByText("Agent settings")).toBeVisible();
   expect(screen.queryByRole("combobox", { name: "Model" })).toBeNull();
-  expect(
-    screen.queryByRole("combobox", { name: "Reasoning effort" }),
-  ).toBeNull();
+  expect(screen.queryByRole("combobox", { name: "Thinking" })).toBeNull();
   await user.click(screen.getByRole("tab", { name: "Identity" }));
   const fresh = await screen.findByRole("textbox", { name: "Instructions" });
   expect(fresh).not.toBe(field);
@@ -264,8 +260,8 @@ it("guards hosted model drafts and a pending model save", async () => {
   expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(
     "Friendly Model",
   );
-  await user.click(screen.getByRole("combobox", { name: "Reasoning effort" }));
-  await user.click(await screen.findByRole("option", { name: "high" }));
+  await user.click(screen.getByRole("combobox", { name: "Thinking" }));
+  await user.click(await screen.findByRole("option", { name: "High" }));
   const pending = deferred<HostResponse>();
   h.request.mockReturnValueOnce(pending.promise);
   try {
@@ -293,9 +289,9 @@ it("guards hosted model drafts and a pending model save", async () => {
   expect(
     await screen.findByRole("combobox", { name: "Model" }),
   ).toHaveTextContent("Choose a model");
-  expect(
-    screen.getByRole("combobox", { name: "Reasoning effort" }),
-  ).toHaveTextContent("Choose reasoning effort");
+  expect(screen.getByRole("combobox", { name: "Thinking" })).toHaveTextContent(
+    "Choose thinking",
+  );
   expect(screen.queryByRole("alert")).toBeNull();
 });
 

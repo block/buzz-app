@@ -118,6 +118,7 @@ export function createSettingsTab(client: AgentClient, session: OAuthSession) {
                 }
               >
                 <Textarea
+                  appearance="outlined"
                   value={draft}
                   onChange={(event) => setDraft(event.target.value)}
                   disabled={busy}

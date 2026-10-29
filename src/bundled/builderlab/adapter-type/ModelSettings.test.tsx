@@ -116,13 +116,13 @@ it("requires an explicit supported pair, clears effort when the model changes, a
   expect(screen.getByRole("button", { name: "Save model" })).toBeDisabled();
   await choose("Model", "Friendly One");
   expect(screen.getByRole("button", { name: "Save model" })).toBeDisabled();
-  await choose("Reasoning effort", "high");
+  await choose("Thinking", "High");
   await choose("Model", "Friendly Two");
-  expect(
-    screen.getByRole("combobox", { name: "Reasoning effort" }),
-  ).toHaveTextContent("Choose reasoning effort");
+  expect(screen.getByRole("combobox", { name: "Thinking" })).toHaveTextContent(
+    "Choose thinking",
+  );
   expect(screen.getByRole("button", { name: "Save model" })).toBeDisabled();
-  await choose("Reasoning effort", "none");
+  await choose("Thinking", "None");
   await userEvent
     .setup()
     .click(screen.getByRole("button", { name: "Save model" }));
@@ -150,9 +150,9 @@ it("shows no warning or success message when opening valid saved preferences", a
   expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(
     "Friendly One",
   );
-  expect(
-    screen.getByRole("combobox", { name: "Reasoning effort" }),
-  ).toHaveTextContent("high");
+  expect(screen.getByRole("combobox", { name: "Thinking" })).toHaveTextContent(
+    "High",
+  );
   expect(screen.queryByRole("status")).not.toBeInTheDocument();
   expect(
     screen.queryByRole("dialog", { name: "Model preferences saved" }),
@@ -180,15 +180,15 @@ it.each([
       selection.modelId === "retired" ? "retired" : "Friendly Two",
     );
     expect(
-      screen.getByRole("combobox", { name: "Reasoning effort" }),
-    ).toHaveTextContent("Choose reasoning effort");
+      screen.getByRole("combobox", { name: "Thinking" }),
+    ).toHaveTextContent("Choose thinking");
     expect(screen.getByRole("button", { name: "Save model" })).toBeDisabled();
   },
 );
 it("preserves a failed draft and refuses to save it through a different account", async () => {
   const h = await fixture();
   await choose("Model", "Friendly One");
-  await choose("Reasoning effort", "low");
+  await choose("Thinking", "Low");
   h.offline(true);
   const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: "Save model" }));
@@ -196,9 +196,9 @@ it("preserves a failed draft and refuses to save it through a different account"
   expect(
     screen.queryByRole("dialog", { name: "Model preferences saved" }),
   ).not.toBeInTheDocument();
-  expect(
-    screen.getByRole("combobox", { name: "Reasoning effort" }),
-  ).toHaveTextContent("low");
+  expect(screen.getByRole("combobox", { name: "Thinking" })).toHaveTextContent(
+    "Low",
+  );
   h.offline(false);
   await act(async () => h.changeAccount());
   const before = h.request.mock.calls.length;
@@ -212,7 +212,7 @@ it("preserves a failed draft and refuses to save it through a different account"
 it("retries a failed catalog refresh without retrying a failed save", async () => {
   const h = await fixture();
   await choose("Model", "Friendly One");
-  await choose("Reasoning effort", "low");
+  await choose("Thinking", "Low");
   const user = userEvent.setup();
   h.offline(true);
   await user.click(screen.getByRole("button", { name: "Save model" }));
@@ -225,9 +225,9 @@ it("retries a failed catalog refresh without retrying a failed save", async () =
   await user.click(retry);
   await screen.findByRole("button", { name: "Refresh models" });
   expect(screen.getByRole("alert")).toHaveTextContent("HTTP 400");
-  expect(
-    screen.getByRole("combobox", { name: "Reasoning effort" }),
-  ).toHaveTextContent("low");
+  expect(screen.getByRole("combobox", { name: "Thinking" })).toHaveTextContent(
+    "Low",
+  );
   expect(
     h.request.mock.calls.filter(([request]) =>
       request.url.endsWith("/update-agent"),

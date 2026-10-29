@@ -81,7 +81,7 @@ import {
   type ComposerInputElement,
 } from "./composer-dom";
 import { isApplePlatform } from "../shortcuts/format";
-import { macWebKit } from "./mac-webkit";
+import { macWebKit, webKit } from "./mac-webkit";
 import { composerLinkUrl } from "./composer-link";
 import { messageLinkParts } from "./message-link-parts";
 import { updatePlainLinks, type PlainLink } from "./composer-link-edit";
@@ -234,7 +234,10 @@ function crossTokenLine(
         (index > 0 || !above || level(above) < line.top) &&
         (index < last || !below || level(below) > line.bottom);
       // WebKit's native move onto a line the token is split across can put
-      // the caret inside the token, so such a line is entered here too.
+      // the caret inside the token, so such a line is entered here too. It is
+      // left natively, which works from either edge. Text beside the token can
+      // put `previous` on this very line, so a caret already on it is not
+      // entering.
       const split = rects.filter((rect) => holds(line, rect)).length > 1;
       if (!alone && !split) continue;
       const previous = up
@@ -267,7 +270,7 @@ function crossTokenLine(
   const token = native?.focusNode?.childNodes[native.focusOffset - 1];
   if (
     !up &&
-    navigator.vendor === "Apple Computer, Inc." &&
+    webKit() &&
     native &&
     next?.nodeType === Node.TEXT_NODE &&
     token instanceof HTMLElement &&

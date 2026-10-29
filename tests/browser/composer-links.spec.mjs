@@ -810,6 +810,8 @@ test("Up and Down move one line at a time through links that wrap", async ({
         for (const index of expected) {
           await page.keyboard.press(`${shift}${key}`);
           await expect.poll(async () => line((await caret()).head)).toBe(index);
+          const { head, anchor } = await caret();
+          expect(anchor).toBe(shift ? start : head);
           await rendered();
         }
       }

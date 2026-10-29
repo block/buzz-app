@@ -1,5 +1,5 @@
 import { fileURLToPath } from "node:url";
-import { createRequire } from "node:module";
+import { markdownWorkerPlugins } from "./scripts/markdown-worker";
 import { defineConfig, loadEnv, type PluginOption } from "vite";
 import react from "@vitejs/plugin-react";
 import { worktreePort } from "./scripts/worktree-port.mjs";
@@ -80,23 +80,7 @@ export default defineConfig(async ({ command, mode }) => {
     });
   return {
     plugins,
-    worker: {
-      plugins: () => [
-        {
-          name: "markdown-worker-entities",
-          enforce: "pre",
-          resolveId(source: string) {
-            if (source !== "decode-named-character-reference") return;
-            // The official default export is DOM-free. Resolve only worker
-            // bundles; the page keeps its smaller browser entity decoder.
-            const require = createRequire(import.meta.url);
-            return createRequire(
-              require.resolve("mdast-util-from-markdown"),
-            ).resolve(source);
-          },
-        },
-      ],
-    },
+    worker: { plugins: markdownWorkerPlugins },
     define: {
       "import.meta.env.VITE_BUZZ_LIVE": JSON.stringify(live ? "1" : "0"),
       "import.meta.env.VITE_BUZZ_NOTIFICATIONS_PAUSED": JSON.stringify(

@@ -2340,3 +2340,52 @@ it("lets go of whichever channel-list listener it holds when Activity unsubscrib
   relay.connect();
   expect(changed).toHaveBeenCalledTimes(1);
 });
+
+it.each(["stop", "retire"])(
+  "keeps a protected final answer local after %s",
+  async (mode) => {
+    const answered = deferred<unknown>();
+    const check = vi.fn(async () => {});
+    const f = setup({
+      wait: () => answered.promise,
+      abort: () => ({}),
+      runtime: () => ({
+        file: "/runtime/host.mjs",
+        node: "/node/bin/node",
+        codeRoot: "/runtime",
+        nodeRoot: "/node",
+        data: "/data",
+        auth: "/auth",
+      }),
+    });
+    let stop!: () => Promise<void>;
+    const turn = f.deliver(
+      { type: "mention", event: reply("2", "@Pi look") },
+      {
+        interruptible: (fn) => {
+          stop = fn;
+        },
+      },
+    );
+    await turn.run;
+    Object.assign(f.agent, {
+      protection: {
+        key: "test",
+        stateKey: "test",
+        processProtection: { readOnlyPaths: [], hiddenPaths: [] },
+        assertAvailable() {},
+        check,
+      },
+    });
+    if (mode === "stop") await stop();
+    else await f.runtime.retire(self);
+    answered.resolve({
+      status: "done",
+      answer: 5,
+      text: "The build is green.",
+    });
+    await f.settled(turn);
+    expect(f.published).toEqual([]);
+    expect(check).not.toHaveBeenCalled();
+  },
+);

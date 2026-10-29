@@ -256,7 +256,7 @@ describe("semantic contrast contract", () => {
     ],
     [
       "accent hover",
-      "--cobalt-10-light: #2176d9;",
+      "--cobalt-10-light: #0968d6;",
       "--cobalt-10-light: #9a5cd0;",
       "--text-on-accent",
     ],
@@ -270,6 +270,44 @@ describe("semantic contrast contract", () => {
       expect(result.output).toContain("needs 4.5:1");
     },
   );
+
+  it.each([
+    [
+      "shade",
+      "--shade-fill: rgb(0 0 0 / 10%);",
+      "--shade-fill: rgb(0 0 0 / 45%);",
+      "light --text-mention (",
+      "on --affordance-mention (",
+    ],
+    [
+      "tint",
+      "--tint-hover-fill: rgb(255 255 255 / 20%);",
+      "--tint-hover-fill: rgb(255 255 255 / 70%);",
+      "dark --text-mention (",
+      "on --affordance-mention-hover (",
+    ],
+  ])(
+    "measures a see-through %s chip as the colour it makes on its bubble",
+    (_name, from, to, text, pairing) => {
+      expect(tokens).toContain(from);
+      const result = check(tokens.replace(from, to));
+      expect(result.status, result.output).toBe(1);
+      expect(result.output).toContain(text);
+      expect(result.output).toContain(pairing);
+    },
+  );
+
+  it("fails when an accent is missing an overlay it is measured on", () => {
+    const from = "  --accent-overlay-soft-dark: var(--shade-soft-fill);\n";
+    const bee = tokens.indexOf('[data-accent="bee"] {');
+    const at = tokens.indexOf(from, bee);
+    expect(at).toBeGreaterThan(bee);
+    const result = check(tokens.slice(0, at) + tokens.slice(at + from.length));
+    expect(result.status, result.output).toBe(1);
+    expect(result.output).toContain(
+      "bee/high/dark: unresolved overlay pair --text-message-own on --affordance-reaction-own",
+    );
+  });
 
   it.each(["danger", "warning"])(
     "rejects the former low-contrast %s boundary",

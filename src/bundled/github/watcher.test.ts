@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 import type { Context } from "@deepseek-ai/cordis";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { createElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AddedTool } from "../../buzz-mcp/session-tools";
 import type { BuzzClient } from "../../buzz-mcp/client";
@@ -12,6 +14,7 @@ import type { AttentionValue } from "../../features/agents/attention";
 import { POLL_MS, watchPulls } from "./watcher";
 import { pullOf, pullRequest, QUIET_MS, WAKE_LIMIT } from "./watch";
 import { savePolicy } from "./authors";
+import { AuthorSettings } from "./AuthorSettings";
 
 const agent = "a".repeat(64);
 const root = "f".repeat(64);
@@ -849,6 +852,35 @@ describe("github_watch_pr", () => {
     expect(app.texts()).toHaveLength(1);
     expect(app.texts()[0]).toContain("body-wes");
     expect(app.texts()[0]).not.toContain("body-stranger");
+    app.dispose();
+  });
+
+  it("tells a running watch what rules saved in Settings allow", async () => {
+    const app = setup();
+    await app.call({ url });
+    render(createElement(AuthorSettings, { active: () => true }));
+    const save = (rules: string) => {
+      fireEvent.change(screen.getByRole("textbox", { name: /Rules/ }), {
+        target: { value: rules },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    };
+    fireEvent.click(screen.getByRole("radio", { name: "Don’t wake it" }));
+    save("allow author:wes");
+    const wes = { id: "I1", login: "wes", body: "body-wes" };
+    const stranger = { id: "I2", login: "stranger", body: "body-stranger" };
+    app.gh(answer({ comments: [wes, stranger] }));
+    await vi.advanceTimersByTimeAsync(POLL_MS + QUIET_MS + POLL_MS);
+    expect(app.texts()).toHaveLength(1);
+    expect(app.texts()[0]).toContain("body-wes");
+    expect(app.texts()[0]).not.toContain("body-stranger");
+    save("allow author:stranger");
+    const later = { id: "I3", login: "stranger", body: "body-later" };
+    app.gh(answer({ comments: [wes, stranger, later] }));
+    await vi.advanceTimersByTimeAsync(POLL_MS + QUIET_MS + POLL_MS);
+    expect(app.texts()).toHaveLength(2);
+    expect(app.texts()[1]).toContain("body-later");
+    cleanup();
     app.dispose();
   });
 

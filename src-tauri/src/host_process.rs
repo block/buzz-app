@@ -3,13 +3,20 @@
 //! arrive. A process belongs to the plugin that started it and to the page that
 //! asked; it is killed when the plugin asks, when the page reloads, or when the
 //! app exits. A page that reloaded hears nothing of it after. It runs with the
-//! user's own access: there is no sandbox.
+//! user's own access, with optional native containment for protected workers.
+mod protection;
+use protection::ProcessProtection;
+
 use crate::host_command::{effective_path, load_login_shell_path, resolve_program};
 use crate::{with_manager, PluginManager};
-use buzzodz_plugins::HostProcess;
+use buzzodz_plugins::{HostProcess, ProcessArtifact};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::ffi::OsStr;
+use std::io::Read;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt as _;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt as _;
 use std::path::PathBuf;
@@ -302,16 +309,19 @@ pub(crate) async fn plugin_host_process_spawn<R: tauri::Runtime>(
     env: Option<HashMap<String, Option<String>>>,
     on_event: Channel<ProcessEvent>,
     mcp: Option<ProcessMcpConnection>,
+    protection: Option<ProcessProtection>,
 ) -> Result<u64, String> {
     let page = processes.page();
     let plugin = id.clone();
-    let declared = with_manager(manager, move |manager| {
+    let (declared, registry) = with_manager(manager, move |manager| {
+        let registry = manager.storage_root().to_path_buf();
         manager
             .host_grants(&id, &revision)?
             .processes
             .into_iter()
             .find(|process| process.id == process_id)
             .ok_or_else(|| "Process is not declared".into())
+            .map(|declared| (declared, registry))
     })
     .await?;
     if args.len() > 256 || args.iter().any(|arg| arg.contains('\0')) {
@@ -320,19 +330,71 @@ pub(crate) async fn plugin_host_process_spawn<R: tauri::Runtime>(
     load_login_shell_path().await;
     let path = effective_path();
     let program = program_path(&declared, || app.path().resource_dir().ok(), &path)?;
-    let mut command = if mcp.is_some() {
+    #[cfg(target_os = "macos")]
+    let artifact_parent = declared.artifact.as_ref().map(|_| {
+        program
+            .parent()
+            .expect("absolute artifact path has a parent")
+            .to_path_buf()
+    });
+    let (program, prefix) = if mcp.is_some() {
         let resources = app.path().resource_dir().map_err(|_| "No app resources")?;
         let helper = if cfg!(windows) {
             "buzz-agent-command.exe"
         } else {
             "buzz-agent-command"
         };
-        let mut command = Command::new(resources.join("bin").join(helper));
-        command.arg("--launch").arg(&program);
-        command
+        (
+            resources.join("bin").join(helper),
+            vec![
+                std::ffi::OsString::from("--launch"),
+                program.into_os_string(),
+            ],
+        )
+    } else {
+        (program, Vec::new())
+    };
+    #[cfg(not(target_os = "macos"))]
+    let _ = &registry;
+    let mut command = if let Some(protection) = protection {
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = protection;
+            return Err("Protected workers require macOS".into());
+        }
+        #[cfg(target_os = "macos")]
+        {
+            // A dev frontend can be served from another checkout. Its actual
+            // source is not native-owned, so HMR could replace the gate.
+            if tauri::is_dev() {
+                return Err("Use a packaged Buzz build for protected workers; development frontends are mutable".into());
+            }
+            let controls = app
+                .path()
+                .app_data_dir()
+                .map_err(|_| "Application data is unavailable")?
+                .join("agents");
+            std::fs::create_dir_all(&controls).map_err(|_| "Agent controls are unavailable")?;
+            let executable =
+                std::env::current_exe().map_err(|_| "Application executable is unavailable")?;
+            let bundle = executable
+                .ancestors()
+                .find(|p| p.extension().is_some_and(|extension| extension == "app"))
+                .map(std::path::Path::to_path_buf)
+                .unwrap_or(executable);
+            let mut protected_roots = vec![controls, bundle, registry];
+            if let Some(parent) = artifact_parent {
+                protected_roots.push(parent);
+            }
+            let profile = protection.profile(&protected_roots)?;
+            let mut contained = Command::new("/usr/bin/sandbox-exec");
+            contained.args(["-p", &profile]).arg(program);
+            contained
+        }
     } else {
         Command::new(program)
     };
+    command.args(prefix);
     command
         .args(&declared.args)
         .args(&args)
@@ -461,11 +523,82 @@ fn program_path(
     resources: impl FnOnce() -> Option<PathBuf>,
     path: &OsStr,
 ) -> Result<PathBuf, String> {
+    if let Some(artifact) = &declared.artifact {
+        return verify_artifact(artifact);
+    }
     if !declared.bundled {
         return Ok(resolve_program(&declared.program, path));
     }
     let resources = resources().ok_or_else(|| format!("Could not start {}", declared.program))?;
     Ok(resources.join("bin").join(&declared.program))
+}
+
+/// A descriptor names exact local bytes. No component may resolve through a
+/// symlink, including the containing directory and each declared sibling.
+fn verify_artifact(artifact: &ProcessArtifact) -> Result<PathBuf, String> {
+    let executable = PathBuf::from(&artifact.path);
+    if !executable.is_absolute() {
+        return Err("Artifact path must be absolute".into());
+    }
+    verify_artifact_file(&executable, &artifact.sha256, true)?;
+    let parent = executable
+        .parent()
+        .ok_or("Artifact has no parent directory")?;
+    for sibling in &artifact.siblings {
+        verify_artifact_file(&parent.join(&sibling.name), &sibling.sha256, false)?;
+    }
+    Ok(executable)
+}
+
+fn verify_artifact_file(
+    path: &std::path::Path,
+    expected: &str,
+    executable: bool,
+) -> Result<(), String> {
+    #[cfg(not(unix))]
+    let _ = executable;
+    if !path.is_absolute()
+        || expected.len() != 64
+        || !expected
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
+        return Err("Invalid artifact descriptor".into());
+    }
+    for component in path.ancestors() {
+        let metadata =
+            std::fs::symlink_metadata(component).map_err(|_| "Artifact is unavailable")?;
+        if metadata.file_type().is_symlink() {
+            return Err("Artifact path contains a symlink".into());
+        }
+    }
+    if path.canonicalize().map_err(|_| "Artifact is unavailable")? != path {
+        return Err("Artifact path is not canonical".into());
+    }
+    let metadata = std::fs::metadata(path).map_err(|_| "Artifact is unavailable")?;
+    if !metadata.is_file() {
+        return Err("Artifact is not a regular file".into());
+    }
+    #[cfg(unix)]
+    if executable && metadata.permissions().mode() & 0o111 == 0 {
+        return Err("Artifact is not executable".into());
+    }
+    let mut file = std::fs::File::open(path).map_err(|_| "Artifact is unreadable")?;
+    let mut hash = Sha256::new();
+    let mut buffer = [0; 64 * 1024];
+    loop {
+        let count = file
+            .read(&mut buffer)
+            .map_err(|_| "Artifact is unreadable")?;
+        if count == 0 {
+            break;
+        }
+        hash.update(&buffer[..count]);
+    }
+    if format!("{:x}", hash.finalize()) != expected {
+        return Err("Artifact checksum does not match".into());
+    }
+    Ok(())
 }
 
 /// The rest of a path written `~/…`, or on Windows also `~\…`.

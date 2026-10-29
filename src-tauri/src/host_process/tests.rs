@@ -314,6 +314,44 @@ fn a_bundled_program_runs_from_the_app_bin_never_path() {
 }
 
 #[test]
+#[cfg(unix)]
+fn artifact_program_requires_exact_executable_and_sibling_bytes() {
+    use sha2::{Digest, Sha256};
+    use std::os::unix::fs::{symlink, PermissionsExt};
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let executable = root.join("agent");
+    let sibling = root.join("runtime.js");
+    std::fs::write(&executable, "#!/bin/sh\nexit 0\n").unwrap();
+    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::write(&sibling, "original").unwrap();
+    let hash = |bytes: &[u8]| format!("{:x}", Sha256::digest(bytes));
+    let process: HostProcess = serde_json::from_value(serde_json::json!({
+        "id": "agent", "program": "agent", "artifact": {
+            "path": executable.to_str().unwrap(),
+            "sha256": hash(b"#!/bin/sh\nexit 0\n"),
+            "siblings": [{"name": "runtime.js", "sha256": hash(b"original")}]
+        }
+    }))
+    .unwrap();
+    assert_eq!(
+        program_path(&process, || unreachable!(), OsStr::new("")),
+        Ok(executable.clone())
+    );
+    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o644)).unwrap();
+    assert!(program_path(&process, || unreachable!(), OsStr::new("")).is_err());
+    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::write(&sibling, "changed").unwrap();
+    assert!(program_path(&process, || unreachable!(), OsStr::new("")).is_err());
+    std::fs::write(&sibling, "original").unwrap();
+    std::fs::remove_file(&executable).unwrap();
+    let target = root.join("actual");
+    std::fs::write(&target, "#!/bin/sh\nexit 0\n").unwrap();
+    symlink(&target, &executable).unwrap();
+    assert!(program_path(&process, || unreachable!(), OsStr::new("")).is_err());
+}
+
+#[test]
 fn process_mcp_connection_has_an_explicit_wire_shape() {
     let connection = serde_json::json!({
         "url": "http://127.0.0.1:1234/mcp",

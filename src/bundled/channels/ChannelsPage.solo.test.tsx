@@ -759,7 +759,7 @@ it.each([
   },
 );
 
-it("offers the same chat actions from the header and the sidebar row", async () => {
+it("offers the header's chat actions from the sidebar row, plus inline Rename", async () => {
   const f = fixture();
   f.mountWithSidebar();
   const user = userEvent.setup();
@@ -784,7 +784,7 @@ it("offers the same chat actions from the header and the sidebar row", async () 
     "Archive chat",
     "Delete chat",
   ]);
-  expect(await items("Actions for Planning")).toEqual(header);
+  expect(await items("Actions for Planning")).toEqual(["Rename", ...header]);
 });
 
 it("runs the header's own chat actions and returns focus to Chat actions", async () => {

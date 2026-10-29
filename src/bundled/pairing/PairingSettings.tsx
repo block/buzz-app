@@ -151,7 +151,8 @@ export function PairingSettings({
   );
   const confirmed = ["transferring", "complete"].includes(state.phase);
   const done = state.phase === "complete";
-  const legacy = state.phase === "code" && !state.codeEntry;
+  const verificationInstructions =
+    "If your phone asks for a code, enter these digits and finish confirming on your phone. If it shows a code, check that the digits match. Then choose Codes match here to send your Buzz identity.";
   const steps = [
     {
       id: "scan",
@@ -162,10 +163,8 @@ export function PairingSettings({
     },
     {
       id: "verify",
-      title: legacy ? "Confirm mobile code" : "Enter code on your phone",
-      detail: legacy
-        ? "This phone uses code comparison. Check that both devices show the same six digits."
-        : "After scanning, enter the six-digit code shown on this desktop into your phone.",
+      title: "Verify the code on your phone",
+      detail: verificationInstructions,
       complete: confirmed,
     },
     {
@@ -193,7 +192,7 @@ export function PairingSettings({
               ? "Couldn’t copy the pairing code."
               : "Pairing code copied."
             : state.phase === "code"
-              ? `Verification code ${state.code.split("").join(" ")}. ${legacy ? "Confirm the matching code." : "Enter this code on your phone."}`
+              ? `Verification code ${state.code.split("").join(" ")}. ${verificationInstructions}`
               : done
                 ? "Your phone is paired."
                 : ""}
@@ -276,9 +275,7 @@ export function PairingSettings({
                   {state.phase === "code" && (
                     <div className="flex min-h-64 w-full flex-col justify-between gap-6">
                       <h3 className="m-0 text-label">
-                        {legacy
-                          ? "Check the code on your phone"
-                          : "Enter this code on your phone"}
+                        Verify the code on your phone
                       </h3>
                       <fieldset className="m-0 w-full whitespace-nowrap rounded-xl border border-shell-edge bg-surface px-4 py-4">
                         <legend className="sr-only">Pairing code</legend>
@@ -293,24 +290,13 @@ export function PairingSettings({
                         </span>
                       </fieldset>
                       <div className="flex flex-col gap-2">
-                        {legacy ? (
-                          <Button
-                            variant="prominent"
-                            onClick={() => void pairing.confirm()}
-                          >
-                            Codes match
-                          </Button>
-                        ) : (
-                          <p className="m-0 text-body-sm text-muted">
-                            Pairing continues when you enter all six digits on
-                            your phone.
-                          </p>
-                        )}
                         <Button
-                          onClick={() =>
-                            void (legacy ? pairing.deny() : pairing.cancel())
-                          }
+                          variant="prominent"
+                          onClick={() => void pairing.confirm()}
                         >
+                          Codes match
+                        </Button>
+                        <Button onClick={() => void pairing.deny()}>
                           Cancel
                         </Button>
                       </div>

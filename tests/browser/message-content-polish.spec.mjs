@@ -40,6 +40,40 @@ async function expectReadable(locator) {
   ).toBeGreaterThanOrEqual(4.5);
 }
 
+// An own table-only message drops its bubble fill but keeps its reactions in
+// the bubble, so the grouped count must take the panel's ink, not the bubble's.
+test("reaction counts under an unboxed own table stay readable", async ({
+  page,
+}) => {
+  await page.goto("/tests/fixtures/emoji.html?reactions&table-reactions");
+  const row = page
+    .locator("[data-message-id]")
+    .filter({ has: page.getByRole("table") });
+  const count = row.getByRole("button", { name: "👍: 9 people" });
+  await expect(count).toContainText("9");
+  for (const theme of ["light", "dark"])
+    for (const level of ["touch", "high"])
+      for (const color of ACCENTS) {
+        await page.locator("html").evaluate(
+          (element, { theme, level, color }) => {
+            Object.assign(element.dataset, {
+              colorMode: theme,
+              colorLevel: level,
+              accent: color,
+            });
+          },
+          { theme, level, color },
+        );
+        // Theme changes fade the chip's colors; measure the settled pair.
+        await page.evaluate(() =>
+          Promise.all(
+            document.getAnimations().map((motion) => motion.finished),
+          ),
+        );
+        await expectReadable(count);
+      }
+});
+
 for (const theme of ["light", "dark"]) {
   test(`message references and inset surfaces remain legible in ${theme}`, async ({
     page,

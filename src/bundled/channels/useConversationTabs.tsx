@@ -931,15 +931,18 @@ export function useConversationTabs({
 
   function panelItem(entry: Opening) {
     const main = inMain(entry);
+    const id = tabId(entry);
     const Icon =
       entry.panel.icon ?? (entry.channelContext ? InfoIcon : undefined);
     return {
-      id: tabId(entry),
+      id,
       instance: entry,
       label: entry.panel.title,
-      load: main
-        ? tabState.mainSelected === tabId(entry)
-        : tabState.paneOpen && selectedTab === tabId(entry),
+      load:
+        (!entry.restored && !entry.panel.deferUntilShown) ||
+        (main
+          ? tabState.mainSelected === id
+          : tabState.paneOpen && selectedTab === id),
       ...(Icon && { icon: <Icon size="1rem" /> }),
       close: () => closeTab(entry),
       // Panel tabs cross panes at the edge between them, never reorder.

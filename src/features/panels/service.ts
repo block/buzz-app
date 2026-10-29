@@ -87,6 +87,9 @@ export type Panel = Readonly<{
   keepOpen?: boolean;
   /** Safe to mount a restored view. Otherwise the host asks the viewer to resume. */
   restore?: "view";
+  /** Mount tab content on first selection, then retain it for the workspace visit.
+   * Component-provided titles and local detail tabs are also deferred. */
+  deferUntilShown?: boolean;
   component: ComponentType<PanelProps>;
 }>;
 export type RegisteredPanel = Contribution<Panel>;
@@ -213,6 +216,11 @@ export class PanelsService extends Service implements Panels {
       throw new Error("A panel's keepOpen must be a boolean");
     if (panel.restore !== undefined && panel.restore !== "view")
       throw new Error("A panel's restore policy must be view");
+    if (
+      panel.deferUntilShown !== undefined &&
+      typeof panel.deferUntilShown !== "boolean"
+    )
+      throw new Error("A panel's deferUntilShown must be a boolean");
     this.panels.register(this.ctx, {
       ...panel,
       ...(panel.launcher && { launcher: Object.freeze({ ...panel.launcher }) }),

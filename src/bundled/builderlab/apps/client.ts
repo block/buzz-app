@@ -9,7 +9,7 @@ import type { OAuthSession } from "../oauth/session";
 const PROTOCOL = "0.2.0";
 export type RuntimeProfile = "static" | "fetch-js";
 export const SIGN_IN =
-  "Ask your owner to sign in at Settings → Plugins → Builderlab agents, then try again.";
+  "Ask your owner to sign in at Settings → Plugins → Builderlab, then try again.";
 
 type Json = Record<string, unknown>;
 const object = (value: unknown): Json =>

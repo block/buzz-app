@@ -23,7 +23,8 @@ export type ChannelSummary = Readonly<{
   /** Explicit signed visibility; absent means unknown, not public. */
   visibility?: "public" | "private" | undefined;
   preview?: string | undefined;
-  /** Newest verified user-visible activity for sidebar ordering, in Unix seconds. */
+  /** Newest verified user-visible activity for sidebar ordering, in Unix
+   * seconds. An own send counts once the relay accepts it. */
   lastActivityAt?: number | undefined;
   /** Activity has been observed or read successfully, including an empty result. */
   activityKnown?: true;

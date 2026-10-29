@@ -1,12 +1,20 @@
 // Builderlab Apps for local agents: tools that create, deploy and share a
 // web app with the plugin's Builderlab sign-in, and a side panel that
 // shows a deployed app in Buzz's browser view.
-import { createElement } from "react";
+import { createElement, useSyncExternalStore } from "react";
 import type { PluginModule } from "../../../plugins/api";
 import type { PanelProps } from "../../../features/panels/service";
 import type { OAuthSession } from "../oauth/session";
 import { createAppsClient, type RuntimeProfile } from "./client";
-import { appName, controlPlane, isAppUrl } from "./environment";
+import {
+  appName,
+  controlPlane,
+  isAppUrl,
+  isViewerTarget,
+  viewerAppDomain,
+} from "./environment";
+
+import { Login } from "../login/Login";
 
 type Ctx = Parameters<PluginModule["apply"]>[0];
 /** How long `apps_deploy` waits for the new version to serve. */
@@ -34,24 +42,53 @@ const DEPLOY_RECIPE = `Deploy a Builderlab app. Read apps_contract before choosi
 4. Call this with the archive's absolute path; it must be in your owner's home directory.
 It returns the version/deployment IDs once accepted, even if readiness checking fails. Use apps_status for that exact version; do not redeploy to retry readiness. Redeploy the same app_id after source changes; a validation error names what to fix in the archive.`;
 
-export function applyApps(ctx: Ctx, session: OAuthSession) {
+export function applyApps(
+  ctx: Ctx,
+  session: OAuthSession,
+  /** Whether Settings can sign in; otherwise the app's own browser login is used. */
+  loginAvailable: boolean,
+) {
   // Cordis wraps service functions on access; keep React's component identity.
   const View = ctx.browser.View;
+  const AppView = ({ target }: PanelProps) => {
+    const state = useSyncExternalStore(
+      session.subscribe,
+      session.snapshot,
+      session.snapshot,
+    );
+    // Unconfigured login and other tenants keep their own browser login.
+    // Only this build's exact app tenant may receive the Settings credential.
+    if (!loginAvailable || (viewerAppDomain() && !isViewerTarget(target)))
+      return createElement(View, {
+        url: target,
+        storage: "builderlab-apps",
+        label: appName(target),
+      });
+    if (state.status !== "signed-in")
+      return createElement(
+        "div",
+        { className: "p-panel-inset" },
+        createElement(Login, {
+          session,
+          cancelOnUnmount: false,
+          available: true,
+          active: () => true,
+        }),
+      );
+    return createElement(View, {
+      url: target,
+      builderlab: session.viewerSession(),
+      canResumeUrl: viewerAppDomain() ? isViewerTarget : undefined,
+      label: appName(target),
+    });
+  };
   ctx.panels.register({
     id: "app",
     restore: "view",
     title: "App",
-    // Each app keeps its own tab while the conversation moves on.
     keepOpen: true,
     matches: (target) => ctx.browser.available && isAppUrl(target),
-    component: ({ target }: PanelProps) =>
-      // One storage for every app keeps the apps sign-in, which covers all
-      // of a tenant's app hosts, between opens and restarts.
-      createElement(View, {
-        url: target,
-        storage: "builderlab-apps",
-        label: appName(target),
-      }),
+    component: AppView,
   });
   const base = controlPlane();
   if (!base) return;

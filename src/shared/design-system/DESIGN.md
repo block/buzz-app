@@ -97,6 +97,7 @@ content, local controls, and its states; it must not repeat those outer elements
 Keep object summary before detailed sections. Use panel-style tabs for related
 content on the opaque surface; do not use backdrop/chrome tabs inside it.
 
+Content tabs follow the [navigation history and dismissal contract](../../../docs/navigation-history.md#content-tabs).
 Use the existing panel navigation/subview mechanism for related details. Preserve
 the original panel's scroll and draft state, the host's close/back behavior, and
 focus restoration. Do not create another overlay, navigation history, or global
@@ -146,6 +147,15 @@ standalone consequential confirmation. “Modal” is the interaction mode, not 
 component to build. Preserve established stepped confirmations and their dismissal
 policy rather than silently changing semantics during visual adoption.
 
+New addressable dialogs and dialog-navigation changes follow the
+[navigation history and dismissal contract](../../../docs/navigation-history.md): Back closes
+the dialog before leaving its underlying view, Forward can restore it, and
+explicit Close retires its restoration visits. Global/contextual scope does not
+change that rule. Navigation owns history; this shared modal owns controls,
+focus and dismissal guards. Existing dialogs are not automatically migrated by
+using this component. Transient confirmations, menus and popovers do not create
+history visits. Preserve operation/draft lifecycles as specified there.
+
 Compose title and optional useful description together in the shared header
 heading, with Close aligned beside them. This lockup applies to both `Dialog`
 and `AlertDialog`; descriptions are not separate body paragraphs. Follow with
@@ -156,6 +166,10 @@ help, status, warnings, and section-specific explanations with their content.
 Ordinary flow Dialogs use sticky header and footer bars over the scrolling body.
 Their full backgrounds combine a surface-color gradient and progressive blur;
 labels and actions remain sharp. Reduced transparency uses an opaque surface.
+`ScrollEdgeMaterial` owns this treatment, shared with the agent Save footer.
+Its host supplies overlap and isolation; `--scroll-edge-surface` selects the
+host surface when it differs from the default popover surface.
+`--scroll-edge-fill` can supply a stronger backing behind text within that fade.
 Navigated, stepped, stable-height, and internally scrolling dialogs retain their
 existing layout.
 
@@ -164,6 +178,11 @@ task controls in the body; reserve `headerActions` for contextual utilities besi
 the shared Close control. The pane-header icon-only rule does not prohibit text
 buttons in dialog footers, forms, or menus. Do not recreate the backdrop, title,
 close button, body padding, or footer with feature-specific markup.
+
+For an illustrated introduction, `artwork` places feature-owned imagery above a
+centered title and description, keeping shared Close at the top right. Keep the
+artwork bounded and leave room beside its top edge for Close. Community import
+uses this slot for the agent portrait and its overlapping community images.
 
 | Task | Shared starting point | Scrolling |
 | --- | --- | --- |
@@ -335,7 +354,10 @@ local color override to disguise a blocked action.
 Keep the surface header, content frame, focus and scroll anchor mounted. Reserve
 the content’s approximate final geometry on a first read rather than replacing a
 form with a one-line loading message. LoadingRegion keeps a reserved status line;
-its children own geometry. Unknown fields stay hidden/inert, not editable defaults
+its children own geometry. When field placeholders already convey loading, use
+`statusVisibility="screen-reader"` to retain the delayed announcement without a
+visible status row; supplied error/retry feedback still appears immediately.
+Unknown fields stay hidden/inert, not editable defaults
 from another scope. Avoid decorative shimmer or a skeleton of every control.
 
 Prefer already-verified content for the exact account/community/item while
@@ -868,6 +890,10 @@ extra-small capsule uses `text-caption`. For a caption-sized inline choice such 
 the composer's model name, `size="inline"` keeps a 24px minimum target with 4px
 horizontal padding and icon gap, and 12px icons. Pair it with `variant="ghost"`
 for an unframed label; shared hover, disabled, and keyboard focus still apply.
+Compact Selects use `appearance="link"` for a text-and-caret choice, such as channel access, without a capsule or horizontal
+button inset. It uses regular body-small type and a 24px minimum target with
+the text at its bottom edge, so supporting copy follows without an extra gap;
+it retains the Select's keyboard behavior and focus treatment.
 
 Button defaults to `md` (40px minimum height); IconButton defaults to `sm`
 (32px square with 16px artwork) and a 10px rounded rectangle
@@ -940,6 +966,12 @@ Field groups label, input, help and error using Base UI. Input and Textarea
 carry the shared field appearance. RadioGroup is for one choice, Checkbox for an
 independent choice and Switch for an immediate on/off setting. Use the native
 form semantics exposed by those Base UI primitives rather than duplicating them.
+
+`Checkbox` and `Radio` default to 40px rows with 20px controls. For compact
+inline choices, use `size="sm"`: 32px rows, 16px controls, and an 8px label gap.
+Pair small radios with `RadioGroup size="sm"` to remove the extra group gap.
+Compact filter popovers use `padding="list"`; keep room around a scrolling
+choice list for the shared keyboard focus ring.
 
 For finite choices, use Select: its inline layout fits compact toolbars and
 `variant="field"` fits labelled forms. The proposed `variant="compact"` fits
@@ -1356,7 +1388,8 @@ semantics, hug their contents up to a 12rem maximum with ellipsis, use 18px corn
 actions, and a subtle selected fill, accept avatars/icons, and place a sibling close
 button over reserved trailing space. Tab close icons use 1rem artwork to match
 container header actions while retaining their compact hit areas. Close buttons stay visible on the active tab; inactive tabs reveal them on hover or keyboard focus. Touch devices keep close buttons visible. Navigation tab strips scroll only horizontally. Their rounded thumb uses the sidebar’s quiet scrollbar role, with a 3px visible thumb in the header’s 4px bottom inset. The tab row keeps its vertical position as overflow starts or stops. It appears only while the strip is hovered; touch devices retain the thumb without requiring hover. The main
-channel header uses the same control with a single non-closable tab with `showSelection={false}` (no selection or hover fill); channel
+channel header uses the same control with a single non-closable tab with `showSelection={false}` (no selection or hover fill); that
+title tab fills the header's title slot instead of stopping at 12rem, truncating only when the header runs out of room; channel
 actions remain in the header action slot. The settings launcher uses
 `data-highlight-expanded="false"` to preserve disclosure semantics without a
 sticky pressed treatment; the selected tab owns the open-state indicator.
@@ -1371,6 +1404,45 @@ NavigationItem
 offers an `option` variant for picker rows with even 8px padding and immediate
 hover feedback. It forwards normal button events, refs and data attributes so unread observation,
 preloading and product shortcuts remain with the caller.
+`multiline` lets a stacked navigation label grow with its content. Use
+`NavigationCard` when a destination has supporting detail or separate sibling
+controls: the primary NavigationItem owns focus and `aria-current`, while the
+card owns the shared hover and selected surface. Put details in its `footer`,
+not inside the primary button. Nested destinations keep their own selection.
+Use `tone="tonal"` for task trees: the shared card uses neutral selected and hover
+surfaces. Use `tone="inset"` for a lead destination whose own hover, focus, menu,
+and selection use `surface-inset`. Both tones rest transparent, including open
+cards. A contained active branch clears its enclosing cards' fill and border.
+Own row hover, focus, or menu can paint over contained selection; that enclosure
+has one uniform surface until a contained interaction takes priority. A
+task card hovered inside `SidebarNavigation` temporarily clears the other task
+cards' shading; selected shading returns when the pointer leaves the cards. A Solo
+card's `dropTarget` uses `affordance-sidebar-hover` across its full enclosure;
+it takes priority over selection and clears contained card fills while active.
+Put nested destinations in `body`. Solo sources compose rows from
+`ui.Conversation` parts and `ui.Disclosure`; see
+[Solo regions](../../../docs/solo-regions.md). Task rows keep worker disclosures in
+`footer` by default; show their summary only while that task or a worker is
+selected. A project heading puts an independent caret immediately after the
+project title. Only the caret toggles the container; the title and supporting
+metadata navigate to the project chat, and double-click does not rename the title.
+Own-row hover, keyboard focus, or menu interaction reveals the caret through
+`Reveal`; expansion alone does not. More stays at the row end, aligned with the
+same status column as ordinary tasks.
+Keep the worker body mounted and its saved expansion state. Footer disclosures
+put the caret at the inline end:
+closed rows show worker avatars; hover, expansion, or keyboard focus replaces the
+avatars with the caret. Worker rows and their summary add no hierarchy indentation.
+Solo task headings use `text-body-sm`; workers use `text-caption`, and inset
+project headings use `text-label`. Task and worker supporting text uses
+`text-caption`; project rollups keep `text-body-sm`. Footer summary text and its
+caret use the unselected row role `text-navigation` and align to the inline start.
+Worker status glyphs are 12px; task and project glyphs remain 14px. Worker unread
+counts appear in the summary; retain accessible row unread evidence without
+painting a dot. Task and project unread dots stay in the card's trailing flow,
+separate from status text and the overflow action.
+Selected rows can expand without painting the entire branch in the accent color.
+
 Its `text` variant is a text-only row action, such as a capped list's Show
 more and Show less: the base navigation item's type and padding with no fill, resting in
 `--text-subtle` and strengthening to `--text-standard` on hover and keyboard
@@ -1509,8 +1581,9 @@ to remain visible on conversation surfaces in both modes.
 
 One device-local accent choice colors message bubbles and their related content,
 the composer Send button, and sidebar row hover/selection. General buttons,
-checked controls, segmented filters, tabs, menus, links outside bubbles, and drag
-indicators keep their neutral appearance. Status colors, focus, categorical
+checked controls, segmented filters, tabs, menus, and links outside bubbles keep
+their neutral appearance. Solo card drop destinations use the sidebar hover tint;
+other drag indicators stay neutral. Status colors, focus, categorical
 purple, shadows, and media-specific roles stay independent.
 
 **Chillin’** (the default) uses soft accent fills for your messages; **Buzzin’**
@@ -1622,9 +1695,11 @@ pairings in both themes; a numbered step alone does not guarantee contrast.
 For example, warning boundaries use amber-11 in light mode and amber-9 in dark,
 because the lighter amber steps cannot identify a control against a light panel.
 
-Palette values are based on Radix Colors (MIT), with authored neutral ramps and
-documented adjustments in `tokens.css`. These are values, not a component or
-behavior dependency. Base UI remains the component behavior layer, with Sonner owning Toast.
+The utility hues (gray, purple, red, green, amber, blue, cyan and orange) use
+Radix Colors (MIT) values. The six accent families (Honey, Magenta, Iris, Cobalt,
+Citrus and Mono) are Buzz's own values on the same twelve-step structure, and the
+neutral ramps are authored. Step 10 is each accent's hover. These are values, not
+a component or behavior dependency. Base UI remains the component behavior layer, with Sonner owning Toast.
 
 ### Naming and usage
 
@@ -1691,12 +1766,31 @@ Mentions are people, not destinations, so they are chips rather than links.
 Spend the accent on mentions of you, not on mentions in general: ordinary
 mentions repeat in almost every message, so they stay a neutral chip
 (`text-mention` on `affordance-mention`) at every level, matching the composer.
-A mention of you asks for your attention and joins the strong group:
-`text-mention-self` on `affordance-mention-self`, the prominent fill and its ink
-in light mode, and a neutral chip with the prominent mark as ink in dark mode,
-where fills stay neutral. Inside your own bubble the `-own` pair wins; on the
-solid accent bubble (at Buzzin’) it is tone-on-tone: a deeper step of the bubble's fill with the bubble's ink, deeper again on hover. System notices
-name people as quiet text, never as chips.
+The chip is a see-through overlay, so it works on any bubble: a shade (black 10%,
+14% on hover) on light and mid-tone fills, and a tint (white 16%, 20% on hover)
+on dark ones. The direction follows how light the fill is, not its text color.
+Strength follows the text: a chip under light text needs more to show, so the
+tint is stronger than the shade, and a mid-tone fill with light text takes a
+strong shade (black 16%, 22% on hover).
+A mention of you asks for your attention and joins the strong group in both
+modes: `text-mention-self` on `affordance-mention-self`, the prominent fill and
+its ink, with the accent's own hover step rather than an overlay, which would
+muddy it. Inside your own bubble the `-own` pair wins; on the solid accent
+bubble (at Buzzin’) it overlays the bubble's fill with the bubble's ink. That is
+a shade on every accent except Mono in light mode, whose near-black bubble takes
+a tint. Magenta, Iris and Cobalt carry white text there, so they take the
+strong shade. System notices name people as quiet text, never as chips.
+
+Reactions sit on `affordance-reaction`, a softer overlay than a chip: black 6%
+or white 10%, in the same direction as the chips. Hovering the add control lays
+the same overlay again on top of the strip. Inside your bubble reactions take
+its ink and `affordance-reaction-own`; outside it, under an emoji-only message,
+they keep the standard ink and overlay of the panel they sit on.
+
+Hovering your own message lays a quieter overlay across the whole bubble
+(`affordance-message-own-hover`: black 4% or white 8%), in the same direction as
+its chips, so a bright bubble never takes a white wash in dark mode. Received
+bubbles keep the quiet surface their reaction strip shares and take no hover.
 
 These pairs have no link-specific contrast exemptions.
 The contrast guard checks APCA and WCAG AA (4.5:1) on opaque text pairs, including

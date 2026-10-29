@@ -90,7 +90,8 @@ export function MentionPicker({
   const parentAdmission = !!channel && channel.channelType !== "solo";
   const members =
     draftRoster?.map((person) => person.pubkey) ?? channel?.members;
-  const memberKey = members?.join(":") ?? "";
+  // Only an open chooser demands names; typing must not join every member.
+  const memberKey = open && !draftRoster ? (members?.join(":") ?? "") : "";
   useEffect(() => {
     if (draftRoster || !open || !memberKey) return;
     let current = true;

@@ -1,8 +1,9 @@
 # Contribution workflow
 
 The repository pins just 1.58.0, Node.js 24.18.0, pnpm 11.8.0, Lefthook 2.2.2,
-and Rust 1.98.1
-(including Cargo, rustfmt, and Clippy) with [Hermit](https://cashapp.github.io/hermit/).
+and rustup with [Hermit](https://cashapp.github.io/hermit/). `rust-toolchain.toml`
+pins Rust 1.98.1 (including Cargo, rustfmt, and Clippy), which rustup installs
+under the machine-shared `~/.rustup`.
 No global tool installation is required: `bin/hermit` bootstraps Hermit and tools
 are downloaded on first use. Desktop development still requires the
 [Tauri platform prerequisites](https://v2.tauri.app/start/prerequisites/).
@@ -11,8 +12,17 @@ From the repository root:
 
 ```sh
 source bin/activate-hermit # bash/zsh; fish: source bin/activate-hermit.fish
+rustup toolchain install
 just --list
 ```
+
+Run `rustup toolchain install` after cloning and after `rust-toolchain.toml`
+changes, before an editor or parallel commands start the Rust proxies. rustup
+does not serialize installs, so concurrent first use can leave the toolchain
+missing a component's binaries while rustup reports it installed (for example,
+`cargo clippy` fails although `rustup component add clippy` says it is up to
+date). To repair it, reinstall the toolchain:
+`rustup toolchain uninstall 1.98.1 && rustup toolchain install`.
 
 Without activation, use `bin/just`, `bin/pnpm`, or `bin/cargo` from the root;
 these proxies supply the pinned environment to child commands too. For example,
@@ -171,8 +181,9 @@ scripts/bootstrap-worktree.sh /absolute/path/to/source/checkout
 ```
 
 The idempotent script copies the source checkout's git-ignored `.env.local`
-without overwriting an existing target, then uses the new worktree's Hermit proxy
-to run `bin/pnpm install --frozen-lockfile`. It rejects checkouts from another
+without overwriting an existing target, then uses the new worktree's Hermit
+proxies to run `bin/rustup toolchain install` and
+`bin/pnpm install --frozen-lockfile`. It rejects checkouts from another
 repository. Keychain credentials and pnpm's package cache remain machine-shared;
 do not copy private keys, `node_modules`, build output, `.npmrc`, or other ignored
 files. Git hooks need no per-worktree step; see [Git hooks](#git-hooks).
@@ -240,7 +251,7 @@ Buzz library are described in [Agents](agents.md#community-inventory).
 
 ## Running the app
 
-Hermit pins just, Node.js 24, pnpm 11.8.0, and Rust in `bin/`; no global tool
+Hermit pins just, Node.js 24, pnpm 11.8.0, and rustup in `bin/`; no global tool
 installation is needed. From the repository root, activate the pinned environment:
 
 ```sh
@@ -762,7 +773,7 @@ add setup time; normal warm hooks use the pinned tools already installed.
 that could omit newly added tests. It splits the CI-selected `scan` coverage
 across cached, parallel jobs rather than running the entire recipe several times.
 [Three documented WebKit cases remain local-only](browser-testing.md#ci-coverage-and-local-only-webkit-checks);
-the complete suite still runs with `pnpm test` / `just scan`:
+the complete correctness suite still runs with `pnpm test` / `just scan`:
 
 - **JavaScript:** three runners, each with Biome, one TypeScript check and a frontend
   build. Vitest splits all test files across the runners, with two workers each;
@@ -772,6 +783,7 @@ the complete suite still runs with `pnpm test` / `just scan`:
   tests build Rust and install scaffold dependencies; they are intentionally CI-only
   rather than part of pre-push.
 - **Browser measurements:** Chromium then WebKit, serially on an isolated runner.
+  It also runs all [perf scenarios](performance.md) once in Chromium.
 - **Browser journeys:** twenty-one runners (nine Chromium and twelve WebKit
   file-level shards), each with two workers. They start alongside measurements on separate
   runners; `CI required` still requires both lanes. A separate required Ubuntu

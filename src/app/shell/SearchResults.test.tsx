@@ -62,6 +62,61 @@ afterEach(() => {
   Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
 });
 
+it("keeps a joined private Guest channel in recents without calling it public or unjoined", async () => {
+  const relay = keypair(),
+    viewer = keypair();
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  const discovery = [
+    metadata(relay, "guest", "Private updates", 1700000000, [["private"]]),
+    signed(relay, {
+      kind: 39002,
+      content: "",
+      tags: [
+        ["d", "guest"],
+        ["p", viewer.pubkey, "", "guest"],
+      ],
+    }),
+  ];
+  const owner = createRelaySession({
+    ...wire.transport,
+    query: async (filters) =>
+      discovery.filter((event) =>
+        filters.some((filter) => matchFilter(filter as Filter, event)),
+      ),
+  });
+  const props = {
+    session: owner.session,
+    onQueryChange() {},
+    input: createRef<HTMLInputElement>(),
+    pages: [],
+    openConversation: vi.fn(),
+  };
+  try {
+    const mounted = render(<SearchResults {...props} query="" />);
+    const recent = await screen.findByRole("group", {
+      name: "Recent activity",
+    });
+    expect(
+      within(recent).getByRole("option", { name: /Private updates/ }),
+    ).toBeVisible();
+    mounted.rerender(<SearchResults {...props} query="Private" />);
+    expect(
+      await screen.findByRole("option", { name: /Private updates/ }),
+    ).toHaveTextContent("Conversation");
+    expect(
+      screen.queryByText("Public channel · not joined"),
+    ).not.toBeInTheDocument();
+    expect(owner.session.channels.get?.("guest")).toMatchObject({
+      readOnly: true,
+      viewerRole: "guest",
+      visibility: "private",
+    });
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
 it("opens with a conversation action and recent channels in activity order", async () => {
   const relay = keypair();
   const viewer = keypair();
@@ -395,10 +450,14 @@ it("shows the real read failure, retains conversation choices, and retries to an
       },
     ]);
     await act(async () =>
-      request.fail(new ReadError("unavailable", "Relay read timed out")),
+      request.fail(
+        new ReadError("invalid-response", "Relay response was invalid"),
+      ),
     );
     expect(
-      screen.getByText(/Message search couldn’t finish: Relay read timed out/),
+      screen.getByText(
+        /Message search couldn’t finish: Relay response was invalid/,
+      ),
     ).toBeVisible();
     expect(screen.getByRole("option", { name: /wes-crew/ })).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Retry messages" }));
@@ -580,10 +639,14 @@ it("sorts a conversation newest first across pages and restarts paging when the 
       { ...text, search_sort: "newest", page: 2 },
     ]);
     await act(async () =>
-      failed.fail(new ReadError("unavailable", "Relay read timed out")),
+      failed.fail(
+        new ReadError("invalid-response", "Relay response was invalid"),
+      ),
     );
     expect(
-      screen.getByText("More messages couldn’t load: Relay read timed out"),
+      screen.getByText(
+        "More messages couldn’t load: Relay response was invalid",
+      ),
     ).toBeVisible();
     fireEvent.click(screen.getByRole("option", { name: /Show more messages/ }));
     const second = await request();
@@ -1079,6 +1142,135 @@ it("finds active public channels the viewer has not joined without adding them t
     ).toEqual(["joined"]);
     fireEvent.click(lobby);
     expect(openConversation).toHaveBeenCalledExactlyOnceWith("lobby");
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
+it.each(["finish", "fail"])(
+  "shows open channels from the first directory page while older pages load, and keeps them when they %s",
+  async (outcome) => {
+    const relay = keypair();
+    const viewer = keypair();
+    const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+    const open = (id: string) =>
+      metadata(relay, id, id, 1700000000, [
+        ["public", ""],
+        ["t", "stream"],
+      ]);
+    // A full first page, so the directory read goes on to an older one.
+    const discovery = [
+      open("crew-lobby"),
+      ...Array.from({ length: 499 }, (_, i) => open(`extra-${i}`)),
+    ];
+    let older!: (failed: boolean) => void;
+    const held = new Promise<boolean>((resolve) => (older = resolve));
+    const owner = createRelaySession({
+      ...wire.transport,
+      async query(filters) {
+        if (filters.some((filter) => filter.before_id !== undefined)) {
+          if (await held) throw new Error("Relay read failed (500)");
+          return [];
+        }
+        return discovery.filter((event) =>
+          filters.some((filter) => matchFilter(filter as Filter, event)),
+        );
+      },
+    });
+    try {
+      vi.useFakeTimers();
+      const props = {
+        session: owner.session,
+        onQueryChange: () => {},
+        input: createRef<HTMLInputElement>(),
+        pages: [],
+        openConversation: () => {},
+      };
+      const mounted = render(<SearchResults {...props} query="crew" />);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(180);
+      });
+      expect(
+        screen.getByRole("option", { name: /crew-lobby/ }),
+      ).toHaveTextContent("Public channel · not joined");
+      // The read's feedback waits a second; its rows do not.
+      expect(screen.queryByRole("status")).toBeNull();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "Searching open channels…",
+      );
+      // Narrowing the query while older pages load keeps the row.
+      mounted.rerender(<SearchResults {...props} query="crew-l" />);
+      expect(screen.getByRole("option", { name: /crew-lobby/ })).toBeVisible();
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "Searching open channels…",
+      );
+      older(outcome === "fail");
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(180);
+      });
+      expect(screen.queryByRole("status")).toBeNull();
+      expect(screen.getByRole("option", { name: /crew-lobby/ })).toBeVisible();
+      if (outcome === "fail")
+        expect(
+          screen.getByText(/Public channel search couldn’t finish/),
+        ).toBeVisible();
+    } finally {
+      cleanup();
+      owner.dispose();
+    }
+  },
+);
+
+it("keeps the open-channel search notice silent when the directory answers within a second", async () => {
+  vi.useFakeTimers();
+  const relay = keypair();
+  const viewer = keypair();
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  const discovery = [
+    metadata(relay, "lobby", "crew-lobby", 1700000000, [
+      ["public", ""],
+      ["t", "stream"],
+    ]),
+    roster(relay, "lobby", [keypair().pubkey]),
+  ];
+  // The match's exact resolution is the warm directory's one round trip.
+  let resolved!: () => void;
+  const held = new Promise<void>((release) => (resolved = release));
+  const owner = createRelaySession({
+    ...wire.transport,
+    async query(filters) {
+      if (filters.some((filter) => filter["#d"])) await held;
+      return discovery.filter((event) =>
+        filters.some((filter) => matchFilter(filter as Filter, event)),
+      );
+    },
+  });
+  try {
+    render(
+      <SearchResults
+        session={owner.session}
+        query="crew"
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        openConversation={() => {}}
+      />,
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(180);
+    });
+    expect(screen.queryByRole("option", { name: /crew-lobby/ })).toBeNull();
+    expect(screen.queryByText("Searching open channels…")).toBeNull();
+    await act(async () => resolved());
+    expect(screen.getByRole("option", { name: /crew-lobby/ })).toBeVisible();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+    expect(screen.queryByText("Searching open channels…")).toBeNull();
   } finally {
     cleanup();
     owner.dispose();
@@ -1899,12 +2091,14 @@ it("prioritizes people, separates agents, shows profile avatars, and excludes ar
       return Promise.resolve([]);
     },
   });
+  const known = { status: "ready" as const, archived: [archived.pubkey] };
   const session = {
     ...owner.session,
     archives: {
       ...owner.session.archives,
       state: (key: string) =>
         key === archived.pubkey ? ("archived" as const) : ("active" as const),
+      snapshot: () => known,
     },
   } as typeof owner.session;
   try {

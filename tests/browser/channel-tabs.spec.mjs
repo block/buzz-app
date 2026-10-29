@@ -54,6 +54,15 @@ test("middle-click closes a content tab without selecting it", async ({
     exact: true,
   });
   await expect(settings).toHaveAttribute("aria-selected", "true");
+  // A covered tab keeps its state but leaves workspace layout until shown.
+  const contentVisibility = async (tab) => {
+    const pane = await tab.getAttribute("aria-controls");
+    return page
+      .locator(`[id="${pane}"]`)
+      .evaluate((element) => getComputedStyle(element).contentVisibility);
+  };
+  await expect.poll(() => contentVisibility(beta)).toBe("hidden");
+  await expect.poll(() => contentVisibility(settings)).toBe("visible");
   await beta.click({ button: "right" });
   await expect(
     page.getByRole("menuitem", { name: "Close all tabs", exact: true }),
@@ -261,10 +270,8 @@ test("content-opened tabs restore drafts without offering blank-tab creation", a
     exact: true,
   });
   await expect(alphaComposer).toHaveText("Alpha draft");
-  // Returning to Alpha resumes reading in its visible selected thread.
-  await expect(
-    workspace.locator('[role="tab"][data-tab-value^="thread:alpha:"]'),
-  ).toBeFocused();
+  // Restored side content must not take focus from the main conversation.
+  await expect(alphaComposer).toBeFocused();
   await workspace.getByRole("tab", { name: "Beta", exact: true }).click();
   await hoverMessage(row);
   await row.getByRole("button", { name: "Reply", exact: true }).click();

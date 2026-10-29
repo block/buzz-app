@@ -84,7 +84,9 @@ retain a hidden Channels page or message reader. Sidebar and page render errors
 have separate boundaries. A page sidebar is isolated by the same owned-contribution
 boundary, so a failure falls back to a concise alert without taking down the page,
 Settings, or shell. The host owns the slot, collapse state, labels, and narrow drawer;
-the page owns its sidebar content and local interaction state.
+the page owns its sidebar content and local interaction state. Sidebar presentation
+helpers remain importable from `bundled/channels`; the conversation sidebar also
+exposes a versioned section contribution for plugins.
 
 Channels is the page-authoring example, not a thin registration wrapper over a
 host-owned product page. Keep page-specific components, styles, interactions and tests
@@ -212,6 +214,57 @@ remaining acceptance work and historical evidence.
 
 ## Starting contracts
 
+### Conversation sidebar sections
+
+A plugin may register a versioned `sidebarSections` contribution. Read it with
+`ctx.reflect.get("sidebarSections")` instead of adding it to required `inject`;
+the lookup returns `undefined` when an older host has not provided the capability. The host
+renders its rows inside the existing Team sidebar using the same collapsible,
+reorderable, resizable section frame as built-in
+sections. It owns presentation and persists contributed section expansion and
+relative order; a plugin supplies row data and actions, not another sidebar.
+
+Each registration is owned by the plugin's Cordis scope and is removed on
+disable, replacement, or teardown. Rows use an external-store snapshot and
+subscription: return a stable immutable array until the data changes, then notify
+listeners. `select` is a pure row-to-`OpenTarget` function used for both active
+selection and opening the row. Optional
+header actions are compact buttons; each has a stable id, accessible label,
+icon, and callback. A render failure, including invalid rows, replaces only that
+section with its unavailable state. Its Retry renders the current rows again.
+Rejected row/header actions stay local to that section.
+
+```tsx
+import { createElement } from "react";
+
+const rows = [{
+  id: "today",
+  label: "Today",
+  count: 2,
+}];
+const listeners = new Set<() => void>();
+ctx.reflect.get("sidebarSections")?.register({
+  version: 1,
+  id: "work",
+  title: "Work",
+  icon: "W",
+  rows: {
+    snapshot: () => rows,
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  },
+  select: () => ({ version: 1, kind: "home" }),
+  actions: [{
+    id: "new",
+    label: "New item",
+    icon: createElement("span", { "aria-hidden": true }, "+"),
+    onSelect: createItem,
+  }],
+});
+```
+
 A plugin exports `inject` and `apply(ctx)`. Pages register with
 `ctx.pages.register({ id, title, layout?, companion?, primary?, placement?, icon?, component, sidebar? })`. Panels register with
 `ctx.panels.register({ id, title, matches, order?, launcher?, toolbar?, component })`. An optional `toolbar` supplies live controls beside shell search in place of the static launcher. Its lifetime stays with its plugin, and shell render failures are isolated. Huddles is the first caller. IDs are local to the
@@ -227,7 +280,7 @@ falling back to the sidebar without failing activation. Older hosts ignore place
 and continue to show primary pages in their sidebar.
 
 Harness plugins register an agent type with `ctx.agents.register`. Per-agent
-configuration belongs in its `tabs`; the Agents host adds Attention. An optional
+configuration belongs in its `tabs`; the plugin that controls Attention shows the device switch. An optional
 `provider` contribution exposes a stable readiness snapshot, subscription,
 read-only `check()` and `DialogBody`. The Agents page supplies the Providers
 health submenu plus provider title, registered icon, modal framing, dismissal,
@@ -237,6 +290,29 @@ authentication work as blocking and supplies its cancellation control. Only
 active registered types appear there; plugin activation remains owned by
 Settings → Plugins → Manage plugins. Provider defaults are versioned device preferences, not
 agent-record migrations; blank per-agent values inherit them.
+
+A plugin, bundled or installed, can add a tab to the settings of every agent
+running on this device, whatever its type, with
+`ctx.agents.registerTab({ id, title, component })`. The component receives
+`{ agent }`; it reads and saves through the plugin's own `ctx.agents`. The tab
+follows Activity and precedes History and Settings, in the agent's Build view and
+its profile panel, and is not offered for hosted or elsewhere agents. It is
+removed when the plugin is turned off or its scope ends. The bundled Agent
+Attention UI plugin uses it.
+
+A plugin that shows Attention and its device switch calls
+`ctx.agents.controlAttention()`. Installed plugins may call it too, and one that
+does should show that switch. Agents' watches, timers and sources run on this
+device only while such a plugin is on. With none on, every agent's
+`attentionEnabled` reads false and each keeps its saved switch. Messages from
+then wake no kind 9 watch later, even across a restart, though a relay replay
+after a reconnect can still deliver one, as it can after the switch is off. While plugins are still
+starting and none has shown Attention yet, kind 9 watches keep their catch-up
+place, so startup still catches up on what the app missed while closed, and the
+events an agent with its switch on would hear wait to be matched once startup
+ends. Those are dropped for a kind 9 watch last seen with Attention hidden;
+other watches keep no such record, so they still match them. The bundled Agent
+Attention UI plugin calls it.
 
 A plugin, bundled or installed, can add a tool to every agent session in the
 app with `ctx.agents.addTool({ name, description, inputSchema, call })`. `call`
@@ -433,7 +509,7 @@ contracts with their own layout and local navigation.
 **Channels is the only required bundled plugin.** Bestie,
 Todos and Usage are off by default. Feedback, Diff viewer, Identity
 Naming, Agent Activity, Terminal, Links, GitHub, Inbox,
-Repositories, Agents, Claude, Codex, Workflows, Builderlab, Hosted communities,
+Repositories, Agents, Claude, Codex, Workflows, Builderlab,
 Membership, and Moderation are on by default, but optional. Both browser and
 native catalogs declare that policy.
 
@@ -447,7 +523,7 @@ without a saved flag use the current default, so changing a default also changes
 those existing profiles. There is no migration or forced reset: a browser profile that previously saved its full
 plugin snapshot can retain Bestie enabled. Native profiles store per-plugin
 overrides. Default-on does not promise platform support: Terminal contributes UI
-only on macOS/Linux desktop; Hosted communities needs either the desktop app or
+only on macOS/Linux desktop; Builderlab's hosted communities need either the desktop app or
 the live development broker. Disabling Membership removes its Invite to community shortcut.
 
 Membership and Moderation share app-owned access controllers composed in
@@ -517,9 +593,10 @@ Create resolves its agents and its teams' members to those that are the owner's
 agents in this community and sends them with the Canvas as ordinary channel setup,
 which the session applies and retries as before.
 
-Hosted communities (`block.hosted-communities`) is a Block-specific bundled plugin
-under Settings → Plugins → Builderlab hosting. It manages Block-hosted relays through a Builderlab
-account: browser sign-in, binding the local Buzz identity (a locally signed kind
+Hosted communities are part of the Block-specific Builderlab plugin
+(`block.builderlab`, `communities/`), shown under Settings → Plugins → Builderlab
+beside remote agents. They manage Block-hosted relays through the plugin's one
+Builderlab sign-in: binding the local Buzz identity (a locally signed kind
 24243 challenge), and create/archive/unarchive/transfer. A server-declared,
 default-off capability also exposes owner deletion for archived communities. The
 card persists the bound four-field request before admission. A fresh request can
@@ -534,14 +611,15 @@ re-read and verified before dispatch; browser local storage has no atomic compar
 so exactly simultaneous contexts remain a documented client-side race;
 it never signs deletion or infers acceptance from a missing list row. Joining
 stays in the existing Join a community dialog; the card only copies the new relay address. Its
-account backend follows the same split as `HostService`: live development uses the
-broker's `/api/builderlab/*` routes (`browser-host/builderlab.mjs`), which keep the session
-credential and signing key in Node. Desktop builds use `native.ts`, the same routes
-over the shared `oauth_callback` sign-in, host HTTP to the manifest's single
-`https://app.builderlab.xyz` grant, and `identity_sign_builderlab_binding`, which
-validates the challenge and signs only the fixed kind 24243 binding. The desktop
-credential lives in plugin memory for the plugin's lifetime and is never persisted,
-so restarting the app signs out. Other browser builds show the unavailable notice.
+account backend follows the same split as `HostService`: live development with a
+pinned viewer uses the broker's `/api/builderlab/*` routes (`browser-host/builderlab.mjs`),
+which keep their own session credential and signing key in Node. Desktop builds use
+`native.ts`, the same routes with the plugin's shared session credential, host HTTP to
+the configured `BUZZ_BUILDERLAB_URL` grant, and `identity_sign_builderlab_binding`, which
+validates the challenge and signs only the fixed kind 24243 binding. They read the
+account after sign-in's automatic identity link settles. The desktop credential lives in
+plugin memory for the plugin's lifetime and is never persisted, so restarting the app
+signs out. Builds without a configured Builderlab URL show the unavailable notice.
 
 ### Composer accessories
 
@@ -589,6 +667,12 @@ signing authority. Plugins decide when to capture it into their own work.
 A tab a link opens is a transient detail: the next link or thread replaces it. A panel
 that sets `keepOpen: true` keeps each target it opens from links as its own tab until
 the viewer closes it, as a launcher's tab is kept.
+
+A panel may set `deferUntilShown: true` to mount tab content on its first selection
+in a workspace visit, then retain it for that visit. The default remains eager.
+Component-provided titles (`usePanelTabTitle`) and local detail tabs (`PanelLocalTab`)
+are also deferred; opt in when the contribution's static title is sufficient until
+selection.
 
 Channels keeps layout and channel/thread selection. The Terminal plugin binds its
 mounted launcher into the existing shortcut dispatcher, and owns sessions separately
@@ -1219,7 +1303,10 @@ no inline-renderer or panel contract extension is needed.
 The host provides `ctx.navigation` to plugins declaring `navigation` in `inject`.
 `open(target)` returns a presentation result, not merely an accepted address:
 `opened`, `failed` (with a reason), `superseded`, or `cancelled`. The host owns one
-history driver, toolbar/keyboard traversal, and a 15-second attempt deadline.
+history driver, toolbar/keyboard traversal, and a 15-second attempt deadline
+that runs only while a presenter is attached (the identity/key-setup gate,
+`IdentitySetup`, hides the only one, so the startup visit's deadline starts when
+that gate lifts).
 A visit has stable identity; retrying/reclicking preserves that visit and Forward,
 while a new destination truncates the forward branch. Leaving aborts the old
 attempt, and late completion cannot acknowledge a replacement attempt.
@@ -1343,7 +1430,14 @@ does not fetch metadata or infer a service from names in paths or query strings.
 Its `order` is a function: recognised services and Buzz entities claim the default
 band, the globe case the catch-all band, so a renderer dedicated to one website
 wins it at the default.
-It does not fetch titles. Messages currently recognize
+It does not fetch titles. The bundled GitHub plugin contributes a pull request
+renderer at a lower `order` for github.com pull request URLs: the same label
+with the pull request's state (open, draft, merged, closed) as a coloured icon,
+read with the person's `gh` sign-in or the public API and kept current while
+shown. Repositories, issues and commits, and every pull request link when that
+plugin is disabled, keep the Links presentation. If the renderer fails, a pull
+request link shows as a plain link.
+Messages currently recognize
 credential-free HTTP(S) and supported Buzz links. Markdown labels preserve their
 formatting, escaped pasted wrappers are normalized outside code, and paired `<…>`
 autolink wrappers are hidden in display. Buzz links use known channel names with corresponding icons, falling back
@@ -1358,7 +1452,11 @@ link to the same destination, routed through the same host navigation handler. O
 session's bounded thread reader; closing disposes it. The reader supplies verified
 message content, author and timestamp and preserves edit/deletion/access handling.
 Previewing never acknowledges reading or switches community. The host offers a
-resolved label to the bundled presentation via `LinkLabelContext`; no author API
+resolved label to the bundled presentation via `LinkLabelContext`, and whether
+the link is live or a composer decoration or preview via `LinkInteractiveContext`,
+so a renderer reads nothing for a draft. A renderer that shows a status, such as
+a pull request's state, describes the host anchor via `LinkDescriptionContext`,
+so the link keeps its label or URL as its name; no author API
 contract or relay protocol changes are required. Known channel references and
 unambiguous signed person/agent mentions share the inline hover styling. Names in
 ordinary prose never create notification intent or establish an identity.
@@ -1579,10 +1677,13 @@ joined; they are labeled "Not joined", and private results are never offered.
 The relay has no name search, so that lookup covers only its newest page of
 channel metadata, which the store reuses while the viewer types. While the next
 lookup runs, the previous one's still-matching rows stay. Names match by the
-channel pickers' rule (`matchName`): exact, prefix, word start, then substring,
-with alphabetical ties. Its fuzzy ranks are left out, because Enter and Tab pick
-the first row while the viewer writes prose. Open channels follow joined ones, as
-in Command-K, so a late search result never moves the first row; when joined
+channel pickers' rule (`matchName`): exact, prefix, word start, substring,
+then letter runs that each begin a word (`tlp` for `team-launch-planning`), with
+alphabetical ties. Its last rank, letters merely in order, is left out, because
+Enter and Tab pick the first row while the viewer writes prose. Word runs match
+joined channels only: the open-channel lookup, as in Command-K, offers only
+names that contain the typed text. Open channels follow joined ones, as in
+Command-K, so a late search result never moves the first row; when joined
 matches would fill the 20 rows, five stay reserved for open channels. Namesakes
 include their channel IDs. A query containing a space completes only names it
 prefixes, as person names do, so ordinary prose after `#name` closes the popup.
@@ -1826,3 +1927,5 @@ The intended fix is to match Alt/Option chords on the physical `event.code` in
 both the capture control and the dispatcher's `matches`, which is a coordinated
 change to the plugin-facing matching rules and is deliberately not part of the
 Settings page.
+
+Native agent hook callbacks are described in [Agent hook callbacks](agent-tool-hooks.md).

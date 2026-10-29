@@ -407,6 +407,34 @@ test("Solo sidebar shares working activity, keyboard preview and local panel nav
   await expect(badge).toHaveCount(0);
 });
 
+// The minifier wraps a :has() selector list in :is(); WebKit then restyles the
+// whole document on every sidebar activity change.
+test("Solo row status rules keep :has() out of minified :is() lists", async ({
+  page,
+  app,
+}) => {
+  await page.goto(app.origin);
+  await newChat(page);
+  const wrapped = await page.evaluate(() => {
+    const found = [];
+    const walk = (rules) => {
+      for (const rule of rules) {
+        if (rule.cssRules) walk(rule.cssRules);
+        const selector = rule.selectorText ?? "";
+        if (
+          selector.startsWith(":is(") &&
+          selector.includes(":has(") &&
+          selector.includes("data-solo-shared")
+        )
+          found.push(selector);
+      }
+    };
+    for (const sheet of document.styleSheets) walk(sheet.cssRules);
+    return found;
+  });
+  expect(wrapped).toEqual([]);
+});
+
 // Reading needs real focus inside the chat; a pointer selection leaves it on the row.
 test.describe("reading", () => {
   test.use({ readState: true });

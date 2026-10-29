@@ -29,8 +29,8 @@ import { WorkspaceControl } from "./WorkspaceControl";
 import { rememberedMentions } from "../messages/remembered-mentions";
 import { composerMarkdown } from "../messages/composer-markdown";
 import {
+  addressingOnly,
   followupDraft,
-  hasDraftContent,
   mentionDraft,
   type MentionDraft,
   type MentionRecipient,
@@ -80,9 +80,8 @@ function dropOtherAgentTag(scope: string, key: string, agent?: string) {
   if (!agent) return;
   const saved = mentionDraft(readView<unknown>(scope, key, ""));
   if (
-    saved.recipients.length &&
-    !saved.recipients.some((item) => item.pubkey === agent) &&
-    !hasDraftContent(saved)
+    addressingOnly(saved) &&
+    !saved.recipients.some((item) => item.pubkey === agent)
   )
     writeView(scope, key, null);
 }
@@ -388,7 +387,8 @@ export function SoloDraft({
         }
         submission={{
           draftKey: `${draftKey}:new-draft`,
-          initialDraft: source?.link,
+          // The space ends the link, so typing after it writes prose.
+          initialDraft: source && `${source.link} `,
           locked: busy,
           disabled: busy || !available,
           attachments: true,

@@ -169,11 +169,12 @@ export type AgentsNative = {
   /** A repository's URL in the agent's community and the Git header that
    * authorizes it there as the agent for a minute. */
   gitAuth(member: Membership, owner: string, repo: string): Promise<GitAuth>;
-  /** Writes memory entry `slug`, encrypted to the owner, newer than `after`. */
+  /** Writes memory entry `slug`, encrypted to the owner, newer than `after`;
+   * a `null` body deletes it. */
   remember(
     member: Membership,
     slug: string,
-    body: string,
+    body: string | null,
     after: number,
   ): Promise<RelayEvent>;
   /** Publishes its name and picture as its profile in one community unless
@@ -185,6 +186,8 @@ export type AgentsNative = {
   claim(pubkey: string): Promise<boolean>;
   /** Lets another copy run it. */
   release(pubkey: string): Promise<void>;
+  /** Keeps this Mac from idle sleep, or lets it sleep again. */
+  keepAwake(hold: boolean): Promise<void>;
 };
 
 export const nativeAgents = (): AgentsNative | undefined =>
@@ -260,5 +263,6 @@ export const nativeAgents = (): AgentsNative | undefined =>
           invoke("app_agent_publish_profile", { pubkey, relay }),
         claim: (pubkey) => invoke("app_agent_claim", { pubkey }),
         release: (pubkey) => invoke("app_agent_release", { pubkey }),
+        keepAwake: (hold) => invoke("keep_awake_set", { hold }),
       }
     : undefined;

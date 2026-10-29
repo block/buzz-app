@@ -12,6 +12,10 @@ import {
   GoogleLogoIcon,
   MetaLogoIcon,
   CodexLogoIcon,
+  DeepSeekLogoIcon,
+  GrokLogoIcon,
+  ZaiLogoIcon,
+  KimiLogoIcon,
   RobotIcon,
 } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -25,6 +29,8 @@ export type ModelChoice = Readonly<{
   /** The model ID saved in the type's config. */
   id: string;
   label: string;
+  /** Catalog-owned family, when the plugin knows more than the ID/name matcher. */
+  family?: string;
   description?: string | undefined;
   efforts?: readonly { id: string; label: string }[];
   effortScope?: string;
@@ -37,8 +43,8 @@ const CUSTOM_MODEL_ACTION: ModelChoice = {
   description: "Enter a model ID",
 };
 
-/** Recognizes the vendor from a model's ID or name. */
-export function ModelIcon({ model }: { model: string }) {
+/** Resolve artwork before passing an optional leading slot to a control. */
+export function modelLogo(model: string, className?: string) {
   const name = model.toLowerCase();
   const Icon = /claude|anthropic|opus|sonnet|haiku/.test(name)
     ? ClaudeLogoIcon
@@ -48,8 +54,23 @@ export function ModelIcon({ model }: { model: string }) {
         ? GoogleLogoIcon
         : /llama/.test(name)
           ? MetaLogoIcon
-          : RobotIcon;
-  return <Icon size={20} aria-hidden="true" />;
+          : /deepseek/.test(name)
+            ? DeepSeekLogoIcon
+            : /grok/.test(name)
+              ? GrokLogoIcon
+              : /(?:^|[\s/._-])glm(?:[\s/._-]|\d|$)|zhipu|z[.-]ai/.test(name)
+                ? ZaiLogoIcon
+                : /kimi|moonshot/.test(name)
+                  ? KimiLogoIcon
+                  : null;
+  return Icon ? (
+    <Icon className={className} size={20} aria-hidden="true" />
+  ) : null;
+}
+
+/** Browse surfaces retain the generic mark when the vendor is unknown. */
+export function ModelIcon({ model }: { model: string }) {
+  return modelLogo(model) ?? <RobotIcon size={20} aria-hidden="true" />;
 }
 
 /** The custom-model form. Create hosts it outside its closing menu; Settings
@@ -211,6 +232,10 @@ export function ModelPicker({
   const discovering = loading && !pending;
   const choices =
     allowCustomModel && !compact ? [...shown, CUSTOM_MODEL_ACTION] : shown;
+  const optionLogos = choices.map((model) =>
+    modelLogo(`${model.id} ${model.label}`),
+  );
+  const hasOptionLogos = optionLogos.some(Boolean);
   const openCustomDialog = () => {
     const listed = !value || models.some((model) => model.id === value);
     const initialValue = listed ? "" : value;
@@ -257,7 +282,7 @@ export function ModelPicker({
             valueLabel={discovering ? "Loading models…" : selected.label}
             valueSuffix={!discovering && inherited ? " · Default" : undefined}
             valueTitle={discovering ? "Loading models…" : selectedLabel}
-            leading={<ModelIcon model={`${selected.id} ${selected.label}`} />}
+            leading={modelLogo(`${selected.id} ${selected.label}`)}
             variant={compact ? "compact" : "preference"}
             appearance={appearance}
             {...(appearance === "glass-ghost" ? { size: "xs" as const } : {})}
@@ -265,14 +290,17 @@ export function ModelPicker({
             groups={[
               {
                 label: "",
-                options: choices.map((model) => ({
+                options: choices.map((model, index) => ({
                   value: model.id,
                   label:
                     includeDefault && model.id === ""
                       ? `${model.label} · Default`
                       : model.label,
                   description: model.description,
-                  leading: <ModelIcon model={`${model.id} ${model.label}`} />,
+                  // The empty fragment reserves Select's icon column only in mixed lists.
+                  leading: hasOptionLogos
+                    ? (optionLogos[index] ?? <></>)
+                    : undefined,
                 })),
               },
             ]}

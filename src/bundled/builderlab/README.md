@@ -1,13 +1,14 @@
 # Builderlab
 
-Create agents that Builderlab hosts for you, so they keep working even when Buzz is closed.
+One Builderlab account for communities and agents that Builderlab hosts for you, so they keep working even when Buzz is closed.
 
 ## Getting started
 
-1. Go to **Settings → Plugins → Builderlab agents** and choose **Sign in with Builderlab**.
-2. In **Agents**, choose **New agent** and pick **Builderlab (hosted)** as the **Harness**.
-3. Choose a model and reasoning effort, optionally add instructions, then create the agent.
-4. Edit instructions later in **Identity**, and model settings in **Settings**.
+1. Go to **Settings → Plugins → Builderlab** and choose **Sign in with Builderlab**.
+2. To host a community, choose **Create community** under **Communities**, then **Copy address**, open the community picker and choose **Join a community**.
+3. To host an agent, in **Agents** choose **New agent** and pick **Builderlab (hosted)** as the **Harness**.
+4. Choose a model and thinking level, optionally add instructions, then create the agent.
+5. Edit model settings and instructions later in **Identity**.
 
 ---
 
@@ -22,6 +23,11 @@ tenant's runtimes and schema location. Creation checks that contract and support
 initialization. The executable profile returns the required asset manifest and
 bindings, even when its handler serves all content itself.
 
+Sharing follows the one-workspace model: `apps_visibility` switches an app
+between everyone in the owner's workspace and only the owner, and
+`apps_community` grants or revokes a Buzz community at the grant revision it just
+read. `apps_visibility` keeps existing viewers and community grants.
+
 BBBlock is the employee pilot. BBPublic uses the same authenticated control-plane
 boundary: the server must grant Builderlab access to the current workspace/account.
 Existing workspace early-preview enablement can provide that access; these tools
@@ -35,15 +41,27 @@ again. A failed reservation or initialization names the planned app ID; inspect 
 resume that app before creating another one. Automatic reservation recovery and
 hosted tool declarations are separate work.
 
-The app panel uses the existing native browser and persistent website store on
-macOS 14+. Website login is separate from Settings login, including sign-out and
-account switching. Confirm the website account when testing. Earlier macOS uses a
-private store; other platforms do not expose the embedded app panel. CLI-to-site
-SSO is a separate integration.
+The macOS app panel uses the Settings account for viewing. Native code exchanges
+its CLI credential on the configured Builderlab API for a restricted viewer
+credential and absolute expiry. Native code installs the HttpOnly/Secure viewer
+cookie before opening the original app URL. The guest never receives the CLI
+credential. App authorization and consent still run at ingress.
+Opening a different tenant's app never forwards the current account's credential.
+
+Each sign-in has separate website storage. Signing out or changing accounts closes
+live and retained guests; deliberate sign-out also requests revocation of the server CLI parent.
+Canceling sign-in or disposing the plugin closes its local guests without logging
+out an existing server session. Other platforms do not expose the app panel.
+The server's native viewer feature must be enabled after its schema and auth
+review; older CLI sessions without signed authentication time require a fresh
+Settings login. This client change alone does not enable the server feature. Apps that require
+pre-app consent still use the existing canonical browser authentication gate.
 
 ## Remote agents
 
-The bundled `block.builderlab` plugin adds Settings → Plugins → Builderlab agents.
+The bundled `block.builderlab` plugin adds Settings → Plugins → Builderlab: one
+sign-in, then hosted communities (`communities/`, see
+[plugin architecture](../../../docs/plugin-architecture.md)) and remote agents.
 With a valid `BUZZ_BUILDERLAB_URL` build input, it also registers
 `block.builderlab/builderlab` in Agents' new-agent type picker.
 `adapter-type/` connects this hosted type to Beekeeper: provision registers the
@@ -68,23 +86,40 @@ The agent's Identity tab reads its current instructions from Builderlab and
 saves changes directly to the provider. Loading and saving use the same login;
 failed saves keep the draft, and switching accounts requires the original
 account before saving. Empty instructions can be saved to clear them.
-The Settings tab loads a separate model catalog from Builderlab. Choose a model
-and one of that model's reasoning efforts, then save the pair for new tasks.
+The Identity tab also loads a separate model catalog from Builderlab. Choose a
+model and one of that model's thinking levels, then save the pair for new tasks.
 There is no default or fallback selection. Missing or unavailable saved choices
 show the server's setup status and require a supported pair. Changing the model
-clears the effort choice. Instructions and model settings save independently.
+clears the effort choice. One shared Save action sits in the agent pane's bottom
+footer and saves the Identity draft. When model settings and instructions both
+change, they are sent in one update. Instructions alone remain editable when the
+model catalog is unavailable; a changed model requires a supported effort before
+the draft can be saved.
+The model control uses the same family submenus as Goose. Builderlab's catalog
+aliases are mapped to families in `adapter-type/models.ts`; update that mapping
+with Builderlab's catalog information until its API supplies family metadata.
+The server still owns available choices, names and thinking levels. Unmapped
+aliases use shared family inference from the model ID and name; unrecognized
+models remain selectable under Other. Families without a shared brand mark use
+the generic model icon.
 Creation offers the same catalog choices and optional instructions. The provider
 registers and activates the agent before saving the settings together. Unfinished
 setup retains these values on this device so retry continues the same agent,
 including after a restart. Setup completes only once the settings save succeeds.
-Settings shows the fixed remote workspace and per-thread session behavior. Both
-tabs link to the configured Builderlab site for remote runtime management.
+Settings shows the fixed remote workspace and per-thread session behavior, with
+a link to the configured Builderlab site for remote runtime management.
 Activity shows the turns the agent published to its owner while Buzz has been
-open, for the conversation it was opened from or all of them. It needs the Agent
-Activity plugin, which owns the feed.
+open, across all of its conversations. It doesn't scope to the conversation it
+was opened from, because hosted frames don't always name their thread. It needs
+the Agent Activity plugin, which owns the feed.
 Create sends the chosen picture with registration, and Beekeeper publishes it at
 attestation. Renaming or changing the picture republishes the agent's profile
 through Beekeeper's `update-agent-profile`.
+While the hosted type is registered, the plugin also provides `ctx.builderlab`
+so bundled consumers such as Bestie can set a hosted agent's model and
+instructions with the same login. It offers only sign-in, the signed-in
+account subject, list, the model catalog and those two updates; it never
+exposes the credential or the Beekeeper client.
 
 The adapter retains the provider agent ID, server, verified account subject and
 provisioning replay reference in `buzz.builderlab.adapter-identity.v1:` records.

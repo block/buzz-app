@@ -1,3 +1,5 @@
+#[path = "src/build_resources.rs"]
+mod build_resources;
 #[path = "src/enterprise_adapter_url.rs"]
 mod enterprise_adapter_url;
 #[path = "src/enterprise_auth_build.rs"]
@@ -22,6 +24,13 @@ fn main() {
     // tauri-build watches only the resource files present when it ran, so watch
     // the directory too: goose-acp is staged after a first `cargo check`.
     println!("cargo:rerun-if-changed=resources/bin");
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
+        build_resources::prepare_executables(
+            std::path::Path::new("resources/bin"),
+            &std::path::PathBuf::from(std::env::var_os("OUT_DIR").expect("Cargo OUT_DIR")),
+        )
+        .expect("Could not prepare executable resources");
+    }
     let mut attributes = tauri_build::Attributes::new();
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
         && std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc")
@@ -63,6 +72,8 @@ fn main() {
             "nsec_backup_available",
             "nsec_backup_session",
             "nsec_backup_retry",
+            "nsec_backup_state",
+            "nsec_backup_watch",
             "nsec_restore_begin",
             "nsec_restore_wait",
             "nsec_restore_install",
@@ -108,11 +119,13 @@ fn main() {
             "relay_upload",
             "relay_upload_cancel",
             "media_download",
+            "file_download",
             "media_copy_image",
             "media_stream_base",
             "get_os_idle_seconds",
             "workspace_pick_folder",
             "repositories_folder_validate",
+            "legacy_communities",
             "plugin_import_folder",
             "plugin_update_check",
             "plugin_update_preview",
@@ -174,6 +187,7 @@ fn main() {
             "request_notification_access",
             "dock_permission",
             "unread_indicator_set",
+            "keep_awake_set",
             "deep_link_take",
             "deep_link_watch",
             "terminal_create_owner",

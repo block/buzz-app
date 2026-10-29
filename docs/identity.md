@@ -46,11 +46,46 @@ old Buzz service/account and copy the selected agent key into this app's separat
 agent namespace; it never writes the old blob.
 No user key belongs in release configuration.
 
+## Local restore helper on macOS
+
+macOS builds with Rust debug assertions accept `BUZZ_DEV_CREDENTIAL_HELPER` as an
+absolute executable path. When set, only `read_human()` uses this helper.
+The helper replaces both the normal read and the copy from the previous service.
+Its setup must select the intended saved identity, including its service name.
+Exit 10 declares that identity absent; it does not start a Keychain migration.
+Release builds ignore it. With no setting, the normal Keychain read is unchanged.
+Import, creation, deletion, agent keys, and session records keep their own owners.
+
+The helper receives a fresh Unix socket as stdout and no stdin. It must return
+exactly 63 bytes of nsec text with no newline, then close stdout and exit zero.
+The native identity owner still validates the nsec checksum and scalar. Exit 10
+means absent, 11 means denied, and 12 means corrupt. Other failures stop restore.
+Only absence permits identity creation. The app clears the returned buffer when
+its owner releases it. It does not log helper output or stderr.
+
+Normal reads have a five-second limit. For first approval only, set
+`BUZZ_DEV_CREDENTIAL_HELPER_AUTHORIZE=1`. This passes `--authorize` and allows
+two minutes. Remove that setting after approval. A failed helper never triggers
+a second credential read.
+
+The helper is trusted local code. Keep its setup and signing keys outside this
+repository. It must read only the exact debug human item in the default Keychain
+and disable Keychain dialogs during normal reads. Before it sends a key, it must
+verify the socket peer's audit token, parent PID, and live code signature against
+the configured app identifier and certificate. A PID check alone is insufficient.
+Reject pipes and sockets created before exec. Sign both processes with hardened
+runtime and without entitlements that allow code injection. These access controls
+need native tests; the app hook does not supply them.
+
+The certificate check trusts access to its signing key. Another program that can
+use that key and app identifier can satisfy the same requirement. Approval to use
+the signing key across rebuilds therefore extends trust to those programs.
+
 ## Automatic backup and optional recovery
 
 Desktop builds configured with `BUZZ_NSEC_BACKUP_SERVICE_URL` and
 `BUZZ_NSEC_BACKUP_NAMESPACE` back up a local identity only after an explicit saved
-automatic-backup choice, Builderlab or Hosted communities login, and matching key
+automatic-backup choice, Builderlab login, and matching key
 binding. Unset, self-managed, corrupt or mismatched consent prevents all backup
 requests, including retries. These are paired
 native build-process inputs; unset leaves the feature disabled. The service URL
@@ -67,12 +102,23 @@ events retry them, including a coalesced follow-up when an event arrives during 
 active pass. Upload success requires a matching stored receipt. Backup
 failure never replaces or deletes the local identity.
 
+The main WebView can observe the uploader through `identity.backup`, which
+registers on first read and stays out of identity snapshots. Its status says
+whether Builderlab backup can run in this build and whether the latest pass is
+idle, running, complete, waiting for consent, a session or a key binding, or
+failed with a named kind; no service response body reaches the renderer. A login
+handoff or retry resolves to the number of the pass it starts, or to none, so a
+caller can wait for that pass's own outcome. A pass superseded by a key install
+reports nothing; reloading the window mid-pass reports idle.
+
 When secure storage confirms absence, native recovery commands support explicit
 browser sign-in. The session and recovered keys remain native; the renderer sees
 only validated public identities and attempt-scoped handles. Recovery prefers the
 account's current associated identity. A previous identity requires explicit
 selection and does not change the account association. Failed mapping requests,
-unavailable endpoints, failed backups and an empty successful result remain distinct.
+unavailable endpoints, an account refused recovery (outside a private
+organization, or without Buzz access), failed backups and an empty successful
+result remain distinct.
 Installation uses the existing create-only secure store; cancel, reload, signout
 or a competing create/import prevents stale installation.
 Remembering recovered completion is best effort; retry-file failure does not block
@@ -404,7 +450,9 @@ the user must inspect the conversation before explicitly sending a new message.
 
 Protected media and uploads are native, because the webview cannot attach Blossom
 (kind 24242) authentication itself: `<img>`, `<video>` and `<audio>` send no custom
-headers, and the CSP keeps `connect-src` closed to general HTTPS. Relay `/media/`
+headers, and the CSP keeps `connect-src` closed to general HTTPS; it admits only
+the `buzz-media` scheme, whose bytes the requesting window may already read (such
+as an agent card's embedded definition). Relay `/media/`
 URLs selected by shared TypeScript render through the `buzz-media` URI scheme;
 `<video>` and `<audio>` instead load the same URLs from a native listener on
 `127.0.0.1`, since WebKitGTK cannot play a custom scheme. It authorizes each

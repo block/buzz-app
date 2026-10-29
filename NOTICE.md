@@ -88,6 +88,36 @@ cropped the border, padded it to square, resized to 64×64 and quantised it to
 16 colours. The MIT license terms above also apply to this artwork, with the
 Nous Research copyright notice.
 
+## Model-family brand marks
+
+The additional artwork in `src/shared/design-system/icons/HarnessLogos.tsx`
+identifies model families in shared pickers, including Builderlab and Goose.
+All marks remain the property of their respective owners; their inclusion
+identifies supported models and does not imply endorsement.
+
+DeepSeek: [DeepSeek-icon.svg](https://commons.wikimedia.org/wiki/File:DeepSeek-icon.svg),
+file revision June 30, 2025. Copyright © DeepSeek, MIT (Expat) license.
+The MIT terms reproduced above apply with this copyright notice. The original
+blue fill and path geometry are preserved; this app adds its shared SVG wrapper.
+
+Grok: [Grok-feb-2025-logo.svg](https://commons.wikimedia.org/wiki/File:Grok-feb-2025-logo.svg),
+by X.AI Corp., classified by Wikimedia Commons as public domain because it
+consists of simple geometric shapes or text. This app retains the two mark
+paths, omits the wordmark, crops the viewBox to square, and preserves the
+original `currentColor` fill. Grok is a trademark of xAI.
+
+Z.ai / GLM: [Z.ai (company logo).svg](https://commons.wikimedia.org/wiki/File:Z.ai_(company_logo).svg),
+by Z.ai, sourced from its [official favicon](https://z-cdn.chatglm.cn/z-ai/static/logo.svg).
+Wikimedia Commons classifies the artwork as public domain because it consists
+of simple geometric shapes or text. This app preserves the favicon geometry,
+colors and border, removes unused styles and groups, and adds its shared SVG
+wrapper. Z.ai and GLM are marks of their respective owner.
+
+Kimi: the official [Moonshot Kimi favicon](https://www.kimi.com/favicon-light.ico),
+retrieved October 28, 2026, converted from its 48×48 ICO frame to the colocated
+`icons/kimi.png` without resizing or changing colors. No open-source license is
+asserted for this official brand asset. Kimi is a trademark of Moonshot AI.
+
 ## Plugin catalog artwork
 
 The generated plugin PNG artwork in `src/bundled/*/icon.png` was created by

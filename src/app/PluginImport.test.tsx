@@ -2141,3 +2141,61 @@ it("keeps a late close bound to the replaced import", async () => {
     screen.getByRole("dialog", { name: /^Review .+ access$/ }),
   ).toBeVisible();
 });
+
+it("waits for an occupied native acquisition slot and previews the latest link", async () => {
+  let finish!: (preview: ImportPreview) => void;
+  const first = new Promise<ImportPreview>((resolve) => {
+    finish = resolve;
+  });
+  let acquiring = false;
+  const git = vi.fn(async (repository: string) => {
+    if (acquiring) throw new Error("Another import is in progress");
+    acquiring = true;
+    try {
+      return repository.endsWith("first.git")
+        ? await first
+        : {
+            ...rememberedPreview,
+            token: "latest",
+            candidates: rememberedPreview.candidates.slice(0, 1),
+          };
+    } finally {
+      acquiring = false;
+    }
+  });
+  const discard = vi.fn(async () => {});
+  const manager = { imports: { git, discard } } as unknown as PluginManager;
+  const props = {
+    plugins: manager,
+    catalog: { profile: "test", location: "test", plugins: [] },
+    busy: false,
+  };
+  const source = (name: string) => ({
+    repository: `https://example.com/${name}.git`,
+    reference: "",
+  });
+  const view = render(
+    <PluginImport key="first" {...props} initialGit={source("first")} />,
+  );
+  await waitFor(() => expect(git).toHaveBeenCalledTimes(1));
+  view.rerender(
+    <PluginImport key="second" {...props} initialGit={source("second")} />,
+  );
+  await screen.findByRole("status");
+  view.rerender(
+    <PluginImport key="latest" {...props} initialGit={source("latest")} />,
+  );
+  await act(async () =>
+    finish({
+      ...rememberedPreview,
+      candidates: rememberedPreview.candidates.slice(0, 1),
+    }),
+  );
+  await screen.findByRole("dialog", { name: /^Review .+ access$/ });
+  expect(git.mock.calls.map(([repository]) => repository)).toEqual([
+    "https://example.com/first.git",
+    "https://example.com/latest.git",
+  ]);
+  expect(discard).toHaveBeenCalledWith("remembered");
+  expect(screen.queryByRole("alert")).toBeNull();
+});

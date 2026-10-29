@@ -22,6 +22,9 @@ import type { PluginManager } from "../plugins/manager";
 import type { Catalog, ImportPreview, PluginInfo } from "../plugins/types";
 import type { GitPluginSource } from "../features/navigation/targets";
 
+// The native importer has one acquisition slot, shared by successive dialogs.
+const acquisitions = new WeakMap<object, Promise<void>>();
+
 function importLocation(
   preview: Pick<ImportPreview, "source" | "commit">,
   path: string | undefined,
@@ -299,7 +302,7 @@ export function PluginImport({
   if (!imports) return null;
 
   async function load(operation: () => Promise<ImportPreview | null>) {
-    if (pending.current || blocked) return;
+    if (!imports || pending.current || blocked) return;
     const returnTo = document.activeElement as HTMLElement | null;
     sourceTrigger.current = returnTo;
     pending.current = true;
@@ -309,8 +312,26 @@ export function PluginImport({
     setPreview(null);
     setShowUnchanged(false);
     setEnableOnInstall(true);
-    try {
+    const previous = acquisitions.get(imports);
+    const acquisition = (async () => {
+      if (previous) await previous;
+      if (!current.active) return null;
       const result = await operation();
+      if (!current.active && result) {
+        await imports?.discard(result.token);
+        return null;
+      }
+      return result;
+    })();
+    acquisitions.set(
+      imports,
+      acquisition.then(
+        () => {},
+        () => {},
+      ),
+    );
+    try {
+      const result = await acquisition;
       if (!result && updateId && savedSource)
         throw new Error("No update source found. Try again.");
       const next =

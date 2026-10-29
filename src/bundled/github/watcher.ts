@@ -4,7 +4,14 @@
 import type { Context } from "@deepseek-ai/cordis";
 import { callAttentionTool } from "../../buzz-mcp/attention";
 import type { PullStates } from "./pull-states";
-import { pullOf, snapshotOf, step, WAKE_LIMIT, type Watch } from "./watch";
+import {
+  pullOf,
+  QUIET_MS,
+  snapshotOf,
+  step,
+  WAKE_LIMIT,
+  type Watch,
+} from "./watch";
 
 export const POLL_MS = 60_000;
 /** Watches saved before Attention. They had no Interest to move to. */
@@ -110,10 +117,13 @@ export function watchPulls(ctx: Context, states: PullStates) {
         let fresh = false;
         let done = false;
         let timer: ReturnType<typeof setTimeout> | undefined;
+        /** Looks again once new feedback has been quiet long enough. */
+        let quiet: ReturnType<typeof setTimeout> | undefined;
         let unwatch = () => {};
         const finish = () => {
           done = true;
           clearTimeout(timer);
+          clearTimeout(quiet);
           unwatch();
           signal.removeEventListener("abort", finish);
           resolve();
@@ -175,6 +185,13 @@ export function watchPulls(ctx: Context, states: PullStates) {
             return finish();
           }
           persist();
+          // A read that changes nothing does not notify, so the wake for
+          // feedback gone quiet is looked for when it is due; one that could
+          // not be sent is tried again on the minute.
+          clearTimeout(quiet);
+          const due = (watch.arrived ?? 0) + QUIET_MS - Date.now();
+          if (watch.pending?.length && due > 0)
+            quiet = setTimeout(() => look(false), due);
         };
         const tick = () => {
           timer = setTimeout(() => {

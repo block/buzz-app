@@ -602,7 +602,11 @@ describe("github_watch_pr", () => {
     );
     await vi.advanceTimersByTimeAsync(POLL_MS);
     expect(app.woke).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(QUIET_MS + POLL_MS);
+    // It wakes once the feedback read has been quiet long enough, not on a
+    // later minute.
+    await vi.advanceTimersByTimeAsync(QUIET_MS - 1);
+    expect(app.woke).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
     expect(app.woke.mock.calls).toEqual([
       [
         agent,

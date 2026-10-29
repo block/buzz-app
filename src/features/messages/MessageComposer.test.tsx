@@ -1988,7 +1988,7 @@ it("retains preparation retry when recovery is deferred by an edit then unmounte
   expect(composer.getByRole("alert")).toHaveTextContent(
     "Community emoji is loading",
   );
-  // The remount retried the catalog; recovery is offered once that fails.
+  // The refused send retried the catalog; recovery is offered once that fails.
   expect(
     await composer.findByRole("button", { name: "Retry message preparation" }),
   ).toBeVisible();
@@ -2032,7 +2032,7 @@ it("offers message preparation retry after a failed attachment send remounts", a
   expect(composer.getByRole("alert")).toHaveTextContent(
     "Community emoji is loading",
   );
-  // The remount retried the catalog; recovery is offered once that fails.
+  // The refused send retried the catalog; recovery is offered once that fails.
   const retry = await composer.findByRole("button", {
     name: "Retry message preparation",
   });

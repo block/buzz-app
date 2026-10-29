@@ -166,10 +166,7 @@ export function createEmojiDirectory(
     return pending;
   }
   function ensure() {
-    // A cold failure retries on the next demand; refresh() shares a pending read.
-    // Overflow would repeat on every read, so it waits for an explicit retry.
-    if (snapshot.status === "idle" || (snapshot.status === "error" && !limited))
-      return refresh();
+    if (snapshot.status === "idle") return refresh();
     return pending ?? Promise.resolve();
   }
   /** Read-modify-write of the viewer's own set; an absent URL removes the shortcode. */
@@ -334,7 +331,10 @@ export function createEmojiDirectory(
       if (!codes.length) return [];
       if (closed) throw new Error("Community session is closed");
       if (snapshot.status !== "ready") {
-        void ensure();
+        // Only a send retries a cold failure, so passive mounts cannot repeat
+        // reads; refresh() shares a pending one. Overflow would repeat on every
+        // read, so it waits for an explicit retry.
+        void (snapshot.status === "error" && !limited ? refresh() : ensure());
         throw new Error(
           snapshot.status === "error"
             ? `Community emoji unavailable. Retry message preparation or open the emoji picker. ${snapshot.error ?? ""}`

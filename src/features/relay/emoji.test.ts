@@ -291,8 +291,12 @@ it("custom emoji reactions are colon-wrapped, bounded, tagged, and retry origina
     h.session.messages.react(root.id, `:${"x".repeat(65)}:`),
   ).toThrow(/long/);
 });
-it("plain sends are immediate and do not acquire a palette; a cold load failure retries on the next demand", async () => {
+it("plain sends are immediate and do not acquire a palette; only a send retries a cold load failure", async () => {
   const h = session();
+  const reads = () =>
+    h.query.mock.calls.filter(([filters]) =>
+      filters.some((filter) => filter.kinds?.includes(30030)),
+    ).length;
   expect(h.session.messages.send("c", "hello")).toMatch(/^[0-9a-f]{64}$/);
   expect(h.wire.pending.some((p) => p.filters[0]?.kinds?.includes(30030))).toBe(
     false,
@@ -304,22 +308,30 @@ it("plain sends are immediate and do not acquire a palette; a cold load failure 
   h.wire.next().fail(new Error("offline"));
   await ready;
   expect(h.session.emoji.snapshot().status).toBe("error");
+  // Mounts and pickers demand the catalog without re-reading a cold failure.
+  void h.session.emoji.ensure();
+  await flush();
+  expect(h.session.emoji.snapshot().status).toBe("error");
+  expect(reads()).toBe(1);
+  // A refused send starts one retry cycle; repeated sends and demand share it.
   expect(() =>
     h.session.messages.reply("c", "a".repeat(64), ":party:"),
   ).toThrow(/is loading/);
-  // The refused send started one retry; later demands share it.
   expect(h.session.emoji.snapshot().status).toBe("loading");
   const retry = h.session.emoji.ensure();
+  expect(() => h.session.messages.send("c", ":party:")).toThrow(/is loading/);
   expect(h.session.emoji.ensure()).toBe(retry);
   await vi.waitFor(() => expect(h.wire.pending).toHaveLength(1));
+  expect(reads()).toBe(2);
   h.wire.next().respond([set()]);
   await retry;
   expect(h.session.emoji.snapshot().status).toBe("ready");
+  const id = h.session.messages.send("c", ":party:");
   expect(
-    h.query.mock.calls.filter(([filters]) =>
-      filters.some((filter) => filter.kinds?.includes(30030)),
-    ),
-  ).toHaveLength(2);
+    h.session.outbox?.snapshot().find((item) => item.event.id === id)?.event
+      .tags,
+  ).toContainEqual(["emoji", "party", url]);
+  expect(reads()).toBe(2);
 });
 it("a failed refresh keeps a loaded catalog ready and sendable, with its error until a retry", async () => {
   const h = session();
@@ -446,7 +458,7 @@ it("exposes read-cap and retained-byte limits rather than evicting replacement e
     entries: [],
     error: expect.stringContaining("budget"),
   });
-  // Overflow would repeat on every read, so demand leaves it to Retry.
+  // Overflow would repeat on every read, so demand and sends leave it to Retry.
   await directory.queries.ensure();
   expect(() => directory.tags(":party:")).toThrow(/Retry message preparation/);
   expect(reader.read).toHaveBeenCalledTimes(1);

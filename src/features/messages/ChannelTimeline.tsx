@@ -1162,7 +1162,8 @@ function Timeline({
               !restoredAnchor.current &&
               heldReader.current?.intent !== intent.current
             )
-              recordPosition(element, true);
+              // A size change refreshes geometry, never bottom-follow intent.
+              savedPosition.current = { ...positionAt(element), bottom: false };
           }}
           as="ol"
           item="li"

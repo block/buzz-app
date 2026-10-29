@@ -187,9 +187,13 @@ function mount(bottom = false, revealOnMount = false) {
     },
   };
 }
-it.each([0, 400])(
-  "refreshes reading geometry measured after native scrollend at offset %i",
-  async (offset) => {
+it.each([
+  { offset: 0, gap: 1400 },
+  { offset: 400, gap: 1000 },
+  { offset: 400, gap: 40 },
+])(
+  "refreshes measured geometry without changing reading intent at offset $offset / gap $gap",
+  async ({ offset, gap }) => {
     const h = mount(true);
     await frame();
     const region = screen.getByRole("region", {
@@ -210,6 +214,9 @@ it.each([0, 400])(
 
     // Virtua's measured offsets commit without another scroll event.
     rowY += 238;
+    vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(
+      offset + region.clientHeight + gap,
+    );
     act(() => scroll.resized());
     h.append();
     await h.measured();

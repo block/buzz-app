@@ -1404,7 +1404,8 @@ renderer at a lower `order` for github.com pull request URLs: the same label
 with the pull request's state (open, draft, merged, closed) as a coloured icon,
 read with the person's `gh` sign-in or the public API and kept current while
 shown. Repositories, issues and commits, and every pull request link when that
-plugin is disabled or its renderer fails, keep the Links presentation.
+plugin is disabled, keep the Links presentation. If the renderer fails, a pull
+request link shows as a plain link.
 Messages currently recognize
 credential-free HTTP(S) and supported Buzz links. Markdown labels preserve their
 formatting, escaped pasted wrappers are normalized outside code, and paired `<…>`

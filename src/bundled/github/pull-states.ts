@@ -7,8 +7,8 @@ import { parseGitHubReference } from "./references";
 /** How often shown pull requests that can change are read again. */
 export const PULL_REFRESH_MS = 60_000;
 /** Without `gh`, GitHub allows 60 public reads an hour. A pull request that
- * could not be read is tried again this often, and a closed one, which rarely
- * reopens, is read again this often too. */
+ * could not be read is tried again this often, as is one read from the
+ * public API, and a closed one, which rarely reopens. */
 export const PULL_SLOW_REFRESH_MS = 5 * 60_000;
 /** How many of the due pull requests one public poll reads; the rest take
  * the next. */
@@ -149,15 +149,17 @@ const keyOf = (url: string) => {
  * Every shown pull request that is due is read in one request, once for every
  * subscriber that appears together, then polled only while shown, visible and
  * able to change: a merged one is never read again, a closed one or one GitHub
- * could not read every few minutes. Without `gh`, a few at a time are read
- * from the public API, each once, tried again every few minutes until it is;
- * while `gh` is unavailable, likewise until it is tried again. None is read
- * while GitHub holds its limit; the panel has the live view. */
+ * could not read every few minutes. Without `gh`, or while it is
+ * unavailable, a few at a time are read from the public API, the longest
+ * unread first, each every few minutes. None is read while GitHub holds its
+ * limit; the panel has the live view. */
 export function createPullStates(gh: GitHubCli | undefined): PullStates {
   const listeners = new Map<string, Set<() => void>>();
   const states = new Map<string, PullState | "failed">();
   /** When each read pull request is read again; never for a settled one. */
   const nextRead = new Map<string, number>();
+  /** When each was last read, so a public poll takes the longest unread. */
+  const readAt = new Map<string, number>();
   /** Until when to read public data instead, after `gh` was unavailable. */
   let publicUntil = 0;
   const readsPublic = () => !gh || Date.now() < publicUntil;
@@ -174,7 +176,7 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
   const dueAt = (url: string) => nextRead.get(url) ?? 0;
   /** When `state`, read now, is read again. */
   const again = (state: PullState | undefined, now: number) => {
-    if (state?.state === "merged" || (!gh && state)) return Infinity;
+    if (state?.state === "merged") return Infinity;
     return !state || state.state === "closed" || readsPublic()
       ? now + PULL_SLOW_REFRESH_MS
       : now + PULL_REFRESH_MS;
@@ -215,7 +217,11 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
       AbortSignal.timeout(30_000),
     ]);
     const now = Date.now();
-    const due = [...listeners.keys()].filter((url) => dueAt(url) <= now);
+    // A public poll reads only the first few: the longest unread go first, so
+    // those that keep failing cannot keep one never read waiting.
+    const due = [...listeners.keys()]
+      .filter((url) => dueAt(url) <= now)
+      .sort((a, b) => (readAt.get(a) ?? 0) - (readAt.get(b) ?? 0));
     try {
       if (!due.length || (readsPublic() && now < publicHeldUntil)) return;
       const found = await readAll(due, signal);
@@ -229,6 +235,7 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
           continue;
         }
         const state = found[i] ?? "failed";
+        readAt.set(url, now);
         nextRead.set(url, again(found[i], now));
         // An unchanged state keeps its object, so whoever shows it is left be.
         if (same(states.get(url), state)) continue;

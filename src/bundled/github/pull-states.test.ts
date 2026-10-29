@@ -225,9 +225,10 @@ it("tries unreadable pull requests again every 5 minutes, in the one query with 
   expect(repositories().slice(1)).toEqual(
     Array.from({ length: 4 }, () => ["buzz-app"]),
   );
-  // The fifth also tries both missing ones, in the same query: one gh run.
+  // The fifth also tries both missing ones, longest unread first, in the
+  // same query: one gh run.
   await vi.advanceTimersByTimeAsync(PULL_REFRESH_MS);
-  expect(repositories().slice(5)).toEqual([["buzz-app", "buzz", "goose"]]);
+  expect(repositories().slice(5)).toEqual([["buzz", "goose", "buzz-app"]]);
   expect(states.get(second)).toBe("failed");
 });
 
@@ -357,11 +358,20 @@ it("reads a closed pull request, which can reopen, again every few minutes rathe
   expect(gh).toHaveBeenCalledTimes(3);
 });
 
-it("reads public data once without gh, never on a timer", async () => {
+it("reads public data without gh every few minutes until it is merged", async () => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
-  const fetch = vi.fn(
-    async () => new Response(JSON.stringify({ title: "A", state: "open" })),
-  );
+  const fetch = vi
+    .fn()
+    .mockResolvedValueOnce(
+      new Response(JSON.stringify({ title: "A", state: "open" })),
+    )
+    .mockResolvedValueOnce(
+      new Response(JSON.stringify({ state: "open", draft: true })),
+    )
+    .mockResolvedValueOnce(new Response(JSON.stringify({ state: "closed" })))
+    .mockResolvedValue(
+      new Response(JSON.stringify({ state: "closed", merged: true })),
+    );
   vi.stubGlobal("fetch", fetch);
   const states = createPullStates(undefined);
   states.watch(pull, () => {});
@@ -370,11 +380,19 @@ it("reads public data once without gh, never on a timer", async () => {
     "https://api.github.com/repos/block/buzz-app/pulls/7",
     expect.anything(),
   );
-  await vi.advanceTimersByTimeAsync(3 * PULL_SLOW_REFRESH_MS);
+  await vi.advanceTimersByTimeAsync(PULL_SLOW_REFRESH_MS - PULL_REFRESH_MS);
   expect(fetch).toHaveBeenCalledOnce();
+  // Open, draft and closed can each still change.
+  for (const state of ["draft", "closed", "merged"]) {
+    await vi.advanceTimersByTimeAsync(PULL_REFRESH_MS);
+    await vi.waitFor(() => expect(states.get(pull)).toEqual({ state }));
+    await vi.advanceTimersByTimeAsync(PULL_SLOW_REFRESH_MS - PULL_REFRESH_MS);
+  }
+  await vi.advanceTimersByTimeAsync(3 * PULL_SLOW_REFRESH_MS);
+  expect(fetch).toHaveBeenCalledTimes(4);
 });
 
-it("tries a public read that failed again every few minutes, until it is read", async () => {
+it("tries a public read that failed again every few minutes", async () => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
   const fetch = vi
     .fn()
@@ -389,8 +407,6 @@ it("tries a public read that failed again every few minutes, until it is read", 
   expect(fetch).toHaveBeenCalledOnce();
   await vi.advanceTimersByTimeAsync(PULL_REFRESH_MS);
   await vi.waitFor(() => expect(states.get(pull)).toEqual({ state: "closed" }));
-  await vi.advanceTimersByTimeAsync(3 * PULL_SLOW_REFRESH_MS);
-  expect(fetch).toHaveBeenCalledTimes(2);
 });
 
 const pulls = Array.from(
@@ -422,9 +438,32 @@ it("reads a few public pull requests at a time, the rest a minute later", async 
   await vi.advanceTimersByTimeAsync(PULL_REFRESH_MS / 2);
   expect(fetch).toHaveBeenCalledTimes(pulls.length);
   expect(states.get(pulls.at(-1) ?? "")).toEqual({ state: "open" });
-  // Each read once, none again.
-  await vi.advanceTimersByTimeAsync(3 * PULL_SLOW_REFRESH_MS);
-  expect(fetch).toHaveBeenCalledTimes(pulls.length);
+  // Each is read again a few minutes after it was, still a few at a time.
+  await vi.advanceTimersByTimeAsync(PULL_SLOW_REFRESH_MS - PULL_REFRESH_MS);
+  expect(fetch).toHaveBeenCalledTimes(pulls.length + PUBLIC_READS_PER_POLL);
+  await vi.advanceTimersByTimeAsync(PULL_REFRESH_MS);
+  expect(fetch).toHaveBeenCalledTimes(2 * pulls.length);
+});
+
+it("reads a public pull request never read before those that keep failing", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  // Private repositories are 404 without gh. Five polls' worth of them,
+  // tried again every few minutes, would fill every poll on their own.
+  const failing = Array.from(
+    { length: 5 * PUBLIC_READS_PER_POLL },
+    (_, i) => `https://github.com/block/private-${i}/pull/1`,
+  );
+  const fetch = vi.fn(async (url: string) =>
+    url.includes("/private-")
+      ? new Response(null, { status: 404 })
+      : new Response(JSON.stringify({ state: "open" })),
+  );
+  vi.stubGlobal("fetch", fetch);
+  const states = createPullStates(undefined);
+  for (const url of [...failing, pull]) states.watch(url, () => {});
+  await vi.advanceTimersByTimeAsync(PULL_SLOW_REFRESH_MS);
+  await vi.waitFor(() => expect(states.get(pull)).toEqual({ state: "open" }));
+  expect(states.get(failing[0] ?? "")).toBe("failed");
 });
 
 it.each([

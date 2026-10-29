@@ -88,6 +88,14 @@ cropped the border, padded it to square, resized to 64×64 and quantised it to
 16 colours. The MIT license terms above also apply to this artwork, with the
 Nous Research copyright notice.
 
+Builderlab: the Builderlab Event 2026 mark was supplied by Taylor Ho as native
+Figma SVG exports on October 29, 2026. `public/builderlab-mark.svg` is the
+small-size adaptation used at 24px on the sign-in callback page. It preserves
+the rounded outline and soft letter from the harness artwork, uses a transparent
+luminance-mask cutout and `currentColor`, and omits procedural grain and
+displacement for legibility at this size. No open-source license is asserted
+for this supplied brand asset; the mark remains its owner's property.
+
 ## Model-family brand marks
 
 The additional artwork in `src/shared/design-system/icons/HarnessLogos.tsx`

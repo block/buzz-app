@@ -388,7 +388,10 @@ async fn reply(stream: &mut TcpStream, status: u16, message: &str) {
             "{{closeDelay}}",
             &focus::READABLE_DELAY.as_secs().to_string(),
         )
-        .replace("{{brand}}", include_str!("../../../public/buzz-mark.svg"))
+        .replace(
+            "{{brand}}",
+            include_str!("../../../public/builderlab-mark.svg"),
+        )
         .replace("{{heading}}", heading)
         .replace("{{message}}", message);
     let reason = match status {

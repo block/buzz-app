@@ -196,8 +196,9 @@ async fn real_listener_preserves_callback_parameters_and_closes_after_completion
         assert!(response.starts_with("HTTP/1.1 200"));
         assert!(response.contains("Cache-Control: no-store"));
         assert!(response.contains("Referrer-Policy: no-referrer"));
-        assert!(response.contains("<title>Buzz sign-in</title>"));
-        assert!(response.contains(include_str!("../../../public/buzz-mark.svg")));
+        assert!(response.contains("<title>Builderlab sign-in</title>"));
+        assert!(response.contains("<span>Builderlab</span>"));
+        assert!(response.contains(include_str!("../../../public/builderlab-mark.svg")));
         assert!(response.contains("<h1 id=\"heading\">You're now signed in.</h1>"));
         assert!(response.contains("data-complete=\"true\""));
         assert!(response.contains("data-close-delay=\"3\""));

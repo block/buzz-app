@@ -108,7 +108,7 @@ p:empty {
 }
 
 .brand svg {
-  inline-size: 2rem;
+  inline-size: 1.5rem;
   block-size: 1.5rem;
   flex-shrink: 0;
 }

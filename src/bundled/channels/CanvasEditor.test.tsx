@@ -478,12 +478,15 @@ it("keeps another editor's typed text when an edit back to the Canvas removes th
   fireEvent.change(other, { target: { value: "Mine" } });
   fireEvent.change(editing, { target: { value: "Theirs" } });
   fireEvent.change(editing, { target: { value: head.content } });
-  expect(viewRevision(scope, `canvas-draft-v1:${channelId}`)).toBeNull();
   await waitFor(() => {
     expect(second.read).toHaveBeenCalledTimes(2);
     expect(region).toHaveAttribute("aria-busy", "false");
   });
   expect(other).toHaveValue("Mine");
+  expect(readView(scope, `canvas-draft-v1:${channelId}`, null)).toEqual({
+    content: "Mine",
+    base: head.id,
+  });
   expect(within(region).queryByRole("alert")).toBeNull();
   expect(
     within(region).getByRole("button", { name: "Save Canvas" }),
@@ -503,8 +506,8 @@ it("keeps typed text stored when its save fails after another editor removed the
     expect(second.read).toHaveBeenCalledTimes(2);
     expect(region).toHaveAttribute("aria-busy", "false");
   });
-  // No draft is stored, so the save writes a snapshot of the typed text.
-  expect(viewRevision(scope, `canvas-draft-v1:${channelId}`)).toBeNull();
+  // The edit back removed the draft; this editor stored its typed text again.
+  expect(viewRevision(scope, `canvas-draft-v1:${channelId}`)).not.toBeNull();
   second.save.mockRejectedValueOnce(new Error("Offline: draft kept"));
   await user.click(within(region).getByRole("button", { name: "Save Canvas" }));
   expect(await within(region).findByRole("alert")).toHaveTextContent(
@@ -517,7 +520,7 @@ it("keeps typed text stored when its save fails after another editor removed the
   });
 });
 
-it("keeps another editor's typed text and blocks its Save after a save", async () => {
+it("keeps another editor's typed text through a reopen and blocks its Save after a save", async () => {
   const user = userEvent.setup();
   const { saved, second, editing, other } = await twoEditors();
   const region = screen.getAllByRole("region", {
@@ -540,6 +543,15 @@ it("keeps another editor's typed text and blocks its Save after a save", async (
   expect(
     within(region).getByRole("button", { name: "Save Canvas" }),
   ).toBeDisabled();
+  cleanup();
+  fixture((canvas) => canvas.read.mockResolvedValue(saved));
+  const reopened = screen.getByRole("textbox", { name: "Canvas Markdown" });
+  await waitFor(() => expect(reopened).toBeEnabled());
+  expect(reopened).toHaveValue("Mine");
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Canvas changed since this draft began",
+  );
+  expect(screen.getByRole("button", { name: "Save Canvas" })).toBeDisabled();
 });
 
 function hold(operation: ReturnType<typeof vi.fn>) {
@@ -916,6 +928,38 @@ it("stores no draft after restoring over a revision Refresh history found", asyn
   expect(screen.queryByRole("alert")).toBeNull();
   expect(screen.getByRole("button", { name: "Save Canvas" })).toBeEnabled();
 });
+it.each(["save", "restore"])(
+  "keeps typed text stored when a %s fails after typing could not store it",
+  async (action) => {
+    const user = userEvent.setup();
+    const { canvas } = historyFixture();
+    const text = screen.getByRole("textbox", { name: "Canvas Markdown" });
+    await waitFor(() => expect(text).toBeEnabled());
+    vi.spyOn(Storage.prototype, "setItem").mockImplementationOnce(() => {
+      throw new DOMException("Storage is full", "QuotaExceededError");
+    });
+    fireEvent.change(text, { target: { value: "Mine" } });
+    // No draft is stored, so the write stores a snapshot of the typed text.
+    expect(viewRevision(scope, `canvas-draft-v1:${channelId}`)).toBeNull();
+    canvas.save.mockRejectedValueOnce(new Error("Offline: draft kept"));
+    if (action === "save")
+      await user.click(screen.getByRole("button", { name: "Save Canvas" }));
+    else {
+      await openHistory(user);
+      await user.click(
+        screen.getByRole("button", { name: "Restore this version" }),
+      );
+      await user.click(screen.getByRole("button", { name: "Restore version" }));
+    }
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Offline: draft kept",
+    );
+    expect(readView(scope, `canvas-draft-v1:${channelId}`, null)).toEqual({
+      content: "Mine",
+      base: head.id,
+    });
+  },
+);
 it("keeps a stale recovered draft even when its text matches the loaded head", async () => {
   const user = userEvent.setup();
   writeView(scope, `canvas-draft-v1:${channelId}`, {

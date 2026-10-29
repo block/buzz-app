@@ -14,6 +14,7 @@ import type { RelayEvent } from "../../features/relay/events";
 import {
   clearView,
   readView,
+  replaceView,
   subscribeView,
   viewRevision,
   writeView,
@@ -46,8 +47,8 @@ export function CanvasEditor({
     () => viewRevision(scope, key),
   );
   // Only edits are stored. When a stored draft disappears, another editor
-  // saved, discarded or reverted it. Unless this editor removed it, it reloads,
-  // or only rereads the Canvas while it holds text typed here.
+  // saved, discarded or reverted it. Unless this editor removed it, it reloads.
+  // An editor holding text typed here stores that text again and only rereads.
   const retiredDraft = useRef(true);
   const retire = useCallback(
     (expected: string | null | undefined) => {
@@ -72,6 +73,9 @@ export function CanvasEditor({
   });
   const [draft, setDraft] = useState(saved?.content ?? "");
   const [base, setBase] = useState<string | null>(saved?.base ?? null);
+  // Text this editor took from the relay or the stored draft it opened with.
+  // A draft that differs from it was typed here.
+  const [adopted, setAdopted] = useState(saved?.content);
   const [head, setHead] = useState<RelayEvent>();
   const [loaded, setLoaded] = useState(false),
     [busy, setBusy] = useState(false),
@@ -122,6 +126,7 @@ export function CanvasEditor({
         setLoaded(true);
         if (replace || (!saved && !loaded)) {
           setDraft(event?.content ?? "");
+          setAdopted(event?.content ?? "");
           setBase(event?.id ?? null);
           if (replace) retire(stored);
         } else if ((event?.id ?? null) !== base)
@@ -146,7 +151,7 @@ export function CanvasEditor({
   const differs = (content: string) =>
     (head?.id ?? null) !== base || content !== (head?.content ?? "");
   const dirty = differs(draft);
-  const edited = dirty && (draft !== saved?.content || base !== saved?.base);
+  const edited = dirty && draft !== adopted;
   useEffect(() => {
     if (draftRevision !== null) {
       retiredDraft.current = false;
@@ -154,8 +159,9 @@ export function CanvasEditor({
     }
     if (!loaded || busy || retiredDraft.current) return;
     retiredDraft.current = true;
+    if (edited) replaceView(scope, key, null, { content: draft, base });
     void load(!edited);
-  }, [draftRevision, loaded, busy, edited, load]);
+  }, [draftRevision, loaded, busy, edited, load, scope, key, draft, base]);
   const recover = (replace: boolean) => {
     handoff.current = recovery.current;
     setRecovering(true);
@@ -184,6 +190,7 @@ export function CanvasEditor({
         );
       } else {
         setDraft(event.content);
+        setAdopted(event.content);
         setBase(event.id);
         setError("");
       }
@@ -201,9 +208,9 @@ export function CanvasEditor({
         setError(reason instanceof Error ? reason.message : String(reason));
       throw reason;
     } finally {
-      // The snapshot only covered the write. A restore can be dirty without
-      // edits, after Refresh history moved the head, so remove it either way.
-      if (snapshot) retire(stored);
+      // A restore can be dirty without edits, after Refresh history moved the
+      // head, so keep the snapshot only when it holds text typed here.
+      if (snapshot && !edited) retire(stored);
       if (generation === operation.current) setBusy(false);
     }
   };
@@ -225,6 +232,7 @@ export function CanvasEditor({
       if (generation === operation.current) {
         setHead(event);
         setBase(event.id);
+        setAdopted(event.content);
       }
     } catch (reason) {
       if (generation === operation.current)

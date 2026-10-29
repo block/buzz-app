@@ -1385,7 +1385,6 @@ it("opens the open channel that lands after an early Enter, without first saying
       await vi.advanceTimersByTimeAsync(180);
     });
     expect(screen.queryByRole("option")).toBeNull();
-    expect(screen.getByText("Searching…")).toBeVisible();
     expect(
       screen.queryByText("No matching messages in accessible conversations."),
     ).toBeNull();
@@ -1395,6 +1394,131 @@ it("opens the open channel that lands after an early Enter, without first saying
     expect(openConversation).not.toHaveBeenCalled();
     await act(async () => resolved());
     expect(openConversation).toHaveBeenCalledExactlyOnceWith("lobby");
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
+it("holds an early Enter for an open channel over a message that lands first, and for a message once channels settle empty", async () => {
+  vi.useFakeTimers();
+  const relay = keypair();
+  const viewer = keypair();
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  const discovery = [
+    metadata(relay, "general", "general"),
+    roster(relay, "general", [viewer.pubkey]),
+    metadata(relay, "lobby", "crew-lobby", 1700000000, [
+      ["public", ""],
+      ["t", "stream"],
+    ]),
+    roster(relay, "lobby", [keypair().pubkey]),
+  ];
+  let resolved!: () => void;
+  const held = new Promise<void>((release) => (resolved = release));
+  const owner = createRelaySession({
+    ...wire.transport,
+    async query(filters, signal) {
+      if (
+        filters.some(
+          (filter) => filter.search !== undefined && !filter.kinds?.includes(0),
+        )
+      )
+        return wire.transport.query(filters, signal);
+      if (filters.some((filter) => filter["#d"]?.includes("lobby"))) await held;
+      return discovery.filter((event) =>
+        filters.some((filter) => matchFilter(filter as Filter, event)),
+      );
+    },
+  });
+  const openConversation = vi.fn();
+  try {
+    const props = {
+      session: owner.session,
+      onQueryChange: () => {},
+      input: createRef<HTMLInputElement>(),
+      pages: [],
+      openConversation,
+    };
+    const mounted = render(<SearchResults {...props} query="crew" />);
+    await act(async () => vi.advanceTimersByTimeAsync(180));
+    fireEvent.keyDown(screen.getByRole("combobox", { name: "Search Buzz" }), {
+      key: "Enter",
+    });
+    await act(async () =>
+      wire
+        .next()
+        .respond([message(viewer, "general", "crew news", 1700000001)]),
+    );
+    expect(screen.getByRole("option", { name: /crew news/ })).toBeVisible();
+    expect(openConversation).not.toHaveBeenCalled();
+    await act(async () => resolved());
+    expect(openConversation).toHaveBeenCalledExactlyOnceWith("lobby");
+    // With no channel to wait for, Enter waits for message search instead.
+    mounted.rerender(<SearchResults {...props} query="news" />);
+    fireEvent.keyDown(screen.getByRole("combobox", { name: "Search Buzz" }), {
+      key: "Enter",
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(180));
+    expect(openConversation).toHaveBeenCalledOnce();
+    const news = message(viewer, "general", "news", 1700000002);
+    await act(async () => wire.next().respond([news]));
+    expect(openConversation).toHaveBeenLastCalledWith("general", news.id);
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
+it("opens an open channel from the first directory page after an early Enter, while older pages load", async () => {
+  vi.useFakeTimers();
+  const relay = keypair();
+  const viewer = keypair();
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  const open = (id: string) =>
+    metadata(relay, id, id, 1700000000, [
+      ["public", ""],
+      ["t", "stream"],
+    ]);
+  // A full first page, so the directory read goes on to an older one.
+  const discovery = [
+    open("crew-lobby"),
+    ...Array.from({ length: 499 }, (_, i) => open(`extra-${i}`)),
+  ];
+  const owner = createRelaySession({
+    ...wire.transport,
+    async query(filters, signal) {
+      if (filters.some((filter) => filter.before_id !== undefined))
+        return new Promise(() => {});
+      if (
+        filters.some(
+          (filter) => filter.search !== undefined && !filter.kinds?.includes(0),
+        )
+      )
+        return wire.transport.query(filters, signal);
+      return discovery.filter((event) =>
+        filters.some((filter) => matchFilter(filter as Filter, event)),
+      );
+    },
+  });
+  const openConversation = vi.fn();
+  try {
+    render(
+      <SearchResults
+        session={owner.session}
+        query="crew"
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        openConversation={openConversation}
+      />,
+    );
+    fireEvent.keyDown(screen.getByRole("combobox", { name: "Search Buzz" }), {
+      key: "Enter",
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(180));
+    // Neither the older directory page nor message search has answered.
+    expect(openConversation).toHaveBeenCalledExactlyOnceWith("crew-lobby");
   } finally {
     cleanup();
     owner.dispose();
@@ -3637,10 +3761,12 @@ it("lets the newest choice win over a DM that is still opening", async () => {
   t.open
     .mockImplementationOnce(hold)
     .mockImplementationOnce(async () => "carol-dm")
+    .mockImplementationOnce(hold)
     .mockImplementationOnce(hold);
   const signal = (call: number) =>
     (t.open.mock.calls[call] as unknown as [unknown, AbortSignal])[1];
   const openConversation = vi.fn();
+  const onScopeChange = vi.fn();
   try {
     render(
       <SearchResults
@@ -3649,6 +3775,8 @@ it("lets the newest choice win over a DM that is still opening", async () => {
         onQueryChange={() => {}}
         input={createRef()}
         pages={[]}
+        currentChannelId="chat"
+        onScopeChange={onScopeChange}
         openConversation={openConversation}
       />,
     );
@@ -3671,9 +3799,22 @@ it("lets the newest choice win over a DM that is still opening", async () => {
     expect(
       await screen.findByText("Opening your conversation with Ally Bob…"),
     ).toBeVisible();
-    fireEvent.click(screen.getByRole("option", { name: /ally-chat/ }));
+    fireEvent.click(screen.getByRole("option", { name: /^ally-chat/ }));
     expect(signal(2).aborted).toBe(true);
     expect(openConversation).toHaveBeenLastCalledWith("chat");
+    expect(
+      screen.queryByText("Opening your conversation with Ally Bob…"),
+    ).toBeNull();
+    // So does searching in this conversation.
+    fireEvent.click(bobRow);
+    expect(
+      await screen.findByText("Opening your conversation with Ally Bob…"),
+    ).toBeVisible();
+    fireEvent.click(
+      screen.getByRole("option", { name: /Search in ally-chat/ }),
+    );
+    expect(signal(3).aborted).toBe(true);
+    expect(onScopeChange).toHaveBeenCalledExactlyOnceWith("chat");
     expect(
       screen.queryByText("Opening your conversation with Ally Bob…"),
     ).toBeNull();

@@ -279,7 +279,7 @@ async function setup(
     },
   };
 }
-it("offers your agents before typing and adds one without a directory search", async () => {
+it("offers your agents when you are the only member and adds one without a directory search", async () => {
   const t = await setup();
   const yours = await screen.findByRole("region", {
     name: "Your agents",
@@ -297,6 +297,69 @@ it("offers your agents before typing and adds one without a directory search", a
       .filter((filter) => filter.search),
   ).toEqual([]);
 });
+
+it.each([false, true])(
+  "shows idle suggestions only while the viewer is alone (second member is an agent: %s)",
+  async (localAgent) => {
+    const t = await setup("stream", false, localAgent);
+    await act(async () =>
+      t.control.set({
+        agents: [
+          t.agent,
+          { ...t.agent, pubkey: keypair().pubkey, name: "Fixture helper" },
+          {
+            ...t.agent,
+            pubkey: keypair().pubkey,
+            name: localAgent ? t.agent.name : "Morgan",
+          },
+        ],
+      }),
+    );
+    const refresh = screen.getByRole("button", { name: "Refresh member data" });
+    const settled = () =>
+      vi.waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false"));
+    const suggestions = () =>
+      screen.queryByRole("region", { name: "Not in this channel" });
+    const search = screen.getByRole("searchbox");
+    await settled();
+    expect(suggestions()).toBeVisible();
+
+    t.confirmRoster();
+    await t.user.click(refresh);
+    await settled();
+    const roster = () =>
+      screen.getByRole("region", {
+        name: localAgent ? "Agents" : "People",
+      });
+    expect(
+      within(roster()).getByText(localAgent ? "Fixture agent" : "Morgan"),
+    ).toBeVisible();
+    expect(suggestions()).toBeNull();
+    expect(within(roster()).queryByText(/^npub…/)).toBeNull();
+
+    await t.user.type(search, "Fixture");
+    await screen.findByRole("button", { name: /^Add Fixture helper/ });
+    expect(suggestions()).toBeVisible();
+    if (localAgent) expect(within(roster()).getByText(/^npub…/)).toBeVisible();
+    await t.user.clear(search);
+    await settled();
+    expect(suggestions()).toBeNull();
+    expect(within(roster()).queryByText(/^npub…/)).toBeNull();
+    await t.user.type(search, "   ");
+    expect(suggestions()).toBeNull();
+    await t.user.clear(search);
+
+    t.removeTarget();
+    await t.user.click(refresh);
+    await settled();
+    expect(suggestions()).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: /^Add Fixture helper/ }),
+    ).toBeVisible();
+    expect(search).toHaveValue("");
+    expect(t.publish).not.toHaveBeenCalled();
+  },
+);
 
 it("explains imported agents with the current community's badge and nested popover", async () => {
   const snapshot: ReturnType<CommunityReader["snapshot"]> = {
@@ -510,7 +573,7 @@ async function relationshipInvitations() {
   return { ...t, people, key, directId, otherDirectId, rows };
 }
 
-it("orders blank invitations by shared relationships and usage before the four-row limit", async () => {
+it("orders empty-channel invitations by shared relationships and usage before the four-row limit", async () => {
   const t = await setup();
   await t.user.click(screen.getByRole("button", { name: "Done" }));
   const agents = ["Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot"].map(

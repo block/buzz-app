@@ -845,6 +845,9 @@ It is titled **Channel access** in channels and **Chat access** in a Solo chat (
 agents there but cannot change roles.
 One search field, with an accessible name but no visible label, filters current
 members and lists people, agents and Teams to invite under **Not in this channel**.
+With an empty query, ordinary channels show invitations only when the viewer is
+the sole member; otherwise they show just the roster. Searching offers invitations
+with the existing grouping, ranking and expansion behavior.
 Each result's **Add** button, or Enter on the highlighted result, adds immediately.
 The footer keeps **Copy link** at its leading edge and **Done** at its trailing edge.
 When adding is unavailable, the field reads **Search members** and a short reason names

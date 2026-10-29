@@ -931,7 +931,11 @@ export function ChannelMembersDialog({
     !initialLoading &&
     canAdd &&
     roleFilter === "All" &&
-    (!!text || (!solo && available.length > 0));
+    (!!text ||
+      (!solo &&
+        members.size === 1 &&
+        members.has(session.viewer ?? "") &&
+        available.length > 0));
   const invitationGroups = [
     "Your agents",
     "People",
@@ -989,11 +993,13 @@ export function ChannelMembersDialog({
       next: ordered[size]?.pubkey,
     };
   });
-  const visibleCandidates = solo
-    ? roleFilter === "All"
-      ? available.slice(0, invitationSize)
-      : []
-    : invitationGroups.flatMap((group) => group.people);
+  const visibleCandidates = !offering
+    ? []
+    : solo
+      ? roleFilter === "All"
+        ? available.slice(0, invitationSize)
+        : []
+      : invitationGroups.flatMap((group) => group.people);
   const agentsByMention =
     offering &&
     solo &&
@@ -1097,18 +1103,23 @@ export function ChannelMembersDialog({
     ...visibleCandidates.map((person) => label(person.pubkey, person.name)),
   ])
     shownNames.set(name, (shownNames.get(name) ?? 0) + 1);
-  // A confirmed addition replaces its focused Add button with a member row.
+  // A confirmation can replace its Add button or retire another pending row.
   // DOM removal does not emit blur, so restore focus only if it was not moved elsewhere.
   useLayoutEffect(() => {
     const previous = focusedAdd.current;
-    if (!previous || !memberKey.split(":").includes(previous.key)) return;
+    if (
+      !previous ||
+      (!memberKey.split(":").includes(previous.key) &&
+        (offering || previous.button.isConnected))
+    )
+      return;
     focusedAdd.current = null;
     if (
       document.activeElement === previous.button ||
       document.activeElement === document.body
     )
       input.current?.focus();
-  }, [memberKey]);
+  }, [memberKey, offering]);
   const add = useCallback(
     async (key: string) => {
       const signal = lifetime.current?.signal;

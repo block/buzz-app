@@ -2028,15 +2028,24 @@ it.each([true, false])(
     });
     const change = vi.fn(async () => {});
     const onClosed = vi.fn();
+    const tokens = new Set<string>();
+    const git = vi.fn(async (repository: string) => {
+      tokens.add(repository);
+      return {
+        ...rememberedPreview,
+        token: repository,
+        candidates: rememberedPreview.candidates.slice(0, 1),
+      };
+    });
+    const discard = vi.fn(async (token: string) => {
+      tokens.delete(token);
+    });
     const manager = {
-      imports: {
-        git: vi.fn(async () => ({
-          ...rememberedPreview,
-          candidates: [rememberedPreview.candidates[0]],
-        })),
-        discard: vi.fn(async () => {}),
-      },
-      installImport: vi.fn(() => installed),
+      imports: { git, discard },
+      installImport: vi.fn(async (token: string) => {
+        await installed;
+        return tokens.has(token);
+      }),
       change,
     } as unknown as PluginManager;
     const props = {
@@ -2074,6 +2083,9 @@ it.each([true, false])(
         }}
       />,
     );
+    await act(async () => {});
+    expect(discard).not.toHaveBeenCalled();
+    expect(git).toHaveBeenCalledTimes(1);
     await act(async () => finish(true));
     if (enabled)
       expect(change).toHaveBeenCalledExactlyOnceWith(

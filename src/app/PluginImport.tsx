@@ -22,8 +22,8 @@ import type { PluginManager } from "../plugins/manager";
 import type { Catalog, ImportPreview, PluginInfo } from "../plugins/types";
 import type { GitPluginSource } from "../features/navigation/targets";
 
-// The native importer has one acquisition slot, shared by successive dialogs.
-const acquisitions = new WeakMap<object, Promise<void>>();
+// The native importer has one slot, shared by successive dialogs.
+const importOperations = new WeakMap<object, Promise<void>>();
 
 function importLocation(
   preview: Pick<ImportPreview, "source" | "commit">,
@@ -169,7 +169,7 @@ export function PluginImport({
     setError(String(reason));
   }
   const [enableOnInstall, setEnableOnInstall] = useState(true);
-  const lifetime = useRef({ active: true, token: "" });
+  const lifetime = useRef({ active: true, token: "", installing: false });
   const pending = useRef(false);
   async function checkSource(operation: () => Promise<string>) {
     if (checkPending.current) return;
@@ -202,7 +202,7 @@ export function PluginImport({
       void checkSource(() => imports.checkFolder(updateId));
   });
   useEffect(() => {
-    const current = { active: true, token: "" };
+    const current = { active: true, token: "", installing: false };
     lifetime.current = current;
     // Defer until effects settle so Strict Mode's retired mount never acquires.
     queueMicrotask(() => {
@@ -210,7 +210,8 @@ export function PluginImport({
     });
     return () => {
       current.active = false;
-      if (current.token) void imports?.discard(current.token).catch(() => {});
+      if (current.token && !current.installing)
+        void imports?.discard(current.token).catch(() => {});
     };
   }, [imports]);
 
@@ -312,7 +313,7 @@ export function PluginImport({
     setPreview(null);
     setShowUnchanged(false);
     setEnableOnInstall(true);
-    const previous = acquisitions.get(imports);
+    const previous = importOperations.get(imports);
     const acquisition = (async () => {
       if (previous) await previous;
       if (!current.active) return null;
@@ -323,7 +324,7 @@ export function PluginImport({
       }
       return result;
     })();
-    acquisitions.set(
+    importOperations.set(
       imports,
       acquisition.then(
         () => {},
@@ -771,6 +772,12 @@ export function PluginImport({
                     onClick={async () => {
                       if (blocked || pending.current) return;
                       const current = lifetime.current;
+                      current.installing = true;
+                      let release!: () => void;
+                      const settled = new Promise<void>((resolve) => {
+                        release = resolve;
+                      });
+                      importOperations.set(imports, settled);
                       pending.current = true;
                       setLoading(true);
                       setError(null);
@@ -806,6 +813,12 @@ export function PluginImport({
                         setOpen(false);
                         onClosed?.();
                       } finally {
+                        current.installing = false;
+                        if (!current.active && current.token) {
+                          await imports.discard(current.token).catch(() => {});
+                          current.token = "";
+                        }
+                        release();
                         pending.current = false;
                         if (current.active) setLoading(false);
                       }

@@ -1221,13 +1221,15 @@ test("Add keeps a rejected install reachable and retries the same preview", asyn
   const dialog = page
     .getByRole("dialog")
     .and(page.locator('[aria-modal="true"]'));
-  await expect(dialog).toHaveAccessibleName(/^Review .+ access$/);
+  await expect(dialog).toHaveAccessibleName(
+    "Review Retry plugin Plugin access",
+  );
   await expect(dialog.getByRole("radio")).toHaveCount(0);
   await expect(
     dialog.getByText("Choose a plugin folder", { exact: true }),
   ).toHaveCount(0);
   await expect(
-    dialog.getByRole("heading", { name: "Retry plugin" }),
+    dialog.getByRole("heading", { name: "Retry plugin", exact: true }),
   ).toHaveCount(0);
   await expect(dialog.getByText("example.retry", { exact: true })).toHaveCount(
     0,

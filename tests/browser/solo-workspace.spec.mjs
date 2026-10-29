@@ -341,13 +341,29 @@ test("Solo sidebar shares working activity, keyboard preview and local panel nav
   await expect(
     page.locator(`[data-solo-menu-id="${id}"] [data-solo-shared]`),
   ).toBeVisible();
-  await action.click();
-  await expect(
-    page.getByRole("menu", { name: "Actions for Alpha", exact: true }),
-  ).toBeVisible();
+  const menuBounds = await action.boundingBox();
+  await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 100);
+  // Keep the opening focus handoff pending: Escape must restore the row
+  // even when focus has not yet left the overflow trigger.
+  await page.mouse.click(
+    menuBounds.x + menuBounds.width / 2,
+    menuBounds.y + menuBounds.height / 2,
+  );
+  const menu = page.getByRole("menu", {
+    name: "Actions for Alpha",
+    exact: true,
+  });
+  await expect
+    .poll(async () => {
+      await page.clock.runFor(16);
+      return menu.isVisible();
+    })
+    .toBe(true);
+  await expect(action).toBeFocused();
   await expect(action).toHaveAttribute("aria-expanded", "true");
   await expect(action).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
   await page.keyboard.press("Escape");
+  await page.clock.resume();
   await expect(alpha).toBeFocused();
   await sidebar.getByRole("button", { name: "Beta", exact: true }).click();
   await page.mouse.move(0, 0);

@@ -6,6 +6,7 @@ test.use({
   productionBroker: true,
   channelLifecycle: true,
   lifecycleRole: "guest",
+  channelWriteKinds: [9, 9007, 40100],
   historyCounts: { alpha: 1, beta: 1 },
 });
 
@@ -185,6 +186,30 @@ test("a joined guest can read and leave without receiving a composer or Join pro
   await expect(
     members.getByRole("region", { name: "Not in this channel" }),
   ).toHaveCount(0);
+  await members.getByRole("button", { name: "Done", exact: true }).click();
+  // The registered channel menu and panel must retain Guest reading access.
+  await page
+    .getByRole("button", { name: "Channel actions", exact: true })
+    .click();
+  await page
+    .getByRole("menuitem", { name: "View canvas", exact: true })
+    .click();
+  const canvas = page.getByRole("region", {
+    name: "Channel Canvas",
+    exact: true,
+  });
+  const editor = canvas.getByRole("textbox", {
+    name: "Canvas Markdown",
+    exact: true,
+  });
+  await expect(editor).toBeEnabled();
+  await expect(editor).toHaveJSProperty("readOnly", true);
+  await expect(
+    canvas.getByRole("button", { name: "Save Canvas", exact: true }),
+  ).toBeDisabled();
+  await expect(
+    canvas.getByText("Canvas is read-only.", { exact: true }),
+  ).toBeVisible();
   expect(app.report.lifecyclePublications ?? []).toEqual([]);
   expect(app.report.unexpected).toEqual([]);
 });

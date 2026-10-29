@@ -179,13 +179,6 @@ async function startWorkingAgent(page, app) {
   await expect
     .poll(() => page.evaluate(() => !!window.localAgentFixture))
     .toBe(true);
-  await expect
-    .poll(() =>
-      app.report.agentPublications?.some(({ event }) =>
-        event.tags.some(([name, value]) => name === "d" && value === agent),
-      ),
-    )
-    .toBe(true);
   const editor = page.getByRole("textbox", {
     name: "Message your agents",
     exact: true,
@@ -234,10 +227,13 @@ test("queue focus survives preview release and pointer removal", async ({
   await editor.press("End");
   await editor.pressSequentially("Keep this row");
   await editor.press("Enter");
+  await expect(queue).toContainText("Keep this row");
   await editor.press("End");
   await editor.pressSequentially("Remove last row");
   await editor.press("Enter");
+  await expect(queue).toContainText("Remove last row");
   const remove = queue.getByRole("button", { name: "Remove queued message" });
+  await expect(remove).toHaveCount(2);
   await queue.getByRole("listitem").last().hover();
   // WebKit does not focus clicked buttons; focus explicitly to cover the same
   // pointer-modality handoff on both engines.

@@ -73,7 +73,8 @@ scripts/bootstrap-worktree.sh /absolute/path/to/source/checkout
 
 Do not start development before bootstrap completes. The script copies the
 git-ignored `.env.local` without overwriting an existing target, then uses that
-worktree's Hermit proxy to run `bin/pnpm install --frozen-lockfile`. Do not copy
+worktree's Hermit proxies to run `bin/rustup toolchain install` and
+`bin/pnpm install --frozen-lockfile`. Do not copy
 other ignored paths: Keychain credentials and pnpm's package cache are
 machine-shared, while dependencies and build output are regenerated. Git hooks
 need no per-worktree setup; see [Git hooks](docs/contributing.md#git-hooks).

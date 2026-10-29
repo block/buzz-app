@@ -975,7 +975,7 @@ export function ChannelMembersDialog({
     solo &&
     !canAddSoloAgents &&
     [...candidates.values()].some(agentCandidate);
-  const shareChannels = offering && solo ? share.channels : [];
+  const shareChannels = offering && solo && text ? share.channels : [];
   // Keep roster ownership observed while filtering; retiring the view clears
   // valid hints and forces every retained agent row through recovery renders.
   const agentKeys = [

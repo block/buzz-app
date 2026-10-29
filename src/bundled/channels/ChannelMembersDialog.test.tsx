@@ -2339,6 +2339,47 @@ it("lets the Solo owner add an agent without sending a message", async () => {
   expect(t.publish).toHaveBeenCalledOnce();
 });
 
+it("keeps Solo channel sharing search-only while suggesting your agents when alone", async () => {
+  const t = await setup("solo", false, true);
+  const destination = "22222222-2222-4222-8222-222222222222";
+  const events = [
+    metadata(t.relay, destination, "Planning", 1700000000, [
+      ["t", "stream"],
+      ["public"],
+    ]),
+    roster(t.relay, destination, [t.viewer.pubkey], 1700000000),
+  ];
+  const query = t.query.getMockImplementation();
+  if (!query) throw new Error("Missing query fixture");
+  t.query.mockImplementation(async (filters) => [
+    ...(await query(filters)),
+    ...events.filter((event) =>
+      filters.some((filter) => matchesEvent(event, filter)),
+    ),
+  ]);
+  await act(async () => t.session.channels.refreshList?.());
+  await vi.waitFor(() =>
+    expect(
+      t.session.channels.list().channels.find((item) => item.id === destination)
+        ?.members,
+    ).toContain(t.viewer.pubkey),
+  );
+  expect(screen.getByRole("region", { name: "Your agents" })).toBeVisible();
+  expect(screen.queryByRole("region", { name: "Channels" })).toBeNull();
+  const input = screen.getByRole("searchbox");
+  await t.user.type(input, "Plan");
+  const channels = await screen.findByRole("region", { name: "Channels" });
+  expect(
+    within(channels).getByRole("button", { name: "Select #Planning" }),
+  ).toBeVisible();
+  await t.user.clear(input);
+  expect(screen.queryByRole("region", { name: "Channels" })).toBeNull();
+  expect(screen.getByRole("region", { name: "Your agents" })).toBeVisible();
+  await t.user.type(input, " ");
+  expect(screen.queryByRole("region", { name: "Channels" })).toBeNull();
+  expect(t.publish).not.toHaveBeenCalled();
+});
+
 it("gives Solo the channel invitation groups, ranking and independent four-row expansion", async () => {
   const t = await setup("solo", false, true);
   const client = Array.from({ length: 5 }, (_, index) => ({

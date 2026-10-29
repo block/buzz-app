@@ -781,8 +781,14 @@ it("unlocks Remove in an already-open window after the sending window abandons i
   await vi.waitFor(() => expect(first.queue.snapshot()[0]?.error).toBeTruthy());
   await vi.waitFor(() => expect(remove.disabled).toBe(false));
   expect(followUpStorage(scope).isSending(id)).toBe(true);
+  const next = second.enqueue();
+  await followUpStorage(scope).lock(id, async () => {});
+  await vi.waitFor(() => expect(remove.disabled).toBe(false));
+  expect(followUpStorage(scope).isSending(id)).toBe(true);
   remove.click();
-  await vi.waitFor(() => expect(second.queue.snapshot()).toEqual([]));
+  await vi.waitFor(() =>
+    expect(second.queue.snapshot().map((entry) => entry.id)).toEqual([next]),
+  );
   expect(second.send).not.toHaveBeenCalled();
 });
 

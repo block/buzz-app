@@ -496,9 +496,21 @@ test("an open queue recovers Remove when another window releases an abandoned ha
       await window.queueLockHeld;
     });
     await expect(remove).toBeEnabled();
-    await queue.getByRole("listitem").hover();
-    await remove.click();
-    await expect(queue).toHaveCount(0);
+    await editor.press("End");
+    await page.keyboard.insertText("Next queued message");
+    await editor.press("Enter");
+    await expect(queue).toContainText("Next queued message");
+    const abandoned = queue
+      .getByRole("listitem")
+      .filter({ hasText: "Abandoned handoff" });
+    const abandonedRemove = abandoned.getByRole("button", {
+      name: "Remove queued message",
+    });
+    await expect(abandonedRemove).toBeEnabled();
+    await abandoned.hover();
+    await abandonedRemove.click();
+    await expect(abandoned).toHaveCount(0);
+    await expect(queue).toContainText("Next queued message");
     expect(
       app.report.publications.filter(
         ({ event }) =>

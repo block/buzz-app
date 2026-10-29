@@ -46,6 +46,7 @@ function createQueue(session: RelaySession) {
   let storageError: string | undefined;
   let sequence = Date.now();
   const waits = new Map<string, Wait[]>();
+  const refreshingSending = new Set<string>();
   function restore() {
     if (!storage) return;
     try {
@@ -75,6 +76,7 @@ function createQueue(session: RelaySession) {
             saved.find((row) => row.id === entry.id)?.sending === true;
       }
       storageError = undefined;
+      refreshSending();
     } catch (error) {
       storageError = error instanceof Error ? error.message : String(error);
     }
@@ -457,9 +459,7 @@ function createQueue(session: RelaySession) {
     }
     emit();
   }
-  const refreshingSending = new Set<string>();
-  const onStorage = () => {
-    restore();
+  function refreshSending() {
     for (const entry of entries) {
       if (!entry.sending || !storage || refreshingSending.has(entry.id))
         continue;
@@ -476,6 +476,9 @@ function createQueue(session: RelaySession) {
         .catch(() => {})
         .finally(() => refreshingSending.delete(entry.id));
     }
+  }
+  const onStorage = () => {
+    restore();
     if (entries.length) watch();
     emit();
     pump();

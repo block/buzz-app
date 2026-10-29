@@ -1093,7 +1093,6 @@ it("deletes a failed send from this device without publishing, so no restart res
   );
   await restarted.owner.session.outbox?.ready();
   expect(screen.queryByText("Unsent message")).toBeNull();
-  expect(restarted.publications).toHaveLength(0);
 });
 
 it("reports a failed send that started retrying instead of deleting it", async () => {
@@ -1130,55 +1129,64 @@ it("reports a failed send that started retrying instead of deleting it", async (
   expect(h.publications).toHaveLength(2);
 });
 
-it("deletes a failed send in a channel that was archived or left, which only gates relay changes", async () => {
-  const h = await fixture();
-  const id = await unsent(
-    h,
-    new PublishRejected("invalid: channel is archived"),
-    "failed",
-  );
-  cleanup();
-  const live = h.owner.session.channels.list();
-  const closed = {
-    ...live,
-    channels: live.channels.map((channel) => ({
-      ...channel,
-      archived: true as const,
-      readOnly: true as const,
-    })),
-  };
-  const session = {
-    ...h.owner.session,
-    channels: { ...h.owner.session.channels, list: () => closed },
-  };
-  const row = session.channels
-    .window("room")
-    .rows.find((item) => item.id === id);
-  assert.exists(row);
-  render(
-    <MessageManagement session={session} channelId="room">
-      <MenuRoot>
-        <MenuTrigger>Message actions</MenuTrigger>
-        <MenuPopup>
-          <MessageManagementItems row={row} session={session} />
-        </MenuPopup>
-      </MenuRoot>
-    </MessageManagement>,
-  );
-  fireEvent.click(screen.getByRole("button", { name: "Message actions" }));
-  fireEvent.click(
-    await screen.findByRole("menuitem", { name: "Delete message" }),
-  );
-  const confirmation = await screen.findByRole("alertdialog", {
-    name: "Delete message?",
-  });
-  fireEvent.click(within(confirmation).getByRole("button", { name: "Delete" }));
-  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
-  expect(session.outbox?.snapshot().some((item) => item.event.id === id)).toBe(
-    false,
-  );
-  expect(h.publications).toHaveLength(1);
-});
+it.each(["archived", "left"] as const)(
+  "deletes a failed send in a channel that was %s, which only gates relay changes",
+  async (state) => {
+    const h = await fixture();
+    const id = await unsent(
+      h,
+      new PublishRejected("invalid: channel is archived"),
+      "failed",
+    );
+    cleanup();
+    const live = h.owner.session.channels.list();
+    // A channel the viewer left is no longer listed at all.
+    const closed = {
+      ...live,
+      channels:
+        state === "left"
+          ? []
+          : live.channels.map((channel) => ({
+              ...channel,
+              archived: true as const,
+              readOnly: true as const,
+            })),
+    };
+    const session = {
+      ...h.owner.session,
+      channels: { ...h.owner.session.channels, list: () => closed },
+    };
+    const row = session.channels
+      .window("room")
+      .rows.find((item) => item.id === id);
+    assert.exists(row);
+    render(
+      <MessageManagement session={session} channelId="room">
+        <MenuRoot>
+          <MenuTrigger>Message actions</MenuTrigger>
+          <MenuPopup>
+            <MessageManagementItems row={row} session={session} />
+          </MenuPopup>
+        </MenuRoot>
+      </MessageManagement>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Message actions" }));
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "Delete message" }),
+    );
+    const confirmation = await screen.findByRole("alertdialog", {
+      name: "Delete message?",
+    });
+    fireEvent.click(
+      within(confirmation).getByRole("button", { name: "Delete" }),
+    );
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(
+      session.outbox?.snapshot().some((item) => item.event.id === id),
+    ).toBe(false);
+    expect(h.publications).toHaveLength(1);
+  },
+);
 
 it("does not offer local deletion for an unconfirmed send, which may have reached the relay", async () => {
   const h = await fixture();

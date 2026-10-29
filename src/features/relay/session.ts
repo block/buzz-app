@@ -1386,8 +1386,16 @@ export function createRelaySession(
       );
     },
     {
+      // Admission needs a current library read; stale rows only display.
       selectable: () =>
-        agentChoices.snapshot().selectable.map((agent) => agent.pubkey),
+        agentChoices
+          .snapshot()
+          .selectable.filter(
+            (agent) =>
+              agent.managed ||
+              agentLibrary.queries.snapshot().status === "ready",
+          )
+          .map((agent) => agent.pubkey),
       archived: (pubkey) =>
         archiveHides(archives.queries, pubkey, transport?.viewer),
     },
@@ -3182,7 +3190,7 @@ export function createRelaySession(
         dropHintConfirmations();
         requests.invalidate();
         repositories.clearHomes();
-        agentLibrary.clear();
+        agentLibrary.stale();
         archives.stale();
         workflows.interrupt();
         streamDropped = true;

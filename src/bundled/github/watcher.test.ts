@@ -808,6 +808,28 @@ describe("github_watch_pr", () => {
     app.dispose();
   });
 
+  it("reads newer feedback before rereading what it holds", async () => {
+    savePolicy("allow author:wes\nallow org:block");
+    const app = setup();
+    await app.call({ url });
+    app.members(null);
+    const held = Array.from({ length: 50 }, (_, index) => ({
+      id: `I${index}`,
+      login: `stranger${index}`,
+      body: `body-${index}`,
+    }));
+    app.gh(answer({ comments: held }));
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+    app.gh(
+      answer({
+        comments: [...held, { id: "I50", login: "wes", body: "body-wes" }],
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(POLL_MS + QUIET_MS + POLL_MS);
+    expect(app.texts().join("\n")).toContain("body-wes");
+    app.dispose();
+  });
+
   it("tells only feedback from trusted authors, once their organization is known", async () => {
     savePolicy("allow author:wes\nallow org:block");
     const app = setup();

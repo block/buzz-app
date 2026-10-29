@@ -181,6 +181,9 @@ export function watchPulls(ctx: Context) {
       }
     }
   };
+  /** Feedback ids read but held for an unread membership or rules that no
+   * longer parse, by pull request URL. */
+  const held = new Map<string, ReadonlySet<string>>();
   /** The pull request at `url`, with the text of feedback not in `seen`. */
   const read = async (url: string, seen?: readonly string[]) => {
     const pull = pullOf(url);
@@ -189,9 +192,13 @@ export function watchPulls(ctx: Context) {
     const snapshot = output === null ? undefined : parsePull(output);
     if (!snapshot || !seen) return snapshot;
     const known = new Set(seen);
-    const asked = snapshot.ids
-      .filter((id) => !known.has(id))
-      .slice(0, FEEDBACK_READ);
+    const waiting = held.get(url) ?? new Set();
+    const unseen = snapshot.ids.filter((id) => !known.has(id));
+    // Feedback not read yet comes first, so what is held cannot crowd it out.
+    const asked = [
+      ...unseen.filter((id) => !waiting.has(id)),
+      ...unseen.filter((id) => waiting.has(id)),
+    ].slice(0, FEEDBACK_READ);
     if (!asked.length) return snapshot;
     // Text is read apart, so CI results still arrive when it cannot be.
     // recheck decides what of it may wake the agent.
@@ -230,6 +237,17 @@ export function watchPulls(ctx: Context) {
       [...admitted].flatMap(([id, ok]) => (ok === undefined ? [id] : [])),
     );
     const known = (id: string) => !unknown.has(id);
+    const fetched = new Set(snapshot.feedback.map((item) => item.id));
+    held.set(
+      watch.url,
+      new Set(
+        snapshot.ids.filter(
+          (id) =>
+            unknown.has(id) ||
+            (!fetched.has(id) && held.get(watch.url)?.has(id)),
+        ),
+      ),
+    );
     return [
       {
         ...watch,

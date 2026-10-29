@@ -29,6 +29,8 @@ import { isWorkflowOperation } from "../workflows/protocol";
 import {
   recordTaskFirstEvent,
   validateTaskPublication,
+  validateTaskMembers,
+  isTaskChannel,
 } from "../solo/task-mode";
 import {
   createRelayReader,
@@ -1333,6 +1335,21 @@ export function createRelaySession(
         agentChoices.snapshot().selectable.map((agent) => agent.pubkey),
       archived: (pubkey) =>
         archiveHides(archives.queries, pubkey, transport?.viewer),
+      admission: (id, keys) => {
+        if (!isTaskChannel(session, id)) return;
+        const context = validateTaskMembers(session, id, keys);
+        return () => {
+          try {
+            return (
+              !context?.signal.aborted &&
+              validateTaskMembers(session, id, keys)?.binding.incarnation ===
+                context?.binding.incarnation
+            );
+          } catch {
+            return false;
+          }
+        };
+      },
     },
     transport?.relayAuthor,
     { read: (filters, settings) => readVerified(filters, settings, false) },

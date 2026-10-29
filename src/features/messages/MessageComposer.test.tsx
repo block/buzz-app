@@ -10045,3 +10045,298 @@ it("guards automatic recipient changes using the current draft prose", () => {
   h.fill(" \n ");
   act(() => expect(replace?.([second])).toBe(true));
 });
+
+async function taskComposerFixture() {
+  const { createSoloRegionFixture } = await import(
+    "../channel-navigation/solo-navigation-testing"
+  );
+  const navigation = await import("../channel-navigation/solo-navigation");
+  const viewer = "f".repeat(64),
+    region = createSoloRegionFixture(viewer);
+  const eligible = new Set([first.pubkey, second.pubkey]);
+  let primary = first.pubkey;
+  const source = await region.register({
+    task: {
+      prepare: async () => ({ ok: false, reason: "unused" }),
+      markChannelStarted: async () => "resume",
+      recordFirstEvent: async () => {},
+      participants: {
+        eligible: (key) => eligible.has(key),
+        defaultRecipient: () => primary,
+        makePrimary: async (_channel, key) => {
+          primary = key;
+        },
+        maxRecipients: 1,
+      },
+    },
+  });
+  const lookup = vi
+    .spyOn(navigation, "soloNavigationFor")
+    .mockReturnValue(region.service);
+  onTestFinished(async () => {
+    lookup.mockRestore();
+    await region.dispose();
+  });
+  const h = mount({}, undefined, viewer);
+  h.setLibrary([
+    { ...first, name: "Ada" },
+    { ...second, name: "Bea" },
+  ]);
+  h.setProfiles(
+    new Map([
+      [first.pubkey, { name: "Ada", isAgent: true }],
+      [second.pubkey, { name: "Bea", isAgent: true }],
+    ]),
+  );
+  let channel: ChannelSummary = {
+    id: "channel",
+    name: "Task",
+    channelType: "solo",
+    creator: viewer,
+    members: [viewer, first.pubkey],
+    labels: ["buzz.solo", source.handle.label, "solo-task-mode:v1"],
+  };
+  let list = { status: "ready" as const, channels: [channel] };
+  const refreshMembership = vi.fn(async () => channel);
+  const addAgents = vi.fn(
+    async (_id: string, keys: readonly string[], active?: () => boolean) => {
+      expect(active?.()).toBe(true);
+      channel = { ...channel, members: [...(channel.members ?? []), ...keys] };
+      list = { ...list, channels: [channel] };
+    },
+  );
+  const session = {
+    ...h.session,
+    channels: { ...h.session.channels, list: () => list },
+    channelWrites: {
+      ...h.session.channelWrites,
+      refreshMembership,
+      addAgents,
+    },
+  };
+  h.retarget({ ownSoloConversation: true, requireMention: true, session });
+  return { h, session, region, source, eligible, addAgents, refreshMembership };
+}
+
+it("task primary A survives explicit B; later Make primary B changes untagged routing without prefill", async () => {
+  const { h, addAgents } = await taskComposerFixture();
+  expect(h.input()).toHaveValue("");
+  expect(screen.getByRole("button", { name: "To Ada" })).toBeVisible();
+  h.fill("Untagged A");
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledTimes(1));
+  expect(h.messages.send.mock.calls[0]?.[2]).toEqual([first.pubkey]);
+  expect(h.input()).toHaveValue("");
+  act(() => {
+    h.commands().insertMention({ ...second, name: "Bea" });
+  });
+  await h.user.type(h.input(), "Explicit B");
+  expect(
+    screen.getByRole("button", { name: "This message → Bea" }),
+  ).toBeVisible();
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledTimes(2));
+  expect(addAgents).toHaveBeenCalledWith(
+    "channel",
+    [second.pubkey],
+    expect.any(Function),
+  );
+  expect(h.messages.send.mock.calls[1]?.[2]).toEqual([second.pubkey]);
+  expect(h.input()).toHaveValue("");
+  h.fill("Still A");
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledTimes(3));
+  expect(h.messages.send.mock.calls[2]?.[2]).toEqual([first.pubkey]);
+  await h.user.click(screen.getByRole("button", { name: "To Ada" }));
+  await h.user.click(
+    await screen.findByRole("menuitem", { name: "Make Bea primary" }),
+  );
+  expect(await screen.findByRole("button", { name: "To Bea" })).toBeVisible();
+  h.fill("Now B");
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledTimes(4));
+  expect(h.messages.send.mock.calls[3]?.[2]).toEqual([second.pubkey]);
+  expect(h.input()).toHaveValue("");
+  h.setRows([
+    editableMessage({ authorId: "f".repeat(64), mentions: [second.pubkey] }),
+  ]);
+  h.present(false);
+  h.present(true);
+  expect(h.input()).toHaveValue("");
+});
+
+it("task sends reject multiple or revoked explicit targets before admission and never fall back", async () => {
+  const { h, eligible, refreshMembership, addAgents } =
+    await taskComposerFixture();
+  act(() => {
+    h.commands().insertMention({ ...first, name: "Ada" });
+    h.commands().insertMention({ ...second, name: "Bea" });
+  });
+  await h.user.type(h.input(), "Do not split this request");
+  h.submit();
+  await waitFor(() =>
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Tag one agent per message",
+    ),
+  );
+  expect(refreshMembership).not.toHaveBeenCalled();
+  expect(addAgents).not.toHaveBeenCalled();
+  expect(h.messages.send).not.toHaveBeenCalled();
+  act(() => h.input().removeRecipient(first.pubkey));
+  eligible.delete(second.pubkey);
+  h.submit();
+  await waitFor(() =>
+    expect(screen.getByRole("alert")).toHaveTextContent("no longer eligible"),
+  );
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(h.input().value).toContain("Do not split");
+});
+
+it("an ineligible pasted task identity blocks the send instead of falling back to primary", async () => {
+  const { h, eligible, refreshMembership } = await taskComposerFixture();
+  eligible.delete(second.pubkey);
+  pasteText(h.input(), `[@Bea](${profileTarget(second.pubkey)}) Help `);
+  h.submit();
+  await waitFor(() =>
+    expect(screen.getByRole("alert")).toHaveTextContent("eligible task agent"),
+  );
+  expect(refreshMembership).not.toHaveBeenCalled();
+  expect(h.messages.send).not.toHaveBeenCalled();
+});
+
+it("a task with a missing provider stays read-only and retains its draft", async () => {
+  const { h, source } = await taskComposerFixture();
+  h.fill("Keep this task draft");
+  await act(async () => source.fiber.dispose());
+  expect(screen.getByText(/Nexus is unavailable/)).toBeVisible();
+  h.submit();
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(h.input()).toHaveValue("Keep this task draft");
+});
+
+it.each([false, true])(
+  "task token identity reaches the actual recipient on send/reply=%s and mismatched skills block admission",
+  async (reply) => {
+    const { h, refreshMembership, addAgents } = await taskComposerFixture();
+    if (reply)
+      h.retarget({
+        threadRootId: "1".repeat(64),
+        replyParentId: "2".repeat(64),
+        threadSeed: editableMessage({ mentions: [second.pubkey] }),
+      });
+    h.fill("Use this skill ");
+    const token = {
+      kind: "nexus.skill" as const,
+      id: JSON.stringify({
+        path: "/safe/SKILL.md",
+        name: "Review",
+        source: "agent",
+      }),
+      label: "/review",
+      target: second.pubkey,
+    };
+    act(() =>
+      h.input().insertToken(token, {
+        start: h.input().value.length,
+        end: h.input().value.length,
+      }),
+    );
+    h.submit();
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "belongs to another agent",
+      ),
+    );
+    expect(refreshMembership).not.toHaveBeenCalled();
+    expect(addAgents).not.toHaveBeenCalled();
+    expect(h.messages.send).not.toHaveBeenCalled();
+    expect(h.messages.reply).not.toHaveBeenCalled();
+    act(() => h.commands().insertMention({ ...second, name: "Bea" }));
+    h.submit();
+    if (reply) {
+      await waitFor(() => expect(h.messages.reply).toHaveBeenCalledOnce());
+      expect(h.messages.reply.mock.calls[0]?.[3]).toEqual([second.pubkey]);
+      expect(h.messages.reply.mock.calls[0]?.[8]).toEqual([token]);
+    } else {
+      await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+      expect(h.messages.send.mock.calls[0]?.[2]).toEqual([second.pubkey]);
+      expect(h.messages.send.mock.calls[0]?.[7]).toEqual([token]);
+    }
+  },
+);
+
+it.each([false, true])(
+  "queued task follow-ups preserve captured primary/token identity (explicit=%s)",
+  async (explicit) => {
+    localStorage.setItem("buzz-follow-up-behavior.v1", "queue");
+    const { h, session, addAgents } = await taskComposerFixture();
+    await addAgents("channel", [second.pubkey], () => true);
+    const listeners = new Set<() => void>();
+    let activity = {
+      status: "listening",
+      records: [],
+      turns: [],
+      typing: [],
+      local: [
+        {
+          agent: first.pubkey,
+          channelId: "channel",
+          messageId: "previous",
+          state: "working",
+          scope: "scope",
+          threadRootId: "",
+          startedAt: 1,
+        },
+      ],
+    };
+    h.retarget({
+      session: {
+        ...session,
+        agentActivity: {
+          activate: () => () => {},
+          snapshot: () => activity,
+          subscribe: (listener: () => void) => {
+            listeners.add(listener);
+            return () => {
+              listeners.delete(listener);
+            };
+          },
+        },
+      } as unknown as RelaySession,
+    });
+    if (explicit)
+      act(() => h.commands().insertMention({ ...first, name: "Ada" }));
+    await h.user.type(h.input(), "Queued task request ");
+    const token = {
+      kind: "nexus.skill" as const,
+      id: "/exact/SKILL.md",
+      label: "/review",
+      target: first.pubkey,
+    };
+    act(() =>
+      h.input().insertToken(token, {
+        start: h.input().value.length,
+        end: h.input().value.length,
+      }),
+    );
+    h.submit();
+    await screen.findByRole("region", { name: "Queued follow-ups" });
+    expect(h.messages.send).not.toHaveBeenCalled();
+    // A primary update after queueing cannot retarget this captured request.
+    await h.user.click(screen.getByRole("button", { name: "To Ada" }));
+    await h.user.click(
+      await screen.findByRole("menuitem", { name: "Make Bea primary" }),
+    );
+    expect(await screen.findByRole("button", { name: "To Bea" })).toBeVisible();
+    act(() => {
+      activity = {
+        ...activity,
+        local: activity.local.map((row) => ({ ...row, state: "done" })),
+      };
+      for (const listener of listeners) listener();
+    });
+    await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+    expect(h.messages.send.mock.calls[0]?.[2]).toEqual([first.pubkey]);
+    expect(h.messages.send.mock.calls[0]?.[7]).toEqual([token]);
+  },
+);

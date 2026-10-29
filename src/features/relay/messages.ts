@@ -373,6 +373,7 @@ export function createMessages(
       parentId: string = rootId,
       references: readonly string[] = [],
       picks: MentionPicks = {},
+      tokens: readonly ComposerToken[] = [],
     ) {
       if (!channelId) throw new Error("A channel is required");
       if (!/^[0-9a-f]{64}$/.test(rootId))
@@ -390,6 +391,7 @@ export function createMessages(
           ...mentionTags(channelId, mentions),
           ...referenceTags(references),
           ...pickTags(channelId, mentions, picks),
+          ...taskTokenTags(tokens),
           ...emojiTags(content),
           ...message.tags,
         ],

@@ -169,3 +169,24 @@ it("refuses a skill after a recipient switch and never executes future token ver
     ),
   ).toBeDefined();
 });
+
+it("applies task policy to every signed member addition, including a direct outbox retry", async () => {
+  const f = await fixture();
+  const addition = signed(f.viewer, {
+    kind: 9000,
+    content: "",
+    tags: [
+      ["h", f.channel.id],
+      ["p", f.b],
+    ],
+  });
+  expect(validateTaskPublication(f.session, addition)?.region).toBe("work");
+  f.eligible.delete(f.b);
+  expect(() => validateTaskPublication(f.session, addition)).toThrow(
+    "participant",
+  );
+  await f.source.fiber.dispose();
+  expect(() => validateTaskPublication(f.session, addition)).toThrow(
+    "Nexus is unavailable",
+  );
+});

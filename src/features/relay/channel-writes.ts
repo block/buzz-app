@@ -39,6 +39,10 @@ export function createChannelWrites(
   agents?: {
     selectable: () => readonly string[];
     archived: (pubkey: string) => boolean;
+    admission?: (
+      id: string,
+      keys: readonly string[],
+    ) => (() => boolean) | undefined;
   },
   relayAuthor?: string,
   /** Signed roster discovery, including channels this viewer cannot open. */
@@ -448,8 +452,13 @@ export function createChannelWrites(
   async function addAgents(
     id: string,
     keys: readonly string[],
-    active?: () => boolean,
+    caller?: () => boolean,
   ) {
+    const policy = agents?.admission?.(id, keys);
+    const active =
+      caller || policy
+        ? () => caller?.() !== false && policy?.() !== false
+        : undefined;
     if (active?.() === false)
       throw new DOMException("Channel addition cancelled", "AbortError");
     const original = await refreshMembership(id);

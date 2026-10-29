@@ -73,10 +73,10 @@ export function taskChannelContext(
   return context;
 }
 
-export function validateTaskRecipients(
+export function validateTaskMembers(
   session: TaskSession,
   channelId: string,
-  recipients: readonly string[],
+  additions: readonly string[] = [],
 ) {
   const context = taskChannelContext(session, channelId);
   if (!context) return;
@@ -84,35 +84,75 @@ export function validateTaskRecipients(
     .list()
     .channels.find((item) => item.id === channelId);
   const policy = context.mode.participants;
-  try {
-    if (
-      !channel?.members ||
-      channel.members.some(
-        (key) => key !== session.viewer && !policy.eligible(key),
-      )
+  if (
+    !channel?.members ||
+    [...channel.members, ...additions].some(
+      (key) => key !== session.viewer && !policy.eligible(key),
     )
-      throw new Error(
-        "A task participant is no longer eligible. Repair task membership before sending.",
-      );
-    if (!recipients.length || recipients.some((key) => !policy.eligible(key)))
-      throw new Error(
-        "A selected task agent is no longer eligible. Choose an available agent.",
-      );
-    if (recipients.length > (policy.maxRecipients ?? 1))
-      throw new Error("Tag one agent per message");
-  } catch (error) {
-    throw error instanceof Error ? error : new Error(TASK_UNAVAILABLE);
-  }
+  )
+    throw new Error(
+      "A task participant is no longer eligible. Repair task membership before sending.",
+    );
   return context;
+}
+
+export function validateTaskRecipients(
+  session: TaskSession,
+  channelId: string,
+  recipients: readonly string[],
+) {
+  const context = validateTaskMembers(session, channelId);
+  if (!context) return;
+  const policy = context.mode.participants;
+  if (!recipients.length || recipients.some((key) => !policy.eligible(key)))
+    throw new Error(
+      "A selected task agent is no longer eligible. Choose an available agent.",
+    );
+  if (recipients.length > (policy.maxRecipients ?? 1))
+    throw new Error("Tag one agent per message");
+  return context;
+}
+
+export function resolveTaskRecipients(
+  session: TaskSession,
+  channelId: string,
+  explicit: readonly string[],
+) {
+  const context = taskChannelContext(session, channelId);
+  if (!context) return [...explicit];
+  const primary = explicit.length
+    ? undefined
+    : context.mode.participants.defaultRecipient(channelId);
+  if (!explicit.length && !primary)
+    throw new Error("Choose an eligible primary agent before sending.");
+  const recipients = [
+    ...new Set(explicit.length ? explicit : primary ? [primary] : []),
+  ];
+  validateTaskRecipients(session, channelId, recipients);
+  if (
+    primary &&
+    !session.channels
+      .list()
+      .channels.find((item) => item.id === channelId)
+      ?.members?.includes(primary)
+  )
+    throw new Error("Choose a primary agent who is a member of this task.");
+  return recipients;
 }
 
 export function validateTaskPublication(
   session: TaskSession,
   event: EventData,
 ) {
-  if (event.kind !== 9) return;
+  if (event.kind !== 9 && event.kind !== 9000) return;
   const channelId = event.tags.find(([key]) => key === "h")?.[1];
   if (!channelId) return;
+  if (event.kind === 9000)
+    return validateTaskMembers(
+      session,
+      channelId,
+      event.tags.filter(([key]) => key === "p").map((tag) => tag[1] ?? ""),
+    );
   const tokens = readTaskTokens(event.tags);
   const recipients = event.tags
     .filter(([key]) => key === "p")

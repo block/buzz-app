@@ -127,14 +127,17 @@ function randomD() {
   ).join("");
 }
 
-// Status is encrypted, so every head must be read to find the pending ones, and
-// handled ones stay live until they expire, so the list grows with use. Past
-// the bound the read is partial: the newest heads show under "Some reminders
-// could not be loaded", older ones stay hidden, the plugin's saved check time
-// stays put, and every refresh walks all the pages again.
+// Status is encrypted, so every head must be read to find the pending ones.
+// Handled ones carry a 30-90 day `expiration` the relay does not enforce yet,
+// so the list grows with use: a few reminders a day reaches 2,000 heads in
+// under two years. Past the bound the read is partial: the newest heads show
+// under "Some reminders could not be loaded", older ones stay hidden, the
+// plugin's saved check time stays put (so reminders due since then notify
+// again each launch), and every refresh walks all the pages again. A list of
+// exactly the bound reads as partial too: a full last page cannot be told from
+// more to come. Fifty pages keeps that safety net, which the cursor guard
+// already backs, out of an everyday user's reach.
 const PAGE = 200;
-// A few reminders a day reaches 2,000 heads in under two years; 10,000 keeps a
-// safety net the cursor guard already backs without an everyday user in reach.
 const MAX_PAGES = 50;
 
 const now = () => Math.floor(Date.now() / 1000);

@@ -387,6 +387,29 @@ describe("reminder history paging", () => {
     expect(h.snapshot().error).toBeUndefined();
   });
 
+  it("reports a page that fails during an outage like any failed read, until recovery's own walk ends", async () => {
+    const rest = deferred();
+    const h = paged(heads("a", 200, 1_000), rest.promise, [
+      wire("old", 10, "pending", "old"),
+    ]);
+    const dropped = h.model.recover();
+    await vi.waitFor(() => expect(h.filters).toHaveLength(2));
+    h.model.stale();
+    rest.reject(new Error("socket closed"));
+    await dropped;
+    // The rows stay up under Retry, and `error` keeps the check time put.
+    expect(h.snapshot()).toMatchObject({
+      status: "ready",
+      hydrated: true,
+      error: "socket closed",
+    });
+    expect(h.snapshot().reminders).toHaveLength(200);
+    await h.model.recover();
+    expect(h.filters[2]).not.toHaveProperty("until");
+    expect(h.snapshot()).toMatchObject({ status: "ready", hydrated: true });
+    expect(h.snapshot().reminders).toHaveLength(201);
+  });
+
   it("stops at the page bound and reports the list as partial", async () => {
     const h = paged(
       ...Array.from({ length: 51 }, (_, page) =>

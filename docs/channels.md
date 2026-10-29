@@ -699,8 +699,10 @@ Starred** and saves Starred placement with the creation intent. In the sidebar,
 the filled Tabler star retains the section emoji artwork size and is centered in
 the channel icon column. The creation heading reuses the decorative emoji slot
 and inherits the heading's typography.
-Group and Starred placement use the existing preference writer and apply before
-the new channel opens, so its first sidebar row is already in its destination.
+Group and Starred placement use the existing preference writer and normally
+apply before the new channel opens, so its first sidebar row is already in its
+destination; placement that must first re-read preferences can list the row
+before moving it.
 Placement starts once the Create is delivered, so it also stands when the form
 cannot yet confirm the channel; the channel lists in its destination once it is
 confirmed. Unavailable placement blocks a new create. Once the channel opens, a

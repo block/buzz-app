@@ -719,9 +719,10 @@ export function createRelaySession(
           const incoming = [9, 40002, 40008].includes(event.kind)
             ? incomingPhase === "live" || previous?.incoming === "live"
               ? "live"
-              : incomingPhase === "replay" &&
-                  (previous?.incoming === "replay" ||
-                    (!previous && !unread.event(event.id)))
+              : previous?.incoming === "replay" ||
+                  (incomingPhase === "replay" &&
+                    !previous &&
+                    !unread.event(event.id))
                 ? "replay"
                 : undefined
             : undefined;

@@ -4060,7 +4060,13 @@ it("reports a replay failure to recovery, continues other channels, and exposes 
   }
 });
 
-it.each(["replay-first", "live-first", "known-history"])(
+it.each([
+  "replay-first",
+  "live-first",
+  "known-history",
+  "replay-finite-live",
+  "finite-first",
+])(
   "keeps incoming alerts correct across duplicate sources: %s",
   async (order) => {
     vi.useFakeTimers({ now: 1_700_000_100_000 });
@@ -4096,14 +4102,24 @@ it.each(["replay-first", "live-first", "known-history"])(
       const incoming = vi.fn();
       owner.session.subscribeIncoming(incoming);
       const event = message(author, "c00", "fresh input", 1_700_000_100);
+      const finite = async () => {
+        const read = owner.session.readRemote([
+          { kinds: [9], "#h": ["c00"], limit: 10 },
+        ]);
+        wire.next().respond([event]);
+        await read;
+      };
       if (order === "known-history") h.callbacks.receive([event]);
+      if (order === "finite-first") await finite();
       if (order === "live-first")
         await h.first.receive(["EVENT", source[1], event]);
       await h.first.receive(["EVENT", replay[1], event]);
       await h.first.receive(["EVENT", replay[1], event]);
       expect(incoming).toHaveBeenCalledTimes(order === "live-first" ? 1 : 0);
+      if (order === "replay-finite-live") await finite();
       await h.first.receive(["EVENT", source[1], event]);
-      const count = order === "known-history" ? 0 : 1;
+      const count =
+        order === "known-history" || order === "finite-first" ? 0 : 1;
       expect(incoming).toHaveBeenCalledTimes(count);
       await h.first.receive(["EVENT", replay[1], event]);
       await h.first.receive(["EVENT", source[1], event]);

@@ -450,6 +450,28 @@ it("spends a few public reads at once, then only its share of each hour's", asyn
   expect(new Set(read.slice(-pulls.length)).size).toBe(pulls.length);
 });
 
+it("spends nothing, rather than everything, when the clock is set back", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const fetch = vi.fn(
+    async () => new Response(JSON.stringify({ state: "open" })),
+  );
+  vi.stubGlobal("fetch", fetch);
+  const states = createPullStates(undefined);
+  for (const url of pulls) states.watch(url, () => {});
+  await vi.waitFor(() =>
+    expect(states.get(pulls[PUBLIC_READS_PER_POLL - 1] ?? "")).toBeDefined(),
+  );
+  // The budget spent, the clock corrected back a minute: links shown now are
+  // not read, and no time is earned until the clock passes where it was.
+  vi.setSystemTime(Date.now() - PULL_REFRESH_MS);
+  for (const url of [second, third, pull]) states.watch(url, () => {});
+  await vi.advanceTimersByTimeAsync(PULL_REFRESH_MS / 2);
+  expect(fetch).toHaveBeenCalledTimes(PUBLIC_READS_PER_POLL);
+  await vi.advanceTimersByTimeAsync(11 * PULL_REFRESH_MS);
+  expect(fetch).toHaveBeenCalledTimes(PUBLIC_READS_PER_POLL + 5);
+  expect(states.get(pull)).toEqual({ state: "open" });
+});
+
 it("reads a public pull request never read before those that keep failing", async () => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
   // Private repositories are 404 without gh. Enough of them that some are

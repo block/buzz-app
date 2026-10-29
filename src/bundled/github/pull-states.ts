@@ -17,6 +17,8 @@ export const PUBLIC_READS_PER_POLL = 10;
  * requests are shown. No hour spends more than 40 of GitHub's 60, so the
  * panel keeps the rest. */
 export const PUBLIC_READS_PER_HOUR = 30;
+/** How often one of them is earned back. */
+const PUBLIC_READ_EARNED_MS = (60 * 60_000) / PUBLIC_READS_PER_HOUR;
 
 export type PullState = Readonly<{
   state: "open" | "draft" | "merged" | "closed";
@@ -169,9 +171,10 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
   const readsPublic = () => !gh || Date.now() < publicUntil;
   /** Until when GitHub refuses public reads, once it has refused one. */
   let publicHeldUntil = 0;
-  /** The public reads that can be spent now, and when that was counted. */
+  /** The public reads that can be spent now, and up to when they were
+   * earned. */
   let publicReads = PUBLIC_READS_PER_POLL;
-  let publicCountedAt = Date.now();
+  let publicEarnedTo = Date.now();
   let timer: ReturnType<typeof setTimeout> | undefined;
   let controller: AbortController | undefined;
   let scheduled = false;
@@ -279,14 +282,14 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
         // GitHub may still be refusing public reads from the last time.
         if (Date.now() < publicHeldUntil) return [];
       }
-    const now = Date.now();
-    publicReads = Math.min(
-      PUBLIC_READS_PER_POLL,
-      publicReads +
-        ((now - publicCountedAt) * PUBLIC_READS_PER_HOUR) / (60 * 60_000),
+    // Whole reads only, so nothing drifts; a clock set back earns none, and
+    // its time is earned again once the clock passes where it was.
+    const earned = Math.floor(
+      Math.max(0, Date.now() - publicEarnedTo) / PUBLIC_READ_EARNED_MS,
     );
-    publicCountedAt = now;
-    const reading = urls.slice(0, Math.floor(publicReads));
+    publicReads = Math.min(PUBLIC_READS_PER_POLL, publicReads + earned);
+    publicEarnedTo += earned * PUBLIC_READ_EARNED_MS;
+    const reading = urls.slice(0, publicReads);
     publicReads -= reading.length;
     return Promise.all(
       reading.map((url) =>

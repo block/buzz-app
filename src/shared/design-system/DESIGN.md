@@ -310,6 +310,11 @@ surface belongs to exactly one bucket, and the timings live in
 timing, change the bucket for everyone. Submenus inside an open menu are the one
 exception and open on hover at once, as menus conventionally do.
 
+The Harness menu has a narrow exception to the disabled-control hint recipe:
+its side explanation for a group of unavailable choices uses
+`PopoverTrigger openOnHover="control"` (0.1s) while the menu is open. Keep each
+disabled choice keyboard reachable and connected to the shared description.
+
 | Bucket | Use for | Timing | API |
 | --- | --- | --- | --- |
 | Familiar hint | Naming an icon whose meaning is already obvious: back/forward, close, window controls, sidebar and pane toggles, new (+), more (…), send, attach, copy, download, refresh, delete, mute, reply, add reaction, bold/italic. An obvious icon stays familiar when its hint also shows a shortcut; a disabled one switches to helpful | Rests 1.5s | `Tooltip hint="familiar"`; `Button`/`IconButton` `title` with `hint="familiar"` |

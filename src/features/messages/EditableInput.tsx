@@ -44,7 +44,11 @@ import {
   resourceBlockingMarks,
 } from "./composer-document";
 import { scanMarkdown } from "../relay/message-content";
-import type { ComposerResource } from "../conversation/contracts";
+import type {
+  ComposerResource,
+  ComposerToken,
+} from "../conversation/contracts";
+import { composerToken, composerTokenName } from "./composer-token";
 import {
   activeBlockFormats,
   toggleComposerBlock,
@@ -219,6 +223,7 @@ export function EditableInput({
       {
         source: string;
         resource: ComposerResource | null;
+        semantic: ComposerToken | null;
         position(): number | undefined;
       }
     >(),
@@ -299,10 +304,11 @@ export function EditableInput({
     };
     const normalize = new Plugin({
       filterTransaction(tr) {
+        if (!tr.docChanged) return true;
+        const next = projectComposerDocument(tr.doc).draft;
         return (
-          !tr.docChanged ||
-          composerMarkdown(projectComposerDocument(tr.doc).draft).length <=
-            current.current.maxLength
+          next.text.length <= 16000 &&
+          composerMarkdown(next).length <= current.current.maxLength
         );
       },
       appendTransaction(transactions, old, state) {
@@ -328,6 +334,15 @@ export function EditableInput({
         const decorations = current.current
           .decorationsFor(safe)
           .filter((item) => {
+            if (
+              next.tokens.some(
+                (token) =>
+                  token.node.attrs.semantic &&
+                  item.start < token.end &&
+                  item.end > token.start,
+              )
+            )
+              return false;
             const from = next.position(item.start),
               to = next.position(item.end, -1);
             if (
@@ -396,7 +411,8 @@ export function EditableInput({
                   (item) =>
                     item.start === token.start && item.end === token.end,
                 )
-              : token.node.attrs.resource ||
+              : token.node.attrs.semantic ||
+                token.node.attrs.resource ||
                 decorations.some(
                   // A larger decoration has already adopted any tokens inside it.
                   (item) => item.start <= token.start && item.end >= token.end,
@@ -659,6 +675,52 @@ export function EditableInput({
       const before = editor.state;
       editor.dispatch(tr);
       return editor.state !== before;
+    };
+    const insertToken = (
+      value: ComposerToken,
+      range: { start: number; end: number },
+    ) => {
+      if (!editable() || composing.current || editor.composing) return false;
+      const token = composerToken(value);
+      if (!token) return false;
+      const source = projection();
+      const from = source.position(range.start),
+        to = source.position(range.end, -1);
+      if (
+        source.source(from) !== range.start ||
+        source.source(to) !== range.end
+      )
+        return false;
+      const context = composerMarkdownContext(editor.state.doc, source);
+      if (
+        [...context.protected, ...markdownRanges(context.text).literal].some(
+          (span) => range.start < span.end && range.end > span.start,
+        )
+      )
+        return false;
+      const tr = closeHistory(editor.state.tr).replaceWith(
+        from,
+        to,
+        Fragment.fromArray([
+          composerSchema.nodes.token.create({
+            source: token.label,
+            semantic: token,
+          }),
+          composerSchema.text(" "),
+        ]),
+      );
+      const next = projectComposerDocument(tr.doc).draft;
+      if (
+        (next.tokens?.length ?? 0) > 32 ||
+        next.text.length > current.current.maxLength
+      )
+        return false;
+      tr.setSelection(
+        Selection.near(tr.doc.resolve(tr.mapping.map(to, 1)), -1),
+      );
+      editor.dispatch(tr.scrollIntoView());
+      editor.focus();
+      return true;
     };
     /** True, or the reason shown by the host. The link must survive its context. */
     const insertResource = (value: ComposerResource): true | string => {
@@ -1286,6 +1348,7 @@ export function EditableInput({
             hosts.current.set(dom, {
               source: node.attrs.source,
               resource: node.attrs.resource,
+              semantic: composerToken(node.attrs.semantic) ?? null,
               position: getPos,
             });
             return {
@@ -1726,6 +1789,7 @@ export function EditableInput({
       insertText: { configurable: true, value: insert },
       replaceRecipients: { configurable: true, value: replaceRecipients },
       insertResource: { configurable: true, value: insertResource },
+      insertToken: { configurable: true, value: insertToken },
       toggleFormat: { configurable: true, value: toggleFormat },
       insertLineBreak: {
         configurable: true,
@@ -1946,7 +2010,15 @@ export function EditableInput({
             item.end === (source ?? 0) + host.source.length,
         );
         return createPortal(
-          host.resource ? (
+          host.semantic ? (
+            <span
+              className={styles.resource}
+              role="img"
+              aria-label={composerTokenName(host.semantic)}
+            >
+              {host.semantic.label}
+            </span>
+          ) : host.resource ? (
             // Host-owned artwork: restore never depends on the providing plugin.
             <>
               <span className="sr-only">Resource: </span>

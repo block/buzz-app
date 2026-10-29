@@ -49,6 +49,7 @@ function tokenLink(
   node: EditorNode,
 ): { href: string; label: string } | undefined {
   const { source, recipient, resource } = node.attrs;
+  if (node.attrs.semantic) return;
   if (recipient) {
     const href = profileTarget(recipient.pubkey);
     return href ? { href, label: source } : undefined;
@@ -113,6 +114,8 @@ const serializer = new DOMSerializer(
 /** Identity and channel locators read as their sigil-prefixed names outside the app. */
 function humanised(node: EditorNode): EditorNode {
   if (node.type.name === "token") {
+    if (node.attrs.semantic)
+      return composerSchema.text(node.attrs.source, node.marks);
     const link = node.attrs.recipient ? undefined : tokenLink(node);
     const buzz = link && parseBuzzLink(link.href);
     return link &&

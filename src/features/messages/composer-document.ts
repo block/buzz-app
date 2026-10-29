@@ -9,6 +9,7 @@ import { composerLinkUrl } from "./composer-link";
 import { scanMarkdown } from "../relay/message-content";
 import type { MentionDraft, DraftRecipient } from "./mention-draft";
 import type { ComposerResource } from "../conversation/contracts";
+import { composerToken } from "./composer-token";
 
 /** The document owns editable marks and exact source tokens. Unimplemented
  * Markdown stays source text, never round-trips through an HTML serializer. */
@@ -95,6 +96,7 @@ export const composerSchema = new Schema<
         recipient: { default: null },
         /** Host-owned `{ uri, label }`; valid only while `source` is its link. */
         resource: { default: null },
+        semantic: { default: null },
         editAsText: { default: false },
       },
       leafText: (node) => node.attrs.source,
@@ -228,9 +230,11 @@ export function readComposerDocument(
       if (node.isText) return node.mark(marks);
       if (node.type.name === "token") {
         const resource = composerResource(node.attrs.resource);
+        const semantic = composerToken(node.attrs.semantic);
         return node.type.create(
           {
             ...node.attrs,
+            semantic: semantic?.label === node.attrs.source ? semantic : null,
             recipient:
               node.attrs.recipient && valid(node.attrs.recipient)
                 ? node.attrs.recipient
@@ -371,6 +375,7 @@ export function projectComposerDocument(doc: EditorNode) {
   let text = "";
   const positions = new Array<number>(doc.content.size + 1).fill(0);
   const recipients: DraftRecipient[] = [];
+  const semantic: NonNullable<MentionDraft["tokens"]>[number][] = [];
   const carets: number[] = [];
   const blocks: { from: number; to: number; start: number; code: boolean }[] =
     [];
@@ -425,6 +430,9 @@ export function projectComposerDocument(doc: EditorNode) {
         });
     }
     if (node.type.name === "token") {
+      const token = composerToken(node.attrs.semantic);
+      if (token && token.label === content)
+        semantic.push({ token, start, end: text.length });
       tokens.push({
         start,
         end: text.length,
@@ -444,6 +452,7 @@ export function projectComposerDocument(doc: EditorNode) {
     draft: {
       text,
       recipients,
+      ...(semantic.length ? { tokens: semantic } : {}),
       document: { version: 1, content: doc.toJSON() },
     } satisfies MentionDraft,
     positions,
@@ -541,6 +550,16 @@ export function readComposerSnapshot(value: unknown): EditorNode | undefined {
       )
         return;
       length += node.attrs.source.length;
+      if ("semantic" in node.attrs && node.attrs.semantic !== null) {
+        const token = composerToken(node.attrs.semantic);
+        if (
+          !token ||
+          token.label !== node.attrs.source ||
+          ("recipient" in node.attrs && node.attrs.recipient) ||
+          ("resource" in node.attrs && node.attrs.resource)
+        )
+          return;
+      }
     }
     if (length > 16000) return;
     if (node.content !== undefined) {

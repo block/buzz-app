@@ -133,10 +133,9 @@ function randomD() {
 // under two years. Past the bound the read is partial: the newest heads show
 // under "Some reminders could not be loaded", older ones stay hidden, the
 // plugin's saved check time stays put (so reminders due since then notify
-// again each launch), and every refresh walks all the pages again. A list of
-// exactly the bound reads as partial too: a full last page cannot be told from
-// more to come. Fifty pages keeps that safety net, which the cursor guard
-// already backs, out of an everyday user's reach.
+// again each launch), and every refresh walks all the pages again. Fifty pages
+// keeps that safety net, which the cursor guard already backs, out of an
+// everyday user's reach.
 const PAGE = 200;
 const MAX_PAGES = 50;
 
@@ -161,8 +160,9 @@ export function createReminders(options: {
   });
   let loading: Promise<void> | undefined;
   // Until the live connection is established, and again from each drop, no read
-  // can mark the list ready. Recovery bumps the generation, so only a read
-  // started after (re-)establishment can. Offline reads still load the list.
+  // can mark the list ready (a failed one still reports `ready` with `error`,
+  // which never counts as complete). Recovery bumps the generation, so only a
+  // read started after (re-)establishment can. Offline reads still load the list.
   let offline = true;
   let generation = 0;
   let refreshController: AbortController | undefined;
@@ -274,7 +274,7 @@ export function createReminders(options: {
                     {
                       kinds: [REMINDER_KIND],
                       authors: [viewer],
-                      limit: PAGE,
+                      limit: PAGE + 1,
                       ...cursor,
                     },
                   ],
@@ -284,23 +284,27 @@ export function createReminders(options: {
             );
             // A disposed session's late reply, even an empty one, proves nothing.
             if (signal.aborted) return;
-            const changed = await accept(events);
+            // Relay query order is time descending, then ID ascending (also at
+            // ties). One event past the page tells a full page from the end of
+            // the list; it is left for the next page, and the rest land in the
+            // order the relay sent them.
+            const ordered = [...events].sort(
+              (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
+            );
+            const more = ordered.length > PAGE;
+            const past = more ? ordered[PAGE] : undefined;
+            const changed = await accept(
+              past ? events.filter((event) => event !== past) : events,
+            );
             if (signal.aborted || current !== generation) return;
             // Earlier pages show while later ones load; only the last can end it.
-            const more = events.length >= PAGE;
             if (!more && !offline) publishState({ status: "ready" }, true);
             else if (changed || !state.hydrated)
               publishState({ status: "loading" }, true);
             if (!more) return;
             if (pages === MAX_PAGES)
               throw new Error("Too many reminders to load");
-            // Relay query order is time descending, then ID ascending (also at ties).
-            const last = [...events]
-              .sort(
-                (a, b) =>
-                  b.created_at - a.created_at || a.id.localeCompare(b.id),
-              )
-              .at(-1);
+            const last = ordered[PAGE - 1];
             if (
               !last ||
               (cursor &&

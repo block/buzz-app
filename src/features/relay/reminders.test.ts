@@ -288,21 +288,25 @@ describe("reminder history paging", () => {
     return { promise, resolve, reject };
   }
 
-  it("reads one page when the list is shorter than a page", async () => {
-    const h = paged(heads("a", 199, 1_000));
+  it("reads one page when the list fits in a page, even exactly", async () => {
+    const h = paged(heads("a", 200, 1_000));
     await h.model.recover();
     expect(h.filters).toEqual([
-      { kinds: [30300], authors: [viewer], limit: 200 },
+      { kinds: [30300], authors: [viewer], limit: 201 },
     ]);
     expect(h.snapshot()).toMatchObject({ status: "ready", hydrated: true });
+    expect(h.snapshot().reminders).toHaveLength(200);
   });
 
   it("pages from the last head until a short page, staying loading until then", async () => {
-    // The oldest time is tied, so the cursor is its highest ID.
+    // The page's oldest time is tied, so the cursor is its highest ID; the
+    // one event past the page only proves there is more, and page two reads it.
+    const past = wire("s", 801, "done", "s");
     const first = [
       ...heads("a", 198, 1_000),
       wire("f1", 802, "done", "t1"),
       wire("f0", 802, "done", "t0"),
+      past,
     ];
     const rest = deferred();
     const h = paged(first, rest.promise);
@@ -311,18 +315,19 @@ describe("reminder history paging", () => {
     expect(h.statuses).toEqual(["loading"]);
     expect(h.snapshot()).toMatchObject({ status: "loading", hydrated: true });
     expect(h.snapshot().reminders).toHaveLength(200);
+    expect(h.snapshot().reminders.some((r) => r.id === "s")).toBe(false);
     expect(h.filters[1]).toEqual({
       kinds: [30300],
       authors: [viewer],
-      limit: 200,
+      limit: 201,
       until: 802,
       before_id: "f1",
     });
-    rest.resolve([wire("old", 10, "pending", "old")]);
+    rest.resolve([past, wire("old", 10, "pending", "old")]);
     await read;
     expect(h.statuses).toEqual(["loading", "ready"]);
     expect(h.snapshot()).toMatchObject({ status: "ready", hydrated: true });
-    expect(h.snapshot().reminders).toHaveLength(201);
+    expect(h.snapshot().reminders).toHaveLength(202);
     expect(h.snapshot().reminders.find((r) => r.id === "old")?.status).toBe(
       "pending",
     );
@@ -330,7 +335,7 @@ describe("reminder history paging", () => {
 
   it("keeps landed pages when a later page fails and restarts from the top", async () => {
     const h = paged(
-      heads("a", 200, 1_000),
+      heads("a", 201, 1_000),
       Promise.reject(new Error("rejected")),
       [wire("old", 10, "pending", "old")],
     );
@@ -350,7 +355,7 @@ describe("reminder history paging", () => {
   it("abandons a walk when recovery restarts it", async () => {
     const stale = deferred();
     const fresh = deferred();
-    const h = paged(heads("a", 200, 1_000), stale.promise, fresh.promise);
+    const h = paged(heads("a", 201, 1_000), stale.promise, fresh.promise);
     const abandoned = h.model.recover();
     await vi.waitFor(() => expect(h.filters).toHaveLength(2));
     const restarted = h.model.recover();
@@ -365,14 +370,20 @@ describe("reminder history paging", () => {
     expect(h.snapshot().status).toBe("ready");
   });
 
-  it("keeps loading when the connection drops between pages, until recovery's own walk ends", async () => {
+  // Page one has landed and page two is in flight when the connection drops.
+  async function dropBetweenPages() {
     const rest = deferred();
-    const h = paged(heads("a", 200, 1_000), rest.promise, [
+    const h = paged(heads("a", 201, 1_000), rest.promise, [
       wire("old", 10, "pending", "old"),
     ]);
     const dropped = h.model.recover();
     await vi.waitFor(() => expect(h.filters).toHaveLength(2));
     h.model.stale();
+    return { h, rest, dropped };
+  }
+
+  it("keeps loading when the connection drops between pages, until recovery's own walk ends", async () => {
+    const { h, rest, dropped } = await dropBetweenPages();
     // The short page still lands and shows, but it cannot end the walk: live
     // edits made during the outage could not reach this session.
     rest.resolve([wire("old", 10, "pending", "old")]);
@@ -387,17 +398,13 @@ describe("reminder history paging", () => {
     expect(h.snapshot().error).toBeUndefined();
   });
 
-  it("reports a page that fails during an outage like any failed read, until recovery's own walk ends", async () => {
-    const rest = deferred();
-    const h = paged(heads("a", 200, 1_000), rest.promise, [
-      wire("old", 10, "pending", "old"),
-    ]);
-    const dropped = h.model.recover();
-    await vi.waitFor(() => expect(h.filters).toHaveLength(2));
-    h.model.stale();
+  it("reports a page whose retries ran out during an outage like any failed read, until recovery's own walk ends", async () => {
+    const { h, rest, dropped } = await dropBetweenPages();
+    // A plain Error is final (not retryable), standing in for exhausted retries.
     rest.reject(new Error("socket closed"));
     await dropped;
-    // The rows stay up under Retry, and `error` keeps the check time put.
+    // The rows stay up under Retry; with `error` set the list never counts as
+    // complete, so the plugin's saved check time cannot move.
     expect(h.snapshot()).toMatchObject({
       status: "ready",
       hydrated: true,
@@ -405,17 +412,30 @@ describe("reminder history paging", () => {
     });
     expect(h.snapshot().reminders).toHaveLength(200);
     await h.model.recover();
+    expect(h.filters).toHaveLength(3);
     expect(h.filters[2]).not.toHaveProperty("until");
     expect(h.snapshot()).toMatchObject({ status: "ready", hydrated: true });
+    expect(h.snapshot().error).toBeUndefined();
     expect(h.snapshot().reminders).toHaveLength(201);
   });
 
-  it("stops at the page bound and reports the list as partial", async () => {
-    const h = paged(
-      ...Array.from({ length: 51 }, (_, page) =>
-        heads(`p${page}-`, 200, 20_000 - page * 200),
-      ),
+  // Fifty pages that each prove there is more, then the page past the bound.
+  const bound = (lastPage: number) =>
+    Array.from({ length: 50 }, (_, page) =>
+      heads(`p${page}-`, page === 49 ? lastPage : 201, 20_000 - page * 200),
     );
+
+  it("completes a list of exactly the page bound", async () => {
+    const h = paged(...bound(200));
+    await h.model.recover();
+    expect(h.filters).toHaveLength(50);
+    expect(h.snapshot()).toMatchObject({ status: "ready", hydrated: true });
+    expect(h.snapshot().error).toBeUndefined();
+    expect(h.snapshot().reminders).toHaveLength(10_000);
+  });
+
+  it("stops at the page bound and reports a longer list as partial", async () => {
+    const h = paged(...bound(201), heads("p50-", 201, 10_000));
     await h.model.recover();
     expect(h.filters).toHaveLength(50);
     expect(h.snapshot()).toMatchObject({
@@ -427,7 +447,7 @@ describe("reminder history paging", () => {
   });
 
   it("fails a page that does not advance the cursor", async () => {
-    const first = heads("a", 200, 1_000);
+    const first = heads("a", 201, 1_000);
     const h = paged(first, first);
     await h.model.recover();
     expect(h.filters).toHaveLength(2);

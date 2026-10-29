@@ -381,7 +381,7 @@ it("seeds a first launch to now and keeps communities apart", async () => {
 
 it("notifies a reminder only a later history page holds, saving only after the last page", async () => {
   const rest = deferred();
-  const full = Array.from({ length: 200 }, (_, i) => wire(`old${i}`, 50));
+  const full = Array.from({ length: 201 }, (_, i) => wire(`old${i}`, 50));
   const reads = [Promise.resolve(full), rest.promise];
   const model = session(() => reads.shift() as Promise<RelayEvent[]>);
   const { submit, connect } = mount();

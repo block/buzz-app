@@ -890,8 +890,9 @@ it("holds Send while the To field has text that is not a recipient", async () =>
   expect(screen.queryByText(error)).not.toBeInTheDocument();
   await t.user.keyboard("{Escape}");
   expect(screen.getByRole("status")).toHaveTextContent(error);
-  // Typing in To removes it, so the status never changes text while shown.
-  await t.user.type(recipient(), "z");
+  // Typing in To, where Escape left focus, removes it, so the status never
+  // changes text while shown.
+  await t.user.keyboard("z");
   expect(screen.queryByText(/is not a valid recipient/)).toBeNull();
   await t.user.clear(recipient());
   await t.user.click(screen.getByRole("textbox"));
@@ -924,6 +925,23 @@ it("shows the To error only beside a recipient, and clears it once the text beco
   await t.user.type(screen.getByRole("textbox"), "Hello");
   expect(screen.queryByText(/is not a valid recipient/)).toBeNull();
   expect(send()).toBeEnabled();
+});
+
+it("does not hold Send for spaces left in the To field", async () => {
+  const t = setup();
+  t.mount();
+  await t.user.click(await screen.findByRole("option", { name: "Person 1" }));
+  await t.user.type(recipient(), "  ");
+  expect(recipient()).toHaveValue("  ");
+  await t.user.click(screen.getByRole("textbox"));
+  await t.user.keyboard("Hello");
+  // Spaces are no name, so they neither hold Send nor raise the To error.
+  expect(send()).toBeEnabled();
+  expect(
+    within(screen.getByRole("group", { name: "Recipients" })).queryByRole(
+      "status",
+    ),
+  ).toBeNull();
 });
 
 it("cuts the text named by the To error to 24 characters", async () => {

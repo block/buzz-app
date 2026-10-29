@@ -93,14 +93,26 @@ async function fixture(
     session,
     null,
   );
-  render(<ModelSettings {...{ client, session, agent }} subject="account" />, {
-    wrapper: ({ children }) => (
-      <StrictMode>
-        <ToastProvider>{children}</ToastProvider>
-      </StrictMode>
-    ),
-  });
-  await waitFor(() => expect(screen.queryByText("Loading models…")).toBeNull());
+  render(
+    <ModelSettings
+      {...{ client, session }}
+      settings={{ agent, subject: "account" }}
+    />,
+    {
+      wrapper: ({ children }) => (
+        <StrictMode>
+          <ToastProvider>{children}</ToastProvider>
+        </StrictMode>
+      ),
+    },
+  );
+  await waitFor(() =>
+    expect(
+      screen
+        .getByRole("textbox", { name: "Instructions" })
+        .closest("[aria-busy]"),
+    ).toHaveAttribute("aria-busy", "false"),
+  );
   return {
     request,
     session,

@@ -357,7 +357,10 @@ local color override to disguise a blocked action.
 Keep the surface header, content frame, focus and scroll anchor mounted. Reserve
 the content’s approximate final geometry on a first read rather than replacing a
 form with a one-line loading message. LoadingRegion keeps a reserved status line;
-its children own geometry. Unknown fields stay hidden/inert, not editable defaults
+its children own geometry. When field placeholders already convey loading, use
+`statusVisibility="screen-reader"` to retain the delayed announcement without a
+visible status row; supplied error/retry feedback still appears immediately.
+Unknown fields stay hidden/inert, not editable defaults
 from another scope. Avoid decorative shimmer or a skeleton of every control.
 
 Prefer already-verified content for the exact account/community/item while
@@ -889,6 +892,10 @@ extra-small capsule uses `text-caption`. For a caption-sized inline choice such 
 the composer's model name, `size="inline"` keeps a 24px minimum target with 4px
 horizontal padding and icon gap, and 12px icons. Pair it with `variant="ghost"`
 for an unframed label; shared hover, disabled, and keyboard focus still apply.
+Compact Selects use `appearance="link"` for a text-and-caret choice, such as channel access, without a capsule or horizontal
+button inset. It uses regular body-small type and a 24px minimum target with
+the text at its bottom edge, so supporting copy follows without an extra gap;
+it retains the Select's keyboard behavior and focus treatment.
 
 Button defaults to `md` (40px minimum height); IconButton defaults to `sm`
 (32px square with 16px artwork) and a 10px rounded rectangle

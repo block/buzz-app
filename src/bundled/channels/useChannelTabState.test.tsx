@@ -1013,6 +1013,15 @@ test.each(["missing", "readOnly", "archived", "cached"])(
   },
 );
 
+test("a joined Guest can open a readable thread without writing access", () => {
+  const session = tabSession([
+    { id: "alpha", name: "Alpha", readOnly: true, viewerRole: "guest" },
+  ]);
+  const tabs = channelTabs(session);
+  expect(tabs.open("alpha", "r1")).toBe(true);
+  expect(tabs.list("alpha")).toHaveLength(1);
+});
+
 test("an agent's tab name stays with the tab until cleared", () => {
   const session = tabSession();
   const tabs = channelTabs(session);

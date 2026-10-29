@@ -1,6 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
 import type { AgentViewProps } from "../../../features/agents/service";
-import { Button } from "../../../shared/design-system/ui/Button";
 import { PreferenceRow } from "../../../shared/design-system/ui/PreferenceRow";
 import { SettingsGroup } from "../../../shared/design-system/ui/SettingsGroup";
 import inlineStyles from "../../../shared/InlineReference.module.css";
@@ -57,32 +56,12 @@ export function createSettingsTab(client: AgentClient, session: OAuthSession) {
       return () => current.abort();
     }, [pubkey]);
     return (
-      <div className="grid gap-4">
-        {loaded && (
-          <ModelSettings
-            client={client}
-            session={session}
-            agent={loaded.agent}
-            subject={loaded.subject}
-            harnessControl={harnessControl}
-          />
-        )}
-        {!loaded &&
-          (busy ? (
-            <p role="status" className="m-0 text-body-sm text-secondary">
-              Loading settings…
-            </p>
-          ) : (
-            <div>
-              <Button onClick={retry}>Retry</Button>
-            </div>
-          ))}
-        {error && (
-          <p role="alert" className="m-0 text-body-sm text-danger">
-            {error}
-          </p>
-        )}
-      </div>
+      <ModelSettings
+        client={client}
+        session={session}
+        settings={loaded ?? { pending: busy, error, retry }}
+        harnessControl={harnessControl}
+      />
     );
   }
   return function Settings({

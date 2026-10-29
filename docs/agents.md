@@ -107,13 +107,36 @@ tool's name, description or schema changes, so edit those deliberately.
 `addedKey` covers only plugins' tools, so a resumed Codex thread keeps the Buzz
 tools, and their `load`, that it started with.
 
-On desktop the GitHub plugin adds `github_watch_pr`, so an agent can wait on a pull
+The GitHub plugin keeps one store of pull request data (`pull-states.ts`), and
+it is the only place the plugin reads pull requests from GitHub. Links, the Solo
+sidebar, the side panel, watches and agents' lookups each ask it for a level:
+`state`, `feedback` (reviews and comments with their text) or `details` (what
+the side panel shows and acts on). It reads
+each pull request once for all of them, in one batched `gh` query, at every
+level asked of it. It drops a level's data at the first read without that
+level, and forgets a pull request nobody follows at the first read 15 minutes
+after its last poll; with no later read, the data stays in memory.
+Each reader also says how often it wants its pull request read again; the
+store reads each one as often as its most eager reader wants, and every poll
+reads all that are due together.
+
+On desktop the GitHub plugin adds `github_pr_state`, so an agent can read a pull
+request's state as its owner's links show it: open, draft, merged or closed,
+checks, failed check names and conflicts, with when it was read. With
+`details: true` it also gives what the side panel shows: title, branches, files
+changed, the review decision and reviewers, unresolved review threads, the
+merge state and auto-merge. The answer is at most a minute old unless the agent
+asks for a fresh read, or the last read failed: then the answer says so, and
+how old it is.
+
+The GitHub plugin also adds `github_watch_pr`, so an agent can wait on a pull
 request without a model checking it. An agent calls it with a pull request URL
 and the id of one of its own Interests, from a thread or a Solo chat. The tool is a
 convenience over `watch_add`: it adds an `attention/github-pr` source watch to that
 Interest through the same attention tool code, and refuses an Interest that does
-not exist. The plugin never writes an Interest. While the app is open the plugin reads the pull
-request through the signed-in `gh` CLI once a minute. It wakes the agent when CI
+not exist. The plugin never writes an Interest. While the app is open the watch asks the store to
+follow the pull request's feedback, which it reads through the signed-in `gh`
+CLI once a minute, also while the window is hidden. It wakes the agent when CI
 settles on the head commit, once per commit and result, or when new feedback has
 been quiet for 90 seconds, and once more when the pull request merges or closes,
 so the agent can finish and retire its Interest. Attention delivers the wake
@@ -123,8 +146,8 @@ comments, line by line, each clipped, with GitHub's links. Agents comment as the
 `gh` account, as their owner does, so GitHub cannot tell them apart: a comment of
 that account that starts with 🤖, as an agent's do, wakes nobody, and the owner's
 other comments wake the agent. A watch is saved in Attention on the device and respects its on/off switch. Device-local GitHub watches saved before Attention are dropped, not imported: they name no Interest. It ends when the
-pull request merges or closes, after 20 wakes, after 30 failed polls in a row,
-or when the agent calls it with `stop: true`.
+pull request merges or closes, after 20 wakes, after 30 minutes without a
+successful read, or when the agent calls it with `stop: true`.
 
 The Agents runner starts a mention run from a `p` tag, or from any new message
 by the other member of a one-to-one DM the agent is in; group DMs still need
@@ -401,7 +424,23 @@ chooser is unavailable because activation failed.
 The picker shows keys alongside names (namesakes remain separate), reads optional
 profiles only on demand, and keeps selected identity spans in scoped drafts.
 Typing a name alone does not notify anyone. Plain Space after a unique exact name
-selects its recipient; ambiguous names require Tab, Enter or click. Editing a
+selects its recipient; ambiguous names require Tab, Enter or click. While the
+chooser is still waiting on members, names, agents or a directory search, Space
+holds the name as a pending chip (a spinner in place of its `@`) and applies the
+same rule once the evidence arrives, within 8 s, or returns it to prose; sending
+waits for a pending chip, and when one it waited for returns to prose it keeps
+the draft and says which name was not tagged and why (not confirmed as one
+person or agent, not taggable here, the recipient limit or the message
+length), so the next send sends the text knowingly. A name already known to
+continue the query (`Mira Example` for `mira`) is a declined Space, not a
+pending one, so the next word
+can still complete it; a longer name learned only after the chip was held
+extends the chip over the words typed after it when they spell one of those
+names up to a name boundary, the longest they complete (`@mira Example hi`
+tags `Mira Example`), and otherwise returns it to prose, where the reopened
+chooser answers the rest of the name from the page already read for the chip
+(a complete directory page settles every query extending its own, with no
+further read), so the Space that completes the name selects it. Editing a
 selected span removes its notification intent. Native beforeinput ranges preserve untouched spans; missing
 range evidence, IME/history edits and collapsed deletions clear selections rather
 than guess. Even a same-text replacement drops the edited identity. Selected mentions appear as inline identity chips in the composer. Namesakes
@@ -479,10 +518,17 @@ recipients among the destination's members plus the draft recipients.
 
 Plain Space selects only a unique exact name/alias/label across the full uncapped
 candidate set, and only if that identity is displayed and still eligible. A known
-longer name beginning with that name plus a space prevents selection. Partial
-names, ambiguous names, modified Space, IME composition, code and protected literal
-ranges keep ordinary editing behavior. Selection rechecks available evidence and
-stores only `{pubkey, name}`; qualifiers are presentation, not wire data.
+longer name beginning with that name plus a space prevents selection, unless it is
+another name of that same identity. Partial names, ambiguous names, modified Space,
+IME composition, code and protected literal ranges keep ordinary editing behavior. Selection rechecks available evidence and
+stores only `{pubkey, name}`; qualifiers are presentation, not wire data. A Space
+the chooser cannot decide yet, because its evidence is still loading, holds the
+name as a pending chip that the plugin's headless resolver settles by the same
+rule (`resolve-space-mention.ts`); a known longer name declines Space outright
+rather than holding it, while one found after the chip was held extends the
+chip over the typed words that complete it or returns it to prose; the host
+admits the result like any selection, and a pending chip is never stored in a
+draft or sent as a tag.
 
 The composer rejects already-known archived recipients (never the viewer) at
 send entry. The next draft keeps only agents that the sent message notified. This is not an archive transaction: archive

@@ -10,9 +10,13 @@ export const PULL_REFRESH_MS = 60_000;
  * could not be read is tried again this often, as is one read from the
  * public API, and a closed one, which rarely reopens. */
 export const PULL_SLOW_REFRESH_MS = 5 * 60_000;
-/** How many of the due pull requests one public poll reads; the rest take
- * the next. */
+/** How many public reads can be spent at once, as on a channel of links
+ * first shown; the rest wait their turn. */
 export const PUBLIC_READS_PER_POLL = 10;
+/** How many public reads an hour are spent after that, however many pull
+ * requests are shown. No hour spends more than 40 of GitHub's 60, so the
+ * panel keeps the rest. */
+export const PUBLIC_READS_PER_HOUR = 30;
 
 export type PullState = Readonly<{
   state: "open" | "draft" | "merged" | "closed";
@@ -150,9 +154,9 @@ const keyOf = (url: string) => {
  * subscriber that appears together, then polled only while shown, visible and
  * able to change: a merged one is never read again, a closed one or one GitHub
  * could not read every few minutes. Without `gh`, or while it is
- * unavailable, a few at a time are read from the public API, the longest
- * unread first, each every few minutes. None is read while GitHub holds its
- * limit; the panel has the live view. */
+ * unavailable, they are read from the public API within its own share of
+ * GitHub's limit, the longest unread first, each at most every few minutes.
+ * None is read while GitHub holds its limit; the panel has the live view. */
 export function createPullStates(gh: GitHubCli | undefined): PullStates {
   const listeners = new Map<string, Set<() => void>>();
   const states = new Map<string, PullState | "failed">();
@@ -165,6 +169,9 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
   const readsPublic = () => !gh || Date.now() < publicUntil;
   /** Until when GitHub refuses public reads, once it has refused one. */
   let publicHeldUntil = 0;
+  /** The public reads that can be spent now, and when that was counted. */
+  let publicReads = PUBLIC_READS_PER_POLL;
+  let publicCountedAt = Date.now();
   let timer: ReturnType<typeof setTimeout> | undefined;
   let controller: AbortController | undefined;
   let scheduled = false;
@@ -217,8 +224,8 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
       AbortSignal.timeout(30_000),
     ]);
     const now = Date.now();
-    // A public poll reads only the first few: the longest unread go first, so
-    // those that keep failing cannot keep one never read waiting.
+    // A public poll reads only as many as it can spend: the longest unread go
+    // first, so those that keep failing cannot keep one never read waiting.
     const due = [...listeners.keys()]
       .filter((url) => dueAt(url) <= now)
       .sort((a, b) => (readAt.get(a) ?? 0) - (readAt.get(b) ?? 0));
@@ -255,9 +262,9 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
       }
     }
   }
-  /** Reads `urls`, or from the public API the first few of them: each one's
-   * state, or undefined for one GitHub could not read. Throws when it
-   * answered for none, or refused a public read for its limit. */
+  /** Reads `urls`, or from the public API as many of them as can be spent:
+   * each one's state, or undefined for one GitHub could not read. Throws when
+   * it answered for none, or refused a public read for its limit. */
   async function readAll(
     urls: readonly string[],
     signal: AbortSignal,
@@ -272,8 +279,17 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
         // GitHub may still be refusing public reads from the last time.
         if (Date.now() < publicHeldUntil) return [];
       }
+    const now = Date.now();
+    publicReads = Math.min(
+      PUBLIC_READS_PER_POLL,
+      publicReads +
+        ((now - publicCountedAt) * PUBLIC_READS_PER_HOUR) / (60 * 60_000),
+    );
+    publicCountedAt = now;
+    const reading = urls.slice(0, Math.floor(publicReads));
+    publicReads -= reading.length;
     return Promise.all(
-      urls.slice(0, PUBLIC_READS_PER_POLL).map((url) =>
+      reading.map((url) =>
         readPublicState(url, signal).catch((error: unknown) => {
           if (!(error instanceof GitHubRateLimited)) return undefined;
           // Over the limit: nothing more is read until GitHub says it resets.

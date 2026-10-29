@@ -3,6 +3,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { GhUnavailable, GitHubError, type GitHubCli } from "./gh";
 import {
   createPullStates,
+  PUBLIC_READS_PER_HOUR,
   PUBLIC_READS_PER_POLL,
   PULL_REFRESH_MS,
   PULL_SLOW_REFRESH_MS,
@@ -419,10 +420,10 @@ const limited = (resetAt?: number) =>
     headers: resetAt ? { "x-ratelimit-reset": String(resetAt / 1000) } : {},
   });
 
-it("reads a few public pull requests at a time, the rest a minute later", async () => {
+it("spends a few public reads at once, then only its share of each hour's", async () => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
   const fetch = vi.fn(
-    async () => new Response(JSON.stringify({ state: "open" })),
+    async (_url: string) => new Response(JSON.stringify({ state: "open" })),
   );
   vi.stubGlobal("fetch", fetch);
   const states = createPullStates(undefined);
@@ -433,24 +434,28 @@ it("reads a few public pull requests at a time, the rest a minute later", async 
   // A channel of links does not spend the hour's public reads at once.
   expect(fetch).toHaveBeenCalledTimes(PUBLIC_READS_PER_POLL);
   expect(states.get(pulls.at(-1) ?? "")).toBeUndefined();
-  await vi.advanceTimersByTimeAsync(PULL_REFRESH_MS / 2);
-  expect(fetch).toHaveBeenCalledTimes(PUBLIC_READS_PER_POLL);
-  await vi.advanceTimersByTimeAsync(PULL_REFRESH_MS / 2);
-  expect(fetch).toHaveBeenCalledTimes(pulls.length);
+  // Kept current for an hour, and the next, they leave the panel the rest of
+  // GitHub's 60, however many are shown.
+  await vi.advanceTimersByTimeAsync(60 * 60_000);
+  expect(fetch).toHaveBeenCalledTimes(
+    PUBLIC_READS_PER_POLL + PUBLIC_READS_PER_HOUR,
+  );
   expect(states.get(pulls.at(-1) ?? "")).toEqual({ state: "open" });
-  // Each is read again a few minutes after it was, still a few at a time.
-  await vi.advanceTimersByTimeAsync(PULL_SLOW_REFRESH_MS - PULL_REFRESH_MS);
-  expect(fetch).toHaveBeenCalledTimes(pulls.length + PUBLIC_READS_PER_POLL);
-  await vi.advanceTimersByTimeAsync(PULL_REFRESH_MS);
-  expect(fetch).toHaveBeenCalledTimes(2 * pulls.length);
+  await vi.advanceTimersByTimeAsync(60 * 60_000);
+  expect(fetch).toHaveBeenCalledTimes(
+    PUBLIC_READS_PER_POLL + 2 * PUBLIC_READS_PER_HOUR,
+  );
+  // Each is read in turn, none left behind.
+  const read = fetch.mock.calls.map(([url]) => url);
+  expect(new Set(read.slice(-pulls.length)).size).toBe(pulls.length);
 });
 
 it("reads a public pull request never read before those that keep failing", async () => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
-  // Private repositories are 404 without gh. Five polls' worth of them,
-  // tried again every few minutes, would fill every poll on their own.
+  // Private repositories are 404 without gh. Enough of them that some are
+  // still unread when the first come round again, wanting every read there is.
   const failing = Array.from(
-    { length: 5 * PUBLIC_READS_PER_POLL },
+    { length: PUBLIC_READS_PER_POLL + 3 },
     (_, i) => `https://github.com/block/private-${i}/pull/1`,
   );
   const fetch = vi.fn(async (url: string) =>
@@ -461,7 +466,7 @@ it("reads a public pull request never read before those that keep failing", asyn
   vi.stubGlobal("fetch", fetch);
   const states = createPullStates(undefined);
   for (const url of [...failing, pull]) states.watch(url, () => {});
-  await vi.advanceTimersByTimeAsync(PULL_SLOW_REFRESH_MS);
+  await vi.advanceTimersByTimeAsync(2 * PULL_SLOW_REFRESH_MS);
   await vi.waitFor(() => expect(states.get(pull)).toEqual({ state: "open" }));
   expect(states.get(failing[0] ?? "")).toBe("failed");
 });

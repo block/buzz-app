@@ -1066,6 +1066,24 @@ describe("github_watch_pr", () => {
     app.dispose();
   });
 
+  it("learns feedback already there on a first read, whatever membership it needs", async () => {
+    savePolicy("allow org:block");
+    const app = setup(
+      answer({ comments: [{ id: "I1", login: "alice", body: "body-old" }] }),
+    );
+    app.members(["alice"]);
+    // Another reader, such as the panel, already holds its text.
+    await app.states.read(url, {
+      maxAge: 0,
+      level: "feedback",
+      wantsText: () => true,
+    });
+    await app.call({ url });
+    await vi.advanceTimersByTimeAsync(POLL_MS + QUIET_MS + POLL_MS);
+    expect(app.texts().join("\n")).not.toContain("body-old");
+    app.dispose();
+  });
+
   it("tells newly read feedback rules saved while membership is read allow", async () => {
     savePolicy("allow org:block");
     const app = setup();

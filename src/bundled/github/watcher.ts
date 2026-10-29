@@ -194,7 +194,8 @@ export function watchPulls(
     snapshot: PullSnapshot,
   ): [Watch, PullSnapshot, Feedback[]] => {
     const items = [...(watch.pending ?? []), ...snapshot.feedback];
-    if (!items.length) return [watch, snapshot, []];
+    // A first read only learns what is there, whoever wrote it.
+    if (!watch.seen || !items.length) return [watch, snapshot, []];
     const policy = loadPolicy();
     const member = membership(organizations(policy), MEMBERSHIP_MS);
     const admitted = new Map(

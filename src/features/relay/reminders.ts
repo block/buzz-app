@@ -26,7 +26,8 @@ export type Reminder = Readonly<{
 }>;
 export type RemindersState = Readonly<{
   status: "loading" | "ready" | "error";
-  /** True once a history read has succeeded; local saves and live arrivals don't count. */
+  /** True once the first page of a history read has landed; later pages may
+   * still be loading. Local saves and live arrivals don't count. */
   hydrated: boolean;
   reminders: readonly Reminder[];
   error?: string;
@@ -127,7 +128,10 @@ function randomD() {
 }
 
 // Status is encrypted, so every head must be read to find the pending ones, and
-// handled ones stay live until they expire. Past the bound the read is partial.
+// handled ones stay live until they expire, so the list grows with use. Past
+// the bound the read is partial: the newest heads show under "Some reminders
+// could not be loaded", older ones stay hidden, the plugin's saved check time
+// stays put, and every refresh walks all the pages again.
 const PAGE = 200;
 const MAX_PAGES = 10;
 

@@ -365,6 +365,28 @@ describe("reminder history paging", () => {
     expect(h.snapshot().status).toBe("ready");
   });
 
+  it("keeps loading when the connection drops between pages, until recovery's own walk ends", async () => {
+    const rest = deferred();
+    const h = paged(heads("a", 200, 1_000), rest.promise, [
+      wire("old", 10, "pending", "old"),
+    ]);
+    const dropped = h.model.recover();
+    await vi.waitFor(() => expect(h.filters).toHaveLength(2));
+    h.model.stale();
+    // The short page still lands and shows, but it cannot end the walk: live
+    // edits made during the outage could not reach this session.
+    rest.resolve([wire("old", 10, "pending", "old")]);
+    await dropped;
+    expect(h.statuses).not.toContain("ready");
+    expect(h.snapshot()).toMatchObject({ status: "loading", hydrated: true });
+    expect(h.snapshot().reminders).toHaveLength(201);
+    await h.model.recover();
+    expect(h.filters).toHaveLength(3);
+    expect(h.filters[2]).not.toHaveProperty("until");
+    expect(h.snapshot()).toMatchObject({ status: "ready", hydrated: true });
+    expect(h.snapshot().error).toBeUndefined();
+  });
+
   it("stops at the page bound and reports the list as partial", async () => {
     const h = paged(
       ...Array.from({ length: 11 }, (_, page) =>

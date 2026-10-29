@@ -401,7 +401,23 @@ chooser is unavailable because activation failed.
 The picker shows keys alongside names (namesakes remain separate), reads optional
 profiles only on demand, and keeps selected identity spans in scoped drafts.
 Typing a name alone does not notify anyone. Plain Space after a unique exact name
-selects its recipient; ambiguous names require Tab, Enter or click. Editing a
+selects its recipient; ambiguous names require Tab, Enter or click. While the
+chooser is still waiting on members, names, agents or a directory search, Space
+holds the name as a pending chip (a spinner in place of its `@`) and applies the
+same rule once the evidence arrives, within 8 s, or returns it to prose; sending
+waits for a pending chip, and when one it waited for returns to prose it keeps
+the draft and says which name was not tagged and why (not confirmed as one
+person or agent, not taggable here, the recipient limit or the message
+length), so the next send sends the text knowingly. A name already known to
+continue the query (`Mira Example` for `mira`) is a declined Space, not a
+pending one, so the next word
+can still complete it; a longer name learned only after the chip was held
+extends the chip over the words typed after it when they spell one of those
+names up to a name boundary, the longest they complete (`@mira Example hi`
+tags `Mira Example`), and otherwise returns it to prose, where the reopened
+chooser answers the rest of the name from the page already read for the chip
+(a complete directory page settles every query extending its own, with no
+further read), so the Space that completes the name selects it. Editing a
 selected span removes its notification intent. Native beforeinput ranges preserve untouched spans; missing
 range evidence, IME/history edits and collapsed deletions clear selections rather
 than guess. Even a same-text replacement drops the edited identity. Selected mentions appear as inline identity chips in the composer. Namesakes
@@ -479,10 +495,17 @@ recipients among the destination's members plus the draft recipients.
 
 Plain Space selects only a unique exact name/alias/label across the full uncapped
 candidate set, and only if that identity is displayed and still eligible. A known
-longer name beginning with that name plus a space prevents selection. Partial
-names, ambiguous names, modified Space, IME composition, code and protected literal
-ranges keep ordinary editing behavior. Selection rechecks available evidence and
-stores only `{pubkey, name}`; qualifiers are presentation, not wire data.
+longer name beginning with that name plus a space prevents selection, unless it is
+another name of that same identity. Partial names, ambiguous names, modified Space,
+IME composition, code and protected literal ranges keep ordinary editing behavior. Selection rechecks available evidence and
+stores only `{pubkey, name}`; qualifiers are presentation, not wire data. A Space
+the chooser cannot decide yet, because its evidence is still loading, holds the
+name as a pending chip that the plugin's headless resolver settles by the same
+rule (`resolve-space-mention.ts`); a known longer name declines Space outright
+rather than holding it, while one found after the chip was held extends the
+chip over the typed words that complete it or returns it to prose; the host
+admits the result like any selection, and a pending chip is never stored in a
+draft or sent as a tag.
 
 The composer rejects already-known archived recipients (never the viewer) at
 send entry. The next draft keeps only agents that the sent message notified. This is not an archive transaction: archive

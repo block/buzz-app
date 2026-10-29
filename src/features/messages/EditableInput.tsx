@@ -150,31 +150,58 @@ function keyboardKey(
     CARET_KEYS.get(event.code) ?? CARET_KEYS.get(event.keyCode) ?? event.key
   );
 }
-/** Moves the head a line up or down where the browser cannot. A line that
- * holds nothing but a token, or part of a wrapped one, offers no caret
- * position besides the token's edge, so native Up and Down stall there in
- * WebKit and jump to a document edge in Chromium, entering such a line and
+/** Moves the selection head to a document position, keeping the anchor when
+ * extending, and scrolls it into view. */
+function moveHead(editor: EditorView, head: number, extend: boolean) {
+  const { tr, selection, doc } = editor.state;
+  editor.dispatch(
+    tr
+      .setSelection(
+        TextSelection.create(doc, extend ? selection.anchor : head, head),
+      )
+      .scrollIntoView(),
+  );
+}
+/** Moves the head for plain or Shift Up and Down where the browser cannot. A
+ * line that holds nothing but a token, or part of a wrapped one, offers no
+ * caret position besides the token's edge, so native Up and Down stall there
+ * in WebKit and jump to a document edge in Chromium, entering such a line and
  * leaving it alike. Such a line is entered at the token edge it holds, or
  * crossed to the far edge when it holds neither, and left for the nearest
  * position on the neighbouring line. The token's client rects give its
  * lines, so a line scrolled out of the composer still counts. A caret at a
  * soft wrap is measured on the line it leaves: a move may go one line too
  * far but never stalls. Every other line move stays native, from a DOM
- * caret the browser can move. */
+ * caret the browser can move. The Mac's emacs-style Ctrl+N and Ctrl+P line
+ * moves stay native too, and can still stall on such a line: they are rare
+ * in a composer and would need a platform key binding here. */
 function crossTokenLine(
   editor: EditorView,
   tokens: ReadonlyMap<HTMLElement, { position(): number | undefined }>,
-  up: boolean,
-  extend: boolean,
+  key: string,
+  event: Pick<
+    globalThis.KeyboardEvent,
+    "altKey" | "ctrlKey" | "metaKey" | "shiftKey"
+  >,
 ) {
+  const up = key === "ArrowUp";
+  const extend = event.shiftKey;
   const { selection, doc } = editor.state;
-  if (!(selection instanceof TextSelection) || !tokens.size) return false;
+  if (
+    (!up && key !== "ArrowDown") ||
+    event.altKey ||
+    event.ctrlKey ||
+    event.metaKey ||
+    !(selection instanceof TextSelection) ||
+    !tokens.size
+  )
+    return false;
   const origin = extend ? selection.head : up ? selection.from : selection.to;
   const caret = editor.coordsAtPos(origin, up ? -1 : 1);
   const level = (line: { top: number; bottom: number }) =>
     (line.top + line.bottom) / 2;
-  const holds = (line?: { top: number; bottom: number }) =>
-    !!line && line.top <= level(caret) && level(caret) <= line.bottom;
+  const holds = (line?: { top: number; bottom: number }, point = caret) =>
+    !!line && line.top <= level(point) && level(point) <= line.bottom;
   // The position beside a token that is drawn on the neighbouring line when
   // the token starts or ends its own: past a line break (a hard break or a
   // typed newline), into the adjacent textblock, or else the token edge.
@@ -191,7 +218,10 @@ function crossTokenLine(
     const from = host.position();
     if (from === undefined) continue;
     const to = from + 1;
-    const lines = [...element.getClientRects()];
+    // Bidi reordering can split a token into several rects on one line, as
+    // WebKit reports them, so a rect on its predecessor's line is folded in.
+    const rects = [...element.getClientRects()];
+    const lines = rects.filter((rect, index) => !holds(rects[index - 1], rect));
     const last = lines.length - 1;
     const before = outside(from, -1);
     const after = outside(to, 1);
@@ -203,47 +233,48 @@ function crossTokenLine(
       const alone =
         (index > 0 || !above || level(above) < line.top) &&
         (index < last || !below || level(below) > line.bottom);
-      if (!alone) continue;
+      // WebKit's native move onto a line the token is split across can put
+      // the caret inside the token, so such a line is entered here too.
+      const split = rects.filter((rect) => holds(line, rect)).length > 1;
+      if (!alone && !split) continue;
       const previous = up
         ? (lines[index + 1] ?? below)
         : (lines[index - 1] ?? above);
       let head: number | undefined;
       // Entering: stop at the edge this line holds, or cross a middle line.
-      if (holds(previous))
+      if (holds(previous) && !holds(line))
         head = up ? (index === last ? to : from) : index === 0 ? from : to;
       // Leaving from the edge: cross the rest of the token, or step off it.
       else if (
+        alone &&
         holds(line) &&
         ((index === 0 && origin === from) || (index === last && origin === to))
       )
         head = up ? (index > 0 ? from : before) : index < last ? to : after;
       if (head === undefined || (up ? head >= origin : head <= origin))
         continue;
-      editor.dispatch(
-        editor.state.tr
-          .setSelection(
-            TextSelection.create(doc, extend ? selection.anchor : head, head),
-          )
-          .scrollIntoView(),
-      );
+      moveHead(editor, head, extend);
       return true;
     }
   }
   // After a token, the DOM caret sits between its element and the text that
-  // follows. Once WebKit has drawn the caret there beside a wrapped token,
-  // Down stalls; from the text's start, the same position, it moves.
+  // follows. Once WebKit, on any platform, has drawn the caret there beside a
+  // wrapped token, Down stalls; from the text's start, the same position, it
+  // moves. The step is harmless beside a token that does not wrap, so it is
+  // not limited to wrapped ones. Up and Chromium need no help.
   const native = editor.dom.ownerDocument.getSelection();
   const next = native?.focusNode?.childNodes[native.focusOffset];
   const token = native?.focusNode?.childNodes[native.focusOffset - 1];
   if (
-    native?.anchorNode &&
+    !up &&
+    navigator.vendor === "Apple Computer, Inc." &&
+    native &&
     next?.nodeType === Node.TEXT_NODE &&
     token instanceof HTMLElement &&
     tokens.has(token)
   ) {
     if (native.isCollapsed) native.collapse(next, 0);
-    else
-      native.setBaseAndExtent(native.anchorNode, native.anchorOffset, next, 0);
+    else native.extend(next, 0);
   }
   return false;
 }
@@ -1206,7 +1237,7 @@ export function EditableInput({
       const extend = event.shiftKey;
       const sideways = key === "ArrowLeft" || key === "ArrowRight";
       if (sideways && !event.altKey && !boundary) {
-        const { $head, anchor, empty } = editor.state.selection;
+        const { $head, empty } = editor.state.selection;
         const backward = key === "ArrowLeft";
         const leaf = $head.textOffset
           ? null
@@ -1216,30 +1247,15 @@ export function EditableInput({
         // Only an inline leaf is stepped over in document terms. A block beside
         // the head, as after select-all, is left to the browser's caret motion.
         if ((empty || extend) && leaf?.isInline && !leaf.isText) {
-          const head = backward
-            ? $head.pos - leaf.nodeSize
-            : $head.pos + leaf.nodeSize;
-          editor.dispatch(
-            editor.state.tr
-              .setSelection(
-                TextSelection.create(
-                  editor.state.doc,
-                  extend ? anchor : head,
-                  head,
-                ),
-              )
-              .scrollIntoView(),
+          moveHead(
+            editor,
+            backward ? $head.pos - leaf.nodeSize : $head.pos + leaf.nodeSize,
+            extend,
           );
           return true;
         }
       }
-      if (
-        (key === "ArrowUp" || key === "ArrowDown") &&
-        !event.altKey &&
-        !boundary &&
-        crossTokenLine(editor, hosts.current, key === "ArrowUp", extend)
-      )
-        return true;
+      if (crossTokenLine(editor, hosts.current, key, event)) return true;
       const selection = editor.dom.ownerDocument.getSelection();
       if (!selection || typeof selection.modify !== "function") return true;
       const alter = extend ? "extend" : "move";
@@ -2035,16 +2051,7 @@ export function EditableInput({
           if (
             !event.defaultPrevented &&
             view.current &&
-            (event.key === "ArrowUp" || event.key === "ArrowDown") &&
-            !event.altKey &&
-            !event.metaKey &&
-            !event.ctrlKey &&
-            crossTokenLine(
-              view.current,
-              hosts.current,
-              event.key === "ArrowUp",
-              event.shiftKey,
-            )
+            crossTokenLine(view.current, hosts.current, event.key, event)
           )
             event.preventDefault();
         }}

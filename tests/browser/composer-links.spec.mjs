@@ -786,6 +786,33 @@ test("Up and Down move one line at a time through links that wrap", async ({
       ),
     );
     expect((await caret()).head).toBe(firstTo);
+
+    // WebKit splits this link into two rects on one line, reordering its
+    // Hebrew with the text after it. That is still one line, and native Down
+    // onto the link stalls there, so each press must still move one line.
+    const bidi = [
+      "First line.",
+      `${link("PR שלום עולם", 1)} שלום עולם`,
+      "Last line.",
+    ];
+    await input.fill("");
+    await input.fill(bidi.join("\n"));
+    await expect(links).toHaveCount(1);
+    const starts = [0, bidi[0].length + 1, bidi[0].length + bidi[1].length + 2];
+    const line = (head) => starts.findLastIndex((start) => head >= start);
+    for (const shift of ["", "Shift+"])
+      for (const [key, start, expected] of [
+        ["ArrowDown", 0, [1, 2]],
+        ["ArrowUp", bidi.join("\n").length, [1, 0]],
+      ]) {
+        await input.evaluate((el, at) => el.setSelectionRange(at, at), start);
+        await rendered();
+        for (const index of expected) {
+          await page.keyboard.press(`${shift}${key}`);
+          await expect.poll(async () => line((await caret()).head)).toBe(index);
+          await rendered();
+        }
+      }
   } finally {
     await server.close();
   }

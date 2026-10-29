@@ -526,6 +526,72 @@ test("GIF shortcut retry keeps keyboard focus through repeated discovery failure
   await expect(search).not.toHaveAttribute("aria-describedby");
 });
 
+// WebKit sizes the caret from the line box, so an inline GIF stretched the
+// caret to GIF height and floated prose beside it. jsdom has no layout.
+test("a GIF draft preview takes its own row so prose and the caret keep text height", async ({
+  page,
+  app,
+}) => {
+  await page.route("**/api/relay/*/gif-info", fulfillGifInfo);
+  await page.route("**/api/relay/*/gifs", (route) =>
+    route.fulfill({
+      json: { result: true, data: { data: [gifResult(7, "Row Gif", 240)] } },
+    }),
+  );
+  await page.route("https://gif.fixture.invalid/**", fulfillGifImage);
+  await page.goto(app.origin);
+  await openPage(page, "Messages");
+  const draft = page.getByRole("textbox", {
+    name: "Message #Alpha",
+    exact: true,
+  });
+  await draft.click();
+  await page.keyboard.type("before ");
+  await page.keyboard.press("ControlOrMeta+g");
+  await page
+    .getByRole("button", { name: "Choose Row Gif", exact: true })
+    .click();
+  await expect(draft).toBeFocused();
+  await page.keyboard.type(" after");
+  await expect(draft).toHaveJSProperty(
+    "value",
+    "before ![Row Gif](https://gif.fixture.invalid/7.gif) after",
+  );
+  const preview = draft.getByRole("img", { name: "Row Gif", exact: true });
+  await expect(preview).toHaveJSProperty("naturalWidth", 160);
+  const layout = await draft.evaluate((input) => {
+    const box = (text) => {
+      const node = [...input.querySelectorAll("p")]
+        .flatMap((p) => [...p.childNodes])
+        .find((child) => child.nodeType === 3 && child.data.includes(text));
+      const range = input.ownerDocument.createRange();
+      range.selectNodeContents(node);
+      return range.getBoundingClientRect();
+    };
+    const gif = input
+      .querySelector("[data-gif-preview]")
+      .getBoundingClientRect();
+    const before = box("before");
+    const after = box("after");
+    const lineHeight = parseFloat(getComputedStyle(input).lineHeight);
+    return {
+      beforeBottom: before.bottom,
+      beforeHeight: before.height,
+      gifTop: gif.top,
+      gifBottom: gif.bottom,
+      gifHeight: gif.height,
+      afterTop: after.top,
+      afterHeight: after.height,
+      lineHeight,
+    };
+  });
+  expect(layout.gifHeight).toBeGreaterThan(layout.lineHeight * 3);
+  expect(layout.beforeBottom).toBeLessThanOrEqual(layout.gifTop);
+  expect(layout.afterTop).toBeGreaterThanOrEqual(layout.gifBottom);
+  expect(layout.beforeHeight).toBeLessThanOrEqual(layout.lineHeight);
+  expect(layout.afterHeight).toBeLessThanOrEqual(layout.lineHeight);
+});
+
 test.describe("GIF send roundtrip", () => {
   test.use({
     productionBroker: true,

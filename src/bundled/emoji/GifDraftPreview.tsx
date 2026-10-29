@@ -45,8 +45,10 @@ function gifSource(
   return media(url);
 }
 
-/** The GIF that `markdown` attaches when it is exactly one GIF image, as the
- * picker inserts it. The Markdown stays the sent source. */
+/** The GIF that `markdown` attaches when it is exactly one image with a safe
+ * URL, as the picker inserts it. The Markdown stays the sent source. Picked
+ * assets need no `.gif` suffix, so only the thumbnail depends on the preview
+ * rules; `source` is absent when it cannot be shown. */
 export function draftGif(
   markdown: string,
   media: (url: string) => string | undefined,
@@ -57,11 +59,12 @@ export function draftGif(
     tooDeep ||
     images.length !== 1 ||
     image?.position?.start.offset !== 0 ||
-    image.position.end.offset !== markdown.length
+    image.position.end.offset !== markdown.length ||
+    !image.url ||
+    !safeMessageUrl(image.url)
   )
     return;
-  const source = gifSource(image.url, media);
-  return source ? { source, title: image.alt || "GIF" } : undefined;
+  return { source: gifSource(image.url, media), title: image.alt || "GIF" };
 }
 
 /** Presentation only: the editor retains the exact Markdown for undo and sending. */

@@ -322,7 +322,7 @@ export function applyApps(
             : "Only your owner.",
           ...(audience === "only_you" && others
             ? [
-                `${others} ${others === 1 ? "other person" : "other people"} added earlier can also open it.`,
+                `${others} ${others === 1 ? "other person" : "other people"} can also open it.`,
               ]
             : []),
           ...(shared.length

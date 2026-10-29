@@ -314,7 +314,7 @@ it("says who can open an app after a visibility switch", async () => {
     audience: "only_you",
     shared_community_ids: ["buzz-alpha"],
     who_can_open:
-      "Only your owner. 1 other person added earlier can also open it. So can members of the Buzz community it is shared with.",
+      "Only your owner. 1 other person can also open it. So can members of the Buzz community it is shared with.",
   });
   await expect(
     call("apps_visibility", { app_id: "demo", audience: "private" }),
@@ -394,6 +394,6 @@ it("counts everyone else who can still open a private app", async () => {
       ),
     ).who_can_open,
   ).toBe(
-    "Only your owner. 2 other people added earlier can also open it. So can members of the 2 Buzz communities it is shared with.",
+    "Only your owner. 2 other people can also open it. So can members of the 2 Buzz communities it is shared with.",
   );
 });

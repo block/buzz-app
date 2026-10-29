@@ -2206,12 +2206,17 @@ function TeamEditor({
         label="Instructions"
         description={
           <>
-            Every member follows these after its own instructions.
+            {remote.length > 0
+              ? "Agents on your devices follow these after their own instructions."
+              : "Every member follows these after its own instructions."}
             {remote.length > 0 && (
-              <span className="mt-1 flex items-start gap-1 text-warning">
-                <WarningCircleIcon className="mt-0.5 shrink-0" aria-hidden />
-                {`${names(remote)} ${remote.length === 1 ? "runs" : "run"} remotely and may not get these instructions.`}
-              </span>
+              <>
+                {" "}
+                <span className="mt-1 flex items-start gap-1 text-warning">
+                  <WarningCircleIcon className="mt-0.5 shrink-0" aria-hidden />
+                  {`Agents run by their provider (${names(remote)}) will not get these team instructions.`}
+                </span>
+              </>
             )}
           </>
         }

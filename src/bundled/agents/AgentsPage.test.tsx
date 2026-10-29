@@ -2479,20 +2479,20 @@ it("offers hosted agents as members, warning that they may not get the instructi
   );
   expect(members.map(Boolean)).toEqual([true, true, false, false]);
   const instructions = screen.getByRole("textbox", { name: "Instructions" });
-  const warning = /remotely/;
+  const local = "Every member follows these after its own instructions.";
   await user.click(screen.getByRole("checkbox", { name: "Ada" }));
-  expect(instructions).not.toHaveAccessibleDescription(warning);
+  expect(instructions).toHaveAccessibleDescription(local);
   await user.click(screen.getByRole("checkbox", { name: "Sky" }));
   expect(instructions).toHaveAccessibleDescription(
-    /Sky runs remotely and may not get these instructions\.$/,
+    "Agents on your devices follow these after their own instructions. Agents run by their provider (Sky) will not get these team instructions.",
   );
   await user.click(screen.getByRole("checkbox", { name: "Kai" }));
   expect(instructions).toHaveAccessibleDescription(
-    /Sky and Kai run remotely and may not get these instructions\.$/,
+    /\(Sky and Kai\) will not get these team instructions\.$/,
   );
   await user.click(screen.getByRole("checkbox", { name: "Sky" }));
   await user.click(screen.getByRole("checkbox", { name: "Kai" }));
-  expect(instructions).not.toHaveAccessibleDescription(warning);
+  expect(instructions).toHaveAccessibleDescription(local);
 });
 
 it("closes the team editor when leaving Your teams", async () => {

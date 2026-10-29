@@ -117,10 +117,7 @@ it.each(["private", "public"] as const)(
     await user.click(control);
     await user.click(
       await screen.findByRole("option", {
-        name:
-          choice === "private"
-            ? "Channel members only"
-            : "Anyone in the community",
+        name: choice === "private" ? "Private" : "Public",
       }),
     );
     expect(

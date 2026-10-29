@@ -731,7 +731,8 @@ the verified selection checked, alongside profile/removal actions and the existi
 confirmation. Immutable roles such as Owner and self remain protected.
 The access row stays below and outside the scrolling member list, without a visible
 section heading. It uses the same avatar slot and type sizes as member rows: a community avatar/lock
-icon, a compact audience Select (**Who can read**), a short result description,
+icon, a compact audience Select (**Who can read**) with **Public** / **Private**
+labels, a hint explaining the audience and selected participation default,
 and the trailing **New people can** Select (Participate / View only), with short
 descriptions of the permitted actions. Audience options show the community avatar and
 lock icon inside the dropdown. The audience Select uses the shared text-link

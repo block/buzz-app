@@ -167,10 +167,14 @@ it.each(["public", "private"] as const)(
     render(
       <ChannelGeneralAccess capability={h.capability} channelId="alpha" />,
     );
-    const option =
-      visibility === "public"
-        ? "Channel members only"
-        : "Anyone in the community";
+    expect(
+      await screen.findByText(
+        visibility === "public"
+          ? "Anyone in the community can find and view."
+          : "New channel members can view.",
+      ),
+    ).toBeVisible();
+    const option = visibility === "public" ? "Private" : "Public";
     const control = await select(user, "Who can read", option);
     const confirm = screen.getByRole("alertdialog", {
       name: "Change general access?",
@@ -187,9 +191,7 @@ it.each(["public", "private"] as const)(
     await user.keyboard("{Escape}");
     await waitFor(() => expect(control).toHaveFocus());
     expect(control).toHaveTextContent(
-      visibility === "public"
-        ? "Anyone in the community"
-        : "Channel members only",
+      visibility === "public" ? "Public" : "Private",
     );
     await select(user, "Who can read", option);
     const next = {
@@ -225,7 +227,10 @@ it("confirms new people's View only/Participate access independently of private 
   );
   expect(
     screen.getByRole("combobox", { name: "Who can read" }),
-  ).toHaveTextContent("Channel members only");
+  ).toHaveTextContent("Private");
+  expect(
+    screen.getByText("New channel members can participate."),
+  ).toBeVisible();
 });
 it("shows the absent Member default without saving, and a declined save reloads current access", async () => {
   const h = harness();
@@ -325,7 +330,7 @@ it("retires an open confirmation and late reads when the destination changes", a
   const view = render(
     <ChannelGeneralAccess capability={h.capability} channelId="alpha" />,
   );
-  await select(user, "Who can read", "Anyone in the community");
+  await select(user, "Who can read", "Public");
   const pending = new Promise<ChannelDetails>(() => {});
   h.load.mockReturnValueOnce(pending);
   view.rerender(

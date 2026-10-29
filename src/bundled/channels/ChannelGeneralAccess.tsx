@@ -249,12 +249,12 @@ function ChannelGeneralAccessEditor({
                 options: [
                   {
                     value: "public",
-                    label: "Anyone in the community",
+                    label: "Public",
                     leading: communityAvatar("compact"),
                   },
                   {
                     value: "private",
-                    label: "Channel members only",
+                    label: "Private",
                     leading: <LockIcon size={20} />,
                   },
                 ],

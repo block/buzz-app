@@ -460,8 +460,8 @@ The timeline, channel-list preview and filtered plugin views share that operatio
   explicitly `dismiss(id)` to remove an operation's local contribution.
 - Reactive filtered views: at most 64 owned handles; dispose with the plugin.
 - Reminders: the viewer's list is read in pages of 200, newest first, until the
-  relay runs out, up to 2,000 reminders. Pages show as they land, but the list
-  stays loading until the last one. Past the bound the newest 2,000 show under
+  relay runs out, up to 10,000 reminders. Pages show as they land, but the list
+  stays loading until the last one. Past the bound the newest 10,000 show under
   "Some reminders could not be loaded" with Retry, older reminders stay hidden,
   the reminders plugin's saved check time does not advance, and every refresh
   reads all the pages again.

@@ -389,18 +389,18 @@ describe("reminder history paging", () => {
 
   it("stops at the page bound and reports the list as partial", async () => {
     const h = paged(
-      ...Array.from({ length: 11 }, (_, page) =>
-        heads(`p${page}-`, 200, 10_000 - page * 200),
+      ...Array.from({ length: 51 }, (_, page) =>
+        heads(`p${page}-`, 200, 20_000 - page * 200),
       ),
     );
     await h.model.recover();
-    expect(h.filters).toHaveLength(10);
+    expect(h.filters).toHaveLength(50);
     expect(h.snapshot()).toMatchObject({
       status: "ready",
       hydrated: true,
       error: "Too many reminders to load",
     });
-    expect(h.snapshot().reminders).toHaveLength(2_000);
+    expect(h.snapshot().reminders).toHaveLength(10_000);
   });
 
   it("fails a page that does not advance the cursor", async () => {

@@ -133,7 +133,9 @@ function randomD() {
 // could not be loaded", older ones stay hidden, the plugin's saved check time
 // stays put, and every refresh walks all the pages again.
 const PAGE = 200;
-const MAX_PAGES = 10;
+// A few reminders a day reaches 2,000 heads in under two years; 10,000 keeps a
+// safety net the cursor guard already backs without an everyday user in reach.
+const MAX_PAGES = 50;
 
 const now = () => Math.floor(Date.now() / 1000);
 /** Completed records expire 30–90 days out, randomized (NIP-ER). */

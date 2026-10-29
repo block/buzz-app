@@ -1008,12 +1008,14 @@ export function createChannelStore(
     }
   }
   // Background reads deduplicate metadata versions; strong resolution revisits proof.
-  const creationReads = new Map<string, string>();
+  type CreationRead = { version: string; complete: boolean };
+  const creationReads = new Map<string, CreationRead>();
   async function readCreations(
     events: readonly RelayEvent[],
     settings?: ChannelReadOptions,
   ) {
     if (!transport || !discovery || options.cachedOnly) return;
+    const pending = new Map<string, CreationRead>();
     const filters = events.flatMap((event) => {
       const id = tag(event, "d");
       const identity = channelIdentity(event);
@@ -1026,10 +1028,12 @@ export function createChannelStore(
         discovery.get(id)?.parentChannelId ||
         !identity.creator ||
         (settings?.consistency !== "strong" &&
-          creationReads.get(id) === event.id)
+          creationReads.get(id)?.version === event.id)
       )
         return [];
-      creationReads.set(id, event.id);
+      const read = { version: event.id, complete: false };
+      creationReads.set(id, read);
+      pending.set(id, read);
       return [
         {
           kinds: [9007],
@@ -1062,17 +1066,21 @@ export function createChannelStore(
         settings?.signal?.throwIfAborted();
         if (disposed || generation !== epoch || controller.signal.aborted)
           throw new DOMException("Stale creation resolution", "AbortError");
+        for (const filter of filters.slice(offset, offset + 4)) {
+          const id = filter["#h"][0];
+          const read = id && pending.get(id);
+          if (id && read && creationReads.get(id) === read)
+            read.complete = true;
+        }
         applyDiscovery(receipts.filter((event) => event.kind === 9007));
       }
     })()
       .catch((error) => {
         // Unavailable proof leaves an ordinary channel. A later metadata refresh
         // may retry; never turn a failed proof read into loss of channel access.
-        for (const event of events) {
-          const id = tag(event, "d");
-          if (id && creationReads.get(id) === event.id)
+        for (const [id, read] of pending)
+          if (!read.complete && creationReads.get(id) === read)
             creationReads.delete(id);
-        }
         throw error;
       })
       .finally(() => controllers.delete(controller));
@@ -2894,7 +2902,8 @@ export function createChannelStore(
   ) {
     const hadHydration = hydration !== undefined;
     epoch++;
-    creationReads.clear();
+    for (const [id, read] of creationReads)
+      if (!read.complete || !authorized(id)) creationReads.delete(id);
     revokedEpoch = epoch;
     hydration = undefined;
     revealHydration?.();

@@ -471,7 +471,9 @@ it("explains Watching to a new agent and switches it on this device", async () =
     React.createElement(createTab(ctx), { agent: { key: "membership-b" } }),
   );
   expect(
-    screen.getByText(/Agents can watch for events and automatically wake/),
+    screen.getByText(
+      /Attention lets agents watch for events and automatically wake/,
+    ),
   ).toBeTruthy();
   expect(
     screen.getByText("Watches only run while Buzz is open on this device."),

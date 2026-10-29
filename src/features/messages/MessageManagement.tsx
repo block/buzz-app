@@ -146,7 +146,8 @@ export function MessageManagement({
   );
   const available =
     !selection ||
-    ((!channelId || channelId === selection.row.channelId) && deletable);
+    ((!channelId || channelId === selection.row.channelId) &&
+      (selection.row.delivery === "failed" || deletable));
   useEffect(() => {
     if (!available) setSelection(undefined);
   }, [available]);
@@ -257,13 +258,8 @@ export function MessageManagement({
   );
 }
 
-/** Personal read/follow actions need current membership, not writing access.
- * Delete alone also accepts a failed send, to discard it. */
-function useManagedMessage(
-  row: ChannelMessage,
-  session: RelaySession,
-  discardFailed = false,
-) {
+/** Personal read/follow actions need current membership, not writing access. */
+function useManagedMessage(row: ChannelMessage, session: RelaySession) {
   const management = useContext(Management);
   const joined = useListedChannel(
     session.channels,
@@ -277,9 +273,7 @@ function useManagedMessage(
     joined &&
     !row.membership &&
     !row.diff &&
-    (!row.delivery ||
-      ["accepted", "seen"].includes(row.delivery) ||
-      (discardFailed && row.delivery === "failed"))
+    (!row.delivery || ["accepted", "seen"].includes(row.delivery))
     ? management
     : undefined;
 }
@@ -334,7 +328,52 @@ export function MessageManagementItems({
   row: ChannelMessage;
   session: RelaySession;
 }) {
-  const management = useManagedMessage(row, session, true);
+  return row.delivery === "failed" ? (
+    <UnsentMessageItems row={row} session={session} />
+  ) : (
+    <ManagedMessageItems row={row} session={session} />
+  );
+}
+
+/** The relay never stored a failed send, so Delete, which discards it from this
+ * device, is its only item, and channel state does not gate it. */
+function UnsentMessageItems({
+  row,
+  session,
+}: {
+  row: ChannelMessage;
+  session: RelaySession;
+}) {
+  const management = useContext(Management);
+  const editor = useMessageEditScope();
+  const afterClose = useAfterMessageMenuClose();
+  if (
+    !management ||
+    row.authorId !== session.viewer ||
+    row.membership ||
+    row.diff
+  )
+    return null;
+  const remove = () =>
+    management.remove(row, undefined, () => editor?.focusTarget() ?? null);
+  return (
+    <MenuItem onClick={() => (afterClose ? afterClose(remove) : remove())}>
+      <MenuIcon>
+        <TrashIcon size={14} />
+      </MenuIcon>
+      Delete message
+    </MenuItem>
+  );
+}
+
+function ManagedMessageItems({
+  row,
+  session,
+}: {
+  row: ChannelMessage;
+  session: RelaySession;
+}) {
+  const management = useManagedMessage(row, session);
   const editor = useMessageEditScope();
   const afterClose = useAfterMessageMenuClose();
   const archived = useListedChannel(
@@ -370,7 +409,6 @@ export function MessageManagementItems({
       item.event.tags.some(([name, id]) => name === "e" && id === row.id),
   );
   const own = row.authorId === session.viewer && !archived;
-  const unsent = row.delivery === "failed";
   const canEdit =
     writable && own && editor?.current && lastEditableMessage(session, [row]);
   const authorization =
@@ -380,9 +418,8 @@ export function MessageManagementItems({
     ownership.owner === session.viewer
       ? { agentId: row.authorId, ownerId: session.viewer }
       : undefined;
-  const canDelete = unsent
-    ? own
-    : ((writable && own) || !!authorization) && session.outbox?.supports(5);
+  const canDelete =
+    ((writable && own) || !!authorization) && session.outbox?.supports(5);
   const act = (action: () => void) =>
     afterClose ? afterClose(action) : action();
   return (
@@ -436,7 +473,7 @@ export function MessageManagementItems({
           Delete message
         </MenuItem>
       )}
-      {!dm && !unsent && (
+      {!dm && (
         <MenuItem
           onClick={() => {
             management.report(undefined);
@@ -505,6 +542,7 @@ function DeleteMessageDialog({
     setError(undefined);
     try {
       if (
+        !unsent &&
         !session.channels
           .list()
           .channels.some(
@@ -520,8 +558,19 @@ function DeleteMessageDialog({
           "This conversation is no longer available for changes.",
         );
       if (unsent) {
+        // dismiss() leaves a send that is retrying alone, without an error.
+        if (
+          !session.outbox
+            ?.snapshot()
+            .some(
+              (item) => item.event.id === row.id && item.delivery === "failed",
+            )
+        )
+          throw new Error(
+            "This message’s delivery changed. Cancel to see its current status.",
+          );
         setDiscarding(true);
-        await session.outbox?.dismiss(row.id);
+        await session.outbox.dismiss(row.id);
         close();
       } else if (operationId) {
         session.outbox?.retry(operationId);

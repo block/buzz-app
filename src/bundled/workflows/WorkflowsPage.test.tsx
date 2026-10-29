@@ -93,7 +93,7 @@ function detailPane() {
 it("shows the owner's identity in the row and detail and follows profile updates", async () => {
   const fixture = mount();
   const fallback = `Owner: ${formatPublicKey(fixtureViewer)}`;
-  expect(await screen.findByText(fallback)).toBeVisible();
+  await waitFor(() => expect(screen.getByText(fallback)).toBeVisible());
   act(() =>
     fixture.profiles.update({
       status: "ready",

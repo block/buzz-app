@@ -1490,9 +1490,11 @@ it("starts with My workflows and offers All channel workflows explicitly", async
     screen.queryByRole("button", { name: /^Open Other enabled:/ }),
   ).toBeNull();
   await choose("Owner", "All channel workflows");
-  expect(
-    await screen.findByRole("button", { name: /^Open Other enabled:/ }),
-  ).toBeVisible();
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: /^Open Other enabled:/ }),
+    ).toBeVisible(),
+  );
   await choose("Owner", "My workflows");
   act(() =>
     fixture.definitions.update({

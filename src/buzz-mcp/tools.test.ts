@@ -239,6 +239,39 @@ it("replies to a message inside a thread at the thread's root, and posts a file'
   });
 });
 
+it("attaches a WAV as a playable voice note after host preparation", async () => {
+  const { client, published } = fake(community);
+  const wav = new TextEncoder().encode("RIFFxxxxWAVE");
+  client.read = vi.fn(async () => wav);
+  client.upload = vi.fn(async (_data, mime) => {
+    if (mime !== "audio/wav") throw new Error("disallowed content type");
+    return {
+      url: "https://relay/media/voice.mp4",
+      sha256: "ab",
+      size: 100,
+      type: "video/mp4",
+      duration: 1.5,
+    };
+  });
+  await callTool(client, { channel: "chan", root }, "send", {
+    audience: "everyone",
+    files: ["/tmp/t.wav"],
+  });
+  expect(client.upload).toHaveBeenCalledWith(wav, "audio/wav");
+  expect(published[0]?.content).toBe(
+    "\n![voice-note-t.mp4](<https://relay/media/voice.mp4>)",
+  );
+  expect(published[0]?.tags).toContainEqual([
+    "imeta",
+    "url https://relay/media/voice.mp4",
+    "m video/mp4",
+    "x ab",
+    "size 100",
+    "duration 1.5",
+    "filename voice-note-t.mp4",
+  ]);
+});
+
 it("posts at the channel's top level when given a channel", async () => {
   const { client, published } = fake(community);
   await callTool(client, { channel: "chan", root }, "send", {

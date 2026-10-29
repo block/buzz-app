@@ -1,8 +1,8 @@
 # Deployment configuration: current-feature parity
 
 Buzz Foundation supports configuration for capabilities that exist here, not a
-port of every OG Buzz feature. Keep deployment overrides in local/CI configuration.
-Build defaults are readable binary data, **never secret storage**.
+port of every OG Buzz feature. Keep deployment values in local/CI configuration,
+not in source. Build defaults are readable binary data, **never secret storage**.
 
 ## Supported inputs and surfaces
 
@@ -67,10 +67,8 @@ builds.
 
 ## Builderlab URL build input
 
-Development and packaged builds default to `https://app.builderlab.xyz`, matching
-the desktop release workflow. To use another deployment, set `BUZZ_BUILDERLAB_URL`
-in repository-root `.env.local` for development, or in the process running
-`bin/pnpm build` / `bin/pnpm tauri build` for packaging:
+Set `BUZZ_BUILDERLAB_URL` in repository-root `.env.local` for development, or in
+the process running `bin/pnpm build` / `bin/pnpm tauri build` for packaging:
 
 ```sh
 BUZZ_BUILDERLAB_URL=https://app.builderlab.xyz bin/pnpm tauri build
@@ -81,9 +79,9 @@ repository-root `.env.local` and process values using the native dotenv pattern.
 For desktop, supply the full URL in `.env.local` or the build process environment
 so both stages receive it. Vite's additional `.env` and mode-specific files do
 not configure native grants. Process values take precedence, including an
-explicit empty value. Set `BUZZ_BUILDERLAB_URL=` to leave login unconfigured and
-grant no Builderlab network origin. The desktop release workflow supplies the
-production URL by default; see [release configuration](releases.md#builderlab-url).
+explicit empty value. When unset or empty, login is unconfigured and no network
+origin is granted. Local builds have no deployment default. The desktop release
+workflow supplies the production URL by default; see [release configuration](releases.md#builderlab-url).
 
 Any HTTPS host is supported, including an explicit port or deployment path. URL
 credentials, query parameters and fragments are rejected by the native build.

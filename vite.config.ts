@@ -86,7 +86,7 @@ export default defineConfig(async ({ command, mode }) => {
       ),
       "import.meta.env.VITE_BUZZ_COMMUNITY_ALIASES": JSON.stringify(aliases),
       "import.meta.env.VITE_BUZZ_BUILDERLAB_URL": JSON.stringify(
-        env.BUZZ_BUILDERLAB_URL ?? "https://app.builderlab.xyz",
+        env.BUZZ_BUILDERLAB_URL ?? "",
       ),
       "import.meta.env.VITE_BUZZ_OPEN_RELAY": JSON.stringify(openOrigin),
       "import.meta.env.VITE_BUZZ_DATABRICKS_HOST":

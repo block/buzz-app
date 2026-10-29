@@ -119,8 +119,7 @@ const importReminderKey = "agent-community-import:dismissed";
 
 /** The type's one-line summary of an agent; its title when it has none. */
 function summaryOf(agent: Agent, type: RegisteredAgentType | undefined) {
-  if (agent.place === "elsewhere")
-    return type && !type.remote ? "On another device" : "Harness unavailable";
+  if (agent.place === "elsewhere") return "On another device";
   if (agent.unfinished) return "Setup unfinished";
   if (!type) return "Type unavailable";
   try {
@@ -1172,17 +1171,8 @@ function AgentPeek({
       />
       {agent.place === "elsewhere" ? (
         <p className="m-0 text-body-sm text-secondary">
-          {type && !type.remote ? (
-            <>
-              Its key is on another of your devices, which runs it. Open Agents
-              there to change or delete it.
-            </>
-          ) : (
-            <>
-              This agent’s harness is unavailable in this client. Check Settings
-              → Plugins or use a build with this harness configured.
-            </>
-          )}
+          Its key is on another of your devices, which runs it. Open Agents
+          there to change or delete it.
         </p>
       ) : (
         <>

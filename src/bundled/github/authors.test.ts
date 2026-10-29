@@ -121,6 +121,13 @@ allow org:Block body:/bug/s`);
     expect(organizations(policy)).toEqual(["block"]);
   });
 
+  it("match bodies only as far as a wake quotes them", () => {
+    const policy = rules("allow body:/approved$/\ndeny");
+    const body = `${"x".repeat(999)}approved`;
+    expect(admit(by("eve", body), policy, "j", nobody)).toBe(false);
+    expect(admit(by("eve", body.slice(9)), policy, "j", nobody)).toBe(true);
+  });
+
   it("name the line that is not a rule", () => {
     const errors = {
       "allow\nwho knows": "Line 2: it must start with allow or deny",

@@ -5,7 +5,7 @@
 // agents' own comments, as before rules existed. Saved on this device and
 // edited in Settings; each poll reads them again, so a change applies to
 // running watches.
-import type { Feedback } from "./watch";
+import { BODY_CHARS, type Feedback } from "./watch";
 
 export type Rule = Readonly<{
   effect: "allow" | "deny";
@@ -195,7 +195,8 @@ export function admit(
       !item.body.trimStart().startsWith(rule.prefix)
     )
       continue;
-    if (rule.body && !rule.body.test(item.body)) continue;
+    // A rule sees only what a wake quotes.
+    if (rule.body && !rule.body.test(item.body.slice(0, BODY_CHARS))) continue;
     if (rule.org !== undefined) {
       if (item.bot || item.author === "ghost") continue;
       const known = member(item.author, rule.org.toLowerCase());

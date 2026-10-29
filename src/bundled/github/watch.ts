@@ -73,7 +73,7 @@ export const FEEDBACK_READ = 50;
  * and characters of each name. The manifest's `pull` command clips each body
  * to one more character than BODY_CHARS. */
 const LISTED = 10;
-const BODY_CHARS = 1_000;
+export const BODY_CHARS = 1_000;
 const CHECKS = 20;
 const NAME_CHARS = 100;
 

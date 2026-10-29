@@ -729,17 +729,21 @@ text before each row’s ellipsis button; Member and Guest are shown as **Partic
 and **Viewing only**. The ellipsis menu contains permitted role choices with
 the verified selection checked, alongside profile/removal actions and the existing role
 confirmation. Immutable roles such as Owner and self remain protected.
-**General access** sits below the list as one sentence-like row: a community/lock
+**General access** sits below the list as one sentence-like row: a community avatar/lock
 icon, a compact audience Select (**Who can read**), a short result description,
 and the trailing **New people can** Select (Participate / View only), with short
-descriptions of the permitted actions. Audience options show the community and
-lock icons inside the dropdown. Both Selects use the shared ghost Button treatment. On narrow screens the role control wraps
+descriptions of the permitted actions. Audience options show the community avatar and
+lock icon inside the dropdown. The audience Select uses the shared ghost Button
+treatment; the participation Select is outlined and vertically centered against
+the audience row, with its popup aligned to the trigger’s right edge. On narrow screens the role control wraps
 under the audience. The confirmation explains “People already in the channel keep
 their access.”; the note is not a permanent paragraph below the controls.
 Each selection opens a consequence confirmation. Cancel/Escape returns focus to
 the unchanged Select. **Change access** saves immediately through the existing
 channel-details capability, then reloads signed metadata. Loading, pending and
-unconfirmed saves disable both controls. Rejections offer **Reload access**.
+unconfirmed saves disable both controls. A pending save shows an inline spinner
+in the leading icon slot instead of a separate saving message. Rejections offer
+**Reload access**.
 failures before publication identify the initial access check, signing, or final
 access check that failed, retaining the underlying error. No request is retried.
 Uncertain results survive closing the dialog and offer **Check save status**,

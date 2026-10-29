@@ -192,6 +192,7 @@
 }
 .accessRole {
   min-width: 0;
+  align-self: center;
 }
 @media (max-width: 480px) {
   .accessRow {

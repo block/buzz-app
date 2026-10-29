@@ -9,8 +9,66 @@ import type {
 } from "../../features/relay/channel-details";
 import type { ChannelDetails } from "../../features/relay/channel-details-protocol";
 import { ChannelGeneralAccess } from "./ChannelGeneralAccess";
+import type { CommunityReader } from "../../features/communities/service";
 
 afterEach(cleanup);
+
+it.each([false, true])(
+  "uses this channel's community image when readOnly is %s",
+  async (readOnly) => {
+    const h = harness();
+    h.load.mockResolvedValue({ ...base, visibility: "public" });
+    const state: ReturnType<CommunityReader["snapshot"]> = {
+      status: "ready",
+      relayAvailable: true,
+      profile: { name: "Viewer", picture: "" },
+      selected: "https://other.example",
+      sync: { known: [], outbox: [] },
+      memberships: [
+        {
+          id: "https://other.example",
+          name: "Other",
+          icon: "https://other.example/icon.png",
+        },
+        {
+          id: "https://community.example",
+          name: "Community",
+          icon: "https://community.example/old.png",
+          publishedIcon: "https://community.example/current.png",
+        },
+      ],
+    };
+    const reader: CommunityReader = {
+      subscribe: () => () => {},
+      snapshot: () => state,
+    };
+    const view = render(
+      <ChannelGeneralAccess
+        capability={h.capability}
+        channelId="alpha"
+        communityReader={reader}
+        communityScope={`https://community.example:${"a".repeat(64)}`}
+        channel={{
+          id: "alpha",
+          name: "Alpha",
+          ...(readOnly ? { readOnly: true } : {}),
+          visibility: "public",
+          joinRole: "member",
+        }}
+      />,
+    );
+    if (!readOnly)
+      await waitFor(() =>
+        expect(
+          screen.getByRole("combobox", { name: "Who can read" }),
+        ).toBeEnabled(),
+      );
+    expect(view.container.querySelector("img")).toHaveAttribute(
+      "src",
+      "https://community.example/current.png",
+    );
+  },
+);
 
 it.each(["public", "private"] as const)(
   "shows verified %s access to readers without invoking the editing capability",

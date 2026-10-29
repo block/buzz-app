@@ -453,6 +453,7 @@ function TeamRow({
 /** The one access dialog. Any conversation lists and adds members; a Solo chat
  * adds people under its share rule and can also be shared to a channel. */
 export function ChannelMembersDialog({
+  communityScope,
   session,
   channelId,
   close,
@@ -467,6 +468,7 @@ export function ChannelMembersDialog({
   navigator,
   signal,
 }: {
+  communityScope?: string | undefined;
   session: RelaySession;
   channelId: string;
   close(): void;
@@ -2078,6 +2080,8 @@ export function ChannelMembersDialog({
           </section>
           {generalAccess && (
             <ChannelGeneralAccess
+              communityReader={communities}
+              communityScope={communityScope}
               key={channelId}
               capability={session.channelDetails}
               channelId={channelId}

@@ -4,6 +4,7 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type ReactNode,
 } from "react";
 import type { ChannelDetailsCapability } from "../../features/relay/channel-details";
 import type { ChannelSummary } from "../../features/relay/contracts";
@@ -14,25 +15,57 @@ import type {
 import { Button } from "../../shared/design-system/ui/Button";
 import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
 import { Select } from "../../shared/design-system/ui/Select";
+import { Avatar } from "../../shared/design-system/ui/Avatar";
+import type { CommunityReader } from "../../features/communities/service";
+import { communityName } from "../../features/communities/names";
+import { communityFromScope } from "../../features/relay/gifs";
+import { communityDestination } from "../../features/communities/destination";
 import {
   CircleNotchIcon,
   LockIcon,
-  UsersIcon,
+  GlobeIcon,
 } from "../../shared/design-system/icons";
 import styles from "./ChannelMembersDialog.module.css";
 import { privacyConsequence } from "./ChannelPrivacyConfirmation";
 
+const noCommunitySubscription = () => () => {};
+
 /** General access uses the same signed save/readback owner as channel details.
  * Choices are confirmed individually, like the member rows above this section. */
 export function ChannelGeneralAccess({
+  communityReader,
+  communityScope,
   capability,
   channelId,
   channel,
 }: {
+  communityReader?: CommunityReader | undefined;
+  communityScope?: string | undefined;
   capability: ChannelDetailsCapability;
   channelId: string;
   channel?: ChannelSummary;
 }) {
+  const origin = communityScope ? communityFromScope(communityScope) : null;
+  const community = useSyncExternalStore(
+    communityReader?.subscribe ?? noCommunitySubscription,
+    () =>
+      communityReader
+        ?.snapshot()
+        .memberships.find(
+          (entry) => communityDestination(entry.id).url === origin,
+        ),
+  );
+  const communityAvatar = community ? (
+    <Avatar
+      alt=""
+      src={community.publishedIcon ?? community.icon}
+      fallback={communityName(community)}
+      shape="squircle"
+      size="compact"
+    />
+  ) : (
+    <GlobeIcon size={24} />
+  );
   // Public previews and Guests can inspect signed discovery metadata without
   // calling the membership/write-gated channel-details capability.
   if (channel?.readOnly)
@@ -42,7 +75,7 @@ export function ChannelGeneralAccess({
         <div className="flex items-start gap-3">
           <span className="text-subtle" aria-hidden="true">
             {channel.visibility === "public" ? (
-              <UsersIcon size={24} />
+              communityAvatar
             ) : (
               <LockIcon size={24} />
             )}
@@ -67,16 +100,22 @@ export function ChannelGeneralAccess({
       </section>
     );
   return (
-    <ChannelGeneralAccessEditor capability={capability} channelId={channelId} />
+    <ChannelGeneralAccessEditor
+      capability={capability}
+      channelId={channelId}
+      communityAvatar={communityAvatar}
+    />
   );
 }
 
 function ChannelGeneralAccessEditor({
   capability,
   channelId,
+  communityAvatar,
 }: {
   capability: ChannelDetailsCapability;
   channelId: string;
+  communityAvatar: ReactNode;
 }) {
   const attempt = useSyncExternalStore(capability.subscribe, () =>
     capability.snapshot(channelId),
@@ -181,7 +220,7 @@ function ChannelGeneralAccessEditor({
               className="motion-safe:animate-spin"
             />
           ) : base?.visibility === "public" ? (
-            <UsersIcon size={24} />
+            communityAvatar
           ) : (
             <LockIcon size={24} />
           )}
@@ -201,7 +240,7 @@ function ChannelGeneralAccessEditor({
                   {
                     value: "public",
                     label: "Anyone in the community",
-                    leading: <UsersIcon size={20} />,
+                    leading: communityAvatar,
                   },
                   {
                     value: "private",
@@ -232,7 +271,7 @@ function ChannelGeneralAccessEditor({
         <div className={styles.accessRole}>
           <Select
             variant="compact"
-            appearance="ghost"
+            appearance="outlined"
             label="New people can"
             align="end"
             value={base ? (base.joinRole ?? "member") : ""}

@@ -37,7 +37,10 @@ it("imports once and only after consent", async () => {
     answer(true);
     await flush();
     expect(communities.snapshot().memberships).toEqual([
-      { id: "https://old.example", name: "old.example" },
+      expect.objectContaining({
+        id: "https://old.example",
+        name: "old.example",
+      }),
     ]);
     expect(communities.snapshot().sync.outbox).toEqual([
       { url: "wss://old.example", removed: false },

@@ -115,6 +115,19 @@ empty state there. Try drafting in A, switching to B, then returning to A.
 Selected channels, drafts and reading offsets are partitioned by the canonical
 community origin and viewer; channel IDs alone are not sufficient keys.
 
+Windows on the same app origin share the saved memberships and selection.
+Each snapshot and command reads a changed device record before it uses membership.
+Storage events also notify readers and dispose sessions for removed memberships.
+A new local join has a generation value. Artifact handles capture this value, so
+leave and rejoin cannot restore an old handle. Records without a generation remain
+readable. Explicit rejoin creates a new handle and session. Account sync also assigns a new
+generation when it adds a membership. Snapshot reads notify subscribers after the
+read returns, so a sync owner cannot start a second drain from inside its snapshot.
+
+Leave takes the artifact partition lock before it removes membership. It holds the
+lock through device purge. New artifact collections wait for that purge before
+they initialize, so a concurrent rejoin keeps its fresh records.
+
 ## Import from the previous desktop app
 
 After native startup, Buzz offers the previous desktop app's saved communities

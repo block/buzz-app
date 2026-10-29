@@ -166,7 +166,7 @@ export function ButtonSpecimen() {
               <MenuGroupLabel>Add as</MenuGroupLabel>
               <MenuItem>
                 <ChoiceRow
-                  label="Participate"
+                  label="Participant"
                   description="Send messages, reply, and react."
                 />
               </MenuItem>

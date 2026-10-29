@@ -101,7 +101,7 @@ const INVITATION_GROUP_SIZE = 4;
 const additionRoles = [
   {
     role: "member",
-    label: "Participate",
+    label: "Participant",
     action: "Add as participant",
     description: "Send messages, reply, and react.",
   },

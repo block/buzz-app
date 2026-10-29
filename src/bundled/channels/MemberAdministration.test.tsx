@@ -288,7 +288,7 @@ it.each([
           role === "guest"
             ? "View only Read messages and threads."
             : role === "member"
-              ? "Participate Send messages, reply, and react."
+              ? "Participant Send messages, reply, and react."
               : "Admin Manage this channel and its members.",
       }),
     );

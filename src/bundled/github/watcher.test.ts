@@ -133,6 +133,12 @@ function membership(members: readonly string[], input: string) {
   });
 }
 
+/** How many membership reads asked GitHub about `login`. */
+const asks = (app: ReturnType<typeof setup>, login: string) =>
+  app.runCommand.mock.calls.filter(([, input]) =>
+    (JSON.parse(input) as { query: string }).query.includes(`login:"${login}"`),
+  ).length;
+
 function setup(initial: Pull | null = answer()) {
   let gh = initial;
   let texts = true;
@@ -1129,14 +1135,29 @@ describe("github_watch_pr", () => {
     expect(app.texts()).toHaveLength(1);
     expect(app.texts()[0]).toContain("body-alice");
     // After ten polls it is taken to be in no organization, and is seen.
-    const asked = () =>
-      app.runCommand.mock.calls.filter(([, input]) =>
-        (input as string).includes('"mannequin"'),
-      ).length;
     await vi.advanceTimersByTimeAsync(12 * POLL_MS);
-    const settled = asked();
+    const settled = asks(app, "mannequin");
+    expect(settled).toBeGreaterThan(0);
     await vi.advanceTimersByTimeAsync(3 * POLL_MS);
-    expect(asked()).toBe(settled);
+    expect(asks(app, "mannequin")).toBe(settled);
+    expect(app.texts().join("\n")).not.toContain("body-mannequin");
+    app.dispose();
+  });
+
+  it("gives up on a lone commenter GitHub cannot read, as it answers the viewer", async () => {
+    savePolicy("allow org:block");
+    const app = setup();
+    await app.call({ url });
+    app.gh(
+      answer({
+        comments: [{ id: "I1", login: "mannequin", body: "body-mannequin" }],
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(12 * POLL_MS);
+    const settled = asks(app, "mannequin");
+    expect(settled).toBeGreaterThan(0);
+    await vi.advanceTimersByTimeAsync(3 * POLL_MS);
+    expect(asks(app, "mannequin")).toBe(settled);
     expect(app.texts().join("\n")).not.toContain("body-mannequin");
     app.dispose();
   });

@@ -105,9 +105,7 @@ export function ModelFamilyMenu({
               </span>
             )}
             <span className="buzz-select-leading" aria-hidden="true">
-              <ModelIcon
-                model={selected.family || selected.id || selected.label}
-              />
+              <ModelIcon model={modelFamily(selected)} />
             </span>
             {/* Card labels keep Default accessible without crowding the model. */}
             <span className={styles.value}>

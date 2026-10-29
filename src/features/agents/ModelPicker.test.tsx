@@ -10,9 +10,41 @@ import {
   GrokLogoIcon,
   ZaiLogoIcon,
   KimiLogoIcon,
+  ClaudeLogoIcon,
+  CodexLogoIcon,
+  GoogleLogoIcon,
 } from "../../shared/design-system/icons";
 
 afterEach(cleanup);
+
+it.each([
+  ["Gemini 3 Pro", "Gemini", GoogleLogoIcon],
+  ["Claude Sonnet 5", "Claude", ClaudeLogoIcon],
+  ["GPT-6", "OpenAI", CodexLogoIcon],
+] as const)(
+  "matches the selected %s icon to its family submenu with an opaque catalog ID",
+  async (label, family, Icon) => {
+    const user = userEvent.setup();
+    const reference = render(<Icon size={20} />);
+    const artwork = reference.container.querySelector("svg")?.innerHTML;
+    reference.unmount();
+    render(
+      <ModelPicker
+        groupByFamily
+        includeDefault={false}
+        models={[{ id: "opaque-catalog-id", label }]}
+        value="opaque-catalog-id"
+        defaultLabel="Choose model"
+        onChange={vi.fn()}
+      />,
+    );
+    const trigger = screen.getByRole("button", { name: /^Model:/ });
+    expect(trigger.querySelector("svg")?.innerHTML).toBe(artwork);
+    await user.click(trigger);
+    const submenu = await screen.findByRole("menuitem", { name: family });
+    expect(submenu.querySelector("svg")?.innerHTML).toBe(artwork);
+  },
+);
 
 it.each([
   ["DeepSeek", "deepseek/deepseek-v3", DeepSeekLogoIcon],

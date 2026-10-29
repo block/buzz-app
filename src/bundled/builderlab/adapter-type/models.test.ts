@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 import { modelChoice } from "./models";
+import { modelFamily } from "../../../features/agents/ModelFamilyMenu";
 
 it.each([
   ["Sol 6", "OpenAI"],
@@ -13,22 +14,24 @@ it.each([
   ["GLM 5.3 Flash", "GLM"],
   ["Kimi K3", "Kimi"],
   ["DeepSeek 4.1 Flash", "DeepSeek"],
+  ["Gemini 3 Pro", "Gemini"],
+  ["Claude Sonnet 5", "Claude"],
+  ["GPT-6", "OpenAI"],
   ["Future Model", "Other"],
   ["Solstice", "Other"],
   ["constructor", "Other"],
 ])(
   "maps the Builderlab catalog alias %s to %s without rewriting its identity",
   (displayName, family) => {
-    expect(
-      modelChoice({
-        id: "opaque-provider-id",
-        displayName,
-        supportedReasoningEfforts: ["high"],
-      }),
-    ).toEqual({
+    const choice = modelChoice({
+      id: "opaque-provider-id",
+      displayName,
+      supportedReasoningEfforts: ["high"],
+    });
+    expect(choice).toMatchObject({
       id: "opaque-provider-id",
       label: displayName,
-      family,
     });
+    expect(modelFamily(choice)).toBe(family);
   },
 );

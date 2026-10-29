@@ -3,7 +3,7 @@ import type { RemoteAgentModel } from "../agents/client";
 
 // Builderlab owns these catalog aliases. Keep this mapping in sync with its
 // catalog information until the API supplies a model-family field. Unknown
-// names stay selectable under Other; labels, IDs and efforts remain server-owned.
+// names fall through to shared inference; labels, IDs and efforts remain server-owned.
 const families = new Map([
   ["sol", "OpenAI"],
   ["luna", "OpenAI"],
@@ -21,9 +21,10 @@ export function modelChoice(model: RemoteAgentModel): ModelChoice {
     .trim()
     .toLowerCase()
     .split(/[\s._-]/)[0];
+  const family = families.get(alias ?? "");
   return {
     id: model.id,
     label: model.displayName,
-    family: families.get(alias ?? "") ?? "Other",
+    ...(family ? { family } : {}),
   };
 }

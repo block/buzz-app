@@ -80,8 +80,9 @@ the draft can be saved.
 The model control uses the same family submenus as Goose. Builderlab's catalog
 aliases are mapped to families in `adapter-type/models.ts`; update that mapping
 with Builderlab's catalog information until its API supplies family metadata.
-The server still owns available choices, names and thinking levels. Unknown
-aliases remain selectable under Other. Families without a shared brand mark use
+The server still owns available choices, names and thinking levels. Unmapped
+aliases use shared family inference from the model ID and name; unrecognized
+models remain selectable under Other. Families without a shared brand mark use
 the generic model icon.
 Creation offers the same catalog choices and optional instructions. The provider
 registers and activates the agent before saving the settings together. Unfinished

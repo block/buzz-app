@@ -352,6 +352,15 @@ export function HostedCommunities({
         api.admitDeletion(pending.request, "recovery"),
       );
     });
+  /** Retries a failed account check; the surrounding page keeps the shared session. */
+  const retryAuth = () =>
+    run("retry", async () => {
+      const at = generation.current;
+      const next = await api.getAuth();
+      if (at !== generation.current || !activeRef.current()) return;
+      setAuth(next);
+      if (next) await load();
+    });
   const busy = action !== null;
   // Repeated inside open dialogs, whose modal backdrop hides the page copy.
   const failure = error && (
@@ -447,7 +456,17 @@ export function HostedCommunities({
           Checking sign-in…
         </p>
       ) : !auth ? (
-        sharedSignIn ? null : (
+        sharedSignIn ? (
+          <div className="mt-3">
+            <Button
+              loading={action === "retry"}
+              disabled={busy}
+              onClick={() => void retryAuth()}
+            >
+              Try again
+            </Button>
+          </div>
+        ) : (
           <EmptyState
             icon={<GlobeIcon />}
             title="Sign in to manage hosted communities"

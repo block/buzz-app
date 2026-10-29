@@ -533,9 +533,17 @@ export class AgentRunners {
    * nothing from the time it was off; across a restart, its saved
    * checkpoint, moved while it was off, does the same. */
   private quiet = new Set<string>();
-  /** Whether startup is over for catch-up: plugins have finished starting,
+  /** Whether startup is over for Attention: plugins have finished starting,
    * or Attention has been shown, since this copy started. */
   private settled = false;
+  /** Whether Attention is still waiting for startup, so neither its checkpoints
+   * nor the live events it would hear can be decided yet. */
+  private starting() {
+    this.settled ||= this.host.attentionShown() || this.host.pluginsSettled();
+    return !this.settled;
+  }
+  /** Whether live events are held until startup ends. */
+  private heldForStartup = false;
   /** Mention turns working now, which closing or reloading the app would
    * stop, and those the app left working last time until they are given
    * again or forgotten, as saved. */
@@ -1096,10 +1104,14 @@ export class AgentRunners {
     };
     // Until plugins finish starting or Attention is shown, every checkpoint
     // stays put, so the first catch-up still reads what the app missed while
-    // closed. After that, no plugin showing Attention is like turning it off.
+    // closed, and live events stay held. After that, no plugin showing
+    // Attention is like turning it off.
     const shown = this.host.attentionShown();
-    this.settled ||= shown || this.host.pluginsSettled();
-    const held = !shown && !this.settled;
+    const held = this.starting();
+    if (!held && this.heldForStartup) {
+      this.heldForStartup = false;
+      this.releaseHeld(() => true);
+    }
     for (const runner of this.runners.values()) {
       this.resumeTurns(runner);
       const agent = this.host.agent(runner.key);
@@ -1868,11 +1880,20 @@ export class AgentRunners {
       return CHAT_KINDS.includes(event.kind)
         ? { triggers: [{ type: "mention", event }] }
         : { triggers: [] };
-    if (!agent.attentionEnabled) return { triggers: [] };
+    // An agent whose Attention waits for startup holds what it would hear.
+    const waiting =
+      !agent.attentionEnabled &&
+      this.host.saved(runner.key)?.attentionEnabled === true &&
+      this.starting();
+    if (!agent.attentionEnabled && !waiting) return { triggers: [] };
     const matches = this.watches(runner, agent).filter(
       ({ slug, watch }) => !done.has(slug) && watchMatches(watch, event),
     );
     if (!matches.length) return { triggers: [] };
+    if (waiting) {
+      this.heldForStartup = true;
+      return { triggers: [], held: true };
+    }
     const member = this.host.member(agent, event);
     if (member === undefined) return { triggers: [], held: true };
     if (!member) return { triggers: [] };

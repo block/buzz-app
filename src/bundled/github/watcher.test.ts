@@ -919,6 +919,32 @@ describe("github_watch_pr", () => {
     app.dispose();
   });
 
+  it("tells newly read feedback rules saved while membership is read allow", async () => {
+    savePolicy("allow org:block");
+    const app = setup();
+    await app.call({ url });
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const run = app.runCommand.getMockImplementation();
+    app.runCommand.mockImplementation(async (id, input) => {
+      if (!("variables" in JSON.parse(input))) await gate;
+      return run?.(id, input) ?? null;
+    });
+    app.gh(
+      answer({
+        comments: [{ id: "I1", login: "stranger", body: "body-stranger" }],
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+    savePolicy("allow");
+    release();
+    await vi.advanceTimersByTimeAsync(QUIET_MS + POLL_MS);
+    expect(app.texts().join("\n")).toContain("body-stranger");
+    app.dispose();
+  });
+
   it("holds waiting feedback while the rules need a membership it cannot read", async () => {
     const app = setup();
     await app.call({ url });

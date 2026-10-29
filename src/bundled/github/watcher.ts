@@ -178,34 +178,21 @@ export function watchPulls(ctx: Context) {
       .slice(0, FEEDBACK_READ);
     if (!asked.length) return snapshot;
     // Text is read apart, so CI results still arrive when it cannot be.
+    // recheck decides what of it may wake the agent.
     const text = await ctx.host.runCommand("pull", feedbackRequest(asked));
     const feedback = text === null ? undefined : parseFeedback(text);
-    const policy = loadPolicy();
-    if (feedback) await lookUp(feedback, policy, snapshot.viewer);
-    const member = membership(organizations(policy), MEMBERSHIP_MS);
-    const admitted = new Map(
-      (feedback ?? []).map((item) => [
-        item.id,
-        admit(item, policy, snapshot.viewer, member),
-      ]),
-    );
-    // Feedback a rule needs its author's unread membership for is not read
-    // yet. What was not read stays unseen, to be read on a later poll.
-    const unknown = new Set(
-      [...admitted].flatMap(([id, ok]) => (ok === undefined ? [id] : [])),
-    );
-    const got = new Set(feedback ? asked.filter((id) => !unknown.has(id)) : []);
+    // What was not read stays unseen, to be read on a later poll.
+    const got = new Set(feedback ? asked : []);
     return {
       ...snapshot,
       ids: snapshot.ids.filter((id) => known.has(id) || got.has(id)),
-      // Feedback the rules deny is seen but not told.
-      feedback: (feedback ?? []).filter((item) => admitted.get(item.id)),
+      feedback: feedback ?? [],
     };
   };
 
-  /** `watch` and `snapshot` with waiting and new feedback checked against the
-   * rules again, as they may have changed since it was read. What they deny is
-   * dropped; what needs an unread membership is unseen, to be read later. */
+  /** `watch` and `snapshot` with waiting and newly read feedback checked
+   * against the rules, as they are now. What they deny is dropped; what needs
+   * an unread membership is unseen, to be read later. */
   const recheck = async (
     watch: Watch,
     snapshot: PullSnapshot,

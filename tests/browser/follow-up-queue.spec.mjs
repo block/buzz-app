@@ -521,3 +521,55 @@ test("an open queue recovers Remove when another window releases an abandoned ha
     await other.evaluate(() => window.releaseQueueLock?.());
   }
 });
+
+// Real storage-event delivery must preserve earlier work and pause only successors.
+test("external removal pauses successors while earlier queued work still drains", async ({
+  page,
+  context,
+  app,
+}) => {
+  const { editor, first } = await startWorkingAgent(page, app);
+  const queue = page.getByRole("region", { name: "Queued follow-ups" });
+  for (const text of ["Earlier queued", "Removed middle", "Later queued"]) {
+    await editor.press("End");
+    await page.keyboard.insertText(text);
+    await editor.press("Enter");
+    await expect(queue).toContainText(text);
+  }
+  const other = await context.newPage();
+  await other.route("**/queue-removal-owner", (route) =>
+    route.fulfill({
+      contentType: "text/html",
+      body: "<!doctype html><title>Queue removal owner</title>",
+    }),
+  );
+  await other.goto(`${app.origin}/queue-removal-owner`);
+  await other.evaluate(() => {
+    const key = Object.keys(localStorage).find(
+      (key) =>
+        key.startsWith("buzz-view.v1:") &&
+        JSON.parse(key.slice("buzz-view.v1:".length))[1].startsWith(
+          "follow-up:",
+        ) &&
+        JSON.parse(localStorage.getItem(key))?.text?.includes("Removed middle"),
+    );
+    if (!key) throw new Error("Middle queued row missing");
+    localStorage.removeItem(key);
+  });
+  await expect(queue).not.toContainText("Removed middle");
+  const later = queue.getByRole("listitem").filter({ hasText: "Later queued" });
+  await expect(later).toContainText(
+    "Paused because an earlier message was handled in another window. Send when ready.",
+  );
+  await page.evaluate((id) => window.localAgentFixture.finish(id, true), first);
+  await expect
+    .poll(() =>
+      app.report.publications.some(
+        ({ event }) =>
+          event.kind === 9 && event.content.includes("Earlier queued"),
+      ),
+    )
+    .toBe(true);
+  await expect(queue.getByRole("listitem")).toHaveCount(1);
+  await expect(later).toBeVisible();
+});

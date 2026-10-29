@@ -605,6 +605,51 @@ it("refuses Remove in either window while the Outbox handoff is pending", async 
   expect(first.send).toHaveBeenCalledOnce();
 });
 
+it("keeps earlier rows draining when another window removes a later row", async () => {
+  const first = fixture();
+  const earlier = first.enqueue();
+  const later = first.enqueue({ ...message, text: "Later" });
+  cleanup.push(first.queue.subscribe(() => {}));
+  const second = fixture();
+  second.queue.remove(later);
+  await vi.waitFor(() => expect(followUpStorage(scope).has(later)).toBe(false));
+  window.dispatchEvent(new StorageEvent("storage"));
+  expect(first.queue.snapshot()).toMatchObject([{ id: earlier }]);
+  expect(first.queue.snapshot()[0]?.restored).not.toBe(true);
+  first.finish();
+  await vi.waitFor(() => expect(first.send).toHaveBeenCalledOnce());
+});
+
+it("refuses removal while another window owns the row before setting its sending marker", async () => {
+  const first = fixture();
+  const id = first.enqueue();
+  const second = fixture();
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let started!: () => void;
+  const acquired = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const lock = followUpStorage(scope).lock(id, async () => {
+    started();
+    await held;
+  });
+  try {
+    await acquired;
+    expect(followUpStorage(scope).isSending(id)).toBe(false);
+    second.queue.remove(id);
+    await Promise.resolve();
+    expect(followUpStorage(scope).has(id)).toBe(true);
+  } finally {
+    release();
+    await lock;
+  }
+  second.queue.remove(id);
+  await vi.waitFor(() => expect(followUpStorage(scope).has(id)).toBe(false));
+});
+
 it("pauses a later row when another window removes its handed-off predecessor", async () => {
   const first = fixture();
   const id = first.enqueue();

@@ -18,6 +18,7 @@ type Entry = {
   message?: FollowUpMessage;
   restored?: boolean;
   resumeCancelled?: boolean;
+  predecessorRemoved?: boolean;
   sending?: boolean;
   ready?(): boolean;
   beforeRelease?(): Promise<void>;
@@ -52,11 +53,13 @@ function createQueue(session: RelaySession) {
     try {
       const saved = storage.load();
       sequence = Math.max(sequence, ...saved.map((entry) => entry.createdAt));
-      const removedChannels = new Set(
-        entries
-          .filter((entry) => !saved.some((row) => row.id === entry.id))
-          .map((entry) => entry.channelId),
-      );
+      const removedChannels = new Set<string>();
+      const paused = new Set<string>();
+      for (const entry of entries) {
+        if (!saved.some((row) => row.id === entry.id))
+          removedChannels.add(entry.channelId);
+        else if (removedChannels.has(entry.channelId)) paused.add(entry.id);
+      }
       entries = saved.map(
         (saved) =>
           entries.find((entry) => entry.id === saved.id) ?? {
@@ -67,9 +70,10 @@ function createQueue(session: RelaySession) {
           },
       );
       for (const entry of entries) {
-        if (removedChannels.has(entry.channelId)) {
+        if (paused.has(entry.id)) {
           entry.restored = true;
           entry.resumeCancelled = true;
+          entry.predecessorRemoved = true;
         }
         if (!entry.error)
           entry.sending =
@@ -435,7 +439,7 @@ function createQueue(session: RelaySession) {
     const entry = entries.find((item) => item.id === id);
     try {
       if (entry?.sending && publishing.has(id)) return;
-      if (entry?.message && storage?.isSending(id) && !locked) {
+      if (entry?.message && storage && navigator.locks && !locked) {
         void storage.tryLock(id, () => {
           remove(id, true);
           reconcileDelivery();

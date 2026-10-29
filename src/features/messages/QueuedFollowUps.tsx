@@ -82,7 +82,9 @@ export function QueuedFollowUps({
               )}
               {entry.restored && !entry.sending && !entry.error && (
                 <p className="text-caption">
-                  Saved before restart. Send when ready.
+                  {entry.predecessorRemoved
+                    ? "Paused because an earlier message was handled in another window. Send when ready."
+                    : "Saved before restart. Send when ready."}
                 </p>
               )}
               {entry.error && (

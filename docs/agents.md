@@ -333,7 +333,9 @@ fresh local completion is required. Uncertain or unreadable requests keep waitin
 If a type cannot resume or the relay confirms a request is gone, its saved follow-ups
 return to paused; other agents’ waits remain intact. Incomplete recipient discovery
 defers release until availability can be determined. A predecessor removed by another
-window pauses the remaining rows when this window cannot establish its completion.
+window pauses only its successors when this window cannot establish its completion;
+earlier rows continue draining. The paused rows explain that an earlier message was
+handled in another window.
 **Don’t resume** leaves the saved follow-ups paused. Other chats remain paused.
 Every release rechecks membership and recipient availability. A failed save keeps the
 composer draft; a failed removal keeps the row. Delivery transfers to the existing

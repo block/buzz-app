@@ -550,10 +550,20 @@ the returned command, and confirms relay-owned state before removing a row. Arch
 confirmed Delete/Leave use the existing access-loss purge. Commands use narrow
 development-broker routes or the packaged native `relay_channel_sign` and
 `relay_channel_publish` commands, never the message outbox or automatic replay.
-Both hosts admit only the exact two-tag `9002` shape with `archived=true` (Archive)
-or `archived=false` (Unarchive); other values, extra tags, cross-route commands and
+The same route carries the **Starter channel for new members** switch as two commands
+without a confirmation dialog, `auto-join-on` and `auto-join-off`, each a `9002`
+with `auto_join=true|false`. The lifecycle owner requires fresh relay metadata for an
+active public stream channel before signing (channel roles cannot show community
+ownership; the relay accepts the flag only from community owners and admins) and
+confirms the result from the republished `39000`: the relay advertises the flag
+as a bare `auto_join` tag only while it is in effect, so success is that tag's
+presence or absence, not the written value.
+Both hosts admit only the exact two-tag `9002` shape with `archived=true` (Archive),
+`archived=false` (Unarchive) or `auto_join=true|false` (the switch); other values,
+extra tags, cross-route commands and
 altered or foreign signatures are rejected. Hosts without this capability display
-an unavailable notice. Native Unarchive requires rebuilding/restarting the desktop
+an unavailable notice. Native Unarchive and the auto-join switch require
+rebuilding/restarting the desktop
 binary; updating the frontend alone does not update the Rust validator. Rust
 validator and production-IPC tests cover both values, but do not establish an
 installed desktop Archive → Unarchive round trip against a live relay; that
@@ -625,6 +635,12 @@ Edit details button, header-menu Edit details entry and informational Channel ty
 row are omitted.
 Duration uses Create's Ongoing/Temporary cards, and Private uses the same
 switch in the action row. These controls stage changes; neither publishes immediately.
+**Starter channel for new members**, between Visibility and Members, is separate: an
+immediate switch that publishes its own narrow `9002` (see
+[Channel lifecycle](#channel-lifecycle)) and shows pending, the relay's refusal
+or, when the change is not confirmed, a prompt to try again beside itself. It appears only to community owners and admins
+(the relay-signed kind `13534` roster) on an active public stream channel; the
+relay enforces that rule, so the gate is display-only.
 **Save changes** submits the draft together and is enabled only for valid, changed values.
 **Cancel** explicitly discards edits and closes without confirmation. Close, Escape
 and backdrop clicks close untouched forms immediately; changed drafts first show
@@ -1117,6 +1133,39 @@ The relay service restores a read-only session from the account/relay-scoped cac
 concurrently with the real connection handshake. Saved groups, stars and channel
 names are display data, not a confirmed preference mutation base. No cache means
 the ordinary cold connection flow; unavailable/corrupt storage never grants access.
+
+With no saved selection, Messages opens the first channel the relay flags
+`auto_join` (its default for new members), then the first non-Solo channel; an
+explicit empty route bypasses both. The relay joins a new member into its
+`auto_join` channels once, during the invite claim, and the resulting membership
+hints populate the sidebar live; it never re-adds them, so a later leave stands.
+`features/channels/default-channels.ts` backs up an add that failed at the
+claim, and only then: when the claim made on this device returned `joined`
+(never `already_member`), the `default-channels` view-state marker is `pending`.
+Once the live roster is verified, Messages records the flagged public channels
+the viewer is not in as owed (a capped directory read is final) and, only once
+that record is saved, joins each through the lifecycle owner. Channels the claim
+already added are never owed, so leaving one stands. An owed channel is dropped
+once it joins, may have joined (the relay accepted the join but it was not
+confirmed, including when Messages closed after sending it), is already joined,
+is no longer a flagged public channel or is definitively refused. A rate limit,
+a join that was never sent or leaving Messages before sending keeps it owed, and
+the next launch retries only owed channels the viewer is still not in. If a
+dropped channel cannot be saved, the marker is forgotten rather than left owing
+a channel the viewer may since have left. Runs can overlap, in two windows or
+when a replaced connection starts a newer run while an older one is still
+finishing a join. Each run saves only what the record still owes and joins only
+channels the record still owes, checking again just before each join is sent,
+and a result removes only its own channel from the record as saved at that
+moment, never undoing what the other run settled.
+Windows take turns updating the record.
+The marker becomes `done` when nothing is owed. Without a marker nothing runs,
+so upgrading, another device, cleared storage, a recovered claim whose reply
+was lost, and setup without an invite code never re-add channels the viewer
+left. Open communities, which require no claim, therefore get no client
+fallback: the relay advertises the flag there but auto-joins nobody, and the
+client cannot tell a newcomer from a returning member. Leaving the community
+purges the marker with the rest of the scope.
 
 A cached roster can display previously downloaded, reverified history for up to
 24 hours. It cannot authorize head/history reads, unread evidence, typing or

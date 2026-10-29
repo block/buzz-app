@@ -63,6 +63,7 @@ export const test = base.extend({
   lifecycleRole: ["owner", { option: true }],
   lifecycleOwnerAgent: [false, { option: true }],
   lifecycleVisibility: [{ archived: [], hidden: [] }, { option: true }],
+  autoJoinChannels: [[], { option: true }],
   sidebarIcons: [false, { option: true }],
   channelNames: [{}, { option: true }],
   expectedPageFailure: [false, { option: true }],
@@ -131,6 +132,7 @@ export const test = base.extend({
       lifecycleRole,
       lifecycleOwnerAgent,
       lifecycleVisibility,
+      autoJoinChannels,
       sidebarIcons,
       channelNames,
       expectedPageFailure,
@@ -1160,6 +1162,7 @@ export const test = base.extend({
                       (dmIds.includes(id) ? "dm" : "stream"),
                   ],
                   ...(archivedIds.has(id) ? [["archived", "true"]] : []),
+                  ...(autoJoinChannels.includes(id) ? [["auto_join"]] : []),
                   // Ordinary channels are explicitly public; do not add a public
                   // flag to private Solo chats or change the separate DM fixtures.
                   ...(!soloChannels.includes(id) &&

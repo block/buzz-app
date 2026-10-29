@@ -668,6 +668,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
                 tag(event, "t") === "stream" ? "" : tag(event, "t"),
                 has(event, "private") ? "private" : "",
                 has(event, "archived") ? "archived" : "",
+                has(event, "auto_join") ? "auto-join" : "",
                 ids.has(id)
                   ? ""
                   : membershipsComplete
@@ -1361,6 +1362,7 @@ class Tools {
       tag(metadata, "t"),
       has(metadata, "private") ? "private" : "open",
       has(metadata, "archived") ? "archived" : "",
+      has(metadata, "auto_join") ? "auto-join" : "",
       tag(metadata, "ttl")
         ? `archives after ${tag(metadata, "ttl")}s idle`
         : "",

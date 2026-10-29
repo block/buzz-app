@@ -258,15 +258,18 @@ describe("reminder history paging", () => {
   ) {
     const filters: ReadFilter[] = [];
     const statuses: string[] = [];
+    const decoded: string[] = [];
     const model = createReminders({
       viewer,
       signal: new AbortController().signal,
       host: {
-        decode: async (events) =>
-          events.map((e) => ({
+        decode: async (events) => {
+          decoded.push(...events.map((e) => e.id));
+          return events.map((e) => ({
             eventId: e.id,
             content: JSON.parse(e.content),
-          })),
+          }));
+        },
         sign: async () => wire("e", 1, "pending", "d"),
       },
       query: async ([filter]) => {
@@ -279,7 +282,13 @@ describe("reminder history paging", () => {
     model.capability.subscribe(() =>
       statuses.push(model.capability.snapshot().status),
     );
-    return { model, filters, statuses, snapshot: model.capability.snapshot };
+    return {
+      model,
+      filters,
+      statuses,
+      decoded,
+      snapshot: model.capability.snapshot,
+    };
   }
   // Scripted replies in order, whatever the filter asks.
   const paged = (...replies: (RelayEvent[] | Promise<RelayEvent[]>)[]) =>
@@ -447,6 +456,8 @@ describe("reminder history paging", () => {
     await h.model.recover();
     expect(h.filters).toHaveLength(2);
     expect(h.filters[1]).toMatchObject({ until: 801, before_id: "h199" });
+    // The event past page one comes back on page two but decrypts once.
+    expect(h.decoded).toHaveLength(201);
     expect(h.statuses).toEqual(["loading", "ready"]);
     expect(h.snapshot()).toMatchObject({ status: "ready", hydrated: true });
     expect(h.snapshot().reminders).toHaveLength(201);

@@ -200,12 +200,13 @@ export function createReminders(options: {
   async function accept(events: readonly RelayEvent[]) {
     // An event already held as a head (the one past the previous page, a live
     // echo of an own write) decodes to the head it is; skip the decrypt.
-    const held = new Set(Array.from(heads.values(), (r) => r.eventId));
+    const held = (event: RelayEvent) => {
+      const d = event.tags.find(([name]) => name === "d")?.[1];
+      return d !== undefined && heads.get(d)?.eventId === event.id;
+    };
     const own = events.filter(
       (event) =>
-        event.kind === REMINDER_KIND &&
-        event.pubkey === viewer &&
-        !held.has(event.id),
+        event.kind === REMINDER_KIND && event.pubkey === viewer && !held(event),
     );
     if (!own.length) return false;
     const byId = new Map(own.map((event) => [event.id, event]));

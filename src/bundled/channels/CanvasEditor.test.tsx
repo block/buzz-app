@@ -472,13 +472,47 @@ it("keeps a draft typed after a save while another editor's reload is pending", 
 
 it("keeps another editor's typed text when an edit back to the Canvas removes the draft", async () => {
   const { second, editing, other } = await twoEditors();
+  const region = screen.getAllByRole("region", {
+    name: "Channel Canvas",
+  })[1] as HTMLElement;
   fireEvent.change(other, { target: { value: "Mine" } });
   fireEvent.change(editing, { target: { value: "Theirs" } });
   fireEvent.change(editing, { target: { value: head.content } });
   expect(viewRevision(scope, `canvas-draft-v1:${channelId}`)).toBeNull();
-  // An automatic reload would have started its read synchronously.
-  expect(second.read).toHaveBeenCalledOnce();
+  await waitFor(() => {
+    expect(second.read).toHaveBeenCalledTimes(2);
+    expect(region).toHaveAttribute("aria-busy", "false");
+  });
   expect(other).toHaveValue("Mine");
+  expect(within(region).queryByRole("alert")).toBeNull();
+  expect(
+    within(region).getByRole("button", { name: "Save Canvas" }),
+  ).toBeEnabled();
+});
+
+it("keeps another editor's typed text and blocks its Save after a save", async () => {
+  const user = userEvent.setup();
+  const { saved, second, editing, other } = await twoEditors();
+  const region = screen.getAllByRole("region", {
+    name: "Channel Canvas",
+  })[1] as HTMLElement;
+  fireEvent.change(other, { target: { value: "Mine" } });
+  fireEvent.change(editing, { target: { value: "Edited" } });
+  second.read.mockResolvedValue(saved);
+  await user.click(
+    screen.getAllByRole("button", { name: "Save Canvas" })[0] as HTMLElement,
+  );
+  await waitFor(() => {
+    expect(second.read).toHaveBeenCalledTimes(2);
+    expect(region).toHaveAttribute("aria-busy", "false");
+  });
+  expect(other).toHaveValue("Mine");
+  expect(within(region).getByRole("alert")).toHaveTextContent(
+    "Canvas changed since this draft began",
+  );
+  expect(
+    within(region).getByRole("button", { name: "Save Canvas" }),
+  ).toBeDisabled();
 });
 
 function hold(operation: ReturnType<typeof vi.fn>) {

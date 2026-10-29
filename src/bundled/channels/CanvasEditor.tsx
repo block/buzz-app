@@ -152,9 +152,9 @@ export function CanvasEditor({
       retiredDraft.current = false;
       return;
     }
-    if (!loaded || busy || edited || retiredDraft.current) return;
+    if (!loaded || busy || retiredDraft.current) return;
     retiredDraft.current = true;
-    void load(true);
+    void load(!edited);
   }, [draftRevision, loaded, busy, edited, load]);
   const recover = (replace: boolean) => {
     handoff.current = recovery.current;
@@ -164,7 +164,8 @@ export function CanvasEditor({
   const restore = async (revision: RelayEvent) => {
     if (readOnly) return;
     const generation = ++operation.current;
-    // Keep a clean snapshot stable if another editor opens during this write.
+    // An editor that opens during this write starts from this snapshot and
+    // reconciles with the Canvas once the write settles and removes it.
     const snapshot =
       viewRevision(scope, key) === null &&
       writeView(scope, key, { content: draft, base });
@@ -208,7 +209,8 @@ export function CanvasEditor({
   const save = async () => {
     if (readOnly) return;
     const generation = ++operation.current;
-    // Keep a clean snapshot stable if another editor opens during this write.
+    // An editor that opens during this write starts from this snapshot and
+    // reconciles with the Canvas once the write settles and removes it.
     const snapshot =
       viewRevision(scope, key) === null &&
       writeView(scope, key, { content: draft, base });

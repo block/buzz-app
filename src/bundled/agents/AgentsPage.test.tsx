@@ -165,6 +165,7 @@ function setup(
       navigator?: Navigation;
       communities?: CommunityReader;
     },
+    teams = [] as AgentsSnapshot["teams"],
   } = {},
 ) {
   let snapshot: AgentsSnapshot = {
@@ -173,7 +174,7 @@ function setup(
     agents: saved,
     running: saved,
     interrupted: [],
-    teams: [],
+    teams,
   };
   const listeners = new Set<() => void>();
   const echoProvider = provider("ready", ({ onClose }) => (
@@ -2558,6 +2559,50 @@ it("explains an unavailable harness without claiming the key is on another devic
   expect(
     screen.queryByRole("button", { name: "Delete agent" }),
   ).not.toBeInTheDocument();
+});
+
+it("shows a synced team only where its members are, after switching communities", async () => {
+  const user = userEvent.setup();
+  const sky: Agent = { ...agent("Sky", 2), place: "hosted" };
+  const { show } = setup([agent("Ada", 1), sky], {
+    teams: [
+      {
+        id: "sky",
+        name: "Sky crew",
+        instructions: "",
+        members: [sky.pubkey],
+        revision: "1",
+      },
+      {
+        id: "empty",
+        name: "Empty",
+        instructions: "",
+        members: [],
+        revision: "1",
+      },
+      {
+        id: "stale",
+        name: "Stale",
+        instructions: "",
+        members: ["9".repeat(64)],
+      },
+    ],
+  });
+  const listed = () =>
+    within(screen.getByRole("list", { name: "Teams" }))
+      .getAllByRole("button")
+      .map((card) => card.getAttribute("aria-label"));
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  expect(listed()).toEqual(["Sky crew", "Empty", "Stale"]);
+  await user.click(screen.getByRole("button", { name: "Sky crew" }));
+  expect(
+    screen.getByRole("form", { name: "Edit Sky crew" }),
+  ).toBeInTheDocument();
+  act(() => show([agent("Bo", 3)]));
+  expect(
+    screen.queryByRole("form", { name: "Edit Sky crew" }),
+  ).not.toBeInTheDocument();
+  expect(listed()).toEqual(["Empty", "Stale"]);
 });
 
 it("shows an agent on another device read-only, and offers only Finish setup and Delete for an unfinished hosted one", async () => {

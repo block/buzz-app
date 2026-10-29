@@ -45,8 +45,12 @@
 }
 
 body {
-  min-block-size: 100svh;
   margin: 0;
+}
+
+/* Browser-injected body siblings must not become rows in the centering grid. */
+.page {
+  min-block-size: 100svh;
   padding: var(--space-panel-inset);
   display: grid;
   place-items: center;

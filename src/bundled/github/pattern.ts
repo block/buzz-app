@@ -41,7 +41,8 @@ export class Pattern {
     const word = new RegExp("^\\w$", flags);
     const isWord = (char?: string) => char !== undefined && word.test(char);
     const ESCAPE = unicode
-      ? /^\\(?:x[\da-f]{2}|u[\da-f]{4}|u\{[\da-f]+\}|c[a-z]|[pP]\{[^}]*\}|[\s\S])/iu
+      ? // An escaped surrogate pair is one character.
+        /^\\(?:ud[89ab][\da-f]{2}\\ud[c-f][\da-f]{2}|x[\da-f]{2}|u[\da-f]{4}|u\{[\da-f]+\}|c[a-z]|[pP]\{[^}]*\}|[\s\S])/iu
       : /^\\(?:x[\da-f]{2}|u[\da-f]{4}|c[a-z]|[\s\S])/i;
     let at = 0;
     const alternation = (): Node => {

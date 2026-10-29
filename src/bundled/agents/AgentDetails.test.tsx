@@ -97,6 +97,8 @@ it("shows every affected community with unsaved shared settings and submits the 
     },
     snapshot: () => ({ agents: [agent] }),
     configHistory: () => undefined,
+    addedTabs: () => [],
+    registerTab: () => {},
     memberships: () => [
       { key: agent.key, origin: "https://current.example", connected: true },
       { key: "other", origin: "wss://other.example", connected: false },

@@ -18,10 +18,9 @@ if (
 const port = values.port === undefined ? undefined : Number(values.port);
 
 const help = forwarded.some((arg) => arg === "--help" || arg === "-h");
-// Build the bundled goose-acp before Tauri compiles, so a cold build does not
-// count against its dev-server timeout. Local runs skip the size optimizations.
+// Stage bundled goose-acp before Tauri compiles, outside its dev-server timeout.
 if (!help) {
-  // Build for the target Tauri is given, as Tauri tells beforeBuildCommand.
+  // Stage for the target Tauri is given, as Tauri tells beforeBuildCommand.
   const at = forwarded.findIndex((arg) => arg === "--target" || arg === "-t");
   const triple =
     at === -1
@@ -57,7 +56,7 @@ if (!help) {
   // Work that never touches Goose should still start; Goose then says
   // goose-acp is missing.
   if (goose.status !== 0)
-    console.warn("goose-acp did not build; Goose agents will not start.");
+    console.warn("goose-acp did not stage; Goose agents will not start.");
 }
 const root = fileURLToPath(new URL("../", import.meta.url));
 const config = desktopOverlay(root);

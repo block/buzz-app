@@ -395,10 +395,14 @@ it("shows the real read failure, retains conversation choices, and retries to an
       },
     ]);
     await act(async () =>
-      request.fail(new ReadError("unavailable", "Relay read timed out")),
+      request.fail(
+        new ReadError("invalid-response", "Relay response was invalid"),
+      ),
     );
     expect(
-      screen.getByText(/Message search couldn’t finish: Relay read timed out/),
+      screen.getByText(
+        /Message search couldn’t finish: Relay response was invalid/,
+      ),
     ).toBeVisible();
     expect(screen.getByRole("option", { name: /wes-crew/ })).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Retry messages" }));
@@ -580,10 +584,14 @@ it("sorts a conversation newest first across pages and restarts paging when the 
       { ...text, search_sort: "newest", page: 2 },
     ]);
     await act(async () =>
-      failed.fail(new ReadError("unavailable", "Relay read timed out")),
+      failed.fail(
+        new ReadError("invalid-response", "Relay response was invalid"),
+      ),
     );
     expect(
-      screen.getByText("More messages couldn’t load: Relay read timed out"),
+      screen.getByText(
+        "More messages couldn’t load: Relay response was invalid",
+      ),
     ).toBeVisible();
     fireEvent.click(screen.getByRole("option", { name: /Show more messages/ }));
     const second = await request();
@@ -2028,12 +2036,14 @@ it("prioritizes people, separates agents, shows profile avatars, and excludes ar
       return Promise.resolve([]);
     },
   });
+  const known = { status: "ready" as const, archived: [archived.pubkey] };
   const session = {
     ...owner.session,
     archives: {
       ...owner.session.archives,
       state: (key: string) =>
         key === archived.pubkey ? ("archived" as const) : ("active" as const),
+      snapshot: () => known,
     },
   } as typeof owner.session;
   try {

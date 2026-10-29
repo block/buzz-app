@@ -1,9 +1,11 @@
+import { soloNavigationFor } from "../../features/channel-navigation/solo-navigation";
 import {
   useEffect,
   useState,
   useSyncExternalStore,
   type ReactNode,
 } from "react";
+import { SoloRegions } from "../../features/channel-navigation/SoloRegions";
 import { SoloInventory } from "../../features/channel-navigation/SoloInventory";
 import { soloDraft } from "../../features/channel-navigation/routes";
 import { RecoveryNotice } from "../../features/relay/RecoveryNotice";
@@ -33,6 +35,7 @@ import type {
   ChatMenu,
   ConversationSection,
 } from "../../features/conversation/service";
+import type { SidebarSections } from "../../features/channel-navigation/sidebar-sections-service";
 
 const noSubscription = () => () => {};
 
@@ -50,6 +53,7 @@ type Props = {
   chatIcons?: ContributionReader<ChatIcon> | undefined;
   chatMenus?: ContributionReader<ChatMenu> | undefined;
   conversationSections?: ContributionReader<ConversationSection> | undefined;
+  sidebarSections?: SidebarSections | undefined;
   target: OpenTarget;
   children: ReactNode;
 };
@@ -98,6 +102,26 @@ function ScopedSidebar({
         typeof saved?.location === "string" ? saved.location : undefined,
     };
   });
+  useEffect(
+    () =>
+      soloNavigationFor(connection.session)?.subscribeReveal(
+        (_id, explicit) =>
+          explicit &&
+          setView((current) =>
+            current.filter === "team"
+              ? { ...current, filter: "solo" }
+              : current,
+          ),
+      ),
+    [connection.session],
+  );
+  const soloNavigation = soloNavigationFor(connection.session);
+  const soloSnapshot = useSyncExternalStore(
+    soloNavigation?.subscribe ?? noSubscription,
+    () => soloNavigation?.snapshot(),
+  );
+  const soloTitle =
+    soloSnapshot?.regions.find((region) => region.source)?.title ?? "Solo";
   const target = props.target;
   const local =
     "scope" in target &&
@@ -154,7 +178,11 @@ function ScopedSidebar({
             label="Navigation scope"
             variant="segmented"
             value={filter}
-            items={filters}
+            items={
+              soloTitle === "Solo"
+                ? filters
+                : [filters[0], filters[2], { ...filters[1], label: soloTitle }]
+            }
             onValueChange={setFilter}
           />
         </div>
@@ -187,6 +215,7 @@ function ScopedSidebar({
           queries={connection.session}
           scope={scope}
           viewer={connection.viewer}
+          sidebarSections={props.sidebarSections}
           cached={!!connection.cached}
           layoutReady={filter === "team" || soloReady}
           connectionError={connection.error}
@@ -216,7 +245,7 @@ function ScopedSidebar({
                 <SidebarUnread listRef={sidebar.list} dmPreviews={dmPreviews}>
                   {filter === "all" && recent}
                   <section
-                    aria-label="Solo"
+                    aria-label={soloTitle}
                     className={styles.sidebarGroup}
                     hidden={filter === "team"}
                   >
@@ -228,6 +257,32 @@ function ScopedSidebar({
                       target={props.target}
                       chatIcons={props.chatIcons}
                       chatMenus={props.chatMenus}
+                      renderContents={(
+                        ordinary,
+                        ordinaryActions,
+                        header,
+                        creationTrigger,
+                        pendingClick,
+                      ) => (
+                        <SoloRegions
+                          key={`regions:${scope}:${connection.generation}`}
+                          session={connection.session}
+                          scope={scope}
+                          navigator={props.navigator}
+                          target={props.target}
+                          sidebar={sidebar}
+                          ordinary={ordinary}
+                          ordinaryActions={ordinaryActions}
+                          creationTrigger={creationTrigger}
+                          pendingClick={pendingClick}
+                          fallback={
+                            <>
+                              {header}
+                              {ordinary}
+                            </>
+                          }
+                        />
+                      )}
                     />
                   </section>
                   <div

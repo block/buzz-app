@@ -1210,6 +1210,8 @@ it.each(["ready", "unavailable", "error"] as const)(
 it("a presented ordinary thread survives the real navigation deadline while history is pending", async () => {
   vi.useFakeTimers();
   const controller = createNavigationController(createMemoryHistory());
+  // The visit deadline runs only while a presenter is attached, as the app's is.
+  controller.attach();
   let release = () => {};
   try {
     const navigation = ordinaryNavigation();
@@ -1735,6 +1737,67 @@ it("a retained reader reveals its exact selected message, again for each new req
   h.rerenderProps();
   await new Promise((resolve) => setTimeout(resolve, 50));
   expect(revealedReply()).toBe(false);
+});
+
+it("a new reveal request reopens a branch the reader collapsed, and live updates leave it closed", async () => {
+  const h = messagesHarness();
+  const reply = (id: string, content: string, replyParentId: string) => ({
+    ...row,
+    id: id.repeat(64),
+    content,
+    replyParentId,
+    createdAt: 2,
+  });
+  const parent = reply("d", "the parent", row.id);
+  const first = reply("e", "first child", parent.id);
+  const second = reply("f", "second child", parent.id);
+  h.snapshot.replies = [parent, first, second];
+  h.snapshot.target = first;
+  h.snapshot.targetStatus = "ready";
+  const props = h.props as ThreadPanelProps;
+  Object.assign(props, {
+    messageId: first.id,
+    retainThread: true,
+    revealSelected: true,
+    revealRequest: 1,
+  });
+  h.render();
+  const shown = (message: ChannelMessage) =>
+    h.element.querySelector(`[data-message-id="${message.id}"]`);
+  const collapse = () => {
+    fireEvent.click(screen.getByRole("button", { name: "Collapse 2 replies" }));
+    expect(shown(first)).toBeNull();
+  };
+  const revealed = async (message: ChannelMessage) => {
+    await waitFor(() => expect(shown(message)).toHaveFocus());
+    expect(
+      vi
+        .mocked(HTMLElement.prototype.scrollIntoView)
+        .mock.contexts.some(
+          (context) =>
+            (context as HTMLElement).dataset.messageId === message.id,
+        ),
+    ).toBe(true);
+    vi.mocked(HTMLElement.prototype.scrollIntoView).mockClear();
+  };
+  await revealed(first);
+  collapse();
+  // An ordinary live update within the same request keeps the branch closed.
+  h.snapshot.replies = [parent, first, second, reply("9", "later", row.id)];
+  h.render();
+  expect(screen.getByText("later")).toBeInTheDocument();
+  expect(shown(first)).toBeNull();
+  // The same message requested again reopens its branch.
+  props.revealRequest = 2;
+  h.rerenderProps();
+  await revealed(first);
+  collapse();
+  // So does a request for another reply in that branch.
+  h.snapshot.target = second;
+  h.render();
+  Object.assign(props, { messageId: second.id, revealRequest: 3 });
+  h.rerenderProps();
+  await revealed(second);
 });
 
 it("an unrouted retained opening retries allocation locally", () => {

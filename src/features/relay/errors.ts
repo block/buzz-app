@@ -15,6 +15,10 @@ export class ReadError extends Error {
     this.name = "ReadError";
   }
 }
+/** HTTP statuses where the same request can succeed later unchanged. */
+export function transientStatus(status: number) {
+  return status === 408 || status === 429 || status >= 500;
+}
 export function httpReadError(status: number) {
   return new ReadError(
     status === 401 || status === 403 ? "denied" : "unavailable",

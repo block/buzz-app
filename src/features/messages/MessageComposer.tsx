@@ -746,7 +746,7 @@ function Composer({
   const [activeFormats, setActiveFormats] = useState<readonly ComposerFormat[]>(
     [],
   );
-  const saveDraft = (next: MentionDraft) => {
+  const saveDraft = (next: MentionDraft, save = true) => {
     next = stageChatCards(
       {
         ...next,
@@ -761,7 +761,7 @@ function Composer({
     if (JSON.stringify(next) === JSON.stringify(valueRef.current)) return false;
     valueRef.current = next;
     updateDraft(next);
-    if (!editing.target) {
+    if (save && !editing.target) {
       if (submission) writeView(scope, draftKey, next);
       else {
         dirty.current = true;
@@ -1367,19 +1367,44 @@ function Composer({
   // A new Solo chat is seeded with its default agent each time it is shown,
   // while its draft is empty and untagged; a saved chat seeds from its window
   // like every other composer. Once it has content, respect edits and
-  // removals until the composer is shown again.
+  // removals until the composer is shown again. Like the window's seed, the
+  // tag is this composer's own prefill and isn't saved until the viewer edits
+  // the draft, so showing the chat again tags the current default agent.
   const seedMention = defaultMention;
   const autoTagged = useRef<string | undefined>(undefined);
+  const seeding = useRef(false);
+  const prefill = (apply: () => boolean) => {
+    seeding.current = true;
+    try {
+      if (!apply()) return false;
+    } finally {
+      seeding.current = false;
+    }
+    automaticTag.current = JSON.stringify(valueRef.current);
+    return true;
+  };
   useEffect(() => {
     if (!presented) autoTagged.current = undefined;
     if (
       !presented ||
       sendPending ||
       completion.composing.current ||
-      editing.target ||
-      autoTagged.current === draftKey
+      editing.target
     )
       return;
+    if (autoTagged.current === draftKey) return;
+    // Shown again untouched, the prefill retags for the current default. A
+    // saved draft is the viewer's, however it was addressed.
+    if (automaticTag.current === JSON.stringify(valueRef.current)) {
+      // Until the default can be tagged, as when its evidence is loading.
+      if (
+        seedMention &&
+        (seedMention.pubkey === valueRef.current.recipients[0]?.pubkey ||
+          prefill(() => replaceRecipients([seedMention])))
+      )
+        autoTagged.current = draftKey;
+      return;
+    }
     // A shortcut may seed an ordinary editable link. Still add the default
     // agent once while that freshly seeded text is untouched; a restored draft
     // keeps its recipients as saved, so a removed tag never returns.
@@ -1393,15 +1418,16 @@ function Composer({
     }
     if (seedMention && admits()(seedMention.pubkey)) {
       if (
-        insert(
-          `@${seedMention.name} `,
-          seedMention,
-          { start: 0, end: 0, query: "" },
-          undefined,
-          false,
+        prefill(() =>
+          insert(
+            `@${seedMention.name} `,
+            seedMention,
+            { start: 0, end: 0, query: "" },
+            undefined,
+            false,
+          ),
         )
       ) {
-        automaticTag.current = JSON.stringify(valueRef.current);
         input.current?.setSelectionRange(
           valueRef.current.text.length,
           valueRef.current.text.length,
@@ -2279,6 +2305,11 @@ function Composer({
               emoji={emojiCatalog.entries}
               onDraftChange={(next) => {
                 const textChanged = next.text !== valueRef.current.text;
+                // The default tag's prefill shows without being saved.
+                if (seeding.current) {
+                  saveDraft(next, false);
+                  return;
+                }
                 if (!editing.target) {
                   // The user's edit settles the seed on screen, as settled
                   // evidence does: clearing it lasts until the composer is

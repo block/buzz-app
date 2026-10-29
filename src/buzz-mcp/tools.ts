@@ -34,6 +34,17 @@ import type {
 const ROLES = ["owner", "admin", "member", "guest", "bot"];
 const str = { type: "string" } as const;
 const strs = { type: "array", items: str } as const;
+// Shared by send and reply_in_subthread.
+const audience = {
+  type: "string",
+  enum: ["everyone", "agents"],
+  description:
+    "agents: only other agents need this (delegating, asking or answering an agent)",
+} as const;
+const final = {
+  type: "boolean",
+  description: "Your last message this turn; ends the turn.",
+} as const;
 /** The channel types a channel list can ask for, as NIP-CL names them. */
 const CHANNEL_TYPES = ["stream", "forum", "dm", "workflow", "system"];
 const tool = (
@@ -81,18 +92,24 @@ export const TOOLS: readonly Tool[] = [
       reply: str,
       files: strs,
       mentions: strs,
-      audience: {
-        type: "string",
-        enum: ["everyone", "agents"],
-        description:
-          "agents: only other agents need this (delegating, asking or answering an agent)",
-      },
-      final: {
-        type: "boolean",
-        description: "Your last message this turn; ends the turn.",
-      },
+      audience,
+      final,
     },
     ["audience"],
+  ),
+  tool(
+    "reply_in_subthread",
+    "Reply under a specific message, nested in a subthread below it rather than in the main thread. Use when asked to reply in a subthread, or to keep a side discussion under the message it is about. Takes send's text, path, files, mentions, audience and final; the channel is the parent's.",
+    {
+      parent: { ...str, description: "Id of the message to reply under" },
+      text: str,
+      path: str,
+      files: strs,
+      mentions: strs,
+      audience,
+      final,
+    },
+    ["parent", "audience"],
   ),
   tool(
     "self_handoff",
@@ -223,9 +240,10 @@ export const TOOLS: readonly Tool[] = [
     ["name"],
   ),
   tool("notes_rm", "Delete your note.", { name: str }, ["name"]),
-  tool("canvas", "Read a channel's canvas, or replace it.", {
+  tool("canvas_get", "Read a channel's canvas.", { channel: str }),
+  tool("canvas_set", "Replace a channel's canvas.", {
     channel: str,
-    text: str,
+    content: str,
     path: str,
   }),
   tool(
@@ -378,7 +396,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     );
   },
   async send(tools, args) {
-    const { client, context } = tools;
+    const { context } = tools;
     const reply =
       text(args.reply) ??
       (args.channel === undefined ? context.root : undefined);
@@ -394,28 +412,38 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       throw new Error(
         "This chat stays at the top level: send again without reply.",
       );
-    if (args.audience !== "everyone" && args.audience !== "agents")
-      throw new Error("audience must be everyone or agents.");
-    const files = await tools.attach(list(args.files));
-    const content = `${(await tools.body(args, !files.links)) ?? ""}${files.links}`;
+    const audienceTags = audienceOf(args);
     const thread = reply ? await tools.threadTags(reply) : [];
-    const mentions = await tools.mentions(
+    return post(tools, channel, args, thread, audienceTags);
+  },
+
+  async reply_in_subthread(tools, args) {
+    const { context } = tools;
+    const parent = text(args.parent)?.toLowerCase();
+    if (!parent) throw new Error("parent is required.");
+    const target =
+      parent === context.root ? undefined : await tools.event(parent);
+    const channel = (target && tag(target, "h")) ?? context.channel;
+    if (!channel) throw new Error("No channel for that message.");
+    if (context.topLevel && channel === context.channel)
+      throw new Error("This chat stays at the top level: use send instead.");
+    const audienceTags = audienceOf(args);
+    // As relay ingest reads it: the last valid marker, in either case.
+    const root = target
+      ? (threadReference(target)?.rootId ?? target.id)
+      : parent;
+    return post(
+      tools,
       channel,
-      content,
-      list(args.mentions),
+      args,
+      root === parent
+        ? [["e", root, "", "reply"]]
+        : [
+            ["e", root, "", "root"],
+            ["e", parent, "", "reply"],
+          ],
+      audienceTags,
     );
-    const event = await client.publish({
-      kind: 9,
-      content,
-      tags: [
-        ["h", channel],
-        ...thread,
-        ...mentions.map((pubkey) => ["p", pubkey]),
-        ...files.tags,
-        ...(args.audience === "agents" ? [["audience", "agents"]] : []),
-      ],
-    });
-    return `sent ${event.id}`;
   },
 
   async edit(tools, args) {
@@ -1071,16 +1099,19 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     return `deleted ${coordinate}`;
   },
 
-  async canvas(tools, args) {
+  async canvas_get(tools, args) {
+    const channel = text(args.channel) ?? tools.context.channel;
+    if (!channel) throw new Error("channel is required here.");
+    const head = await canvas(tools, channel);
+    return head?.content || "No canvas.";
+  },
+
+  async canvas_set(tools, args) {
     const { client, context } = tools;
     const channel = text(args.channel) ?? context.channel;
     if (!channel) throw new Error("channel is required here.");
-    const content = await tools.body(args, false);
-    const [head] = await client.query([
-      { kinds: [40100], "#h": [channel], limit: 1 },
-    ]);
-    if (!head && !(await tools.metadata(channel))) throw unseen(channel);
-    if (content === undefined) return head?.content || "No canvas.";
+    const content = (await tools.body(args, true, "content")) as string;
+    const head = await canvas(tools, channel);
     // The newest canvas wins, so a write must be dated after the current one.
     const after = head ? (head.created_at + 1) * 1000 : 0;
     if (after - Date.now() > 5000)
@@ -1200,6 +1231,39 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
   },
 };
 
+/** The tags for a message's required audience. */
+function audienceOf(args: Args): string[][] {
+  if (args.audience !== "everyone" && args.audience !== "agents")
+    throw new Error("audience must be everyone or agents.");
+  return args.audience === "agents" ? [["audience", "agents"]] : [];
+}
+
+/** Publishes `args`' text, files and mentions as a message in `channel`,
+ * with `thread`'s e-tags and any `extra` tags. */
+async function post(
+  tools: Tools,
+  channel: string,
+  args: Args,
+  thread: readonly string[][],
+  extra: readonly string[][] = [],
+) {
+  const files = await tools.attach(list(args.files));
+  const content = `${(await tools.body(args, !files.links)) ?? ""}${files.links}`;
+  const mentions = await tools.mentions(channel, content, list(args.mentions));
+  const event = await tools.client.publish({
+    kind: 9,
+    content,
+    tags: [
+      ["h", channel],
+      ...thread,
+      ...mentions.map((pubkey) => ["p", pubkey]),
+      ...files.tags,
+      ...extra,
+    ],
+  });
+  return `sent ${event.id}`;
+}
+
 /** One call's helpers, so lookups it repeats are made once. */
 class Tools {
   private readonly cache = new Map<string, Promise<unknown>>();
@@ -1217,16 +1281,17 @@ class Tools {
     return value;
   }
 
-  /** `text`, or the file at `path`. Undefined when neither is given and
-   * `needed` is false. */
-  async body(args: Args, needed: boolean) {
+  /** `field` (default `text`), or the file at `path`. Undefined when neither
+   * is given and `needed` is false. */
+  async body(args: Args, needed: boolean, field = "text") {
     const path = text(args.path);
     const value = path
       ? new TextDecoder().decode(await this.client.read(path))
-      : typeof args.text === "string"
-        ? args.text
+      : typeof args[field] === "string"
+        ? args[field]
         : undefined;
-    if (value === undefined && needed) throw new Error("Give text or path.");
+    if (value === undefined && needed)
+      throw new Error(`Give ${field} or path.`);
     return value;
   }
 
@@ -1239,8 +1304,8 @@ class Tools {
     return event;
   }
 
-  /** The e-tag of a reply to `parent`. Agents never nest: a reply to any
-   * message in a thread is a reply to the thread's root. */
+  /** The e-tag of a `send` reply to `parent`: a reply to any message in a
+   * thread is a reply to the thread's root. */
   async threadTags(parent: string) {
     const root =
       parent === this.context.root ? parent : rootOf(await this.event(parent));
@@ -1979,6 +2044,15 @@ async function leads(
 /** A failed read after a write, as the reason the write is not confirmed. */
 const unread = (error: unknown) =>
   new Error(`its state could not be read back: ${reason(error)}`);
+
+/** The channel's newest canvas, once the channel is known to be visible. */
+async function canvas(tools: Tools, channel: string) {
+  const [head] = await tools.client.query([
+    { kinds: [40100], "#h": [channel], limit: 1 },
+  ]);
+  if (!head && !(await tools.metadata(channel))) throw unseen(channel);
+  return head;
+}
 
 /** The `channel` argument, or the current channel only when it is left out. */
 function target(tools: Tools, args: Args) {

@@ -1,3 +1,4 @@
+import { retryRead } from "./read-retry";
 import { channelRowKind, rowProfileIds, messagePreview } from "./membership";
 import type { Outbox } from "./outbox";
 import { MessageProjection } from "./message-projection";
@@ -32,7 +33,7 @@ import { relayDebug } from "./debug";
 import { clientMetrics } from "../developer/client-metrics";
 import { MessageClock } from "./message-order";
 import { yieldToHost } from "./yield";
-import { matchRank } from "../search/match";
+import { MatchRank, matchRank } from "../search/match";
 
 type Listener = () => void;
 type WindowState = {
@@ -576,10 +577,17 @@ export function createChannelStore(
     settings: ReadOptions,
   ) {
     if (!transport) throw new Error("Relay is unavailable");
-    const events = await transport.read(
-      [windowFilter(channelId, cursor)],
-      settings,
-    );
+    const source = transport;
+    const read = (signal?: AbortSignal) =>
+      source.read([windowFilter(channelId, cursor)], {
+        ...settings,
+        ...(signal ? { signal } : {}),
+      });
+    // Head reads belong to session recovery; only manual pagination needs a
+    // finite retry owner here.
+    const events = cursor
+      ? await retryRead(read, settings.signal ?? new AbortController().signal)
+      : await read();
     return {
       events,
       page: parseWindow(channelId, cursor, transport.relayAuthor, events),
@@ -1872,7 +1880,13 @@ export function createChannelStore(
             (settings?.exact
               ? name.toLowerCase() === needle
               : name.toLowerCase().includes(needle))
-            ? [{ id, name, rank: matchRank(name, needle) ?? 3 }]
+            ? [
+                {
+                  id,
+                  name,
+                  rank: matchRank(name, needle) ?? MatchRank.substring,
+                },
+              ]
             : [];
         })
         // Best match first before the cut, so an exact name is never dropped.
@@ -2042,7 +2056,12 @@ export function createChannelStore(
         return channel &&
           name &&
           (settings?.exact ? name === needle : name.includes(needle))
-          ? [{ channel, rank: matchRank(channel.name, needle) ?? 3 }]
+          ? [
+              {
+                channel,
+                rank: matchRank(channel.name, needle) ?? MatchRank.substring,
+              },
+            ]
           : [];
       })
       .sort((a, b) => a.rank - b.rank)
@@ -3043,6 +3062,11 @@ export function createChannelStore(
         const event = state.events.find((candidate) => candidate.id === id);
         if (event) return event;
       }
+    },
+    retainedEvents(): RelayEvent[] {
+      return [...windows.values()].flatMap((state) =>
+        authorized(state.channelId) ? [...state.events] : [],
+      );
     },
     demandedChannels: () => [
       ...new Set([

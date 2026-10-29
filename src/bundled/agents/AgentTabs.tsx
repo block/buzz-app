@@ -6,6 +6,7 @@ import type {
   AgentSettingsHost,
   Agents,
   RegisteredAgentType,
+  TranscriptRequest,
 } from "../../features/agents/service";
 import type { AgentMemories } from "../../features/agents/MemoryPanel";
 import type { CommunityReader } from "../../features/communities/service";
@@ -27,6 +28,8 @@ export function AgentTabs(props: {
   settingsContent: ReactNode;
   conversation?: AgentConversation | undefined;
   initialActivity?: boolean | undefined;
+  initialTranscript?: TranscriptRequest | undefined;
+  close?: (() => void) | undefined;
   onDiscard?: () => void;
 }) {
   const settingsContent = (
@@ -56,6 +59,7 @@ export function AgentTabs(props: {
     ...supplied.filter((section) => section.value.startsWith("agent:type:")),
     ...supplied.filter((section) => section.value === "agent:memory"),
     ...supplied.filter((section) => section.value === "agent:activity"),
+    ...supplied.filter((section) => section.value.startsWith("agent:added:")),
     ...supplied.filter((section) => section.value === "agent:history"),
     {
       value: "agent:management",

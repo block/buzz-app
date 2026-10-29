@@ -15,8 +15,9 @@ it("shows the default rules, and saves only rules that parse", async () => {
   const user = userEvent.setup();
   render(<AuthorSettings active={() => true} />);
   expect(screen.getByRole("status")).toHaveTextContent(
-    "A bare allow rule lets comments from anyone",
+    "Comments from anyone no rule denies can wake your agents.",
   );
+  expect(screen.getByRole("radio", { name: "Wake the agent" })).toBeChecked();
   const rules = screen.getByRole("textbox", { name: /Rules/ });
   expect(rules).toHaveValue(DEFAULT_RULES);
   const save = screen.getByRole("button", { name: "Save" });
@@ -33,12 +34,19 @@ it("shows the default rules, and saves only rules that parse", async () => {
     rules,
     "deny author:@me prefix:🤖{Enter}allow org:block{Enter}  allow author:/^copilot/  ",
   );
+  await user.click(screen.getByRole("radio", { name: "Don’t wake it" }));
   await user.click(save);
   expect(loadPolicy().text).toBe(
     "deny author:@me prefix:🤖\nallow org:block\nallow author:/^copilot/",
   );
+  expect(loadPolicy().fallback).toBe("deny");
   expect(rules).toHaveValue(loadPolicy().text);
   expect(screen.queryByRole("status")).not.toBeInTheDocument();
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   expect(save).toBeDisabled();
+  await user.click(screen.getByRole("radio", { name: "Wake the agent" }));
+  expect(save).toBeEnabled();
+  await user.click(save);
+  expect(loadPolicy().fallback).toBe("allow");
+  expect(screen.getByRole("status")).toBeInTheDocument();
 });

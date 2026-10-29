@@ -42,6 +42,26 @@ describe("GitHub author rules", () => {
     expect(admit(by("john", "🤖", true), policy, "john", nobody)).toBe(true);
   });
 
+  it("let the fallback decide what no rule matches, and a bare rule match everyone", () => {
+    expect(loadPolicy().fallback).toBe("allow");
+    const closed = rules("allow author:wes");
+    expect(closed.fallback).toBe("deny");
+    expect(open(closed)).toBe(false);
+    expect(admit(by("stranger"), closed, "john", nobody)).toBe(false);
+    const opened = parse("allow author:wes", "allow") as AuthorPolicy;
+    expect(open(opened)).toBe(true);
+    expect(admit(by("stranger"), opened, "john", nobody)).toBe(true);
+    expect(admit(by("wes"), opened, "john", nobody)).toBe(true);
+    const deny = parse("allow author:wes\ndeny", "allow") as AuthorPolicy;
+    expect(admit(by("wes"), deny, "john", nobody)).toBe(true);
+    expect(admit(by("stranger"), deny, "john", nobody)).toBe(false);
+    expect(savePolicy("allow author:wes", "allow")).toEqual(opened);
+    expect(loadPolicy()).toEqual(opened);
+    // Rules saved before the fallback existed keep denying what none match.
+    localStorage.setItem(POLICY_KEY, '{"version":2,"text":"allow author:wes"}');
+    expect(loadPolicy()).toEqual(closed);
+  });
+
   it("let the first matching rule decide, and deny what none match", () => {
     const policy = rules(`deny author:Noisy
 allow org:block

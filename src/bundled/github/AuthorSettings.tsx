@@ -2,17 +2,22 @@ import { useState } from "react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Header } from "../../shared/design-system/ui/Header";
+import { Radio, RadioGroup } from "../../shared/design-system/ui/RadioGroup";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { Textarea } from "../../shared/design-system/ui/Textarea";
-import { loadPolicy, open, parse, savePolicy } from "./authors";
+import { loadPolicy, open, parse, savePolicy, type Rule } from "./authors";
 
 /** Whose pull request comments and reviews wake agents watching it. */
 export function AuthorSettings({ active }: { active(): boolean }) {
   const [saved, setSaved] = useState(loadPolicy);
   const [draft, setDraft] = useState(saved.text);
+  const [fallback, setFallback] = useState(saved.fallback);
   const [error, setError] = useState("");
   const parsed = parse(draft);
-  const dirty = typeof parsed === "string" || parsed.text !== saved.text;
+  const dirty =
+    typeof parsed === "string" ||
+    parsed.text !== saved.text ||
+    fallback !== saved.fallback;
   return (
     <section aria-label="GitHub comment authors settings">
       <Header
@@ -25,7 +30,7 @@ export function AuthorSettings({ active }: { active(): boolean }) {
           event.preventDefault();
           if (!active() || !dirty) return;
           try {
-            const policy = savePolicy(draft);
+            const policy = savePolicy(draft, fallback);
             setSaved(policy);
             setDraft(policy.text);
             setError("");
@@ -37,14 +42,14 @@ export function AuthorSettings({ active }: { active(): boolean }) {
         <SettingsGroup layout="form">
           {open(saved) && (
             <p role="status" className="m-0 text-body-sm text-subtle">
-              A bare allow rule lets comments from anyone it reaches wake your
-              agents. Replace it with allow org:name or allow author:login to
-              limit them.
+              Comments from anyone no rule denies can wake your agents. To limit
+              them, allow only org:name or author:login, and don’t wake them
+              when no rule matches.
             </p>
           )}
           <Field
             label="Rules"
-            description="One per line: allow or deny, then any of author:login, author:/pattern/, org:organization, body:/pattern/ and prefix:text, which runs to the end of the line. author:@me is your GitHub account, a bot's login ends in [bot], and logins match case aside. The first rule that matches decides; feedback no rule matches wakes nobody. Membership your GitHub account cannot see, or of a misspelled organization, counts as none."
+            description="One per line: allow or deny, then any of author:login, author:/pattern/, org:organization, body:/pattern/ and prefix:text, which runs to the end of the line. A bare allow or deny matches everyone. author:@me is your GitHub account, a bot's login ends in [bot], and logins match case aside. The first rule that matches decides. Membership your GitHub account cannot see, or of a misspelled organization, counts as none."
           >
             <Textarea
               rows={6}
@@ -57,6 +62,16 @@ export function AuthorSettings({ active }: { active(): boolean }) {
                 setDraft(event.target.value);
               }}
             />
+          </Field>
+          <Field label="When no rule matches" nativeLabel={false}>
+            <RadioGroup<Rule["effect"]>
+              aria-label="When no rule matches"
+              value={fallback}
+              onValueChange={setFallback}
+            >
+              <Radio value="allow" label="Wake the agent" />
+              <Radio value="deny" label="Don’t wake it" />
+            </RadioGroup>
           </Field>
           {error && (
             <p role="alert" className="m-0 text-body-sm text-danger">

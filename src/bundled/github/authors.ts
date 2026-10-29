@@ -1,10 +1,10 @@
 // Whose GitHub feedback wakes agents. Agents act on what a wake quotes, so a
 // stranger's comment on a public pull request should not reach them. Rules,
 // one per line, allow or deny feedback; the first that matches decides, and
-// feedback none matches wakes nobody. The defaults admit everyone but agents'
-// own comments, as before rules existed. Saved on this device and edited in
-// Settings; each poll reads them again, so a change applies to running
-// watches.
+// the fallback decides feedback none matches. The defaults admit everyone but
+// agents' own comments, as before rules existed. Saved on this device and
+// edited in Settings; each poll reads them again, so a change applies to
+// running watches.
 import type { Feedback } from "./watch";
 
 export type Rule = Readonly<{
@@ -23,16 +23,16 @@ export type AuthorPolicy = Readonly<{
   /** The rules as saved, one per line. */
   text: string;
   rules: readonly Rule[];
+  /** What feedback no rule matches gets. */
+  fallback: Rule["effect"];
 }>;
 
 /** The signed-in GitHub account, which agents use too. */
 export const ME = "@me";
 export const POLICY_KEY = "buzz.github.author-policy.v2";
 /** Agents comment as the signed-in account and start with 🤖, so their own
- * comments wake nobody; the owner's other comments wake the agent. */
-export const DEFAULT_RULES = `deny author:${ME} prefix:🤖
-allow author:${ME}
-allow`;
+ * comments wake nobody, and the fallback lets everyone else's wake the agent. */
+export const DEFAULT_RULES = `deny author:${ME} prefix:🤖`;
 const ORGANIZATION = /^[A-Za-z0-9][A-Za-z0-9-]*$/;
 // Enterprise Managed Users' logins end in `_shortcode`.
 const LOGIN = /^[A-Za-z0-9][A-Za-z0-9_-]*(?:\[bot\])?$/i;
@@ -99,7 +99,10 @@ function rule(line: string): Rule | string {
 }
 
 /** The policy `text` holds, or why it is not one, naming the line. */
-export function parse(text: string): AuthorPolicy | string {
+export function parse(
+  text: string,
+  fallback: Rule["effect"] = "deny",
+): AuthorPolicy | string {
   const lines: string[] = [];
   const rules: Rule[] = [];
   for (const [index, line] of text.split(/\r?\n/).entries()) {
@@ -110,20 +113,21 @@ export function parse(text: string): AuthorPolicy | string {
     lines.push(trimmed);
     rules.push(parsed);
   }
-  return { text: lines.join("\n"), rules };
+  return { text: lines.join("\n"), rules, fallback };
 }
 
-const DEFAULT = parse(DEFAULT_RULES) as AuthorPolicy;
+const DEFAULT = parse(DEFAULT_RULES, "allow") as AuthorPolicy;
 
 export function loadPolicy(): AuthorPolicy {
   try {
     const saved = JSON.parse(localStorage.getItem(POLICY_KEY) ?? "null") as {
       version?: unknown;
       text?: unknown;
+      fallback?: unknown;
     } | null;
     const policy =
       saved?.version === 2 && typeof saved.text === "string"
-        ? parse(saved.text)
+        ? parse(saved.text, saved.fallback === "allow" ? "allow" : "deny")
         : DEFAULT;
     return typeof policy === "string" ? DEFAULT : policy;
   } catch {
@@ -131,19 +135,24 @@ export function loadPolicy(): AuthorPolicy {
   }
 }
 
-/** Saves `text`'s rules, or throws why they are not rules. */
-export function savePolicy(text: string) {
-  const policy = parse(text);
+/** Saves `text`'s rules and `fallback`, or throws why they are not rules. */
+export function savePolicy(text: string, fallback?: Rule["effect"]) {
+  const policy = parse(text, fallback);
   if (typeof policy === "string") throw new Error(policy);
   localStorage.setItem(
     POLICY_KEY,
-    JSON.stringify({ version: 2, text: policy.text }),
+    JSON.stringify({
+      version: 2,
+      text: policy.text,
+      fallback: policy.fallback,
+    }),
   );
   return policy;
 }
 
-/** Whether a rule lets anyone it has not denied wake agents. */
+/** Whether anyone no rule denies may wake agents. */
 export const open = (policy: AuthorPolicy) =>
+  policy.fallback === "allow" ||
   policy.rules.some(
     (rule) =>
       rule.effect === "allow" &&
@@ -195,7 +204,7 @@ export function admit(
     }
     return rule.effect === "allow";
   }
-  return false;
+  return policy.fallback === "allow";
 }
 
 /** The `gh api graphql --input -` body asking which of `organizations` each of

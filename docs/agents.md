@@ -139,23 +139,22 @@ of these conditions, all of which must hold:
 - `prefix:text`, what the comment starts with, leading space aside. It runs to
   the end of the line, spaces included, so it comes last.
 
+A bare `allow` or `deny`, with no conditions, matches everyone.
+
 Logins match case aside, so an author pattern always has the `i` flag; a
 pattern may also use `m`, `s` and `u`. The first rule that matches decides, and
-feedback no rule matches wakes nobody. Saving compiles every pattern and
-rejects the rules, naming the line, when one is not a rule. The defaults keep
-the behavior from before rules: agents' comments wake nobody, and everyone
-else's wake the agent.
+When no rule matches decides the rest: Wake the agent or Don't wake it.
+Saving compiles every pattern and rejects the rules, naming the line, when one
+is not a rule. The defaults keep the behavior from before rules: agents'
+comments wake nobody, and everyone else's wake the agent.
 
 ```text
 deny author:@me prefix:🤖
-allow author:@me
-allow
 ```
 
-Replacing the bare `allow` with, say, `allow org:block` and
-`allow author:/^copilot/` limits feedback to those. Lists of trusted
-organizations, trusted logins and ignored logins saved before rules become the
-equivalent rules. Membership is asked of `gh` only for organizations the rules
+with When no rule matches set to Wake the agent. Adding, say,
+`allow org:block` and `allow author:/^copilot/` and choosing Don't wake it
+limits feedback to those. Membership is asked of `gh` only for organizations the rules
 name, and kept for an hour; feedback whose author's membership cannot be read
 waits for a later poll, until ten polls in a row fail for that login alone and
 it counts as no member. A membership hidden from the `gh` account, or a

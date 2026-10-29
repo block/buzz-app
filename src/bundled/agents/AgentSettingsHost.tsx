@@ -148,6 +148,7 @@ function TypeField({
   const selectedType = types.find((item) => item.key === selected) ?? type;
   const TypeIcon = selectedType?.icon;
   const [error, setError] = useState("");
+  const [helpOpen, setHelpOpen] = useState(false);
   const providerButton = useRef<HTMLButtonElement>(null);
   const [checking, setChecking] = useState(false);
   const [configuring, setConfiguring] = useState(false);
@@ -210,7 +211,12 @@ function TypeField({
         trailing={
           others.length > 0 ? (
             <div className="buzz-select" data-variant="compact">
-              <MenuRoot onOpenChange={(open) => open && setError("")}>
+              <MenuRoot
+                onOpenChange={(open) => {
+                  if (open) setError("");
+                  else setHelpOpen(false);
+                }}
+              >
                 <MenuTrigger
                   aria-label={`Change harness from ${selectedType?.title ?? "unavailable harness"}`}
                   render={
@@ -225,7 +231,17 @@ function TypeField({
                     </Button>
                   }
                 />
-                <MenuPopup>
+                <MenuPopup
+                  onKeyDownCapture={(event) => {
+                    // WebKit keeps focus on the menu root after pointer entry.
+                    // Consume the help's Escape here, including that focus path.
+                    if (event.key === "Escape" && helpOpen) {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      setHelpOpen(false);
+                    }
+                  }}
+                >
                   <MenuRadioGroup
                     value={selected}
                     onValueChange={(next) => choose(String(next))}
@@ -252,6 +268,8 @@ function TypeField({
                       <UnavailableHarnessChoices
                         types={unavailable}
                         source={type}
+                        open={helpOpen}
+                        onOpenChange={setHelpOpen}
                       />
                     )}
                   </MenuRadioGroup>
@@ -326,14 +344,17 @@ function TypeField({
 function UnavailableHarnessChoices({
   types,
   source,
+  open,
+  onOpenChange,
 }: {
   types: readonly RegisteredAgentType[];
   source: RegisteredAgentType | undefined;
+  open: boolean;
+  onOpenChange(open: boolean): void;
 }) {
   const triggerId = useId();
   const trigger = useRef<HTMLDivElement>(null);
   const description = useId();
-  const [open, setOpen] = useState(false);
   // Builderlab is currently the only registered remote harness.
   const hosted = types[0];
   return (
@@ -352,7 +373,7 @@ function UnavailableHarnessChoices({
           details.cancel();
           return;
         }
-        setOpen(next);
+        onOpenChange(next);
       }}
     >
       <PopoverTrigger
@@ -369,16 +390,12 @@ function UnavailableHarnessChoices({
             event.target instanceof HTMLElement &&
             event.target.matches(":focus-visible")
           )
-            setOpen(true);
+            onOpenChange(true);
         }}
         onKeyDownCapture={(event) => {
-          if (event.key === "Escape" && open) {
+          if (event.key === "Enter" || event.key === " ") {
             event.preventDefault();
-            event.stopPropagation();
-            setOpen(false);
-          } else if (event.key === "Enter" || event.key === " ") {
-            event.preventDefault();
-            setOpen(true);
+            onOpenChange(true);
           }
         }}
         render={

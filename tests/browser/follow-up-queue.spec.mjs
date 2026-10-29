@@ -435,3 +435,77 @@ test.describe("resuming saved Solo work", () => {
     );
   }
 });
+
+// Browser-only boundary: another same-origin document owns the real Web Lock
+// and writes the handoff marker. Releasing ownership emits no storage event.
+test("an open queue recovers Remove when another window releases an abandoned handoff", async ({
+  page,
+  context,
+  app,
+}) => {
+  const { editor } = await startWorkingAgent(page, app);
+  await editor.press("End");
+  await page.keyboard.insertText("Abandoned handoff");
+  await editor.press("Enter");
+  const queue = page.getByRole("region", { name: "Queued follow-ups" });
+  await expect(queue).toContainText("Abandoned handoff");
+  const other = await context.newPage();
+  await other.route("**/queue-lock-owner", (route) =>
+    route.fulfill({
+      contentType: "text/html",
+      body: "<!doctype html><title>Queue lock owner</title>",
+    }),
+  );
+  await other.goto(`${app.origin}/queue-lock-owner`);
+  try {
+    await other.evaluate(async () => {
+      const key = Object.keys(localStorage).find((key) => {
+        if (!key.startsWith("buzz-view.v1:")) return false;
+        return JSON.parse(key.slice("buzz-view.v1:".length))[1].startsWith(
+          "follow-up:",
+        );
+      });
+      if (!key) throw new Error("Queued row missing");
+      const [scope] = JSON.parse(key.slice("buzz-view.v1:".length));
+      const saved = JSON.parse(localStorage.getItem(key));
+      let started;
+      const acquired = new Promise((resolve) => {
+        started = resolve;
+      });
+      const held = new Promise((resolve) => {
+        window.releaseQueueLock = resolve;
+      });
+      window.queueLockHeld = navigator.locks.request(
+        `buzz-follow-up:${scope}:${saved.id}`,
+        async () => {
+          localStorage.setItem(
+            key,
+            JSON.stringify({ ...saved, sending: true }),
+          );
+          started();
+          await held;
+        },
+      );
+      await acquired;
+    });
+    const remove = queue.getByRole("button", { name: "Remove queued message" });
+    await expect(remove).toBeDisabled();
+    await expect(queue).toContainText("Sending…");
+    await other.evaluate(async () => {
+      window.releaseQueueLock();
+      await window.queueLockHeld;
+    });
+    await expect(remove).toBeEnabled();
+    await queue.getByRole("listitem").hover();
+    await remove.click();
+    await expect(queue).toHaveCount(0);
+    expect(
+      app.report.publications.filter(
+        ({ event }) =>
+          event.kind === 9 && event.content.includes("Abandoned handoff"),
+      ),
+    ).toHaveLength(0);
+  } finally {
+    await other.evaluate(() => window.releaseQueueLock?.());
+  }
+});

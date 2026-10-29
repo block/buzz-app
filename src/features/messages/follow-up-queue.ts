@@ -303,6 +303,7 @@ function createQueue(session: RelaySession) {
     if (!entries.includes(entry) || publishing.has(entry.id)) return;
     publishing.add(entry.id);
     let id: string | undefined;
+    let awaitingChoices = false;
     try {
       if (storage && entry.message) {
         if (!storage.has(entry.id)) {
@@ -334,9 +335,16 @@ function createQueue(session: RelaySession) {
       }
       if (entry.beforeRelease) await entry.beforeRelease();
       if (!entries.includes(entry)) return;
-      if (!requested.has(entry.id) && blockers(entry.channelId)) return;
+      if (
+        !requested.has(entry.id) &&
+        (entry.restored || blockers(entry.channelId))
+      )
+        return;
       if (storage && entry.message && !storage.has(entry.id)) return;
-      if (entry.ready?.() === false) return;
+      if (entry.ready?.() === false) {
+        awaitingChoices = true;
+        return;
+      }
       entry.beforePublish?.();
       requested.get(entry.id)?.();
       if (storage && entry.message) storage.sending(entry.id, true);
@@ -371,7 +379,7 @@ function createQueue(session: RelaySession) {
       );
     } finally {
       publishing.delete(entry.id);
-      requested.delete(entry.id);
+      if (!awaitingChoices) requested.delete(entry.id);
       emit();
       reconcileDelivery();
       queueMicrotask(pump);
@@ -391,6 +399,16 @@ function createQueue(session: RelaySession) {
         )
       )
         continue;
+      const manual = entries.filter(
+        (entry) =>
+          entry.channelId === channelId &&
+          requested.has(entry.id) &&
+          entry.ready?.() !== false,
+      );
+      if (manual.length) {
+        for (const entry of manual) void release(entry);
+        continue;
+      }
       if (blockers(channelId)) continue;
       const first = entries.find((entry) => entry.channelId === channelId);
       if (first && !first.error && !first.restored && first.ready?.() !== false)
@@ -439,18 +457,24 @@ function createQueue(session: RelaySession) {
     }
     emit();
   }
+  const refreshingSending = new Set<string>();
   const onStorage = () => {
     restore();
     for (const entry of entries) {
-      if (entry.sending && storage)
-        void storage
-          .tryLock(entry.id, () => {
-            if (!entries.includes(entry) || publishing.has(entry.id)) return;
-            entry.sending = false;
-            entries = [...entries];
-            emit();
-          })
-          .catch(() => {});
+      if (!entry.sending || !storage || refreshingSending.has(entry.id))
+        continue;
+      refreshingSending.add(entry.id);
+      // Wait for the current handoff to release ownership, including a window
+      // closing or persistence failing without another storage event.
+      void storage
+        .lock(entry.id, async () => {
+          if (!entries.includes(entry) || publishing.has(entry.id)) return;
+          entry.sending = false;
+          entries = [...entries];
+          emit();
+        })
+        .catch(() => {})
+        .finally(() => refreshingSending.delete(entry.id));
     }
     if (entries.length) watch();
     emit();
@@ -551,17 +575,17 @@ function createQueue(session: RelaySession) {
           { agent, message, resumed: true },
         ]);
       }
-      entries = entries.map((entry) =>
-        entry.restored &&
-        !entry.resumeCancelled &&
-        channels.has(entry.channelId)
-          ? {
-              ...entry,
-              restored: false,
-              beforePublish: () => beforePublish?.(entry),
-            }
-          : entry,
-      );
+      entries = entries.map((entry) => {
+        if (
+          entry.restored &&
+          !entry.resumeCancelled &&
+          channels.has(entry.channelId)
+        ) {
+          entry.restored = false;
+          entry.beforePublish = () => beforePublish?.(entry);
+        }
+        return entry;
+      });
       if (entries.length) watch();
       emit();
       // Other agents in the same Resume decision seed their barriers first.
@@ -583,11 +607,13 @@ function createQueue(session: RelaySession) {
         if (remaining.length) waits.set(channelId, remaining);
         else waits.delete(channelId);
       }
-      entries = entries.map((entry) =>
-        channels.has(entry.channelId)
-          ? { ...entry, restored: true, resumeCancelled: true }
-          : entry,
-      );
+      entries = entries.map((entry) => {
+        if (channels.has(entry.channelId)) {
+          entry.restored = true;
+          entry.resumeCancelled = true;
+        }
+        return entry;
+      });
       emit();
       pump();
     },

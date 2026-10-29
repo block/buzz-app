@@ -711,3 +711,152 @@ it("lets the user remove an abandoned sending marker without trying Send first",
   await vi.waitFor(() => expect(followUpStorage(scope).has(id)).toBe(false));
   expect(restarted.send).not.toHaveBeenCalled();
 });
+
+it("retains a manual Send through partial discovery even while another turn works", async () => {
+  const id = fixture().enqueue();
+  const restarted = fixture();
+  restarted.choices(false, []);
+  const guard = vi.fn();
+  restarted.queue.sendNow(id, guard);
+  // Taking the row lock proves the prior release has finished deferring.
+  await followUpStorage(scope).lock(id, async () => {});
+  expect(restarted.send).not.toHaveBeenCalled();
+  expect(guard).not.toHaveBeenCalled();
+  restarted.choices(true, [agent]);
+  await vi.waitFor(() => expect(restarted.queue.snapshot()).toEqual([]));
+  expect(restarted.send).toHaveBeenCalledOnce();
+  expect(guard).toHaveBeenCalledOnce();
+});
+
+it("cancels a deferred manual Send when its row is removed", async () => {
+  const id = fixture().enqueue();
+  const restarted = fixture();
+  restarted.choices(false, []);
+  restarted.queue.sendNow(id);
+  await followUpStorage(scope).lock(id, async () => {});
+  restarted.queue.remove(id);
+  restarted.choices(true, [agent]);
+  await followUpStorage(scope).lock(id, async () => {});
+  expect(restarted.queue.snapshot()).toEqual([]);
+  expect(restarted.send).not.toHaveBeenCalled();
+});
+
+it("unlocks Remove in an already-open window after the sending window abandons its handoff", async () => {
+  const first = fixture();
+  const id = first.enqueue();
+  const second = fixture();
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  render(
+    createElement(QueuedFollowUps, {
+      session: second.session,
+      channelId: "chat",
+      disabled: false,
+      focusComposer() {},
+    }),
+  );
+  const remove = screen.getByRole("button", {
+    name: "Remove queued message",
+  }) as HTMLButtonElement;
+  await first.owner.ready;
+  let fail!: (error: Error) => void;
+  const pending = new Promise<void>((_resolve, reject) => {
+    fail = reject;
+  });
+  first.save.mockImplementation(() => pending);
+  try {
+    first.queue.sendNow(id);
+    await vi.waitFor(() => expect(first.send).toHaveBeenCalledOnce());
+    window.dispatchEvent(new StorageEvent("storage"));
+    await vi.waitFor(() => expect(remove.disabled).toBe(true));
+  } finally {
+    fail(new Error("Outbox unavailable"));
+  }
+  // No storage event or remount follows the lock release.
+  await vi.waitFor(() => expect(first.queue.snapshot()[0]?.error).toBeTruthy());
+  await vi.waitFor(() => expect(remove.disabled).toBe(false));
+  expect(followUpStorage(scope).isSending(id)).toBe(true);
+  remove.click();
+  await vi.waitFor(() => expect(second.queue.snapshot()).toEqual([]));
+  expect(second.send).not.toHaveBeenCalled();
+});
+
+it.each([false, true])(
+  "preserves in-flight cleanup and errors when a resume is abandoned (failure: %s)",
+  async (failure) => {
+    const id = fixture().enqueue();
+    const restarted = fixture();
+    restarted.queue.resumeAfter(agent, { missing: "chat" });
+    let finish!: () => void;
+    let fail!: (error: Error) => void;
+    const pending = new Promise<void>((resolve, reject) => {
+      finish = resolve;
+      fail = reject;
+    });
+    const outbox = { ...restarted.owner.outbox };
+    const recover = vi
+      .spyOn(outbox, "recover")
+      .mockImplementationOnce(() => pending);
+    Object.assign(restarted.session, { outbox });
+    try {
+      restarted.queue.sendNow(id);
+      await vi.waitFor(() => expect(recover).toHaveBeenCalledOnce());
+      restarted.queue.pauseAfter(agent, { missing: "chat" });
+      expect(restarted.queue.snapshot()[0]?.restored).toBe(true);
+    } finally {
+      if (failure) fail(new Error("Recovery failed"));
+      else finish();
+    }
+    if (failure) {
+      await vi.waitFor(() =>
+        expect(restarted.queue.snapshot()[0]?.error).toBe("Recovery failed"),
+      );
+      expect(restarted.queue.snapshot()[0]?.sending).toBe(false);
+    } else {
+      await vi.waitFor(() => expect(restarted.queue.snapshot()).toEqual([]));
+      expect(followUpStorage(scope).has(id)).toBe(false);
+    }
+    expect(restarted.send).toHaveBeenCalledOnce();
+  },
+);
+
+it.each([false, true])(
+  "respects a pause during membership validation except for explicit Send (manual: %s)",
+  async (manual) => {
+    const id = fixture().enqueue();
+    const restarted = fixture();
+    const channel = await restarted.refresh();
+    restarted.refresh.mockClear();
+    let finish!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    restarted.refresh.mockImplementationOnce(async () => {
+      await pending;
+      return channel;
+    });
+    restarted.finish();
+    restarted.queue.resumeAfter(agent, { original: "chat" });
+    try {
+      if (manual) restarted.queue.sendNow(id);
+      else restarted.work("original", "done");
+      await vi.waitFor(() => expect(restarted.refresh).toHaveBeenCalledOnce());
+      restarted.queue.pauseAfter(agent, { original: "chat" });
+    } finally {
+      finish();
+    }
+    await followUpStorage(scope).lock(id, async () => {});
+    if (manual) {
+      expect(restarted.send).toHaveBeenCalledOnce();
+      expect(restarted.queue.snapshot()).toEqual([]);
+    } else {
+      expect(restarted.send).not.toHaveBeenCalled();
+      expect(restarted.queue.snapshot()[0]?.restored).toBe(true);
+    }
+  },
+);

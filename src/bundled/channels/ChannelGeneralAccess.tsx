@@ -31,7 +31,7 @@ import { privacyConsequence } from "./ChannelPrivacyConfirmation";
 const noCommunitySubscription = () => () => {};
 
 /** General access uses the same signed save/readback owner as channel details.
- * Choices are confirmed individually, like the member rows above this section. */
+ * Choices are confirmed individually, like the member rows that follow. */
 export function ChannelGeneralAccess({
   communityReader,
   communityScope,
@@ -72,7 +72,6 @@ export function ChannelGeneralAccess({
   if (channel?.readOnly)
     return (
       <section aria-label="General access" className={styles.generalAccess}>
-        <h3 className="pb-2 text-caption text-subtle">General</h3>
         <div className={styles.accessRow}>
           <span className={styles.accessIcon} aria-hidden="true">
             {channel.visibility === "public" ? (
@@ -206,7 +205,6 @@ function ChannelGeneralAccessEditor({
       aria-busy={loading || pending}
       className={styles.generalAccess}
     >
-      <h3 className="pb-2 text-caption text-subtle">General</h3>
       <div className={styles.accessRow}>
         <span
           className={styles.accessIcon}

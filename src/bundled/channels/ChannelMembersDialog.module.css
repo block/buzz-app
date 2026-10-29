@@ -169,7 +169,7 @@
 .accessRow {
   display: grid;
   grid-template-columns:
-    calc(var(--size-control-sm) + var(--space-4)) minmax(0, 1fr)
+    calc(var(--size-control-sm) + var(--space-6)) minmax(0, 1fr)
     auto;
   align-items: start;
   gap: var(--space-2);
@@ -211,7 +211,7 @@
     max-width: 100%;
   }
   .accessRow {
-    grid-template-columns: calc(var(--size-control-sm) + var(--space-4)) minmax(
+    grid-template-columns: calc(var(--size-control-sm) + var(--space-6)) minmax(
         0,
         1fr
       );

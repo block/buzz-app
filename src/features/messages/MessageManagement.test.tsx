@@ -71,6 +71,7 @@ async function fixture(
   agentOwner: "viewer" | "other" | undefined = undefined,
   chatCard = false,
   shareRead?: Promise<RelayEvent[]>,
+  viewerRole: "member" | "guest" = "member",
 ) {
   vi.stubGlobal(
     "ResizeObserver",
@@ -180,7 +181,14 @@ async function fixture(
         if (filter.kinds?.includes(39000) || filter.kinds?.includes(39002))
           return [
             metadata(relay, "room", "Room"),
-            roster(relay, "room", [viewer.pubkey, peer.pubkey]),
+            signed(relay, {
+              ...roster(relay, "room", [viewer.pubkey, peer.pubkey]),
+              tags: [
+                ["d", "room"],
+                ["p", viewer.pubkey, "", viewerRole],
+                ["p", peer.pubkey, "", "member"],
+              ],
+            }),
           ];
         if (filter.kinds?.includes(0))
           return [
@@ -564,32 +572,78 @@ it("reverses an own message force from its menu without changing notification el
   expect(h.publications).toHaveLength(0);
 });
 
-it("toggles actual unread state immediately without a dialog", async () => {
-  const h = await fixture(false, true);
-  const target = {
-    kind: "message" as const,
-    channelId: "room",
-    messageId: h.original.id,
-  };
-  expect(h.owner.session.unread.attention("room", h.original.id).unread).toBe(
-    true,
-  );
-  fireEvent.click(await screen.findByRole("menuitem", { name: "Mark read" }));
-  await waitFor(() =>
-    expect(h.owner.session.unread.attention("room", h.original.id).unread).toBe(
+it.each(["member", "guest"] as const)(
+  "lets a joined %s toggle actual unread state and follow without writing",
+  async (role) => {
+    const h = await fixture(
       false,
-    ),
-  );
-  expect(screen.queryByRole("dialog")).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "Message actions" }));
-  fireEvent.click(await screen.findByRole("menuitem", { name: "Mark unread" }));
-  await waitFor(() =>
+      true,
+      false,
+      false,
+      false,
+      undefined,
+      false,
+      undefined,
+      role,
+    );
+    const target = {
+      kind: "message" as const,
+      channelId: "room",
+      messageId: h.original.id,
+    };
     expect(h.owner.session.unread.attention("room", h.original.id).unread).toBe(
       true,
-    ),
+    );
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Mark read" }));
+    await waitFor(() =>
+      expect(
+        h.owner.session.unread.attention("room", h.original.id).unread,
+      ).toBe(false),
+    );
+    expect(screen.queryByRole("dialog")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Message actions" }));
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "Mark unread" }),
+    );
+    await waitFor(() =>
+      expect(
+        h.owner.session.unread.attention("room", h.original.id).unread,
+      ).toBe(true),
+    );
+    expect(h.owner.session.unread.snapshot(target).observedCount).toBe(1);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Message actions" }));
+    expect(screen.queryByRole("menuitem", { name: "Edit message" })).toBeNull();
+    expect(
+      screen.queryByRole("menuitem", { name: "Delete message" }),
+    ).toBeNull();
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "Follow thread" }),
+    );
+    await waitFor(() =>
+      expect(h.owner.session.unread.following("room", h.original.id)).toBe(
+        true,
+      ),
+    );
+    expect(h.publications).toHaveLength(0);
+  },
+);
+
+it("keeps editing and ordinary deletion hidden from a Guest who authored an earlier message", async () => {
+  const h = await fixture(
+    true,
+    false,
+    false,
+    false,
+    false,
+    undefined,
+    false,
+    undefined,
+    "guest",
   );
-  expect(h.owner.session.unread.snapshot(target).observedCount).toBe(1);
-  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(h.owner.session.channels.get?.("room")?.viewerRole).toBe("guest");
+  expect(screen.queryByRole("menuitem", { name: "Edit message" })).toBeNull();
+  expect(screen.queryByRole("menuitem", { name: "Delete message" })).toBeNull();
   expect(h.publications).toHaveLength(0);
 });
 

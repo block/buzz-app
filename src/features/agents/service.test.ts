@@ -7193,6 +7193,38 @@ it("wakes nothing from the time its attention was off", async () => {
   }
 });
 
+it("wakes nothing from the time no plugin showed its attention", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  try {
+    const { service, run, history, recover, watching, ctx } = await setup({
+      identities: [echo],
+    });
+    const start = nowSeconds();
+    await service.save(bot, { attentionEnabled: true, attention: chat });
+    await settle();
+    vi.setSystemTime((start + 5) * 1000);
+    await watching.dispose();
+    history.push(posted("while hidden", start + 5));
+    await ctx
+      .extend({
+        pluginOwner: Object.freeze({ id: "buzz.watching", revision: "two" }),
+      })
+      .plugin({
+        inject: ["agents"],
+        apply: (scope: Context) => scope.agents.controlAttention(),
+      });
+    // A reconnect a minute later catches up from when it was shown again.
+    vi.setSystemTime((start + 60) * 1000);
+    history.push(posted("after", start + 30));
+    recover();
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    await settle();
+    expect(heard(run)).toEqual(["after"]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("wakes nothing from the time its watch was off, also when it is turned on after a restart", async () => {
   vi.useFakeTimers({ toFake: ["Date"] });
   try {

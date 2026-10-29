@@ -531,6 +531,8 @@ export class AgentRunners {
    * nothing from the time it was off; across a restart, its saved
    * checkpoint, moved while it was off, does the same. */
   private quiet = new Set<string>();
+  /** Whether a plugin has shown Attention since this copy started. */
+  private shown = false;
   /** Mention turns working now, which closing or reloading the app would
    * stop, and those the app left working last time until they are given
    * again or forgotten, as saved. */
@@ -1089,17 +1091,19 @@ export class AgentRunners {
       this.setCheckpoint(key, checkpoint);
       changed = true;
     };
-    // With no plugin showing Attention, as while its plugin starts, every
-    // checkpoint stays put, so the first catch-up after it is on still reads
-    // what the app missed while closed.
+    // Until a plugin first shows Attention, as while plugins start, every
+    // checkpoint stays put, so the first catch-up still reads what the app
+    // missed while closed. Hiding it later is like turning Attention off.
     const shown = this.host.attentionShown();
+    const held = !shown && !this.shown;
+    this.shown ||= shown;
     for (const runner of this.runners.values()) {
       this.resumeTurns(runner);
       const agent = this.host.agent(runner.key);
       const community = agent && this.host.community(agent);
       const on = !!agent?.attentionEnabled && !!runner.type?.run;
       const reading: Stream[] = [];
-      for (const stream of agent && shown ? streamsOf(agent) : []) {
+      for (const stream of agent && !held ? streamsOf(agent) : []) {
         if (!on || !stream.enabled) {
           // Saved too, so one turned on after a restart starts from about
           // when this copy last saw it off.

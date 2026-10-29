@@ -1,22 +1,16 @@
-// GitHub detects changes; Attention owns subscriptions, cancellation and delivery.
+// The pull request store reads GitHub; a watch only asks it for feedback,
+// decides from what it holds, and Attention owns subscriptions, cancellation
+// and delivery.
 import type { Context } from "@deepseek-ai/cordis";
 import { callAttentionTool } from "../../buzz-mcp/attention";
-import {
-  FEEDBACK_READ,
-  feedbackRequest,
-  parseFeedback,
-  parsePull,
-  pullOf,
-  pullRequest,
-  step,
-  WAKE_LIMIT,
-  type Watch,
-} from "./watch";
+import type { PullStates } from "./pull-states";
+import { pullOf, snapshotOf, step, WAKE_LIMIT, type Watch } from "./watch";
 
 export const POLL_MS = 60_000;
 /** Watches saved before Attention. They had no Interest to move to. */
 const RETIRED_STORAGE_KEY = "buzz.github.pull-watches.v1";
-/** Failed polls in a row, a minute apart, that end a watch. */
+/** Minutes in a row without a usable read, or a wake that could be sent,
+ * that end a watch. */
 const FAILURE_LIMIT = 30;
 
 type Cursor = Watch & { subscription?: string; revision?: unknown };
@@ -70,33 +64,10 @@ const subscription = (watch: Watch) => ({
   ...(watch.root ? { root: watch.root } : {}),
 });
 
-export function watchPulls(ctx: Context) {
+export function watchPulls(ctx: Context, states: PullStates) {
   localStorage.removeItem(RETIRED_STORAGE_KEY);
   const cursors = load();
   let disposed = false;
-  /** The pull request at `url`, with the text of feedback not in `seen`. */
-  const read = async (url: string, seen?: readonly string[]) => {
-    const pull = pullOf(url);
-    if (!pull) return undefined;
-    const output = await ctx.host.runCommand("pull", pullRequest(pull));
-    const snapshot = output === null ? undefined : parsePull(output);
-    if (!snapshot || !seen) return snapshot;
-    const known = new Set(seen);
-    const asked = snapshot.ids
-      .filter((id) => !known.has(id))
-      .slice(0, FEEDBACK_READ);
-    if (!asked.length) return snapshot;
-    // Text is read apart, so CI results still arrive when it cannot be.
-    const text = await ctx.host.runCommand("pull", feedbackRequest(asked));
-    const feedback = text === null ? undefined : parseFeedback(text);
-    // What was not read stays unseen, to be read on a later poll.
-    const got = new Set(feedback ? asked : []);
-    return {
-      ...snapshot,
-      ids: snapshot.ids.filter((id) => known.has(id) || got.has(id)),
-      feedback: feedback ?? [],
-    };
-  };
 
   ctx.agents.addAttentionSource({
     id: "github-pr",
@@ -130,51 +101,97 @@ export function watchPulls(ctx: Context) {
         cursors.set(key, { ...watch, revision, subscription: id });
         save(cursors);
       };
-      while (!signal.aborted && !disposed) {
-        let ended = false;
-        try {
-          const snapshot = await read(pull.url, watch.seen);
-          if (signal.aborted || disposed) return;
-          if (!snapshot) throw new Error("gh could not read it");
-          const next = step(watch, snapshot, Date.now());
-          if (next.wake)
-            emit(
-              next.ended === "limit"
-                ? `${next.wake}\n\nThat is ${WAKE_LIMIT} wakes, so this watch has ended; call github_watch_pr again to keep watching.`
-                : next.wake,
-            );
-          watch = { ...next.watch, failures: 0 };
-          ended = !!next.ended;
-        } catch (error) {
-          if (signal.aborted || disposed) return;
-          console.warn(`GitHub watch failed for ${pull.url}`, error);
-          watch = { ...watch, failures: (watch.failures ?? 0) + 1 };
-          if ((watch.failures ?? 0) >= FAILURE_LIMIT) {
-            try {
-              emit(
-                `Stopped watching ${pull.url}: it could not be read with gh, or you could not be woken, for ${FAILURE_LIMIT} minutes. Call github_watch_pr again to retry.`,
-              );
-            } catch {}
-            ended = true;
+      // The store keeps the pull request read, with its feedback, while
+      // this runs; each read it records and each minute are looked at.
+      await new Promise<void>((resolve) => {
+        /** The last read looked at, and whether one came since the last
+         * minute. */
+        let looked = -Infinity;
+        let fresh = false;
+        let done = false;
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        let unwatch = () => {};
+        const finish = () => {
+          done = true;
+          clearTimeout(timer);
+          unwatch();
+          signal.removeEventListener("abort", finish);
+          resolve();
+        };
+        /** Decides from what the store holds now; `minute` counts a minute
+         * without a usable read. */
+        const look = (minute: boolean) => {
+          if (done) return;
+          if (signal.aborted || disposed) return finish();
+          const state = states.get(pull.url);
+          const read = states.readAt(pull.url);
+          const snapshot =
+            typeof state === "object" && read && !read.error
+              ? snapshotOf(state, watch.seen)
+              : undefined;
+          if (snapshot && read && read.readAt > looked) {
+            looked = read.readAt;
+            fresh = true;
           }
-        }
-        if (ended) {
-          cursors.delete(key);
-          save(cursors);
-          return;
-        }
-        persist();
-        await new Promise<void>((resolve) => {
-          const finish = () => {
-            clearTimeout(timer);
-            signal.removeEventListener("abort", finish);
-            resolve();
-          };
-          const timer = setTimeout(finish, POLL_MS);
-          signal.addEventListener("abort", finish, { once: true });
-          if (signal.aborted) finish();
+          let ended = false;
+          let unsent = false;
+          if (snapshot)
+            try {
+              const next = step(watch, snapshot, Date.now());
+              if (next.wake)
+                emit(
+                  next.ended === "limit"
+                    ? `${next.wake}\n\nThat is ${WAKE_LIMIT} wakes, so this watch has ended; call github_watch_pr again to keep watching.`
+                    : next.wake,
+                );
+              watch = next.watch;
+              ended = !!next.ended;
+            } catch (error) {
+              // What could not be sent stays news, to be sent next time.
+              console.warn(`GitHub watch failed for ${pull.url}`, error);
+              unsent = true;
+            }
+          // Each minute counts as failed without a usable read since the
+          // last, or when the agent could not be woken.
+          if (minute) {
+            const failed = !fresh || unsent;
+            fresh = false;
+            watch = {
+              ...watch,
+              failures: failed ? (watch.failures ?? 0) + 1 : 0,
+            };
+            if ((watch.failures ?? 0) >= FAILURE_LIMIT) {
+              try {
+                emit(
+                  `Stopped watching ${pull.url}: it could not be read with gh, or you could not be woken, for ${FAILURE_LIMIT} minutes. Call github_watch_pr again to retry.`,
+                );
+              } catch {}
+              ended = true;
+            }
+          }
+          if (ended) {
+            cursors.delete(key);
+            save(cursors);
+            return finish();
+          }
+          persist();
+        };
+        const tick = () => {
+          timer = setTimeout(() => {
+            look(true);
+            if (!done) tick();
+          }, POLL_MS);
+        };
+        signal.addEventListener("abort", finish, { once: true });
+        if (signal.aborted || disposed) return finish();
+        // Only feedback the watch has not seen is worth its text; a new
+        // watch has seen everything listed when it starts.
+        unwatch = states.watch(pull.url, () => look(false), "feedback", {
+          wantsText: (id) => !!watch.seen && !watch.seen.includes(id),
         });
-      }
+        tick();
+        look(false);
+      });
     },
   });
   ctx.agents.addTool({
@@ -245,8 +262,19 @@ export function watchPulls(ctx: Context) {
             ? saved
             : (object.config.initial as Watch | undefined)
           : undefined;
-      const snapshot = await read(pull.url, prior?.seen);
+      // An explicit call reads GitHub now, through the store.
+      const found = await states
+        .read(pull.url, {
+          maxAge: 0,
+          level: "feedback",
+          wantsText: (id) => !!prior?.seen && !prior.seen.includes(id),
+        })
+        .catch(() => undefined);
       if (disposed) throw new Error("The GitHub plugin has stopped");
+      const snapshot =
+        typeof found?.state === "object" && !found.error
+          ? snapshotOf(found.state, prior?.seen)
+          : undefined;
       if (!snapshot)
         throw new Error(
           "Could not read the pull request with gh. Check that gh is installed, signed in, and can see it.",

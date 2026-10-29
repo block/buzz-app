@@ -1,11 +1,15 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from "vitest";
 import { GhUnavailable, GitHubError, type GitHubCli } from "./gh";
+import { GitHubRateLimited } from "./data";
 import {
+  BODY_CHARS,
   createPullStates,
+  PANEL_REFRESH_MS,
   PUBLIC_READS_PER_HOUR,
   PUBLIC_READS_PER_POLL,
   PULL_REFRESH_MS,
+  PULL_RETAIN_MS,
   PULL_SLOW_REFRESH_MS,
 } from "./pull-states";
 
@@ -288,7 +292,7 @@ it("leaves a read in flight alone when another pull request is watched, reading 
   expect(gh.mock.calls[1]?.[1]).toEqual({ o0: "block", n0: "buzz", p0: 9 });
 });
 
-it("looks again later rather than reading while the window is hidden", async () => {
+it("reads a link once but does not poll it while the window is hidden", async () => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
   const gh = mockGh(async () => ({ r0: rollup("OPEN", {}, "SUCCESS") }));
   const visibility = vi
@@ -297,11 +301,9 @@ it("looks again later rather than reading while the window is hidden", async () 
   const states = createPullStates(gh);
   states.watch(pull, () => {});
   await vi.waitFor(() => expect(states.get(pull)).toBeDefined());
-  await vi.advanceTimersByTimeAsync(2 * PULL_REFRESH_MS);
+  await vi.advanceTimersByTimeAsync(10 * PULL_REFRESH_MS);
   expect(gh).toHaveBeenCalledOnce();
-  visibility.mockReturnValue("visible");
-  await vi.advanceTimersByTimeAsync(PULL_REFRESH_MS);
-  expect(gh).toHaveBeenCalledTimes(2);
+  visibility.mockRestore();
 });
 
 it("reads what became due while the window was hidden as soon as it comes back", async () => {
@@ -677,4 +679,704 @@ it("keeps what a timed-out refresh read, and marks what it could not", async () 
   } finally {
     for (const unwatch of stop) unwatch();
   }
+});
+
+/** A pull request as the store's query answers for it with `gh`, at every
+ * level: its head and checks, feedback ids, and what the panel reads. */
+type Check = { name: string; status: string; conclusion: string | null };
+const full = ({
+  comments = ["I1"],
+  checks = [
+    { name: "unit", status: "COMPLETED", conclusion: "FAILURE" },
+    { name: "e2e", status: "COMPLETED", conclusion: "SUCCESS" },
+  ] as Check[],
+  total = undefined as number | undefined,
+  rollupState = "FAILURE",
+} = {}) => ({
+  squashMergeAllowed: true,
+  pullRequest: {
+    state: "OPEN",
+    isDraft: false,
+    mergeStateStatus: "CLEAN",
+    headRefOid: "abc123",
+    id: "PR_1",
+    title: "A change",
+    baseRefName: "main",
+    headRefName: "feature",
+    commits: {
+      nodes: [
+        {
+          commit: {
+            statusCheckRollup: {
+              state: rollupState,
+              contexts: {
+                totalCount: total ?? checks.length,
+                nodes: checks.map((check) => ({
+                  __typename: "CheckRun",
+                  ...check,
+                })),
+              },
+            },
+          },
+        },
+      ],
+    },
+    reviews: {
+      nodes: [
+        { id: "R1", comments: { nodes: [{ id: "C1" }] } },
+        { id: "R2", comments: { nodes: [] } },
+      ],
+    },
+    comments: { nodes: comments.map((id) => ({ id })) },
+  },
+});
+/** What GitHub says of each feedback node asked for. */
+const text = (ids: string[]) => ({
+  nodes: ids.map((id) =>
+    id.startsWith("R")
+      ? {
+          __typename: "PullRequestReview",
+          id,
+          author: { login: "wes" },
+          state: id === "R2" ? "COMMENTED" : "CHANGES_REQUESTED",
+          body: id === "R2" ? " " : "Fix it",
+          url: `u/${id}`,
+        }
+      : id.startsWith("C")
+        ? {
+            __typename: "PullRequestReviewComment",
+            id,
+            author: { login: "codex" },
+            body: "Here",
+            path: "src/a.ts",
+            url: `u/${id}`,
+          }
+        : {
+            __typename: "IssueComment",
+            id,
+            author: null,
+            body: "x".repeat(BODY_CHARS + 50),
+            url: `u/${id}`,
+          },
+  ),
+});
+type Variables = Record<string, unknown>;
+const ghFor = (answer: () => Record<string, unknown>) =>
+  mockGh(async (_query: string, variables: Variables) =>
+    "ids" in variables
+      ? text(variables.ids as string[])
+      : { viewer: { login: "baxen" }, ...answer() },
+  );
+/** The feedback items held for `url`. */
+const itemsOf = (states: ReturnType<typeof createPullStates>, url: string) => {
+  const state = states.get(url);
+  return typeof state === "object" ? (state.feedback?.items ?? []) : [];
+};
+const listings = (gh: ReturnType<typeof mockGh>) =>
+  gh.mock.calls.filter(([, variables]) => !("ids" in (variables as Variables)));
+
+it("reads a pull request once at every level its readers ask for", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const gh = ghFor(() => ({ r0: full(), r1: rollup("OPEN", {}, "SUCCESS") }));
+  const states = createPullStates(gh);
+  states.watch(pull, () => {});
+  states.watch(pull, () => {}, "feedback");
+  states.watch(pull, () => {}, "panel");
+  states.watch(second, () => {});
+  await vi.waitFor(() =>
+    expect(states.get(pull)).toMatchObject({ panel: expect.anything() }),
+  );
+  // One listing for both, and only the followed one lists its feedback.
+  expect(listings(gh)).toHaveLength(1);
+  const query = String(listings(gh)[0]?.[0]);
+  expect(query).toContain("viewer{login}");
+  const [first, other] = query.split("r1:");
+  expect(first).toContain("reviews(");
+  expect(first).toContain("viewerDefaultMergeMethod");
+  expect(other).not.toContain("reviews(");
+  expect(other).not.toContain("viewerDefaultMergeMethod");
+  expect(states.get(pull)).toMatchObject({
+    state: "open",
+    checks: "failure",
+    head: "abc123",
+    settled: true,
+    failed: ["unit"],
+    feedback: {
+      viewer: "baxen",
+      ids: ["review/R1", "inline/C1", "review/R2", "comment/I1"],
+    },
+    panel: {
+      signedIn: true,
+      details: { title: "A change" },
+      checklist: { id: "PR_1", head: "abc123", base: "main" },
+    },
+  });
+  expect(states.get(second)).not.toHaveProperty("feedback");
+  expect(states.get(second)).not.toHaveProperty("panel");
+});
+
+it("is not settled while a check runs, more are unread, or the rollup waits", async () => {
+  const running = [{ name: "e2e", status: "IN_PROGRESS", conclusion: null }];
+  for (const answer of [
+    full({ checks: running }),
+    full({ total: 3 }),
+    full({ rollupState: "EXPECTED" }),
+  ]) {
+    const states = createPullStates(ghFor(() => ({ r0: answer })));
+    const { state } = await states.read(pull, { maxAge: 0 });
+    expect(state).toMatchObject({ settled: false });
+  }
+});
+
+it("reads the text of feedback it does not hold, newest first, and keeps it while listed", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  let comments = ["I1"];
+  const gh = ghFor(() => ({ r0: full({ comments }) }));
+  const states = createPullStates(gh);
+  states.watch(pull, () => {}, "feedback");
+  await vi.waitFor(() => expect(itemsOf(states, pull)).toHaveLength(4));
+  const asked = () =>
+    gh.mock.calls
+      .map(([, variables]) => (variables as Variables).ids)
+      .filter(Boolean);
+  expect(asked()).toEqual([["R1", "C1", "R2", "I1"]]);
+  const items = itemsOf(states, pull);
+  expect(items.map((item) => item.id)).toEqual([
+    "review/R1",
+    "inline/C1",
+    "review/R2",
+    "comment/I1",
+  ]);
+  // Long bodies are clipped; an empty review wrapper is held as read.
+  expect(items[3]?.body).toHaveLength(BODY_CHARS + 1);
+  expect(items[2]).toMatchObject({ state: "COMMENTED", body: " " });
+
+  // Only what is new is read; what is no longer listed is let go.
+  comments = ["I2"];
+  await vi.advanceTimersByTimeAsync(PULL_REFRESH_MS);
+  expect(asked().at(-1)).toEqual(["I2"]);
+  expect(itemsOf(states, pull).map((item) => item.id)).toEqual([
+    "review/R1",
+    "inline/C1",
+    "review/R2",
+    "comment/I2",
+  ]);
+});
+
+it("keeps the listing when feedback text cannot be read, and reads it next time", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  let texts = false;
+  const gh = mockGh(async (_query: string, variables: Variables) => {
+    if (!("ids" in variables)) return { viewer: { login: "b" }, r0: full() };
+    if (!texts) throw new GitHubError("Something went wrong", "INTERNAL");
+    return text(variables.ids as string[]);
+  });
+  const states = createPullStates(gh);
+  states.watch(pull, () => {}, "feedback");
+  await vi.waitFor(() =>
+    expect(states.get(pull)).toMatchObject({ head: "abc123" }),
+  );
+  expect(states.get(pull)).toMatchObject({ feedback: { items: [] } });
+  texts = true;
+  await vi.advanceTimersByTimeAsync(PULL_REFRESH_MS);
+  expect(states.get(pull)).toMatchObject({
+    feedback: { items: expect.arrayContaining([expect.anything()]) },
+  });
+});
+
+it("holds what a level adds only while someone asks for it", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const gh = ghFor(() => ({ r0: full() }));
+  const states = createPullStates(gh);
+  states.watch(pull, () => {});
+  const unfollow = states.watch(pull, () => {}, "feedback");
+  await vi.waitFor(() => expect(states.get(pull)).toHaveProperty("feedback"));
+  unfollow();
+  await vi.advanceTimersByTimeAsync(PULL_REFRESH_MS);
+  expect(states.get(pull)).not.toHaveProperty("feedback");
+  expect(String(listings(gh).at(-1)?.[0])).not.toContain("reviews(");
+});
+
+it("follows a pull request's feedback while the window is hidden, but not one only shown", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const gh = ghFor(() => ({ r0: full(), r1: full() }));
+  vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+  const states = createPullStates(gh);
+  states.watch(pull, () => {}, "feedback");
+  states.watch(second, () => {});
+  await vi.waitFor(() => expect(states.get(second)).toBeDefined());
+  expect(listings(gh)).toHaveLength(1);
+  await vi.advanceTimersByTimeAsync(3 * PULL_REFRESH_MS);
+  const read = listings(gh).map(([, variables]) => (variables as Variables).n0);
+  expect(read).toEqual(["buzz-app", "buzz-app", "buzz-app", "buzz-app"]);
+  expect(
+    listings(gh)
+      .slice(1)
+      .every(([, v]) => !("n1" in (v as Variables))),
+  ).toBe(true);
+});
+
+it("polls a pull request open in the panel twice a minute", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const gh = ghFor(() => ({ r0: full() }));
+  const states = createPullStates(gh);
+  states.watch(pull, () => {});
+  await vi.waitFor(() => expect(states.get(pull)).toBeDefined());
+  // Opening the panel reads what it adds now, then on the panel's interval.
+  const close = states.watch(pull, () => {}, "panel");
+  await vi.advanceTimersByTimeAsync(0);
+  expect(listings(gh)).toHaveLength(2);
+  expect(states.get(pull)).toHaveProperty("panel");
+  await vi.advanceTimersByTimeAsync(PANEL_REFRESH_MS);
+  expect(listings(gh)).toHaveLength(3);
+  // Closed, the links' minute after the last poll follows, and drops what
+  // only the panel holds.
+  close();
+  await vi.advanceTimersByTimeAsync(PULL_REFRESH_MS - 1);
+  expect(listings(gh)).toHaveLength(3);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(listings(gh)).toHaveLength(4);
+  expect(states.get(pull)).not.toHaveProperty("panel");
+});
+
+it("answers a reader from what it holds within the age asked, and reads otherwise", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const gh = ghFor(() => ({ r0: full() }));
+  const states = createPullStates(gh);
+  const first = await states.read(pull, { maxAge: PULL_REFRESH_MS });
+  expect(first).toMatchObject({
+    state: { head: "abc123" },
+    readAt: Date.now(),
+  });
+  expect(states.readAt(pull)).toEqual({
+    readAt: first.readAt,
+    error: undefined,
+  });
+  await vi.advanceTimersByTimeAsync(PULL_REFRESH_MS / 2);
+  // Within the minute, from the store; at a level it lacks, read again.
+  expect(
+    (await states.read(`${pull}?tab=files`, { maxAge: PULL_REFRESH_MS }))
+      .readAt,
+  ).toBe(first.readAt);
+  expect(listings(gh)).toHaveLength(1);
+  const followed = await states.read(pull, {
+    maxAge: PULL_REFRESH_MS,
+    level: "feedback",
+  });
+  expect(followed.state).toHaveProperty("feedback");
+  expect(listings(gh)).toHaveLength(2);
+  // Nothing watches it, so nothing polls it.
+  await vi.advanceTimersByTimeAsync(3 * PULL_REFRESH_MS);
+  expect(listings(gh)).toHaveLength(2);
+  // Two readers asking together share one read.
+  const [a, b] = await Promise.all([
+    states.read(pull, { maxAge: 0 }),
+    states.read(second, { maxAge: 0 }),
+  ]);
+  expect(listings(gh)).toHaveLength(3);
+  expect(a.readAt).toBe(b.readAt);
+  await expect(
+    states.read("https://github.com/block/buzz-app/issues/7", { maxAge: 0 }),
+  ).rejects.toThrow("Not a GitHub pull request URL");
+});
+
+it("tells a reader why a pull request could not be read, or that GitHub answered for none", async () => {
+  let fail = false;
+  const gh = mockGh(async () => {
+    if (fail) throw new GitHubError("Bad gateway", "INTERNAL");
+    throw new GitHubError("Not found", "NOT_FOUND", {
+      r0: { pullRequest: null },
+    });
+  });
+  const states = createPullStates(gh);
+  const read = await states.read(pull, { maxAge: 0 });
+  expect(read.state).toBe("failed");
+  expect(read.error?.message).toMatch("couldn’t find this");
+  expect(states.readAt(pull)?.error?.message).toMatch("couldn’t find this");
+  fail = true;
+  await expect(states.read(pull, { maxAge: 0 })).rejects.toThrow("Bad gateway");
+});
+
+it("forgets a pull request nobody has watched or asked for in a while", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const gh = ghFor(() => ({ r0: full() }));
+  const states = createPullStates(gh);
+  const unwatch = states.watch(pull, () => {});
+  await vi.waitFor(() => expect(states.get(pull)).toBeDefined());
+  unwatch();
+  await vi.advanceTimersByTimeAsync(PULL_RETAIN_MS - PULL_REFRESH_MS);
+  await states.read(second, { maxAge: 0 });
+  expect(states.get(pull)).toBeDefined();
+  await vi.advanceTimersByTimeAsync(PULL_REFRESH_MS);
+  await states.read(second, { maxAge: 0 });
+  expect(states.get(pull)).toBeUndefined();
+  expect(states.readAt(pull)).toBeUndefined();
+});
+
+it("reads the panel without gh apart from the links' share, with the head's checks", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const fetch = vi.fn(async (url: string) =>
+    url.includes("/commits/")
+      ? new Response(
+          JSON.stringify(
+            url.includes("check-runs")
+              ? {
+                  total_count: 1,
+                  check_runs: [
+                    {
+                      name: "unit",
+                      status: "completed",
+                      conclusion: "success",
+                    },
+                  ],
+                }
+              : { total_count: 0, statuses: [] },
+          ),
+        )
+      : new Response(
+          JSON.stringify({ title: "A", state: "open", head: { sha: "abc" } }),
+        ),
+  );
+  vi.stubGlobal("fetch", fetch);
+  const states = createPullStates(undefined);
+  // The links' share is spent.
+  for (const url of pulls) states.watch(url, () => {});
+  await vi.waitFor(() =>
+    expect(states.get(pulls[PUBLIC_READS_PER_POLL - 1] ?? "")).toBeDefined(),
+  );
+  const { state } = await states.read(pull, { maxAge: 0, level: "panel" });
+  expect(state).toMatchObject({
+    state: "open",
+    panel: {
+      signedIn: false,
+      details: { title: "A" },
+      publicChecks: { state: "success" },
+    },
+  });
+});
+
+it("lets the panel's own read try GitHub while its public limit holds the links", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const fetch = vi
+    .fn()
+    .mockResolvedValueOnce(limited(Date.now() + 60 * 60_000))
+    .mockResolvedValueOnce(limited(Date.now() + 60 * 60_000))
+    .mockResolvedValue(
+      new Response(JSON.stringify({ title: "Recovered", state: "open" })),
+    );
+  vi.stubGlobal("fetch", fetch);
+  const states = createPullStates(undefined);
+  states.watch(pull, () => {});
+  await vi.waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+  // A link's state waits for the reset; asking for it does not read.
+  await expect(states.read(pull, { maxAge: 0 })).rejects.toBeInstanceOf(
+    GitHubRateLimited,
+  );
+  expect(fetch).toHaveBeenCalledOnce();
+  // The panel asks GitHub each time: refused, then read.
+  await expect(
+    states.read(pull, { maxAge: 0, level: "panel" }),
+  ).rejects.toBeInstanceOf(GitHubRateLimited);
+  const { state } = await states.read(pull, { maxAge: 0, level: "panel" });
+  expect(state).toMatchObject({ panel: { details: { title: "Recovered" } } });
+  expect(fetch).toHaveBeenCalledTimes(3);
+});
+
+it("keeps the latest state, and when it was read, when a later read fails", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  let fail = false;
+  const gh = mockGh(async () => {
+    if (fail)
+      throw new GitHubError("Not found", "NOT_FOUND", {
+        r0: { pullRequest: null },
+      });
+    return { r0: rollup("OPEN", {}, "SUCCESS") };
+  });
+  const states = createPullStates(gh);
+  const changed = vi.fn();
+  states.watch(pull, changed);
+  await vi.waitFor(() => expect(states.get(pull)).toBeDefined());
+  const shown = states.get(pull);
+  const readAt = states.readAt(pull)?.readAt;
+  fail = true;
+  const read = await states.read(pull, { maxAge: 0 });
+  expect(read).toMatchObject({ state: shown, readAt });
+  expect(read.error?.message).toMatch("couldn’t find this");
+  expect(states.get(pull)).toBe(shown);
+  expect(states.readAt(pull)).toMatchObject({ readAt });
+  expect(changed).toHaveBeenCalledOnce();
+  fail = false;
+  await vi.advanceTimersByTimeAsync(PULL_SLOW_REFRESH_MS);
+  await vi.waitFor(() => expect(states.readAt(pull)?.error).toBeUndefined());
+  expect(states.readAt(pull)?.readAt).toBeGreaterThan(readAt ?? 0);
+});
+
+/** The pull requests each GitHub call read, by owner/name. */
+const readPerCall = (gh: ReturnType<typeof mockGh>) =>
+  gh.mock.calls.map(([, variables]) => {
+    const vars = variables as Record<string, unknown>;
+    return Object.keys(vars)
+      .filter((key) => /^o\d+$/.test(key))
+      .map((key) => `${vars[key]}/${vars[`n${key.slice(1)}`]}`)
+      .sort();
+  });
+
+it("reads each pull request as often as its most eager reader wants, all that are due together", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const gh = mockGh(async (_query: string, variables: Variables) =>
+    Object.fromEntries(
+      Object.keys(variables)
+        .filter((key) => /^o\d+$/.test(key))
+        .map((key) => [`r${key.slice(1)}`, rollup("OPEN", {}, "SUCCESS")]),
+    ),
+  );
+  const states = createPullStates(gh);
+  const every = (ms: number) => () => ms;
+  states.watch(pull, () => {}, "state", { polling: every(20_000) });
+  states.watch(second, () => {}, "state", { polling: every(40_000) });
+  // A second reader of the first wanting it less often changes nothing.
+  states.watch(pull, () => {}, "state", { polling: every(60_000) });
+  await vi.advanceTimersByTimeAsync(0);
+  expect(readPerCall(gh)).toEqual([["block/buzz", "block/buzz-app"]]);
+  await vi.advanceTimersByTimeAsync(20_000);
+  await vi.advanceTimersByTimeAsync(20_000);
+  expect(readPerCall(gh).slice(1)).toEqual([
+    ["block/buzz-app"],
+    ["block/buzz", "block/buzz-app"],
+  ]);
+  // A reader wanting the second more often brings its next read forward.
+  states.watch(second, () => {}, "state", { polling: every(10_000) });
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(readPerCall(gh).at(-1)).toEqual(["block/buzz"]);
+});
+
+it("keeps each reader's own pace: the panel stops at a closed pull request, links slow down", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  let state = "OPEN";
+  const gh = ghFor(() => ({
+    r0: { ...full(), pullRequest: { ...full().pullRequest, state } },
+  }));
+  const states = createPullStates(gh);
+  const close = states.watch(pull, () => {}, "panel");
+  await vi.advanceTimersByTimeAsync(0);
+  expect(listings(gh)).toHaveLength(1);
+  state = "CLOSED";
+  await vi.advanceTimersByTimeAsync(PANEL_REFRESH_MS);
+  expect(states.get(pull)).toMatchObject({ state: "closed" });
+  // The panel alone reads a closed pull request no more.
+  await vi.advanceTimersByTimeAsync(PULL_SLOW_REFRESH_MS * 2);
+  expect(listings(gh)).toHaveLength(2);
+  // A link on it reads it every few minutes, as links did.
+  states.watch(pull, () => {});
+  await vi.advanceTimersByTimeAsync(0);
+  expect(listings(gh)).toHaveLength(3);
+  await vi.advanceTimersByTimeAsync(PULL_SLOW_REFRESH_MS);
+  expect(listings(gh)).toHaveLength(4);
+  close();
+});
+
+it("reads the panel without gh when opened and with its links, apart from their share, reading checks for a new head", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  let head = "abc";
+  const fetch = vi.fn(async (url: string) =>
+    url.includes("/commits/")
+      ? new Response(
+          JSON.stringify(
+            url.includes("check-runs")
+              ? { total_count: 0, check_runs: [] }
+              : { total_count: 0, statuses: [] },
+          ),
+        )
+      : new Response(
+          JSON.stringify({ title: "A", state: "open", head: { sha: head } }),
+        ),
+  );
+  vi.stubGlobal("fetch", fetch);
+  const states = createPullStates(undefined);
+  // The links' share is spent.
+  for (const url of pulls) states.watch(url, () => {});
+  await vi.waitFor(() =>
+    expect(states.get(pulls[PUBLIC_READS_PER_POLL - 1] ?? "")).toBeDefined(),
+  );
+  const pullReads = () =>
+    fetch.mock.calls.filter(([url]) => url.endsWith("/pulls/7")).length;
+  const checkReads = () =>
+    fetch.mock.calls.filter(([url]) => url.includes("/commits/abc")).length;
+  states.watch(pull, () => {}, "panel");
+  await vi.waitFor(() => expect(states.get(pull)).toHaveProperty("panel"));
+  expect([pullReads(), checkReads()]).toEqual([1, 2]);
+  // The panel alone does not poll the public API.
+  await vi.advanceTimersByTimeAsync(PULL_SLOW_REFRESH_MS);
+  expect([pullReads(), checkReads()]).toEqual([1, 2]);
+  // A link on it does, every few minutes; the same head keeps its checks.
+  states.watch(pull, () => {});
+  await vi.advanceTimersByTimeAsync(0);
+  expect([pullReads(), checkReads()]).toEqual([2, 2]);
+  head = "def";
+  await vi.advanceTimersByTimeAsync(PULL_SLOW_REFRESH_MS);
+  expect(pullReads()).toBe(3);
+  expect(
+    fetch.mock.calls.filter(([url]) => url.includes("/commits/def")),
+  ).toHaveLength(2);
+});
+
+it("parses only the levels a read asked for, and reads a level asked for meanwhile at once", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  let answer: (value: unknown) => void = () => {};
+  const gh = mockGh(
+    () =>
+      new Promise((resolve) => {
+        answer = resolve;
+      }),
+  );
+  const states = createPullStates(gh);
+  states.watch(pull, () => {});
+  await vi.waitFor(() => expect(gh).toHaveBeenCalledOnce());
+  // The panel opens while the links' read is in flight.
+  states.watch(pull, () => {}, "panel");
+  states.watch(pull, () => {}, "feedback");
+  answer({ r0: rollup("OPEN") });
+  await vi.waitFor(() => expect(states.get(pull)).toBeDefined());
+  expect(states.get(pull)).not.toHaveProperty("panel");
+  expect(states.get(pull)).not.toHaveProperty("feedback");
+  // What they asked for is read next, not a poll later.
+  await vi.waitFor(() => expect(gh).toHaveBeenCalledTimes(2));
+  const query = String(gh.mock.calls[1]?.[0]);
+  expect(query).toContain("bodyHTML");
+  expect(query).toContain("viewer{login}");
+});
+
+it("spends no public read on a watch while gh is unavailable, and tries gh again as links do", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const fetch = vi.fn(async () =>
+    Response.json({ title: "A", state: "open", head: { sha: "abc" } }),
+  );
+  vi.stubGlobal("fetch", fetch);
+  const gh = mockGh(async () => {
+    throw new GhUnavailable("signed out");
+  });
+  const states = createPullStates(gh);
+  states.watch(pull, () => {}, "feedback");
+  await vi.advanceTimersByTimeAsync(0);
+  expect(states.get(pull)).toBe("failed");
+  expect(states.readAt(pull)?.error).toBeInstanceOf(GhUnavailable);
+  await vi.advanceTimersByTimeAsync(PULL_SLOW_REFRESH_MS - 1);
+  expect(gh).toHaveBeenCalledOnce();
+  await vi.advanceTimersByTimeAsync(1);
+  expect(gh).toHaveBeenCalledTimes(2);
+  // A link on it reads it publicly, at the links' pace, not the watch's.
+  states.watch(pull, () => {});
+  await vi.advanceTimersByTimeAsync(PULL_SLOW_REFRESH_MS);
+  expect(gh).toHaveBeenCalledTimes(3);
+  expect(fetch).toHaveBeenCalledOnce();
+  await vi.advanceTimersByTimeAsync(PULL_SLOW_REFRESH_MS - 1);
+  expect(fetch).toHaveBeenCalledOnce();
+});
+
+it("records why GitHub answered for none, and reads again as its readers want", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  let down = false;
+  const gh = ghFor(() => {
+    if (down)
+      throw new GitHubError("Service unavailable", "SERVICE_UNAVAILABLE");
+    return { r0: full() };
+  });
+  const states = createPullStates(gh);
+  states.watch(pull, () => {}, "panel");
+  await vi.waitFor(() => expect(states.get(pull)).toHaveProperty("panel"));
+  const { readAt } = states.readAt(pull) ?? {};
+  down = true;
+  await vi.advanceTimersByTimeAsync(PANEL_REFRESH_MS);
+  expect(listings(gh)).toHaveLength(2);
+  // What is held stays, with why it could not be read again, also for a
+  // reader answered from what is held.
+  expect(states.get(pull)).toHaveProperty("panel");
+  expect(states.readAt(pull)).toMatchObject({
+    readAt,
+    error: { type: "SERVICE_UNAVAILABLE" },
+  });
+  expect(
+    (await states.read(pull, { maxAge: Infinity, level: "panel" })).error,
+  ).toMatchObject({ type: "SERVICE_UNAVAILABLE" });
+  // The panel is read again at its own pace.
+  await vi.advanceTimersByTimeAsync(PANEL_REFRESH_MS);
+  expect(listings(gh)).toHaveLength(3);
+});
+
+it("reads a level asked for during a read GitHub answered for none at once", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  let fail: (error: unknown) => void = () => {};
+  const gh = mockGh(
+    () =>
+      new Promise((_, reject) => {
+        fail = reject;
+      }),
+  );
+  const states = createPullStates(gh);
+  states.watch(pull, () => {});
+  await vi.waitFor(() => expect(gh).toHaveBeenCalledOnce());
+  // A watch subscribes while the links' read is in flight, and it fails.
+  states.watch(pull, () => {}, "feedback");
+  fail(new GitHubError("Service unavailable", "SERVICE_UNAVAILABLE"));
+  await vi.advanceTimersByTimeAsync(0);
+  expect(gh).toHaveBeenCalledTimes(2);
+  expect(String(gh.mock.calls[1]?.[0])).toContain("reviews(");
+});
+
+it("reads the panel's public checks once gh drops out, rather than keeping none", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const fetch = vi.fn(async (url: string) =>
+    Response.json(
+      url.includes("/commits/")
+        ? url.includes("check-runs")
+          ? {
+              total_count: 1,
+              check_runs: [
+                { name: "unit", status: "completed", conclusion: "success" },
+              ],
+            }
+          : { total_count: 0, statuses: [] }
+        : { title: "A", state: "open", head: { sha: "abc" } },
+    ),
+  );
+  vi.stubGlobal("fetch", fetch);
+  let signedIn = true;
+  const gh = mockGh(async () => {
+    if (!signedIn) throw new GhUnavailable("signed out");
+    return {
+      r0: {
+        ...full(),
+        pullRequest: { ...full().pullRequest, headRefOid: "abc" },
+      },
+    };
+  });
+  const states = createPullStates(gh);
+  states.watch(pull, () => {}, "panel");
+  await vi.waitFor(() =>
+    expect(states.get(pull)).toMatchObject({ panel: { signedIn: true } }),
+  );
+  signedIn = false;
+  await vi.advanceTimersByTimeAsync(PANEL_REFRESH_MS);
+  expect(states.get(pull)).toMatchObject({
+    panel: { signedIn: false, publicChecks: { state: "success" } },
+  });
+});
+
+it("reads a pull request a panel and a watch share without gh once, not again and again", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const fetch = vi.fn(async (url: string) =>
+    Response.json(
+      url.includes("/commits/")
+        ? { total_count: 0, check_runs: [], statuses: [] }
+        : { title: "A", state: "open", head: { sha: "abc" } },
+    ),
+  );
+  vi.stubGlobal("fetch", fetch);
+  const states = createPullStates(undefined);
+  states.watch(pull, () => {}, "panel");
+  states.watch(pull, () => {}, "feedback");
+  await vi.advanceTimersByTimeAsync(PULL_REFRESH_MS);
+  // The pull request and its two kinds of checks, once; public data has no
+  // feedback to read again for.
+  expect(fetch).toHaveBeenCalledTimes(3);
 });

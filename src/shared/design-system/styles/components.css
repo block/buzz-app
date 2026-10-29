@@ -2116,6 +2116,7 @@
     min-width: 0;
     align-items: center;
     gap: var(--space-row-gap);
+    color: inherit;
   }
   .buzz-choice-row-leading {
     display: flex;

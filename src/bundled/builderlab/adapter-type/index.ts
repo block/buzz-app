@@ -87,7 +87,7 @@ export function builderlabType(
         ?.supportedReasoningEfforts.includes(draft.reasoningEffort)
     )
       throw new Error(
-        "Choose a model and reasoning effort offered in the model catalog.",
+        "Choose a model and thinking level offered in the model catalog.",
       );
     return draft;
   }

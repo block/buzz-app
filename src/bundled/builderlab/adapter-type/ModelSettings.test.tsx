@@ -1,11 +1,15 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { StrictMode } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Host } from "../../../features/host/service";
-import { createAgentClient, type RemoteAgent } from "../agents/client";
+import {
+  createAgentClient,
+  type RemoteAgent,
+  type RemoteAgentModel,
+} from "../agents/client";
 import { createOAuthSession } from "../oauth/session";
 import { ModelSettings } from "./ModelSettings";
 import { ToastProvider } from "../../../shared/design-system/ui/Toast";
@@ -17,7 +21,10 @@ afterEach(() => {
   cleanup();
   vi.unstubAllEnvs();
 });
-async function fixture(selection: Partial<RemoteAgent> = {}) {
+async function fixture(
+  selection: Partial<RemoteAgent> = {},
+  catalog?: readonly RemoteAgentModel[],
+) {
   let agent: RemoteAgent = {
     id: "agent",
     name: "Helper",
@@ -38,7 +45,11 @@ async function fixture(selection: Partial<RemoteAgent> = {}) {
     let result: unknown;
     if (url.endsWith("/get-model-catalog"))
       result = {
-        models: [
+        models: catalog?.map((model) => ({
+          id: model.id,
+          display_name: model.displayName,
+          supported_reasoning_efforts: model.supportedReasoningEfforts,
+        })) ?? [
           {
             id: "model-one",
             display_name: "Friendly One",
@@ -89,7 +100,7 @@ async function fixture(selection: Partial<RemoteAgent> = {}) {
       </StrictMode>
     ),
   });
-  await screen.findByRole("combobox", { name: "Model" });
+  await waitFor(() => expect(screen.queryByText("Loading models…")).toBeNull());
   return {
     request,
     session,
@@ -105,27 +116,108 @@ async function fixture(selection: Partial<RemoteAgent> = {}) {
 }
 async function choose(label: string, value: string) {
   const user = userEvent.setup();
-  await user.click(screen.getByRole("combobox", { name: label }));
-  await user.click(await screen.findByRole("option", { name: value }));
+  if (label === "Model") {
+    const trigger = screen.getByRole("button", { name: /^Model:/ });
+    await waitFor(() => expect(trigger).toBeEnabled());
+    await user.click(trigger);
+    (await screen.findByRole("menuitem", { name: "Other" })).focus();
+    await user.keyboard("{ArrowRight}");
+    await user.click(await screen.findByRole("menuitemradio", { name: value }));
+  } else {
+    await user.click(screen.getByRole("combobox", { name: label }));
+    await user.click(await screen.findByRole("option", { name: value }));
+  }
 }
-it("requires an explicit supported pair, clears effort when the model changes, and reads back server validity", async () => {
+it("explains the disabled harness selector on hover and keyboard focus without offering migration", async () => {
   const h = await fixture();
-  expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(
+  const user = userEvent.setup();
+  const harness = screen.getByRole("button", { name: "Harness: Builderlab" });
+  expect(harness).toHaveAttribute("aria-disabled", "true");
+  await user.hover(harness);
+  expect(
+    await screen.findByRole("dialog", { name: "Builderlab harness" }),
+  ).toHaveTextContent(
+    "Builderlab holds this agent’s signing key. Buzz can’t move that identity to a local harness yet. To run locally, create a new agent.",
+  );
+  await user.unhover(harness);
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("dialog", { name: "Builderlab harness" }),
+    ).toBeNull(),
+  );
+  await user.tab();
+  expect(harness).toHaveFocus();
+  expect(
+    await screen.findByRole("dialog", { name: "Builderlab harness" }),
+  ).toHaveTextContent("Builderlab holds this agent’s signing key.");
+  expect(harness).toHaveAccessibleDescription(
+    "Builderlab holds this agent’s signing key. Buzz can’t move that identity to a local harness yet. To run locally, create a new agent.",
+  );
+  await user.keyboard("{Escape}");
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("dialog", { name: "Builderlab harness" }),
+    ).toBeNull(),
+  );
+  expect(harness).toHaveFocus();
+  await user.keyboard("{Enter}");
+  expect(
+    await screen.findByRole("dialog", { name: "Builderlab harness" }),
+  ).toBeVisible();
+  await user.click(harness);
+  expect(
+    screen.getByRole("dialog", { name: "Builderlab harness" }),
+  ).toBeVisible();
+  await user.keyboard("{Escape}");
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("dialog", { name: "Builderlab harness" }),
+    ).toBeNull(),
+  );
+  await user.keyboard(" ");
+  expect(
+    await screen.findByRole("dialog", { name: "Builderlab harness" }),
+  ).toBeVisible();
+  await user.click(harness);
+  expect(
+    screen.getByRole("dialog", { name: "Builderlab harness" }),
+  ).toBeVisible();
+  await user.click(screen.getByRole("textbox", { name: "Instructions" }));
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("dialog", { name: "Builderlab harness" }),
+    ).toBeNull(),
+  );
+  expect(screen.queryByRole("menu")).toBeNull();
+  expect(
+    h.request.mock.calls.filter(([request]) =>
+      request.url.endsWith("/update-agent"),
+    ),
+  ).toHaveLength(0);
+});
+
+it("requires an explicit supported pair, clears effort when the model changes, and reads back server validity", async () => {
+  const h = await fixture({ instructions: "Saved instructions." });
+  expect(screen.getByRole("button", { name: /^Model:/ })).toHaveTextContent(
     "Choose a model",
   );
-  expect(screen.getByRole("button", { name: "Save model" })).toBeDisabled();
-  await choose("Model", "Friendly One");
-  expect(screen.getByRole("button", { name: "Save model" })).toBeDisabled();
-  await choose("Reasoning effort", "high");
-  await choose("Model", "Friendly Two");
   expect(
-    screen.getByRole("combobox", { name: "Reasoning effort" }),
-  ).toHaveTextContent("Choose reasoning effort");
-  expect(screen.getByRole("button", { name: "Save model" })).toBeDisabled();
-  await choose("Reasoning effort", "none");
-  await userEvent
-    .setup()
-    .click(screen.getByRole("button", { name: "Save model" }));
+    screen.queryByRole("button", { name: "Save" }),
+  ).not.toBeInTheDocument();
+  await choose("Model", "Friendly One");
+  expect(
+    screen.queryByRole("button", { name: "Save" }),
+  ).not.toBeInTheDocument();
+  await choose("Thinking", "High");
+  await choose("Model", "Friendly Two");
+  expect(screen.getByRole("combobox", { name: "Thinking" })).toHaveTextContent(
+    "Choose thinking",
+  );
+  expect(
+    screen.queryByRole("button", { name: "Save" }),
+  ).not.toBeInTheDocument();
+  await choose("Thinking", "None");
+  await userEvent.setup().click(screen.getByRole("button", { name: "Save" }));
   expect(
     await screen.findByRole("dialog", { name: "Model preferences saved" }),
   ).toBeVisible();
@@ -139,20 +231,148 @@ it("requires an explicit supported pair, clears effort when the model changes, a
     model_id: "model-two",
     reasoning_effort: "none",
   });
-  expect(screen.getByRole("button", { name: "Save model" })).toBeDisabled();
+  expect(screen.getByRole("textbox", { name: "Instructions" })).toHaveValue(
+    "Saved instructions.",
+  );
+  expect(
+    screen.queryByRole("button", { name: "Save" }),
+  ).not.toBeInTheDocument();
 });
+it("can clear instructions without changing a model when the catalog is empty", async () => {
+  const h = await fixture({ instructions: "Saved instructions." }, []);
+  const user = userEvent.setup();
+  await user.clear(screen.getByRole("textbox", { name: "Instructions" }));
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() =>
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull(),
+  );
+  const updates = h.request.mock.calls.filter(([request]) =>
+    request.url.endsWith("/update-agent"),
+  );
+  expect(updates).toHaveLength(1);
+  expect(JSON.parse(updates[0]?.[0].body ?? "{}")).toEqual({
+    agent_pubkey: "ab".repeat(32),
+    agent_instructions: "",
+  });
+  expect(screen.getByRole("textbox", { name: "Instructions" })).toHaveValue("");
+});
+
+it("preserves the combined draft when model readback fails and retries one combined update", async () => {
+  const h = await fixture({ instructions: "Saved instructions." });
+  const user = userEvent.setup();
+  await choose("Model", "Friendly One");
+  await choose("Thinking", "High");
+  const field = screen.getByRole("textbox", { name: "Instructions" });
+  await user.type(field, " Updated.");
+  const implementation = h.request.getMockImplementation();
+  if (!implementation) throw new Error("Missing request fixture");
+  h.request
+    .mockImplementationOnce(implementation)
+    .mockResolvedValueOnce({ status: 400, headers: {}, body: "{}" });
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("HTTP 400");
+  expect(field).toHaveValue("Saved instructions. Updated.");
+  expect(screen.getByRole("button", { name: /^Model:/ })).toHaveTextContent(
+    "Friendly One",
+  );
+  expect(screen.getByRole("combobox", { name: "Thinking" })).toHaveTextContent(
+    "High",
+  );
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() =>
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull(),
+  );
+  expect(screen.queryByRole("alert")).toBeNull();
+  const updates = h.request.mock.calls.filter(([request]) =>
+    request.url.endsWith("/update-agent"),
+  );
+  expect(updates).toHaveLength(2);
+  for (const [request] of updates)
+    expect(JSON.parse(request.body ?? "{}")).toEqual({
+      agent_pubkey: "ab".repeat(32),
+      agent_instructions: "Saved instructions. Updated.",
+      model_id: "model-one",
+      reasoning_effort: "high",
+    });
+});
+
+it("refuses a combined update for an agent that is no longer Active", async () => {
+  const h = await fixture({ status: "Revoked" });
+  const user = userEvent.setup();
+  await choose("Model", "Friendly One");
+  await choose("Thinking", "High");
+  await user.type(
+    screen.getByRole("textbox", { name: "Instructions" }),
+    "Changed.",
+  );
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Only Active agents",
+  );
+  expect(
+    h.request.mock.calls.filter(([request]) =>
+      request.url.endsWith("/update-agent"),
+    ),
+  ).toHaveLength(0);
+});
+
+it("uses Builderlab families in the shared menu and keeps unknown catalog choices selectable", async () => {
+  await fixture(
+    {
+      modelId: "opaque-id",
+      reasoningEffort: "high",
+      modelSelectionStatus: "valid",
+    },
+    [
+      {
+        id: "opaque-id",
+        displayName: "Sol 6.1",
+        supportedReasoningEfforts: ["high"],
+      },
+      {
+        id: "future-id",
+        displayName: "Future Model",
+        supportedReasoningEfforts: ["none"],
+      },
+    ],
+  );
+  const trigger = screen.getByRole("button", { name: "Model: Sol 6.1" });
+  await waitFor(() => expect(trigger).toBeEnabled());
+  expect(trigger.querySelector("svg")).toHaveAttribute(
+    "viewBox",
+    "176 176 364 364",
+  );
+  const user = userEvent.setup();
+  await user.click(trigger);
+  expect(await screen.findByRole("menuitem", { name: "OpenAI" })).toBeVisible();
+  expect(screen.queryByRole("menuitemradio", { name: /Default/ })).toBeNull();
+  const other = screen.getByRole("menuitem", { name: "Other" });
+  other.focus();
+  await user.keyboard("{ArrowRight}");
+  await user.click(
+    await screen.findByRole("menuitemradio", { name: "Future Model" }),
+  );
+  expect(trigger).toHaveTextContent("Future Model");
+  expect(screen.getByRole("combobox", { name: "Thinking" })).toHaveTextContent(
+    "Choose thinking",
+  );
+  expect(
+    screen.queryByRole("button", { name: "Save" }),
+  ).not.toBeInTheDocument();
+});
+
 it("shows no warning or success message when opening valid saved preferences", async () => {
   await fixture({
     modelId: "model-one",
     reasoningEffort: "high",
     modelSelectionStatus: "valid",
   });
-  expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(
+  expect(screen.getByRole("button", { name: /^Model:/ })).toHaveTextContent(
     "Friendly One",
   );
-  expect(
-    screen.getByRole("combobox", { name: "Reasoning effort" }),
-  ).toHaveTextContent("high");
+  expect(screen.getByRole("combobox", { name: "Thinking" })).toHaveTextContent(
+    "High",
+  );
   expect(screen.queryByRole("status")).not.toBeInTheDocument();
   expect(
     screen.queryByRole("dialog", { name: "Model preferences saved" }),
@@ -180,31 +400,33 @@ it.each([
       selection.modelId === "retired" ? "retired" : "Friendly Two",
     );
     expect(
-      screen.getByRole("combobox", { name: "Reasoning effort" }),
-    ).toHaveTextContent("Choose reasoning effort");
-    expect(screen.getByRole("button", { name: "Save model" })).toBeDisabled();
+      screen.getByRole("combobox", { name: "Thinking" }),
+    ).toHaveTextContent("Choose thinking");
+    expect(
+      screen.queryByRole("button", { name: "Save" }),
+    ).not.toBeInTheDocument();
   },
 );
 it("preserves a failed draft and refuses to save it through a different account", async () => {
   const h = await fixture();
   await choose("Model", "Friendly One");
-  await choose("Reasoning effort", "low");
+  await choose("Thinking", "Low");
   h.offline(true);
   const user = userEvent.setup();
-  await user.click(screen.getByRole("button", { name: "Save model" }));
+  await user.click(screen.getByRole("button", { name: "Save" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("HTTP 400");
   expect(
     screen.queryByRole("dialog", { name: "Model preferences saved" }),
   ).not.toBeInTheDocument();
-  expect(
-    screen.getByRole("combobox", { name: "Reasoning effort" }),
-  ).toHaveTextContent("low");
+  expect(screen.getByRole("combobox", { name: "Thinking" })).toHaveTextContent(
+    "Low",
+  );
   h.offline(false);
   await act(async () => h.changeAccount());
   const before = h.request.mock.calls.length;
-  await user.click(screen.getByRole("button", { name: "Save model" }));
+  await user.click(screen.getByRole("button", { name: "Save" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "account that loaded these model settings",
+    "account that loaded these settings",
   );
   expect(h.request).toHaveBeenCalledTimes(before);
 });
@@ -212,10 +434,10 @@ it("preserves a failed draft and refuses to save it through a different account"
 it("retries a failed catalog refresh without retrying a failed save", async () => {
   const h = await fixture();
   await choose("Model", "Friendly One");
-  await choose("Reasoning effort", "low");
+  await choose("Thinking", "Low");
   const user = userEvent.setup();
   h.offline(true);
-  await user.click(screen.getByRole("button", { name: "Save model" }));
+  await user.click(screen.getByRole("button", { name: "Save" }));
   await user.click(
     await screen.findByRole("button", { name: "Refresh models" }),
   );
@@ -225,15 +447,15 @@ it("retries a failed catalog refresh without retrying a failed save", async () =
   await user.click(retry);
   await screen.findByRole("button", { name: "Refresh models" });
   expect(screen.getByRole("alert")).toHaveTextContent("HTTP 400");
-  expect(
-    screen.getByRole("combobox", { name: "Reasoning effort" }),
-  ).toHaveTextContent("low");
+  expect(screen.getByRole("combobox", { name: "Thinking" })).toHaveTextContent(
+    "Low",
+  );
   expect(
     h.request.mock.calls.filter(([request]) =>
       request.url.endsWith("/update-agent"),
     ),
   ).toHaveLength(1);
-  await user.click(screen.getByRole("button", { name: "Save model" }));
+  await user.click(screen.getByRole("button", { name: "Save" }));
   expect(
     await screen.findByRole("dialog", { name: "Model preferences saved" }),
   ).toBeVisible();

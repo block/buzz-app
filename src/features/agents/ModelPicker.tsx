@@ -232,6 +232,10 @@ export function ModelPicker({
   const discovering = loading && !pending;
   const choices =
     allowCustomModel && !compact ? [...shown, CUSTOM_MODEL_ACTION] : shown;
+  const optionLogos = choices.map((model) =>
+    modelLogo(`${model.id} ${model.label}`),
+  );
+  const hasOptionLogos = optionLogos.some(Boolean);
   const openCustomDialog = () => {
     const listed = !value || models.some((model) => model.id === value);
     const initialValue = listed ? "" : value;
@@ -286,14 +290,17 @@ export function ModelPicker({
             groups={[
               {
                 label: "",
-                options: choices.map((model) => ({
+                options: choices.map((model, index) => ({
                   value: model.id,
                   label:
                     includeDefault && model.id === ""
                       ? `${model.label} · Default`
                       : model.label,
                   description: model.description,
-                  leading: <ModelIcon model={`${model.id} ${model.label}`} />,
+                  // The empty fragment reserves Select's icon column only in mixed lists.
+                  leading: hasOptionLogos
+                    ? (optionLogos[index] ?? <></>)
+                    : undefined,
                 })),
               },
             ]}

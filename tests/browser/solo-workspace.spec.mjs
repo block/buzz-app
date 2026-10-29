@@ -1,3 +1,4 @@
+import { pauseClock } from "./clock.mjs";
 import { pluginAction } from "./plugin-settings.mjs";
 import { generateSecretKey, getPublicKey, verifyEvent } from "nostr-tools";
 import { test, expect } from "./fixture.mjs";
@@ -371,8 +372,8 @@ test("Solo sidebar shares working activity, keyboard preview and local panel nav
   await expect(alpha).toHaveAttribute("aria-current", "page");
   await closeProfile(page).click();
   await expect(alpha).toBeFocused();
-  // Read the running page clock instead of assuming the host clock matches it.
-  await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 100);
+  // Pause without letting the running clock overtake the sampled timestamp.
+  await pauseClock(page, 100);
   // Cross the closed trigger, then reopen by keyboard before hover dismissal.
   await alpha.hover();
   await page.mouse.move(0, 0);

@@ -1,3 +1,4 @@
+import { pauseClock } from "./clock.mjs";
 import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import {
@@ -267,7 +268,7 @@ test("automatic recovery restores an empty paused roster without restarting heal
   try {
     await openPage(page, "Messages");
     await expect.poll(() => rosterHeld).toBe(true);
-    await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 1000);
+    await pauseClock(page, 1000);
   } finally {
     roster.resolve();
   }

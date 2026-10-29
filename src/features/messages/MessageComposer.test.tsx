@@ -496,6 +496,40 @@ function mount(
   };
 }
 
+it.each([
+  ["nexus.repository", "@"],
+  ["nexus.folder", "@"],
+  ["nexus.skill", "/"],
+] as const)("changes %s through its own %s chooser", (kind, prefix) => {
+  const token = {
+    kind,
+    id: "/Development/notes",
+    label: "@notes",
+    verified: false,
+    target: first.pubkey,
+  };
+  let controls!: import("../channel-navigation/solo-navigation-contract").TaskDraftTokenControls;
+  mount({
+    ownSoloConversation: true,
+    taskDraft: { region: "tasks" },
+    submission: {
+      draftKey: "task-folder-edit",
+      initialDraft: composerTokenDraft(token),
+      locked: false,
+      disabled: false,
+      submit: () => {},
+      header: (_draft, next) => {
+        controls = next;
+        return null;
+      },
+    },
+  });
+  act(() => {
+    expect(controls.changeToken(token.id)).toBe(true);
+  });
+  expect(screen.getByRole("textbox")).toHaveValue(`${prefix} `);
+});
+
 it.each(["locked", "inactive", "unmounted"])(
   "refuses captured task-draft token controls while %s",
   (state) => {
@@ -10431,6 +10465,38 @@ it("a task with a missing provider stays read-only and retains its draft", async
   expect(h.messages.send).not.toHaveBeenCalled();
   expect(h.input()).toHaveValue("Keep this task draft");
 });
+
+it.each([false, true])(
+  "forwards folder identity without changing recipients on send/reply=%s",
+  async (reply) => {
+    const { h } = await taskComposerFixture();
+    if (reply)
+      h.retarget({
+        threadRootId: "1".repeat(64),
+        replyParentId: "2".repeat(64),
+      });
+    h.fill("Use ");
+    const folder = {
+      kind: "nexus.folder" as const,
+      id: "/Development/notes",
+      label: "@notes",
+      executionHost: "82e43596-21a8-43c2-afb3-a9d8f2b4bf85",
+    };
+    act(() => {
+      expect(h.input().insertToken(folder, { start: 4, end: 4 })).toBe(true);
+    });
+    h.submit();
+    if (reply) {
+      await waitFor(() => expect(h.messages.reply).toHaveBeenCalledOnce());
+      expect(h.messages.reply.mock.calls[0]?.[3]).toEqual([first.pubkey]);
+      expect(h.messages.reply.mock.calls[0]?.[8]).toEqual([folder]);
+    } else {
+      await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+      expect(h.messages.send.mock.calls[0]?.[2]).toEqual([first.pubkey]);
+      expect(h.messages.send.mock.calls[0]?.[7]).toEqual([folder]);
+    }
+  },
+);
 
 it.each([false, true])(
   "task token identity reaches the actual recipient on send/reply=%s and mismatched skills block admission",

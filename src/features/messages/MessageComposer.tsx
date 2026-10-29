@@ -1472,7 +1472,8 @@ function Composer({
       ? ""
       : span.token.kind === "nexus.project"
         ? "#"
-        : span.token.kind === "nexus.repository"
+        : span.token.kind === "nexus.repository" ||
+            span.token.kind === "nexus.folder"
           ? "@"
           : "/";
     completion.invalidate();

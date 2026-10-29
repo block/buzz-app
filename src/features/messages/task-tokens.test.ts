@@ -25,6 +25,17 @@ it("round-trips exact identities and extra metadata without interpreting display
     evidence: "reported",
   };
   expect(readTaskTokens(taskTokenTags([skill]))).toEqual([skill]);
+  const folder: ComposerToken = {
+    kind: "nexus.folder",
+    id: "/Development/notes",
+    label: "@notes",
+    executionHost: "82e43596-21a8-43c2-afb3-a9d8f2b4bf85",
+  };
+  expect(readTaskTokens(taskTokenTags([folder]))).toEqual([folder]);
+  expect(taskTokenTags([folder]).map(([name]) => name)).toEqual([
+    TASK_TOKENS_TAG,
+  ]);
+  expect(() => taskTokenTags([folder, folder])).toThrow("duplicate");
 });
 it("rejects duplicate tags, duplicate identities, malformed shapes and oversized UTF-8 payloads", () => {
   const tag = taskTokenTags([token])[0];

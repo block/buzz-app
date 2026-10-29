@@ -1022,7 +1022,7 @@ another non-owner member:
 | Target role | Change role | Remove from this channel |
 | --- | --- | --- |
 | Admin / Member / Guest | Admin / Member / Guest, excluding the current role | Yes |
-| Bot | Admin / Member / Guest, after explicit confirmation | Yes |
+| Bot | Admin / Guest, after explicit confirmation; Participating is already selected | Yes |
 | Owner, self, unknown or inconsistent | No | No |
 
 Agent identity is independent of channel role. Explicitly promoting a Bot to Admin grants authority to that agent’s own public key and preserves its verified agent identity; the human owner’s roles do not confer authority.

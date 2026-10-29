@@ -2092,10 +2092,17 @@ test("agent record signing refuses malformed coordinates, content and timestamps
   const template = {
     kind: 30177,
     created_at: 1700000000,
-    content: JSON.stringify({ name: "Agent" }),
+    content: JSON.stringify({
+      name: "Agent",
+      parallelism: 1,
+      respond_to: "owner-only",
+    }),
     tags: [["d", "ab".repeat(32)]],
   };
   try {
+    const signed = await h.post("sign", template);
+    expect(signed.status).toBe(200);
+    expect(verifyEvent(await signed.json())).toBe(true);
     for (const invalid of [
       { tags: [] },
       { tags: [...template.tags, ...template.tags] },

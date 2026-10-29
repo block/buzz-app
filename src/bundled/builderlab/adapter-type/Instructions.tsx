@@ -23,15 +23,7 @@ const message = (reason: unknown) =>
 
 /** Hosted settings belong to Builderlab, rather than Agents' local config. */
 export function createSettingsTab(client: AgentClient, session: OAuthSession) {
-  function Editor({
-    pubkey,
-    retry,
-    section,
-  }: {
-    pubkey: string;
-    retry(): void;
-    section: AgentViewProps["settingsSection"];
-  }) {
+  function Editor({ pubkey, retry }: { pubkey: string; retry(): void }) {
     const [loaded, setLoaded] = useState<{
       agent: RemoteAgent;
       subject: string;
@@ -42,7 +34,6 @@ export function createSettingsTab(client: AgentClient, session: OAuthSession) {
     useAgentSaveState(
       !!loaded && draft !== (loaded.agent.instructions ?? ""),
       !!loaded && busy,
-      section !== "runtime",
     );
     const controller = useRef<AbortController | null>(null);
     useEffect(() => {
@@ -101,18 +92,14 @@ export function createSettingsTab(client: AgentClient, session: OAuthSession) {
     return (
       <div className="grid gap-4">
         {loaded && (
-          <div hidden={section === "identity"}>
-            <ModelSettings
-              client={client}
-              session={session}
-              agent={loaded.agent}
-              subject={loaded.subject}
-              active={section !== "identity"}
-            />
-          </div>
+          <ModelSettings
+            client={client}
+            session={session}
+            agent={loaded.agent}
+            subject={loaded.subject}
+          />
         )}
         <form
-          hidden={!!loaded && section === "runtime"}
           className="flex flex-col gap-4"
           onSubmit={(event) => {
             event.preventDefault();
@@ -155,9 +142,7 @@ export function createSettingsTab(client: AgentClient, session: OAuthSession) {
             </>
           ) : busy ? (
             <p role="status" className="m-0 text-body-sm text-secondary">
-              {section === "runtime"
-                ? "Loading model settings…"
-                : "Loading instructions…"}
+              Loading instructions…
             </p>
           ) : (
             <div>
@@ -181,12 +166,13 @@ export function createSettingsTab(client: AgentClient, session: OAuthSession) {
     const [revision, setRevision] = useState(0);
     return (
       <div className="grid gap-4">
-        <Editor
-          key={`${agent.pubkey}/${revision}`}
-          pubkey={agent.pubkey}
-          retry={() => setRevision((value) => value + 1)}
-          section={settingsSection}
-        />
+        {settingsSection !== "runtime" && (
+          <Editor
+            key={`${agent.pubkey}/${revision}`}
+            pubkey={agent.pubkey}
+            retry={() => setRevision((value) => value + 1)}
+          />
+        )}
         {settingsSection !== "identity" && (
           <>
             <SettingsGroup>

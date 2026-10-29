@@ -979,8 +979,10 @@ it.each([
     await waitFor(() => expect(instructions).toBeEnabled());
     expect(browserInstructions).toBe("");
 
-    await user.click(screen.getByRole("tab", { name: "Settings" }));
     await screen.findByRole("combobox", { name: "Model" });
+    await user.click(screen.getByRole("tab", { name: "Settings" }));
+    expect(screen.queryByRole("combobox", { name: "Model" })).toBeNull();
+    expect(screen.getByText("Workspace")).toBeVisible();
     // Confirmed deletion waits for login before provider or community removal.
     await user.click(screen.getByRole("button", { name: "Sign out" }));
     await user.click(screen.getByRole("button", { name: "Delete agent" }));

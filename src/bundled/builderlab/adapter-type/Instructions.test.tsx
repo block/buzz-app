@@ -183,7 +183,16 @@ it("keeps hosted instructions on cancellation and resets a confirmed discard", a
   const user = userEvent.setup();
   renderTabs(h);
   expect(screen.queryByRole("tab", { name: "Instructions" })).toBeNull();
+  expect(screen.getByRole("tab", { name: "Identity" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
   const field = await screen.findByRole("textbox", { name: "Instructions" });
+  expect(await screen.findByRole("combobox", { name: "Model" })).toBeVisible();
+  expect(
+    screen.getByRole("combobox", { name: "Reasoning effort" }),
+  ).toBeVisible();
+  expect(screen.queryByText("Workspace")).toBeNull();
   expect(screen.getByRole("link", { name: "Builderlab" })).toHaveAttribute(
     "href",
     "https://builderlab.example",
@@ -226,14 +235,17 @@ it("keeps hosted instructions on cancellation and resets a confirmed discard", a
   expect(screen.getByText("Workspace")).toBeVisible();
   expect(screen.getByText("One session per thread")).toBeVisible();
   expect(screen.getByText("Agent settings")).toBeVisible();
-  expect(await screen.findByRole("combobox", { name: "Model" })).toBeVisible();
+  expect(screen.queryByRole("combobox", { name: "Model" })).toBeNull();
+  expect(
+    screen.queryByRole("combobox", { name: "Reasoning effort" }),
+  ).toBeNull();
   await user.click(screen.getByRole("tab", { name: "Identity" }));
   const fresh = await screen.findByRole("textbox", { name: "Instructions" });
   expect(fresh).not.toBe(field);
   expect(fresh).toHaveValue("First instructions.");
   expect(screen.queryByRole("alert")).toBeNull();
   expect(screen.queryByText("Workspace")).toBeNull();
-  expect(screen.queryByRole("combobox", { name: "Model" })).toBeNull();
+  expect(await screen.findByRole("combobox", { name: "Model" })).toBeVisible();
 });
 
 it("guards hosted model drafts and a pending model save", async () => {
@@ -241,13 +253,12 @@ it("guards hosted model drafts and a pending model save", async () => {
   const user = userEvent.setup();
   renderTabs(h);
   await screen.findByRole("textbox", { name: "Instructions" });
-  await user.click(screen.getByRole("tab", { name: "Settings" }));
   await user.click(await screen.findByRole("combobox", { name: "Model" }));
   await user.click(
     await screen.findByRole("option", { name: "Friendly Model" }),
   );
   expect(screen.getByRole("button", { name: "Save model" })).toBeDisabled();
-  await user.click(screen.getByRole("tab", { name: "Identity" }));
+  await user.click(screen.getByRole("tab", { name: "Settings" }));
   expect(await screen.findByRole("alertdialog")).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Keep editing" }));
   expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(
@@ -259,11 +270,11 @@ it("guards hosted model drafts and a pending model save", async () => {
   h.request.mockReturnValueOnce(pending.promise);
   try {
     await user.click(screen.getByRole("button", { name: "Save model" }));
-    expect(screen.getByRole("tab", { name: "Identity" })).toHaveAttribute(
+    expect(screen.getByRole("tab", { name: "Settings" })).toHaveAttribute(
       "aria-disabled",
       "true",
     );
-    await user.click(screen.getByRole("tab", { name: "Identity" }));
+    await user.click(screen.getByRole("tab", { name: "Settings" }));
     expect(screen.getByRole("combobox", { name: "Model" })).toBeVisible();
   } finally {
     await act(async () => pending.reject(new Error("offline")));
@@ -271,12 +282,14 @@ it("guards hosted model drafts and a pending model save", async () => {
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Could not reach Builderlab",
   );
-  await user.click(screen.getByRole("tab", { name: "Identity" }));
+  await user.click(screen.getByRole("tab", { name: "Settings" }));
   await user.click(screen.getByRole("button", { name: "Discard changes" }));
+  expect(screen.getByText("Agent settings")).toBeVisible();
+  expect(screen.queryByRole("combobox", { name: "Model" })).toBeNull();
+  await user.click(screen.getByRole("tab", { name: "Identity" }));
   expect(
     await screen.findByRole("textbox", { name: "Instructions" }),
   ).toHaveValue("First instructions.");
-  await user.click(screen.getByRole("tab", { name: "Settings" }));
   expect(
     await screen.findByRole("combobox", { name: "Model" }),
   ).toHaveTextContent("Choose a model");
@@ -284,4 +297,46 @@ it("guards hosted model drafts and a pending model save", async () => {
     screen.getByRole("combobox", { name: "Reasoning effort" }),
   ).toHaveTextContent("Choose reasoning effort");
   expect(screen.queryByRole("alert")).toBeNull();
+});
+
+it("keeps the model draft guarded after independently saving instructions", async () => {
+  const h = fixture();
+  const user = userEvent.setup();
+  renderTabs(h);
+  const field = await screen.findByRole("textbox", { name: "Instructions" });
+  await user.click(await screen.findByRole("combobox", { name: "Model" }));
+  await user.click(
+    await screen.findByRole("option", { name: "Friendly Model" }),
+  );
+  await user.type(field, " Updated.");
+  const save = screen.getByRole("button", { name: "Save instructions" });
+  await user.click(save);
+  await waitFor(() => expect(save).toHaveAttribute("aria-disabled", "true"));
+  expect(field).toHaveValue("First instructions. Updated.");
+  expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(
+    "Friendly Model",
+  );
+  await user.click(screen.getByRole("tab", { name: "Settings" }));
+  expect(await screen.findByRole("alertdialog")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Keep editing" }));
+  expect(field).toHaveValue("First instructions. Updated.");
+});
+
+it("keeps runtime settings available without loading Builderlab configuration", () => {
+  const h = fixture();
+  render(
+    <h.Tab
+      agent={agent()}
+      save={vi.fn()}
+      settingsSection="runtime"
+      settingsContent={<p>Agent settings</p>}
+    />,
+    { wrapper: StrictMode },
+  );
+  expect(screen.getByText("Workspace")).toBeVisible();
+  expect(screen.getByText("One session per thread")).toBeVisible();
+  expect(screen.getByText("Agent settings")).toBeVisible();
+  expect(screen.queryByRole("textbox", { name: "Instructions" })).toBeNull();
+  expect(screen.queryByRole("combobox", { name: "Model" })).toBeNull();
+  expect(h.request).not.toHaveBeenCalled();
 });

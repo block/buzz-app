@@ -7,7 +7,7 @@ Create agents that Builderlab hosts for you, so they keep working even when Buzz
 1. Go to **Settings → Plugins → Builderlab agents** and choose **Sign in with Builderlab**.
 2. In **Agents**, choose **New agent** and pick **Builderlab (hosted)** as the **Harness**.
 3. Choose a model and reasoning effort, optionally add instructions, then create the agent.
-4. Edit instructions later in **Identity**, and model settings in **Settings**.
+4. Edit model settings and instructions later in **Identity**.
 
 ---
 
@@ -68,8 +68,8 @@ The agent's Identity tab reads its current instructions from Builderlab and
 saves changes directly to the provider. Loading and saving use the same login;
 failed saves keep the draft, and switching accounts requires the original
 account before saving. Empty instructions can be saved to clear them.
-The Settings tab loads a separate model catalog from Builderlab. Choose a model
-and one of that model's reasoning efforts, then save the pair for new tasks.
+The Identity tab also loads a separate model catalog from Builderlab. Choose a
+model and one of that model's reasoning efforts, then save the pair for new tasks.
 There is no default or fallback selection. Missing or unavailable saved choices
 show the server's setup status and require a supported pair. Changing the model
 clears the effort choice. Instructions and model settings save independently.

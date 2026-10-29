@@ -214,6 +214,70 @@ it.each(["admin", "guest"] as const)(
     expect(h.owner.capability.snapshot(id).operation?.status).toBe("uncertain");
   },
 );
+it("publishes no member change once the caller's guard turns false during signing", async () => {
+  const h = harness();
+  let eligible = true;
+  const active = vi.fn(() => eligible);
+  const sign = required(h.sign.getMockImplementation());
+  h.sign.mockImplementationOnce(async (template) => {
+    eligible = false;
+    return sign(template);
+  });
+  await h.owner.capability.run(id, change, undefined, active);
+  expect(active).toHaveBeenCalled();
+  expect(h.publish).not.toHaveBeenCalled();
+  expect(h.owner.capability.snapshot(id)).toMatchObject({
+    operation: { status: "failed" },
+    error: "Member change cancelled",
+  });
+  // Nothing reached the relay, so a later eligible change is not fenced as uncertain.
+  await h.owner.capability.run(id, change);
+  expect(h.owner.capability.snapshot(id).operation?.status).toBe("confirmed");
+});
+it("checks the guard only after the final re-authorization read settles", async () => {
+  const h = harness();
+  let eligible = true;
+  const active = vi.fn(() => eligible);
+  const started = deferred(),
+    gate = deferred();
+  const sign = required(h.sign.getMockImplementation());
+  h.sign.mockImplementationOnce(async (template) => {
+    h.read.mockImplementationOnce(async () => {
+      started.resolve();
+      await gate.promise;
+      return h.events();
+    });
+    return sign(template);
+  });
+  const running = h.owner.capability.run(id, change, undefined, active);
+  try {
+    await started.promise;
+    expect(active).not.toHaveBeenCalled();
+    eligible = false;
+  } finally {
+    gate.resolve();
+  }
+  await running;
+  expect(active).toHaveBeenCalledOnce();
+  expect(h.publish).not.toHaveBeenCalled();
+  expect(h.owner.capability.snapshot(id).operation?.status).toBe("failed");
+  eligible = true;
+  await h.owner.capability.run(id, change, undefined, active);
+  expect(h.publish).toHaveBeenCalledOnce();
+  expect(h.owner.capability.snapshot(id).operation?.status).toBe("confirmed");
+});
+it("publishes nothing when the caller's signal aborts during signing", async () => {
+  const h = harness();
+  const controller = new AbortController();
+  const sign = required(h.sign.getMockImplementation());
+  h.sign.mockImplementationOnce(async (template) => {
+    controller.abort();
+    return sign(template);
+  });
+  await h.owner.capability.run(id, change, controller.signal);
+  expect(h.publish).not.toHaveBeenCalled();
+  expect(h.owner.capability.snapshot(id).operation?.status).toBe("failed");
+});
 it.each(["owner", "bot", "unknown"])(
   "never coerces %s target roles",
   async (role) => {

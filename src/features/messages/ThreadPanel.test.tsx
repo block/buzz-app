@@ -1165,6 +1165,8 @@ it.each(["ready", "unavailable", "error"] as const)(
 it("a presented ordinary thread survives the real navigation deadline while history is pending", async () => {
   vi.useFakeTimers();
   const controller = createNavigationController(createMemoryHistory());
+  // The visit deadline runs only while a presenter is attached, as the app's is.
+  controller.attach();
   let release = () => {};
   try {
     const navigation = ordinaryNavigation();

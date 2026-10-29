@@ -191,7 +191,7 @@ it("reveals labelled custom fields and saves a future time with the note", async
   await user.keyboard("{Enter}");
   await screen.findByRole("option", { name: "Custom date & time" });
   await vi.waitFor(() =>
-    expect(screen.getByRole("option", { name: "In 30 minutes" })).toHaveFocus(),
+    expect(screen.getByRole("option", { selected: true })).toHaveFocus(),
   );
   await user.keyboard("{End}");
   await vi.waitFor(() =>

@@ -738,7 +738,9 @@ it("offers DMs a Move conversation menu and relocates them into a saved group", 
   let assignments: Record<string, string> = {};
   const read = vi.fn(async () => ({ ...saved, assignments }));
   const write = vi.fn(
-    async (intent: { channelId: string; sectionId?: string }) => {
+    async (intent: { channelId?: string; sectionId?: string }) => {
+      if (intent.channelId === undefined)
+        throw new Error("Expected channel move");
       const changedAssignments = intent.sectionId
         ? { ...assignments, [intent.channelId]: intent.sectionId }
         : Object.fromEntries(
@@ -1181,10 +1183,67 @@ it("rejects a deferred header Create section after its navigation origin retires
     for (const frame of frames.splice(0)) frame(0);
   });
   expect(
-    screen.queryByRole("dialog", { name: "Create new section" }),
+    screen.queryByRole("dialog", { name: "Move to new section" }),
   ).not.toBeInTheDocument();
   expect(preferences.queries.snapshot().data?.sections).toEqual([]);
   preferences.dispose();
+});
+
+it("gates all creation entry points while uncertain creation reconciles, preserving ordinary moves", async () => {
+  const data = { sections: [], assignments: {}, starred: [], muted: [] };
+  let finish!: (value: SidebarPreferences) => void;
+  let entered!: () => void;
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const read = new Promise<SidebarPreferences>((resolve) => {
+    finish = resolve;
+  });
+  const preferences = createSidebarPreferencesStore({
+    read: async () => data,
+    readAfterWrite: () => {
+      entered();
+      return read;
+    },
+    available: true,
+    write: vi.fn().mockRejectedValue(new Error("response lost")),
+    writeStar: vi.fn(async () => []),
+  });
+  await preferences.queries.ensure();
+  const creating = expect(
+    preferences.queries.createSection({ id: "saved", name: "Saved" }),
+  ).rejects.toThrow("response lost");
+  try {
+    await started;
+    const h = fixture(preferences.queries);
+    const user = userEvent.setup();
+    render(h.view("alpha"));
+    const row = await screen.findByRole("button", { name: "beta" });
+    expect(document.querySelector("[data-create-section-trigger]")).toBeNull();
+    fireEvent.keyDown(row, { key: "ContextMenu" });
+    await user.hover(
+      await screen.findByRole("menuitem", { name: "Move channel" }),
+    );
+    expect(
+      await screen.findByRole("menuitem", { name: "Create new…" }),
+    ).toHaveAttribute("aria-disabled", "true");
+    expect(
+      screen.getByRole("menuitemradio", { name: "Starred" }),
+    ).not.toHaveAttribute("aria-disabled", "true");
+    await act(async () => {
+      finish(data);
+      await creating;
+    });
+    await waitFor(() =>
+      expect(
+        document.querySelector("[data-create-section-trigger]"),
+      ).not.toBeNull(),
+    );
+  } finally {
+    finish(data);
+    await creating;
+    preferences.dispose();
+  }
 });
 
 it("clears only the removed section's collapsed intent after confirmation, never on cancel or failure", async () => {
@@ -1641,6 +1700,11 @@ it("moves a saved group from its menu, rolls back a failed save, and retries it"
     await waitFor(() =>
       expect(groups()).toEqual(["group:work", "group:later"]),
     );
+    expect(
+      document.querySelector(
+        "[data-create-section-slot] + [data-sidebar-section]",
+      ),
+    ).toHaveAttribute("data-sidebar-section", "group:work");
     await user.click(
       screen.getByRole("button", { name: "More actions for Work" }),
     );
@@ -1671,6 +1735,11 @@ it("moves a saved group from its menu, rolls back a failed save, and retries it"
     await waitFor(() =>
       expect(groups()).toEqual(["group:later", "group:work"]),
     );
+    expect(
+      document.querySelector(
+        "[data-create-section-slot] + [data-sidebar-section]",
+      ),
+    ).toHaveAttribute("data-sidebar-section", "group:later");
     expect(order).toHaveBeenLastCalledWith(
       ["later", "work"],
       expect.any(AbortSignal),

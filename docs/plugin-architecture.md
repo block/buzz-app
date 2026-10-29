@@ -280,7 +280,7 @@ falling back to the sidebar without failing activation. Older hosts ignore place
 and continue to show primary pages in their sidebar.
 
 Harness plugins register an agent type with `ctx.agents.register`. Per-agent
-configuration belongs in its `tabs`; the Agents host adds Attention. An optional
+configuration belongs in its `tabs`; the Agents host adds the device Attention switch. An optional
 `provider` contribution exposes a stable readiness snapshot, subscription,
 read-only `check()` and `DialogBody`. The Agents page supplies the Providers
 health submenu plus provider title, registered icon, modal framing, dismissal,
@@ -290,6 +290,15 @@ authentication work as blocking and supplies its cancellation control. Only
 active registered types appear there; plugin activation remains owned by
 Settings → Plugins → Manage plugins. Provider defaults are versioned device preferences, not
 agent-record migrations; blank per-agent values inherit them.
+
+A plugin, bundled or installed, can add a tab to the settings of every agent
+running on this device, whatever its type, with
+`ctx.agents.registerTab({ id, title, component })`. The component receives
+`{ agent }`; it reads and saves through the plugin's own `ctx.agents`. The tab
+follows Activity and precedes History and Settings, in the agent's Build view and
+its profile panel, and is not offered for hosted or elsewhere agents. It is
+removed when the plugin is turned off or its scope ends. The bundled Agent
+Attention UI plugin uses it.
 
 A plugin, bundled or installed, can add a tool to every agent session in the
 app with `ctx.agents.addTool({ name, description, inputSchema, call })`. `call`
@@ -1272,7 +1281,10 @@ no inline-renderer or panel contract extension is needed.
 The host provides `ctx.navigation` to plugins declaring `navigation` in `inject`.
 `open(target)` returns a presentation result, not merely an accepted address:
 `opened`, `failed` (with a reason), `superseded`, or `cancelled`. The host owns one
-history driver, toolbar/keyboard traversal, and a 15-second attempt deadline.
+history driver, toolbar/keyboard traversal, and a 15-second attempt deadline
+that runs only while a presenter is attached (the identity/key-setup gate,
+`IdentitySetup`, hides the only one, so the startup visit's deadline starts when
+that gate lifts).
 A visit has stable identity; retrying/reclicking preserves that visit and Forward,
 while a new destination truncates the forward branch. Leaving aborts the old
 attempt, and late completion cannot acknowledge a replacement attempt.
@@ -1632,10 +1644,13 @@ joined; they are labeled "Not joined", and private results are never offered.
 The relay has no name search, so that lookup covers only its newest page of
 channel metadata, which the store reuses while the viewer types. While the next
 lookup runs, the previous one's still-matching rows stay. Names match by the
-channel pickers' rule (`matchName`): exact, prefix, word start, then substring,
-with alphabetical ties. Its fuzzy ranks are left out, because Enter and Tab pick
-the first row while the viewer writes prose. Open channels follow joined ones, as
-in Command-K, so a late search result never moves the first row; when joined
+channel pickers' rule (`matchName`): exact, prefix, word start, substring,
+then letter runs that each begin a word (`tlp` for `team-launch-planning`), with
+alphabetical ties. Its last rank, letters merely in order, is left out, because
+Enter and Tab pick the first row while the viewer writes prose. Word runs match
+joined channels only: the open-channel lookup, as in Command-K, offers only
+names that contain the typed text. Open channels follow joined ones, as in
+Command-K, so a late search result never moves the first row; when joined
 matches would fill the 20 rows, five stay reserved for open channels. Namesakes
 include their channel IDs. A query containing a space completes only names it
 prefixes, as person names do, so ordinary prose after `#name` closes the popup.

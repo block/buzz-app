@@ -474,17 +474,36 @@ function MessageRowContent({
       return false;
     }
   };
+  // A plugin may draw an image itself, such as a shared agent's card; it
+  // stands alone rather than joining the gallery around it.
+  const attachmentRenderers = useSyncExternalStore(
+    extensions?.attachments?.subscribe ?? noSubscribe,
+    extensions?.attachments?.snapshot ?? noActions,
+    extensions?.attachments?.snapshot ?? noActions,
+  );
+  const drawn = (attachment: ChannelMessage["attachments"][number]) =>
+    attachment.kind === "image" &&
+    attachmentRenderers.some((renderer) => {
+      try {
+        return renderer.matches(attachment);
+      } catch {
+        return false;
+      }
+    });
   // Gallery-backed images and videos share a group, preserving sender order.
   const attachmentGroups: ChannelMessage["attachments"][number][][] = [];
   for (const attachment of row.attachments) {
     if (!safeMessageUrl(attachment.url) || claimed(attachment)) continue;
     const previous = attachmentGroups.at(-1);
     if (
-      ((attachment.kind === "image" || attachment.kind === "file") &&
-        previous?.[0]?.kind === attachment.kind) ||
-      (onOpenMediaReview &&
-        (attachment.kind === "image" || attachment.kind === "video") &&
-        (previous?.[0]?.kind === "image" || previous?.[0]?.kind === "video"))
+      previous?.[0] &&
+      !drawn(attachment) &&
+      !drawn(previous[0]) &&
+      (((attachment.kind === "image" || attachment.kind === "file") &&
+        previous[0].kind === attachment.kind) ||
+        (onOpenMediaReview &&
+          (attachment.kind === "image" || attachment.kind === "video") &&
+          (previous[0].kind === "image" || previous[0].kind === "video")))
     )
       previous.push(attachment);
     else attachmentGroups.push([attachment]);
@@ -1141,7 +1160,7 @@ function MessageRowContent({
                         );
                       }
                       if (attachment.kind === "image") {
-                        return (
+                        const image = (
                           <AttachmentImage
                             onOpenLink={
                               canOpenLink?.(attachment.url)
@@ -1180,6 +1199,19 @@ function MessageRowContent({
                                 }
                               : {})}
                           />
+                        );
+                        return source &&
+                          extensions?.attachments &&
+                          drawn(attachment) ? (
+                          <AttachmentView
+                            key={url}
+                            registry={extensions.attachments}
+                            attachment={{ ...attachment, url }}
+                            source={source}
+                            fallback={image}
+                          />
+                        ) : (
+                          image
                         );
                       }
                       return (
@@ -1228,7 +1260,9 @@ function MessageRowContent({
                         />
                       );
                     });
-                    return images && (imageOnly || group.length >= 4) ? (
+                    return images &&
+                      !(group[0] && drawn(group[0])) &&
+                      (imageOnly || group.length >= 4) ? (
                       <div className={styles.imageGroup} key={group[0]?.url}>
                         {/* biome-ignore lint/a11y/useSemanticElements: This labels related media links, not a fieldset of form controls. */}
                         <div

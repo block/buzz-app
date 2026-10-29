@@ -46,6 +46,7 @@ import type {
 } from "../../features/agents/service";
 import type { Host } from "../../features/host/service";
 import type { EventData } from "../../features/relay/events";
+import type { ChannelLabel } from "../../features/channels/channel-icon";
 import { threadReference } from "../../features/relay/thread-reference";
 import {
   CONTEXT_LIMIT,
@@ -106,16 +107,18 @@ const replyTags = ({ channel, root, topLevel }: Where) => [
   ["h", channel],
   ...(topLevel ? [] : [["e", root, "", "reply"]]),
 ];
-/** A Buzz thread or channel the agent has a Pi conversation for. */
-export type Place = Readonly<{
-  key: string;
-  conversation: number;
-  channelId: string;
-  root?: string;
-  name?: string;
-  /** When the newest message it was shown was sent. */
-  at: number;
-}>;
+/** A Buzz thread or channel the agent has a Pi conversation for, with the
+ * channel's name and kind once `channelLabel` has added them. */
+export type Place = Readonly<
+  Partial<ChannelLabel> & {
+    key: string;
+    conversation: number;
+    channelId: string;
+    root?: string;
+    /** When the newest message it was shown was sent. */
+    at: number;
+  }
+>;
 /** How a request settled in Pi: answered, unanswered and why, or not yet,
  * because the agent was closed and its run waits to continue. */
 type Waited =
@@ -211,6 +214,12 @@ export class PiRuntime {
       event: string,
       input: unknown,
     ) => Promise<unknown>,
+    /** Tells when the owner's connection to the agent's community may have
+     * changed, so `reads` may answer with another (`Agents.relay(key)?.subscribe`). */
+    private readonly subscribeRelay: (
+      key: AgentKey,
+      listener: () => void,
+    ) => () => void = () => () => {},
   ) {
     this.pi = new Pi(() => this.spawn, {
       tool: (call) => this.tool(call),
@@ -289,17 +298,42 @@ export class PiRuntime {
     return places
       .map(({ key, conversation, seen }) => {
         const [channelId = key, root] = key.split("/");
-        const name = this.reads(agent)?.channelName(channelId);
         return {
           key,
           conversation,
           channelId,
           ...(root ? { root } : {}),
-          ...(name ? { name } : {}),
           at: seen * 1000,
         };
       })
       .sort((a, b) => b.at - a.at);
+  }
+  /** The community's current name and kind for a place's channel, if it
+   * lists the channel; `subscribeChannels` tells when that may change. Read
+   * when shown, not with `places`, so a channel going private shows so at
+   * once. */
+  channelLabel(agent: AgentKey, channelId: string) {
+    return this.reads(agent)?.channelLabel(channelId);
+  }
+  /** Tells `listener` when `channelLabel` may answer differently: the
+   * community's channel list changed, or the connection it is read through
+   * did, which brings another list. The listener follows that connection as
+   * it comes, goes and is replaced. */
+  subscribeChannels(agent: AgentKey, listener: () => void) {
+    let reads = this.reads(agent);
+    let stop = reads?.subscribeChannels(listener);
+    const stopFollowing = this.subscribeRelay(agent, () => {
+      const current = this.reads(agent);
+      if (current?.connection === reads?.connection) return;
+      stop?.();
+      reads = current;
+      stop = current?.subscribeChannels(listener);
+      listener();
+    });
+    return () => {
+      stop?.();
+      stopFollowing();
+    };
   }
   /** The agent's conversations, most recently active first, with whether
    * each is working while it runs here. The first call reads them from Pi's

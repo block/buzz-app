@@ -151,6 +151,28 @@ belong to this persistent sidebar. Rows in saved groups, **Starred** and **Chann
 can also be dragged with a pointer onto another saved group, **Starred** or
 **Channels**; the drop is the same Move intent, with the same gate, optimistic
 placement, rollback notice and Retry.
+The **Channels** ellipsis menu also offers **Create section**, which creates an
+empty section without moving a channel. Its dialog retains the name and section
+ID after an attempted write fails and waits for confirmation before closing.
+The submitted name stays read-only and focused; a rejected gate that attempted
+no write leaves the draft editable. Failed confirmation uses plain copy and
+offers Retry preferences whenever preferences are unavailable, with Create
+disabled until recovery. After a failed creation,
+the session refreshes preferences from the writer before allowing dismissal so
+an accepted save stays visible even after Cancel. If that read fails too, new
+creation is gated across menu, drop and create-and-move paths, and Retry retains
+writer routing until reconciliation succeeds. Recovery waits for all queued
+preference writes and repeats a writer read invalidated by a concurrent write.
+Ordinary startup remains replica-eligible. Dragging a channel into
+the gap above the first custom section expands an **Add to new section** drop
+target inside the sidebar. With no custom sections, the target is above
+**Channels**; **Starred** keeps its pinned position. The created section appears
+at that same first position. The target stays revealed for the rest of that drag, with
+reduced motion opening it immediately; other section destinations remain available.
+Dropping there opens the existing create-and-move dialog; cancelling leaves the
+channel in place, and no preference is written until submission. These entry
+points supplement the per-channel **Move channel → Create new…** route and use
+the existing gated preference queue and encrypted section record.
 Only a channel's select surface starts a drag, the surface its row menu wraps.
 **Starred** accepts drops only when it is already visible; starting a drag does
 not reveal an empty section. Use the row menu to star the first channel.
@@ -268,8 +290,9 @@ A register is `[version, device, value]`, with a nonnegative safe-integer millis
 version and 16 lowercase hex device ID. Meta-less relay heads import at event
 seconds × 1,000 with the zero device ID. Edits exceed every observed register
 version and use a random in-memory device ID. Sections sort by canonical `(order,id)`
-and project dense display orders; new sections append after the canonical live
-maximum. Orphan assignments are omitted from the legacy projection, not deleted
+and project dense display orders; menu-created sections append after the canonical
+live maximum, while drop-created sections precede the live minimum. Orphan
+assignments are omitted from the legacy projection, not deleted
 from metadata. Read projection accepts Desktop string values on retained section
 name/icon registers; only projected live text receives UI length limits. Already
 satisfied intents return without rewriting the head, including assignment removal
@@ -786,22 +809,25 @@ native acceptance.
 
 ## Member administration
 
-**Members** has a scoped conversation history visit (`panel: "members"`)
-through the host navigation owner. Opening creates a visit; browser Back dismisses
-and Forward restores the list. Reload restores the same channel and Members,
-including the underlying message/thread address when present. Close, Escape and
-outside dismissal return to the visit Members was opened from, so closing never
-adds a visit and Back does not reopen the list. When that visit is unknown, such
-as after a reload, dismissal replaces the Members visit with the underlying
-conversation instead; Back then steps to the earlier visit of that same
-conversation. A profile handoff replaces the Members visit rather than
-traversing back, so the profile and its address stay current. Opening a DM
-adds the DM as a new visit after Members, so Back from the DM returns to the
-list. History traversal never repeats a DM open or membership mutation.
+**Members** has its own conversation visit, carried in its address as
+`panel: "members"` through the host navigation owner.
+Opening adds a visit: Back closes the dialog on the same channel and Forward
+restores it. Explicit dismissal (Close, Escape, outside click) retires the visit
+without adding a closed-dialog stop, so Back can leave the channel and Forward
+keeps Members closed. Reload and deep links restore the same channel and
+Members, including the underlying message/thread address when present; cold
+dismissal replaces in place when no matching opener is known.
+Profile/DM handoffs dismiss Members without overwriting the destination. A
+routed destination replaces the Members visit, so Back returns to its channel
+opener once; traversal never repeats a DM open or membership mutation.
 Search, role filters, menus and confirmations are transient, not address data.
 Scoped history still requires the original viewer, joined community and current
 channel access. Tabs remain session-owned: navigation preserves them, but this
 change does not add disk persistence for tab sets. Draft persistence is unchanged.
+The content-tab menu's **Close other tabs** and **Close all tabs** retire all
+closed thread, Profile and GitHub visits together, including inactive tabs.
+The kept tab stays selected; underlying channel/message visits remain. Back and
+Forward skip the closed content, and reopening it explicitly is still possible.
 A covering Members modal owns focus while underlying exact-message readers verify
 and restore their targets without focusing through the modal. Session conversations
 have no Members surface; a restored/handwritten Members route to a session resolves
@@ -1164,7 +1190,10 @@ path. No native or relay changes are required.
 
 Click a message's reply count to open its root and replies in the right column.
 Up to three overlapping participant avatars appear beside the count, with `+N`
-for additional summary participants; missing/unavailable pictures use initials.
+for additional participants; missing/unavailable pictures use initials. Like the
+count, participants come from the relay's summary, with the authors of replies
+this client has sent since that summary placed first, so your own reply's avatar
+is among the visible three as soon as you send it.
 They reuse the channel's existing shared profile/media path, not extra per-row reads.
 On a supporting relay, the panel opens at the newest 10 replies and loads older
 pages of 50 when you scroll upward; there is no Load more replies button. It validates

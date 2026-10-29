@@ -33,8 +33,6 @@ export type EventWatch = Readonly<{
   authors?: readonly string[];
   /** The event's author must not be one of these. */
   exclude_authors?: readonly string[];
-  /** Match any case-insensitive literal substring of the event content. */
-  keywords?: readonly string[];
   tags?: Readonly<Record<string, readonly string[]>>;
   /** true: replies only; false: top-level only (NIP-10 `reply` marker). */
   is_reply?: boolean;
@@ -151,7 +149,6 @@ function eventWatch(value: Record<string, unknown>) {
       "name",
       "authors",
       "exclude_authors",
-      "keywords",
       "tags",
       "is_reply",
       "classifier",
@@ -165,16 +162,6 @@ function eventWatch(value: Record<string, unknown>) {
   integer(value.since, "since", 1);
   destination(value);
   const { channels, kinds, tags, classifier } = value;
-  if (value.keywords !== undefined) {
-    if (
-      !Array.isArray(value.keywords) ||
-      !value.keywords.length ||
-      value.keywords.length > 32
-    )
-      fail("keywords must contain 1 to 32 literal strings");
-    for (const keyword of value.keywords as unknown[])
-      filled(keyword, "keywords", 256);
-  }
   if (channels !== "all")
     if (
       !Array.isArray(channels) ||
@@ -384,13 +371,6 @@ export function watchMatches(watch: EventWatch, event: EventData): boolean {
   if (watch.kinds.length && !watch.kinds.includes(event.kind)) return false;
   if (watch.authors && !watch.authors.includes(event.pubkey)) return false;
   if (watch.exclude_authors?.includes(event.pubkey)) return false;
-  if (watch.keywords) {
-    const content = event.content.toLowerCase();
-    if (
-      !watch.keywords.some((keyword) => content.includes(keyword.toLowerCase()))
-    )
-      return false;
-  }
   for (const [key, values] of Object.entries(watch.tags ?? {}))
     if (
       !event.tags.some(
@@ -492,10 +472,7 @@ export function describeWatch(
         ? `#${only.name}`
         : plural(watch.channels.length, "channel");
   const filtered =
-    watch.authors ||
-    watch.exclude_authors ||
-    watch.keywords ||
-    watch.is_reply !== undefined;
+    watch.authors || watch.exclude_authors || watch.is_reply !== undefined;
   return `${what} in ${where}${filtered ? ", filtered" : ""}`;
 }
 

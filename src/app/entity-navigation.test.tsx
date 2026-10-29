@@ -38,6 +38,15 @@ vi.mock("../bundled", async () => ({
       module: await import("../bundled/agents"),
     },
     {
+      manifest: {
+        id: "buzz.watching",
+        name: "Agent Attention UI",
+        apiVersion: 1,
+      },
+      module: await import("../bundled/watching"),
+      enabledByDefault: true,
+    },
+    {
       manifest: { id: "buzz.inbox", name: "Inbox", apiVersion: 1 },
       module: await import("../bundled/inbox"),
     },
@@ -186,6 +195,121 @@ it("keeps an OS entity intent through real community selection and Retry in App"
   ).not.toBeInTheDocument();
 });
 
+const elsewhere = "https://elsewhere.example";
+/** Live App services with community links bound to a controllable shell. */
+function bindCommunityLinks(
+  selected: string | null,
+  take: () => Promise<readonly string[]>,
+) {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+  vi.stubEnv("VITE_BUZZ_LIVE", "1");
+  localStorage.setItem(
+    `buzz-client.v1:${viewer}`,
+    JSON.stringify({
+      profile: { name: "Fixture", picture: "" },
+      memberships: [
+        { id: origin, name: "Fixture community" },
+        { id: elsewhere, name: "Elsewhere" },
+      ],
+      selected,
+    }),
+  );
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (url.endsWith("/identity")) return Response.json({ viewer });
+      if (url.endsWith("/session"))
+        return Response.json({ viewer, relayAuthor: viewer, relayUrl: origin });
+      if (url.endsWith("/query")) return Response.json([]);
+      return Response.json({});
+    }),
+  );
+  services = createServices();
+  const current = services;
+  let ping = () => {};
+  stop = bindDeepLinks(
+    { ...current.navigationHost, invite: current.invites.open },
+    current.communities,
+    {
+      take,
+      watch(listener) {
+        ping = listener;
+        return () => {};
+      },
+    },
+  );
+  render(<App services={current} />);
+  return { current, ping: () => ping() };
+}
+
+it("offers to join a code-less link's community, or opens it once joined", async () => {
+  const queue = [
+    "buzz://add-community?relay=wss%3A%2F%2Fother.example%2F&name=other",
+  ];
+  const { current, ping } = bindCommunityLinks(null, async () =>
+    queue.splice(0),
+  );
+  expect(await screen.findByLabelText("Community URL")).toHaveValue(
+    "https://other.example",
+  );
+  await act(async () => {
+    queue.push("buzz://connect?relay=wss%3A%2F%2Fcommunity.example");
+    ping();
+  });
+  await waitFor(() =>
+    expect(current.navigation.snapshot()).toMatchObject({
+      status: "opened",
+      entry: {
+        target: {
+          kind: "page",
+          pluginId: "buzz.channels",
+          scope: { viewer, communityOrigin: origin },
+        },
+      },
+    }),
+  );
+  expect(current.communities.snapshot().selected).toBe(origin);
+  // The latest link replaces the unjoined community's dialog.
+  expect(current.invites.snapshot()).toBeUndefined();
+  await waitFor(() =>
+    expect(screen.queryByLabelText("Community URL")).not.toBeInTheDocument(),
+  );
+});
+
+it("keeps a link read while a code-less link switches communities", async () => {
+  const reads: ((urls: readonly string[]) => void)[] = [];
+  const { current, ping } = bindCommunityLinks(
+    elsewhere,
+    () => new Promise((resolve) => reads.push(resolve)),
+  );
+  await waitFor(() => expect(reads).toHaveLength(1));
+  await waitFor(() =>
+    expect(current.communities.snapshot().status).toBe("ready"),
+  );
+  // A second link arrives while the first read is pending.
+  ping();
+  await act(async () =>
+    reads[0]?.(["buzz://connect?relay=wss%3A%2F%2Fcommunity.example"]),
+  );
+  await waitFor(() => expect(reads).toHaveLength(2));
+  await waitFor(() =>
+    expect(current.communities.snapshot().selected).toBe(origin),
+  );
+  await act(async () =>
+    reads[1]?.(["buzz://add-community?relay=wss%3A%2F%2Fother.example"]),
+  );
+  expect(await screen.findByLabelText("Community URL")).toHaveValue(
+    "https://other.example",
+  );
+});
+
 it("lists active primary pages in their sidebar and header placements", async () => {
   vi.stubGlobal(
     "ResizeObserver",
@@ -235,16 +359,27 @@ it("lists active primary pages in their sidebar and header placements", async ()
   ).not.toBeInTheDocument();
   expect(screen.getByRole("tab", { name: "Agents" })).toBeInTheDocument();
 
-  const attentionTab = screen.getByRole("tab", { name: "Agent Attention" });
-  await userEvent.click(attentionTab);
-  expect(
-    await screen.findByRole("region", { name: "Agent Attention" }),
-  ).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "New watch" })).toBeNull();
-
   // The fixture page is active and searchable but never a sidebar row.
   expect(current.pages.snapshot().map((page) => page.key)).toContain(
     "fixture.notes/notes",
+  );
+
+  // The Watching tab is on by default, and attention keeps running without it.
+  const providers = () =>
+    current.agents.attentionProviders().map(({ provider }) => provider);
+  await waitFor(() =>
+    expect(current.agents.addedTabs().map((tab) => tab.key)).toEqual([
+      "buzz.watching/watching",
+    ]),
+  );
+  await act(() => current.plugins.change("disable", "buzz.watching"));
+  await waitFor(() => expect(current.agents.addedTabs()).toEqual([]));
+  expect(providers()).toContain("attention/command");
+  await act(() => current.plugins.change("enable", "buzz.watching"));
+  await waitFor(() =>
+    expect(current.agents.addedTabs().map((tab) => tab.key)).toEqual([
+      "buzz.watching/watching",
+    ]),
   );
 
   await act(() => current.plugins.change("disable", "buzz.agents"));
@@ -257,9 +392,6 @@ it("lists active primary pages in their sidebar and header placements", async ()
   );
 
   expect(screen.queryByRole("tab", { name: "Agents" })).not.toBeInTheDocument();
-  expect(
-    screen.queryByRole("tab", { name: "Agent Attention" }),
-  ).not.toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "Search Buzz" }));
   const search = await screen.findByRole("dialog", { name: "Search Buzz" });
   expect(

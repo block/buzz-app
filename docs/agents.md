@@ -680,9 +680,10 @@ in its home record and applies everywhere.
   agent's memory in that community stay, so they come back if it is added again;
   its attention there does not.
 - **Teams** work like agents: a team shows in every community where it has a
-  member (or in all of them while it has none), but has one home community. A
-  local team is shared by every community; a member's roster lists only teammates
-  in the same community, and the editor keeps members that are only elsewhere.
+  member (or in all of them while it has none), and a synced team always shows
+  in its one home community. A local team is shared by every community; a
+  member's roster lists only teammates in the same community, and the editor
+  keeps members that are only elsewhere.
   Where the community's relay supports config channels, a new team, or one
   imported from old Buzz, is synced: its NIP-AP config channel (name and
   instructions) is created only in the community it was made in, and its members
@@ -696,6 +697,17 @@ in its home record and applies everywhere.
   one at a time per team, and report anything left part way. Existing local
   teams are not migrated.
 - **Hosted agents** stay in one community, as their provider holds the key.
+  Only a synced team homed there can have them as members, so the team editor
+  offers them only for such a team, or for a new one that will sync there. One
+  picked in a community Save doesn't put the team in, as when another is
+  selected before a new team's first Save, is left off unless the team already
+  has it. One picked where Save puts the team stays, shown checked, while that
+  community's agent list is read again, but Save refuses it until the list is
+  read, and refuses it once the list is read without it. Unchecking it leaves
+  it off. They do not get its instructions, but rosters name them.
+  Until the community's agent list is read, which tells hosted agents from
+  ones on other devices, the team's roster there names each member not on this
+  device by npub alone.
 
 `removeRelayAgent` applies the same steps to a relay-only agent: archive when
 consent exists, delete the owner's kind 30177 record (NIP-09), then remove it from
@@ -902,9 +914,13 @@ the agent would share now, and publishes that, still shared.
 
 **Export agent** saves `{name}.agent.png` or, by **File format**,
 `{name}.agent.json` in the `buzz-agent-snapshot` version 1 format that block/buzz
-and earlier Buzz write, without memory. The PNG is the picture redrawn at
-512×512, or a transparent pixel when it is missing or takes over 5 seconds to
-load, with the manifest in a `buzz_agent_snapshot` tEXt chunk. Desktop saves it
+and earlier Buzz write, without memory. The PNG is an 820×1230 agent card
+(`src/features/agents/share-card.ts`): foil around the picture, the name, and
+its harness and model, with the letter tile when the picture is missing, takes
+over 5 seconds to load, or can't be read back, and a transparent pixel when no
+card can be drawn. The manifest is in a `buzz_agent_snapshot` tEXt chunk.
+Exporting the card previews it first and saves the bytes shown; sending the
+agent uploads the same card. Desktop saves it
 to Downloads through `file_download` (`src-tauri/src/relay.rs`), as media is
 saved, since WKWebView cannot save a `blob:` link cleanly, and returns the
 saved path, which the dialog shows. It takes only

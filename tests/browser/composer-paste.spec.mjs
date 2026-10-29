@@ -151,12 +151,16 @@ test("pasting copied messages into the composer restores chips, the recipient an
   // One representative renderer → clipboard → editor → signed-send round trip.
   // The detailed syntax matrix belongs to the colocated component tests.
   const blocks =
-    "- one\n- two\n\n3. first\n\n> quoted\n\n```sh\necho hi\n```\n\n| a | b |\n| - | - |\n| 1 | 2 |";
+    "- one\n- two\n\n3. first\n\n> quoted\n\na ||secret|| b\n\n```sh\necho hi\n```\n\n| a | b |\n| - | - |\n| 1 | 2 |";
   const structured = app.append("primary", "alpha", blocks);
   const structuredRow = page.locator(
     `[data-channel-timeline] [data-message-id="${structured.id}"]`,
   );
   await expect(structuredRow.locator("table")).toBeVisible();
+  // The spoiler stays masked: its inert content must still copy.
+  await expect(
+    structuredRow.getByRole("button", { name: "Reveal spoiler" }),
+  ).toBeVisible();
   const payload = await structuredRow.locator("ul").evaluate((list) => {
     const content = list.parentElement;
     const range = document.createRange();
@@ -178,10 +182,16 @@ test("pasting copied messages into the composer restores chips, the recipient an
     };
   });
   expect(payload.text).toBe(
-    "one\ntwo\n\nfirst\n\nquoted\n\necho hi\n\na\tb\n1\t2",
+    "one\ntwo\n\nfirst\n\nquoted\n\na ||secret|| b\n\necho hi\n\na\tb\n1\t2",
   );
   await expect(input).toHaveJSProperty("value", "");
   await pasteInto(input, payload);
+  // The engine's DOMParser hands the composer its own blocks, not their source.
+  await expect(input.locator("ul li")).toHaveCount(2);
+  await expect(input.locator('ol[start="3"] li, blockquote, pre')).toHaveCount(
+    3,
+  );
+  await expect(input.locator("[data-spoiler]")).toHaveText("secret");
   await input.press("Enter");
   await expect.poll(() => app.report.publications.length).toBe(2);
   expect(app.report.publications[1].event.content).toBe(
@@ -219,6 +229,60 @@ test("pasting copied messages into the composer restores chips, the recipient an
   expect(app.report.publications[2].event.content).toBe(
     "[#Beta](buzz://channel/beta)",
   );
+});
+
+// Browser-only contract: each engine's native triple-click range. On a
+// one-heading message it ends in the next row, past the empty reaction row,
+// yet copies the heading alone, which pastes into the current line. The range
+// shapes this crosses are modelled in selection-copy.test.tsx.
+test("a triple-clicked heading message pastes into the current line", async ({
+  page,
+  app,
+  browserName,
+}) => {
+  await open(page, app);
+  const event = app.append("primary", "alpha", "## Title");
+  app.append("primary", "alpha", "next");
+  const heading = page
+    .locator(`[data-channel-timeline] [data-message-id="${event.id}"]`)
+    .getByRole("heading", { name: "Title" });
+  await expect(page.getByText("next", { exact: true })).toBeVisible();
+  await heading.click({ clickCount: 3 });
+  await expect
+    .poll(() => page.evaluate(() => window.getSelection()?.toString()))
+    .toContain("Title");
+  await page.evaluate(() => {
+    window.__copyPayload = undefined;
+    document.addEventListener(
+      "copy",
+      (event) => {
+        window.__copyPayload = {
+          text: event.clipboardData?.getData("text/plain"),
+          html: event.clipboardData?.getData("text/html"),
+        };
+      },
+      { once: true },
+    );
+  });
+  // See timeline-copy.spec.mjs for the WebKit copy command.
+  if (browserName === "webkit")
+    expect(await page.evaluate(() => document.execCommand("copy"))).toBe(true);
+  else await page.keyboard.press("ControlOrMeta+c");
+  const copied = {
+    text: "Title",
+    html: '<div data-buzz-copy="timeline"><h2>Title</h2></div>',
+  };
+  await expect
+    .poll(() => page.evaluate(() => window.__copyPayload))
+    .toEqual(copied);
+  const input = page.getByRole("textbox", {
+    name: "Message #Alpha",
+    exact: true,
+  });
+  await input.click();
+  await input.pressSequentially("foo");
+  await pasteInto(input, copied);
+  await expect(input).toHaveJSProperty("value", "foo## Title");
 });
 
 // Browser integration: external clipboard HTML paints a labelled link in the

@@ -136,9 +136,10 @@ member sets. `snapshot()` / `subscribe()` provide an immutable catalog; `ensure(
 is lazy and background-priority, and `refresh()` explicitly retries. The shared
 composer warms it on mount. Each author's newest complete set replaces their old
 one (including empty removal sets); the union picks newer sets, then smaller URLs,
-for shortcode conflicts. The directory retains at most 500 member sets / 2 MiB;
-read caps and overflow expose errors rather than silently evicting replacements.
-An explicit retry after overflow starts a fresh bounded catalog read.
+for shortcode conflicts. The directory retains at most 500 member sets / 2 MiB.
+A read that reaches the 500-set cap stays usable with an incompleteness error;
+overflow exposes an error rather than silently evicting replacements. Only an
+explicit retry after overflow starts a fresh bounded catalog read.
 
 `snapshot().mine` lists the viewer's own set. When the session has an attachment
 uploader and its writer admits kind 30030, the directory also exposes `upload()`
@@ -155,6 +156,8 @@ broker admits kind 30030 only for the canonical own-set template
 Live kind-30030 updates share the existing profile route, not another socket or
 subscription slot. Global establishment repairs an already requested catalog;
 cache/access clearing and disposal cancel its reads and fence stale results.
+A loaded catalog stays ready while that repair or any refresh reads, and a failed
+refresh keeps it ready with the error attached.
 The development broker imports the live subscription code at startup: an already
 running broker needs one coordinated restart to gain the new filter. Reopening
 the picker reuses its ready catalog; it is not a manual refresh fallback for an
@@ -162,8 +165,10 @@ older broker.
 
 `session.messages.send`, `reply`, `edit`, and `react` resolve referenced `:shortcodes:`
 into original-URL emoji tags **before** the outbox assigns identity or signs. Text
-without shortcode candidates does not wait. A cold/unavailable catalog throws
-synchronously, so a composer retains its draft; plugins can await `ensure()` or
+without shortcode candidates does not wait. A catalog that has not loaded yet,
+or failed before loading, throws synchronously, so a composer retains its draft.
+A refused send after a failed read starts one shared retry; mounts and pickers do
+not, and overflow waits for an explicit retry. Plugins can await `ensure()` or
 explicitly retry `refresh()`. Unknown codes in a ready catalog remain literal.
 Retries retain the exact original event and URL even if the palette changes.
 Low-level `outbox.send` remains raw intent; callers supply its tags themselves.
@@ -809,8 +814,34 @@ EOSE establishes streaming, **not complete historical replay**. Retained channel
 windows get finite, signed-bounds head catch-up after establishment/reconnect;
 unopened channels defer it until demand. `live.snapshot().heads` distinguishes
 pending, verified, deferred and failed obligations. Verification covers the
-bounded current head, not all history or every event missed while disconnected.
-Catch-up merges into paged readers without resetting older pages or their cursor.
+bounded current head and its continuity with the rows the reader kept across
+the drop, not all history. Those rows are snapshotted when the stream drops, or
+at a window's head read before the stream is up (a channel opened before the
+first connection or during a disconnect, a window evicted and reopened while
+down, a restored head revalidated before connecting); the rows the
+re-established stream replays before catch-up (its last five minutes) are newer
+than any gap, so a head overlapping only them is not continuity evidence. The
+healthy renewal is unchanged: a head sharing any row with the snapshot verifies
+the window in that one read, and only a channel with more than a page of rows
+across the drop and replay pays pages. When the head has more history and shares
+no row with the snapshot, catch-up pages back from it (up to five pages),
+merging each page as it lands. Past that bound, or when a page fails or the
+stream drops mid-fill, the snapshotted rows it never reached are dropped and the
+window continues from the last page read (verified at the bound, cached after an
+interruption or a drop mid-fill), so a long disconnect never shows a gap as
+history and the next head's overlap is truthful: a fill the drop interrupted
+leaves the settled rows as the next catch-up's snapshot, and a second drop
+before any catch-up completes keeps the first snapshot. Replayed rows, rows
+the stream delivers meanwhile, and older pages read during the disconnect stay
+(the last below the settled range until paging reaches them). Catch-up merges
+into paged readers without resetting older pages or their cursor. An open
+thread view refreshes the same way: it snapshots its replies at the drop, or
+at its first read before the stream is up, and only the refresh after the
+stream is back clears that snapshot (a refresh completing while it is down
+keeps it); the re-read pages past the retained range until it reaches one of
+them, within the thread page bound. Past it, the replies it never reached go
+and the view settles back on the range the reader had, so later refreshes stay
+proportional to it.
 
 Removing a batch member rebuilds only that batch's survivor scope. One established
 source overlaps its zero-replay replacement until EOSE; another removal supersedes

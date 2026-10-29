@@ -83,6 +83,7 @@ import { createUserStatuses } from "./user-status";
 import { createEmojiDirectory } from "./emoji-directory";
 import { EMOJI_SET_KIND } from "./emoji";
 import { createProfileDirectory } from "./profile-directory";
+import { rowProfileIds } from "./membership";
 import { createChannelStore, type ChannelStoreOptions } from "./store";
 import { MessageClock } from "./message-order";
 import {
@@ -273,7 +274,7 @@ export function createRelaySession(
             profiling,
             clock,
             notifyListener: notify,
-            onAccepted: (event) => {
+            onAccepted: (event, acknowledged) => {
               // Product feedback is accepted into a private sidecar, not queryable history.
               if (event.kind !== PRODUCT_FEEDBACK_KIND) confirm(event);
               const recovery = writes?.outbox
@@ -288,6 +289,8 @@ export function createRelaySession(
                       error,
                     ),
                   );
+              // An `unknown` attempt waits for confirm() to read it back.
+              if (acknowledged) acceptOwnActivity(event);
             },
             afterSigned: (event, recovery, signal): Promise<() => void> =>
               recordTaskFirstEvent(session, event, recovery, signal),
@@ -421,6 +424,16 @@ export function createRelaySession(
       // The relay reapplies access to a new sync; nothing held survives.
       for (const view of artifactSyncs) view.restart();
       commit();
+      // After commit: a store commit may clear profiles again, aborting earlier reads.
+      channels.refetchWindowProfiles();
+      for (const thread of threads)
+        if (canAccess(thread.channelId)) {
+          const { root, replies } = thread.view.snapshot();
+          const rows = root ? [root, ...replies] : replies;
+          void profiles
+            .ensure(rows.flatMap(rowProfileIds), "background")
+            .catch(() => {});
+        }
       unread.purge();
       inboxFeed.purge();
     } finally {
@@ -740,6 +753,12 @@ export function createRelaySession(
     );
     return visible;
   }
+  /** The relay's ACK or read-back verifies an own send before any live echo. */
+  function acceptOwnActivity(event: RelayEvent) {
+    const channelId = event.tags.find(([name]) => name === "h")?.[1];
+    if (!cacheClearing && channelId && canReadRemote(channelId))
+      channelActivity.accept([event]);
+  }
   function confirm(event: RelayEvent, attempt = 0) {
     if (closed || (attempt === 0 && pendingConfirmation.has(event.id))) return;
     pendingConfirmation.add(event.id);
@@ -748,8 +767,9 @@ export function createRelaySession(
         priority: attempt === 0 ? "foreground" : "background",
       })
       .catch(() => [])
-      .then(() => {
+      .then((events) => {
         if (closed) return;
+        if (events.some(({ id }) => id === event.id)) acceptOwnActivity(event);
         const operation = writes?.outbox
           .snapshot()
           .find((item) => item.event.id === event.id);
@@ -1591,6 +1611,14 @@ export function createRelaySession(
     setupListeners.forEach((listener) => {
       listener();
     });
+  // Create's preflight has just read sidebar preferences. Placement re-reads
+  // only once that read no longer stands (failed or cleared); another refresh
+  // in flight leaves it writable. So placement normally projects before the
+  // new channel first lists.
+  const settledPreferences = async () => {
+    if (!sidebarPreferences.queries.writable)
+      await sidebarPreferences.queries.refresh();
+  };
   const channelSetup =
     transport && writes && transport.channelKit
       ? createChannelSetup({
@@ -1718,7 +1746,7 @@ export function createRelaySession(
             }
           },
           async star(id) {
-            await sidebarPreferences.queries.refresh();
+            await settledPreferences();
             if (!sidebarPreferences.queries.starWritable)
               throw new Error(
                 "Starred placement is unavailable; keep the partial channel and star it separately",
@@ -1730,7 +1758,7 @@ export function createRelaySession(
             await sidebarPreferences.queries.setStar(id, true);
           },
           async place(id, groupId) {
-            await sidebarPreferences.queries.refresh();
+            await settledPreferences();
             const state = sidebarPreferences.queries.snapshot();
             if (
               !sidebarPreferences.queries.writable ||
@@ -2311,6 +2339,7 @@ export function createRelaySession(
         canRefresh: () => !closed && canReadRemote(channelId),
         visible: (events) => events.filter(visibility(events)),
         notify,
+        dropped: streamDropped,
       });
       threads.add(thread);
       thread.receive(recent.entries().map(([, item]) => item.event));
@@ -2854,6 +2883,9 @@ export function createRelaySession(
   // the sidebar page to mount and observe them.
   if (options.warm) void sidebarPreferences.queries.ensure();
   let refreshedGeneration = -1;
+  /** No route has been established since the stream dropped, or ever: a
+   * thread view opened now reads while it is down. */
+  let streamDropped = true;
   const catchupRunning = new Map<string, Catchup>();
   const catchupQueue = new Set<string>();
   const isChannelHead = (filters: readonly ReadFilter[], channelId: string) =>
@@ -3106,7 +3138,9 @@ export function createRelaySession(
         agentLibrary.clear();
         archives.stale();
         workflows.interrupt();
+        streamDropped = true;
         channels.staleHeads();
+        for (const thread of threads) thread.stale();
         unread.stale();
         inboxFeed.stale();
       }
@@ -3143,6 +3177,7 @@ export function createRelaySession(
     },
     established(channelId) {
       if (closed) return;
+      streamDropped = false;
       if (!channelId) {
         if (refreshedGeneration !== liveGeneration) {
           refreshedGeneration = liveGeneration;
@@ -3174,7 +3209,7 @@ export function createRelaySession(
         : channelId) {
         if (!channels.canAccess(id)) continue;
         for (const thread of threads)
-          if (thread.channelId === id) void thread.view.refresh();
+          if (thread.channelId === id) void thread.established();
         const job = {
           generation: liveGeneration,
           state: "pending" as "pending" | "verified" | "deferred" | "error",

@@ -239,6 +239,19 @@ const BOUNDARY_SURFACES = [
   "--surface-inset",
   "--surface-popover",
 ];
+/**
+ * State icons that also sit inside message bubbles: a pull request link's
+ * glyph and the sidebar's. Each is measured against the received bubble, and
+ * its `-own` pair against the own bubble, per accent family and level below.
+ * On the high level the own bubble is the solid accent step, which neither
+ * grey nor any one hue clears on every family, so there the `-own` pair is the
+ * bubble's link ink.
+ */
+const MESSAGE_ICON_ROLES = [
+  "--icon-subtle",
+  "--icon-success",
+  "--icon-categorical-purple",
+];
 const BOUNDARY_ROLES = [
   // Dots and insertion lines in the prominent color stand alone on a surface.
   "--affordance-prominent-mark",
@@ -254,6 +267,7 @@ const BOUNDARY_ROLES = [
   "--chart-series-2",
   "--chart-series-3",
   "--chart-series-4",
+  ...MESSAGE_ICON_ROLES,
 ];
 
 const TINT_PAIRS = [
@@ -542,6 +556,20 @@ for (const family of accentFamilies) {
           boundaryFailures.push(
             `${family}/${level}/${mode}: --border-accent on ${surfaceRole} — ${ratio === null ? "unresolved color" : `${ratio.toFixed(3)}:1`}, needs 3:1`,
           );
+      }
+      for (const baseRole of MESSAGE_ICON_ROLES) {
+        for (const [role, surfaceRole] of [
+          [baseRole, "--surface-message"],
+          [`${baseRole}-own`, "--surface-message-own"],
+        ]) {
+          const icon = resolve(map, role);
+          const surface = resolve(map, surfaceRole);
+          const ratio = icon && surface ? wcagRatio(icon, surface) : null;
+          if (ratio === null || ratio < 3)
+            boundaryFailures.push(
+              `${family}/${level}/${mode}: ${role} on ${surfaceRole} — ${ratio === null ? "unresolved color" : `${ratio.toFixed(3)}:1`}, needs 3:1`,
+            );
+        }
       }
     }
   }

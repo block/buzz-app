@@ -32,7 +32,12 @@ import {
   selectAll,
 } from "prosemirror-commands";
 import { sinkListItem, liftListItem } from "prosemirror-schema-list";
-import { Fragment } from "prosemirror-model";
+import {
+  Fragment,
+  Slice,
+  type Node as EditorNode,
+  type ResolvedPos,
+} from "prosemirror-model";
 import {
   composerSchema,
   readComposerDocument,
@@ -51,6 +56,7 @@ import type {
 import { composerToken, composerTokenName } from "./composer-token";
 import {
   activeBlockFormats,
+  apply,
   toggleComposerBlock,
   composerBlockLineBreak,
   composerBlockPrefix,
@@ -65,7 +71,7 @@ import {
 } from "./composer-inline-input";
 import { composerMarkdown } from "./composer-markdown";
 import {
-  buzzCopyMarkdown,
+  buzzCopyDocument,
   externalLinkMarkdown,
   composerClipboard,
   identityLink,
@@ -817,6 +823,77 @@ export function EditableInput({
       if (terminator && editor.state !== unconverted) separateHistory = true;
       if (focus) editor.focus();
       return true;
+    };
+    /** Paste this app's own copied blocks and marks as the nodes they are. One
+     * paragraph joins the caret's line; anything else lands as sibling blocks,
+     * splitting the caret's paragraph rather than merging into its text. The
+     * caret then ends inside the last pasted block, as ProseMirror leaves it,
+     * so Enter continues a pasted list or quote; that is deliberate. Returns
+     * the range the paste occupies, which can start after the caret's text. */
+    const insertDocument = (doc: EditorNode) => {
+      if (!editable() || composing.current || editor.composing) return null;
+      const { nodes } = composerSchema;
+      const single = doc.childCount === 1 ? doc.firstChild : null;
+      const tr = closeHistory(editor.state.tr);
+      let from = tr.selection.from;
+      if (single?.type === nodes.paragraph)
+        tr.replaceSelection(new Slice(single.content, 0, 0));
+      else {
+        // Delete first so a selection from an item's start is placed like a
+        // caret there, and a fully selected item text like an empty item.
+        tr.deleteSelection();
+        const { $from } = tr.selection;
+        const item = $from.node(-1);
+        const list =
+          item.type === nodes.list_item && single?.type === $from.node(-2).type
+            ? single
+            : null;
+        const blank = $from.parent.content.size === 0;
+        if (
+          $from.parentOffset === 0 &&
+          $from.index(-1) === 0 &&
+          item.type === nodes.list_item &&
+          (list || !blank)
+        ) {
+          // A list item is `paragraph block*`, so no block can precede its
+          // first paragraph; ProseMirror would close that paragraph empty,
+          // which sends as an empty `- ` item. A pasted list of this list's
+          // kind has its items join before the item instead, or take a blank
+          // item's place; any other block, including a list of the other kind,
+          // which keeps its own numbering, follows the item's paragraph.
+          from = list ? $from.before(-1) : $from.after();
+          const to =
+            list && blank && item.childCount === 1 ? $from.after(-1) : from;
+          const content = list ? list.content : doc.content;
+          tr.replaceWith(from, to, content);
+          tr.setSelection(
+            Selection.near(tr.doc.resolve(from + content.size), -1),
+          );
+        } else {
+          // A blank item that no same-kind list replaces leaves its list
+          // first, as Enter there does, until its empty paragraph is no item's
+          // first; a lift can move the following items under it, and they
+          // leave with it. ProseMirror would otherwise keep the empty
+          // paragraph beside the paste, which sends as an empty `- `.
+          const blankItem = ($pos: ResolvedPos) =>
+            $pos.parent.content.size === 0 &&
+            $pos.node(-1).type === nodes.list_item &&
+            $pos.index(-1) === 0;
+          while (blankItem(tr.selection.$from)) {
+            if (!apply(tr, liftListItem(nodes.list_item))) break;
+          }
+          from = tr.selection.from;
+          tr.replaceSelection(new Slice(doc.content, 0, 0));
+        }
+      }
+      if (
+        composerMarkdown(projectComposerDocument(tr.doc).draft).length >
+        current.current.maxLength
+      )
+        return null;
+      editor.dispatch(tr.scrollIntoView());
+      editor.focus();
+      return { from, to: editor.state.selection.to };
     };
     const replaceRecipients = (recipients: readonly MentionRecipient[]) => {
       if (!editable() || composing.current || editor.composing) return false;
@@ -1833,9 +1910,35 @@ export function EditableInput({
             const plain = event.clipboardData?.getData("text/plain") ?? "";
             const hasPlain =
               !!plain || event.clipboardData?.types?.includes("text/plain");
+            const copy = code ? undefined : buzzCopyDocument(html);
+            // Unformatted prose takes the text path: it inherits the caret's
+            // marks and the link spacing below. Structure pastes as nodes.
+            const paragraph = copy?.childCount === 1 ? copy.firstChild : null;
+            const prose =
+              paragraph?.type === composerSchema.nodes.paragraph &&
+              paragraph.childCount <= 1 &&
+              !paragraph.firstChild?.marks.length
+                ? paragraph.textContent
+                : undefined;
+            if (copy && prose === undefined) {
+              // Only the pasted content is offered: an item-start paste lands
+              // after the item's text, whose display-only links stay so.
+              const inserted = insertDocument(copy);
+              if (inserted) {
+                const after = projection();
+                promoteRecipients(
+                  after.source(inserted.from),
+                  after.source(inserted.to),
+                );
+              }
+              return true;
+            }
+            const source = projection(),
+              start = source.source(editor.state.selection.from),
+              end = source.source(editor.state.selection.to);
             let text =
               (!code &&
-                (buzzCopyMarkdown(html) ??
+                (prose ??
                   externalLinkMarkdown(html, hasPlain ? plain : undefined))) ||
               plain ||
               "";
@@ -1870,9 +1973,6 @@ export function EditableInput({
               messageLinkParts(text, undefined, (start, end) => {
                 if (start === 0 && end === text.length) link = true;
               });
-            const source = projection(),
-              start = source.source(editor.state.selection.from),
-              end = source.source(editor.state.selection.to);
             const reuse = link && source.draft.text[end] === " ";
             if (
               link &&

@@ -7,8 +7,12 @@ import type { ComposerToken } from "../conversation/contracts";
 import { EditableInput } from "./EditableInput";
 import type { ComposerInputElement } from "./composer-dom";
 import { composerDOMFixture } from "./composer-testing";
-import { composerClipboard, buzzCopyMarkdown } from "./composer-clipboard";
-import { composerTokenDraft, readComposerDocument } from "./composer-document";
+import { composerClipboard, buzzCopyDocument } from "./composer-clipboard";
+import {
+  composerTokenDraft,
+  readComposerDocument,
+  projectComposerDocument,
+} from "./composer-document";
 import { composerMarkdown } from "./composer-markdown";
 import { composerToken } from "./composer-token";
 import { mentionDraft, type MentionDraft } from "./mention-draft";
@@ -132,7 +136,9 @@ it("copies only labels; pasting the label never creates semantic identity", () =
   );
   expect(copied.text).toBe("Use @block/buzz-app ");
   expect(copied.html).not.toContain("github.com");
-  const pasted = mount(buzzCopyMarkdown(copied.html) ?? copied.text);
+  const pastedDocument = buzzCopyDocument(copied.html);
+  if (!pastedDocument) throw new Error("Missing copied document");
+  const pasted = mount(projectComposerDocument(pastedDocument).draft);
   expect(pasted.draft().tokens).toBeUndefined();
   expect(pasted.draft().recipients).toEqual([]);
 });

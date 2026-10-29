@@ -2524,6 +2524,7 @@ it.each(["v2", "v3", "v5", "v6", "v7"])(
     expect(thread.dynamicTools[0]?.tools.map((tool) => tool.name)).toEqual(
       expect.arrayContaining([
         "media_get",
+        "mem_rm",
         "notes_get",
         "notes_set",
         "notes_rm",

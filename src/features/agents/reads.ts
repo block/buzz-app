@@ -4,18 +4,16 @@
 // through the owner's connection to the community; a standalone host reads
 // them as the agent. Both give a type the same answers, so the type runs the
 // same code in either.
-import type { Memory } from "../../buzz-mcp/client";
+import type { Memories } from "../../buzz-mcp/client";
 import type { EventData, ReadFilter, RelayEvent } from "../relay/events";
 import type { RelayData } from "../relay/service";
 import { ownerCanvas } from "../agent-harness/project";
 import type { ChannelLabel } from "../channels/channel-icon";
 import { soloChat } from "./solo-chat";
 
-/** The agent's memory entries, and whether some may be missing. */
-export type MemoryListing = Readonly<{
-  entries: readonly Memory[];
-  partial: boolean;
-}>;
+/** The agent's memory entries, deleted entries' tombstones, and whether
+ * some may be missing. */
+export type MemoryListing = Memories;
 
 /** What a turn needs to know of its channel. */
 export type ChannelFacts = Readonly<{

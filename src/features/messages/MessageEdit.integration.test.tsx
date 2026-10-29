@@ -132,7 +132,7 @@ it("real ThreadPanel edits its own reply and recovers emoji preparation without 
     fireEvent.keyDown(input, { key: "Enter" });
     const form = within(screen.getByRole("form", { name: "Edit message" }));
     expect(form.getByRole("alert")).toHaveTextContent(
-      "Community emoji unavailable",
+      "Community emoji is loading",
     );
     expect(publish).not.toHaveBeenCalled();
     // The refused edit retried the catalog; recovery is offered once that fails.

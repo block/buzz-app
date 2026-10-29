@@ -1644,7 +1644,7 @@ it("offers emoji catalog refresh after an attachment publication fails preparati
   );
   await waitFor(() => expect(h.input()).toHaveValue("caption :party:"));
   expect(within(h.form()).getByRole("alert")).toHaveTextContent(
-    "Community emoji unavailable",
+    "Community emoji is loading",
   );
   // The refused send retried the catalog; recovery is offered once that fails.
   expect(
@@ -1677,7 +1677,7 @@ it("sends once the catalog retry started by a refused emoji send loads", async (
   await userEvent.type(h.input(), ":party:");
   fireEvent.click(h.send());
   expect(within(h.form()).getByRole("alert")).toHaveTextContent(
-    "Community emoji unavailable; retrying. Your draft is kept; try sending again shortly.",
+    "Community emoji is loading. Your draft is kept; try sending again shortly.",
   );
   await waitFor(() =>
     expect(h.owner.session.emoji.snapshot().status).toBe("ready"),
@@ -1986,7 +1986,7 @@ it("retains preparation retry when recovery is deferred by an edit then unmounte
     expect(composer.getByText("edit-remount.txt")).toBeVisible(),
   );
   expect(composer.getByRole("alert")).toHaveTextContent(
-    "Community emoji unavailable",
+    "Community emoji is loading",
   );
   // The remount retried the catalog; recovery is offered once that fails.
   expect(
@@ -2030,7 +2030,7 @@ it("offers message preparation retry after a failed attachment send remounts", a
     expect(composer.getByText("emoji-remount.txt")).toBeVisible(),
   );
   expect(composer.getByRole("alert")).toHaveTextContent(
-    "Community emoji unavailable",
+    "Community emoji is loading",
   );
   // The remount retried the catalog; recovery is offered once that fails.
   const retry = await composer.findByRole("button", {

@@ -334,15 +334,11 @@ export function createEmojiDirectory(
       if (!codes.length) return [];
       if (closed) throw new Error("Community session is closed");
       if (snapshot.status !== "ready") {
-        const failed = snapshot.status === "error";
-        // ensure() retries a failed read; only a failure it leaves needs Retry.
         void ensure();
         throw new Error(
           snapshot.status === "error"
             ? `Community emoji unavailable. Retry message preparation or open the emoji picker. ${snapshot.error ?? ""}`
-            : failed
-              ? "Community emoji unavailable; retrying. Your draft is kept; try sending again shortly."
-              : "Community emoji is loading. Your draft is kept; try sending again shortly.",
+            : "Community emoji is loading. Your draft is kept; try sending again shortly.",
         );
       }
       const used = new Map<string, string>();

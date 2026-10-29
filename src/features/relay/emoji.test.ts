@@ -306,7 +306,7 @@ it("plain sends are immediate and do not acquire a palette; a cold load failure 
   expect(h.session.emoji.snapshot().status).toBe("error");
   expect(() =>
     h.session.messages.reply("c", "a".repeat(64), ":party:"),
-  ).toThrow(/unavailable; retrying/);
+  ).toThrow(/is loading/);
   // The refused send started one retry; later demands share it.
   expect(h.session.emoji.snapshot().status).toBe("loading");
   const retry = h.session.emoji.ensure();

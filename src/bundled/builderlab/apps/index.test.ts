@@ -108,7 +108,8 @@ it("adds the app tools only for a tenant with an Apps control plane", async () =
     "apps_deploy",
     "apps_status",
     "apps_list",
-    "apps_share",
+    "apps_visibility",
+    "apps_community",
     "apps_open",
   ]);
   const other = await setup("https://builderlab.example");
@@ -288,4 +289,111 @@ it.each([
   await expect(
     call("apps_open", { url: "https://example.org/" }, { channel: "c1" }),
   ).rejects.toThrow(/not a Builderlab app URL/);
+});
+
+it("says who can open an app after a visibility switch", async () => {
+  const { call, responses } = await setup();
+  responses.push(
+    json({
+      ok: true,
+      app_id: "demo",
+      owner: "auth0|owner",
+      visibility: "restricted",
+      effective_viewers: ["auth0|owner", "auth0|earlier"],
+      shared_community_ids: ["buzz-alpha"],
+    }),
+  );
+  expect(
+    JSON.parse(
+      String(
+        await call("apps_visibility", { app_id: "demo", audience: "only_you" }),
+      ),
+    ),
+  ).toEqual({
+    app_id: "demo",
+    audience: "only_you",
+    shared_community_ids: ["buzz-alpha"],
+    who_can_open:
+      "Only your owner. 1 other person can also open it. So can members of the Buzz community it is shared with.",
+  });
+  await expect(
+    call("apps_visibility", { app_id: "demo", audience: "private" }),
+  ).rejects.toThrow(/workspace or only_you/);
+});
+
+it("reports whether the community now shares the app", async () => {
+  const { call, responses } = await setup();
+  responses.push(
+    json({ lifecycle_id: "life-1", community_grant_revision: 2 }),
+    json({ ok: true, shared_community_ids: [], community_grant_revision: 3 }),
+  );
+  expect(
+    JSON.parse(
+      String(
+        await call("apps_community", {
+          app_id: "demo",
+          community_id: "buzz-alpha",
+          action: "revoke",
+        }),
+      ),
+    ),
+  ).toEqual({
+    app_id: "demo",
+    community_id: "buzz-alpha",
+    shared: false,
+    shared_community_ids: [],
+  });
+});
+
+it("reports a granted community and refuses an unknown action", async () => {
+  const { call, responses } = await setup();
+  responses.push(
+    json({ lifecycle_id: "life-1", community_grant_revision: 2 }),
+    json({
+      ok: true,
+      shared_community_ids: ["buzz-alpha", "buzz-beta"],
+      community_grant_revision: 3,
+    }),
+  );
+  expect(
+    JSON.parse(
+      String(
+        await call("apps_community", {
+          app_id: "demo",
+          community_id: "buzz-alpha",
+          action: "grant",
+        }),
+      ),
+    ),
+  ).toMatchObject({ shared: true });
+  await expect(
+    call("apps_community", {
+      app_id: "demo",
+      community_id: "buzz-alpha",
+      action: "add",
+    }),
+  ).rejects.toThrow(/grant or revoke/);
+});
+
+it("counts everyone else who can still open a private app", async () => {
+  const { call, responses } = await setup();
+  responses.push(
+    json({
+      ok: true,
+      app_id: "demo",
+      owner: "auth0|owner",
+      visibility: "restricted",
+      effective_viewers: ["auth0|owner", "auth0|a", "auth0|b"],
+      shared_community_ids: ["buzz-alpha", "buzz-beta"],
+    }),
+  );
+  expect(
+    JSON.parse(
+      String(
+        await call("apps_visibility", { app_id: "demo", audience: "only_you" }),
+      ),
+    ).who_can_open,
+  ).toBe(
+    "Only your owner. 2 other people can also open it. So can members of the 2 Buzz communities it is shared with.",
+  );
 });

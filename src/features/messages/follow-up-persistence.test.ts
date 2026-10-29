@@ -620,6 +620,76 @@ it("keeps earlier rows draining when another window removes a later row", async 
   await vi.waitFor(() => expect(first.send).toHaveBeenCalledOnce());
 });
 
+it("cancels a local queued send while membership validation is pending", async () => {
+  const first = fixture();
+  const id = first.enqueue();
+  const channel = await first.refresh();
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  first.refresh.mockImplementationOnce(async () => {
+    await held;
+    return channel;
+  });
+  first.refresh.mockClear();
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  render(
+    createElement(QueuedFollowUps, {
+      session: first.session,
+      channelId: "chat",
+      disabled: false,
+      focusComposer() {},
+    }),
+  );
+  first.finish();
+  try {
+    await vi.waitFor(() => expect(first.refresh).toHaveBeenCalledOnce());
+    screen.getByRole("button", { name: "Remove queued message" }).click();
+    expect(first.queue.snapshot()).toEqual([]);
+    expect(followUpStorage(scope).has(id)).toBe(false);
+  } finally {
+    release();
+    // Acquiring the row lock proves the validation/release operation finished.
+    await followUpStorage(scope).lock(id, async () => {});
+  }
+  expect(first.send).not.toHaveBeenCalled();
+});
+
+it("pauses newly discovered successors when predecessor storage events are coalesced", async () => {
+  const first = fixture();
+  const predecessor = first.enqueue();
+  cleanup.push(first.queue.subscribe(() => {}));
+  const second = fixture();
+  const successor = second.enqueue({ ...message, text: "New successor" });
+  second.queue.remove(predecessor);
+  await vi.waitFor(() =>
+    expect(followUpStorage(scope).has(predecessor)).toBe(false),
+  );
+  // This window never observed the successor while its predecessor existed.
+  window.dispatchEvent(new StorageEvent("storage"));
+  expect(first.queue.snapshot()).toMatchObject([
+    {
+      id: successor,
+      restored: true,
+      resumeCancelled: true,
+      predecessorRemoved: true,
+    },
+  ]);
+  first.queue.resumeAfter(agent, { original: "chat" });
+  first.work("original", "done");
+  first.finish();
+  await followUpStorage(scope).lock(successor, async () => {});
+  expect(first.send).not.toHaveBeenCalled();
+  expect(first.queue.snapshot()[0]?.restored).toBe(true);
+});
+
 it("refuses removal while another window owns the row before setting its sending marker", async () => {
   const first = fixture();
   const id = first.enqueue();

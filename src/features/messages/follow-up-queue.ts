@@ -11,6 +11,7 @@ type Activity = ReturnType<RelaySession["agentActivity"]["snapshot"]>;
 type Wait = { agent: string; message?: string; turn?: string; resumed?: true };
 type Entry = {
   id: string;
+  createdAt?: number;
   channelId: string;
   text: string;
   recipients: readonly string[];
@@ -53,13 +54,23 @@ function createQueue(session: RelaySession) {
     try {
       const saved = storage.load();
       sequence = Math.max(sequence, ...saved.map((entry) => entry.createdAt));
-      const removedChannels = new Set<string>();
-      const paused = new Set<string>();
-      for (const entry of entries) {
-        if (!saved.some((row) => row.id === entry.id))
-          removedChannels.add(entry.channelId);
-        else if (removedChannels.has(entry.channelId)) paused.add(entry.id);
-      }
+      const removed = entries.filter(
+        (entry) => !saved.some((row) => row.id === entry.id),
+      );
+      const paused = new Set(
+        saved
+          .filter((row) =>
+            removed.some(
+              (entry) =>
+                entry.channelId === row.channelId &&
+                entry.createdAt !== undefined &&
+                (row.createdAt > entry.createdAt ||
+                  (row.createdAt === entry.createdAt &&
+                    row.id.localeCompare(entry.id) > 0)),
+            ),
+          )
+          .map((row) => row.id),
+      );
       entries = saved.map(
         (saved) =>
           entries.find((entry) => entry.id === saved.id) ?? {
@@ -97,6 +108,7 @@ function createQueue(session: RelaySession) {
   const listeners = new Set<() => void>();
   let stop: (() => void) | undefined;
   const publishing = new Set<string>();
+  const validating = new Set<string>();
   const requested = new Map<string, (() => void) | undefined>();
   const acknowledging = new Set<string>();
   let activating = false;
@@ -339,7 +351,11 @@ function createQueue(session: RelaySession) {
             "This message may already be sending in another window. Reload to recover its delivery. If it was interrupted before sending, check the conversation before removing this row and sending again.",
           );
       }
+      // This window owns the lock, but has not started an Outbox handoff.
+      // Remove may cancel its own validation; other windows still need the lock.
+      validating.add(entry.id);
       if (entry.beforeRelease) await entry.beforeRelease();
+      validating.delete(entry.id);
       if (!entries.includes(entry)) return;
       if (
         !requested.has(entry.id) &&
@@ -384,6 +400,7 @@ function createQueue(session: RelaySession) {
           : item,
       );
     } finally {
+      validating.delete(entry.id);
       publishing.delete(entry.id);
       if (!awaitingChoices) requested.delete(entry.id);
       emit();
@@ -439,7 +456,13 @@ function createQueue(session: RelaySession) {
     const entry = entries.find((item) => item.id === id);
     try {
       if (entry?.sending && publishing.has(id)) return;
-      if (entry?.message && storage && navigator.locks && !locked) {
+      if (
+        entry?.message &&
+        storage &&
+        navigator.locks &&
+        !locked &&
+        !validating.has(id)
+      ) {
         void storage.tryLock(id, () => {
           remove(id, true);
           reconcileDelivery();
@@ -551,11 +574,12 @@ function createQueue(session: RelaySession) {
           "The follow-up queue is full. Send or remove a queued message first.",
         );
       const id = crypto.randomUUID();
+      const createdAt = ++sequence;
       if (entry.message) {
         if (!storage) throw new Error("Queued message storage is unavailable.");
-        storage.save({ ...entry.message, id, createdAt: ++sequence });
+        storage.save({ ...entry.message, id, createdAt });
       }
-      entries = [...entries, { ...entry, id }];
+      entries = [...entries, { ...entry, id, createdAt }];
       watch();
       emit();
       pump();

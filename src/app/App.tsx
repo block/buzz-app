@@ -575,6 +575,9 @@ function ConnectedApp({ services }: { services: AppServices }) {
                         );
                     }}
                     onSection={openSettingsSection}
+                    onPluginImportClosed={() =>
+                      route.dismissPluginImport(route.request)
+                    }
                     onProvider={route.setSettingsProvider}
                     onUnsavedChange={setSettingsUnsaved}
                   />

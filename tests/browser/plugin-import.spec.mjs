@@ -1578,6 +1578,10 @@ for (const mode of ["Light", "Dark"]) {
     await dialog.press("Escape");
     await expect(dialog).toBeHidden();
     await selectSettingsSection(page, "Appearance");
+    await page.goBack();
+    await expect(dialog).toBeHidden();
+    await expect(review).toBeHidden();
+    await selectSettingsSection(page, "Appearance");
     await chooseColorMode(page, mode);
     await page.evaluate((link) => window.deliverPluginLink(link), link);
     await expect(review).toBeVisible();
@@ -1614,5 +1618,10 @@ for (const mode of ["Light", "Dark"]) {
         ),
       )
       .toBe(1);
+    await expect(review).toBeHidden();
+    await selectSettingsSection(page, "Appearance");
+    await page.goBack();
+    await expect(review).toBeHidden();
+    await expect(dialog).toBeHidden();
   });
 }

@@ -399,13 +399,18 @@ export function PluginImport({
   }
   async function close() {
     if (blocked || pending.current) return false;
+    const current = lifetime.current;
     const returnTo = document.activeElement;
     pending.current = true;
     setDiscarding(true);
     try {
       if (lifetime.current.token)
         await imports?.discard(lifetime.current.token);
-      lifetime.current.token = "";
+      current.token = "";
+      if (!current.active) {
+        onClosed?.();
+        return false;
+      }
       setPreview(null);
       errorTrigger.current = null;
       setError(null);
@@ -415,11 +420,11 @@ export function PluginImport({
       onClosed?.();
       return true;
     } catch (reason) {
-      showError(reason, returnTo);
+      if (current.active) showError(reason, returnTo);
       return false;
     } finally {
       pending.current = false;
-      setDiscarding(false);
+      if (current.active) setDiscarding(false);
     }
   }
   const rollbackWarning =
@@ -743,8 +748,8 @@ export function PluginImport({
                           preview.token,
                           candidate.path,
                         );
-                        if (!current.active) return;
                         if (!success) {
+                          if (!current.active) return;
                           showError(
                             plugins.snapshot().error ??
                               "Plugin installation wasn’t confirmed. Check the preview and try again.",
@@ -757,7 +762,10 @@ export function PluginImport({
                         await imports.discard(preview.token).catch(() => {});
                         if (!existing && enableOnInstall)
                           await plugins.change("enable", candidate.manifest.id);
-                        if (!current.active) return;
+                        if (!current.active) {
+                          onClosed?.();
+                          return;
+                        }
                         if (!updateId) setPreview(null);
                         else if (existing)
                           setExisting({

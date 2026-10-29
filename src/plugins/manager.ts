@@ -67,6 +67,7 @@ export function createPluginManager(
     error: null,
   }));
   const builtInIds = new Set(builtIn.map(({ manifest }) => manifest.id));
+  let configuration: ConfigurationState = { status: "loading" };
   const runtime = new PluginRuntime(
     ctx,
     createModuleLoader(
@@ -85,7 +86,6 @@ export function createPluginManager(
       configuration.status === "loading" ||
       (configuration.status === "recovery" && !configuration.canReset),
   );
-  let configuration: ConfigurationState = { status: "loading" };
   let busy = false;
   let catalogPending = false;
   let error: string | null = null;

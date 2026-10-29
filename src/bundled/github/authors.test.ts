@@ -165,6 +165,12 @@ allow org:Block body:/bug/s`);
       "allow body:/(a)\\1/": "Line 1: a pattern cannot use backreferences",
       "allow body:/(?=a)/": "Line 1: a pattern's groups can only be",
       "allow author:/a{2000}/": "Line 1: a pattern this long or repetitive",
+      // GitHub could not be asked about even one commenter.
+      [Array.from(
+        { length: 120 },
+        (_, index) => `allow org:organization-${index}`,
+      ).join("\n")]:
+        "the rules name too many organizations to ask GitHub about",
     };
     for (const [text, error] of Object.entries(errors)) {
       expect(parse(text)).toContain(error);

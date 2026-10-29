@@ -16,6 +16,7 @@ import {
 } from "./watch";
 import {
   admit,
+  INPUT_BYTES,
   loadPolicy,
   membershipRequest,
   organizations,
@@ -30,9 +31,6 @@ const RETIRED_STORAGE_KEY = "buzz.github.pull-watches.v1";
 const FAILURE_LIMIT = 30;
 /** How long an organization membership answer is kept. */
 const MEMBERSHIP_MS = 60 * 60_000;
-/** The `pull` command's input limit, in bytes, which a membership read keeps
- * under. */
-const INPUT_BYTES = 4096;
 /** Polls in a row a login's own membership read may fail before it is taken
  * to be in no organization, as one GitHub has no user for is. */
 const LOOKUP_FAILURES = 10;

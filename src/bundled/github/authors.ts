@@ -37,6 +37,11 @@ export const DEFAULT_RULES = `deny author:${ME} prefix:🤖`;
 const ORGANIZATION = /^[A-Za-z0-9][A-Za-z0-9-]*$/;
 // Enterprise Managed Users' logins end in `_shortcode`.
 const LOGIN = /^[A-Za-z0-9][A-Za-z0-9_-]*(?:\[bot\])?$/i;
+/** The `pull` command's input limit, in bytes, which a membership read keeps
+ * under. */
+export const INPUT_BYTES = 4096;
+/** More than a GitHub login's 39 characters, for room. */
+const LOGIN_CHARS = 100;
 /** A `/pattern/flags` condition value, up to the space after it. */
 const PATTERN = /^\/((?:\\.|[^\\/])+)\/([a-z]*)(?=\s|$)/;
 
@@ -114,7 +119,15 @@ export function parse(
     lines.push(trimmed);
     rules.push(parsed);
   }
-  return { text: lines.join("\n"), rules, fallback };
+  const policy = { text: lines.join("\n"), rules, fallback };
+  // At worst each commenter is asked about alone, so that read must fit.
+  const alone = membershipRequest(
+    ["x".repeat(LOGIN_CHARS)],
+    organizations(policy),
+  );
+  if (new TextEncoder().encode(alone).length > INPUT_BYTES)
+    return "the rules name too many organizations to ask GitHub about at once";
+  return policy;
 }
 
 const DEFAULT = parse(DEFAULT_RULES, "allow") as AuthorPolicy;
@@ -164,11 +177,15 @@ export const open = (policy: AuthorPolicy) =>
   );
 
 /** The organizations rules name, whose membership GitHub is asked for. */
-export const organizations = (policy: AuthorPolicy) => [
-  ...new Set(
-    policy.rules.flatMap((rule) => (rule.org ? [rule.org.toLowerCase()] : [])),
-  ),
-];
+export function organizations(policy: AuthorPolicy) {
+  return [
+    ...new Set(
+      policy.rules.flatMap((rule) =>
+        rule.org ? [rule.org.toLowerCase()] : [],
+      ),
+    ),
+  ];
+}
 
 /** Whether `item` may wake an agent, or undefined until whether its author is
  * in an organization a rule needs is known. `member` says, or is undefined

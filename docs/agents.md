@@ -149,7 +149,8 @@ as an automaton, in time the text's length bounds, so a pattern like
 `/^(a+)+$/` cannot stall the app on a hostile comment. The first rule that matches decides, and
 When no rule matches decides the rest: Wake the agent or Don't wake it.
 Saving compiles every pattern and rejects the rules, naming the line, when one
-is not a rule. The defaults keep the behavior from before rules: agents'
+is not a rule, or when they name more organizations than one membership read
+can ask about. The defaults keep the behavior from before rules: agents'
 comments wake nobody, and everyone else's wake the agent.
 
 ```text

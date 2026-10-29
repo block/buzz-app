@@ -595,6 +595,15 @@ function ThreadMessages({
       snapshot.root ? [snapshot.root, ...snapshot.replies] : snapshot.replies,
     [snapshot.root, snapshot.replies],
   );
+  // Remembered agents follow the viewer's latest message here, not the root.
+  // Undefined until the first page lands: the seeded root is not yet the thread.
+  const threadSeed = useMemo(
+    () =>
+      snapshot.status === "ready"
+        ? rows.filter((row) => row.authorId === session.viewer).at(-1)
+        : undefined,
+    [snapshot.status, rows, session.viewer],
+  );
   const authors = [...new Set(rows.flatMap(rowProfileIds))].sort().join(":");
   useEffect(() => {
     if (authors)
@@ -731,7 +740,12 @@ function ThreadMessages({
   const prepareTarget = useCallback(() => {
     follow.current = false;
   }, []);
-  const revealedAncestors = useRef(new Set<string>());
+  // Each request reveals its ancestors once; a branch the reader then
+  // collapses stays closed until the next request.
+  const revealedAncestors = useRef({
+    request: [] as unknown[],
+    ids: new Set<string>(),
+  });
   // A continuation may supply the parent of the visible reply. Commit its new
   // ancestors before restoring geometry; expanded branches stay open.
   useLayoutEffect(() => {
@@ -750,16 +764,23 @@ function ThreadMessages({
   // available ancestor as it arrives; missing parents remain visible at the top.
   useLayoutEffect(() => {
     if (navigation?.signal.aborted) return;
+    const request = [messageId, navigation?.signal, revealRequest];
+    if (
+      request.some(
+        (part, index) => part !== revealedAncestors.current.request[index],
+      )
+    )
+      revealedAncestors.current = { request, ids: new Set() };
     const ancestors = tree
       .ancestors(messageId)
-      .filter((id) => !revealedAncestors.current.has(id));
-    for (const id of ancestors) revealedAncestors.current.add(id);
+      .filter((id) => !revealedAncestors.current.ids.has(id));
+    for (const id of ancestors) revealedAncestors.current.ids.add(id);
     if (ancestors.length)
       setExpanded((current) => {
         if (ancestors.every((id) => current.has(id))) return current;
         return new Set([...current, ...ancestors]);
       });
-  }, [tree, messageId, navigation]);
+  }, [tree, messageId, navigation, revealRequest]);
   const rootTarget =
     navigation?.target.kind === "conversation" &&
     navigation.target.threadRootId === messageId;
@@ -1298,6 +1319,15 @@ function ThreadMessages({
               targetAnchor.current = undefined;
               setExpanded((current) => new Set([...current, row.id]));
             }}
+            collapseLabel={`Collapse ${descendants.length} ${descendants.length === 1 ? "reply" : "replies"}`}
+            onCollapse={() => {
+              follow.current = false;
+              targetAnchor.current = undefined;
+              setExpanded(
+                (current) =>
+                  new Set([...current].filter((id) => id !== row.id)),
+              );
+            }}
           >
             {expanded.has(row.id) && (
               <ol>{renderReplies(row.id, depth + 1)}</ol>
@@ -1589,6 +1619,7 @@ function ThreadMessages({
           channelName={channelName}
           placeholder={replyPlaceholder(composerRoot)}
           threadRootId={composerRoot.id}
+          threadSeed={threadSeed}
           replyParentId={replyParent}
           disabled={
             disabled ||

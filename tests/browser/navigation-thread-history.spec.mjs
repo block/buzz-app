@@ -752,7 +752,7 @@ test("consecutive native Close requests close each side thread, then return focu
         )
         .getByRole("button", { name: /^View thread:/ }),
     );
-  for (const trigger of triggers) await trigger.click();
+  for (const trigger of triggers) await activate(trigger);
   const side = page.locator("[data-panel-workspace]");
   const threads = side.locator('[role="tab"][data-tab-value^="thread:"]');
   await expect(threads).toHaveCount(2);
@@ -789,11 +789,12 @@ test("consecutive native Close requests close each main-pane thread, then return
         )
         .getByRole("button", { name: /^View thread:/ }),
     );
-  for (const trigger of triggers) await trigger.click();
+  for (const trigger of triggers) await activate(trigger);
   const side = page.locator("[data-panel-workspace]");
   const main = page.locator("[data-main-workspace]");
   const threads = (host) =>
     host.locator('[role="tab"][data-tab-value^="thread:"]');
+  await expect(threads(side)).toHaveCount(2);
   for (const count of [1, 2]) {
     await threads(side).first().focus();
     await page.keyboard.press("Alt+Shift+ArrowLeft");

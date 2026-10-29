@@ -157,10 +157,16 @@ export type ChannelMessage = Readonly<{
   sentFromThread?:
     | Readonly<{ rootId: string; excerpt?: string | undefined }>
     | undefined;
-  /** Relay-signed whole-thread reply total (including nested replies).
+  /** Relay-signed whole-thread reply total (including nested replies), plus this
+   * client's own non-deleted reply sends that no summary has counted yet (so an
+   * own reply counts before the relay's summary arrives; stored and other users'
+   * replies wait for the relay's summary).
    * Falls back to direct replies when the summary lacks a valid descendant total. */
   replyCount: number;
-  /** Pubkeys the relay reports as thread participants (may be empty even with replies). */
+  /** Authors of this client's own reply sends no summary has counted yet, even
+   * when the relay already lists them (so an own reply's avatar shows, first,
+   * before the relay's summary arrives), followed by the other pubkeys the relay
+   * reports as thread participants (may be empty even with replies). */
   participants: readonly string[];
 }>;
 export type ListStatus = "unavailable" | "idle" | "loading" | "ready" | "error";
@@ -227,10 +233,15 @@ export interface ChannelQueries {
     options?: ChannelReadOptions,
   ): Promise<void>;
   /** Name lookup for active public channels the viewer has not joined. Matches
-   * become readable through `get`; they never enter list(). */
+   * become readable through `get`; they never enter list(). `progress`
+   * receives the matches so far each time another metadata page lands. */
   searchPublic?(
     query: string,
-    options?: ReadOptions & { limit?: number; exact?: boolean },
+    options?: ReadOptions & {
+      limit?: number;
+      exact?: boolean;
+      progress?: ((found: PublicChannelSearch) => void) | undefined;
+    },
   ): Promise<PublicChannelSearch>;
   /** NIP-CL lookup of the channels `creator` made with `label`, oldest first.
    * Includes the system channels the viewer can read, since `#P` asks for them.
@@ -239,9 +250,10 @@ export interface ChannelQueries {
     query: Readonly<{ creator: string; label: string }>,
     options?: ChannelReadOptions,
   ): Promise<readonly ChannelSummary[]>;
-  /** Synchronous: the last `searchPublic` answer's channels that still match
-   * `query` and are still open previews. Keeps rows while the next search
-   * runs, even across a remount. */
+  /** Synchronous: the last `searchPublic` answer's channels, or its latest
+   * `progress` rows while its read goes on, that still match `query` and are
+   * still open previews. Keeps rows while the next search runs, even across
+   * a remount. */
   matchPublic?(
     query: string,
     options?: { exact?: boolean },

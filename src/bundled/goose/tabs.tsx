@@ -811,9 +811,13 @@ export function createTabs({
   function ActivityTab({
     agent,
     conversation,
+    initialTranscript,
+    close,
   }: {
     agent: AgentViewProps<Config>["agent"];
     conversation?: AgentViewProps<Config>["conversation"];
+    initialTranscript?: AgentViewProps<Config>["initialTranscript"];
+    close?: AgentViewProps<Config>["close"];
   }) {
     const workspace = readConfig(agent.config).workspace;
     const live = useSyncExternalStore(
@@ -862,7 +866,12 @@ export function createTabs({
       row.title
         ? titled(agent.name, row.title)
         : `${row.channelId.slice(0, 8)} · ${row.root ? `thread ${row.root.slice(0, 8)}` : "channel"}`;
-    const { open, show, back } = useOpenTranscript(conversation, label);
+    const { open, show, back } = useOpenTranscript(
+      conversation,
+      label,
+      initialTranscript && { initial: here, ...initialTranscript },
+      close,
+    );
     const rows = (recent.value ?? [])
       .filter((row) => row.sessionId !== here?.sessionId)
       .slice(0, RECENT_LIMIT)
@@ -955,6 +964,7 @@ export function createTabs({
             onBack={back}
           >
             <TranscriptView
+              key={open.key}
               agent={agent}
               row={open}
               working={busy(open.sessionId) ? open.sessionId : undefined}

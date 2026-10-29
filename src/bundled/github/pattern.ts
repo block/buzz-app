@@ -40,11 +40,13 @@ export class Pattern {
     const lines = flags.includes("m");
     const word = new RegExp("^\\w$", flags);
     const isWord = (char?: string) => char !== undefined && word.test(char);
+    // The escapes that mean on their own what they mean in the pattern. Others,
+    // such as \c1 or \U0041, mean something else alone, so they are refused.
     const ESCAPE = unicode
       ? // An escaped surrogate pair is one character.
-        /^\\(?:ud[89ab][\da-f]{2}\\ud[c-f][\da-f]{2}|x[\da-f]{2}|u[\da-f]{4}|u\{[\da-f]+\}|c[a-z]|[pP]\{[^}]*\}|[\s\S])/iu
+        /^\\(?:u[dD][89abAB][\da-fA-F]{2}\\u[dD][c-fC-F][\da-fA-F]{2}|x[\da-fA-F]{2}|u[\da-fA-F]{4}|u\{[\da-fA-F]+\}|c[a-zA-Z]|[pP]\{[^}]*\}|0|[dDsSwWfnrtv]|[^\dA-Za-z])/u
       : // A legacy octal escape such as \012 is one character too.
-        /^\\(?:x[\da-f]{2}|u[\da-f]{4}|c[a-z]|0[0-7]{0,2}|[\s\S])/i;
+        /^\\(?:x[\da-fA-F]{2}|u[\da-fA-F]{4}|c[a-zA-Z]|0[0-7]{0,2}|[dDsSwWfnrtv]|[^\dA-Za-z])/;
     let at = 0;
     const alternation = (): Node => {
       const options = [sequence()];
@@ -110,6 +112,8 @@ export class Pattern {
       }
       if (/^\\(?:[1-9]|k<)/.test(rest))
         throw new Error("a pattern cannot use backreferences");
+      if (rest[0] === "\\" && !ESCAPE.test(rest))
+        throw new Error(`a pattern cannot use the escape ${rest.slice(0, 2)}`);
       const token =
         /^\[\^?(?:\\[\s\S]|[^\]\\])*\]/.exec(rest)?.[0] ??
         ESCAPE.exec(rest)?.[0] ??

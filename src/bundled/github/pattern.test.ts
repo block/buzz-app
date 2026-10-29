@@ -39,6 +39,10 @@ describe("Pattern", () => {
       ["\\0123", ""],
       ["\\08", ""],
       ["^\\040*LGTM", ""],
+      ["\\x4A\\u004a", ""],
+      ["\\cJ\\cj", ""],
+      ["[\\c1\\U]", ""],
+      ["\\-\\t\\/\\@", ""],
     ];
     const texts = [
       "",
@@ -77,6 +81,15 @@ describe("Pattern", () => {
       "\n3",
       "\u00008",
       "  LGTM",
+      "JJ",
+      "\n\n",
+      "\u0011",
+      "U",
+      "-\t/@",
+      "\\c",
+      "\\c1",
+      "U0041",
+      "X41",
     ];
     for (const [source, flags] of patterns) {
       const pattern = new Pattern(source, flags);
@@ -89,5 +102,24 @@ describe("Pattern", () => {
           native.test(text),
         ]);
     }
+  });
+
+  it("refuses an escape it would not match as JavaScript does", () => {
+    const refused: [string, string][] = [
+      ["\\c", ""],
+      ["\\c1", ""],
+      ["\\U0041", ""],
+      ["\\X41", ""],
+      ["\\x4", ""],
+      ["\\u{41}", ""],
+      ["\\p{L}", ""],
+      ["\\k", ""],
+      ["\\a", ""],
+      ["\\U0041", "i"],
+    ];
+    for (const [source, flags] of refused)
+      expect(() => new Pattern(source, flags)).toThrow(
+        "a pattern cannot use the escape",
+      );
   });
 });

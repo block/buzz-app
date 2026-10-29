@@ -144,7 +144,8 @@ A bare `allow` or `deny`, with no conditions, matches everyone.
 
 Logins match case aside, so an author pattern always has the `i` flag; a
 pattern may also use `m`, `s` and `u`. Patterns take JavaScript's syntax but not
-backreferences or lookaround, and `src/bundled/github/pattern.ts` matches them
+backreferences, lookaround or escapes that mean something else alone, such as
+`\c1`, `\U0041` or `\q`, and `src/bundled/github/pattern.ts` matches them
 as an automaton, in time the text's length bounds, so a pattern like
 `/^(a+)+$/` cannot stall the app on a hostile comment. The first rule that matches decides, and
 When no rule matches decides the rest: Wake the agent or Don't wake it.

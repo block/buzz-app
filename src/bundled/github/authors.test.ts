@@ -165,6 +165,24 @@ allow org:Block body:/bug/s`);
     expect(admit(by("eve", "\u000012"), policy, "j", nobody)).toBe(true);
   });
 
+  it("refuse an escape whose meaning alone differs from JavaScript's", () => {
+    // JavaScript reads \c as a backslash and c, and \U0041 as U0041.
+    for (const [source, text] of [
+      ["\\c", "\\c"],
+      ["\\c1", "\\c1"],
+      ["\\U0041", "U0041"],
+      ["\\X41", "X41"],
+    ] as const) {
+      expect(new RegExp(source).test(text)).toBe(true);
+      expect(parse(`deny body:/${source}/\nallow`)).toBe(
+        `Line 1: a pattern cannot use the escape ${source.slice(0, 2)}`,
+      );
+    }
+    const policy = rules("deny body:/\\x4A\\cJ/\nallow");
+    expect(admit(by("eve", "J\n"), policy, "j", nobody)).toBe(false);
+    expect(admit(by("eve", "x4AcJ"), policy, "j", nobody)).toBe(true);
+  });
+
   it("name the line that is not a rule", () => {
     const errors = {
       "allow\nwho knows": "Line 2: it must start with allow or deny",

@@ -884,6 +884,41 @@ describe("github_watch_pr", () => {
     app.dispose();
   });
 
+  it("checks newly read feedback against rules saved while membership is read", async () => {
+    savePolicy("allow org:block", "allow");
+    const wes = { id: "I0", login: "wes", body: "body-wes" };
+    const pending = [{ name: "ci", conclusion: null }];
+    const app = setup(answer({ checks: pending, comments: [wes] }));
+    await app.call({ url });
+    let asked = false;
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const run = app.runCommand.getMockImplementation();
+    app.runCommand.mockImplementation(async (id, input) => {
+      if (!("variables" in JSON.parse(input))) {
+        asked = true;
+        await gate;
+      }
+      return run?.(id, input) ?? null;
+    });
+    app.gh(
+      answer({
+        checks: [{ name: "ci", conclusion: "SUCCESS" }],
+        comments: [wes, { id: "I1", login: "stranger", body: "body-stranger" }],
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+    expect(asked).toBe(true);
+    savePolicy("deny author:stranger");
+    release();
+    await vi.advanceTimersByTimeAsync(QUIET_MS + POLL_MS);
+    expect(app.texts().join("\n")).toContain("CI passed");
+    expect(app.texts().join("\n")).not.toContain("body-stranger");
+    app.dispose();
+  });
+
   it("holds waiting feedback while the rules need a membership it cannot read", async () => {
     const app = setup();
     await app.call({ url });

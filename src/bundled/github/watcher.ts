@@ -203,19 +203,21 @@ export function watchPulls(ctx: Context) {
     };
   };
 
-  /** `watch` and `snapshot` with waiting feedback checked against the rules
-   * again, as they may have changed since it was read. What they deny is
+  /** `watch` and `snapshot` with waiting and new feedback checked against the
+   * rules again, as they may have changed since it was read. What they deny is
    * dropped; what needs an unread membership is unseen, to be read later. */
   const recheck = async (
     watch: Watch,
     snapshot: PullSnapshot,
   ): Promise<[Watch, PullSnapshot]> => {
-    if (!watch.pending?.length) return [watch, snapshot];
+    const items = [...(watch.pending ?? []), ...snapshot.feedback];
+    if (!items.length) return [watch, snapshot];
+    await lookUp(items, loadPolicy(), snapshot.viewer);
+    // The rules are read again, as they may have changed during the lookup.
     const policy = loadPolicy();
-    await lookUp(watch.pending, policy, snapshot.viewer);
     const member = membership(organizations(policy), MEMBERSHIP_MS);
     const admitted = new Map(
-      watch.pending.map((item) => [
+      items.map((item) => [
         item.id,
         admit(item, policy, snapshot.viewer, member),
       ]),
@@ -228,9 +230,13 @@ export function watchPulls(ctx: Context) {
       {
         ...watch,
         seen: watch.seen?.filter(known),
-        pending: watch.pending.filter((item) => admitted.get(item.id)),
+        pending: watch.pending?.filter((item) => admitted.get(item.id)),
       },
-      { ...snapshot, ids: snapshot.ids.filter(known) },
+      {
+        ...snapshot,
+        ids: snapshot.ids.filter(known),
+        feedback: snapshot.feedback.filter((item) => admitted.get(item.id)),
+      },
     ];
   };
 

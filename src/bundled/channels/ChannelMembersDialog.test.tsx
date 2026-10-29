@@ -307,6 +307,11 @@ it.each([false, true])(
         agents: [
           t.agent,
           { ...t.agent, pubkey: keypair().pubkey, name: "Fixture helper" },
+          {
+            ...t.agent,
+            pubkey: keypair().pubkey,
+            name: localAgent ? t.agent.name : "Morgan",
+          },
         ],
       }),
     );
@@ -322,20 +327,24 @@ it.each([false, true])(
     t.confirmRoster();
     await t.user.click(refresh);
     await settled();
-    const roster = screen.getByRole("region", {
-      name: localAgent ? "Agents" : "People",
-    });
+    const roster = () =>
+      screen.getByRole("region", {
+        name: localAgent ? "Agents" : "People",
+      });
     expect(
-      within(roster).getByText(localAgent ? "Fixture agent" : "Morgan"),
+      within(roster()).getByText(localAgent ? "Fixture agent" : "Morgan"),
     ).toBeVisible();
     expect(suggestions()).toBeNull();
+    expect(within(roster()).queryByText(/^npub…/)).toBeNull();
 
     await t.user.type(search, "Fixture");
     await screen.findByRole("button", { name: /^Add Fixture helper/ });
     expect(suggestions()).toBeVisible();
+    if (localAgent) expect(within(roster()).getByText(/^npub…/)).toBeVisible();
     await t.user.clear(search);
     await settled();
     expect(suggestions()).toBeNull();
+    expect(within(roster()).queryByText(/^npub…/)).toBeNull();
     await t.user.type(search, "   ");
     expect(suggestions()).toBeNull();
     await t.user.clear(search);

@@ -989,11 +989,13 @@ export function ChannelMembersDialog({
       next: ordered[size]?.pubkey,
     };
   });
-  const visibleCandidates = solo
-    ? roleFilter === "All"
-      ? available.slice(0, invitationSize)
-      : []
-    : invitationGroups.flatMap((group) => group.people);
+  const visibleCandidates = !offering
+    ? []
+    : solo
+      ? roleFilter === "All"
+        ? available.slice(0, invitationSize)
+        : []
+      : invitationGroups.flatMap((group) => group.people);
   const agentsByMention =
     offering &&
     solo &&

@@ -187,45 +187,48 @@ function mount(bottom = false, revealOnMount = false) {
     },
   };
 }
-it("refreshes top-edge reading geometry measured after native scrollend before holding an append", async () => {
-  const h = mount(true);
-  await frame();
-  const region = screen.getByRole("region", {
-    name: "Channel message history",
-  });
-  let rowY = 120;
-  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
-    function (this: HTMLElement) {
-      return new DOMRect(0, this.closest("ol") ? rowY : 0, 800, 100);
-    },
-  );
-  region.scrollTop = 1400;
-  fireEvent.scroll(region);
-  fireEvent.keyDown(region, { key: "Home", ctrlKey: true });
-  region.scrollTop = 0;
-  fireEvent.scroll(region);
-  fireEvent(region, new Event("scrollend"));
+it.each([0, 400])(
+  "refreshes reading geometry measured after native scrollend at offset %i",
+  async (offset) => {
+    const h = mount(true);
+    await frame();
+    const region = screen.getByRole("region", {
+      name: "Channel message history",
+    });
+    let rowY = 120;
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+      function (this: HTMLElement) {
+        return new DOMRect(0, this.closest("ol") ? rowY : 0, 800, 100);
+      },
+    );
+    region.scrollTop = 1400;
+    fireEvent.scroll(region);
+    fireEvent.keyDown(region, { key: "Home", ctrlKey: true });
+    region.scrollTop = offset;
+    fireEvent.scroll(region);
+    fireEvent(region, new Event("scrollend"));
 
-  // Virtua's measured offsets commit without another scroll at the top edge.
-  rowY += 238;
-  act(() => scroll.resized());
-  h.append();
-  await h.measured();
-  expect(region.scrollTop).toBe(0);
+    // Virtua's measured offsets commit without another scroll event.
+    rowY += 238;
+    act(() => scroll.resized());
+    h.append();
+    await h.measured();
+    expect(region.scrollTop).toBe(offset);
 
-  // Measurements during an active hold must still preserve its original Y.
-  rowY += 90;
-  act(() => scroll.resized());
-  await act(async () => {
-    screen.getByRole("list").style.height = "2210px";
-  });
-  expect(region.scrollTop).toBe(90);
-  h.unmount();
-  expect(readView("scope", "scroll:c", null)).toMatchObject({
-    bottom: false,
-    anchor: { y: 358 },
-  });
-});
+    // Measurements during an active hold must still preserve its original Y.
+    rowY += 90;
+    act(() => scroll.resized());
+    await act(async () => {
+      screen.getByRole("list").style.height = "2210px";
+    });
+    expect(region.scrollTop).toBe(offset + 90);
+    h.unmount();
+    expect(readView("scope", "scroll:c", null)).toMatchObject({
+      bottom: false,
+      anchor: { y: 358 },
+    });
+  },
+);
 it("retains the saved anchor correction when cached rows are promoted before its frame", async () => {
   const h = mount();
   await frame();

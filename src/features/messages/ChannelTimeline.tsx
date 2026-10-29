@@ -1151,11 +1151,13 @@ function Timeline({
           keepMounted={keptIndices}
           onResize={() => {
             const element = scroller.current;
-            // Top rows can measure after native scrollend without moving the
+            // Rows can measure after native scrollend without moving the
             // scroll offset. Do not carry their estimated Y into the next hold.
             if (
-              element?.scrollTop === 0 &&
+              element &&
               settled.current &&
+              element.clientWidth === size.width &&
+              element.clientHeight === size.height &&
               !follow.current &&
               !restoredAnchor.current &&
               heldReader.current?.intent !== intent.current

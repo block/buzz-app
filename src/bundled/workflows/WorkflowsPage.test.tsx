@@ -12,10 +12,15 @@ import {
 import { afterEach, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { formStateToYaml, yamlToFormState } from "./workflowFormTypes";
-import type { ChannelList, Profile } from "../../features/relay/contracts";
+import type { ChannelList } from "../../features/relay/contracts";
 import type { RelaySession } from "../../features/relay/session";
 import { formatPublicKey } from "../../shared/identity/public-key";
 import { createProfileDirectory } from "../../features/relay/profile-directory";
+import { keypair, profile, signed } from "../../features/relay/testing";
+import type { RelayEvent } from "../../features/relay/events";
+import { createAgentLibrary } from "../../features/agents/library";
+import { bindNames } from "../../features/identity-names/service";
+import { agentDirectory } from "../../features/identity-names/testing";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { WorkflowCommunity } from "./WorkflowsPage";
 import {
@@ -24,7 +29,6 @@ import {
   fixtureDefinition,
   fixtureViewer,
   fixtureYaml,
-  fixtureView,
 } from "./fixtures";
 vi.stubGlobal(
   "ResizeObserver",
@@ -35,7 +39,12 @@ vi.stubGlobal(
 );
 afterEach(cleanup);
 
-function mount(initialYaml = fixtureYaml, owner = fixtureViewer, save = true) {
+function mount(
+  initialYaml = fixtureYaml,
+  owner = fixtureViewer,
+  save = true,
+  identity: Partial<Pick<RelaySession, "profiles" | "names">> = {},
+) {
   const fixture = createWorkflowFixture();
   fixture.definitions.update({
     status: "ready",
@@ -49,13 +58,9 @@ function mount(initialYaml = fixtureYaml, owner = fixtureViewer, save = true) {
     channels: [{ id: fixtureChannel, name: "Fixture channel" }],
   };
   const listeners = new Set<() => void>();
-  const profiles = fixtureView<ReadonlyMap<string, Profile>>(new Map());
   const session = {
-    profiles: {
-      snapshot: () => profiles.view.snapshot().data,
-      subscribe: profiles.view.subscribe,
-      ensure: async () => {},
-    },
+    profiles: createProfileDirectory({ read: async () => [] }).queries,
+    ...identity,
     workflows: save
       ? fixture.capability
       : {
@@ -78,7 +83,6 @@ function mount(initialYaml = fixtureYaml, owner = fixtureViewer, save = true) {
   );
   return {
     ...fixture,
-    profiles,
     setChannels(next: ChannelList) {
       list = next;
       for (const fn of listeners) fn();
@@ -91,28 +95,170 @@ function detailPane() {
 }
 
 it("shows the owner's identity in the row and detail and follows profile updates", async () => {
-  const fixture = mount();
-  const fallback = `Owner: ${formatPublicKey(fixtureViewer)}`;
-  await waitFor(() => expect(screen.getByText(fallback)).toBeVisible());
-  act(() =>
-    fixture.profiles.update({
-      status: "ready",
-      data: new Map([[fixtureViewer, { name: "Salman" }]]),
-    }),
+  const owner = keypair();
+  let releaseRead: (events: readonly RelayEvent[]) => void = () => {};
+  const pendingRead = new Promise<readonly RelayEvent[]>((resolve) => {
+    releaseRead = resolve;
+  });
+  const read = vi.fn(() => pendingRead);
+  const profiles = createProfileDirectory({ read });
+  const library = createAgentLibrary(undefined);
+  let alias: string | undefined;
+  let renamed = () => {};
+  const names = bindNames(
+    { profiles: profiles.queries, agentLibrary: library.queries },
+    {
+      snapshot: () => [
+        {
+          id: "owner-alias",
+          activate: () => undefined,
+          scope: () => (key: string) =>
+            key === owner.pubkey && alias ? { name: alias } : undefined,
+          subscribe(listener: () => void) {
+            renamed = listener;
+            return () => {};
+          },
+        },
+      ],
+      subscribe: () => () => {},
+    },
   );
-  expect(screen.getByText("Owner: Salman")).toBeVisible();
-  fireEvent.click(
-    screen.getByRole("button", { name: /^Open Message helper:/ }),
+  try {
+    mount(fixtureYaml, owner.pubkey, true, {
+      profiles: profiles.queries,
+      names,
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Owner: My workflows" }),
+    );
+    fireEvent.click(
+      screen.getByRole("radio", { name: "All channel workflows" }),
+    );
+    await waitFor(() => expect(read).toHaveBeenCalledOnce());
+    await waitFor(() =>
+      expect(
+        screen.getByText(`Owner: ${formatPublicKey(owner.pubkey)}`),
+      ).toBeVisible(),
+    );
+    await act(async () => releaseRead([profile(owner, { name: "Salman" })]));
+    expect(screen.getByText("Owner: Salman")).toBeVisible();
+    fireEvent.click(
+      screen.getByRole("button", { name: /^Open Message helper:/ }),
+    );
+    expect(detailPane().getByText("Owner: Salman")).toBeVisible();
+    act(() =>
+      profiles.accept([
+        profile(owner, { name: "Updated name" }, 1_700_000_001),
+      ]),
+    );
+    expect(detailPane().getByText("Owner: Updated name")).toBeVisible();
+    expect(screen.queryByText("Owner: Salman")).toBeNull();
+    act(() => {
+      alias = "Local owner alias";
+      renamed();
+    });
+    expect(screen.getAllByText("Owner: Local owner alias")).toHaveLength(2);
+    expect(screen.queryByText("Owner: Updated name")).toBeNull();
+  } finally {
+    await act(async () => releaseRead([]));
+    cleanup();
+    names.dispose();
+    library.dispose();
+    profiles.dispose();
+  }
+});
+
+it.each(["{}", "malformed JSON"])(
+  "uses an abbreviated public key for a nameless profile: %s",
+  async (content) => {
+    const owner = keypair();
+    const profiles = createProfileDirectory({
+      read: async () => [signed(owner, { kind: 0, content, tags: [] })],
+    });
+    const library = createAgentLibrary(undefined);
+    const names = bindNames(
+      { profiles: profiles.queries, agentLibrary: library.queries },
+      {
+        snapshot: () => [agentDirectory],
+        subscribe: () => () => {},
+      },
+    );
+    try {
+      mount(fixtureYaml, owner.pubkey, true, {
+        profiles: profiles.queries,
+        names,
+      });
+      fireEvent.click(
+        screen.getByRole("button", { name: "Owner: My workflows" }),
+      );
+      fireEvent.click(
+        screen.getByRole("radio", { name: "All channel workflows" }),
+      );
+      await waitFor(() =>
+        expect(
+          profiles.queries.snapshot().get(owner.pubkey)?.nameIsFallback,
+        ).toBe(true),
+      );
+      await waitFor(() =>
+        expect(
+          screen.getByText(`Owner: ${formatPublicKey(owner.pubkey)}`),
+        ).toBeVisible(),
+      );
+      fireEvent.click(
+        screen.getByRole("button", { name: /^Open Message helper:/ }),
+      );
+      expect(
+        detailPane().getByText(`Owner: ${formatPublicKey(owner.pubkey)}`),
+      ).toBeVisible();
+      expect(
+        screen.queryByText(`Owner: ${owner.pubkey.slice(0, 10)}`),
+      ).toBeNull();
+    } finally {
+      cleanup();
+      names.dispose();
+      library.dispose();
+      profiles.dispose();
+    }
+  },
+);
+
+it("hydrates distinct displayed workflow owners in one batched profile query", async () => {
+  const owners = [keypair(), keypair(), keypair()] as const;
+  const read = vi.fn(async () =>
+    owners.map((owner, index) => profile(owner, { name: `Owner ${index}` })),
   );
-  expect(detailPane().getByText("Owner: Salman")).toBeVisible();
-  act(() =>
-    fixture.profiles.update({
-      status: "ready",
-      data: new Map([[fixtureViewer, { name: "Updated name" }]]),
-    }),
-  );
-  expect(detailPane().getByText("Owner: Updated name")).toBeVisible();
-  expect(screen.queryByText("Owner: Salman")).toBeNull();
+  const profiles = createProfileDirectory({ read });
+  try {
+    const fixture = mount(fixtureYaml, owners[0].pubkey, true, {
+      profiles: profiles.queries,
+    });
+    act(() =>
+      fixture.definitions.update({
+        status: "ready",
+        data: {
+          partial: false,
+          items: [...owners, owners[0]].map((owner, index) => ({
+            ...fixtureDefinition,
+            id: `${index}`,
+            owner: owner.pubkey,
+          })),
+        },
+      }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Owner: My workflows" }),
+    );
+    fireEvent.click(
+      screen.getByRole("radio", { name: "All channel workflows" }),
+    );
+    await waitFor(() =>
+      expect(screen.getAllByText(/^Owner: Owner \d$/)).toHaveLength(4),
+    );
+    expect(read).toHaveBeenCalledOnce();
+  } finally {
+    cleanup();
+    profiles.dispose();
+  }
 });
 
 it("delivers a late webhook secret on the landing page after confirmed navigation", async () => {

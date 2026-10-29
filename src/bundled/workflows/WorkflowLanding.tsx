@@ -455,19 +455,18 @@ function WorkflowOwner({
     selection.snapshot,
     selection.snapshot,
   );
-  useEffect(() => {
-    void session.profiles.ensure([owner], "background").catch(() => {});
-  }, [session, owner]);
   const name = useChannelIdentityNames(session, channelId);
-  return (
-    <>
-      Owner:{" "}
-      {name(
-        owner,
-        profiles.get(owner)?.name ?? formatPublicKey(owner) ?? "Unknown owner",
-      )}
-    </>
-  );
+  const profile = profiles.get(owner);
+  const fallback =
+    profile && !profile.nameIsFallback
+      ? profile.name
+      : (formatPublicKey(owner) ?? "Unknown owner");
+  const resolved = name(owner, fallback);
+  // The naming view can return the directory's synthetic profile name.
+  // Preserve genuine aliases without promoting that placeholder to a name.
+  const shown =
+    profile?.nameIsFallback && resolved === profile.name ? fallback : resolved;
+  return <>Owner: {shown}</>;
 }
 
 function WorkflowCard({
@@ -1478,6 +1477,29 @@ export function WorkflowLanding({
           },
         ]
       : groups;
+  const ownerKey = [
+    ...new Set(
+      groups.flatMap((group) =>
+        group.entries.map(({ definition }) => definition.owner),
+      ),
+    ),
+  ]
+    .sort()
+    .join(":");
+  const ownerIds = useMemo(
+    () => (ownerKey ? ownerKey.split(":") : []),
+    [ownerKey],
+  );
+  useEffect(() => {
+    if (!session) return;
+    // Match the profile directory's query batch size and stay within its
+    // per-call budget even when discovery spans many channels and owners.
+    for (let offset = 0; offset < ownerIds.length; offset += 500) {
+      void session.profiles
+        .ensure(ownerIds.slice(offset, offset + 500), "background")
+        .catch(() => {});
+    }
+  }, [session, ownerIds]);
   return (
     <>
       <fieldset

@@ -9049,6 +9049,46 @@ it("wakes nothing from the time no plugin showed its attention when it is shown 
   }
 });
 
+it("wakes only a watch with no hidden stream for an event heard while Attention was off", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  try {
+    const start = nowSeconds();
+    const storage = memoryStorage();
+    // A second watch on several kinds has no catch-up stream, so no record
+    // that Attention was hidden.
+    const attention = {
+      ...chat,
+      "watch/any": { ...chat["watch/chat"], kinds: [9, 7] },
+    };
+    const first = await setup({ storage, identities: [echo] });
+    await first.service.save(bot, { attentionEnabled: true, attention });
+    await settle();
+    await first.watching?.dispose();
+    await settle();
+    first.connect(false);
+    vi.setSystemTime((start + 20) * 1000);
+    const second = await setup({
+      storage,
+      identities: [echo],
+      history: first.history,
+      attention: false,
+      starting: true,
+    });
+    second.emit({ events: [posted("live while hidden", start + 20)] });
+    await settle();
+    await showAttention(second.ctx, "two");
+    await vi.waitFor(() => expect(second.run).toHaveBeenCalled());
+    await settle();
+    expect(
+      second.run.mock.calls.map(([{ trigger }]) =>
+        trigger.type === "watch" ? trigger.slug : trigger.type,
+      ),
+    ).toEqual(["watch/any"]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("wakes nothing from the time Attention was hidden after it was shown during startup", async () => {
   vi.useFakeTimers({ toFake: ["Date"] });
   try {

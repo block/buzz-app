@@ -1901,9 +1901,10 @@ export class AgentRunners {
         const key = streamOf(agent.key, { ...match, event });
         return !!key && !!this.checkpoints[key]?.hidden;
       };
-      if (matches.every(hidden)) return { triggers: [] };
+      const discarded = matches.filter(hidden).map(({ slug }) => slug);
+      if (discarded.length === matches.length) return { triggers: [] };
       this.heldForStartup = true;
-      return { triggers: [], held: true };
+      return { triggers: [], held: true, discarded };
     }
     const member = this.host.member(agent, event);
     if (member === undefined) return { triggers: [], held: true };

@@ -74,13 +74,14 @@ async function harness(
           const filter = filters[0];
           frames.push({ kind, id, at: performance.now(), socket });
           if (kind === "AUTH" && !options.holdAuth)
-            queueMicrotask(() => this.receive(["OK", id.id, true]));
+            setImmediate(() => this.receive(["OK", id.id, true]));
           if (kind === "EVENT") publications.push({ event: id, socket });
           if (kind !== "REQ") return;
           requests.push({ at: performance.now(), id, filter, filters, socket });
           const refused = requests.length === refuseAt;
+          // WS replies arrive on an I/O turn, which also lets HTTP readers drain.
           if (!options.holdSetup)
-            queueMicrotask(() =>
+            setImmediate(() =>
               this.receive(refused ? ["CLOSED", id, reason] : ["EOSE", id]),
             );
         },
@@ -94,7 +95,7 @@ async function harness(
         },
       };
       sockets.push(socket);
-      queueMicrotask(() => socket.receive(["AUTH", "fixture"]));
+      setImmediate(() => socket.receive(["AUTH", "fixture"]));
       return socket;
     },
   });

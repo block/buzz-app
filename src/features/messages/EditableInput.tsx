@@ -168,9 +168,10 @@ function moveHead(editor: EditorView, head: number, extend: boolean) {
  * caret position besides the token's edge, so native Up and Down stall there
  * in WebKit and jump to a document edge in Chromium, entering such a line and
  * leaving it alike. Such a line is entered at the token edge it holds, or
- * crossed to the far edge when it holds neither, and left for the position
- * on the neighbouring line nearest the caret's column. The token's client
- * rects give its lines, so a line scrolled out of the composer still counts.
+ * crossed to the far edge when it holds neither or a Shift selection would
+ * otherwise grow by the line break alone, and left for the position on the
+ * neighbouring line nearest the caret's column. The token's client rects give
+ * its lines, so a line scrolled out of the composer still counts.
  * A caret at a soft wrap is measured on the line it leaves: a move may go one
  * line too far but never stalls. Every other line move stays native, from a
  * DOM caret the browser can move. The Mac's emacs-style Ctrl+N and Ctrl+P
@@ -223,8 +224,9 @@ function crossTokenLine(
   // the composer still counts. Each is measured where a caret there is drawn,
   // so a soft wrap belongs to the line after it. Only grapheme boundaries
   // count: a position inside an emoji is drawn at its glyph, and a Shift
-  // selection ending there splits the character. Each inline leaf reads as
-  // one character, so the text's offsets are the textblock's positions.
+  // selection ending there splits the character. Each inline leaf reads as a
+  // newline, one character that nothing after it can join, so the text's
+  // offsets are the textblock's positions and the edge after a token counts.
   const column = (
     edge: number | undefined,
     line?: { top: number; bottom: number },
@@ -232,12 +234,7 @@ function crossTokenLine(
     if (edge === undefined) return edge;
     const $edge = doc.resolve(edge);
     const { parent } = $edge;
-    const text = parent.textBetween(
-      0,
-      parent.content.size,
-      undefined,
-      "\uFFFC",
-    );
+    const text = parent.textBetween(0, parent.content.size, undefined, "\n");
     const positions = [...graphemes.segment(text), { index: text.length }]
       .map(({ index }) => $edge.start() + index)
       .filter((pos) => (up ? pos <= edge : pos >= edge));
@@ -282,8 +279,14 @@ function crossTokenLine(
         : (lines[index - 1] ?? above);
       let head: number | undefined;
       // Entering: stop at the edge this line holds, or cross a middle line.
-      if (holds(previous) && !holds(line))
+      // From just past the line break beside the token, a Shift selection
+      // would grow by the break alone, which looks like no move at all, so it
+      // takes the whole token instead.
+      if (holds(previous) && !holds(line)) {
         head = up ? (index === last ? to : from) : index === 0 ? from : to;
+        if (extend && head !== origin && origin === (up ? after : before))
+          head = up ? from : to;
+      }
       // Leaving from the edge: cross the rest of the token, or step off it.
       else if (
         alone &&

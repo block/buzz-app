@@ -850,18 +850,46 @@ test("Up and Down move one line at a time through links that wrap", async ({
       ]);
     }
 
-    // Unchanged: entering a line that only a link holds stops at the edge it
-    // holds, which has no position at the caret's column, so Shift+Down from
-    // the end of the line above adds only the break.
-    await input.evaluate(
-      (el, at) => el.setSelectionRange(at, at),
-      edges[0].length,
+    // Entering a line that only a link holds stops at the edge it holds, which
+    // has no position at the caret's column. From just past the line break
+    // beside the link, a Shift selection would grow by the break alone, so it
+    // takes the whole link instead, and the next press goes on from there.
+    for (const [key, start, near, shifted] of [
+      [
+        "ArrowDown",
+        edges[0].length,
+        thirdFrom,
+        [thirdTo, fourthFrom, fourthTo],
+      ],
+      ["ArrowUp", fourthTo + 1, fourthTo, [fourthFrom, thirdTo, thirdFrom, 0]],
+    ]) {
+      await input.evaluate((el, at) => el.setSelectionRange(at, at), start);
+      await rendered();
+      await page.keyboard.press(key);
+      await expect.poll(caret).toEqual({ head: near, anchor: near });
+      const heads = await walk(
+        `Shift+${key}`,
+        start,
+        key === "ArrowUp" ? 0 : draft.length,
+      );
+      expect(heads.slice(0, shifted.length)).toEqual(shifted);
+    }
+
+    // So does a link pasted on its own line between two lines of text.
+    const own = ["Please review", link(title, 5), "Thanks"];
+    const ownDraft = own.join("\n");
+    await input.fill("");
+    await input.fill(ownDraft);
+    await expect(links).toHaveCount(1);
+    const ownFrom = own[0].length + 1;
+    const ownTo = ownFrom + own[1].length;
+    expect(await walk("Shift+ArrowUp", ownTo + 1, 0)).toEqual([ownFrom, 0]);
+    const [ownDown] = await walk(
+      "Shift+ArrowDown",
+      own[0].length,
+      ownDraft.length,
     );
-    await rendered();
-    await page.keyboard.press("Shift+ArrowDown");
-    await expect
-      .poll(caret)
-      .toEqual({ head: thirdFrom, anchor: edges[0].length });
+    expect(ownDown).toBe(ownTo);
 
     // The nearest position on the neighbouring line is a character boundary,
     // never inside an emoji or a cluster, where a caret is drawn at the glyph

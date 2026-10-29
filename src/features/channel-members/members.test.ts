@@ -116,7 +116,7 @@ function setup(
                     ["d", id],
                     ...members.map((key) =>
                       key === person.pubkey && personRole
-                        ? ["p", key, personRole]
+                        ? ["p", key, "", personRole]
                         : ["p", key],
                     ),
                   ],

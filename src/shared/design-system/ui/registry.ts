@@ -471,6 +471,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "medium leading icon + label: 12px leading / 16px trailing inset (proposed)",
       "shape: capsule (default) | control (12px) | icon (square, 10px)",
       "SurfaceButton: artwork layout with shared activation and focus (proposed)",
+      "SplitButton: primary action with a separately named related-action menu",
       "loading",
     ],
     status: "proposed",

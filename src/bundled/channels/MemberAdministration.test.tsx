@@ -94,7 +94,8 @@ async function setup(
     : profile(target, profileBody);
   const viewerProfile = profile(viewer, { name: "Carl" });
   const ownerProfile = profile(owner, { name: "Owner" });
-  let role: string | undefined = targetRole;
+  let role: string | undefined =
+    targetRole === "absent" ? undefined : targetRole;
   let tick = 1700000000;
   let lag = false;
   const members = () => [
@@ -143,6 +144,8 @@ async function setup(
   });
   let dialogReads = false;
   const query = vi.fn(async (filters: Parameters<typeof matchesEvent>[1][]) => {
+    if (targetRole === "absent" && filters.some((filter) => filter.search))
+      return [targetProfile];
     if (filters.some((filter) => filter.kinds?.includes(39001))) await roleRead;
     if (filters.some((filter) => filter.kinds?.includes(0)))
       await initialReads?.names;
@@ -211,7 +214,8 @@ async function setup(
   await user.click(screen.getByRole("button", { name: "Access" }));
   if (roleRead || initialReads)
     await screen.findByRole("status", { name: "Loading members" });
-  else await screen.findByText("Morgan");
+  else
+    await screen.findByText(targetRole === "absent" ? "Carl (you)" : "Morgan");
   if (!initialReads)
     await vi.waitFor(() =>
       expect(session.memberAdministration.snapshot(id).status).toBe(
@@ -263,6 +267,113 @@ async function setup(
     },
   };
 }
+it.each([
+  ["owner", "guest", true],
+  ["owner", "admin", true],
+  ["admin", "guest", false],
+  ["admin", "admin", false],
+] as const)(
+  "lets an %s add someone directly as %s from the split menu (Agent: %s)",
+  async (actor, role, agent) => {
+    const t = await setup(actor, "absent", true, undefined, agent);
+    await t.user.type(screen.getByRole("searchbox"), "Morgan");
+    await t.user.click(
+      await screen.findByRole("button", { name: /^Add Morgan .* as$/ }),
+    );
+    await t.user.click(
+      await screen.findByRole("menuitem", {
+        name: role === "guest" ? "View only" : "Admin",
+      }),
+    );
+    const dialog = await screen.findByRole("dialog", { name: "Add member?" });
+    expect(dialog).toHaveAccessibleDescription("Morgan");
+    expect(t.publish).not.toHaveBeenCalled();
+    await vi.waitFor(() =>
+      expect(
+        within(dialog).getByRole("button", { name: "Cancel" }),
+      ).toHaveFocus(),
+    );
+    await t.user.click(
+      within(dialog).getByRole("button", {
+        name: role === "guest" ? "Add with view-only access" : "Add as admin",
+      }),
+    );
+    await vi.waitFor(() =>
+      expect(
+        t.session.memberAdministration.snapshot(id).operation?.status,
+      ).toBe("confirmed"),
+    );
+    expect(t.publish).toHaveBeenCalledOnce();
+    expect(t.publish.mock.calls[0]?.[0].tags).toEqual([
+      ["h", id],
+      ["p", t.target.pubkey],
+      ["role", role],
+    ]);
+    await vi.waitFor(() =>
+      expect(screen.getByText("Morgan").closest("li")).toHaveTextContent(
+        role === "guest" ? "Viewing only" : "Admin",
+      ),
+    );
+  },
+);
+
+it("cancels an addition from the split menu and retains the search and keyboard focus", async () => {
+  const t = await setup("owner", "absent");
+  await t.user.type(screen.getByRole("searchbox"), "Morgan");
+  const trigger = await screen.findByRole("button", {
+    name: /^Add Morgan .* as$/,
+  });
+  trigger.focus();
+  await t.user.keyboard("{Enter}");
+  await t.user.click(await screen.findByRole("menuitem", { name: "Admin" }));
+  const dialog = await screen.findByRole("dialog", { name: "Add member?" });
+  await t.user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  await vi.waitFor(() => expect(screen.getByRole("searchbox")).toHaveFocus());
+  expect(screen.getByRole("searchbox")).toHaveValue("Morgan");
+  expect(t.publish).not.toHaveBeenCalled();
+  await t.user.click(
+    screen.getByRole("button", { name: /^Add Morgan .* as$/ }),
+  );
+  await t.user.keyboard("{Escape}");
+  await vi.waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: /^Add Morgan .* as$/ }),
+    ).toHaveFocus(),
+  );
+});
+
+it.each(["member", "guest"])(
+  "hides role additions from a %s",
+  async (actor) => {
+    const t = await setup(actor, "absent");
+    await t.user.type(screen.getByRole("searchbox"), "Morgan");
+    if (actor === "member")
+      await screen.findByRole("button", { name: /^Add Morgan \(/ });
+    expect(
+      screen.queryByRole("button", { name: /^Add Morgan .* as$/ }),
+    ).not.toBeInTheDocument();
+    expect(t.publish).not.toHaveBeenCalled();
+  },
+);
+
+it("disables an addition confirmation if the person joins with a different role", async () => {
+  const t = await setup("owner", "absent");
+  await t.user.type(screen.getByRole("searchbox"), "Morgan");
+  await t.user.click(
+    await screen.findByRole("button", { name: /^Add Morgan .* as$/ }),
+  );
+  await t.user.click(await screen.findByRole("menuitem", { name: "Admin" }));
+  const dialog = await screen.findByRole("dialog", { name: "Add member?" });
+  await act(async () => {
+    t.confirm("member");
+    await t.session.memberAdministration.refresh(id);
+  });
+  expect(
+    within(dialog).getByRole("button", { name: "Add as admin" }),
+  ).toBeDisabled();
+  expect(t.publish).not.toHaveBeenCalled();
+});
+
 it.each([
   ["member", "admin"],
   ["admin", "member"],

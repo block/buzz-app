@@ -168,9 +168,12 @@
 }
 .accessRow {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns:
+    calc(var(--size-control-sm) + var(--space-2)) minmax(0, 1fr)
+    auto;
   align-items: start;
   gap: var(--space-2);
+  column-gap: 0;
 }
 .accessIcon {
   display: flex;
@@ -180,6 +183,9 @@
   width: var(--size-control-sm);
   min-height: var(--size-control-sm);
   color: var(--text-subtle);
+}
+.accessRow > .accessIcon {
+  width: 100%;
 }
 .accessAudience {
   display: grid;
@@ -193,13 +199,26 @@
 .accessRole {
   min-width: 0;
   align-self: center;
+  margin-inline-start: var(--space-2);
 }
 @media (max-width: 480px) {
+  .member:has(> .addAction[data-split]) .staticProfile > span > span {
+    flex-direction: column;
+    align-items: start;
+    gap: 0;
+  }
+  .member:has(> .addAction[data-split]) .name {
+    max-width: 100%;
+  }
   .accessRow {
-    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-columns: calc(var(--size-control-sm) + var(--space-2)) minmax(
+        0,
+        1fr
+      );
   }
   .accessRole {
     grid-column: 2;
     justify-self: start;
+    margin-inline-start: 0;
   }
 }

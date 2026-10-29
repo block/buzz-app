@@ -180,22 +180,21 @@ function ReadyNewMenu({
               </span>
             </MenuTrailing>
           </MenuItem>
+          <MenuItem
+            aria-keyshortcuts="5"
+            disabled={!preferences.sectionCreationWritable}
+            onClick={() => {
+              if (current()) setCreatingSection(true);
+            }}
+          >
+            New section
+            <MenuTrailing>
+              <span aria-hidden="true">
+                <KeyboardShortcut text="5" label="5" />
+              </span>
+            </MenuTrailing>
+          </MenuItem>
         </MenuGroup>
-        <MenuSeparator />
-        <MenuItem
-          aria-keyshortcuts="5"
-          disabled={!preferences.sectionCreationWritable}
-          onClick={() => {
-            if (current()) setCreatingSection(true);
-          }}
-        >
-          New section
-          <MenuTrailing>
-            <span aria-hidden="true">
-              <KeyboardShortcut text="5" label="5" />
-            </span>
-          </MenuTrailing>
-        </MenuItem>
       </MenuPopup>
     </MenuRoot>
   );

@@ -1554,6 +1554,13 @@ export function createRelaySession(
     setupListeners.forEach((listener) => {
       listener();
     });
+  // Create's preflight has just read sidebar preferences. Placement re-reads
+  // only once that read no longer stands (loading, failed or cleared), so it
+  // normally projects before the new channel first lists.
+  const settledPreferences = async () => {
+    if (sidebarPreferences.queries.snapshot().status !== "ready")
+      await sidebarPreferences.queries.refresh();
+  };
   const channelSetup =
     transport && writes && transport.channelKit
       ? createChannelSetup({
@@ -1681,6 +1688,7 @@ export function createRelaySession(
             }
           },
           async star(id) {
+            await settledPreferences();
             if (!sidebarPreferences.queries.starWritable)
               throw new Error(
                 "Starred placement is unavailable; keep the partial channel and star it separately",
@@ -1692,6 +1700,7 @@ export function createRelaySession(
             await sidebarPreferences.queries.setStar(id, true);
           },
           async place(id, groupId) {
+            await settledPreferences();
             const state = sidebarPreferences.queries.snapshot();
             if (
               !sidebarPreferences.queries.writable ||

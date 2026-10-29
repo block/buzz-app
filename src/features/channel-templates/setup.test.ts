@@ -317,6 +317,8 @@ it.each(["group", "starred"] as const)(
         .finally(() => {
           admitted = true;
         });
+      // Awaited below; a failed assertion before then must not leave it unhandled.
+      creation.catch(() => {});
       await listed.promise;
       const id = created;
       assert.exists(id);
@@ -349,6 +351,140 @@ it.each(["group", "starred"] as const)(
     }
   },
 );
+/** A real relay session with one saved "Work" group whose Creates are readable
+ * at once. `state` can fail the new channel's reads or the preference reads. */
+function placementSession(published?: () => Promise<void>) {
+  const relay = keypair();
+  const events: RelayEvent[] = [];
+  const sections = [{ id: "work", name: "Work", order: 0 }];
+  const state = {
+    assignments: {} as Record<string, string>,
+    created: undefined as string | undefined,
+    failChannel: false,
+    failPreferences: false,
+  };
+  const owner = createRelaySession(
+    {
+      viewer: viewer.pubkey,
+      relayAuthor: relay.pubkey,
+      scope: "https://placement.example.test",
+      media: () => undefined,
+      query: async (filters) => {
+        const found = events.filter((event) =>
+          filters.some((filter) => matchesEvent(event, filter)),
+        );
+        if (
+          state.failChannel &&
+          found.some((event) =>
+            event.tags.some(
+              ([tag, value]) => tag === "d" && value === state.created,
+            ),
+          )
+        )
+          throw new Error("Channel read failed");
+        return found;
+      },
+      channelKit: { prepare: async () => "", decode: async () => [] },
+      decodeSidebarPreferences: async () => {
+        if (state.failPreferences) throw new Error("Preferences unavailable");
+        return {
+          sections,
+          assignments: state.assignments,
+          starred: [],
+          muted: [],
+        };
+      },
+      writeSidebarAssignment: async ({ channelId, sectionId }) => {
+        if (channelId && sectionId)
+          state.assignments = { ...state.assignments, [channelId]: sectionId };
+        return { sections, assignments: state.assignments };
+      },
+      writeSidebarStar: async () => [],
+      writer: {
+        kinds: [9007],
+        sign: async (template) => signed(viewer, template),
+        publish: async (event) => {
+          const id = event.tags.find(([tag]) => tag === "h")?.[1];
+          assert.exists(id);
+          state.created = id;
+          events.push(
+            event,
+            metadata(relay, id, "Placed"),
+            roster(relay, id, [viewer.pubkey]),
+          );
+          await published?.();
+        },
+      },
+    },
+    { outboxStorage: { load: async () => [], save: async () => {} } },
+  );
+  return { owner, state };
+}
+const placed: ChannelCreationInput = {
+  name: "Placed",
+  visibility: "open",
+  setup: { agents: [], canvas: "", groupId: "work", templateId: "" },
+};
+it("re-reads sidebar preferences before placement once the preflight read no longer stands", async () => {
+  let stale: string | undefined;
+  const { owner, state } = placementSession(async () => {
+    // Another reader fails the shared preferences after preflight.
+    state.failPreferences = true;
+    await owner.session.sidebarPreferences.refresh();
+    state.failPreferences = false;
+    stale = owner.session.sidebarPreferences.snapshot().status;
+  });
+  try {
+    const id = await owner.session.channelCreation.create(placed);
+    const receipt = `buzz-channel-setup.v2:https://placement.example.test:${viewer.pubkey}:${id}`;
+    await vi.waitFor(() => expect(localStorage.getItem(receipt)).toBeNull());
+    expect(stale).toBe("error");
+    expect(owner.session.channelCreation.notices()).toEqual([]);
+    expect(state.assignments[id]).toBe("work");
+    expect(owner.session.sidebarPreferences.snapshot()).toMatchObject({
+      status: "ready",
+      data: { assignments: { [id]: "work" } },
+    });
+  } finally {
+    owner.dispose();
+  }
+});
+it("keeps a delivered Create's placement through failed admission and its identical retry", async () => {
+  const { owner, state } = placementSession();
+  state.failChannel = true;
+  try {
+    await expect(owner.session.channelCreation.create(placed)).rejects.toThrow(
+      "Channel read failed",
+    );
+    const id = state.created;
+    assert.exists(id);
+    expect(
+      owner.session.sidebarPreferences.snapshot().data?.assignments[id],
+    ).toBe("work");
+    state.failChannel = false;
+    await expect(owner.session.channelCreation.create(placed)).resolves.toBe(
+      id,
+    );
+    await vi.waitFor(() =>
+      expect(owner.session.channelCreation.notices()).toEqual([
+        expect.objectContaining({
+          id,
+          error: expect.stringContaining("Template setup was not continued"),
+        }),
+      ]),
+    );
+    expect(owner.session.channels.list().channels.map((c) => c.id)).toContain(
+      id,
+    );
+    expect(state.assignments).toEqual({ [id]: "work" });
+    expect(owner.session.sidebarPreferences.snapshot()).toMatchObject({
+      status: "ready",
+      data: { assignments: { [id]: "work" } },
+    });
+  } finally {
+    owner.dispose();
+  }
+});
 function firstReceipt() {
   const key = receipts()[0];
   assert.exists(key);

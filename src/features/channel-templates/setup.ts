@@ -312,7 +312,9 @@ export function createChannelSetup({
             : setup?.groupId
               ? place(p.id, setup.groupId)
               : undefined;
-          placement?.catch(() => {}); // Observed below, after admission.
+          // Observed after admission. If admission fails its result is dropped,
+          // but the delivered channel still lists in its destination.
+          placement?.catch(() => {});
           await refresh(p.id, viewer, p.input);
           p.created = true;
           pending = undefined;

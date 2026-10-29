@@ -700,9 +700,12 @@ the filled Tabler star retains the section emoji artwork size and is centered in
 the channel icon column. The creation heading reuses the decorative emoji slot
 and inherits the heading's typography.
 Group and Starred placement use the existing preference writer and apply before
-the new channel opens, so its first sidebar row is already in its destination;
-unavailable placement blocks a new create, while a later placement failure reports
-partial setup without creating a second channel. An identical retry rechecks its
+the new channel opens, so its first sidebar row is already in its destination.
+Placement starts once the Create is delivered, so it also stands when the form
+cannot yet confirm the channel; the channel lists in its destination once it is
+confirmed. Unavailable placement blocks a new create. Once the channel opens, a
+placement failure reports partial setup without creating a second channel; an
+unconfirmed create reports only its own failure. An identical retry rechecks its
 Create without continuing the template's setup writes; agents or Canvas that
 changed underneath an untouched form do not count as new details.
 Group placement remains managed through the left-nav Move action.

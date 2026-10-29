@@ -106,7 +106,7 @@ The installed desktop executable accepts `plugin install-git`. On macOS, install
 a published Git plugin without a compiler or a separate tool:
 
 ```sh
-"/Applications/Buzz.app/Contents/MacOS/buzz-foundation" plugin install-git org-49461806@github.com:squareup/buzz-nexus.git plugin-release --enable
+"/Applications/Buzz.app/Contents/MacOS/Buzz" plugin install-git org-49461806@github.com:squareup/buzz-nexus.git plugin-release --enable
 ```
 
 `install-git REPO REF [PATH] [--enable]` uses the same importer as Settings.

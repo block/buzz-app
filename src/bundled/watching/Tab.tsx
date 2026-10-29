@@ -1,4 +1,5 @@
 import { relativeTimestamp } from "../../shared/relative-timestamp";
+import { useAgentSaveState } from "../../features/agents/AgentSaveButton";
 import { attentionOf, sourceCompleted } from "../../features/agents/attention";
 import { relayOrigin } from "../../features/communities/destination";
 import { relayPartition } from "../../features/relay/partition";
@@ -113,6 +114,8 @@ export function createTab({
   function useAction() {
     const [pending, setPending] = React.useState(false);
     const [error, setError] = React.useState("");
+    // Agent tabs stay open until a pending save settles, so its error shows.
+    useAgentSaveState(false, pending);
     const run = async (action: () => Promise<void>) => {
       if (pending) return;
       setPending(true);

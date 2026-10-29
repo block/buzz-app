@@ -10,6 +10,7 @@ import {
   within,
 } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
+import { AgentSaveState } from "../../features/agents/AgentSaveButton";
 import type { Context } from "../../plugins/author";
 import { createTab, describe } from "./Tab";
 
@@ -360,7 +361,7 @@ it.each(["source", "event", "timer"] as const)(
   },
 );
 
-it("keeps subscription controls disabled while saving and preserves the row on failure", async () => {
+it("keeps subscription controls disabled and the tab open while saving, and preserves the row on failure", async () => {
   const record = {
     key: "membership-a",
     pubkey: "a",
@@ -401,8 +402,13 @@ it("keeps subscription controls disabled while saving and preserves the row on f
     agents: { snapshot: () => snapshot, subscribe: () => () => {}, save },
     relay: { snapshot: () => disconnected, subscribe: () => () => {} },
   } as unknown as Context;
+  const report = vi.fn();
   render(
-    React.createElement(createTab(ctx), { agent: { key: "membership-a" } }),
+    React.createElement(
+      AgentSaveState,
+      { value: report },
+      React.createElement(createTab(ctx), { agent: { key: "membership-a" } }),
+    ),
   );
   const toggle = screen.getByRole("switch", {
     name: "Watch Build",
@@ -415,11 +421,19 @@ it("keeps subscription controls disabled while saving and preserves the row on f
     expect(toggle.getAttribute("aria-disabled")).toBe("true"),
   );
   expect(remove.getAttribute("aria-disabled")).toBe("true");
+  expect(report).toHaveBeenLastCalledWith(
+    { dirty: false, saving: true },
+    expect.any(String),
+  );
   fireEvent.click(remove);
   expect(save).toHaveBeenCalledTimes(1);
   await act(async () => reject(new Error("Could not save")));
   await waitFor(() =>
     expect(screen.getByRole("alert").textContent).toBe("Could not save"),
+  );
+  expect(report).toHaveBeenLastCalledWith(
+    { dirty: false, saving: false },
+    expect.any(String),
   );
   expect(toggle.getAttribute("aria-disabled")).not.toBe("true");
   expect(remove.getAttribute("aria-disabled")).not.toBe("true");

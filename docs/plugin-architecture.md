@@ -1422,7 +1422,9 @@ message content, author and timestamp and preserves edit/deletion/access handlin
 Previewing never acknowledges reading or switches community. The host offers a
 resolved label to the bundled presentation via `LinkLabelContext`, and whether
 the link is live or a composer decoration or preview via `LinkInteractiveContext`,
-so a renderer reads nothing for a draft; no author API
+so a renderer reads nothing for a draft. A renderer that shows a status, such as
+a pull request's state, describes the host anchor via `LinkDescriptionContext`,
+so the link keeps its label or URL as its name; no author API
 contract or relay protocol changes are required. Known channel references and
 unambiguous signed person/agent mentions share the inline hover styling. Names in
 ordinary prose never create notification intent or establish an identity.

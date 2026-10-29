@@ -36,6 +36,7 @@ import {
 import { parseBuzzLink, isBuzzLink } from "../navigation/buzz-links";
 import {
   LinkChannelPrivateContext,
+  LinkDescriptionContext,
   LinkInteractiveContext,
   LinkLabelContext,
   LinkContentContext,
@@ -92,6 +93,7 @@ export function MessageLink({
   const renderer = resolveLink(url, renderers);
   const [unavailable, setUnavailable] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [description, setDescription] = useState<string>();
   if (!active && previewOpen) setPreviewOpen(false);
   const trigger = useRef<HTMLAnchorElement>(null);
   const internal = isBuzzLink(url);
@@ -275,7 +277,7 @@ export function MessageLink({
         aria-description={
           chatChip && withheld
             ? "Chat unavailable. You don’t have access, or it no longer exists."
-            : undefined
+            : description
         }
         data-link-label={label ?? ""}
         data-solo-link={chatChip ? "" : undefined}
@@ -451,7 +453,11 @@ export function MessageLink({
       <LinkLabelContext value={display}>
         <LinkContentContext value={shown}>
           <LinkInteractiveContext value={interactive}>
-            {result}
+            <LinkDescriptionContext
+              value={interactive ? setDescription : undefined}
+            >
+              {result}
+            </LinkDescriptionContext>
           </LinkInteractiveContext>
         </LinkContentContext>
       </LinkLabelContext>

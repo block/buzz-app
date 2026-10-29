@@ -1,5 +1,13 @@
-import { useCallback, useContext, useSyncExternalStore } from "react";
-import { LinkInteractiveContext } from "../../features/conversation/LinkLabelContext";
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useSyncExternalStore,
+} from "react";
+import {
+  LinkDescriptionContext,
+  LinkInteractiveContext,
+} from "../../features/conversation/LinkLabelContext";
 import { LinkLabel } from "../links/InlineLink";
 import inlineStyles from "../../shared/InlineReference.module.css";
 import { describePull, stateIcons } from "./pull-state-view";
@@ -22,6 +30,13 @@ export function PullLink({ url, states }: { url: string; states: PullStates }) {
   // icon doesn't swap when the state arrives.
   const Icon = stateIcons[state?.state ?? "open"];
   const words = describePull({ state, failed: read === "failed" });
+  // The state describes the link rather than joining its name, which stays
+  // the authored label or the URL as the state changes.
+  const describe = useContext(LinkDescriptionContext);
+  useEffect(() => {
+    describe?.(words);
+    return () => describe?.(undefined);
+  }, [describe, words]);
   return (
     <LinkLabel
       href={url}
@@ -29,8 +44,7 @@ export function PullLink({ url, states }: { url: string; states: PullStates }) {
         <span
           className={styles.pullState}
           data-pr-state={state?.state ?? "unknown"}
-          role="img"
-          aria-label={words}
+          aria-hidden="true"
           title={words}
         >
           <Icon aria-hidden="true" className={inlineStyles.icon} />

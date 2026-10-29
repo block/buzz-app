@@ -13,6 +13,13 @@ export const LinkChannelPrivateContext = createContext(false);
  * preview: a renderer that reads anything for its link does so only then. */
 export const LinkInteractiveContext = createContext(true);
 
+/** Sets the host anchor's description, such as a pull request's state, so a
+ * renderer's status reaches assistive technology without joining the link's
+ * name. Undefined when there is no anchor to describe. */
+export const LinkDescriptionContext = createContext<
+  ((description: string | undefined) => void) | undefined
+>(undefined);
+
 /** Host workspace opener for a message link's thread tab; false when it cannot. */
 export const LinkThreadTabContext = createContext<
   | ((channelId: string, messageId: string, rootId: string) => boolean)

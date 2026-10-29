@@ -1,18 +1,12 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import {
-  act,
-  cleanup,
-  render,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, expect, it, vi } from "vitest";
 import type { Contribution } from "../../plugins/contributions";
 import type { LinkRenderer } from "../../features/conversation/contracts";
 import {
+  LinkDescriptionContext,
   LinkInteractiveContext,
   LinkLabelContext,
 } from "../../features/conversation/LinkLabelContext";
@@ -65,18 +59,19 @@ const icon = (container: HTMLElement) =>
 
 it("shows the authored label with the plain pull request glyph until read, then each state's own", () => {
   const states = fakeStates();
-  const { container } = render(
-    <LinkLabelContext value="fix(search): tokens">
-      <PullLink url={pull} states={states} />
-    </LinkLabelContext>,
+  const describe = vi.fn();
+  const { container, unmount } = render(
+    <LinkDescriptionContext value={describe}>
+      <LinkLabelContext value="fix(search): tokens">
+        <PullLink url={pull} states={states} />
+      </LinkLabelContext>
+    </LinkDescriptionContext>,
   );
   expect(container).toHaveTextContent("fix(search): tokens");
   expect(icon(container)).toHaveAttribute("data-pr-state", "unknown");
   expect(icon(container)).toHaveAttribute("title", "Pull request");
-  // The state is read out, not only shown.
-  expect(screen.getByRole("img", { name: "Pull request" })).toBe(
-    icon(container),
-  );
+  // The state is read out as the link's description, not only shown.
+  expect(describe).toHaveBeenLastCalledWith("Pull request");
   expect(icon(container)?.innerHTML).toBe(glyph(stateIcons.open));
   for (const [state, words] of [
     [
@@ -90,17 +85,18 @@ it("shows the authored label with the plain pull request glyph until read, then 
     act(() => states.set(state));
     expect(icon(container)).toHaveAttribute("data-pr-state", state.state);
     expect(icon(container)).toHaveAttribute("title", words);
-    expect(screen.getByRole("img", { name: words })).toBe(icon(container));
+    expect(describe).toHaveBeenLastCalledWith(words);
     expect(icon(container)?.innerHTML).toBe(glyph(stateIcons[state.state]));
   }
   // One GitHub cannot read keeps the plain glyph, and says so.
   act(() => states.set("failed"));
   expect(icon(container)).toHaveAttribute("data-pr-state", "unknown");
   expect(icon(container)).toHaveAttribute("title", "Pull request, unavailable");
-  expect(screen.getByRole("img", { name: "Pull request, unavailable" })).toBe(
-    icon(container),
-  );
+  expect(describe).toHaveBeenLastCalledWith("Pull request, unavailable");
   expect(icon(container)?.innerHTML).toBe(glyph(stateIcons.open));
+  // A removed link leaves the anchor undescribed.
+  unmount();
+  expect(describe).toHaveBeenLastCalledWith(undefined);
 });
 
 it("shows what is known of a pull request while composing, without watching it", () => {
@@ -198,10 +194,8 @@ it("takes pull request links from Links, which keeps the rest of GitHub and stan
   await waitFor(() =>
     expect(icon(both.container)).toHaveAttribute("data-pr-state", "open"),
   );
-  // The state joins the accessibility tree; the link keeps its authored name.
-  expect(within(anchor).getByRole("img", { name: "Pull request, open" })).toBe(
-    icon(both.container),
-  );
+  // The state describes the link; the link keeps its authored name.
+  expect(anchor).toHaveAttribute("aria-description", "Pull request, open");
   expect(screen.getByRole("link", { name: "Fix the lab" })).toBe(anchor);
   cleanup();
 
@@ -215,6 +209,37 @@ it("takes pull request links from Links, which keeps the rest of GitHub and stan
     "data-link-kind",
     "github",
   );
+});
+
+it("names a pull request link shown as its URL by the URL alone, whatever its state", async () => {
+  const { links, github } = renderers();
+  // Its own pull request: the store keeps what earlier tests read.
+  const raw = "https://github.com/block/buzz-app/pull/8";
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      async () =>
+        new Response(JSON.stringify({ state: "closed", merged: true })),
+    ),
+  );
+  const { container } = render(
+    <ToastProvider>
+      <MessageLink
+        url={raw}
+        registry={registry([links, github])}
+        onOpenLink={() => true}
+      >
+        {raw}
+      </MessageLink>
+    </ToastProvider>,
+  );
+  const anchor = screen.getByRole("link", { name: raw });
+  expect(anchor).toHaveAttribute("aria-description", "Pull request");
+  await waitFor(() =>
+    expect(icon(container)).toHaveAttribute("data-pr-state", "merged"),
+  );
+  expect(screen.getByRole("link", { name: raw })).toBe(anchor);
+  expect(anchor).toHaveAttribute("aria-description", "Pull request, merged");
 });
 
 it("reads nothing for a pull request link while it is composed", async () => {

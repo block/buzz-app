@@ -16,10 +16,13 @@ import { useRelayConnection } from "../relay/react";
 import type { Communities, Membership } from "./service";
 import {
   CommunityDepartureError,
+  deviceRemovalFailureText,
   leaveCleanupFailureText,
   leaveCommunity,
   leaveCommunityFailureText,
   leftCommunityText,
+  removeCommunityFromDevice,
+  removedFromDeviceText,
 } from "./departure";
 import { CommunityDialog } from "./CommunityDialog";
 import type { InviteLink } from "./invite-link";
@@ -71,8 +74,13 @@ export function CommunityPicker({
   // The confirm dialog belongs to the picker so it outlives the item it removes.
   const [leaving, setLeaving] = useState<{
     membership: Membership;
-    pending: boolean;
+    pending: false | "leave" | "remove";
+    /** Why the relay did not take the leave; removal stays on offer. */
+    error?: string;
   } | null>(null);
+  // Each departure attempt; a relay wait abandoned for a local removal must
+  // not report or navigate when it finally settles.
+  const departure = useRef(0);
   const wasLeaving = useRef<Membership | null>(null);
   const notify = useToastNotification();
   const client = useSyncExternalStore(
@@ -126,34 +134,92 @@ export function CommunityPicker({
   const leave = async () => {
     if (!leaving || leaving.pending) return;
     const { membership } = leaving;
-    setLeaving({ membership, pending: true });
+    const attempt = ++departure.current;
+    setLeaving({ membership, pending: "leave" });
     let result: Awaited<ReturnType<typeof leaveCommunity>>;
     try {
       result = await leaveCommunity(communities, membership);
     } catch (error) {
+      if (attempt !== departure.current) return;
       // Once the relay accepts the leave, a device persistence failure has
       // different recovery copy from a request it never settled.
-      const departure =
+      const failure =
         error instanceof CommunityDepartureError ? error : undefined;
+      if (failure?.phase === "device") {
+        notify(
+          leaveCleanupFailureText(
+            communityActionLabel(membership),
+            failure.reason,
+            failure.outcome,
+          ),
+          "error",
+        );
+        setLeaving(null);
+        return;
+      }
+      // A relay that never settled the leave may be gone for good. The dialog
+      // stays open so the viewer can still forget it on this device.
+      setLeaving({
+        membership,
+        pending: false,
+        error: leaveCommunityFailureText(
+          communityActionLabel(membership),
+          failure?.reason ?? error,
+        ),
+      });
+      return;
+    }
+    if (attempt !== departure.current) return;
+    const { wasSelected, residue, outcome } = result;
+    // The community is gone from this device whatever happens next, so only
+    // the service call above may read as a cleanup failure.
+    afterDeparture(membership, wasSelected);
+    notify(
+      leftCommunityText(
+        communityActionLabel(membership),
+        outcome,
+        residue.length > 0,
+      ),
+      outcome === "left" ? "success" : "info",
+    );
+    setLeaving(null);
+  };
+  /** Forgets the community on this device only, without asking its relay, so a
+   * dead or unreachable community can still be removed. The membership stays
+   * on the relay. A leave still waiting on the relay is abandoned: its late
+   * answer finds the community already gone and reports nothing. */
+  const remove = async () => {
+    if (!leaving || leaving.pending === "remove") return;
+    const { membership } = leaving;
+    const attempt = ++departure.current;
+    setLeaving({ membership, pending: "remove" });
+    let result: Awaited<ReturnType<typeof removeCommunityFromDevice>>;
+    try {
+      result = await removeCommunityFromDevice(communities, membership);
+    } catch (error) {
+      if (attempt !== departure.current) return;
       notify(
-        departure?.phase === "device"
-          ? leaveCleanupFailureText(
-              communityActionLabel(membership),
-              departure.reason,
-              departure.outcome,
-            )
-          : leaveCommunityFailureText(
-              communityActionLabel(membership),
-              departure?.reason ?? error,
-            ),
+        deviceRemovalFailureText(
+          communityActionLabel(membership),
+          error instanceof CommunityDepartureError ? error.reason : error,
+        ),
         "error",
       );
       setLeaving(null);
       return;
     }
-    const { wasSelected, residue, outcome } = result;
-    // The community is gone from this device whatever happens next, so only
-    // the service call above may read as a cleanup failure.
+    if (attempt !== departure.current) return;
+    afterDeparture(membership, result.wasSelected);
+    notify(
+      removedFromDeviceText(
+        communityActionLabel(membership),
+        result.residue.length > 0,
+      ),
+      "success",
+    );
+    setLeaving(null);
+  };
+  const afterDeparture = (membership: Membership, wasSelected: boolean) => {
     if (wasSelected) {
       // The service already fell back to Personal space. Telling the host too
       // gives the leave the same navigation and ingress recovery as clicking
@@ -168,15 +234,6 @@ export function CommunityPicker({
         );
       }
     }
-    notify(
-      leftCommunityText(
-        communityActionLabel(membership),
-        outcome,
-        residue.length > 0,
-      ),
-      outcome === "left" ? "success" : "info",
-    );
-    setLeaving(null);
   };
   const active = client.memberships.find(
     (membership) => membership.id === client.selected,
@@ -282,7 +339,8 @@ export function CommunityPicker({
                   session={selected ? session : undefined}
                   manager={selected && invites && role.manager}
                   leaving={
-                    leaving?.membership.id === membership.id && leaving.pending
+                    leaving?.membership.id === membership.id &&
+                    !!leaving.pending
                   }
                   onSelect={select}
                   onOpenTarget={
@@ -346,22 +404,32 @@ export function CommunityPicker({
       {leaving && (
         <AlertDialog
           title={`Leave ${communityDefaultName(leaving.membership)}?`}
-          description={`This sends a leave request to the community’s relay, then removes ${communityDefaultName(leaving.membership)} from this device along with its saved drafts and reading positions. Rejoining may need a new invite.`}
-          pending={leaving.pending}
+          description={`This sends a leave request to the community’s relay, then removes ${communityDefaultName(leaving.membership)} from this device along with its saved drafts and reading positions. Rejoining may need a new invite. If the community can’t be reached, remove it from this device instead; your membership stays and you can add it again later.`}
+          pending={!!leaving.pending}
           onClose={() => setLeaving(null)}
           // The picker's own effect places focus once the dialog is gone.
           finalFocus={false}
           actions={
             <>
               <Button
-                disabled={leaving.pending}
+                disabled={!!leaving.pending}
                 onClick={() => setLeaving(null)}
               >
                 Cancel
               </Button>
+              {/* Stays usable while a leave waits on a relay that may never
+                  answer. */}
+              <Button
+                disabled={leaving.pending === "remove"}
+                loading={leaving.pending === "remove"}
+                onClick={() => void remove()}
+              >
+                Remove from this device
+              </Button>
               <Button
                 variant="destructive"
-                loading={leaving.pending}
+                disabled={leaving.pending === "remove"}
+                loading={leaving.pending === "leave"}
                 onClick={() => void leave()}
               >
                 Leave community
@@ -380,6 +448,11 @@ export function CommunityPicker({
             <p className="break-all">
               {communityDestination(leaving.membership.id).url}
             </p>
+            {leaving.error && (
+              <p role="alert" className="text-danger">
+                {leaving.error}
+              </p>
+            )}
           </div>
         </AlertDialog>
       )}

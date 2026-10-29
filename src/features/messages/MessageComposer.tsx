@@ -2412,6 +2412,7 @@ function Composer({
             channelId={channelId}
             threadRootId={threadRootId}
             inviteAgents={agentChoices && !editing.target}
+            recipients={recipients}
             {...(taskContext ? { channelRegion: taskContext.region } : {})}
             {...(taskDraft
               ? {

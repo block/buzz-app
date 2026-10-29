@@ -137,6 +137,7 @@ export function ComposerCompletions({
         match.query.start,
         match.query.end,
         match.query.query,
+        context.recipients,
       ])}
       fallback={
         <span role="status">

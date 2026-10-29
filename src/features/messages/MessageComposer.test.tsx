@@ -35,6 +35,7 @@ import type { Contribution } from "../../plugins/contributions";
 import type {
   ComposerCompletion,
   ComposerCompletionProps,
+  CompletionContext,
   ComposerTool,
   ComposerToolProps,
   CompletionResult,
@@ -10173,6 +10174,64 @@ it("task primary A survives explicit B; later Make primary B changes untagged ro
   h.present(false);
   h.present(true);
   expect(h.input()).toHaveValue("");
+});
+
+it("projects stable structured explicit recipients to completion matchers and components instead of the task primary", async () => {
+  const { h } = await taskComposerFixture();
+  act(() => h.commands().insertMention({ ...second, name: "Bea" }));
+  const selected = h.commands().recipients;
+  const matched: CompletionContext[] = [];
+  const mounted: ComposerCompletionProps[] = [];
+  function Provider(props: ComposerCompletionProps) {
+    useLayoutEffect(() => {
+      mounted.push(props);
+    });
+    return null;
+  }
+  const entries: Contribution<ComposerCompletion>[] = [
+    {
+      id: "skills",
+      key: "test/skills",
+      pluginId: "test",
+      revision: "1",
+      title: "Skills",
+      match: ({ text, start }, context) => {
+        matched.push(context);
+        const trigger = text.lastIndexOf("/", start - 1);
+        return trigger < 0
+          ? null
+          : {
+              start: trigger,
+              end: start,
+              query: text.slice(trigger + 1, start),
+            };
+      },
+      component: Provider,
+    },
+  ];
+  const empty: never[] = [];
+  h.retarget({
+    extensions: {
+      tools: { snapshot: () => empty, subscribe: () => () => {} },
+      inline: { snapshot: () => empty, subscribe: () => () => {} },
+      completions: { snapshot: () => entries, subscribe: () => () => {} },
+    },
+  });
+  await h.user.type(h.input(), "/");
+  expect(matched.at(-1)?.recipients).toBe(selected);
+  expect(mounted.at(-1)?.recipients).toBe(selected);
+  expect(selected).toEqual([{ pubkey: second.pubkey, name: "Bea" }]);
+  const signal = mounted.at(-1)?.composerSignal;
+  await h.user.type(h.input(), "review");
+  expect(matched.at(-1)?.recipients).toBe(selected);
+  expect(mounted.at(-1)?.recipients).toBe(selected);
+  expect(mounted.at(-1)?.composerSignal).toBe(signal);
+  act(() => h.input().removeRecipient(second.pubkey));
+  fireEvent(document, new Event("selectionchange"));
+  expect(matched.at(-1)?.recipients).toEqual([]);
+  expect(mounted.at(-1)?.recipients).toEqual([]);
+  expect(mounted.at(-1)?.composerSignal).toBe(signal);
+  expect(signal?.aborted).toBe(false);
 });
 
 it("keeps task repair visible with revoked historical A, then sends only to eligible primary B", async () => {

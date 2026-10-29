@@ -298,6 +298,8 @@ it("rejects missing/forged/private evidence and purges prior public content on a
 });
 
 it("surfaces bounded metadata failures instead of silently returning an empty page", async () => {
+  vi.useFakeTimers();
+  vi.spyOn(Math, "random").mockReturnValue(0.5);
   const viewer = keypair(),
     relay = keypair();
   const owner = createRelaySession({
@@ -311,11 +313,15 @@ it("surfaces bounded metadata failures instead of silently returning an empty pa
     },
   });
   try {
-    await expect(owner.session.read(search)).rejects.toThrow(
+    const rejected = expect(owner.session.read(search)).rejects.toThrow(
       "metadata unavailable",
     );
+    await vi.advanceTimersByTimeAsync(5250);
+    await rejected;
   } finally {
     owner.dispose();
+    vi.restoreAllMocks();
+    vi.useRealTimers();
   }
 });
 

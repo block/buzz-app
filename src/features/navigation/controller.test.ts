@@ -14,10 +14,12 @@ const page: OpenTarget = {
   pageId: "board",
 };
 const cleanups: (() => void)[] = [];
-function setup(capacity = 100) {
+function setup(capacity = 100, presenter = true) {
   const history = createMemoryHistory(homeTarget, capacity);
   const host = createNavigationController(history);
   cleanups.push(host.dispose);
+  // The deadline measures a presenter; the app's attaches on mount.
+  if (presenter) cleanups.push(host.attach());
   return { host, navigation: host.navigation, history };
 }
 afterEach(() => {
@@ -52,6 +54,22 @@ describe("navigation attempts over one history driver", () => {
     expect(nav.snapshot().entry).toBe(initial);
     void nav.open({ version: 1, kind: "settings", section: "plugins" });
     expect(nav.snapshot().canGoForward).toBe(false);
+  });
+  it("dismisses a modal visit back to its opener, or replaces it, without adding a visit", () => {
+    const { navigation: nav } = setup();
+    void nav.open(page);
+    const opener = nav.snapshot().entry;
+    void nav.open(settings);
+    void nav.open(page, { dismiss: true });
+    expect(nav.snapshot().entry).toBe(opener);
+    expect(nav.snapshot().canGoForward).toBe(true);
+    nav.forward();
+    const other: OpenTarget = { ...page, pageId: "other" };
+    void nav.open(other, { dismiss: true });
+    expect(nav.snapshot().entry.target).toEqual(other);
+    expect(nav.snapshot().canGoForward).toBe(false);
+    nav.back();
+    expect(nav.snapshot().entry).toBe(opener);
   });
   it("rejects late acknowledgments and aborts obsolete work even after successful reveal", async () => {
     const { host, navigation: nav } = setup();
@@ -197,6 +215,42 @@ describe("navigation attempts over one history driver", () => {
     nav.forward();
     expect(listener).not.toHaveBeenCalled();
     expect(host.complete(attempt, { status: "opened" })).toBe(false);
+  });
+});
+
+it("runs the attempt deadline only while a presenter is attached", async () => {
+  vi.useFakeTimers();
+  const { host, navigation: nav } = setup(100, false);
+  // The startup visit exists before any presenter; its deadline is not running.
+  const { attempt } = nav.snapshot();
+  expect(nav.snapshot()).toMatchObject({ status: "opening", attempt });
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(nav.snapshot()).toMatchObject({ status: "opening", attempt });
+  // The deadline starts when a presenter attaches and stops when the last leaves.
+  const first = host.attach();
+  await vi.advanceTimersByTimeAsync(14_999);
+  const second = host.attach();
+  first();
+  await vi.advanceTimersByTimeAsync(1);
+  // One presenter remains, so the running deadline stands.
+  expect(nav.snapshot()).toMatchObject({
+    status: "failed",
+    reason: "timeout",
+    attempt,
+  });
+  const pending = nav.retry();
+  await vi.advanceTimersByTimeAsync(14_999);
+  second();
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(nav.snapshot().status).toBe("opening");
+  // A presenter attaching later is measured from its own start.
+  cleanups.push(host.attach());
+  await vi.advanceTimersByTimeAsync(14_999);
+  expect(nav.snapshot().status).toBe("opening");
+  await vi.advanceTimersByTimeAsync(1);
+  await expect(pending).resolves.toEqual({
+    status: "failed",
+    reason: "timeout",
   });
 });
 

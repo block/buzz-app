@@ -52,7 +52,18 @@ function fixture({
   people = [],
   unloaded = false,
   departed = false,
+  ownedBy,
+  archived = false,
+  viewerNamed = false,
+  others = [],
 }: {
+  /** Other Solo chats listed after this one in the sidebar's Chats. */
+  others?: readonly string[];
+  /** The viewer's own profile has loaded too. */
+  viewerNamed?: boolean;
+  /** Someone other than the viewer or its agent created the chat. */
+  ownedBy?: string;
+  archived?: boolean;
   /** Other people in the chat besides the viewer and its agent. */
   people?: readonly string[];
   /** The people's profiles never load, so nothing confirms they are people. */
@@ -98,10 +109,16 @@ function fixture({
     name: "Planning",
     channelType: type,
     private: true as const,
-    creator: placed ? viewer.pubkey : agent,
+    creator: ownedBy ?? (placed ? viewer.pubkey : agent),
     members: [viewer.pubkey, agent, ...people],
+    ...(archived && { archived }),
   };
-  let list = { status: "ready" as const, channels: [channel] };
+  const neighbors = others.map((other, index) => ({
+    ...channel,
+    id: other,
+    name: `Other ${index + 1}`,
+  }));
+  let list = { status: "ready" as const, channels: [channel, ...neighbors] };
   const listListeners = new Set<() => void>();
   const emitList = () => {
     for (const listener of listListeners) listener();
@@ -117,7 +134,12 @@ function fixture({
     async (action: string, _id?: string, _signal?: AbortSignal) => {
       list = {
         ...list,
-        channels: action === "archive" ? [{ ...channel, archived: true }] : [],
+        channels: [
+          ...(action === "archive"
+            ? [{ ...channel, archived: true as const }]
+            : []),
+          ...neighbors,
+        ],
       };
       emitList();
     },
@@ -146,9 +168,12 @@ function fixture({
     },
   };
   // A stable snapshot, as useSyncExternalStore requires.
-  const profiles = new Map(
-    unloaded ? [] : people.map((key) => [key, { name: "Teammate" }] as const),
-  );
+  const profiles = new Map<string, { name: string }>([
+    ...(unloaded
+      ? []
+      : people.map((key) => [key, { name: "Teammate" }] as const)),
+    ...(viewerNamed ? [[viewer.pubkey, { name: "Viewer" }] as const] : []),
+  ]);
   const session = {
     ...owner.session,
     profiles: {
@@ -286,13 +311,22 @@ function fixture({
           session={session as unknown as RelaySession}
           navigator={navigator}
           scope={scope}
-          chats={[{ id, title: "Planning" }]}
+          chats={[channel, ...neighbors].map((chat) => ({
+            id: chat.id,
+            title: chat.name,
+          }))}
           renderChat={(item) => <button type="button">{item.title}</button>}
         />
       )}
       <ChannelsPage
         relay={relay}
-        panels={{ ...contribution, register() {}, resolve: () => undefined }}
+        panels={{
+          ...contribution,
+          register() {},
+          resolve: () => undefined,
+          requestOpen: () => false,
+          handleOpenRequests: () => () => {},
+        }}
         extensions={extensions}
         navigation={navigation}
         navigator={navigator}
@@ -318,7 +352,7 @@ function fixture({
     },
   };
 }
-it("confirms Archive from the shortcut, then opens a new Solo draft", async () => {
+it("archives from the shortcut without confirmation, then opens a new Solo draft", async () => {
   const f = fixture();
   f.mount();
   await waitFor(() => expect(f.archive.current?.available()).toBe(true));
@@ -327,15 +361,8 @@ it("confirms Archive from the shortcut, then opens a new Solo draft", async () =
     id,
     expect.any(AbortSignal),
   );
-  const dialog = screen.getByRole("dialog", {
-    name: "Archive chat: Planning",
-  });
-  expect(f.run).not.toHaveBeenCalled();
-  const user = userEvent.setup();
-  await user.click(
-    within(dialog).getByRole("button", { name: "Archive chat" }),
-  );
-  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(screen.queryByRole("dialog", { name: /^Archive chat/ })).toBeNull();
+  await waitFor(() => expect(f.open).toHaveBeenCalled());
   expect(f.run).toHaveBeenCalledExactlyOnceWith(
     "archive",
     id,
@@ -400,7 +427,7 @@ it("keeps a shortcut Archive across chat activity during the permission read", a
           });
       }),
   );
-  f.mount();
+  f.mountWithToasts();
   await waitFor(() => expect(f.archive.current).toBeDefined());
   let pending: Promise<void> | undefined;
   act(() => {
@@ -411,9 +438,9 @@ it("keeps a shortcut Archive across chat activity during the permission read", a
     release();
     await pending;
   });
-  // The confirmation names the latest summary, not the one at keypress.
+  // The result names the latest summary, not the one at keypress.
   expect(
-    screen.getByRole("dialog", { name: "Archive chat: Roadmap" }),
+    await screen.findByRole("dialog", { name: "Chat archived: Roadmap" }),
   ).toBeInTheDocument();
 });
 
@@ -643,7 +670,7 @@ it("refuses an untagged send once the fresh roster has no other person", async (
 });
 
 it.each([
-  ["archive", "Archive", "Archive chat: Planning"],
+  ["archive", "Archive chat", undefined],
   ["delete", "Delete chat", "Delete Planning?"],
 ] as const)(
   "runs %s from Chat actions, then opens a new Solo draft",
@@ -655,12 +682,12 @@ it.each([
       await screen.findByRole("button", { name: "Chat actions" }),
     );
     await user.click(await screen.findByRole("menuitem", { name: label }));
-    const dialog = screen.getByRole("dialog", { name: title });
-    await user.click(
-      within(dialog).getByRole("button", {
-        name: action === "archive" ? "Archive chat" : label,
-      }),
-    );
+    // Archive is undoable from its result toast, so only Delete confirms.
+    if (title) {
+      const dialog = screen.getByRole("dialog", { name: title });
+      await user.click(within(dialog).getByRole("button", { name: label }));
+    }
+    await waitFor(() => expect(f.run).toHaveBeenCalled());
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(f.run).toHaveBeenCalledExactlyOnceWith(
       action,
@@ -685,13 +712,10 @@ it.each([
     await user.click(
       await screen.findByRole("button", { name: "Actions for Planning" }),
     );
-    await user.click(await screen.findByRole("menuitem", { name: "Archive" }));
-    const dialog = await screen.findByRole("dialog", {
-      name: "Archive chat: Planning",
-    });
     await user.click(
-      within(dialog).getByRole("button", { name: "Archive chat" }),
+      await screen.findByRole("menuitem", { name: "Archive chat" }),
     );
+    await waitFor(() => expect(f.run).toHaveBeenCalled());
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(f.run).toHaveBeenCalledExactlyOnceWith(
       "archive",
@@ -701,6 +725,37 @@ it.each([
     if (open)
       expect(f.open).toHaveBeenCalledExactlyOnceWith(soloDraftTarget(f.scope));
     else expect(f.open).not.toHaveBeenCalled();
+  },
+);
+
+it.each([
+  ["Chat actions", "archive", "Archive chat", undefined],
+  ["Chat actions", "delete", "Delete chat", "Delete Planning?"],
+  ["Actions for Planning", "archive", "Archive chat", undefined],
+] as const)(
+  "from %s, %s leaves the open chat for its sidebar neighbor",
+  async (trigger, action, label, title) => {
+    const other = "22222222-2222-4222-8222-222222222222";
+    const f = fixture({ others: [other] });
+    f.mountWithSidebar();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: trigger }));
+    await user.click(await screen.findByRole("menuitem", { name: label }));
+    // Archive is undoable from its result toast, so only Delete confirms.
+    if (title) {
+      const dialog = await screen.findByRole("dialog", { name: title });
+      await user.click(within(dialog).getByRole("button", { name: label }));
+    }
+    await waitFor(() => expect(f.open).toHaveBeenCalled());
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(f.run).toHaveBeenCalledExactlyOnceWith(
+      action,
+      id,
+      expect.any(AbortSignal),
+    );
+    expect(f.open).toHaveBeenCalledExactlyOnceWith(
+      conversationTarget(f.scope, other),
+    );
   },
 );
 
@@ -721,14 +776,13 @@ it("offers the same chat actions from the header and the sidebar row", async () 
   };
   const header = await items("Chat actions");
   expect(header).toEqual([
-    "Share",
-    "Rename",
-    "Convert to channel",
+    "Chat settings",
     "Move to",
-    "Copy",
-    "Archive",
+    "Share access",
+    "Copy link",
+    "Convert to channel",
+    "Archive chat",
     "Delete chat",
-    "Chat settings…",
   ]);
   expect(await items("Actions for Planning")).toEqual(header);
 });
@@ -748,9 +802,9 @@ it("runs the header's own chat actions and returns focus to Chat actions", async
   await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
   await user.click(trigger);
   await user.click(
-    await screen.findByRole("menuitem", { name: "Chat settings…" }),
+    await screen.findByRole("menuitem", { name: "Chat settings" }),
   );
-  const dialog = await screen.findByRole("dialog", { name: "Chat settings" });
+  const dialog = await screen.findByRole("dialog", { name: "Edit chat" });
   await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   await waitFor(() => expect(trigger).toHaveFocus());
@@ -818,7 +872,9 @@ it("returns focus to Chat actions when its confirmation is cancelled", async () 
   const user = userEvent.setup();
   const trigger = await screen.findByRole("button", { name: "Chat actions" });
   await user.click(trigger);
-  await user.click(await screen.findByRole("menuitem", { name: "Archive" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Delete chat" }),
+  );
   await user.click(screen.getByRole("button", { name: "Cancel" }));
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(trigger).toHaveFocus();
@@ -826,19 +882,63 @@ it("returns focus to Chat actions when its confirmation is cancelled", async () 
   expect(f.open).not.toHaveBeenCalled();
 });
 
-it("opens Chat settings from the heading and restores keyboard focus without navigating", async () => {
+it("keeps Chat settings in the chat actions menu, not as a separate heading button", async () => {
   const f = fixture();
   f.mount();
+  await screen.findByRole("button", { name: "Chat actions" });
+  expect(screen.queryByRole("button", { name: "Chat settings" })).toBeNull();
+});
+
+it("names the owner on the access controls of someone else's shared chat", async () => {
+  const person = "e".repeat(64);
+  const f = fixture({ placed: false, ownedBy: person, people: [person] });
+  f.mountWithSidebar();
   const user = userEvent.setup();
-  const trigger = await screen.findByRole("button", { name: "Chat settings" });
-  expect(trigger).not.toHaveAttribute("aria-haspopup", "menu");
-  trigger.focus();
-  await user.keyboard("{Enter}");
-  const dialog = await screen.findByRole("dialog", { name: "Chat settings" });
-  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  // The owner's avatar stands in for the people icon on both controls.
+  const header = await screen.findByRole("button", {
+    name: "Share access, Teammate’s chat",
+  });
+  expect(header).toHaveTextContent("T");
+  await user.hover(header);
+  expect(await screen.findByRole("tooltip")).toHaveTextContent(
+    "Teammate’s chat",
+  );
+  const mark = screen.getByRole("button", { name: "Teammate’s chat" });
+  expect(mark).toHaveTextContent("T");
+  await user.click(mark);
+  expect(
+    await screen.findByRole("dialog", { name: /Share access/ }),
+  ).toBeInTheDocument();
+  // Closing returns focus to the mark, not the row's select button.
+  await user.keyboard("{Escape}");
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-  await waitFor(() => expect(trigger).toHaveFocus());
-  expect(f.open).not.toHaveBeenCalled();
+  expect(mark).toHaveFocus();
+});
+
+it.each([
+  ["the viewer's own chat", { people: ["e".repeat(64)], viewerNamed: true }],
+  [
+    "a chat whose owner's profile has not loaded",
+    {
+      placed: false,
+      ownedBy: "e".repeat(64),
+      people: ["e".repeat(64)],
+      unloaded: true,
+    },
+  ],
+])("names no owner on %s", async (_, options) => {
+  fixture(options).mountWithSidebar();
+  expect(
+    await screen.findByRole("button", { name: "Share access" }),
+  ).toBeInTheDocument();
+  expect(screen.queryByText(/’s chat/)).toBeNull();
+});
+
+it("marks an archived chat once and keeps only its lifecycle actions", async () => {
+  fixture({ archived: true }).mount();
+  await screen.findByRole("button", { name: "Chat actions" });
+  expect(screen.getAllByText("Archived")).toHaveLength(1);
+  expect(screen.queryByRole("button", { name: "Share access" })).toBeNull();
 });
 
 it("does not recreate a consumed linked draft on history navigation", () => {
@@ -872,15 +972,4 @@ it("finishes a linked chat across roster updates without appending source prose"
   expect(f.send.mock.calls[0]?.[1]).not.toContain("Source:");
   expect(f.session.channelWrites.start).toHaveBeenCalledOnce();
   expect(f.send.mock.calls[0]?.[1]).toContain(source.link);
-});
-
-it("opens the existing chat name editor from Rename", async () => {
-  const f = fixture();
-  f.mount();
-  const user = userEvent.setup();
-  await user.click(await screen.findByRole("button", { name: "Chat actions" }));
-  await user.click(await screen.findByRole("menuitem", { name: "Rename" }));
-  expect(
-    await screen.findByRole("dialog", { name: "Chat settings" }),
-  ).toBeVisible();
 });

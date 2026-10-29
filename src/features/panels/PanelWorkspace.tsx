@@ -35,9 +35,13 @@ type Item = {
   /** A blank name restores the tab's own title. */
   rename?: ((name: string) => void) | undefined;
   actions?: readonly TabAction[] | undefined;
+  /** Header icon actions for this tab's content, shown while it is selected. */
+  toolbar?: ReactNode;
 };
 type Identity = { label: string; icon?: ReactNode };
-type Local = { id: string; label: string; owner: string; close(): void };
+/** `keepOwner`: the owner stays open; only its detail tabs are cleared. */
+type Close = (options?: { keepOwner?: boolean }) => void;
+type Local = { id: string; label: string; owner: string; close: Close };
 const TabHost = createContext<{
   owner: string;
   register(tab: Local): () => void;
@@ -224,25 +228,30 @@ export function PanelWorkspace({
     };
     // Tab switching stays focus-owned; Close can fall back from the permanent
     // main conversation to the selected visible side tab.
-    const owns = () => {
+    const source = (event: Event) =>
+      event.target instanceof Element ? event.target : document.activeElement;
+    const owns = (event: Event) => {
       const element = root.current;
       return (
         visible() &&
-        (document.activeElement?.closest(
+        (source(event)?.closest(
           "[data-panel-workspace], [data-main-workspace]",
-        ) ?? (main ? null : element)) === element
+        ) ?? (main || event.target instanceof Element ? null : element)) ===
+          element
       );
     };
     const close = (event: Event) => {
-      const focusedMain = document.activeElement?.closest(
-        "[data-main-workspace]",
-      );
+      const focusedMain = source(event)?.closest("[data-main-workspace]");
       const fallback =
         !main &&
         visible() &&
         focusedMain &&
         !focusedMain.hasAttribute("data-active-tab-closable");
-      if (event.defaultPrevented || !active?.close || (!owns() && !fallback))
+      if (
+        event.defaultPrevented ||
+        !active?.close ||
+        (!owns(event) && !fallback)
+      )
         return;
       event.preventDefault();
       const keptFocus = fallback ? document.activeElement : null;
@@ -258,7 +267,7 @@ export function PanelWorkspace({
     };
     // Ctrl+Tab and Ctrl+Shift+Tab, from the native menu or desktop shortcut.
     const step = (delta: -1 | 1) => (event: Event) => {
-      if (event.defaultPrevented || tabs.length < 2 || !owns()) return;
+      if (event.defaultPrevented || tabs.length < 2 || !owns(event)) return;
       event.preventDefault();
       const index = tabs.findIndex((tab) => tab.id === selected);
       const target = tabs[(index + delta + tabs.length) % tabs.length];
@@ -342,6 +351,7 @@ export function PanelWorkspace({
         ? { "data-main-workspace": "" }
         : { "data-panel-workspace": "" })}
       data-active-tab-closable={!!active?.close || undefined}
+      data-overlay-boundary=""
       className={styles.workspace}
       ref={(element) => {
         root.current = element;
@@ -376,7 +386,16 @@ export function PanelWorkspace({
       }}
     >
       <PanelHeader
-        actions={actions}
+        actions={
+          active && "toolbar" in active && active.toolbar ? (
+            <>
+              {active.toolbar}
+              {actions}
+            </>
+          ) : (
+            actions
+          )
+        }
         title={
           <Tabs
             label={label}
@@ -422,7 +441,7 @@ export function PanelWorkspace({
                     if (!closed && !details.length) return false;
                     // Focus follows the chosen detail's removal to its owner.
                     if (local) closingTab.current = local.id;
-                    for (const tab of details) tab.close();
+                    for (const tab of details) tab.close({ keepOwner: true });
                     return true;
                   }),
               }
@@ -528,7 +547,7 @@ export function PanelLocalTab({
   children,
 }: {
   title: string;
-  close(): void;
+  close: Close;
   children: ReactNode;
 }) {
   const host = usePanelTabHost();
@@ -543,7 +562,7 @@ export function PanelLocalTab({
       id,
       label: title,
       owner,
-      close: () => onClose.current(),
+      close: (options) => onClose.current(options),
     });
   }, [register, owner, id, title]);
   const slot = host?.slots.get(id);

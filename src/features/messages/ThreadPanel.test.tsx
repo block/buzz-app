@@ -89,10 +89,12 @@ vi.mock("./MessageComposer", () => ({
     disabled,
     placeholder,
     focusRequest,
+    threadSeed,
   }: MessageComposerProps) => (
     <section
       aria-label="Composer"
       data-root={threadRootId}
+      data-seed={threadSeed?.mentions.join(",")}
       data-channel={channelId}
       data-scope={scope}
       data-own-solo={ownSoloConversation}
@@ -1004,6 +1006,69 @@ it.each([
     );
   },
 );
+const composerSeed = () =>
+  screen.getByRole("region", { name: "Composer" }).getAttribute("data-seed");
+it("passes the viewer's latest message in the thread as the composer seed", () => {
+  const h = messagesHarness();
+  h.snapshot.root = { ...row, authorId: viewer, mentions: ["d".repeat(64)] };
+  h.snapshot.replies = [
+    { ...row, id: "r1", createdAt: 2, mentions: ["e".repeat(64)] },
+    {
+      ...row,
+      id: "r2",
+      createdAt: 3,
+      authorId: viewer,
+      mentions: ["f".repeat(64)],
+    },
+    { ...row, id: "r3", createdAt: 4, mentions: ["g".repeat(64)] },
+  ];
+  h.render();
+  expect(composerSeed()).toBe("f".repeat(64));
+});
+it("seeds from the viewer's reply in someone else's thread", () => {
+  const h = messagesHarness();
+  h.snapshot.root = { ...row, mentions: ["d".repeat(64)] };
+  h.snapshot.replies = [
+    {
+      ...row,
+      id: "r1",
+      createdAt: 2,
+      authorId: viewer,
+      mentions: ["e".repeat(64)],
+    },
+  ];
+  h.render();
+  expect(composerSeed()).toBe("e".repeat(64));
+});
+it.each([
+  {
+    author: "a workflow the viewer owns",
+    root: { ...row, workflowOwnerId: viewer },
+  },
+  { author: "another user", root: row },
+])(
+  "passes no seed for a thread the viewer never wrote in, rooted by $author",
+  ({ root }) => {
+    const h = messagesHarness();
+    h.snapshot.root = { ...root, mentions: ["d".repeat(64)] };
+    h.snapshot.replies = [
+      { ...row, id: "r1", createdAt: 2, mentions: ["e".repeat(64)] },
+    ];
+    h.render();
+    expect(composerSeed()).toBeNull();
+  },
+);
+it("passes no seed until the first page lands", () => {
+  const h = messagesHarness();
+  h.snapshot.status = "loading";
+  h.snapshot.root = { ...row, authorId: viewer, mentions: ["d".repeat(64)] };
+  h.render();
+  expect(screen.getByRole("region", { name: "Composer" })).toBeVisible();
+  expect(composerSeed()).toBeNull();
+  h.snapshot.status = "ready";
+  h.render();
+  expect(composerSeed()).toBe("d".repeat(64));
+});
 it.each([
   { gap: 79, follows: true },
   { gap: 80, follows: false },
@@ -1145,6 +1210,8 @@ it.each(["ready", "unavailable", "error"] as const)(
 it("a presented ordinary thread survives the real navigation deadline while history is pending", async () => {
   vi.useFakeTimers();
   const controller = createNavigationController(createMemoryHistory());
+  // The visit deadline runs only while a presenter is attached, as the app's is.
+  controller.attach();
   let release = () => {};
   try {
     const navigation = ordinaryNavigation();
@@ -1338,6 +1405,21 @@ it("inline Inbox reveal opts into exact reader and composes origin action withou
   expect(
     within(thread).getByRole("region", { name: "Thread messages" }),
   ).not.toHaveAttribute("data-positioning");
+});
+
+it("names the conversation a thread lives in as a link, only when its host can open it there", () => {
+  const h = messagesHarness();
+  const open = vi.fn();
+  const view = render(
+    <ThreadPanel {...h.props} parent={{ label: "#Alpha", open }} />,
+  );
+  const thread = screen.getByRole("complementary", { name: "Thread" });
+  const link = within(thread).getByRole("button", { name: "#Alpha" });
+  expect(link.closest("p")).toHaveTextContent("In #Alpha");
+  fireEvent.click(link);
+  expect(open).toHaveBeenCalledOnce();
+  view.rerender(<ThreadPanel {...h.props} />);
+  expect(within(thread).queryByText("#Alpha")).toBeNull();
 });
 
 it("passes readiness and direct Activity through to thread composition, and gives a Solo thread none", () => {
@@ -1655,6 +1737,67 @@ it("a retained reader reveals its exact selected message, again for each new req
   h.rerenderProps();
   await new Promise((resolve) => setTimeout(resolve, 50));
   expect(revealedReply()).toBe(false);
+});
+
+it("a new reveal request reopens a branch the reader collapsed, and live updates leave it closed", async () => {
+  const h = messagesHarness();
+  const reply = (id: string, content: string, replyParentId: string) => ({
+    ...row,
+    id: id.repeat(64),
+    content,
+    replyParentId,
+    createdAt: 2,
+  });
+  const parent = reply("d", "the parent", row.id);
+  const first = reply("e", "first child", parent.id);
+  const second = reply("f", "second child", parent.id);
+  h.snapshot.replies = [parent, first, second];
+  h.snapshot.target = first;
+  h.snapshot.targetStatus = "ready";
+  const props = h.props as ThreadPanelProps;
+  Object.assign(props, {
+    messageId: first.id,
+    retainThread: true,
+    revealSelected: true,
+    revealRequest: 1,
+  });
+  h.render();
+  const shown = (message: ChannelMessage) =>
+    h.element.querySelector(`[data-message-id="${message.id}"]`);
+  const collapse = () => {
+    fireEvent.click(screen.getByRole("button", { name: "Collapse 2 replies" }));
+    expect(shown(first)).toBeNull();
+  };
+  const revealed = async (message: ChannelMessage) => {
+    await waitFor(() => expect(shown(message)).toHaveFocus());
+    expect(
+      vi
+        .mocked(HTMLElement.prototype.scrollIntoView)
+        .mock.contexts.some(
+          (context) =>
+            (context as HTMLElement).dataset.messageId === message.id,
+        ),
+    ).toBe(true);
+    vi.mocked(HTMLElement.prototype.scrollIntoView).mockClear();
+  };
+  await revealed(first);
+  collapse();
+  // An ordinary live update within the same request keeps the branch closed.
+  h.snapshot.replies = [parent, first, second, reply("9", "later", row.id)];
+  h.render();
+  expect(screen.getByText("later")).toBeInTheDocument();
+  expect(shown(first)).toBeNull();
+  // The same message requested again reopens its branch.
+  props.revealRequest = 2;
+  h.rerenderProps();
+  await revealed(first);
+  collapse();
+  // So does a request for another reply in that branch.
+  h.snapshot.target = second;
+  h.render();
+  Object.assign(props, { messageId: second.id, revealRequest: 3 });
+  h.rerenderProps();
+  await revealed(second);
 });
 
 it("an unrouted retained opening retries allocation locally", () => {

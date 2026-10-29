@@ -1,4 +1,5 @@
 import { canonicalDetailsName } from "./channel-details-protocol";
+import { exactLifecycleTag } from "./channel-lifecycle-protocol";
 import { channelIdentityUnsupported, channelLabelTags } from "./channel-labels";
 import { SOLO_NAMED_LABEL, SOLO_LABEL } from "../solo/labels";
 import type { Outbox } from "./outbox";
@@ -341,9 +342,15 @@ export function createChannelWrites(
       );
     return channel;
   }
-  /** Channel IDs whose relay-signed roster lists `pubkey`, as far as this viewer
-   * may read. Throws rather than return a possibly truncated set. */
-  async function memberChannels(pubkey: string, caller: AbortSignal) {
+  /** Unarchived channel IDs among `candidates` and those whose relay-signed
+   * roster lists `pubkey`, as far as this viewer may read. The relay refuses
+   * membership changes in an archived channel, where a membership is inert.
+   * Throws rather than return a possibly truncated set. */
+  async function memberChannels(
+    pubkey: string,
+    caller: AbortSignal,
+    candidates: Iterable<string>,
+  ) {
     if (!relayAuthor) throw new Error("Channel membership is unavailable.");
     const limit = 500;
     const events = await discovery.read(
@@ -364,7 +371,7 @@ export function createChannelWrites(
     );
     if (events.length >= limit)
       throw new Error("Too many channels to confirm. Retry later.");
-    const ids = new Set<string>();
+    const ids = new Set(candidates);
     for (const event of events) {
       const id = event.tags.find(([name]) => name === "d")?.[1];
       if (
@@ -374,6 +381,33 @@ export function createChannelWrites(
         event.tags.some(([name, value]) => name === "p" && value === pubkey)
       )
         ids.add(id);
+    }
+    if (!ids.size) return [];
+    const metadata = await discovery.read(
+      [
+        {
+          kinds: [39000],
+          authors: [relayAuthor],
+          "#d": [...ids],
+          limit: ids.size,
+          consistency: "strong",
+        },
+      ],
+      {
+        signal: AbortSignal.any([signal, caller]),
+        fresh: true,
+        priority: "foreground",
+      },
+    );
+    for (const event of metadata) {
+      const id = event.tags.find(([name]) => name === "d")?.[1];
+      if (
+        id &&
+        event.kind === 39000 &&
+        event.pubkey === relayAuthor &&
+        exactLifecycleTag(event, "archived") === "true"
+      )
+        ids.delete(id);
     }
     return [...ids];
   }
@@ -612,6 +646,8 @@ export function createChannelWrites(
       ttlSeconds?: number,
       named = false,
       members: readonly string[] = [],
+      active?: () => boolean,
+      labels: readonly string[] = [],
     ) {
       writer();
       identifier(id);
@@ -626,21 +662,27 @@ export function createChannelWrites(
           ttlSeconds > 2_147_483_647)
       )
         throw new Error("Choose a valid chat duration.");
-      return writer().send({
-        kind: 9007,
-        content: "",
-        tags: [
-          ["h", id],
-          ["name", title],
-          ["visibility", "private"],
-          ["channel_type", "stream"],
-          ...(ttlSeconds !== undefined ? [["ttl", String(ttlSeconds)]] : []),
-          ...channelLabelTags(
-            named ? [SOLO_LABEL, SOLO_NAMED_LABEL] : [SOLO_LABEL],
-          ),
-          ...[...new Set(members)].map((key) => ["p", key]),
-        ],
-      });
+      return writer().send(
+        {
+          kind: 9007,
+          content: "",
+          tags: [
+            ["h", id],
+            ["name", title],
+            ["visibility", "private"],
+            ["channel_type", "stream"],
+            ...(ttlSeconds !== undefined ? [["ttl", String(ttlSeconds)]] : []),
+            ...channelLabelTags([
+              SOLO_LABEL,
+              ...(named ? [SOLO_NAMED_LABEL] : []),
+              ...labels,
+            ]),
+            ...[...new Set(members)].map((key) => ["p", key]),
+          ],
+        },
+        undefined,
+        active,
+      );
     },
     /** Starts a Solo chat whose create names its `members`. It lists at once
      * as pending; `ready` settles once the relay OKs the create, which adds the
@@ -656,13 +698,26 @@ export function createChannelWrites(
       /** The chat's Canvas, and the work that saves it once the chat
        * exists; nothing waits for it, and a failure leaves a working chat. */
       setup?: { canvas: string; apply(): Promise<unknown> },
+      options?: { labels?: readonly string[]; active?: () => boolean },
     ) {
-      const create = api.create(id, title, ttlSeconds, named, members);
+      const create = api.create(
+        id,
+        title,
+        ttlSeconds,
+        named,
+        members,
+        options?.active,
+        options?.labels,
+      );
       channels.start?.({
         id,
         name: title,
         members,
-        labels: named ? [SOLO_LABEL, SOLO_NAMED_LABEL] : [SOLO_LABEL],
+        labels: [
+          SOLO_LABEL,
+          ...(named ? [SOLO_NAMED_LABEL] : []),
+          ...(options?.labels ?? []),
+        ],
         ttlSeconds,
       });
       // The relay adds the members in the create, so the chat takes events

@@ -10,6 +10,7 @@ import type {
   SessionUsage,
 } from "../../features/agents/service";
 import { loadPrices } from "./pricing";
+import { since } from "./stats";
 import { UsagePage } from "./UsagePage";
 
 vi.mock("./pricing", async (actual) => {
@@ -31,6 +32,7 @@ const owner = "f".repeat(64);
 const root = "e".repeat(64);
 const agent = (name: string, type = "buzz.claude-code/claude"): Agent =>
   ({
+    key: name.padEnd(64, "0"),
     pubkey: name.padEnd(64, "0"),
     name,
     type,
@@ -141,9 +143,9 @@ it("summarises the agents' spend and opens a costly session's thread", async () 
     ),
   ).toBeTruthy();
   expect(reads).toHaveLength(2);
-  // 30 days back, what Claude Code keeps by default.
-  expect(Date.now() - (reads[0]?.since ?? 0)).toBeGreaterThan(29 * 86_400_000);
-  expect(Date.now() - (reads[0]?.since ?? 0)).toBeLessThan(30 * 86_400_000);
+  // 30 days back, what Claude Code keeps by default: local midnight 29 days
+  // ago, which is not 29 × 24 h before now across a daylight-saving change.
+  expect(reads[0]?.since).toBe(since(Date.now()));
   const hero = screen.getByRole("region", { name: "Estimated cost" });
   expect(within(hero).getByText("$4.00")).toBeTruthy();
   // The daily figures are in a table for assistive technology.
@@ -166,6 +168,77 @@ it("summarises the agents' spend and opens a costly session's thread", async () 
   });
 });
 
+it("waits for every agent before its totals, and shows each agent read meanwhile", async () => {
+  const pixel = agent("Pixel");
+  let finish = () => {};
+  const slow = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  render(
+    <UsagePage
+      agents={host([pixel, agent("Relay")], async (target) => {
+        if (target === pixel) return [session("a", 750_000)];
+        await slow;
+        return [session("b", 250_000)];
+      })}
+      open={vi.fn()}
+    />,
+  );
+  // A quick read would show its result without a loading state first.
+  expect(screen.getByText("Reading your agents’ sessions…")).toBeTruthy();
+  expect(
+    await screen.findByText(
+      "Reading your agents’ sessions: 1 of 2 done…",
+      {},
+      { timeout: 2000 },
+    ),
+  ).toBeTruthy();
+  const hero = screen.getByRole("region", { name: "Estimated cost" });
+  expect(within(hero).getByText("—")).toBeTruthy();
+  expect(screen.getByText("Shown once every agent is read.")).toBeTruthy();
+  const rows = screen
+    .getAllByRole("listitem")
+    .map((row) => row.textContent ?? "");
+  expect(
+    rows.some((row) => row.includes("Pixel") && row.includes("$3.00")),
+  ).toBe(true);
+  expect(
+    rows.some((row) => row.includes("Relay") && row.includes("Reading…")),
+  ).toBe(true);
+  finish();
+  expect(
+    await screen.findByText(
+      summary(
+        "Your 2 agents ran 2 sessions in the last 30 days. Pixel accounts for 75% of the cost, mostly on Claude Opus 5.5.",
+      ),
+    ),
+  ).toBeTruthy();
+  expect(within(hero).getByText("$4.00")).toBeTruthy();
+});
+
+it("tries a failed read once more before reporting it", async () => {
+  let reads = 0;
+  render(
+    <UsagePage
+      agents={host([agent("Pixel")], async () => {
+        reads += 1;
+        if (reads === 1) throw new Error("busy");
+        return [session("a", 250_000)];
+      })}
+      open={vi.fn()}
+    />,
+  );
+  expect(
+    await screen.findByText(
+      summary("Pixel ran 1 session in the last 30 days."),
+      {},
+      { timeout: 2000 },
+    ),
+  ).toBeTruthy();
+  expect(reads).toBe(2);
+  expect(screen.queryByText(/Couldn’t read/)).toBeNull();
+});
+
 it("names the agents it could not read and reads them again", async () => {
   let fail = true;
   let reads = 0;
@@ -180,8 +253,10 @@ it("names the agents it could not read and reads them again", async () => {
     />,
   );
   expect((await screen.findByRole("status")).textContent).toContain(
-    "Couldn’t read the sessions of Pixel.",
+    "Couldn’t read the sessions of Pixel: no workspace.",
   );
+  // Tried once more before it was reported, as each Try again is.
+  expect(reads).toBe(2);
   // A failed read is no evidence of an empty period; filters stay reachable.
   expect(screen.getByText("No sessions read")).toBeTruthy();
   expect(screen.queryByText("No sessions in this period")).toBeNull();
@@ -191,7 +266,7 @@ it("names the agents it could not read and reads them again", async () => {
   const retry = screen.getByRole("button", { name: "Try again" });
   retry.focus();
   await user.keyboard("{Enter}");
-  await vi.waitFor(() => expect(reads).toBe(2));
+  await vi.waitFor(() => expect(reads).toBe(4), { timeout: 2000 });
   await vi.waitFor(() => expect(retry.getAttribute("aria-busy")).toBeNull());
   expect(document.activeElement).toBe(retry);
   // One that succeeds removes it, and the keyboard moves to Refresh.
@@ -203,6 +278,53 @@ it("names the agents it could not read and reads them again", async () => {
     ),
   ).toBeTruthy();
   expect(screen.queryByRole("status")).toBeNull();
+  expect(document.activeElement).toBe(
+    screen.getByRole("button", { name: "Refresh usage" }),
+  );
+});
+
+it("keeps the keyboard on Try again until every agent it reads again is read", async () => {
+  const pixel = agent("Pixel");
+  let fail = true;
+  let held: Promise<void> | undefined;
+  let finish = () => {};
+  render(
+    <UsagePage
+      agents={host([pixel, agent("Relay")], async (target) => {
+        if (target === pixel) {
+          if (fail) throw new Error("no workspace");
+          return [session("a", 750_000)];
+        }
+        await held;
+        return [session("b", 250_000)];
+      })}
+      open={vi.fn()}
+    />,
+  );
+  const retry = await screen.findByRole(
+    "button",
+    { name: "Try again" },
+    { timeout: 2000 },
+  );
+  // Pixel now reads at once, while Relay is held.
+  fail = false;
+  held = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  retry.focus();
+  await userEvent.setup().keyboard("{Enter}");
+  // Pixel's read is shown; it stays named as failed until Relay's ends.
+  expect(
+    await screen.findByText(
+      summary(
+        "Your 2 agents ran 2 sessions in the last 30 days. Pixel accounts for 75% of the counted cost, mostly on Claude Opus 5.5.",
+      ),
+    ),
+  ).toBeTruthy();
+  expect(retry.isConnected).toBe(true);
+  expect(document.activeElement).toBe(retry);
+  finish();
+  await vi.waitFor(() => expect(screen.queryByRole("status")).toBeNull());
   expect(document.activeElement).toBe(
     screen.getByRole("button", { name: "Refresh usage" }),
   );
@@ -257,6 +379,48 @@ it("reads again when an agent is renamed or reconfigured", async () => {
     for (const listener of listeners) listener();
   });
   await vi.waitFor(() => expect(names).toEqual(["Pixel", "Pix"]));
+});
+
+it("reads the same agent apart in another community, without the first's sessions", async () => {
+  const pixel = agent("Pixel");
+  const there = {
+    ...pixel,
+    key: `${pixel.pubkey}@other.example.com`,
+    relay: "wss://other.example.com",
+  };
+  const read: string[] = [];
+  let listeners: (() => void)[] = [];
+  const agents = host([pixel], async (target) => {
+    read.push(target.key);
+    // Its read in the other community is still under way.
+    return target === pixel ? [session("a", 750_000)] : new Promise(() => {});
+  });
+  let snapshot = agents.snapshot();
+  const live = {
+    ...agents,
+    snapshot: () => snapshot,
+    types: agents.types,
+    subscribe: (listener: () => void) => {
+      listeners.push(listener);
+      return () => {
+        listeners = listeners.filter((entry) => entry !== listener);
+      };
+    },
+  } as unknown as Agents;
+  render(<UsagePage agents={live} open={vi.fn()} />);
+  expect(
+    await screen.findByText(
+      summary("Pixel ran 1 session in the last 30 days."),
+    ),
+  ).toBeTruthy();
+  snapshot = { ...snapshot, agents: [there], running: [there] };
+  act(() => {
+    for (const listener of listeners) listener();
+  });
+  await vi.waitFor(() => expect(read).toEqual([pixel.key, there.key]));
+  expect(
+    screen.queryByText(summary("Pixel ran 1 session in the last 30 days.")),
+  ).toBeNull();
 });
 
 it("drops a filter whose agent is gone", async () => {
@@ -361,7 +525,7 @@ it("keeps showing what it read before when a refresh fails", async () => {
   fail = true;
   await userEvent.click(screen.getByRole("button", { name: "Refresh usage" }));
   expect((await screen.findByRole("status")).textContent).toContain(
-    "Couldn’t read the sessions of Pixel; showing what was read before.",
+    "Couldn’t read the sessions of Pixel: no workspace. Showing what was read before.",
   );
   expect(
     within(screen.getByRole("region", { name: "Estimated cost" })).getByText(
@@ -464,7 +628,7 @@ it("compares nothing while an agent it shows could not be read", async () => {
     />,
   );
   expect((await screen.findByRole("status")).textContent).toContain(
-    "Couldn’t read the sessions of Relay.",
+    "Couldn’t read the sessions of Relay: no workspace.",
   );
   const user = userEvent.setup();
   await user.click(screen.getByRole("combobox", { name: "Period" }));

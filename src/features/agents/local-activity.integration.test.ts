@@ -77,10 +77,14 @@ it("carries a verified mention through host handover into all three scopes witho
     port: vi.fn(),
     setPicture: vi.fn(),
     setType: vi.fn(),
+    join: vi.fn(),
+    beginLeave: vi.fn(),
     media: vi.fn(),
     gitAuth: vi.fn(),
     create: vi.fn(),
     rename: vi.fn(),
+    holdRemoval: vi.fn(),
+    releaseRemoval: vi.fn(),
     remove: vi.fn(),
     forget: vi.fn(),
     publish: vi.fn(),
@@ -91,6 +95,7 @@ it("carries a verified mention through host handover into all three scopes witho
     publishProfile: vi.fn(async () => {}),
     claim: vi.fn(async () => true),
     release: vi.fn(async () => {}),
+    keepAwake: vi.fn(async () => {}),
   };
   const service = new AgentsService(
     ctx,

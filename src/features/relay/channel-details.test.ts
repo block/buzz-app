@@ -169,6 +169,59 @@ it("revoked authority while signing prevents publication", async () => {
   );
   expect(h.publish).not.toHaveBeenCalled();
 });
+it("publishes no edit once the caller's guard turns false during signing", async () => {
+  const h = harness();
+  const base = await h.owner.capability.load(id);
+  let eligible = true;
+  const active = vi.fn(() => eligible);
+  h.sign.mockImplementationOnce(async (event) => {
+    eligible = false;
+    return finalizeEvent(structuredClone(event), key);
+  });
+  const error = await h.owner.capability
+    .save(base, draft, undefined, active)
+    .catch((error: unknown) => error);
+  expect(error).toMatchObject({ name: "AbortError" });
+  expect(active).toHaveBeenCalled();
+  expect(h.publish).not.toHaveBeenCalled();
+  // Nothing reached the relay, so no unconfirmed attempt blocks a later eligible save.
+  expect(h.owner.capability.snapshot(id)).toBeUndefined();
+  await h.owner.capability.save(base, draft);
+  expect(h.publish).toHaveBeenCalledOnce();
+});
+it("checks the guard only after the final re-authorization read settles", async () => {
+  const h = harness();
+  const base = await h.owner.capability.load(id);
+  let eligible = true;
+  const active = vi.fn(() => eligible);
+  const started = deferred<void>(),
+    gate = deferred<void>();
+  h.sign.mockImplementationOnce(async (event) => {
+    h.read.mockImplementationOnce(async () => {
+      started.resolve();
+      await gate.promise;
+      return h.events();
+    });
+    return finalizeEvent(structuredClone(event), key);
+  });
+  const saving = h.owner.capability
+    .save(base, draft, undefined, active)
+    .catch((error: unknown) => error);
+  try {
+    await started.promise;
+    expect(active).not.toHaveBeenCalled();
+    eligible = false;
+  } finally {
+    gate.resolve();
+  }
+  expect(await saving).toMatchObject({ name: "AbortError" });
+  expect(active).toHaveBeenCalledOnce();
+  expect(h.publish).not.toHaveBeenCalled();
+  eligible = true;
+  await h.owner.capability.save(base, draft, undefined, active);
+  expect(h.publish).toHaveBeenCalledOnce();
+  expect(h.owner.capability.snapshot(id)).toBeUndefined();
+});
 it("stale edit bases fail before signing", async () => {
   const h = harness();
   const base = await h.owner.capability.load(id);
@@ -892,4 +945,57 @@ it("refuses chosen-name label overflow before signing and retains the existing l
   ).rejects.toThrow("at most 8");
   expect(h.sign).not.toHaveBeenCalled();
   expect((await h.owner.capability.load(id)).labels).toEqual(labels);
+});
+
+it.each([false, true])(
+  "keeps region labels during label replacement, including rename=%s",
+  async (rename) => {
+    const h = harness("owner", true);
+    const region = "buzz.region:example:work";
+    h.set([
+      h.metadata("Original", "", "private", "stream", [SOLO_LABEL, region]),
+      ...h.events().slice(1),
+    ]);
+    const base = await h.owner.capability.load(id);
+    const name = rename ? "Renamed" : "Original";
+    const expected = [
+      SOLO_LABEL,
+      "new-label",
+      region,
+      ...(rename ? [SOLO_NAMED_LABEL] : []),
+    ];
+    h.publish.mockImplementationOnce(async () =>
+      h.set([
+        h.metadata(name, "", "private", "stream", expected),
+        ...h.events().slice(1),
+      ]),
+    );
+    await h.owner.capability.save(base, {
+      ...base,
+      name,
+      labels: [SOLO_LABEL, "new-label"],
+    });
+    expect(
+      h.sign.mock.calls[0]?.[0].tags.filter(([tag]) => tag === "t"),
+    ).toEqual(expected.map((label) => ["t", label]));
+    expect((await h.owner.capability.load(id)).labels).toEqual(expected);
+  },
+);
+
+it("keeps a region label when an editor replaces the label set with empty", async () => {
+  const h = harness("owner", true);
+  const region = "buzz.region:example:work";
+  h.set([
+    h.metadata("Original", "", "private", "stream", [SOLO_LABEL, region]),
+    ...h.events().slice(1),
+  ]);
+  const base = await h.owner.capability.load(id);
+  h.publish.mockImplementationOnce(async () =>
+    h.set([
+      h.metadata("Original", "", "private", "stream", [region]),
+      ...h.events().slice(1),
+    ]),
+  );
+  await h.owner.capability.save(base, { ...base, labels: [] });
+  expect((await h.owner.capability.load(id)).labels).toEqual([region]);
 });

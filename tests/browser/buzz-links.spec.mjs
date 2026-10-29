@@ -7,7 +7,7 @@ import {
   settingsDialog,
 } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
-import { open, virtuaIdle } from "./timeline.mjs";
+import { hoverRow, open, virtuaIdle } from "./timeline.mjs";
 
 test.use({
   productionBroker: true,
@@ -282,10 +282,10 @@ test("a hovered message preview survives scroll anchoring and closes when its li
   const link = page
     .locator(`[data-channel-timeline] [data-message-id="${message.id}"]`)
     .getByRole("link", { name: "Alpha", exact: true });
-  await expect(link).toBeVisible();
+  await expect(link).toBeInViewport();
   await virtuaIdle(page);
   const preview = page.getByLabel("Message preview", { exact: true });
-  await link.hover();
+  await hoverRow(page, link);
   await expect(
     preview.getByText("Broadcast reply", { exact: true }),
   ).toBeVisible();
@@ -352,10 +352,7 @@ test("a hovered message preview survives the timeline's scroll-time pointer-even
   await expect(link).toBeInViewport();
   await virtuaIdle(page);
   const preview = page.getByLabel("Message preview", { exact: true });
-  // Move the raw pointer: Locator.hover retries by scrolling the timeline,
-  // and each scroll restarts Virtua's pointer-event hold.
-  let box = await link.boundingBox();
-  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await hoverRow(page, link);
   await expect(
     preview.getByText("Broadcast reply", { exact: true }),
   ).toBeVisible();
@@ -365,7 +362,7 @@ test("a hovered message preview survives the timeline's scroll-time pointer-even
   // After the list settles, move onto the link again (1px aside, as WebKit
   // can ignore a move to the unchanged position) and prove it is hovered.
   await virtuaIdle(page);
-  box = await link.boundingBox();
+  const box = await link.boundingBox();
   const point = { x: box.x + box.width / 2 - 1, y: box.y + box.height / 2 };
   await page.mouse.move(point.x, point.y);
   await expect
@@ -642,14 +639,16 @@ test("unavailable messages fail honestly and legacy links still open when Links 
   app,
 }) => {
   await open(page, app);
-  const target = app.histories
-    .get("primary/alpha")
-    .find((row) => row.content === "Thread root 0");
+  const history = app.histories.get("primary/alpha");
+  const target = history.find((row) => row.content === "Thread root 0");
+  const plain = history.find((row) =>
+    row.content.startsWith("primary alpha message 637\n"),
+  );
   const href = `buzz://message?channel=alpha&id=${target.id}&thread=${"f".repeat(64)}`;
   const message = app.append(
     "primary",
     "alpha",
-    `<${href}> <buzz://message?channel=alpha&id=${"0".repeat(64)}>`,
+    `<${href}> <buzz://message?channel=alpha&id=${plain.id}> <buzz://message?channel=alpha&id=${"0".repeat(64)}>`,
   );
   const row = page.locator(
     `[data-channel-timeline] [data-message-id="${message.id}"]`,
@@ -661,19 +660,37 @@ test("unavailable messages fail honestly and legacy links still open when Links 
   await selectSettingsSection(page, "Manage plugins");
   await setPluginEnabled(page, "Links", false);
   await closeSettings(page);
-  await row.locator("a").first().click();
-  const targetRow = page.locator(`[data-message-id="${target.id}"]`);
-  await expect(targetRow).toBeFocused();
-  await expect(targetRow).toBeInViewport();
+  // Activate by keyboard: revealing one target can reposition the timeline
+  // under the next click.
+  const activate = async (index) => {
+    const link = row.locator("a").nth(index);
+    await link.focus();
+    await expect(link).toBeFocused();
+    await link.press("Enter");
+  };
+  await activate(0);
+  // A root with replies opens its own thread. The deliberately wrong hint must
+  // not select a different root.
+  const thread = page.getByRole("complementary", {
+    name: "Thread",
+    exact: true,
+  });
+  await expect(
+    thread.locator(`[data-message-id="${target.id}"]`),
+  ).toBeInViewport();
+  await expect(
+    thread.getByText("Thread root 0", { exact: true }),
+  ).toBeVisible();
   await expect.poll(async () => (await state(page)).status).toBe("opened");
-  // The deliberately wrong hint must not select a different root or force a
-  // visible root out of the ordinary timeline.
-  // Revealing the prior target can still reposition the timeline. Activate the
-  // unavailable link by keyboard so this routing check does not click a moving row.
-  const unavailable = row.locator("a").nth(1);
-  await unavailable.focus();
-  await expect(unavailable).toBeFocused();
-  await unavailable.press("Enter");
+  // A root without replies stays in the ordinary timeline.
+  await activate(1);
+  const plainRow = page.locator(
+    `[data-channel-timeline] [data-message-id="${plain.id}"]`,
+  );
+  await expect(plainRow).toBeFocused();
+  await expect(plainRow).toBeInViewport();
+  await expect.poll(async () => (await state(page)).status).toBe("opened");
+  await activate(2);
   await expect
     .poll(async () => (await state(page)).entry.target.messageId)
     .toBe("0".repeat(64));

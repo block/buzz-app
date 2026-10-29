@@ -6,8 +6,10 @@ import {
 import { byteSize } from "./budget";
 import { tag, type RelayEvent } from "./events";
 import { createRelaySession } from "./session";
+import type { ChannelSummary } from "./contracts";
 import type { ChannelStoreOptions } from "./store";
 import {
+  flush,
   keypair,
   message,
   metadata,
@@ -754,6 +756,102 @@ it("ranks public name matches before the cut and reuses one metadata page while 
   expect(h.channels.matchPublic?.("ops")).toEqual([]);
 });
 
+it("names the completed public directory's open channels for references, without reading", async () => {
+  const h = setup();
+  h.channels.ensureList();
+  await h.rosters(0);
+  await h.settled();
+  const id = (n: number) =>
+    `40000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+  const open = (
+    n: number,
+    name: string,
+    extra: string[][] = [],
+    at = 1_700_000_000,
+  ) =>
+    metadata(relay, id(n), name, at, [["public"], ["t", "stream"], ...extra]);
+  const page = [
+    open(0, "release-notes", [], 1_700_000_100),
+    open(1, "retired", [["archived", "true"]]),
+    metadata(relay, id(2), "members-only", 1_700_000_000, [["private"]]),
+    // The first channel's older name, after its rename: the newest wins.
+    open(0, "notes"),
+  ];
+  const listChanged = vi.fn();
+  h.channels.subscribeList(listChanged);
+  expect(h.channels.openDirectory?.()).toEqual([]);
+  const search = h.channels.searchPublic?.("zzz");
+  assert.exists(search);
+  // In flight: nothing is named yet.
+  expect(h.channels.openDirectory?.()).toEqual([]);
+  (await h.next(39000)).respond(page);
+  expect(await search).toEqual({ channels: [], partial: false });
+  await vi.waitFor(() => expect(listChanged).toHaveBeenCalled());
+  const named = h.channels.openDirectory?.();
+  expect(named).toEqual([
+    { id: id(0), name: "release-notes", channelType: "stream" },
+    { id: id(1), name: "retired", channelType: "stream", archived: true },
+  ]);
+  // The same array until a later read replaces it, so rows stay retained.
+  expect(h.channels.openDirectory?.()).toBe(named);
+  expect(h.pending).toHaveLength(0);
+  await h.clearCache();
+  expect(h.channels.openDirectory?.()).toEqual([]);
+});
+
+it("keeps the prior directory's names while a refresh reads, and when the refresh fails", async () => {
+  let clock = 1_000_000;
+  const h = setup({ now: () => clock });
+  h.channels.ensureList();
+  await h.rosters(0);
+  await h.settled();
+  const id = (n: number) =>
+    `50000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+  const open = (n: number, name: string) =>
+    metadata(relay, id(n), name, 1_700_000_000, [["public"], ["t", "stream"]]);
+  const summary = (n: number, name: string) => ({
+    id: id(n),
+    name,
+    channelType: "stream",
+  });
+  // A query nothing matches, so the directory read is the only request.
+  const read = async () => {
+    const search = h.channels.searchPublic?.("zzz");
+    assert.exists(search);
+    return { search, page: await h.next(39000) };
+  };
+  const first = await read();
+  first.page.respond([open(0, "release-notes")]);
+  await first.search;
+  const named = h.channels.openDirectory?.();
+  expect(named).toEqual([summary(0, "release-notes")]);
+  // Past the reuse window the next keystroke reads again; the prior names
+  // hold, by identity, until the new read completes.
+  clock += 30_000;
+  const second = await read();
+  expect(h.channels.openDirectory?.()).toBe(named);
+  second.page.respond([open(0, "release-notes"), open(1, "ops")]);
+  await second.search;
+  const grown = h.channels.openDirectory?.();
+  expect(grown).toEqual([summary(0, "release-notes"), summary(1, "ops")]);
+  // A failed refresh keeps the names that were valid a moment ago...
+  clock += 30_000;
+  const third = await read();
+  expect(h.channels.openDirectory?.()).toBe(grown);
+  third.page.fail(new Error("relay unavailable"));
+  await expect(third.search).rejects.toThrow("relay unavailable");
+  expect(h.channels.openDirectory?.()).toBe(grown);
+  // ...and is not reused: the next keystroke reads again.
+  const fourth = await read();
+  expect(fourth.page.filters).toEqual([
+    { kinds: [39000], authors: [relay.pubkey], limit: 500 },
+  ]);
+  fourth.page.respond([]);
+  await fourth.search;
+  expect(h.channels.openDirectory?.()).toEqual([]);
+  expect(h.pending).toHaveLength(0);
+});
+
 it("reads every public metadata page, and a keystroke that gives up leaves the read for the next", async () => {
   let clock = 1_000_000;
   const h = setup({ now: () => clock });
@@ -805,6 +903,226 @@ it("reads every public metadata page, and a keystroke that gives up leaves the r
     "buzz-community",
   ]);
   expect(result.partial).toBe(false);
+  expect(h.pending).toHaveLength(0);
+});
+
+/** Two full open-channel directory pages: `nsec-backup-ux` leads the newer
+ * one and the better-named `nsec-backup-older` the older. Directory pages and
+ * match resolutions run side by side, so `take` picks a read by its `#d`. */
+function openDirectory(h: ReturnType<typeof setup>) {
+  const id = (n: number) =>
+    `40000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+  const open = (n: number, name: string, at: number) =>
+    metadata(relay, id(n), name, at, [["public"], ["t", "stream"]]);
+  const filler = (from: number, at: number) =>
+    Array.from({ length: 499 }, (_, n) =>
+      open(from + n, `recent-${from + n}`, at),
+    );
+  const first = [
+    open(0, "nsec-backup-ux", 1_700_000_200),
+    ...filler(1, 1_700_000_200),
+  ];
+  const second = [
+    open(500, "nsec-backup-older", 1_700_000_100),
+    ...filler(501, 1_700_000_100),
+  ];
+  const all = [...first, ...second];
+  const take = async (ids?: readonly string[]) => {
+    let found: (typeof h.pending)[number] | undefined;
+    await vi.waitFor(() => {
+      found = h.pending.find(
+        (request) =>
+          JSON.stringify([...(request.filters[0]?.["#d"] ?? [])].sort()) ===
+          JSON.stringify([...(ids ?? [])].sort()),
+      );
+      expect(found).toBeDefined();
+    });
+    assert.exists(found);
+    h.pending.splice(h.pending.indexOf(found), 1);
+    expect(found.filters[0]?.kinds).toEqual([39000]);
+    return found;
+  };
+  const resolves = async (ids: readonly string[]) => {
+    const request = await take(ids);
+    request.respond(all.filter((event) => ids.includes(tag(event, "d") ?? "")));
+  };
+  const names = ({ channels }: { channels: readonly ChannelSummary[] }) =>
+    channels.map((channel) => channel.name);
+  return { id, first, second, take, resolves, names };
+}
+
+it("reports landed public pages' matches while the read goes on, to a search that joins it too", async () => {
+  const h = setup();
+  h.channels.ensureList();
+  await h.rosters(0);
+  await h.settled();
+  const { id, first, second, take, resolves, names } = openDirectory(h);
+  const typed: string[][] = [];
+  const joined: string[][] = [];
+  // One channel each: matches on pages in flight resolve within that budget.
+  const done = h.channels.searchPublic?.("nsec-backup", {
+    limit: 1,
+    progress: (found) => typed.push(names(found)),
+  });
+  assert.exists(done);
+  (await take()).respond(first);
+  await resolves([id(0)]);
+  await vi.waitFor(() => expect(typed).toEqual([["nsec-backup-ux"]]));
+  // A keystroke that narrows the query keeps the row while the read goes on.
+  expect(
+    h.channels.matchPublic?.("nsec-backup-u").map((channel) => channel.name),
+  ).toEqual(["nsec-backup-ux"]);
+  // A later keystroke reuses the read and ranks its landed page at once.
+  const later = h.channels.searchPublic?.("nsec-backup", {
+    progress: (found) => joined.push(names(found)),
+  });
+  assert.exists(later);
+  await resolves([id(0)]);
+  await vi.waitFor(() => expect(joined).toEqual([["nsec-backup-ux"]]));
+  (await take()).respond(second);
+  // A better match past the budget waits for the final answer, which
+  // re-reads every match it returns; until then the shown row stays.
+  await resolves([id(500)]);
+  await vi.waitFor(() =>
+    expect(typed).toEqual([["nsec-backup-ux"], ["nsec-backup-ux"]]),
+  );
+  await vi.waitFor(() => expect(joined).toHaveLength(2));
+  (await take()).respond([]);
+  await resolves([id(500)]);
+  await resolves([id(500), id(0)]);
+  expect(names(await done)).toEqual(["nsec-backup-older"]);
+  expect(names(await later)).toEqual(["nsec-backup-older", "nsec-backup-ux"]);
+  expect(joined[1]).toEqual(["nsec-backup-older", "nsec-backup-ux"]);
+  expect(h.pending).toHaveLength(0);
+});
+
+function retainedDiscoveryBytes(count: number) {
+  return memberships.slice(0, count).reduce((bytes, event) => {
+    const id = tag(event, "d");
+    assert.exists(id);
+    return bytes + byteSize(event) + byteSize(named(id));
+  }, 0);
+}
+
+it("leaves a nearly full discovery room for the final public search answer", async () => {
+  const h = setup({ maxDiscoveryBytes: retainedDiscoveryBytes(1023) + 512 });
+  h.channels.ensureList();
+  await h.rosters(1023);
+  await h.metadata(1023);
+  const { id, first, second, take, resolves, names } = openDirectory(h);
+  const typed: string[][] = [];
+  const done = h.channels.searchPublic?.("nsec-backup", {
+    limit: 1,
+    progress: (found) => typed.push(names(found)),
+  });
+  assert.exists(done);
+  // The remaining bytes fit one final metadata record. Provisional records
+  // cannot consume the budget for a better match on the next page.
+  (await take()).respond(first);
+  await vi.waitFor(() => expect(typed).toEqual([[]]));
+  (await take()).respond(second);
+  await vi.waitFor(() => expect(typed).toEqual([[], []]));
+  (await take()).respond([]);
+  await resolves([id(500)]);
+  expect(names(await done)).toEqual(["nsec-backup-older"]);
+  expect(h.pending).toHaveLength(0);
+});
+
+it("leaves room for the final answers of public searches that run side by side", async () => {
+  const h = setup({ maxDiscoveryBytes: retainedDiscoveryBytes(1022) + 1024 });
+  h.channels.ensureList();
+  await h.rosters(1022);
+  await h.metadata(1022);
+  const { id, first, second, take, resolves, names } = openDirectory(h);
+  const typed: string[][] = [];
+  // Cmd-K's `in:recent-1 nsec-backup`: an exact lookup and a substring search
+  // share the read, and each final answer needs its metadata byte budget.
+  const found = h.channels.searchPublic?.("nsec-backup", {
+    limit: 1,
+    progress: (found) => typed.push(names(found)),
+  });
+  const scoped = h.channels.searchPublic?.("recent-1", {
+    exact: true,
+    limit: 1,
+  });
+  assert.exists(found);
+  assert.exists(scoped);
+  // Provisional metadata cannot consume the bytes for either final answer.
+  (await take()).respond(first);
+  await vi.waitFor(() => expect(typed).toEqual([[]]));
+  (await take()).respond(second);
+  await vi.waitFor(() => expect(typed).toEqual([[], []]));
+  (await take()).respond([]);
+  await resolves([id(500)]);
+  await resolves([id(1)]);
+  expect(names(await found)).toEqual(["nsec-backup-older"]);
+  expect(names(await scoped)).toEqual(["recent-1"]);
+  expect(h.pending).toHaveLength(0);
+});
+
+it("leaves room for the final answer of a public search that joins after a page lands", async () => {
+  const h = setup({ maxDiscoveryBytes: retainedDiscoveryBytes(1022) + 1024 });
+  h.channels.ensureList();
+  await h.rosters(1022);
+  await h.metadata(1022);
+  const { id, first, second, take, resolves, names } = openDirectory(h);
+  const typed: string[][] = [];
+  const found = h.channels.searchPublic?.("nsec-backup", {
+    limit: 1,
+    progress: (found) => typed.push(names(found)),
+  });
+  assert.exists(found);
+  // The byte budget stays available for this final answer and for an
+  // exact lookup that can join the read later.
+  (await take()).respond(first);
+  await vi.waitFor(() => expect(typed).toEqual([[]]));
+  // Editing `nsec-backup` to `in:recent-1 nsec-backup` starts only the lookup.
+  const scoped = h.channels.searchPublic?.("recent-1", {
+    exact: true,
+    limit: 1,
+  });
+  assert.exists(scoped);
+  (await take()).respond(second);
+  await vi.waitFor(() => expect(typed).toEqual([[], []]));
+  (await take()).respond([]);
+  await resolves([id(500)]);
+  await resolves([id(1)]);
+  expect(names(await found)).toEqual(["nsec-backup-older"]);
+  expect(names(await scoped)).toEqual(["recent-1"]);
+  expect(h.pending).toHaveLength(0);
+});
+
+it("stops a public search between pages when its caller gives up", async () => {
+  const h = setup();
+  h.channels.ensureList();
+  await h.rosters(0);
+  await h.settled();
+  const page = Array.from({ length: 500 }, (_, n) =>
+    metadata(
+      relay,
+      `50000000-0000-4000-8000-${String(n).padStart(12, "0")}`,
+      `recent-${n}`,
+      1_700_000_000,
+      [["public"], ["t", "stream"]],
+    ),
+  );
+  const progress = vi.fn();
+  const gaveUp = new AbortController();
+  const done = h.channels.searchPublic?.("nsec", {
+    signal: gaveUp.signal,
+    progress,
+  });
+  assert.exists(done);
+  (await h.next(39000)).respond(page);
+  await vi.waitFor(() => expect(progress).toHaveBeenCalledOnce());
+  gaveUp.abort();
+  await expect(done).rejects.toThrow();
+  // The shared read goes on for the next keystroke.
+  const next = await h.next(39000);
+  expect(next.signal?.aborted).toBe(false);
+  next.respond([]);
+  await flush();
+  expect(progress).toHaveBeenCalledOnce();
   expect(h.pending).toHaveLength(0);
 });
 

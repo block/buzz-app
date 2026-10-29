@@ -7,11 +7,17 @@ import { newer, hasTag, tag, type RelayEvent } from "./events";
 import type { ChannelSummary } from "./contracts";
 import { channelIdentity } from "./channel-labels";
 
+const names = new WeakMap<RelayEvent, string | undefined>();
 /** Display name from signed channel metadata; the content body overrides the tag. */
 export function metadataName(event: RelayEvent): string | undefined {
+  if (names.has(event)) return names.get(event);
   const body = objectBody(event.content);
-  if (typeof body?.name === "string" && body.name) return body.name;
-  return tag(event, "name") || undefined;
+  const name =
+    typeof body?.name === "string" && body.name
+      ? body.name
+      : tag(event, "name") || undefined;
+  names.set(event, name);
+  return name;
 }
 
 /** A Solo chat: a private stream carrying the Solo label. Never access. */
@@ -35,6 +41,8 @@ export function openMetadata(event: RelayEvent): boolean {
 /** NIP-29 discovery: relay-authored replaceable metadata (39000) and rosters (39002). */
 export class DiscoveryState {
   private denied = new Set<string>();
+  /** Denied only because a complete read omitted them; a later one can list them again. */
+  private absent = new Set<string>();
   private suspended = new Set<string>();
   private complete = false;
   private cached = new Set<string>();
@@ -131,6 +139,7 @@ export class DiscoveryState {
       this.cached.delete(id);
     if (next === previous) return confirmed;
     if (event.kind === 39002) {
+      this.absent.delete(id);
       if (cached) this.cached.add(id);
       if (
         previous &&
@@ -169,6 +178,8 @@ export class DiscoveryState {
     // A read can race the chat's own creation; only abandon() or a signed
     // roster ends a start.
     if (this.undecided(id)) return;
+    // A relay denial outranks an omission that a later read could undo.
+    this.absent.delete(id);
     if (!this.canAccess(id) && !this.suspended.has(id)) return;
     this.accessRevision++;
     this.suspended.delete(id);
@@ -200,16 +211,19 @@ export class DiscoveryState {
     // Keep the last signed version: an old replay cannot undo authoritative loss.
     // A NIP-CL pass reads system channels through their own opt-in filter
     // into the same complete set, so one absence rule covers them too.
-    for (const [id, roster] of this.rosters)
-      if (
-        hasTag(roster, "p", this.viewer) &&
-        !ids.has(id) &&
-        !this.denied.has(id) &&
-        started.get(id) === roster
-      ) {
+    for (const [id, roster] of this.rosters) {
+      if (!hasTag(roster, "p", this.viewer) || started.get(id) !== roster)
+        continue;
+      // A lagging read replica can omit a roster; a later complete read that
+      // lists the same version again restores what omission alone revoked.
+      if (ids.has(id)) {
+        if (this.absent.delete(id)) this.denied.delete(id);
+      } else if (!this.denied.has(id)) {
         this.denied.add(id);
+        this.absent.add(id);
         changed = true;
       }
+    }
     if (changed) this.accessRevision++;
     return changed;
   }
@@ -217,6 +231,7 @@ export class DiscoveryState {
     this.accessRevision++;
     this.complete = true;
     this.starting.clear();
+    this.absent.clear();
     for (const id of [...this.rosters.keys(), ...this.metadata.keys()])
       this.denied.add(id);
   }
@@ -263,6 +278,9 @@ export class DiscoveryState {
   }
   named(id: string): boolean {
     return this.metadata.has(id);
+  }
+  byteHeadroom(): number {
+    return this.maxBytes - this.retainedBytes;
   }
   name(id: string): string {
     const event = this.metadata.get(id);

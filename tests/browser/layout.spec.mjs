@@ -19,6 +19,7 @@ import { finalizeEvent, generateSecretKey } from "nostr-tools";
 import {
   wheel,
   anchor,
+  frames,
   settle,
   upper,
   expectAnchor,
@@ -356,15 +357,7 @@ test("separate sidebar and workspace surfaces, real link panel and compact commu
     name: "Channel message history",
   });
   const offset = await timeline.evaluate((el) => el.scrollTop);
-  // This scroll-ownership journey needs overflowing content; descriptions now
-  // start collapsed, so open the real disclosure before sending wheel input.
-  const description = panel(page).getByRole("button", {
-    name: "Description",
-    exact: true,
-  });
-  await description.click();
-  await expect(description).toHaveAttribute("aria-expanded", "true");
-  // The disclosure animates open; wheel only once the panel overflows.
+  // Wait for the description to overflow before testing scroll ownership.
   await expect
     .poll(() =>
       panel(page)
@@ -588,6 +581,8 @@ test("composer stays docked while a cold channel loads", async ({
 // observable state plus settled geometry replaces a fake clock, which would
 // also reorder requestAnimationFrame against the rendering update.
 async function virtuaIdle(page) {
+  // The scroll event must have reached Virtua before its idle state is read.
+  await frames(page);
   await expect(
     page.getByRole("region", { name: "Channel message history" }).locator("ol"),
   ).toHaveCSS("pointer-events", "auto");
@@ -610,7 +605,9 @@ readingTest(
           ),
         )
         .toBeLessThan(4);
-    await settle(page);
+    // Opening at the bottom ends in a downward scroll. Until Virtua's idle, its
+    // buffer covers only the side below, so no row above the viewport is mounted.
+    await virtuaIdle(page);
     await expectBottom();
     const rows = await history.evaluate((element) => {
       const top = element.getBoundingClientRect().top;
@@ -627,7 +624,7 @@ readingTest(
       };
     });
     expect(rows).not.toBeNull();
-    await settle(page);
+    await virtuaIdle(page);
     await expectBottom();
     await history.evaluate((element, ids) => {
       const row = (id) =>

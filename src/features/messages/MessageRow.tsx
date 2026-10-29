@@ -11,7 +11,9 @@ import { Avatar } from "../../shared/design-system/ui/Avatar";
 import {
   ArrowRightIcon,
   LightningIcon,
+  RobotIcon,
 } from "../../shared/design-system/icons";
+import { useProfileOwner } from "../profiles/useProfileOwner";
 import { messagePreviewText } from "../conversation/message-preview-text";
 import { profileMentionParts } from "./profile-mentions";
 import { addressedMessage } from "./audience-address";
@@ -68,6 +70,7 @@ import { AttachmentImage } from "./AttachmentImage";
 import { DeliveryNotice } from "./DeliveryNotice";
 import { AttachmentView } from "../conversation/AttachmentView";
 import { AudioAttachment } from "./AudioAttachment";
+import { AttachmentDownloadContext } from "./AttachmentDownloadContext";
 import { isNativeMediaSource, isProxySource } from "./attachment-source";
 import { FileAttachment } from "./FileAttachment";
 import { useReferenceDirectory } from "./ReferenceText";
@@ -75,7 +78,7 @@ import { MessageMarkdown } from "./MessageMarkdown";
 import { safeMessageUrl } from "../relay/message-content";
 import styles from "./Messages.module.css";
 import { usesLargeEmojiPresentation } from "./emoji-size";
-import { separateSessionCards } from "./session-cards";
+import { separateChatCards } from "./chat-cards";
 import { MessageReactionControls, MessageReactions } from "./MessageReactions";
 
 import {
@@ -97,7 +100,6 @@ import { avatarMedia } from "../../shared/avatar-source";
 export type MessageLinkOrigin = Readonly<{ rootId: string }>;
 export type MessageRowProps = {
   row: ChannelMessage;
-  staticMentions?: boolean | undefined;
   getThreadRoot?: (() => ChannelMessage | undefined) | undefined;
   session?: RelaySession | undefined;
   scope?: string | undefined;
@@ -165,7 +167,6 @@ const FullMessageRow = memo(function MessageRow(props: MessageContentProps) {
 });
 function MessageRowContent({
   row,
-  staticMentions,
   shownRow,
   renderMessage,
   getThreadRoot,
@@ -310,18 +311,31 @@ function MessageRowContent({
       : undefined,
     row.authorId,
   );
+  const agentAuthor = !row.workflowOwnerId && avatarShape === "squircle";
+  const owner = useProfileOwner(
+    session,
+    agentAuthor && !stackPrevious ? row.authorId : undefined,
+  );
+  // The viewer's own agents carry only the agent mark.
+  const ownerLabel =
+    owner &&
+    owner.id !== viewer &&
+    owner.profile &&
+    !owner.profile.nameIsFallback
+      ? `${resolveName(owner.id, owner.profile.name)}’s agent`
+      : undefined;
   const presenceId = useId();
   const shown = shownRow ?? row;
   const timeReply = shown.diff ? undefined : parseMediaTimeReply(shown.content);
   const sourceRow = timeReply
     ? { ...shown, content: timeReply.content }
     : shown;
-  const { caption: displayRow, cards: sessionCards } = useMemo(
-    () => separateSessionCards(sourceRow, directory.channels),
+  const { caption: displayRow, cards: chatCards } = useMemo(
+    () => separateChatCards(sourceRow, directory.channels),
     [sourceRow, directory.channels],
   );
   const cardsOnly =
-    sessionCards.length > 0 && !displayRow.content.trim() && !timeReply;
+    chatCards.length > 0 && !displayRow.content.trim() && !timeReply;
   const attachmentOnly =
     !row.content.trim() &&
     !row.diff &&
@@ -443,17 +457,36 @@ function MessageRowContent({
       return false;
     }
   };
+  // A plugin may draw an image itself, such as a shared agent's card; it
+  // stands alone rather than joining the gallery around it.
+  const attachmentRenderers = useSyncExternalStore(
+    extensions?.attachments?.subscribe ?? noSubscribe,
+    extensions?.attachments?.snapshot ?? noActions,
+    extensions?.attachments?.snapshot ?? noActions,
+  );
+  const drawn = (attachment: ChannelMessage["attachments"][number]) =>
+    attachment.kind === "image" &&
+    attachmentRenderers.some((renderer) => {
+      try {
+        return renderer.matches(attachment);
+      } catch {
+        return false;
+      }
+    });
   // Gallery-backed images and videos share a group, preserving sender order.
   const attachmentGroups: ChannelMessage["attachments"][number][][] = [];
   for (const attachment of row.attachments) {
     if (!safeMessageUrl(attachment.url) || claimed(attachment)) continue;
     const previous = attachmentGroups.at(-1);
     if (
-      ((attachment.kind === "image" || attachment.kind === "file") &&
-        previous?.[0]?.kind === attachment.kind) ||
-      (onOpenMediaReview &&
-        (attachment.kind === "image" || attachment.kind === "video") &&
-        (previous?.[0]?.kind === "image" || previous?.[0]?.kind === "video"))
+      previous?.[0] &&
+      !drawn(attachment) &&
+      !drawn(previous[0]) &&
+      (((attachment.kind === "image" || attachment.kind === "file") &&
+        previous[0].kind === attachment.kind) ||
+        (onOpenMediaReview &&
+          (attachment.kind === "image" || attachment.kind === "video") &&
+          (previous[0].kind === "image" || previous[0].kind === "video")))
     )
       previous.push(attachment);
     else attachmentGroups.push([attachment]);
@@ -486,7 +519,6 @@ function MessageRowContent({
       session={session}
       scope={scope}
       row={displayRow}
-      staticMentions={staticMentions}
       extensions={extensions}
       media={media}
       onOpenLink={openLink}
@@ -806,22 +838,33 @@ function MessageRowContent({
           className={`${styles.reactions} ${styles.reactionFallback}`}
           data-message-reactions
         >
-          {reactions.map((reaction) => (
-            <span key={JSON.stringify([reaction.content, reaction.emoji?.url])}>
-              {extensions ? (
-                <InlineText
-                  registry={extensions.inline}
-                  content={{ text: reaction.content, message: row, reaction }}
-                  media={media}
-                />
-              ) : (
-                reaction.content
-              )}
-              <span className={styles.reactionCount}>
-                {new Set(reaction.events.map((event) => event.authorId)).size}
-              </span>
-            </span>
-          ))}
+          {reactions.flatMap((reaction) =>
+            [...new Set(reaction.events.map((event) => event.authorId))].map(
+              (authorId) => (
+                <span
+                  key={JSON.stringify([
+                    reaction.content,
+                    reaction.emoji?.url,
+                    authorId,
+                  ])}
+                >
+                  {extensions ? (
+                    <InlineText
+                      registry={extensions.inline}
+                      content={{
+                        text: reaction.content,
+                        message: row,
+                        reaction,
+                      }}
+                      media={media}
+                    />
+                  ) : (
+                    reaction.content
+                  )}
+                </span>
+              ),
+            ),
+          )}
         </div>
       )
     );
@@ -884,7 +927,16 @@ function MessageRowContent({
                   />
                 ) : (
                   <span className={styles.authorWithStatus}>
-                    <strong className={styles.author}>{name}</strong>
+                    <strong className={styles.author}>
+                      {/* Inside the name, so the byline keeps the text baseline. */}
+                      {agentAuthor && !stackPrevious && (
+                        <RobotIcon
+                          aria-hidden="true"
+                          className={styles.authorAgentIcon}
+                        />
+                      )}
+                      {name}
+                    </strong>
                     {session && !stackPrevious && (
                       <UserStatusDisplay
                         session={session}
@@ -893,6 +945,12 @@ function MessageRowContent({
                         focusable={false}
                       />
                     )}
+                  </span>
+                )}
+                {ownerLabel && (
+                  <span className={styles.authorOwner}>
+                    <span aria-hidden="true">· </span>
+                    {ownerLabel}
                   </span>
                 )}
                 {!stackPrevious && (
@@ -935,13 +993,13 @@ function MessageRowContent({
               }
               attachments={attachmentGroups.length > 0}
             >
-              {sessionCards.length > 0 && (
+              {chatCards.length > 0 && (
                 <div
                   className={styles.messageAttachments}
                   data-solo-cards
                   data-message-action-anchor
                 >
-                  {sessionCards.map((card) => (
+                  {chatCards.map((card) => (
                     <MessageMarkdown
                       key={card.start}
                       directory={directory}
@@ -1053,18 +1111,19 @@ function MessageRowContent({
                           (isProxySource(source) || isNativeMediaSource(source))
                         )
                           return extensions?.attachments ? (
-                            <AttachmentView
-                              key={url}
-                              registry={extensions.attachments}
-                              attachment={{ ...attachment, url }}
-                              source={source}
-                              fallback={
-                                <AudioAttachment
-                                  attachment={{ ...attachment, url }}
-                                  source={source}
-                                />
-                              }
-                            />
+                            <AttachmentDownloadContext key={url} value={true}>
+                              <AttachmentView
+                                registry={extensions.attachments}
+                                attachment={{ ...attachment, url }}
+                                source={source}
+                                fallback={
+                                  <AudioAttachment
+                                    attachment={{ ...attachment, url }}
+                                    source={source}
+                                  />
+                                }
+                              />
+                            </AttachmentDownloadContext>
                           ) : (
                             <AudioAttachment
                               key={url}
@@ -1082,7 +1141,7 @@ function MessageRowContent({
                         );
                       }
                       if (attachment.kind === "image") {
-                        return (
+                        const image = (
                           <AttachmentImage
                             onOpenLink={
                               canOpenLink?.(attachment.url)
@@ -1121,6 +1180,19 @@ function MessageRowContent({
                                 }
                               : {})}
                           />
+                        );
+                        return source &&
+                          extensions?.attachments &&
+                          drawn(attachment) ? (
+                          <AttachmentView
+                            key={url}
+                            registry={extensions.attachments}
+                            attachment={{ ...attachment, url }}
+                            source={source}
+                            fallback={image}
+                          />
+                        ) : (
+                          image
                         );
                       }
                       return (
@@ -1169,7 +1241,9 @@ function MessageRowContent({
                         />
                       );
                     });
-                    return images && (imageOnly || group.length >= 4) ? (
+                    return images &&
+                      !(group[0] && drawn(group[0])) &&
+                      (imageOnly || group.length >= 4) ? (
                       <div className={styles.imageGroup} key={group[0]?.url}>
                         {/* biome-ignore lint/a11y/useSemanticElements: This labels related media links, not a fieldset of form controls. */}
                         <div

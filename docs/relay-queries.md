@@ -344,6 +344,18 @@ joined-only. Reaching the 20,000-event bound reports partial coverage; read
 failures show a retry.
 The search waits for a ready channel list.
 
+A finished read also names every open channel for `#name` prose in messages
+and drafts, through `channels.openDirectory()`, until a later read completes,
+the cache is cleared, or the session's access changes (dropped names link
+again after the next search); a refresh that is still reading, or that fails,
+keeps the prior names. Rendering never starts the read: a name the joined list
+lacks stays prose on a cold directory and links once a search has warmed it.
+The joined list owns a name both carry. Opening such a link resolves the
+channel through `refer`, as any channel-only link does. Raw
+`buzz://channel/<id>` links never take a directory name: outside the joined
+list, their label follows the exact reference, so a rename or lost access
+shows at once rather than the directory's older name.
+
 A public preview offers **Join channel**. It sends the NIP-29 `9021` join request
 through the purpose-bound channel-lifecycle sign/publish route; generic signing
 rejects `9021`. Before signing, the lifecycle owner re-reads signed metadata and
@@ -352,6 +364,25 @@ metadata may be joined. Success is the viewer in a fresh relay-signed `39002`
 roster, applied through shared discovery. That makes the channel a sidebar
 member and enables the composer, which then receives focus. An accepted but
 unconfirmed join reports that it may have taken effect and stays retryable.
+
+### Finite read recovery
+
+A finite read that has no session recovery source retries transient failures
+quietly through `read-retry.ts` before its existing Retry action appears. That
+covers public search, directory, thread, older-history, profile, catalog,
+repository, staff and media reads. The budget is one read plus three retries,
+with equal jitter under session recovery's first three ceilings (1/2/4 seconds).
+An admission hint is honored within that ceiling; a longer pause surfaces
+immediately to the existing cooldown. Exhaustion rethrows the last failure.
+Access revocation and cache clears end a session read's backoff under the same
+rule that retires its in-flight requests.
+
+Only one owner retries a given read path. Internal roster, head, catch-up,
+preference and template reads keep the session recovery coordinator. Callers
+keep their cancellation, access-epoch and deadline guards. Denied, invalid and
+deterministic local failures, cancellations and writes never retry. Hidden
+conversations keep the last confirmed IDs while refreshing; after exhaustion
+the error does not opt into indefinite session recovery.
 
 ### Channel links
 
@@ -760,30 +791,29 @@ for outstanding work. These manual fixtures are not part of `pnpm test`; see
 The session's `live` capability exposes connection/route state independently from
 finite-read readiness. A connected socket is not proof that every route is live.
 Global profile and self-scoped membership-hint routes are separate from channel
-traffic. The session accepts 10,064 interests, including at most 10,000 joined
-channels. Joined channels share stable wires of at most 10 channels. Initial replay uses one filter
-per channel. Each request has at most 10 filters. New members fill empty slots in
-existing batches. Initial setup takes priority over renewal. Priority changes
-setup order and preserves healthy wires.
-Preview channels use separate wires. Their admission leaves room for joined
-batches, the optional observer and presence routes, and four replacement wires.
-Omitted previews remain visible as limited routes. Joined versus preview
-classification travels with the interest snapshot.
+traffic. Joined channels share stable wires of up to 2,048 IDs, the relay's
+explicit channel bound. There is no fixed roster count limit. New members fill
+empty slots in existing batches. Initial live setup takes priority over renewal
+and replay. Priority changes setup order and preserves healthy wires.
+Preview channels use separate wires. Admission reserves room for global routes,
+observer and presence, replay requests, artifact syncs, the silence probe, and
+replacement wires within the relay's limit of 1,024 subscriptions. Omitted channels stay visible as limited routes.
+Joined versus preview classification travels with the interest snapshot.
 
-With 10,000 joined channels, the default scheduler uses 1,000 channel wires.
-The two global routes, observer, presence, admitted previews and replacement
-wires share the relay's limit of 1,024 subscriptions. The broker accepts up to
-3 MiB for initial interests and 4 MiB for interest updates. It limits frames and
-its write buffer to 8 MiB. Channel IDs remain limited to 128 characters.
-Discovery retains up to 10,000 signed rosters and metadata records in each map. Startup restore accepts at most
-30,000 discovery records within the existing 8 MiB cache bound. A larger cache
-requires fresh discovery.
+The 100,000-channel scale case uses 49 persistent channel wires. Replay uses a
+separate queue with at most 10 singleton filters per request. Each filter requests
+up to 500 recent events. At most four setup requests run at once. A busy channel
+cannot consume another channel's replay allowance. A failed replay is visible to
+recovery and Retry. A local failure does not stop other queued channels. Shared
+quota failures pause admission. Replay stays quiet; one later live copy can emit
+one incoming-message signal.
 
-Initial replay is opportunistic and capped at 500 events **per channel filter**,
-preserving the previous singleton replay allowance. A busy channel cannot consume
-another channel's sample. This reduces REQ frames and route-state publications,
-not historical database queries. Aggregate replay status stays conservative:
-500 received events can mark a batch limited but never prove any channel complete.
+The broker accepts interest records up to 64 MiB. Status deltas and establishment
+notices contain at most 512 channel changes per frame and obey backpressure.
+Frames and the write buffer retain their 8 MiB bound. Channel IDs have at most
+128 characters. Discovery retains up to 256 MiB of signed records. The startup
+cache retains its 8 MiB bound. Larger rosters require fresh discovery on restart.
+Replay status stays conservative and never proves a channel complete.
 EOSE establishes streaming, **not complete historical replay**. Retained channel
 windows get finite, signed-bounds head catch-up after establishment/reconnect;
 unopened channels defer it until demand. `live.snapshot().heads` distinguishes
@@ -801,16 +831,24 @@ Original source scopes stay immutable;
 ambiguous auxiliary events never gain invented alert attribution. Replacements
 without added members use fresh wire IDs, preserve `since`, and request `limit: 0`. Their events are
 live even before EOSE. Pending setup alone does not prove continuity. Narrowed-scope
-failure, denial, invalid traffic and disposal release both sources. A temporary
-failure retains the established source when its full scope stays allowed. This
-also applies when a replacement adds members. The error stays visible until
+failure, denial and disposal release both sources. An undecodable event is dropped
+and logged; its route stays. A temporary failure retains the established source
+when its full scope stays allowed. This also applies when a replacement adds
+members. The error stays visible until
 fresh EOSE. The existing minute timer retries that renewal; quota failures retain
 the same source but obey the existing cooldown and three-retry limit. Exhausted
 or unsupported quota retries require manual Retry, not a reset each minute.
 
 One 60-second recovery timer renews established joined batches and hints the
 existing roster and unread owners to repair finite evidence. It does not renew
-singleton previews, add per-channel background history reads or reset the socket.
+singleton previews or add per-channel background history reads. When the socket
+delivered no frame for a whole interval, the timer also sends one empty probe
+REQ; if no frame arrives within the setup timeout, the socket is replaced through
+the ordinary reconnect, with its backoff and replay. An open socket can stop
+delivering without an error or close, and this is the only signal that catches it.
+The probe follows the shared cooldown like any other request: none is sent while
+the relay has asked the client to wait, and a `rate-limited:` refusal of a probe
+sets that cooldown.
 This repairs silent pruning and missed hints; 60 seconds is an interval, not a
 convergence deadline under throttling, suspension or failure. Each live-only
 replacement consolidates its unchanged kinds, `since` and channel scope into one
@@ -866,7 +904,11 @@ The relay WebSocket keeps retrying transient disconnects and authentication
 timeouts while its session is active. Its exponential delay starts at 250–500ms
 and caps at 15–30s, with jitter on each attempt. A full minute authenticated resets
 that backoff; a brief successful authentication does not. Authentication rejection
-or signing failure remains terminal until explicit retry. Disconnect recovery
+or signing failure keeps its error visible and reconnects on a slow timer, 60 s
+doubling to 10 minutes, because access or a locked signer can change later; a
+signer that does not match the viewer stays terminal. A route the relay CLOSED
+with a reason that needs action, other than a membership denial, retries on the
+recovery timer with the same backoff, which resets after its next EOSE. Disconnect recovery
 re-establishes interests and finite catch-up; it never replays publications.
 
 The browser broker streams SSE over POST with bounded interests and owner-scoped
@@ -880,6 +922,10 @@ interest revisions fence delayed channel events, denials
 and establishment across remove/re-add, including changes during stream startup.
 This is local IPC metadata, not a new Nostr extension. An uncertain control outcome
 uses bounded reconnect with current interests; publications are not replayed.
+A 4xx stream rejection keeps its error visible and retries on the same slow timer
+as a refused route instead of stopping. A stream that stays up for a minute
+resets both backoffs; its first frame does not, because every accepted stream
+sends its state at once.
 Under actual local response backpressure, the host coalesces replaceable route-state
 snapshots until `drain`, retaining only the latest captured interest revision.
 Connection, observer-liveness and channel live→non-live transitions remain ordered, as do actual traffic,

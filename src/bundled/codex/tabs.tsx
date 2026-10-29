@@ -814,9 +814,13 @@ export function createTabs(
   function ActivityTab({
     agent,
     conversation,
+    initialTranscript,
+    close,
   }: {
     agent: AgentViewProps<Config>["agent"];
     conversation?: AgentViewProps<Config>["conversation"];
+    initialTranscript?: AgentViewProps<Config>["initialTranscript"];
+    close?: AgentViewProps<Config>["close"];
   }) {
     const sessions = useSyncExternalStore(runtime.subscribe, () =>
       runtime.sessions(agent.key),
@@ -832,7 +836,12 @@ export function createTabs(
     const recent = conversations
       .filter((item) => item.key !== here?.key)
       .slice(0, CONVERSATION_LIMIT);
-    const { open, show, back } = useOpenTranscript(conversation, label);
+    const { open, show, back } = useOpenTranscript(
+      conversation,
+      label,
+      initialTranscript && { initial: here, ...initialTranscript },
+      close,
+    );
     const saved = new Set(conversations.map((row) => row.key));
     const views = new Map(sessions.map((view) => [view.key, view]));
     const unbound = sessions.filter((view) => !saved.has(view.key));
@@ -935,7 +944,7 @@ export function createTabs(
             backLabel="Back to profile"
             onBack={back}
           >
-            <TranscriptView agent={agent} conversation={open} />
+            <TranscriptView key={open.key} agent={agent} conversation={open} />
           </PanelSubview>
         )}
       </div>

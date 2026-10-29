@@ -296,6 +296,48 @@
   border-radius: var(--radius-row);
   background: var(--affordance-panel-hover);
 }
+.createSectionSlot + .channelSection {
+  margin-top: 0;
+}
+.createSectionHitArea {
+  position: absolute;
+  inset: calc(-1 * var(--space-4)) 0 0;
+  pointer-events: none;
+}
+.createSectionReveal {
+  overflow: hidden;
+}
+.createSectionDrop {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  /* Match the avatar uploader's compact 80px drop area at the default scale. */
+  min-height: calc(5 * var(--space-4));
+  margin-bottom: var(--space-4);
+  padding: var(--space-2);
+  border: 2px solid transparent;
+  border-radius: var(--radius-control);
+  background: var(--surface-inset);
+  color: var(--text-subtle);
+  text-align: center;
+  transition: background-color var(--duration-state) var(--easing-state);
+}
+.createSectionDrop > svg {
+  flex-shrink: 0;
+}
+.createSectionDrop[data-drop-target] {
+  border-color: var(--text-standard);
+  border-style: dashed;
+  background: var(--affordance-subtle-hover);
+  color: var(--text-standard);
+}
+@media (prefers-reduced-motion: reduce) {
+  .createSectionDrop {
+    transition: none;
+  }
+}
 [data-channel-dragging],
 .channelSection[data-section-dragging] {
   opacity: 0.3;
@@ -334,10 +376,18 @@
   line-height: var(--text-body-sm--line-height);
   cursor: grabbing;
 }
+.channelDragOverlay[data-section-creation-preview] {
+  /* The new-section slot opens below the gap where the pointer first enters. */
+  translate: var(--space-3) calc(-100% - var(--space-3));
+}
 .channelDragOverlay > span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* The highlighted destination replaces the preview while it accepts the drop. */
+body:has([data-create-section-drop][data-drop-target]) .channelDragOverlay {
+  visibility: hidden;
 }
 .sectionHeader {
   position: relative;

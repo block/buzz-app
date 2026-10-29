@@ -54,6 +54,7 @@ import { ConvertToChannel } from "../../features/solo/ConvertToChannel";
 import { UnreadOptions } from "./UnreadBadge";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
 import { LinkThreadTabContext } from "../../features/conversation/LinkLabelContext";
+import { placeExactOpening } from "../../features/conversation/exact-opening";
 import { flushSync } from "react-dom";
 import {
   useCallback,
@@ -727,6 +728,7 @@ function ChannelWorkspace({
   const [exactOpening, setExactOpening] = useState<{
     request: PageNavigation;
     inTimeline: boolean;
+    rootId?: string;
   }>();
   useEffect(() => {
     if (
@@ -749,13 +751,7 @@ function ChannelWorkspace({
       // live event must not move an already-opened thread into the timeline.
       setExactOpening({
         request: navigation,
-        inTimeline:
-          requestedThread !== requestedMessage &&
-          window.status === "ready" &&
-          window.freshness !== "cached" &&
-          window.rows.some(
-            (row) => row.id === requestedMessage && !row.threadRootId,
-          ),
+        ...placeExactOpening(window, requestedMessage),
       });
     };
     const stop = queries.channels.subscribeWindow(currentId, choose);
@@ -793,7 +789,7 @@ function ChannelWorkspace({
         ? {
             channelId: current.id,
             messageId: requestedMessage,
-            rootId: requestedThread ?? requestedMessage,
+            rootId: exact.rootId ?? requestedThread ?? requestedMessage,
             pane: threadPane,
             navigation,
           }
@@ -1537,11 +1533,14 @@ function ChannelWorkspace({
   const hasPanel = companion || hasChannelPanel;
   const showingChannelPanel = tabState.paneOpen && hasChannelPanel;
   const showingPanel = companion || showingChannelPanel;
-  // An explicit channel opening resumes its visible selected thread. Passive
-  // restoration and another channel’s retained tab keep their existing focus.
+  // A plain channel visit reads its visible selected thread along with the
+  // conversation that holds focus. A link to a message or thread, passive
+  // restoration and another channel’s retained tab do not.
   const readingThread =
     showingChannelPanel &&
     !companion &&
+    !requestedMessage &&
+    !requestedThread &&
     !membersOpen &&
     !showingMediaReview &&
     (navigation?.focus ?? navigator?.snapshot().attempt.focus) !== "preserve" &&
@@ -1552,28 +1551,33 @@ function ChannelWorkspace({
         tab.channelId === currentId,
     );
   const split = usePanelSplit();
-  const readingVisit = useRef<AbortSignal | string | undefined>(undefined);
+  // A routed thread can mount behind a collapsed pane, where it cannot take
+  // focus, or already be selected, so its pane does not move focus. Once its
+  // tab shows, hand it focus nothing else took.
+  const routedTab =
+    routedThread && !membersOpen
+      ? tabState.tabs.find(
+          (tab) =>
+            tab.kind === "thread" &&
+            tab.channelId === routedThread.channelId &&
+            tab.messageId === routedThread.messageId &&
+            (tabPane(tab) === "main"
+              ? tabState.mainSelected === tab.id
+              : showingChannelPanel && !companion && selectedTab === tab.id),
+        )?.id
+      : undefined;
+  const routedVisit = useRef<AbortSignal | string | undefined>(undefined);
   useLayoutEffect(() => {
     const visit = navigation?.signal ?? currentId;
-    if (!readingThread || readingVisit.current === visit) return;
-    readingVisit.current = visit;
-    const focused = document.activeElement;
-    // Only hand off the channel opener. A person who moved focus while the
-    // retained pane mounted keeps their new target.
-    if (
-      focused !== document.body &&
-      (!(focused instanceof Element) ||
-        focused
-          .closest("[data-channel-id]")
-          ?.getAttribute("data-channel-id") !== currentId)
-    )
-      return;
+    if (!routedTab || routedVisit.current === visit) return;
+    routedVisit.current = visit;
+    if (document.activeElement !== document.body) return;
     split.ref.current
       ?.querySelector<HTMLElement>(
-        `[role="tab"][data-tab-value="${CSS.escape(selectedTab)}"]`,
+        `[role="tab"][data-tab-value="${CSS.escape(routedTab)}"]`,
       )
       ?.focus({ preventScroll: true });
-  }, [readingThread, navigation?.signal, currentId, selectedTab, split.ref]);
+  }, [routedTab, navigation?.signal, currentId, split.ref]);
   useEffect(() => {
     // Only an explicit settings click moves focus; restoring a visit does not.
     if (settingsFocus)
@@ -1747,8 +1751,7 @@ function ChannelWorkspace({
             !current.readOnly &&
             !requestedMessage &&
             !requestedThread &&
-            !routedThread &&
-            !readingThread
+            !routedThread
           }
           trailingTool={
             solo ? (
@@ -1768,6 +1771,7 @@ function ChannelWorkspace({
   const workspace = (
     <div
       data-channel-workspace={currentId ?? ""}
+      data-reading-thread={readingThread ? "" : undefined}
       ref={split.ref}
       style={split.style}
       className={`${styles.board} ${panelStyles.splitMotion}`}

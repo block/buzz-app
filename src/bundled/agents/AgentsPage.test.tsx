@@ -720,6 +720,36 @@ it("restores provider links and retires only that provider's visits after close 
   expect(open).not.toHaveBeenCalled();
 });
 
+it("opens the agent a link names, on Your agents", async () => {
+  const target = {
+    version: 1,
+    kind: "page",
+    pluginId: "buzz.agents",
+    pageId: "agents",
+    scope: null,
+    route: { version: 1, params: { agent: "2".repeat(64) } },
+  } as const;
+  const navigator = {
+    snapshot: () => ({ entry: { id: "agent", target } }),
+    open: vi.fn(async () => ({ status: "opened" as const })),
+  } as unknown as Navigation;
+  const navigation: PageNavigation = {
+    entryId: "agent",
+    target,
+    signal: new AbortController().signal,
+    focus: "content",
+    forSession: () => navigation,
+    resolve: () => true,
+    complete: () => true,
+  };
+  setup([agent("Ada", 1), agent("Bea", 2)], {
+    page: { navigator, navigation },
+  });
+  const profile = await screen.findByRole("region", { name: "Agent profile" });
+  expect(within(profile).getAllByText("Bea").length).toBeGreaterThan(0);
+  expect(within(profile).queryByText("Ada")).toBeNull();
+});
+
 it("shows an agent's picture in the grid and side panel", async () => {
   const user = userEvent.setup();
   const picture = "https://old.example/media/a.png";
@@ -1453,12 +1483,12 @@ it("imports an exported agent file as a new agent of the type that runs it", asy
     ),
   );
   const confirmation = await screen.findByRole("dialog", {
-    name: "Import Scout",
+    name: "Scout",
   });
   // What the new agent will follow is shown before it is accepted.
   expect(
-    within(confirmation).getByRole("region", { name: "Agent instructions" }),
-  ).toHaveTextContent("Scout ahead.");
+    within(confirmation).getByRole("textbox", { name: "Instructions" }),
+  ).toHaveValue("Scout ahead.");
   await user.click(
     within(confirmation).getByRole("button", { name: "Import" }),
   );
@@ -3338,7 +3368,7 @@ it("opens a Marketplace tile in the profile pane and returns focus on close and 
     await user.click(tile);
     await user.click(screen.getByRole("button", { name: "Import" }));
     const dialog = screen.getByRole("dialog", {
-      name: "Import Marketplace helper",
+      name: "Marketplace helper",
     });
     await user.click(within(dialog).getByRole("button", { name: "Import" }));
     await vi.waitFor(() =>

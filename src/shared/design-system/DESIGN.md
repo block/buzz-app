@@ -1380,7 +1380,8 @@ semantics, hug their contents up to a 12rem maximum with ellipsis, use 18px corn
 actions, and a subtle selected fill, accept avatars/icons, and place a sibling close
 button over reserved trailing space. Tab close icons use 1rem artwork to match
 container header actions while retaining their compact hit areas. Close buttons stay visible on the active tab; inactive tabs reveal them on hover or keyboard focus. Touch devices keep close buttons visible. Navigation tab strips scroll only horizontally. Their rounded thumb uses the sidebar’s quiet scrollbar role, with a 3px visible thumb in the header’s 4px bottom inset. The tab row keeps its vertical position as overflow starts or stops. It appears only while the strip is hovered; touch devices retain the thumb without requiring hover. The main
-channel header uses the same control with a single non-closable tab with `showSelection={false}` (no selection or hover fill); channel
+channel header uses the same control with a single non-closable tab with `showSelection={false}` (no selection or hover fill); that
+title tab fills the header's title slot instead of stopping at 12rem, truncating only when the header runs out of room; channel
 actions remain in the header action slot. The settings launcher uses
 `data-highlight-expanded="false"` to preserve disclosure semantics without a
 sticky pressed treatment; the selected tab owns the open-state indicator.

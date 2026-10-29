@@ -264,9 +264,12 @@ export function ChannelInventory({
     { channelId: string; target: HTMLElement } | undefined
   >(undefined);
   const pendingCreate = useRef<ChannelSummary | undefined>(undefined);
+  const [creatingSection, setCreatingSection] = useState(false);
+  const createSectionTrigger = useRef<HTMLButtonElement>(null);
   const [creatingFor, setCreatingFor] = useState<{
     channel: ChannelSummary;
     surface?: ChannelMenuSurface;
+    position?: "first";
   }>();
 
   const createOrigin = creatingFor?.surface?.signal;
@@ -491,6 +494,9 @@ export function ChannelInventory({
     ),
     list.activityStatus === "ready",
   );
+  const firstChannelSection = filteredSections.find(({ key }) =>
+    isChannelSectionKey(key),
+  )?.key;
   // Menu dismissal may run before a moved row mounts at its new placement.
   // Only an actual filter exclusion should return focus to a section summary.
   const hiddenRowSections = useRef(new Map<string, string>());
@@ -718,6 +724,7 @@ export function ChannelInventory({
             </MenuRadioGroup>
             <MenuSeparator />
             <MenuItem
+              disabled={!preferences.sectionCreationWritable}
               onClick={() => {
                 if (surface) {
                   surface.close(() => false);
@@ -725,6 +732,7 @@ export function ChannelInventory({
                     if (
                       mounted.current &&
                       !surface.signal?.aborted &&
+                      queries.sidebarPreferences.sectionCreationWritable &&
                       relay.snapshot().session === queries
                     )
                       setCreatingFor({ channel, surface });
@@ -1121,6 +1129,18 @@ export function ChannelInventory({
       <>
         <ChannelSidebarDnd
           writable={placementWritable}
+          onCreateSection={(channelId) => {
+            const channel = sidebarChannels.find(({ id }) => id === channelId);
+            // Finish releasing the pointer before giving the modal its focus.
+            requestAnimationFrame(() => {
+              if (
+                mounted.current &&
+                channel &&
+                queries.sidebarPreferences.sectionCreationWritable
+              )
+                setCreatingFor({ channel, position: "first" });
+            });
+          }}
           onMove={(channelId, sectionKey) =>
             sectionKey === "starred"
               ? setChannelStar(channelId, true)
@@ -1171,7 +1191,10 @@ export function ChannelInventory({
             if (!channel) return null;
             const Icon = channelIcon(channel);
             return (
-              <div className={styles.channelDragOverlay}>
+              <div
+                className={styles.channelDragOverlay}
+                data-section-creation-preview=""
+              >
                 <Icon size={16} />
                 <span>{channel.name}</span>
               </div>
@@ -1181,6 +1204,10 @@ export function ChannelInventory({
           {filteredSections.map((section) => (
             <DroppableSidebarSection
               key={section.key}
+              createSectionTarget={
+                section.key === firstChannelSection &&
+                preferences.sectionCreationWritable
+              }
               groupIndex={groupIds.indexOf(section.key.slice("group:".length))}
               disabled={
                 !placementWritable || !isChannelDropSectionKey(section.key)
@@ -1281,6 +1308,19 @@ export function ChannelInventory({
                             : "",
                         );
                         setCreateChannelOpen(true);
+                      },
+                    }
+                  : undefined
+              }
+              createSection={
+                section.key === "channels"
+                  ? {
+                      available: preferences.sectionCreationWritable,
+                      open: (trigger) => {
+                        createSectionTrigger.current = trigger;
+                        requestAnimationFrame(() => {
+                          if (mounted.current) setCreatingSection(true);
+                        });
                       },
                     }
                   : undefined
@@ -1624,10 +1664,27 @@ export function ChannelInventory({
     ),
     dialogs: (
       <>
+        {creatingSection && (
+          <CreateSidebarSection
+            writable={preferences.sectionCreationWritable}
+            refreshing={preferences.status === "loading"}
+            retry={preferences.reload}
+            finalFocus={createSectionTrigger}
+            close={() => setCreatingSection(false)}
+            create={async (section) => {
+              if (!queries.sidebarPreferences.sectionCreationWritable)
+                return false;
+              await preferences.createSection(section);
+              sidebar.toggle(`group:${section.id}`, true);
+              setCreatingSection(false);
+              return true;
+            }}
+          />
+        )}
         {creatingFor && !creatingFor.surface?.signal?.aborted && (
           <CreateSidebarSection
             channelName={creatingFor.channel.name}
-            writable={preferences.writable}
+            writable={preferences.sectionCreationWritable}
             refreshing={preferences.status === "loading"}
             retry={preferences.reload}
             create={(section) => {
@@ -1635,13 +1692,18 @@ export function ChannelInventory({
               // the live gate before handing its draft to the optimistic store.
               if (
                 creatingFor.surface?.signal?.aborted ||
-                !queries.sidebarPreferences.writable
+                !queries.sidebarPreferences.sectionCreationWritable
               )
                 return false;
               moveChannel(
                 creatingFor.channel.id,
                 () =>
-                  preferences.createAndAssign(creatingFor.channel.id, section),
+                  preferences.createAndAssign(creatingFor.channel.id, {
+                    ...section,
+                    ...(creatingFor.position
+                      ? { position: creatingFor.position }
+                      : {}),
+                  }),
                 creatingFor.surface,
               );
               setCreatingFor(undefined);

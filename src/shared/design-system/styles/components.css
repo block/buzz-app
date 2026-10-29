@@ -1637,6 +1637,11 @@
     background: transparent;
     cursor: default;
   }
+  /* A hidden-selection strip is a single title, not a row of tabs: it fills
+     the header's title slot and truncates only when the header runs out of room. */
+  .buzz-tabs[data-variant="navigation"][data-selection-hidden] .buzz-tabs-item {
+    max-width: 100%;
+  }
   .buzz-tabs[data-variant="navigation"]
     .buzz-tabs-item[data-closable]
     .navigation-item {

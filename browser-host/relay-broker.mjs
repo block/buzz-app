@@ -611,11 +611,10 @@ export function validAgentEnrollment(event) {
   );
 }
 /** Owner-signed agent listings; preserve prior settings and extension tags. */
-function validAgentRecord(event) {
+function validAgentRecord(event, viewer) {
   if (
     event?.kind !== 30177 ||
     typeof event.content !== "string" ||
-    Buffer.byteLength(event.content) > 32000 ||
     !Number.isSafeInteger(event.created_at) ||
     event.created_at < 0 ||
     !Array.isArray(event.tags) ||
@@ -632,6 +631,16 @@ function validAgentRecord(event) {
     !/^[0-9a-f]{64}$/.test(coordinates[0][1])
   )
     return false;
+  // Match the native signer's 64 KiB NIP-01 commitment bound.
+  const commitment = [
+    0,
+    viewer,
+    event.created_at,
+    event.kind,
+    event.tags,
+    event.content,
+  ];
+  if (Buffer.byteLength(JSON.stringify(commitment)) > 64 * 1024) return false;
   try {
     const body = JSON.parse(event.content);
     return (
@@ -639,7 +648,10 @@ function validAgentRecord(event) {
       typeof body === "object" &&
       !Array.isArray(body) &&
       typeof body.name === "string" &&
-      !!body.name.trim()
+      !!body.name.trim() &&
+      Number.isSafeInteger(body.parallelism) &&
+      body.parallelism >= 0 &&
+      typeof body.respond_to === "string"
     );
   } catch {
     return false;
@@ -2668,7 +2680,7 @@ export function relayBrokerPlugin({
                 });
               }
             } else if (filters?.kind === 30177) {
-              if (!validAgentRecord(filters))
+              if (!validAgentRecord(filters, viewer))
                 return json(res, 400, {
                   error: "Malformed agent record",
                   sent: false,

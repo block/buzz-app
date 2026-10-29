@@ -2089,14 +2089,11 @@ test("agent profile saves publish owner-signed listings through the broker outbo
 
 test("agent record signing refuses malformed coordinates, content and timestamps", async () => {
   const h = await harness(success);
+  const content = { name: "Agent", parallelism: 1, respond_to: "owner-only" };
   const template = {
     kind: 30177,
     created_at: 1700000000,
-    content: JSON.stringify({
-      name: "Agent",
-      parallelism: 1,
-      respond_to: "owner-only",
-    }),
+    content: JSON.stringify(content),
     tags: [["d", "ab".repeat(32)]],
   };
   try {
@@ -2116,8 +2113,17 @@ test("agent record signing refuses malformed coordinates, content and timestamps
       { content: "not JSON" },
       { content: "null" },
       { content: "[]" },
-      { content: JSON.stringify({ name: " " }) },
-      { content: JSON.stringify({ name: "é".repeat(16000) }) },
+      ...[
+        { name: "Agent" },
+        { ...content, name: " " },
+        { ...content, parallelism: undefined },
+        { ...content, parallelism: -1 },
+        { ...content, parallelism: 1.5 },
+        { ...content, parallelism: "1" },
+        { ...content, respond_to: undefined },
+        { ...content, respond_to: null },
+        { ...content, respond_to: [] },
+      ].map((body) => ({ content: JSON.stringify(body) })),
     ])
       expect((await h.post("sign", { ...template, ...invalid })).status).toBe(
         400,
@@ -2127,6 +2133,71 @@ test("agent record signing refuses malformed coordinates, content and timestamps
     await h.close();
   }
 });
+
+test.each(["a", "é"])(
+  "agent records match the native UTF-8 signing bound with %s content",
+  async (character) => {
+    const h = await harness(success);
+    try {
+      await h.start();
+      const content = (prompt) =>
+        JSON.stringify({
+          name: "Agent",
+          parallelism: 0,
+          respond_to: "owner-only",
+          system_prompt: prompt,
+        });
+      const template = {
+        kind: 30177,
+        created_at: 1700000000,
+        content: content(""),
+        tags: [["d", "ab".repeat(32)]],
+      };
+      // Match Key::sign_bounded in src-tauri/src/identity.rs: the NIP-01
+      // commitment is bounded, not just content or the signed event envelope.
+      const size = (event) =>
+        Buffer.byteLength(
+          JSON.stringify([
+            0,
+            h.event.pubkey,
+            event.created_at,
+            event.kind,
+            event.tags,
+            event.content,
+          ]),
+        );
+      const room = 64 * 1024 - size(template);
+      const bytes = Buffer.byteLength(character);
+      const prompt =
+        character.repeat(Math.floor(room / bytes)) + "a".repeat(room % bytes);
+      const largest = { ...template, content: content(prompt) };
+      expect(size(largest)).toBe(64 * 1024);
+      const signed = await h.post("sign", largest);
+      expect(signed.status).toBe(200);
+      const event = await signed.json();
+      expect(verifyEvent(event)).toBe(true);
+      // The shared socket separately bounds the complete publication frame.
+      // A 40 KiB prompt fits that bound while exceeding the old content cap.
+      const publishable = {
+        ...template,
+        content: content(character.repeat(Math.floor((40 * 1024) / bytes))),
+      };
+      const publication = await h.post("sign", publishable);
+      expect(publication.status).toBe(200);
+      const published = await publication.json();
+      expect(verifyEvent(published)).toBe(true);
+      expect((await h.post("publish", published)).status).toBe(200);
+      expect(h.publications).toHaveLength(1);
+
+      const oversized = { ...template, content: content(`${prompt}a`) };
+      expect(size(oversized)).toBe(64 * 1024 + 1);
+      expect((await h.post("sign", oversized)).status).toBe(400);
+      expect(h.publications).toHaveLength(1);
+    } finally {
+      await h.close();
+    }
+  },
+);
 
 test("agent record deletions sign and publish only the viewer's own kind 30177 coordinate", async () => {
   const h = await harness((call) =>

@@ -815,7 +815,7 @@ it("removes a community whose relay cannot be reached from this device without c
   const dialog = await failLeave(user, "Secondary");
   await user.click(confirmRemove(dialog));
   const notice = await screen.findByText(
-    "Secondary — https://secondary.example was removed from this device. Your membership wasn’t changed. You can add it again later.",
+    "Secondary — https://secondary.example was removed from this device. Its relay didn’t confirm the leave, so you may still be a member.",
   );
   expect(notice.closest(".buzz-toast")).toHaveAttribute("data-type", "success");
   // Only the failed leave reached for the relay.
@@ -830,6 +830,24 @@ it("removes a community whose relay cannot be reached from this device without c
   await waitFor(() => expect(switcher()).toHaveFocus());
 });
 
+it("keeps the membership uncertain when the relay may have applied a leave whose answer was lost", async () => {
+  const user = userEvent.setup();
+  // The request reached the relay, which may have applied it; only its answer
+  // was lost to the timeout.
+  const h = harness({
+    leaveResponse: () =>
+      Promise.reject(new DOMException("timed out", "TimeoutError")),
+    leaveResidue: [{ store: "outbox", error: new Error("blocked") }],
+  });
+  render(<CommunityPicker communities={h.communities} />);
+  await user.click(confirmRemove(await failLeave(user, "Secondary")));
+  await screen.findByText(
+    "Secondary — https://secondary.example was removed from this device. Its relay didn’t confirm the leave, so you may still be a member. Some saved data couldn’t be cleared.",
+  );
+  expect(h.leaveRequests()).toHaveLength(1);
+  expect(screen.queryByText(/membership wasn’t changed/)).toBeNull();
+});
+
 it("removing the selected community from this device tells the host to select Personal space", async () => {
   const user = userEvent.setup();
   const h = harness({
@@ -838,7 +856,7 @@ it("removing the selected community from this device tells the host to select Pe
   render(<CommunityPicker communities={h.communities} onSelect={h.onSelect} />);
   await user.click(confirmRemove(await failLeave(user, "Primary")));
   await screen.findByText(
-    "Primary — https://primary.example was removed from this device. Your membership wasn’t changed. You can add it again later.",
+    "Primary — https://primary.example was removed from this device. Its relay didn’t confirm the leave, so you may still be a member.",
   );
   expect(h.leave).toHaveBeenCalledWith(primary, { purge: true });
   expect(h.onSelect).toHaveBeenCalledExactlyOnceWith(null);

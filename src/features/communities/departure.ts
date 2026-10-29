@@ -90,14 +90,21 @@ export async function departCommunity(
     : { intent, ...(await leaveCommunity(communities, membership)) };
 }
 
-/** The notice for a finished departure and its toast tone. */
+/** The notice for a finished departure and its toast tone. Removal only
+ * follows a leave its relay never settled, which may still have applied, so
+ * the notice cannot claim the membership is unchanged. */
 export function departedText(
   name: string,
   departure: Departure,
 ): [string, "success" | "info"] {
   const residue = departure.residue.length > 0;
-  if (departure.intent === "remove")
-    return [removedFromDeviceText(name, residue), "success"];
+  if (departure.intent === "remove") {
+    const removed = `${name} was removed from this device. Its relay didn’t confirm the leave, so you may still be a member.`;
+    return [
+      residue ? `${removed} Some saved data couldn’t be cleared.` : removed,
+      "success",
+    ];
+  }
   return [
     leftCommunityText(name, departure.outcome, residue),
     departure.outcome === "left" ? "success" : "info",

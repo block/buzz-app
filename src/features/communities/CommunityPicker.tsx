@@ -1,4 +1,10 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
@@ -123,9 +129,10 @@ export function CommunityPicker({
   };
   const cancelRef = useRef<HTMLButtonElement>(null);
   const offeringRemoval = leaving?.intent === "remove" && !leaving.pending;
-  useEffect(() => {
+  useLayoutEffect(() => {
     // The confirm button kept focus through the failed leave; a repeated
-    // Enter must not remove the community without a fresh choice.
+    // Enter must not remove the community without a fresh choice, so focus
+    // moves before the browser handles another key.
     if (offeringRemoval) cancelRef.current?.focus();
   }, [offeringRemoval]);
   /** A leave publishes first; the device forgets the community only once the

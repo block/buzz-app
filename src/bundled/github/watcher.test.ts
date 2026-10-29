@@ -830,6 +830,36 @@ describe("github_watch_pr", () => {
     app.dispose();
   });
 
+  it("keeps holding feedback a poll did not reread, so it cannot crowd out what is new", async () => {
+    savePolicy("allow author:wes\nallow org:block");
+    const app = setup();
+    await app.call({ url });
+    app.members(null);
+    const stranger = (index: number) => ({
+      id: `I${index}`,
+      login: `stranger${index}`,
+      body: `body-${index}`,
+      path: "a.ts",
+    });
+    app.gh(
+      answer({
+        reviews: [
+          {
+            ...stranger(100),
+            inline: Array.from({ length: 60 }, (_, index) => stranger(index)),
+          },
+        ],
+        comments: [
+          ...Array.from({ length: 49 }, (_, index) => stranger(index + 60)),
+          { id: "I109", login: "wes", body: "body-wes" },
+        ],
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(4 * POLL_MS + QUIET_MS + POLL_MS);
+    expect(app.texts().join("\n")).toContain("body-wes");
+    app.dispose();
+  });
+
   it("tells only feedback from trusted authors, once their organization is known", async () => {
     savePolicy("allow author:wes\nallow org:block");
     const app = setup();

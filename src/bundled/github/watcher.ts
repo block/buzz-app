@@ -181,18 +181,23 @@ export function watchPulls(ctx: Context) {
       }
     }
   };
-  /** Feedback ids read but held for an unread membership or rules that no
-   * longer parse, by pull request URL. */
+  /** Feedback ids each watch read but holds for an unread membership or
+   * rules that no longer parse, by agent and pull request URL. */
   const held = new Map<string, ReadonlySet<string>>();
   /** The pull request at `url`, with the text of feedback not in `seen`. */
-  const read = async (url: string, seen?: readonly string[]) => {
+  const read = async (agent: string, url: string, seen?: readonly string[]) => {
     const pull = pullOf(url);
     if (!pull) return undefined;
     const output = await ctx.host.runCommand("pull", pullRequest(pull));
     const snapshot = output === null ? undefined : parsePull(output);
     if (!snapshot || !seen) return snapshot;
     const known = new Set(seen);
-    const waiting = held.get(url) ?? new Set();
+    const listed = new Set(snapshot.ids);
+    // What is held but gone from the pull request is held no longer.
+    const waiting = new Set(
+      [...(held.get(`${agent} ${url}`) ?? [])].filter((id) => listed.has(id)),
+    );
+    held.set(`${agent} ${url}`, waiting);
     const unseen = snapshot.ids.filter((id) => !known.has(id));
     // Feedback not read yet comes first, so what is held cannot crowd it out.
     const asked = [
@@ -238,15 +243,14 @@ export function watchPulls(ctx: Context) {
     );
     const known = (id: string) => !unknown.has(id);
     const fetched = new Set(snapshot.feedback.map((item) => item.id));
+    // What this read did not reach stays held for a later one.
+    const key = `${watch.agent} ${watch.url}`;
     held.set(
-      watch.url,
-      new Set(
-        snapshot.ids.filter(
-          (id) =>
-            unknown.has(id) ||
-            (!fetched.has(id) && held.get(watch.url)?.has(id)),
-        ),
-      ),
+      key,
+      new Set([
+        ...[...(held.get(key) ?? [])].filter((id) => !fetched.has(id)),
+        ...unknown,
+      ]),
     );
     return [
       {
@@ -297,7 +301,7 @@ export function watchPulls(ctx: Context) {
       while (!signal.aborted && !disposed) {
         let ended = false;
         try {
-          const snapshot = await read(pull.url, watch.seen);
+          const snapshot = await read(watch.agent, pull.url, watch.seen);
           if (signal.aborted || disposed) return;
           if (!snapshot) throw new Error("gh could not read it");
           const checked = await recheck(
@@ -415,7 +419,7 @@ export function watchPulls(ctx: Context) {
             ? saved
             : (object.config.initial as Watch | undefined)
           : undefined;
-      const snapshot = await read(pull.url, prior?.seen);
+      const snapshot = await read(client.key, pull.url, prior?.seen);
       if (disposed) throw new Error("The GitHub plugin has stopped");
       if (!snapshot)
         throw new Error(

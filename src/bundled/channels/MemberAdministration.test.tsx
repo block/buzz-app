@@ -268,9 +268,11 @@ async function setup(
   };
 }
 it.each([
+  ["owner", "member", true],
   ["owner", "guest", true],
   ["owner", "admin", true],
   ["admin", "guest", false],
+  ["admin", "member", false],
   ["admin", "admin", false],
 ] as const)(
   "lets an %s add someone directly as %s from the split menu (Agent: %s)",
@@ -282,7 +284,12 @@ it.each([
     );
     await t.user.click(
       await screen.findByRole("menuitem", {
-        name: role === "guest" ? "View only" : "Admin",
+        name:
+          role === "guest"
+            ? "View only"
+            : role === "member"
+              ? "Participate"
+              : "Admin",
       }),
     );
     const dialog = await screen.findByRole("dialog", { name: "Add member?" });
@@ -295,7 +302,12 @@ it.each([
     );
     await t.user.click(
       within(dialog).getByRole("button", {
-        name: role === "guest" ? "Add with view-only access" : "Add as admin",
+        name:
+          role === "guest"
+            ? "Add with view-only access"
+            : role === "member"
+              ? "Add to channel"
+              : "Add as admin",
       }),
     );
     await vi.waitFor(() =>
@@ -311,7 +323,11 @@ it.each([
     ]);
     await vi.waitFor(() =>
       expect(screen.getByText("Morgan").closest("li")).toHaveTextContent(
-        role === "guest" ? "Viewing only" : "Admin",
+        role === "guest"
+          ? "Viewing only"
+          : role === "member"
+            ? "Participating"
+            : "Admin",
       ),
     );
   },

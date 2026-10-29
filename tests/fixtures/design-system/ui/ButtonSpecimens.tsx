@@ -160,6 +160,7 @@ export function ButtonSpecimen() {
           menuLabel="Other add options"
           menu={
             <>
+              <MenuItem>Participate</MenuItem>
               <MenuItem>View only</MenuItem>
               <MenuItem>Admin</MenuItem>
             </>

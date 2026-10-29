@@ -133,7 +133,7 @@ it.each(["admin", "remove"] as const)(
   },
 );
 
-it.each(["guest", "admin"] as const)(
+it.each(["guest", "admin", "member"] as const)(
   "adds an absent person directly as %s with exact signed readback",
   async (role) => {
     const h = harness();

@@ -93,6 +93,27 @@ const typedMatch = (name: string, needle: string) =>
 
 const INVITATION_GROUP_SIZE = 4;
 
+const additionRoles = [
+  {
+    role: "member",
+    label: "Participate",
+    action: "Add to channel",
+    description: "Participants can send messages, reply, and react.",
+  },
+  {
+    role: "guest",
+    label: "View only",
+    action: "Add with view-only access",
+    description: "Viewing only allows reading messages and threads.",
+  },
+  {
+    role: "admin",
+    label: "Admin",
+    action: "Add as admin",
+    description: "Admins can manage this channel and its members.",
+  },
+] as const;
+
 /** Mounted rows share the same bounded presence owner as message bylines. */
 function MemberAvatar({
   session,
@@ -320,32 +341,20 @@ const MemberIdentityRow = memo(function MemberIdentityRow({
                 {...addButtonProps}
                 menuLabel={`Add ${name} (${keyLabel}) as`}
                 menuDisabled={busy}
-                menu={
-                  <>
-                    <MenuItem
-                      onClick={() =>
-                        onChange({
-                          pubkey,
-                          expectedRole: "absent",
-                          role: "guest",
-                        })
-                      }
-                    >
-                      View only
-                    </MenuItem>
-                    <MenuItem
-                      onClick={() =>
-                        onChange({
-                          pubkey,
-                          expectedRole: "absent",
-                          role: "admin",
-                        })
-                      }
-                    >
-                      Admin
-                    </MenuItem>
-                  </>
-                }
+                menu={additionRoles.map((option) => (
+                  <MenuItem
+                    key={option.role}
+                    onClick={() =>
+                      onChange({
+                        pubkey,
+                        expectedRole: "absent",
+                        role: option.role,
+                      })
+                    }
+                  >
+                    {option.label}
+                  </MenuItem>
+                ))}
               />
             ) : (
               <Button {...addButtonProps} />
@@ -1433,6 +1442,10 @@ export function ChannelMembersDialog({
   const selectedName =
     selection &&
     label(selection.pubkey, candidates.get(selection.pubkey)?.name);
+  const selectedAddition =
+    selection?.expectedRole === "absent"
+      ? additionRoles.find((option) => option.role === selection.role)
+      : undefined;
   /** A name in a channel share's audience; access actions stay on member rows. */
   const audienceRow = (key: string) => (
     <li key={key} className={styles.stagedRow}>
@@ -1558,10 +1571,8 @@ export function ChannelMembersDialog({
             >
               {selection.role === "remove"
                 ? `Remove ${removalTarget}`
-                : selection.expectedRole === "absent"
-                  ? selection.role === "admin"
-                    ? "Add as admin"
-                    : "Add with view-only access"
+                : selectedAddition
+                  ? selectedAddition.action
                   : `Make ${selection.role}`}
             </Button>
           </>
@@ -1623,11 +1634,8 @@ export function ChannelMembersDialog({
       {selection ? (
         selection.role !== "remove" && (
           <p className="text-body-sm">
-            {selection.expectedRole === "absent"
-              ? selection.role === "admin"
-                ? "Admins can manage this channel and its members."
-                : "Viewing only allows reading messages and threads."
-              : `Change this member’s role from ${selection.expectedRole} to ${selection.role}. ${selection.role === "admin" ? `Admins can manage this ${place} and its members.` : `This changes their authority in this ${place}.`}`}
+            {selectedAddition?.description ??
+              `Change this member’s role from ${selection.expectedRole} to ${selection.role}. ${selection.role === "admin" ? `Admins can manage this ${place} and its members.` : `This changes their authority in this ${place}.`}`}
           </p>
         )
       ) : (

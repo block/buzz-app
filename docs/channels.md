@@ -208,7 +208,7 @@ manually marked unread messages or unread thread activity. Active in the last op
 content-sized dialog with visible 1-, 7-, 30-, and 90-day text-only radio tiles in two columns.
 Apply saves the selected rolling window and activates the filter;
 Cancel leaves the saved choice unchanged. The dialog retains its draft after a
-failed save, and the menu shows the selected window. Activity uses verified timestamps. Channels with unknown activity remain visible until a successful activity read; a failed read keeps them available alongside the activity Retry warning. These filters are encrypted account preferences on the current relay, using a
+failed save, and the menu shows the selected window. Activity uses verified timestamps, including your own messages once the relay accepts them. Channels with unknown activity remain visible until a successful activity read; a failed read keeps them available alongside the activity Retry warning. These filters are encrypted account preferences on the current relay, using a
 separate kind-30078 `channel-filter` record. They leave saved sorting and section
 membership unchanged; earlier device-only filter choices are ignored, not automatically published.
 Filtered sections with no visible channels show only their header, retaining their expanded/collapsed state and menu access to hidden channels.

@@ -268,9 +268,11 @@ export function createRelaySession(
             profiling,
             clock,
             notifyListener: notify,
-            onAccepted: (event) => {
+            onAccepted: (event, acknowledged) => {
               // Product feedback is accepted into a private sidecar, not queryable history.
               if (event.kind !== PRODUCT_FEEDBACK_KIND) confirm(event);
+              // An `unknown` attempt waits for confirm() to read it back.
+              if (acknowledged) acceptOwnActivity(event);
             },
             needsReceipt: isWorkflowOperation,
             onReceipt: (event, message) => workflows.receipt(event, message),
@@ -729,6 +731,12 @@ export function createRelaySession(
     );
     return visible;
   }
+  /** The relay's ACK or read-back verifies an own send before any live echo. */
+  function acceptOwnActivity(event: RelayEvent) {
+    const channelId = event.tags.find(([name]) => name === "h")?.[1];
+    if (!cacheClearing && channelId && canReadRemote(channelId))
+      channelActivity.accept([event]);
+  }
   function confirm(event: RelayEvent, attempt = 0) {
     if (closed || (attempt === 0 && pendingConfirmation.has(event.id))) return;
     pendingConfirmation.add(event.id);
@@ -737,8 +745,9 @@ export function createRelaySession(
         priority: attempt === 0 ? "foreground" : "background",
       })
       .catch(() => [])
-      .then(() => {
+      .then((events) => {
         if (closed) return;
+        if (events.some(({ id }) => id === event.id)) acceptOwnActivity(event);
         const operation = writes?.outbox
           .snapshot()
           .find((item) => item.event.id === event.id);

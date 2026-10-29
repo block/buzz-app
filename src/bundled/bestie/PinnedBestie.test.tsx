@@ -9,7 +9,7 @@ import { createAgentChoices } from "../../features/agents/choices";
 import { createAgentLibrary } from "../../features/agents/library";
 import { localAgentsFixture } from "../../features/agents/local-testing";
 import type { ConversationHostServices } from "../../features/conversation/ConversationHost";
-import type { RelayData } from "../../features/relay/service";
+import type { RelayData, RelaySnapshot } from "../../features/relay/service";
 import { createRelaySession } from "../../features/relay/session";
 import {
   keypair,
@@ -209,6 +209,11 @@ async function fixture({
     signal: lifetime.signal,
   });
   await choices.refresh();
+  let ineligibleSnapshot: ReturnType<typeof choices.snapshot> | undefined;
+  const agentChoices = {
+    ...choices,
+    snapshot: () => ineligibleSnapshot ?? choices.snapshot(),
+  };
   native.onRefresh(() => native.set({ status: "ready" }));
   disposals.push(() => {
     lifetime.abort();
@@ -218,20 +223,25 @@ async function fixture({
   const send = vi.fn<typeof owner.session.messages.send>(() => "d".repeat(64));
   const session = {
     ...owner.session,
-    agentChoices: choices,
+    agentChoices,
     messages: { ...owner.session.messages, send },
   };
-  const snapshot = {
+  let snapshot = {
     status: "ready" as const,
     generation: 1,
     scope,
     viewer: viewer.pubkey,
     session,
-  };
+  } as RelaySnapshot;
+  const relayListeners = new Set<() => void>();
+  const retryConnection = vi.fn();
   const relay: RelayData = {
     snapshot: () => snapshot,
-    subscribe: () => () => {},
-    retry() {},
+    subscribe(listener) {
+      relayListeners.add(listener);
+      return () => relayListeners.delete(listener);
+    },
+    retry: retryConnection,
     disconnect() {},
     async clearCache() {},
   };
@@ -253,6 +263,20 @@ async function fixture({
     open,
     gate,
     native,
+    makePollenIneligible() {
+      const current = choices.snapshot();
+      ineligibleSnapshot = {
+        ...current,
+        selectable: current.selectable.filter(
+          (choice) => choice.pubkey !== pollen,
+        ),
+      };
+    },
+    retryConnection,
+    updateRelay(patch: Partial<RelaySnapshot>) {
+      snapshot = { ...snapshot, ...patch } as RelaySnapshot;
+      for (const listener of relayListeners) listener();
+    },
     recover: () => {
       unavailable = false;
     },
@@ -385,4 +409,62 @@ it("never renders a DM whose signed membership does not match the chosen agent",
     "The conversation’s participants could not be confirmed. Try again.",
   );
   expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+});
+
+it("keeps the saved Bestie visible through reconnect and offers connection recovery", async () => {
+  const f = await fixture({ existing: true });
+  f.choose(pollen);
+  f.mount();
+  await screen.findByRole("textbox", { name: "Message Pollen" });
+  act(() => f.updateRelay({ status: "connecting" }));
+  expect(screen.getByRole("heading", { name: "Pollen" })).toBeVisible();
+  expect(screen.getByText("Connecting…")).toBeVisible();
+  expect(
+    screen.queryByRole("button", { name: "Set up Bestie" }),
+  ).not.toBeInTheDocument();
+  act(() =>
+    f.updateRelay({ status: "error", error: "Community temporarily offline" }),
+  );
+  expect(screen.getByText("Community temporarily offline")).toBeVisible();
+  await userEvent.click(
+    screen.getByRole("button", { name: "Retry connection" }),
+  );
+  expect(f.retryConnection).toHaveBeenCalledOnce();
+});
+
+it("recovers a saved agent missing from a partial inventory through refresh", async () => {
+  const f = await fixture({ localFailed: true });
+  f.choose(pollen);
+  f.mount();
+  expect(await screen.findByText("Local agents unavailable")).toBeVisible();
+  expect(f.session.agentChoices.snapshot()).toMatchObject({
+    status: "ready",
+    complete: false,
+    error: "Local agents unavailable",
+  });
+  await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+  await screen.findByRole("textbox", { name: "Message Pollen" });
+  expect(f.session.agentChoices.snapshot()).toMatchObject({
+    status: "ready",
+    complete: true,
+  });
+  expect(f.session.agentChoices.snapshot()).not.toHaveProperty("error");
+});
+
+it("rechecks eligibility before retrying a failed DM open", async () => {
+  const f = await fixture();
+  f.open.mockRejectedValueOnce(new Error("DM temporarily unavailable"));
+  f.open.mockRejectedValueOnce(new Error("DM temporarily unavailable"));
+  f.choose(pollen);
+  f.mount();
+  await screen.findByText("DM temporarily unavailable");
+  const attempts = f.open.mock.calls.length;
+  f.makePollenIneligible();
+  await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+  expect(
+    await screen.findByText(
+      "This agent is no longer available in this community.",
+    ),
+  ).toBeVisible();
+  expect(f.open).toHaveBeenCalledTimes(attempts);
 });

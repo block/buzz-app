@@ -31,8 +31,7 @@ export type RecoveryState =
   | { status: "error"; error: string };
 
 /** Native recovery's answer when this build or the tenant has no recovery (`nsec_backup.rs` UNAVAILABLE). */
-export const RECOVERY_UNAVAILABLE =
-  "Backup recovery is unavailable. Try again later.";
+export const RECOVERY_UNAVAILABLE = "Backup recovery is unavailable.";
 /** Native recovery's refusal for this account (`nsec_backup.rs` REFUSED: a public org, or no Buzz access). */
 export const RECOVERY_REFUSED =
   "Backup recovery is not offered for this account.";

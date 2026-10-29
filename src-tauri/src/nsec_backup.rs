@@ -28,7 +28,7 @@ const RETRY: &str = "Could not restore your identity. Try again.";
 const CANCELED: &str = "Restore was canceled. Try again.";
 // The renderer matches these two to offer manual key entry instead of a retry
 // (`recoveryOff` in `src/features/identity/service.ts`).
-const UNAVAILABLE: &str = "Backup recovery is unavailable. Try again later.";
+const UNAVAILABLE: &str = "Backup recovery is unavailable.";
 const REFUSED: &str = "Backup recovery is not offered for this account.";
 type Result<T> = std::result::Result<T, String>;
 

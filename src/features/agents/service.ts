@@ -887,6 +887,9 @@ export type AgentsSnapshot = Readonly<{
   /** The owner's teams on this device, which every community shares, and
    * each synced team with a confirmed copy. */
   teams: readonly Team[];
+  /** Whether the selected community's config channels are up, so a new team
+   * made there syncs. What `teamHere` says of a new team changes with it. */
+  syncsTeams?: boolean;
   error?: string;
 }>;
 export type { Carry, Team };
@@ -1863,6 +1866,7 @@ export class AgentsService extends Service implements Agents {
           agents: Object.freeze([]),
           running: Object.freeze([]),
           interrupted: Object.freeze([]),
+          syncsTeams: false,
         });
         this.notify();
       };
@@ -4980,16 +4984,19 @@ export class AgentsService extends Service implements Agents {
     const same = (next: readonly Agent[], prior: readonly Agent[]) =>
       next.length === prior.length &&
       next.every((agent, index) => agent === prior[index]);
+    const syncsTeams = !!selected && this.communityConfigs.has(selected);
     if (
       !same(agents, this.state.agents) ||
       !same(running, this.state.running) ||
-      !same(interrupted, this.state.interrupted)
+      !same(interrupted, this.state.interrupted) ||
+      syncsTeams !== !!this.state.syncsTeams
     ) {
       this.state = Object.freeze({
         ...this.state,
         agents: Object.freeze(agents),
         running: Object.freeze(running),
         interrupted: Object.freeze(interrupted),
+        syncsTeams,
       });
       this.notify();
     }

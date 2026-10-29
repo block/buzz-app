@@ -403,7 +403,11 @@ function setup(
     snapshot = { ...snapshot, agents: next };
     for (const listener of listeners) listener();
   };
-  return { agents, echoProvider, types, show, relay, ...view };
+  const change = (patch: Partial<AgentsSnapshot>) => {
+    snapshot = { ...snapshot, ...patch };
+    for (const listener of listeners) listener();
+  };
+  return { agents, echoProvider, types, show, change, relay, ...view };
 }
 
 it("opens settings for a selected agent beside the grid and follows the arrow keys", async () => {
@@ -2593,6 +2597,32 @@ it("leaves a hosted agent picked in another community off a new team, keeping th
   expect(agents.saveTeam).toHaveBeenLastCalledWith(
     expect.objectContaining({ id: "sky", members: [sky.pubkey] }),
   );
+});
+
+it("offers an open new team hosted agents once its community is known to sync teams", async () => {
+  const user = userEvent.setup();
+  const { agents, change } = setup([
+    agent("Ada", 1),
+    { ...agent("Sky", 2), place: "hosted" },
+  ]);
+  // A new team syncs here once the community's config channels are up.
+  agents.teamHere.mockImplementation(
+    ({ id }) => !id && !!agents.snapshot().syncsTeams,
+  );
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  await user.click(screen.getByRole("button", { name: "New team" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Create a new team" }),
+  );
+  await user.type(screen.getByRole("textbox", { name: "Name" }), "Crew");
+  await user.click(screen.getByRole("checkbox", { name: "Ada" }));
+  expect(
+    screen.queryByRole("checkbox", { name: "Sky" }),
+  ).not.toBeInTheDocument();
+  act(() => change({ syncsTeams: true }));
+  expect(screen.getByRole("checkbox", { name: "Sky" })).not.toBeChecked();
+  expect(screen.getByRole("checkbox", { name: "Ada" })).toBeChecked();
+  expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue("Crew");
 });
 
 it("closes the team editor when leaving Your teams", async () => {

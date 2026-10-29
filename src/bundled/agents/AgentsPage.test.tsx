@@ -2605,7 +2605,7 @@ it("explains an unavailable harness without claiming the key is on another devic
 it("shows a synced team only where its members are, after switching communities", async () => {
   const user = userEvent.setup();
   const sky: Agent = { ...agent("Sky", 2), place: "hosted" };
-  const { show } = setup([agent("Ada", 1), sky], {
+  const { agents, show } = setup([agent("Ada", 1), sky], {
     teams: [
       {
         id: "sky",
@@ -2639,11 +2639,33 @@ it("shows a synced team only where its members are, after switching communities"
   expect(
     screen.getByRole("form", { name: "Edit Sky crew" }),
   ).toBeInTheDocument();
+  // Bo's community is no synced team's home.
+  agents.teamHere.mockReturnValue(false);
   act(() => show([agent("Bo", 3)]));
   expect(
     screen.queryByRole("form", { name: "Edit Sky crew" }),
   ).not.toBeInTheDocument();
   expect(listed()).toEqual(["Empty", "Stale"]);
+});
+
+it("keeps a synced team in its home while none of its members is listed", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([agent("Ada", 1)], {
+    teams: [
+      {
+        id: "gone",
+        name: "Gone",
+        instructions: "",
+        members: ["9".repeat(64)],
+        revision: "1",
+      },
+    ],
+  });
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  expect(agents.teamHere).toHaveBeenCalledWith({ id: "gone" });
+  await user.click(screen.getByRole("button", { name: "Gone" }));
+  await user.click(screen.getByRole("button", { name: "Delete team" }));
+  expect(agents.removeTeam).toHaveBeenCalledWith("gone");
 });
 
 it("shows an agent on another device read-only, and offers only Finish setup and Delete for an unfinished hosted one", async () => {

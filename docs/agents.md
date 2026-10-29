@@ -679,9 +679,10 @@ in its home record and applies everywhere.
   agent's memory in that community stay, so they come back if it is added again;
   its attention there does not.
 - **Teams** work like agents: a team shows in every community where it has a
-  member (or in all of them while it has none), but has one home community. A
-  local team is shared by every community; a member's roster lists only teammates
-  in the same community, and the editor keeps members that are only elsewhere.
+  member (or in all of them while it has none), and a synced team always shows
+  in its one home community. A local team is shared by every community; a
+  member's roster lists only teammates in the same community, and the editor
+  keeps members that are only elsewhere.
   Where the community's relay supports config channels, a new team, or one
   imported from old Buzz, is synced: its NIP-AP config channel (name and
   instructions) is created only in the community it was made in, and its members

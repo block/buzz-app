@@ -257,7 +257,7 @@ it("follows roster changes and community replacement without remounting content 
   act(() => {
     f.update({ status: "connecting", generation: 2 });
   });
-  expect(screen.getByRole("button", { name: "Bestie" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Renamed" })).toBeInTheDocument();
   act(() => {
     f.update({ status: "ready", scope: `https://other.test:${viewer}` });
   });

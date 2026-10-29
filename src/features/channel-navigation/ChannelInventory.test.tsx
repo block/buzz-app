@@ -1940,8 +1940,16 @@ it("promotes exactly the Bestie DM, restores prior local removal, and releases i
     expect(row("pollen-dm")).not.toBeNull();
     h.publish("pollen-dm", { members: [viewer, pollen] });
     expect(row("pollen-dm")).toBeNull();
+    // Source failure removes its candidates but does not release an explicit
+    // account choice whose exact verified DM still exists.
     act(() => {
-      native.set({ agents: [] });
+      native.set({ status: "error", agents: [], error: "Agents unavailable" });
+    });
+    expect(row("pollen-dm")).toBeNull();
+    expect(screen.getByRole("button", { name: "Bestie" })).toBeInTheDocument();
+    // A settled successful inventory proving the saved agent is gone releases it.
+    act(() => {
+      native.set({ status: "ready", agents: [] });
     });
     expect(row("pollen-dm")).not.toBeNull();
     expect(screen.getByRole("button", { name: "Bestie" })).toBeInTheDocument();

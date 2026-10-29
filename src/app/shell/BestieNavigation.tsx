@@ -34,21 +34,31 @@ export function BestieNavigationProvider({
 }) {
   const connection = useRelayConnection(relay);
   const { viewer, scope, session } = connection;
-  const active =
+  const enabled =
     pages.some((page) => page.key === BESTIE_PAGE) &&
-    connection.status === "ready" &&
     !!viewer &&
     !!scope?.endsWith(`:${viewer}`);
+  const active = enabled && connection.status === "ready";
   const saved = useSavedAgent(session, scope ?? "");
   const choices = useAgentChoices(session, active, active);
-  const agent = active
+  const agent = enabled
     ? choices.selectable.find((item) => item.pubkey === saved)
     : undefined;
+  // A failed source contributes no stale identity row, but the account choice
+  // and exact verified DM still establish promotion. Complete evidence that the
+  // agent is gone, or known archive evidence, releases it.
+  const promoted =
+    enabled &&
+    saved &&
+    !choices.archives.archived.includes(saved) &&
+    (agent || choices.status !== "ready" || !choices.complete)
+      ? saved
+      : undefined;
   const channels = useSyncExternalStore(
     session.channels.subscribeList,
     session.channels.list,
   );
-  const channel = bestieChat(channels.channels, viewer, agent?.pubkey);
+  const channel = bestieChat(channels.channels, viewer, promoted);
   const pack = agentAvatars.find((item) => item.url === agent?.avatar);
   const preview = useAvatarPreview(
     pack ? "" : (agent?.avatar ?? ""),

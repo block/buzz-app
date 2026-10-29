@@ -176,12 +176,21 @@ function RegionFrame({
       if (document.activeElement?.closest("[data-solo-destination-root]"))
         return;
       queueMicrotask(() => {
-        if (document.activeElement === document.body)
-          (
-            document.querySelector<HTMLElement>(
-              `[data-sidebar-section="${CSS.escape(sectionKey)}"] summary`,
-            ) ?? document.querySelector<HTMLElement>("[data-solo-heading]")
-          )?.focus();
+        if (document.activeElement !== document.body) return;
+        const candidates = [
+          document.querySelector<HTMLElement>(
+            `[data-sidebar-section="${CSS.escape(sectionKey)}"] summary`,
+          ),
+          document.querySelector<HTMLElement>("[data-solo-heading]"),
+          ...document.querySelectorAll<HTMLElement>(
+            '[data-sidebar-section^="solo-region:"] summary',
+          ),
+        ];
+        for (const candidate of candidates) {
+          if (!candidate || candidate.closest("[hidden], [inert]")) continue;
+          candidate.focus();
+          if (document.activeElement === candidate) break;
+        }
       });
     };
   }, [sectionKey]);

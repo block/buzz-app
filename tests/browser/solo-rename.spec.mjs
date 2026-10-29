@@ -542,3 +542,30 @@ test("composable row removal respects blur and continues past a CSS-hidden neigh
     sidebar(page).locator("summary").filter({ hasText: "Solo" }),
   ).toBeFocused();
 });
+
+// A real browser must move focus off the detached summary to the remaining
+// source heading; the ordinary Solo fallback is not mounted in this layout.
+test("removing a focused region keeps keyboard focus in the remaining region", async ({
+  page,
+  app,
+}) => {
+  await regionFixture(page, app);
+  for (const mode of ["light", "dark"]) {
+    await page.evaluate((mode) => {
+      document.documentElement.dataset.colorMode = mode;
+      document.documentElement.style.fontSize = "150%";
+    }, mode);
+    await page.evaluate(() => window.fixtureSoloRegion.addTransientRegion());
+    const temporary = sidebar(page).locator('summary[aria-label="Temporary"]');
+    await temporary.focus();
+    await expect(temporary).toBeFocused();
+    await page.evaluate(() => window.fixtureSoloRegion.removeTransientRegion());
+    await expect(temporary).toHaveCount(0);
+    const remaining = sidebar(page).locator('summary[aria-label="Solo"]');
+    await expect(remaining).toBeFocused();
+    await remaining.press("Enter");
+    await expect(regionRow(page, alpha)).toBeHidden();
+    await remaining.press("Enter");
+    await expect(regionRow(page, alpha)).toBeVisible();
+  }
+});

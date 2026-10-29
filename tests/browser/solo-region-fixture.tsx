@@ -9,6 +9,8 @@ declare global {
     fixtureSoloRegion?: {
       classify(id: string): Promise<void>;
       present(removed: string[], hidden: string[]): void;
+      addTransientRegion(): Promise<void>;
+      removeTransientRegion(): Promise<void>;
     };
   }
 }
@@ -69,7 +71,35 @@ export const soloRegionFixture: BundledPlugin = {
           </>
         ),
       });
+      let disposeTransient = async () => {};
       window.fixtureSoloRegion = {
+        async addTransientRegion() {
+          const fiber = ctx.plugin({
+            inject: ["soloNavigation"],
+            apply(child) {
+              let current: SoloRegionSnapshot;
+              if (!child.soloNavigation)
+                throw new Error("Solo navigation unavailable");
+              child.soloNavigation.registerSource({
+                id: "temporary",
+                title: "Temporary",
+                order: 100,
+                icon: null,
+                bind(binding) {
+                  current = { status: "ready", binding, revision: 1 };
+                },
+                read: () => current,
+                subscribe: () => () => {},
+                component: () => null,
+              });
+            },
+          });
+          await fiber.await();
+          disposeTransient = async () => {
+            await fiber.dispose();
+          };
+        },
+        removeTransientRegion: () => disposeTransient(),
         classify: (id) => handle.classify(binding, id),
         present(nextRemoved, nextHidden) {
           removed = nextRemoved;

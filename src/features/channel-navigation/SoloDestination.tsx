@@ -429,6 +429,9 @@ function useDestinationFocus(
             `[data-sidebar-section="${CSS.escape(region?.getAttribute("data-sidebar-section") ?? "")}"] summary`,
           ),
           document.querySelector<HTMLElement>("[data-solo-heading]"),
+          ...document.querySelectorAll<HTMLElement>(
+            '[data-sidebar-section^="solo-region:"] summary',
+          ),
         ];
         for (const candidate of candidates) {
           if (!candidate || candidate.closest("[hidden], [inert]")) continue;

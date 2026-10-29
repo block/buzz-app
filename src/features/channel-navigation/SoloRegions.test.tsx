@@ -985,6 +985,25 @@ it("moves focus to the region summary after the last row disappears and to Solo 
   }
 });
 
+it.each(["heading", "destination"])(
+  "moves focus from a removed region's %s to a remaining region",
+  async (focused) => {
+    const h = fixture();
+    const source = await h.register({ component: Body });
+    await h.register({ id: "other", title: "Other" });
+    mount(h);
+    (focused === "heading"
+      ? screen.getByLabelText("Work")
+      : screen.getByRole("button", { name: "Owned" })
+    ).focus();
+    await act(async () => {
+      h.roster([]);
+      await source.fiber.dispose();
+    });
+    await waitFor(() => expect(screen.getByLabelText("Other")).toHaveFocus());
+  },
+);
+
 it("keeps recovery chats reachable while distinguishing installed, unknown and not-installed plugin state", async () => {
   const h = fixture();
   mount(h);

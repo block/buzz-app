@@ -902,9 +902,13 @@ the agent would share now, and publishes that, still shared.
 
 **Export agent** saves `{name}.agent.png` or, by **File format**,
 `{name}.agent.json` in the `buzz-agent-snapshot` version 1 format that block/buzz
-and earlier Buzz write, without memory. The PNG is the picture redrawn at
-512×512, or a transparent pixel when it is missing or takes over 5 seconds to
-load, with the manifest in a `buzz_agent_snapshot` tEXt chunk. Desktop saves it
+and earlier Buzz write, without memory. The PNG is an 820×1230 agent card
+(`src/features/agents/share-card.ts`): foil around the picture, the name, and
+its harness and model, with the letter tile when the picture is missing, takes
+over 5 seconds to load, or can't be read back, and a transparent pixel when no
+card can be drawn. The manifest is in a `buzz_agent_snapshot` tEXt chunk.
+Exporting the card previews it first and saves the bytes shown; sending the
+agent uploads the same card. Desktop saves it
 to Downloads through `file_download` (`src-tauri/src/relay.rs`), as media is
 saved, since WKWebView cannot save a `blob:` link cleanly, and returns the
 saved path, which the dialog shows. It takes only

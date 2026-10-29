@@ -681,10 +681,36 @@ it("says when the card can't be drawn, and draws it again", async () => {
   }
   drawable();
   await user.click(screen.getByRole("button", { name: "Try again" }));
+  // Focus waits on Back while the card is drawn again, then moves to Save.
   expect(
     await screen.findByRole("img", { name: "Ada’s agent card" }),
   ).toBeInTheDocument();
   expect(await saveCard()).toBeEnabled();
+  await vi.waitFor(() =>
+    expect(screen.getByRole("button", { name: "Save card" })).toHaveFocus(),
+  );
+});
+
+it("stops saving, and says why, when the agent can't be shared while previewed", async () => {
+  const user = userEvent.setup();
+  drawable();
+  const { session } = community();
+  const view = share(session);
+  await user.click(exportButton());
+  expect(await saveCard()).toBeEnabled();
+  // Its synced configuration becomes unavailable while the preview is open.
+  view.rerender(
+    <AgentShareDialog
+      agent={{ ...agent, configProblem: "Its configuration is unavailable." }}
+      type={echo}
+      session={session}
+      onClose={() => {}}
+    />,
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Ada can’t be shared. Its configuration is unavailable.",
+  );
+  expect(screen.getByRole("button", { name: "Save card" })).toBeDisabled();
 });
 
 it("names a desktop export so every platform accepts it", async () => {

@@ -552,7 +552,7 @@ export function AgentShareDialog({
               ref={saveButton}
               variant="prominent"
               loading={pending === "export"}
-              disabled={busy || !card}
+              disabled={busy || !card || !definition}
               onClick={() => void save("png")}
             >
               Save card
@@ -587,14 +587,27 @@ export function AgentShareDialog({
             pending={!card}
             label="Drawing the card…"
             feedback={
-              // A save can still fail after a card couldn’t be drawn; say both.
-              card === "failed" || error ? (
+              // A save can still fail after a card couldn’t be drawn, and an
+              // agent can stop being shareable while previewed; say each.
+              refused || card === "failed" || error ? (
                 <div className="grid gap-1">
+                  {refused && (
+                    <p role="alert" className="m-0 text-body-sm text-danger">
+                      {agent.name} can’t be shared. {refused}
+                    </p>
+                  )}
                   {card === "failed" && (
                     <p role="alert" className="m-0 text-body-sm text-danger">
                       Couldn’t draw the card. Saving still keeps the agent’s
                       setup.{" "}
-                      <Button size="sm" onClick={() => setCard(undefined)}>
+                      <Button
+                        size="sm"
+                        onClick={() => {
+                          // Try again leaves while the card is drawn again.
+                          backButton.current?.focus();
+                          setCard(undefined);
+                        }}
+                      >
                         Try again
                       </Button>
                     </p>

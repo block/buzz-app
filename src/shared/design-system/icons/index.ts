@@ -1,6 +1,7 @@
 import { defineIcon } from "./createDecorativeIcon";
 export type { DefinedIcon } from "./createDecorativeIcon";
 import { BestieMarkArtwork } from "./BestieMark";
+import { BlockLogoArtwork } from "./BlockLogo";
 import { GitHubIssueArtwork } from "./GitHubIssue";
 import { OneDriveLogoArtwork } from "./OneDriveLogo";
 import {
@@ -332,6 +333,13 @@ export const OneDriveLogoIcon = defineIcon("custom", OneDriveLogoArtwork, {
   provenance:
     "Custom current-color outline recreation of the Microsoft OneDrive cloud mark.",
   intendedSizes: [{ width: 14, height: 14 }],
+});
+export const BlockLogoIcon = defineIcon("custom", BlockLogoArtwork, {
+  meaning: "Builderlab settings",
+  category: "Custom brand mark",
+  provenance:
+    "Block, Inc. corporate mark, current-color grid from the Builderlab Buzz site's block-logo.svg.",
+  intendedSizes: [{ width: 18, height: 18 }],
 });
 export const GitHubIssueIcon = defineIcon("custom", GitHubIssueArtwork, {
   meaning: "Open GitHub issue",

@@ -31,7 +31,7 @@ test("Bestie opts in without changing the other bundled defaults and survives re
     "GitHub",
     "Terminal",
     "Workflows",
-    "Hosted communities",
+    "Builderlab",
     "Agent Attention UI",
   ])
     await expect(pluginAction(page, name)).toHaveAccessibleName(/^Disable /);

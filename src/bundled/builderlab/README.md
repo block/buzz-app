@@ -1,13 +1,14 @@
 # Builderlab
 
-Create agents that Builderlab hosts for you, so they keep working even when Buzz is closed.
+One Builderlab account for communities and agents that Builderlab hosts for you, so they keep working even when Buzz is closed.
 
 ## Getting started
 
-1. Go to **Settings → Plugins → Builderlab agents** and choose **Sign in with Builderlab**.
-2. In **Agents**, choose **New agent** and pick **Builderlab (hosted)** as the **Harness**.
-3. Choose a model and reasoning effort, optionally add instructions, then create the agent.
-4. Edit instructions later in **Identity**, and model settings in **Settings**.
+1. Go to **Settings → Plugins → Builderlab** and choose **Sign in with Builderlab**.
+2. To host a community, choose **Create community** under **Communities**, then **Copy address**, open the community picker and choose **Join a community**.
+3. To host an agent, in **Agents** choose **New agent** and pick **Builderlab (hosted)** as the **Harness**.
+4. Choose a model and reasoning effort, optionally add instructions, then create the agent.
+5. Edit instructions later in **Identity**, and model settings in **Settings**.
 
 ---
 
@@ -53,7 +54,9 @@ pre-app consent still use the existing canonical browser authentication gate.
 
 ## Remote agents
 
-The bundled `block.builderlab` plugin adds Settings → Plugins → Builderlab agents.
+The bundled `block.builderlab` plugin adds Settings → Plugins → Builderlab: one
+sign-in, then hosted communities (`communities/`, see
+[plugin architecture](../../../docs/plugin-architecture.md)) and remote agents.
 With a valid `BUZZ_BUILDERLAB_URL` build input, it also registers
 `block.builderlab/builderlab` in Agents' new-agent type picker.
 `adapter-type/` connects this hosted type to Beekeeper: provision registers the

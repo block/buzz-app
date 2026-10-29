@@ -509,7 +509,7 @@ contracts with their own layout and local navigation.
 **Channels is the only required bundled plugin.** Bestie,
 Todos and Usage are off by default. Feedback, Diff viewer, Identity
 Naming, Agent Activity, Terminal, Links, GitHub, Inbox,
-Repositories, Agents, Claude, Codex, Workflows, Builderlab, Hosted communities,
+Repositories, Agents, Claude, Codex, Workflows, Builderlab,
 Membership, and Moderation are on by default, but optional. Both browser and
 native catalogs declare that policy.
 
@@ -523,7 +523,7 @@ without a saved flag use the current default, so changing a default also changes
 those existing profiles. There is no migration or forced reset: a browser profile that previously saved its full
 plugin snapshot can retain Bestie enabled. Native profiles store per-plugin
 overrides. Default-on does not promise platform support: Terminal contributes UI
-only on macOS/Linux desktop; Hosted communities needs either the desktop app or
+only on macOS/Linux desktop; Builderlab's hosted communities need either the desktop app or
 the live development broker. Disabling Membership removes its Invite to community shortcut.
 
 Membership and Moderation share app-owned access controllers composed in
@@ -593,9 +593,10 @@ Create resolves its agents and its teams' members to those that are the owner's
 agents in this community and sends them with the Canvas as ordinary channel setup,
 which the session applies and retries as before.
 
-Hosted communities (`block.hosted-communities`) is a Block-specific bundled plugin
-under Settings → Plugins → Builderlab hosting. It manages Block-hosted relays through a Builderlab
-account: browser sign-in, binding the local Buzz identity (a locally signed kind
+Hosted communities are part of the Block-specific Builderlab plugin
+(`block.builderlab`, `communities/`), shown under Settings → Plugins → Builderlab
+beside remote agents. They manage Block-hosted relays through the plugin's one
+Builderlab sign-in: binding the local Buzz identity (a locally signed kind
 24243 challenge), and create/archive/unarchive/transfer. A server-declared,
 default-off capability also exposes owner deletion for archived communities. The
 card persists the bound four-field request before admission. A fresh request can
@@ -610,14 +611,15 @@ re-read and verified before dispatch; browser local storage has no atomic compar
 so exactly simultaneous contexts remain a documented client-side race;
 it never signs deletion or infers acceptance from a missing list row. Joining
 stays in the existing Join a community dialog; the card only copies the new relay address. Its
-account backend follows the same split as `HostService`: live development uses the
-broker's `/api/builderlab/*` routes (`browser-host/builderlab.mjs`), which keep the session
-credential and signing key in Node. Desktop builds use `native.ts`, the same routes
-over the shared `oauth_callback` sign-in, host HTTP to the manifest's single
-`https://app.builderlab.xyz` grant, and `identity_sign_builderlab_binding`, which
-validates the challenge and signs only the fixed kind 24243 binding. The desktop
-credential lives in plugin memory for the plugin's lifetime and is never persisted,
-so restarting the app signs out. Other browser builds show the unavailable notice.
+account backend follows the same split as `HostService`: live development with a
+pinned viewer uses the broker's `/api/builderlab/*` routes (`browser-host/builderlab.mjs`),
+which keep their own session credential and signing key in Node. Desktop builds use
+`native.ts`, the same routes with the plugin's shared session credential, host HTTP to
+the configured `BUZZ_BUILDERLAB_URL` grant, and `identity_sign_builderlab_binding`, which
+validates the challenge and signs only the fixed kind 24243 binding. They read the
+account after sign-in's automatic identity link settles. The desktop credential lives in
+plugin memory for the plugin's lifetime and is never persisted, so restarting the app
+signs out. Builds without a configured Builderlab URL show the unavailable notice.
 
 ### Composer accessories
 

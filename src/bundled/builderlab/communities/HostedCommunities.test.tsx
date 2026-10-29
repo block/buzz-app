@@ -371,6 +371,72 @@ function hold() {
   return { answer: () => answer, release };
 }
 
+const renderShared = () =>
+  render(
+    <StrictMode>
+      <HostedCommunities api={brokerApi} active={() => true} sharedSignIn />
+    </StrictMode>,
+  );
+
+it("retries a failed shared-session account check in place", async () => {
+  routes["/api/builderlab/auth"] = () =>
+    Response.json({ error: "Builderlab is down" }, { status: 500 });
+  renderShared();
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Builderlab is down",
+  );
+  expect(calls.filter(([url]) => url === "/api/builderlab/list")).toHaveLength(
+    0,
+  );
+  routes["/api/builderlab/auth"] = () => ({
+    auth: { email: "a@example.com", expiresAt: "2030" },
+  });
+  routes["/api/builderlab/list"] = () => ({
+    communities: [
+      {
+        id: "c1",
+        name: "north",
+        normalized_host: "north.communities.buzz.xyz",
+      },
+    ],
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+  expect(await screen.findByText("north")).toBeVisible();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+});
+
+it("drops a held account retry when the session replaces the card", async () => {
+  const held = hold();
+  const getAuth = vi
+    .fn<typeof brokerApi.getAuth>()
+    .mockRejectedValueOnce(new Error("Builderlab is down"))
+    .mockReturnValueOnce(held.answer() as ReturnType<typeof brokerApi.getAuth>);
+  const view = render(
+    <HostedCommunities
+      api={{ ...brokerApi, getAuth }}
+      active={() => true}
+      sharedSignIn
+    />,
+  );
+  await screen.findByRole("alert");
+  fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+  try {
+    await waitFor(() => expect(getAuth).toHaveBeenCalledTimes(2));
+    // index.tsx keys the card by account, so a new session remounts it.
+    view.unmount();
+  } finally {
+    held.release({ email: "a@example.com", expiresAt: "2030" });
+  }
+  // The retry's continuation runs before this one, so any load has started.
+  await act(async () => {
+    await held.answer();
+  });
+  expect(calls.filter(([url]) => url === "/api/builderlab/list")).toHaveLength(
+    0,
+  );
+});
+
 it("keeps create and copy paused until this device's key is read and matches", async () => {
   const device = hold();
   routes["/api/relay/identity"] = device.answer as Handler;

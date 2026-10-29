@@ -321,10 +321,6 @@ pub fn bundled_manifests() -> Vec<Manifest> {
         serde_json::from_str(include_str!("../../../src/bundled/feedback/manifest.json"))
             .expect("feedback manifest"),
         serde_json::from_str(include_str!(
-            "../../../src/bundled/hosted-communities/manifest.json"
-        ))
-        .expect("hosted communities manifest"),
-        serde_json::from_str(include_str!(
             "../../../src/bundled/moderation/manifest.json"
         ))
         .expect("moderation manifest"),
@@ -366,7 +362,6 @@ fn enabled_by_default(id: &str) -> bool {
             | "buzz.codex"
             | "buzz.goose"
             | "buzz.workflows"
-            | "block.hosted-communities"
             | "block.builderlab"
             | "buzz.moderation"
             | "buzz.relay-staff"

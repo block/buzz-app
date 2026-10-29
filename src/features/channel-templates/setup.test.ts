@@ -217,6 +217,138 @@ it.each(["ready", "unavailable", "failed", "conflicting"] as const)(
     }
   },
 );
+it.each(["group", "starred"] as const)(
+  "applies %s placement before the new channel first lists or opens",
+  async (destination) => {
+    const relay = keypair();
+    const events: RelayEvent[] = [];
+    const sections = [{ id: "work", name: "Work", order: 0 }];
+    let assignments: Record<string, string> = {};
+    let starred: readonly string[] = [];
+    let created: string | undefined;
+    // The first read of the new channel's metadata or roster is the re-read.
+    const listed = hold();
+    const listing = hold();
+    // A preference re-read after Create stays held: placement must not wait on it.
+    const reread = hold();
+    const writeAssignment = vi.fn(
+      async ({
+        channelId,
+        sectionId,
+      }: {
+        channelId?: string;
+        sectionId?: string;
+      }) => {
+        if (channelId && sectionId)
+          assignments = { ...assignments, [channelId]: sectionId };
+        return { sections, assignments };
+      },
+    );
+    const owner = createRelaySession(
+      {
+        viewer: viewer.pubkey,
+        relayAuthor: relay.pubkey,
+        scope: "https://placement.example.test",
+        media: () => undefined,
+        query: async (filters) => {
+          if (created) {
+            if (filters.some((filter) => filter.kinds?.includes(30078)))
+              await reread.promise;
+            const row = events.filter((event) =>
+              event.tags.some(
+                ([tag, value]) => tag === "d" && value === created,
+              ),
+            );
+            if (
+              row.some((event) => filters.some((f) => matchesEvent(event, f)))
+            ) {
+              listed.release();
+              await listing.promise;
+            }
+          }
+          return events.filter((event) =>
+            filters.some((filter) => matchesEvent(event, filter)),
+          );
+        },
+        channelKit: { prepare: async () => "", decode: async () => [] },
+        decodeSidebarPreferences: async () => ({
+          sections,
+          assignments,
+          starred,
+          muted: [],
+        }),
+        writeSidebarAssignment: writeAssignment,
+        writeSidebarStar: async ({ channelId, starred: on }) => {
+          starred = on
+            ? [...starred, channelId]
+            : starred.filter((id) => id !== channelId);
+          return starred;
+        },
+        writer: {
+          kinds: [9007],
+          sign: async (template) => signed(viewer, template),
+          publish: async (event) => {
+            events.push(event);
+            created = event.tags.find(([tag]) => tag === "h")?.[1];
+            assert.exists(created);
+            events.push(
+              metadata(relay, created, "Placed"),
+              roster(relay, created, [viewer.pubkey]),
+            );
+          },
+        },
+      },
+      { outboxStorage: { load: async () => [], save: async () => {} } },
+    );
+    try {
+      let admitted = false;
+      const creation = owner.session.channelCreation
+        .create({
+          name: "Placed",
+          visibility: "open",
+          setup: {
+            agents: [],
+            canvas: "",
+            groupId: destination === "group" ? "work" : "",
+            templateId: "",
+            ...(destination === "starred" ? { starred: true } : {}),
+          },
+        })
+        .finally(() => {
+          admitted = true;
+        });
+      await listed.promise;
+      const id = created;
+      assert.exists(id);
+      const placed = owner.session.sidebarPreferences.snapshot();
+      expect(admitted).toBe(false);
+      expect(placed.status).toBe("ready");
+      if (destination === "group")
+        expect(placed.data?.assignments[id]).toBe("work");
+      else expect(placed.data?.starred).toContain(id);
+      listing.release();
+      expect(await creation).toBe(id);
+      const receipt = `buzz-channel-setup.v2:https://placement.example.test:${viewer.pubkey}:${id}`;
+      await vi.waitFor(() => expect(localStorage.getItem(receipt)).toBeNull());
+      expect(owner.session.channelCreation.notices()).toEqual([]);
+      const saved = owner.session.sidebarPreferences.snapshot().data;
+      if (destination === "group") {
+        expect(saved?.assignments[id]).toBe("work");
+        expect(writeAssignment).toHaveBeenCalledExactlyOnceWith(
+          { channelId: id, sectionId: "work" },
+          expect.any(AbortSignal),
+        );
+      } else {
+        expect(saved?.starred).toEqual([id]);
+        expect(writeAssignment).not.toHaveBeenCalled();
+      }
+    } finally {
+      listing.release();
+      reread.release();
+      owner.dispose();
+    }
+  },
+);
 function firstReceipt() {
   const key = receipts()[0];
   assert.exists(key);
@@ -575,6 +707,26 @@ it.each([false, true])(
     ).toEqual(draft);
   },
 );
+
+it("keeps a placement started before a failed channel-list re-read handled", async () => {
+  const f = fixture();
+  let placed = 0;
+  // A vi.fn would observe its own rejection and hide an unhandled one.
+  const setup = createChannelSetup({
+    ...f.opts,
+    place: () => {
+      placed++;
+      return Promise.reject(new Error("Group unavailable"));
+    },
+  });
+  f.opts.refresh.mockRejectedValueOnce(new Error("Roster not confirmed"));
+  const run = setup.run(input, viewer.pubkey);
+  await expect(run.admission).rejects.toThrow("Roster not confirmed");
+  await expect(run.completion).rejects.toThrow("Roster not confirmed");
+  expect(placed).toBe(1);
+  expect(f.events.map((e) => e.event.kind)).toEqual([9007]);
+  expect(receipts()).toHaveLength(1);
+});
 
 it("stars a confirmed channel through the setup owner without assigning a custom group", async () => {
   const f = fixture();

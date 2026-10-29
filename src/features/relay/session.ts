@@ -1681,7 +1681,6 @@ export function createRelaySession(
             }
           },
           async star(id) {
-            await sidebarPreferences.queries.refresh();
             if (!sidebarPreferences.queries.starWritable)
               throw new Error(
                 "Starred placement is unavailable; keep the partial channel and star it separately",
@@ -1693,7 +1692,6 @@ export function createRelaySession(
             await sidebarPreferences.queries.setStar(id, true);
           },
           async place(id, groupId) {
-            await sidebarPreferences.queries.refresh();
             const state = sidebarPreferences.queries.snapshot();
             if (
               !sidebarPreferences.queries.writable ||

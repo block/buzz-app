@@ -182,7 +182,13 @@ export function ModelSettings({
             <div className="buzz-select" data-variant="compact">
               <PopoverRoot
                 open={harnessHelpOpen}
-                onOpenChange={setHarnessHelpOpen}
+                onOpenChange={(open, details) => {
+                  if (!open && details.reason === "trigger-press") {
+                    details.cancel();
+                    return;
+                  }
+                  setHarnessHelpOpen(open);
+                }}
               >
                 <PopoverTrigger
                   openOnHover="preview"

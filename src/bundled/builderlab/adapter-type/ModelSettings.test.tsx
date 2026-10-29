@@ -165,6 +165,29 @@ it("explains the disabled harness selector on hover and keyboard focus without o
     await screen.findByRole("dialog", { name: "Builderlab harness" }),
   ).toBeVisible();
   await user.click(harness);
+  expect(
+    screen.getByRole("dialog", { name: "Builderlab harness" }),
+  ).toBeVisible();
+  await user.keyboard("{Escape}");
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("dialog", { name: "Builderlab harness" }),
+    ).toBeNull(),
+  );
+  await user.keyboard(" ");
+  expect(
+    await screen.findByRole("dialog", { name: "Builderlab harness" }),
+  ).toBeVisible();
+  await user.click(harness);
+  expect(
+    screen.getByRole("dialog", { name: "Builderlab harness" }),
+  ).toBeVisible();
+  await user.click(screen.getByRole("textbox", { name: "Instructions" }));
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("dialog", { name: "Builderlab harness" }),
+    ).toBeNull(),
+  );
   expect(screen.queryByRole("menu")).toBeNull();
   expect(
     h.request.mock.calls.filter(([request]) =>

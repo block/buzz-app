@@ -35,6 +35,12 @@ async function setup(
     agentJoined = true;
   const own = message(viewer, id, "Earlier message", time);
   const root = message(peer, id, "Announcement", time);
+  const canvas = signed(peer, {
+    kind: 40100,
+    content: "Saved announcement notes",
+    tags: [["h", id]],
+    created_at: time,
+  });
   const events = () => [
     signed(relay, {
       kind: 39000,
@@ -70,6 +76,7 @@ async function setup(
     }),
     own,
     root,
+    canvas,
   ];
   const sign = vi.fn(async (event: EventTemplate) => signed(viewer, event));
   const publish = vi.fn(async (event: RelayEvent) => {
@@ -283,6 +290,19 @@ it("retains guest history, details and Leave", async () => {
   await h.session.channelLifecycle.run("leave", id);
   expect(h.publish.mock.calls[0]?.[0].kind).toBe(9022);
   expect(h.session.channels.list().channels).toHaveLength(0);
+});
+
+it("lets a Guest read canvas content and history without granting save access", async () => {
+  const h = await setup("guest");
+  expect(await h.session.canvas.read(id)).toMatchObject({
+    content: "Saved announcement notes",
+  });
+  expect((await h.session.canvas.history(id)).revisions).toHaveLength(1);
+  await expect(
+    h.session.canvas.save(id, "Forbidden edit", undefined),
+  ).rejects.toThrow("Canvas writing is unavailable in this channel");
+  expect(h.sign).not.toHaveBeenCalled();
+  expect(h.publish).not.toHaveBeenCalled();
 });
 
 it("rejects guest uploads and fences an upload completed after demotion", async () => {

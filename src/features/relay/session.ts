@@ -1392,6 +1392,7 @@ export function createRelaySession(
     community: transport?.scope ?? "",
     signal: lifetime.signal,
     canWrite: (id) => !closed && channels.canWrite(id),
+    canRead: (id) => !closed && channels.canParticipate(id),
     delivered: channelWrites.delivered,
   });
   const soloPreferences = createSoloPreferences(

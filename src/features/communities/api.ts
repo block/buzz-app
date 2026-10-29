@@ -8,6 +8,7 @@ import type { EventData } from "../relay/events";
 import type { RelaySession } from "../relay/session";
 import type { JoinPolicy } from "./join-policy";
 import type { PersonalProfile } from "./service";
+import { assertRelayRemovable } from "./destination";
 export type CommunityInfo = {
   name?: string;
   icon?: string;
@@ -118,6 +119,7 @@ export type LeaveOutcome = "left" | SettledRefusal;
  * lasts); any other refusal, transport failure or timeout throws and leaves
  * the membership for the caller to retry. */
 export async function requestLeave(id: string): Promise<LeaveOutcome> {
+  assertRelayRemovable(id);
   await registerCommunity(id, AbortSignal.timeout(12000));
   try {
     const receipt = await communityRequest<{

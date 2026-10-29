@@ -4,11 +4,15 @@ import react from "@vitejs/plugin-react";
 import { worktreePort } from "./scripts/worktree-port.mjs";
 import {
   parseCommunityAliases,
+  parseRelayPolicy,
   relayOrigin,
 } from "./src/features/communities/destination.ts";
 
 export default defineConfig(async ({ command, mode }) => {
   const env = loadEnv(mode, ".", "BUZZ_");
+  // Process-only so frontend and Cargo consume exactly the same build input.
+  const relayPolicy = process.env.BUZZ_BUILD_RELAY_POLICY;
+  parseRelayPolicy(relayPolicy);
   // The development broker is the dev server's default: it runs whenever the
   // developer has pinned their public key. Production builds (`pnpm build`,
   // `pnpm tauri build`) never load it, regardless of .env.local contents.
@@ -61,6 +65,7 @@ export default defineConfig(async ({ command, mode }) => {
         authorizedViewer: env.BUZZ_DEV_VIEWER,
         relayUrl: defaultRelay,
         communityAliases: aliases,
+        relayPolicy,
       }),
     );
   const profileReadyToken = process.env.BUZZ_PROFILE_VITE_READY_TOKEN;
@@ -80,6 +85,8 @@ export default defineConfig(async ({ command, mode }) => {
   return {
     plugins,
     define: {
+      "import.meta.env.VITE_BUZZ_RELAY_POLICY":
+        JSON.stringify(relayPolicy) ?? "undefined",
       "import.meta.env.VITE_BUZZ_LIVE": JSON.stringify(live ? "1" : "0"),
       "import.meta.env.VITE_BUZZ_NOTIFICATIONS_PAUSED": JSON.stringify(
         command === "serve" && env.BUZZ_DEV_NOTIFICATIONS === "0" ? "1" : "0",

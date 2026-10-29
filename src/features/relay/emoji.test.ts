@@ -111,7 +111,7 @@ it("unions latest complete member sets; empty replacements and ties survive stal
 it("actual session cold send is draft-safe; A/B sends, replies and signed retries pin original URLs", async () => {
   const a = session("a"),
     b = session("b");
-  expect(() => a.session.messages.send("c", ":party:")).toThrow(/loading/);
+  expect(() => a.session.messages.send("c", ":party:")).toThrow(/isn't ready/);
   expect(a.session.outbox?.snapshot()).toHaveLength(0);
   expect(b.wire.pending).toHaveLength(0);
   const aRead = a.wire.next();
@@ -316,10 +316,10 @@ it("plain sends are immediate and do not acquire a palette; only a send retries 
   // A refused send starts one retry cycle; repeated sends and demand share it.
   expect(() =>
     h.session.messages.reply("c", "a".repeat(64), ":party:"),
-  ).toThrow(/is loading/);
+  ).toThrow(/isn't ready/);
   expect(h.session.emoji.snapshot().status).toBe("loading");
   const retry = h.session.emoji.ensure();
-  expect(() => h.session.messages.send("c", ":party:")).toThrow(/is loading/);
+  expect(() => h.session.messages.send("c", ":party:")).toThrow(/isn't ready/);
   expect(h.session.emoji.ensure()).toBe(retry);
   await vi.waitFor(() => expect(h.wire.pending).toHaveLength(1));
   expect(reads()).toBe(2);

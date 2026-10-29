@@ -333,12 +333,13 @@ export function createEmojiDirectory(
       if (snapshot.status !== "ready") {
         // Only a send retries a cold failure, so passive mounts cannot repeat
         // reads; refresh() shares a pending one. Overflow would repeat on every
-        // read, so it waits for an explicit retry.
+        // read, so it waits for an explicit retry. The composer keeps this text
+        // after the read settles, so it must not claim the read is still running.
         void (snapshot.status === "error" && !limited ? refresh() : ensure());
         throw new Error(
           snapshot.status === "error"
             ? `Community emoji unavailable. Retry message preparation or open the emoji picker. ${snapshot.error ?? ""}`
-            : "Community emoji is loading. Your draft is kept; try sending again shortly.",
+            : "Community emoji isn't ready. Your draft is kept; try sending again shortly.",
         );
       }
       const used = new Map<string, string>();

@@ -1644,12 +1644,17 @@ it("offers emoji catalog refresh after an attachment publication fails preparati
   );
   await waitFor(() => expect(h.input()).toHaveValue("caption :party:"));
   expect(within(h.form()).getByRole("alert")).toHaveTextContent(
-    "Community emoji is loading",
+    "Community emoji isn't ready",
   );
   // The refused send retried the catalog; recovery is offered once that fails.
   expect(
     await screen.findByRole("button", { name: "Retry message preparation" }),
   ).toBeVisible();
+  // The retained refusal stays accurate once that retry has failed.
+  expect(h.owner.session.emoji.snapshot().status).toBe("error");
+  expect(within(h.form()).getByRole("alert")).toHaveTextContent(
+    "Community emoji isn't ready. Your draft is kept; try sending again shortly.",
+  );
   available = true;
   fireEvent.click(
     screen.getByRole("button", { name: "Retry message preparation" }),
@@ -1677,7 +1682,7 @@ it("sends once the catalog retry started by a refused emoji send loads", async (
   await userEvent.type(h.input(), ":party:");
   fireEvent.click(h.send());
   expect(within(h.form()).getByRole("alert")).toHaveTextContent(
-    "Community emoji is loading. Your draft is kept; try sending again shortly.",
+    "Community emoji isn't ready. Your draft is kept; try sending again shortly.",
   );
   await waitFor(() =>
     expect(h.owner.session.emoji.snapshot().status).toBe("ready"),
@@ -1986,7 +1991,7 @@ it("retains preparation retry when recovery is deferred by an edit then unmounte
     expect(composer.getByText("edit-remount.txt")).toBeVisible(),
   );
   expect(composer.getByRole("alert")).toHaveTextContent(
-    "Community emoji is loading",
+    "Community emoji isn't ready",
   );
   // The refused send retried the catalog; recovery is offered once that fails.
   expect(
@@ -2030,7 +2035,7 @@ it("offers message preparation retry after a failed attachment send remounts", a
     expect(composer.getByText("emoji-remount.txt")).toBeVisible(),
   );
   expect(composer.getByRole("alert")).toHaveTextContent(
-    "Community emoji is loading",
+    "Community emoji isn't ready",
   );
   // The refused send retried the catalog; recovery is offered once that fails.
   const retry = await composer.findByRole("button", {

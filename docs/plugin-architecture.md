@@ -304,12 +304,13 @@ A plugin that shows Attention and its device switch calls
 `ctx.agents.controlAttention()`. Agents' watches, timers and sources run on this
 device only while such a plugin is on. With none on, every agent's
 `attentionEnabled` reads false and each keeps its saved switch. Messages from
-then wake nothing later, even across a restart. While plugins are still
+then wake no kind 9 watch later, even across a restart. While plugins are still
 starting and none has shown Attention yet, kind 9 watches keep their catch-up
 place, so startup still catches up on what the app missed while closed, and the
 events an agent with its switch on would hear wait to be matched once startup
-ends. The bundled Agent Attention UI plugin calls
-it.
+ends. Those are dropped for a kind 9 watch last seen with Attention hidden;
+other watches keep no such record, so they still match them. The bundled Agent
+Attention UI plugin calls it.
 
 A plugin, bundled or installed, can add a tool to every agent session in the
 app with `ctx.agents.addTool({ name, description, inputSchema, call })`. `call`

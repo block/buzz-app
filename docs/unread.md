@@ -83,7 +83,8 @@ timeline and the thread being read, without reading unopened threads' replies.
   bound**: missing markers/deletions can overcount; missing history can undercount.
 - `coverage` and `freshness` describe message evidence, separately from `sync()`.
   Evidence is capped at 4,096 events / 8 MiB. Repair queries the membership roster
-  in sequential batches of at most 128 explicit channel IDs (the relay limit),
+  in sequential batches of at most 128 explicit channel IDs (the relay limit, in ID
+  order, so a rename does not move them),
   with up to 500 recent rows **per batch**, not a shared remainder or one head
   request per sidebar row. A 278-channel roster therefore makes three reads.
   Earlier results publish progressively and survive a later transport failure;
@@ -92,14 +93,18 @@ timeline and the thread being read, without reading unopened threads' replies.
   is read again only from sixteen minutes (960 s) before the newest of them: that read
   saw everything in its window, and the relay accepts a `created_at` up to 900 s from
   its own clock, so an event stored just after it can be backdated that far, and the
-  margin covers it. The mark never passes the present, so a skewed clock or a
+  margin covers it, together with client clock skew and the relay's replica read budget.
+  "Fewer than its limit" means nothing was cut off because the relay applies the limit
+  to the rows it returns and does not filter repair kinds (9, 40002, 40008) out after
+  it. The mark never passes the present, so a skewed clock or a
   future-dated event cannot hide history. A read that returned its full limit may have
   cut off older rows (a later deletion frees a slot for one), so it installs no mark
   and drops any existing one: the next repair of that batch reads in full, as it did
   before. Retained evidence only grows between resets, so a bounded read adds what is
   newer to what the earlier reads already returned. Cache clears, access changes,
   capacity overflow and an explicit `refresh()` forget the marks and read every batch
-  in full. A repair still waiting for its answer when they do installs no mark, and
+  in full. A repair still waiting for its answer when they do, or still accepting it
+  (a subscriber notified of the answer may refresh), installs no mark, and
   after an overflow it also leaves the error and its refresh offer in place; `refresh()`
   waits for it, then reads in full. An empty read installs no mark: a batch that has
   never returned a row is read in full, and an existing mark stays, since its window

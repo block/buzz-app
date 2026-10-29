@@ -1627,7 +1627,9 @@ export function createUnread({
         .channels.filter(
           (channel) => !channel.cached && channel.members?.includes(viewer),
         )
-        .map((channel) => channel.id);
+        .map((channel) => channel.id)
+        // Batches key their marks, so they must not move when a channel is renamed.
+        .sort();
       if (!ids.length) {
         freshness = "observed";
         error = undefined;

@@ -36,14 +36,16 @@ const MAX_RECONNECT_DELAY = 30_000;
 export const RELAY_TIMESTAMP_DRIFT_SECS = 900;
 /** A route that reached EOSE was delivered live until its connection last heard
  * the relay. An event stored just after that can be backdated by the full drift,
- * so resume this far before it, plus a minute for fan-out still in flight when
- * the relay closed (a draining pod can trail its peers). */
+ * so resume this far before it, plus one minute shared by everything else the
+ * clocks disagree on: fan-out still in flight when the relay closed (a draining
+ * pod can trail its peers), the client clock's skew from the relay's, and the
+ * relay's replica read budget for the unread repair, which uses the same margin. */
 export const LIVE_RESUME_LAG = RELAY_TIMESTAMP_DRIFT_SECS + 60;
 /** Close codes for a relay that is going away on purpose (a rolling deploy
  * sends 1012 to every client at once): 1001 Going Away, 1012 Service Restart. */
 const RESTART_CLOSE_CODES = [1001, 1012];
 /** The first reconnect after such a close waits a uniform random time up to
- * this, so the fleet's arrival is spread as widely as the relay spread the closes. */
+ * this, so a fleet the relay closed at once does not return at once. */
 export const LIVE_RESTART_SPREAD_MS = 10_000;
 /** What a route knew when its authenticated connection ended (unix seconds). */
 export type LiveCursor = Readonly<{ liveUntil: number }>;
@@ -65,7 +67,7 @@ export function liveReconnectDelay(
 ): number {
   return closeCode !== undefined && RESTART_CLOSE_CODES.includes(closeCode)
     ? random() * Math.max(LIVE_RESTART_SPREAD_MS, backoff)
-    : backoff * (0.75 + random() / 2);
+    : backoff * (0.5 + random() / 2);
 }
 /** Wait before retrying a refusal that needs someone to act (a rejected AUTH, a
  * route CLOSED as blocked). It can still clear: access changes, a relay restarts,
@@ -292,6 +294,17 @@ export function subscribeRelayTraffic(
   // When the current socket last proved it reaches the relay (ms). A silent
   // stall ends at the detecting tick, so this, not the close, bounds liveness.
   let heardAt = 0;
+  // The recovery tick runs every interval while authenticated. One overdue by
+  // a further interval means the app was not running (a sleep): a frame handled
+  // then may have waited through it, so frames prove nothing until a tick runs
+  // on time again.
+  let armedAt = 0;
+  let doubted = false;
+  const overdue = () => Date.now() - armedAt > 2 * LIVE_RECOVERY_INTERVAL;
+  function arm() {
+    armedAt = Date.now();
+    recoveryTimer = setTimeout(recover, LIVE_RECOVERY_INTERVAL);
+  }
   let probe: string | undefined;
   let unresponsive: ((reason: string) => void) | undefined;
   let connection: LiveSnapshot["status"] = "connecting";
@@ -418,6 +431,7 @@ export function subscribeRelayTraffic(
   }
   function recover() {
     if (closed || !authenticated) return;
+    doubted = overdue();
     // An open socket can stop delivering without an error or close, and its
     // routes then only time out. A minute of silence asks for an empty answer;
     // no answer at all means the socket is dead, so replace it. A probe is a
@@ -467,8 +481,7 @@ export function subscribeRelayTraffic(
       // The chain must outlive a failing hook: log it and keep recovering.
       log.error(`${peer} live recovery hook failed`, error);
     }
-    if (!closed && authenticated && generation === current)
-      recoveryTimer = setTimeout(recover, LIVE_RECOVERY_INTERVAL);
+    if (!closed && authenticated && generation === current) arm();
   }
   function sync() {
     if (denying || closed) return;
@@ -864,7 +877,8 @@ export function subscribeRelayTraffic(
       if (authenticated) {
         // Any frame proves the socket still reaches the relay.
         heard = true;
-        heardAt = Date.now();
+        if (overdue()) doubted = true;
+        if (!doubted) heardAt = Date.now();
         clearTimeout(deadline);
       }
       if (typeof event.data !== "string" || event.data.length > 1024 * 1024) {
@@ -932,9 +946,10 @@ export function subscribeRelayTraffic(
         clearTimeout(deadline);
         authenticated = true;
         heardAt = Date.now();
+        doubted = false;
         authFailures = 0;
         connection = "connected";
-        recoveryTimer = setTimeout(recover, LIVE_RECOVERY_INTERVAL);
+        arm();
         pump();
         notify();
         return;

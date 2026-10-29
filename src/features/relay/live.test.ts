@@ -1217,7 +1217,7 @@ it("isolates denial, fences removed/readded routes and late sockets, and dispose
   expect(h.callbacks.receive).not.toHaveBeenCalled();
   expect(h.callbacks.denied).toHaveBeenCalledTimes(1);
   h.first.close();
-  await vi.advanceTimersByTimeAsync(625);
+  await vi.advanceTimersByTimeAsync(500);
   expect(h.sockets).toHaveLength(2);
   await h.first.receive(["EVENT", b[1], message(h.key, "b", "old socket", 2)]);
   expect(h.callbacks.receive).not.toHaveBeenCalled();
@@ -1240,7 +1240,7 @@ it("restores prompt reconnects after each healthy connection across repeated rol
       await vi.advanceTimersByTimeAsync(60000);
       expect(h.callbacks.state.mock.lastCall?.[0].status).toBe("connected");
       socket.close();
-      await vi.advanceTimersByTimeAsync(625);
+      await vi.advanceTimersByTimeAsync(500);
       expect(h.sockets).toHaveLength(cycle + 2);
     }
   } finally {
@@ -1263,7 +1263,7 @@ it.each([0, 0.5])(
         // Authentication alone must not reset backoff on a flapping relay.
         if (cycle < 4) await socket.auth();
         socket.close();
-        const delay = ceiling * (0.75 + sample / 2);
+        const delay = ceiling * (0.5 + sample / 2);
         await vi.advanceTimersByTimeAsync(delay - 1);
         expect(h.sockets).toHaveLength(cycle + 1);
         await vi.advanceTimersByTimeAsync(1);
@@ -1315,9 +1315,9 @@ it.each([
     0.5,
     8000,
   ],
-  ["other closes back off at -25%", 1006, 500, 0, 375],
-  ["other closes back off at the backoff", undefined, 500, 0.5, 500],
-  ["other closes back off at +25%", 1000, 8000, 1, 10000],
+  ["other closes back off at half the backoff", 1006, 500, 0, 250],
+  ["other closes back off at three quarters", undefined, 500, 0.5, 375],
+  ["other closes back off at most the backoff", 1000, 8000, 1, 8000],
 ] as const)(
   "liveReconnectDelay: %s",
   (_name, code, backoff, sample, expected) => {
@@ -1604,6 +1604,65 @@ it("resumes a batch rebuilt before its EOSE from the cursor, not the last five m
   }
 });
 
+it("does not move the cursor to the wake time for a frame that waited through a sleep", async () => {
+  vi.useFakeTimers({ now: 1_700_000_000_000 });
+  const h = setup(["a"], undefined, () => 0.5);
+  try {
+    age();
+    await h.first.auth();
+    await vi.advanceTimersByTimeAsync(750);
+    for (const [, id] of h.first.requests())
+      await h.first.receive(["EOSE", id]);
+    const heard = Math.floor(Date.now() / 1000);
+    // An hour asleep; a frame queued before it is handled on wake, then the
+    // relay's restart close behind it.
+    vi.setSystemTime(Date.now() + 3_600_000);
+    await h.first.receive(["NOTICE", "queued before the sleep"]);
+    h.first.close(1012);
+    await vi.advanceTimersByTimeAsync(10_000);
+    const next = h.sockets[1];
+    assert.exists(next);
+    await next.auth();
+    await vi.advanceTimersByTimeAsync(750);
+    expect(sinceOf(next, (r) => scopeOf(r).includes("a"))).toEqual([
+      heard - 960,
+    ]);
+  } finally {
+    h.owner.dispose();
+  }
+});
+
+it("trusts frames again once a recovery tick runs on time after a sleep", async () => {
+  vi.useFakeTimers({ now: 1_700_000_000_000 });
+  const h = setup(["a"], undefined, () => 0.5);
+  try {
+    age();
+    await h.first.auth();
+    await vi.advanceTimersByTimeAsync(750);
+    for (const [, id] of h.first.requests())
+      await h.first.receive(["EOSE", id]);
+    vi.setSystemTime(Date.now() + 3_600_000);
+    await h.first.receive(["NOTICE", "queued before the sleep"]);
+    // The overdue tick fires on wake and proves nothing; the next one is on time.
+    await vi.advanceTimersByTimeAsync(60_000);
+    await h.first.receive(["NOTICE", "after the wake"]);
+    await vi.advanceTimersByTimeAsync(60_000);
+    await h.first.receive(["NOTICE", "fresh"]);
+    const heard = Math.floor(Date.now() / 1000);
+    h.first.close(1012);
+    await vi.advanceTimersByTimeAsync(10_000);
+    const next = h.sockets[1];
+    assert.exists(next);
+    await next.auth();
+    await vi.advanceTimersByTimeAsync(750);
+    expect(sinceOf(next, (r) => scopeOf(r).includes("a"))).toEqual([
+      heard - 960,
+    ]);
+  } finally {
+    h.owner.dispose();
+  }
+});
+
 it("keeps a route's cursor through a connection that never established it", async () => {
   vi.useFakeTimers({ now: 1_700_000_000_000 });
   const h = setup(["a"], undefined, () => 0.5);
@@ -1655,7 +1714,8 @@ it("forgets the cursor of a channel that left the interests before a rebuild", a
     const heard = Math.floor(Date.now() / 1000);
     h.owner.update(["a", "b"]);
     second.close();
-    await vi.advanceTimersByTimeAsync(1000);
+    // The doubled backoff at three quarters: the rebuild happens now.
+    await vi.advanceTimersByTimeAsync(750);
     const floor = Math.floor(Date.now() / 1000) - 300;
     const third = h.sockets[2];
     assert.exists(third);
@@ -1824,8 +1884,8 @@ it("keeps the earlier cursor when a channel is unsubscribed and subscribed again
 it.each([
   [1012, 9000],
   [1001, 9000],
-  [1006, 600],
-  [undefined, 600],
+  [1006, 475],
+  [undefined, 475],
 ])(
   "waits for the jitter its close code calls for before reconnecting (code %s)",
   async (code, delay) => {
@@ -1854,9 +1914,9 @@ it("reconnects at once when the spread draws zero, then backs off normally after
     await vi.advanceTimersByTimeAsync(0);
     const second = h.sockets[1];
     assert.exists(second);
-    // The restart spread leaves the backoff to double: a failure now waits 1000ms.
+    // The restart spread leaves the backoff to double: a failure now waits 750ms.
     second.close(1006);
-    await vi.advanceTimersByTimeAsync(999);
+    await vi.advanceTimersByTimeAsync(749);
     expect(h.sockets).toHaveLength(2);
     await vi.advanceTimersByTimeAsync(1);
     expect(h.sockets).toHaveLength(3);
@@ -2418,7 +2478,7 @@ it.each([false, true])(
       await h.first.receive(["EOSE", renewal[1]]);
     }
     h.first.close();
-    await vi.advanceTimersByTimeAsync(625);
+    await vi.advanceTimersByTimeAsync(500);
     const socket = h.sockets[1];
     assert.exists(socket);
     await socket.auth();
@@ -2602,7 +2662,7 @@ it.each(["reconnect", "cooldown"])(
     expect(admission.presenceIdle()).toBe(false);
     if (mode === "reconnect") {
       first.close();
-      await vi.advanceTimersByTimeAsync(625);
+      await vi.advanceTimersByTimeAsync(500);
       const next = sockets[1];
       assert.exists(next);
       await next.auth();
@@ -2818,7 +2878,7 @@ it.each(["abort", "dispose", "disconnect"])(
         else h.first.close();
         expect(await result).toMatchObject({ sent: dispatched });
         if (action === "disconnect") {
-          await vi.advanceTimersByTimeAsync(625);
+          await vi.advanceTimersByTimeAsync(500);
           const next = h.sockets[1];
           assert.exists(next);
           await next.auth();

@@ -1303,3 +1303,51 @@ it("a refresh asked while a repair's answer is being accepted still reads in ful
   expect(evidenceReads(h)[1]?.since).toBe(recent - 960);
   expect(evidenceReads(h)[2]?.since).toBeUndefined();
 });
+
+it("renaming a channel does not move the batches, so they keep their bounds", async () => {
+  const h = setup(130);
+  const recent = nowSeconds() - 1000;
+  const names = new Map(h.ids.map((id) => [id, `n-${id}`]));
+  const rows = new Map(
+    h.ids.map((id) => [id, message(h.peer, id, "recent", recent)]),
+  );
+  h.query.mockImplementation(async (filters) => {
+    const filter = filters[0];
+    if (filter?.kinds?.includes(39002))
+      return h.ids.flatMap((id) => [
+        roster(h.relay, id, [h.viewer.pubkey], 10),
+        metadata(h.relay, id, names.get(id) ?? id, 20),
+      ]);
+    if (filter?.kinds?.includes(39000))
+      return h.ids.map((id) => metadata(h.relay, id, names.get(id) ?? id, 20));
+    if (!filter?.kinds?.includes(9) || filter.authors || filter.ids) return [];
+    return (filter["#h"] ?? []).flatMap((id) => rows.get(id) ?? []);
+  });
+  h.reconnect();
+  await vi.waitFor(() =>
+    expect(
+      h.session.channels.list().channels.map(({ name }) => name),
+    ).toContain("n-other"),
+  );
+  await h.session.unread.ensure();
+  expect(evidenceReads(h).map((read) => read?.since)).toEqual([
+    undefined,
+    undefined,
+  ]);
+  // Sorted by name, "other" moves from the first batch to the last.
+  names.set("other", "zzz");
+  h.receive([metadata(h.relay, "other", "zzz", 30)]);
+  await vi.waitFor(() =>
+    expect(
+      h.session.channels.list().channels.map(({ name }) => name),
+    ).toContain("zzz"),
+  );
+  h.reconnect();
+  await vi.waitFor(() => expect(evidenceReads(h)).toHaveLength(4));
+  expect(evidenceReads(h).map((read) => read?.since)).toEqual([
+    undefined,
+    undefined,
+    recent - 960,
+    recent - 960,
+  ]);
+});

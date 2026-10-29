@@ -10,6 +10,7 @@ import {
   createContext,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -134,31 +135,33 @@ export function MessageManagement({
       if (!operations.some((item) => item.event.id === id))
         completions.current.delete(id);
   }, [operations]);
-  const channels = useSyncExternalStore(
-    session.channels.subscribeList,
-    session.channels.list,
+  const deletable = useListedChannel(
+    session.channels,
+    selection?.row.channelId,
+    (channel) =>
+      !!channel &&
+      !channel.cached &&
+      (!channel.readOnly ||
+        (channel.viewerRole === "guest" && !!selection?.authorization)),
   );
   const available =
     !selection ||
-    ((!channelId || channelId === selection.row.channelId) &&
-      channels.channels.some(
-        (channel) =>
-          channel.id === selection.row.channelId &&
-          !channel.cached &&
-          (!channel.readOnly ||
-            (channel.viewerRole === "guest" && !!selection.authorization)),
-      ));
+    ((!channelId || channelId === selection.row.channelId) && deletable);
   useEffect(() => {
     if (!available) setSelection(undefined);
   }, [available]);
-  const visitChannelId = channels.channels.find(
+  const visitChannelId = useListedChannel(
+    session.channels,
+    channelId,
     (channel) =>
       active &&
-      channel.id === channelId &&
+      channel &&
       !channel.cached &&
-      !!session.viewer &&
-      channel.members?.includes(session.viewer),
-  )?.id;
+      session.viewer &&
+      channel.members?.includes(session.viewer)
+        ? channel.id
+        : undefined,
+  );
   const [notice, setNotice] = useState<{
     visit: {
       session: RelaySession;
@@ -179,10 +182,27 @@ export function MessageManagement({
     });
   // Captured reporters cannot overwrite errors from a later visit, even to
   // the same channel. Reset during render so stale alerts never reach children.
-  const report = (error: string | undefined) =>
-    setNotice((current) =>
-      current.visit === visit ? { ...current, error } : current,
-    );
+  // Consumers include every message row; a new value would re-render them all.
+  const management = useMemo(
+    () => ({
+      session,
+      channelId,
+      operations,
+      report: (error: string | undefined) =>
+        setNotice((current) =>
+          current.visit === visit ? { ...current, error } : current,
+        ),
+      remove(
+        row: ChannelMessage,
+        done?: (focus: boolean) => void,
+        focus?: () => HTMLElement | null,
+        authorization?: AgentOwnerAuthorization,
+      ) {
+        setSelection({ row, done, focus, authorization });
+      },
+    }),
+    [session, channelId, operations, visit],
+  );
   useEffect(() => {
     const { session, visitChannelId } = visit;
     let active = true;
@@ -210,17 +230,7 @@ export function MessageManagement({
     };
   }, [visit]);
   return (
-    <Management.Provider
-      value={{
-        session,
-        channelId,
-        operations,
-        report,
-        remove(row, done, focus, authorization) {
-          setSelection({ row, done, focus, authorization });
-        },
-      }}
-    >
+    <Management.Provider value={management}>
       <MessageEditScope>{children}</MessageEditScope>
       {currentVisit && notice.error && <p role="alert">{notice.error}</p>}
       {presented && selection && available && (

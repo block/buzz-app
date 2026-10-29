@@ -32,6 +32,7 @@ import {
 import { useMessageEdit, lastEditableMessage } from "./useMessageEdit";
 import { editMentionText } from "./message-edit";
 import type { ChannelMessage } from "../relay/contracts";
+import { useListedChannel } from "../relay/listed-channel";
 import { FileDropOverlay } from "./FileDropOverlay";
 import { useFileDrop } from "./use-file-drop";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -144,7 +145,6 @@ const noChannels: ReturnType<ComposerSession["channels"]["list"]> = {
   status: "idle",
   channels: [],
 };
-const noChannelSnapshot = () => noChannels;
 const noSubscription = () => () => {};
 
 type AcceptedDraft = {
@@ -334,18 +334,17 @@ export function MessageComposer(props: MessageComposerProps) {
 function PersonalComposer(props: MessageComposerProps) {
   const { session, channelId, submission } = props;
   const choices = useAgentChoices(session, true, true);
-  const list = useSyncExternalStore(
-    session.channels.subscribeList,
-    session.channels.list,
-    session.channels.list,
-  );
   const profiles = useSyncExternalStore(
     session.profiles.subscribe,
     session.profiles.snapshot,
     session.profiles.snapshot,
   );
   const agentPubkeys = useKnownAgentPubkeys(session, profiles);
-  const members = list.channels.find((c) => c.id === channelId)?.members;
+  const members = useListedChannel(
+    session.channels,
+    channelId,
+    (channel) => channel?.members,
+  );
   // A saved chat keeps its people; agents are only the owner's available ones.
   const roster = useMemo(
     () =>
@@ -464,26 +463,21 @@ function Composer({
   trailingTool,
 }: MessageComposerProps) {
   const active = useConversationPresentation();
-  const list = useSyncExternalStore(
-    session.channels?.get || soloConversation
-      ? session.channels.subscribeList
-      : noSubscription,
-    session.channels?.get || soloConversation
-      ? session.channels.list
-      : noChannelSnapshot,
-    session.channels?.get || soloConversation
-      ? session.channels.list
-      : noChannelSnapshot,
+  // Previews replace the list on every message; subscribe to this channel's facts.
+  const listed =
+    session.channels?.get || soloConversation ? session.channels : undefined;
+  const channels = () => (listed?.list() ?? noChannels).channels;
+  const writable = useListedChannel(
+    listed,
+    channelId,
+    (channel) => !!channel && !channel.readOnly && !channel.archived,
   );
-  const readOnly =
-    !submission &&
-    !!session.channels?.get &&
-    !list.channels.some(
-      (channel) =>
-        channel.id === channelId && !channel.readOnly && !channel.archived,
-    );
-  const cached = !!list.channels.find((channel) => channel.id === channelId)
-    ?.cached;
+  const readOnly = !submission && !!session.channels?.get && !writable;
+  const cached = useListedChannel(
+    listed,
+    channelId,
+    (channel) => !!channel?.cached,
+  );
   const disabled = requestedDisabled || readOnly;
   const [sending, setSending] = useState(false);
   const sendAttempt = useRef<AbortController | null>(null);
@@ -517,8 +511,14 @@ function Composer({
   const solo = !!soloConversation || ownSoloConversation;
   // Only a saved Solo chat subscribes; other composers never read this.
   const withPeople = useSoloHasPeople(session, channelId, solo && !submission);
-  const channel = list.channels.find((channel) => channel.id === channelId);
-  const channelType = channel?.channelType;
+  const channelType = useListedChannel(
+    listed,
+    channelId,
+    (channel) => channel?.channelType,
+  );
+  const dmMembers = useListedChannel(listed, channelId, (channel) =>
+    channel?.channelType === "dm" ? channel.members : undefined,
+  );
   // A DM or Solo chat is one conversation; elsewhere a top-level message
   // starts a thread of its own.
   const startsThread =
@@ -578,7 +578,7 @@ function Composer({
     // the user's draft: history seeds it now, and the first save replaces it.
     const saved = stageChatCards(
       legacyFollowupDraft(stored) ? mentionDraft("") : stored,
-      list.channels,
+      channels(),
     );
     const source = threadSeed ?? (seedsFromWindow ? windowSeed() : undefined);
     if (!source || submission || !untouchedDraft(saved))
@@ -688,11 +688,11 @@ function Composer({
   // A one-to-one DM wakes its other member without an explicit mention.
   // Include that session in both the rendered state and late send rechecks.
   const sessionTargets = (pubkeys: readonly string[]) =>
-    channel?.channelType === "dm" && channel.members?.length === 2
+    dmMembers?.length === 2
       ? [
           ...new Set([
             ...pubkeys,
-            ...channel.members.filter((key) => key !== session.viewer),
+            ...dmMembers.filter((key) => key !== session.viewer),
           ]),
         ]
       : pubkeys;
@@ -827,7 +827,7 @@ function Composer({
           ? { gifs: next.gifs ?? valueRef.current.gifs ?? [] }
           : {}),
       },
-      list.channels,
+      channels(),
     );
     if (JSON.stringify(next) === JSON.stringify(valueRef.current)) return false;
     valueRef.current = next;
@@ -882,10 +882,12 @@ function Composer({
       ? []
       : (session.channels.window?.(channelId).rows ?? [])
     ).filter((row) => !row.threadRootId);
-  const editDisabled =
-    disabled ||
-    !!list.channels.find((channel) => channel.id === channelId)?.archived ||
-    !!list.channels.find((channel) => channel.id === channelId)?.readOnly;
+  const editLocked = useListedChannel(
+    listed,
+    channelId,
+    (channel) => !!channel?.archived || !!channel?.readOnly,
+  );
+  const editDisabled = disabled || editLocked;
   const editingDisabled =
     disabled ||
     admitting ||
@@ -982,7 +984,7 @@ function Composer({
     try {
       next = stageChatCards(
         mentionDraft(JSON.parse(raw ?? "null")),
-        list.channels,
+        channels(),
       );
     } catch {
       next = mentionDraft("");
@@ -1169,10 +1171,10 @@ function Composer({
     const next = stageChatCards(
       mentionDraft(
         editing.start(current, (body) =>
-          composerMarkdown(stageChatCards(mentionDraft(body), list.channels)),
+          composerMarkdown(stageChatCards(mentionDraft(body), channels())),
         ),
       ),
-      list.channels,
+      channels(),
     );
     valueRef.current = next;
     updateDraft(next);

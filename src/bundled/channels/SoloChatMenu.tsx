@@ -28,6 +28,7 @@ import {
   FolderSimpleIcon,
   HashArrowInIcon,
   GearIcon,
+  PencilSimpleIcon,
   ShareIcon,
 } from "../../shared/design-system/icons";
 import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
@@ -44,6 +45,7 @@ export function SoloChatMenuItems({
   onMove,
   onNewWorkspace,
   onSettings,
+  onRename,
   onLifecycle,
   onReadResult,
 }: {
@@ -55,6 +57,8 @@ export function SoloChatMenuItems({
   onMove?(projectId?: string): void;
   onNewWorkspace?(): void;
   onSettings(): void;
+  /** Absent where the chat can't be renamed in place. */
+  onRename?: (() => void) | undefined;
   /** Absent where no owner can confirm lifecycle actions. */
   onLifecycle?: ((action: ChannelLifecycleAction) => void) | undefined;
   /** The menu closes at once; its host reports a failed read change. */
@@ -93,6 +97,14 @@ export function SoloChatMenuItems({
             )
           }
         />
+      )}
+      {onRename && (
+        <MenuItem onClick={onRename}>
+          <MenuIcon>
+            <PencilSimpleIcon size={14} />
+          </MenuIcon>
+          Rename
+        </MenuItem>
       )}
       <MenuItem
         disabled={

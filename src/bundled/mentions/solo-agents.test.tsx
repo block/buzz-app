@@ -461,7 +461,7 @@ it("an audience pill says so when the message's own mentions decide", async () =
   );
   expect(
     await screen.findByText(
-      "Your message names Outside agent. Remove the mention to change who gets it.",
+      "Your message tags Outside agent, so picks here add or remove tags.",
     ),
   ).toBeInTheDocument();
   view.unmount();

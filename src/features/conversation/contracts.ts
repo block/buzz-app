@@ -33,7 +33,8 @@ export type ComposerToolProps = Readonly<{
   /** Solo, alone with agents: who hears the message. Inline mentions decide
    * when there are any; otherwise the toolbar's agents stand in. `only`
    * replaces those stand-ins with a non-empty list and `toggle` adds or
-   * removes one, never the last; they also follow each send. Absent
+   * removes one, never the last; they also follow each send. While inline
+   * mentions decide, `toggle` adds or removes that mention instead. Absent
    * elsewhere, where mentions alone decide. */
   audience?:
     | Readonly<{

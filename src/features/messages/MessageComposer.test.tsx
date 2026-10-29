@@ -9115,6 +9115,29 @@ it("a Solo menu toggle adds and removes agents but never the last one", () => {
   expect(h.commands().recipients).toEqual([]);
 });
 
+it("while a typed tag decides, a Solo menu toggle edits the tags, not a hidden list", () => {
+  const { h, ada, bea, sendingTo } = mountSoloAgents({ main: first.pubkey });
+  act(() => {
+    h.commands().insertMention(ada);
+    h.commands().insertText("hello");
+  });
+  act(() => h.commands().audience?.toggle(bea));
+  expect(h.commands().recipients.map(({ pubkey }) => pubkey)).toEqual([
+    ada.pubkey,
+    bea.pubkey,
+  ]);
+  expect(sendingTo("Ada, Bea")).toBeInTheDocument();
+  expect(h.input()).toHaveValue("@Ada @Bea hello");
+  act(() => h.commands().audience?.toggle(ada));
+  expect(h.commands().recipients.map(({ pubkey }) => pubkey)).toEqual([
+    bea.pubkey,
+  ]);
+  expect(h.input()).toHaveValue("@Bea hello");
+  // Deleting the last tag falls back to the main agent, untouched by picks.
+  h.fill("hello");
+  expect(sendingTo("Ada")).toBeInTheDocument();
+});
+
 it("with several Solo agents, each shows as an avatar that removes it, down to one", async () => {
   const { h, ada, bea, sendingTo } = mountSoloAgents();
   expect(

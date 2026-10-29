@@ -738,35 +738,41 @@ function Composer({
   /** Who hears this message: inline mentions win; without any, the toolbar's
    * agents stand in. */
   const addressed = routing && !recipients.length ? routed : recipients;
-  const audience = useMemo(
-    () =>
-      routing
-        ? {
-            recipients: addressed,
-            named: recipients.length > 0,
-            only(people: readonly MentionRecipient[]) {
-              if (!people.length) return;
-              setReplacedKey(undefined);
-              setRouted(people.map(({ pubkey, name }) => ({ pubkey, name })));
-              // Typing resumes in the draft, at its caret.
-              input.current?.focus();
-            },
-            toggle({ pubkey, name }: MentionRecipient) {
-              setReplacedKey(undefined);
-              setRouted((current) =>
-                !current.some((person) => person.pubkey === pubkey)
-                  ? current.length < 32
-                    ? [...current, { pubkey, name }]
-                    : current
-                  : current.length > 1
-                    ? current.filter((person) => person.pubkey !== pubkey)
-                    : current,
+  const audience = routing
+    ? {
+        recipients: addressed,
+        named: recipients.length > 0,
+        only(people: readonly MentionRecipient[]) {
+          if (!people.length) return;
+          setReplacedKey(undefined);
+          setRouted(people.map(({ pubkey, name }) => ({ pubkey, name })));
+          // Typing resumes in the draft, at its caret.
+          input.current?.focus();
+        },
+        toggle({ pubkey, name }: MentionRecipient) {
+          // While tags in the text decide, a pick edits those tags, so
+          // it always changes who gets the message.
+          if (recipients.length) {
+            if (recipients.some((person) => person.pubkey === pubkey))
+              replaceRecipients(
+                recipients.filter((person) => person.pubkey !== pubkey),
               );
-            },
+            else insertMention({ pubkey, name });
+            return;
           }
-        : undefined,
-    [routing, addressed, recipients.length],
-  );
+          setReplacedKey(undefined);
+          setRouted((current) =>
+            !current.some((person) => person.pubkey === pubkey)
+              ? current.length < 32
+                ? [...current, { pubkey, name }]
+                : current
+              : current.length > 1
+                ? current.filter((person) => person.pubkey !== pubkey)
+                : current,
+          );
+        },
+      }
+    : undefined;
   // The moment a mention is typed into a draft without any, the remembered
   // agents are set aside for good; a restored draft with mentions starts so.
   useEffect(() => {
@@ -2087,8 +2093,7 @@ function Composer({
             disabled={editingDisabled}
             remove={(pubkey) => {
               const person = addressed.find((item) => item.pubkey === pubkey);
-              if (recipients.length) input.current?.removeRecipient(pubkey);
-              else if (person) audience?.toggle(person);
+              if (person) audience?.toggle(person);
             }}
           />
         )}

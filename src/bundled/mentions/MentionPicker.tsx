@@ -492,9 +492,9 @@ export function MentionPicker({
               )}
               {audience?.named && (
                 <p className="text-caption text-subtle">
-                  Your message names{" "}
-                  {audience.recipients.map((person) => person.name).join(", ")}.
-                  Remove the mention to change who gets it.
+                  Your message tags{" "}
+                  {audience.recipients.map((person) => person.name).join(", ")},
+                  so picks here add or remove tags.
                 </p>
               )}
               <p role="status" className="sr-only">

@@ -469,13 +469,13 @@ export function SoloDraft({
       if (!recipients.length) throw new Error("Tag an agent to send.");
       // The workspace's agents join in the create with the tagged ones.
       const members = [...new Set([...recipients, ...(setup?.agents ?? [])])];
-      // The agents already listed decide at once; only an unknown one waits
-      // for a fresh list.
+      // The agents already admissible decide at once; an unknown one, or a
+      // library row not yet reread, waits for a fresh list.
       const selectable = () =>
         members.every((key) =>
           session.agentChoices
             .snapshot()
-            .selectable.some((agent) => agent.pubkey === key),
+            .admissible.some((agent) => agent.pubkey === key),
         );
       if (!selectable()) {
         await session.agentChoices.refresh();

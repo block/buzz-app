@@ -699,7 +699,10 @@ in its home record and applies everywhere.
   Only a synced team homed there can have them as members, so the team editor
   offers them only for such a team, or for a new one that will sync there. One
   picked before another community was selected is left off unless the team
-  already has it. They do not get its instructions.
+  already has it. They do not get its instructions, but rosters name them.
+  Until the community's agent list is read, which tells hosted agents from
+  ones on other devices, the team's roster there names each member not on this
+  device by npub alone.
 
 `removeRelayAgent` applies the same steps to a relay-only agent: archive when
 consent exists, delete the owner's kind 30177 record (NIP-09), then remove it from

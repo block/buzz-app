@@ -1279,10 +1279,11 @@ const PARENT_LOOKUP_MS = 5_000;
 const message = (error: unknown) =>
   String(error instanceof Error ? error.message : error);
 /** The team sections for agent `self`: each team it is on, its members that
- * still exist by name and npub, and the team's instructions. */
+ * still exist by name and npub (by npub alone where `agents` has no name),
+ * and the team's instructions. */
 export function teamPrompt(
   teams: readonly Team[],
-  agents: readonly Pick<AgentIdentity, "pubkey" | "name">[],
+  agents: readonly Readonly<{ pubkey: string; name?: string }>[],
   self: string,
 ) {
   const names = new Map(agents.map((agent) => [agent.pubkey, agent.name]));
@@ -1290,12 +1291,12 @@ export function teamPrompt(
     .filter((team) => team.members.includes(self))
     .map((team) => {
       const roster = team.members.flatMap((pubkey) => {
+        if (!names.has(pubkey)) return [];
         const name = names.get(pubkey);
-        return name === undefined
-          ? []
-          : [
-              `- ${name} (${npubEncode(pubkey)})${pubkey === self ? ", you" : ""}`,
-            ];
+        const npub = npubEncode(pubkey);
+        return [
+          `- ${name === undefined ? npub : `${name} (${npub})`}${pubkey === self ? ", you" : ""}`,
+        ];
       });
       return [
         "<team>",
@@ -1645,7 +1646,7 @@ export class AgentsService extends Service implements Agents {
         const origin = member && originOf(member.relay);
         // Only teammates in the same community, where it can reach them.
         return member && origin
-          ? teamPrompt(this.allTeams(), this.teamAgents(origin), member.pubkey)
+          ? teamPrompt(this.allTeams(), this.teammates(origin), member.pubkey)
           : "";
       },
       agentTypes: () =>
@@ -4277,6 +4278,26 @@ export class AgentsService extends Service implements Agents {
         (agent) => agent.place === "hosted" && !agent.unfinished,
       ),
     ];
+  }
+  /** Who rosters in `origin` name: the agents a team there can have. Until
+   * its agent records are read, which tell a hosted agent from one on another
+   * device, a synced team homed there names its other members by npub. */
+  private teammates(origin: string) {
+    const agents = this.teamAgents(origin);
+    if (this.listings.has(origin)) return agents;
+    const known = new Set(
+      [...this.identities, ...this.listedAgents(origin)].map(
+        (agent) => agent.pubkey,
+      ),
+    );
+    const unnamed = new Set(
+      this.synced().flatMap(({ community, team }) =>
+        community === origin
+          ? team.members.filter((pubkey) => !known.has(pubkey))
+          : [],
+      ),
+    );
+    return [...agents, ...[...unnamed].map((pubkey) => ({ pubkey }))];
   }
   /** The membership of this key, unless it was deleted. */
   private liveMember(key: AgentKey) {

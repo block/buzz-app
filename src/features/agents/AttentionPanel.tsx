@@ -1,4 +1,4 @@
-// The device-local runtime control. The Watching plugin owns Interests and watches.
+// The device-local runtime control. The Agent Attention UI plugin owns Interests and watches.
 import { useState } from "react";
 import {
   AgentCommunityScope,

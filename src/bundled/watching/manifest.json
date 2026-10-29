@@ -1,10 +1,10 @@
 {
   "id": "buzz.watching",
-  "name": "Watching",
+  "name": "Agent Attention UI",
   "apiVersion": 1,
   "description": "Show what each agent is watching in its settings.",
   "discovery": {
-    "category": "agents",
+    "category": "agent-tools",
     "tags": ["coding-agents"]
   }
 }

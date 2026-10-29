@@ -179,7 +179,7 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...watchingManifest, apiVersion: 1 },
     module: watching,
-    enabledByDefault: false,
+    enabledByDefault: true,
   },
   {
     manifest: { ...claudeCodeManifest, apiVersion: 1 },

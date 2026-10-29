@@ -1,9 +1,10 @@
-# Watching
+# Agent Attention UI
 
 See what each agent is watching, and pause or remove it, from the agent's own settings.
 
 ## Getting started
 
-1. Turn on **Watching** in **Settings** → **Plugins**.
-2. Open **Agents**, choose an agent that runs on this computer, and open its **Watching** tab.
-3. Pause or delete any Interest or watch there, or use the switch to pause watching on this device. To start watching something, ask the agent: for example, "Watch my PR and tell me when CI finishes or someone reviews it".
+1. Open **Agents**, choose an agent that runs on this computer, and open its **Watching** tab.
+2. Pause or delete any Interest or watch there, or use the switch to pause watching on this device. To start watching something, ask the agent: for example, "Watch my PR and tell me when CI finishes or someone reviews it".
+
+Agent Attention UI is on by default. Turn it off in **Settings** → **Plugins** to hide the tab; attention keeps running.

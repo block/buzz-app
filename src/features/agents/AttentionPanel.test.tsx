@@ -60,7 +60,7 @@ it("names watches by what and where they wake", () => {
   );
 });
 
-it("keeps the device runtime control and leaves watch management to the Watching plugin", async () => {
+it("keeps the device runtime control and leaves watch management to the Agent Attention UI plugin", async () => {
   const save = vi.fn(async () => {});
   render(<AttentionPanel agents={agents} agent={agent} save={save} />);
   expect(screen.queryByText(/Manage Interests and watches/)).toBeNull();

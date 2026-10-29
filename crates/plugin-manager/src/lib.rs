@@ -354,6 +354,7 @@ fn enabled_by_default(id: &str) -> bool {
             | "buzz.voice-notes"
             | "buzz.huddles"
             | "buzz.github"
+            | "buzz.watching"
             | "buzz.pairing"
             | "buzz.inbox"
             | "buzz.reminders"

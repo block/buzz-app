@@ -297,8 +297,8 @@ running on this device, whatever its type, with
 `{ agent }`; it reads and saves through the plugin's own `ctx.agents`. The tab
 follows Activity and precedes History and Settings, in the agent's Build view and
 its profile panel, and is not offered for hosted or elsewhere agents. It is
-removed when the plugin is turned off or its scope ends. The bundled Watching
-plugin (off by default) uses it.
+removed when the plugin is turned off or its scope ends. The bundled Agent
+Attention UI plugin uses it.
 
 A plugin, bundled or installed, can add a tool to every agent session in the
 app with `ctx.agents.addTool({ name, description, inputSchema, call })`. `call`

@@ -38,9 +38,13 @@ vi.mock("../bundled", async () => ({
       module: await import("../bundled/agents"),
     },
     {
-      manifest: { id: "buzz.watching", name: "Watching", apiVersion: 1 },
+      manifest: {
+        id: "buzz.watching",
+        name: "Agent Attention UI",
+        apiVersion: 1,
+      },
       module: await import("../bundled/watching"),
-      enabledByDefault: false,
+      enabledByDefault: true,
     },
     {
       manifest: { id: "buzz.inbox", name: "Inbox", apiVersion: 1 },
@@ -360,12 +364,9 @@ it("lists active primary pages in their sidebar and header placements", async ()
     "fixture.notes/notes",
   );
 
-  // Watching is off by default, and attention keeps running without it.
+  // The Watching tab is on by default, and attention keeps running without it.
   const providers = () =>
     current.agents.attentionProviders().map(({ provider }) => provider);
-  expect(current.agents.addedTabs()).toEqual([]);
-  expect(providers()).toContain("attention/command");
-  await act(() => current.plugins.change("enable", "buzz.watching"));
   await waitFor(() =>
     expect(current.agents.addedTabs().map((tab) => tab.key)).toEqual([
       "buzz.watching/watching",
@@ -374,6 +375,12 @@ it("lists active primary pages in their sidebar and header placements", async ()
   await act(() => current.plugins.change("disable", "buzz.watching"));
   await waitFor(() => expect(current.agents.addedTabs()).toEqual([]));
   expect(providers()).toContain("attention/command");
+  await act(() => current.plugins.change("enable", "buzz.watching"));
+  await waitFor(() =>
+    expect(current.agents.addedTabs().map((tab) => tab.key)).toEqual([
+      "buzz.watching/watching",
+    ]),
+  );
 
   await act(() => current.plugins.change("disable", "buzz.agents"));
   await waitFor(() =>

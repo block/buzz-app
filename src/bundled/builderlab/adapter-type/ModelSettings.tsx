@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useAgentSaveState } from "../../../features/agents/AgentSaveButton";
-import { ModelIcon } from "../../../features/agents/ModelPicker";
+import { ModelFamilyMenu } from "../../../features/agents/ModelFamilyMenu";
 import { Button } from "../../../shared/design-system/ui/Button";
 import { PreferenceRow } from "../../../shared/design-system/ui/PreferenceRow";
 import { Select } from "../../../shared/design-system/ui/Select";
@@ -12,6 +12,7 @@ import type {
   RemoteAgentModel,
 } from "../agents/client";
 import type { OAuthSession } from "../oauth/session";
+import { modelChoice } from "./models";
 
 const effortLabel = (id: string) =>
   id === "xhigh" ? "Extra high" : `${id.charAt(0).toUpperCase()}${id.slice(1)}`;
@@ -127,30 +128,15 @@ export function ModelSettings({
         <PreferenceRow title="Harness" trailing="Builderlab" />
         {!!models?.length && (
           <>
-            <Select
+            <ModelFamilyMenu
               label="Model"
-              variant="preference"
-              value={model ? modelId : ""}
-              placeholder="Choose a model"
-              leading={
-                model ? (
-                  <ModelIcon model={`${model.id} ${model.displayName}`} />
-                ) : undefined
+              align="end"
+              selected={
+                model ? modelChoice(model) : { id: "", label: "Choose a model" }
               }
+              models={models.map(modelChoice)}
               disabled={busy}
-              groups={[
-                {
-                  label: "Models",
-                  options: models.map((choice) => ({
-                    value: choice.id,
-                    label: choice.displayName,
-                    leading: (
-                      <ModelIcon model={`${choice.id} ${choice.displayName}`} />
-                    ),
-                  })),
-                },
-              ]}
-              onValueChange={(next) => {
+              onChange={(next) => {
                 setModelId(next);
                 setEffort("");
               }}
@@ -158,6 +144,7 @@ export function ModelSettings({
             <Select
               label="Thinking"
               variant="preference"
+              align="end"
               value={valid ? effort : ""}
               placeholder="Choose thinking"
               disabled={busy || !model}

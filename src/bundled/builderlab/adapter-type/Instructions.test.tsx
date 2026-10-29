@@ -188,7 +188,7 @@ it("keeps hosted instructions on cancellation and resets a confirmed discard", a
     "true",
   );
   const field = await screen.findByRole("textbox", { name: "Instructions" });
-  expect(await screen.findByRole("combobox", { name: "Model" })).toBeVisible();
+  expect(await screen.findByRole("button", { name: /^Model:/ })).toBeVisible();
   expect(screen.getByRole("combobox", { name: "Thinking" })).toBeVisible();
   expect(screen.queryByText("Workspace")).toBeNull();
   expect(screen.getByRole("link", { name: "Builderlab" })).toHaveAttribute(
@@ -233,7 +233,7 @@ it("keeps hosted instructions on cancellation and resets a confirmed discard", a
   expect(screen.getByText("Workspace")).toBeVisible();
   expect(screen.getByText("One session per thread")).toBeVisible();
   expect(screen.getByText("Agent settings")).toBeVisible();
-  expect(screen.queryByRole("combobox", { name: "Model" })).toBeNull();
+  expect(screen.queryByRole("button", { name: /^Model:/ })).toBeNull();
   expect(screen.queryByRole("combobox", { name: "Thinking" })).toBeNull();
   await user.click(screen.getByRole("tab", { name: "Identity" }));
   const fresh = await screen.findByRole("textbox", { name: "Instructions" });
@@ -241,7 +241,7 @@ it("keeps hosted instructions on cancellation and resets a confirmed discard", a
   expect(fresh).toHaveValue("First instructions.");
   expect(screen.queryByRole("alert")).toBeNull();
   expect(screen.queryByText("Workspace")).toBeNull();
-  expect(await screen.findByRole("combobox", { name: "Model" })).toBeVisible();
+  expect(await screen.findByRole("button", { name: /^Model:/ })).toBeVisible();
 });
 
 it("guards hosted model drafts and a pending model save", async () => {
@@ -249,15 +249,19 @@ it("guards hosted model drafts and a pending model save", async () => {
   const user = userEvent.setup();
   renderTabs(h);
   await screen.findByRole("textbox", { name: "Instructions" });
-  await user.click(await screen.findByRole("combobox", { name: "Model" }));
+  const modelTrigger = await screen.findByRole("button", { name: /^Model:/ });
+  await waitFor(() => expect(modelTrigger).toBeEnabled());
+  await user.click(modelTrigger);
+  (await screen.findByRole("menuitem", { name: "Other" })).focus();
+  await user.keyboard("{ArrowRight}");
   await user.click(
-    await screen.findByRole("option", { name: "Friendly Model" }),
+    await screen.findByRole("menuitemradio", { name: "Friendly Model" }),
   );
   expect(screen.getByRole("button", { name: "Save model" })).toBeDisabled();
   await user.click(screen.getByRole("tab", { name: "Settings" }));
   expect(await screen.findByRole("alertdialog")).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Keep editing" }));
-  expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(
+  expect(screen.getByRole("button", { name: /^Model:/ })).toHaveTextContent(
     "Friendly Model",
   );
   await user.click(screen.getByRole("combobox", { name: "Thinking" }));
@@ -271,7 +275,7 @@ it("guards hosted model drafts and a pending model save", async () => {
       "true",
     );
     await user.click(screen.getByRole("tab", { name: "Settings" }));
-    expect(screen.getByRole("combobox", { name: "Model" })).toBeVisible();
+    expect(screen.getByRole("button", { name: /^Model:/ })).toBeVisible();
   } finally {
     await act(async () => pending.reject(new Error("offline")));
   }
@@ -281,13 +285,13 @@ it("guards hosted model drafts and a pending model save", async () => {
   await user.click(screen.getByRole("tab", { name: "Settings" }));
   await user.click(screen.getByRole("button", { name: "Discard changes" }));
   expect(screen.getByText("Agent settings")).toBeVisible();
-  expect(screen.queryByRole("combobox", { name: "Model" })).toBeNull();
+  expect(screen.queryByRole("button", { name: /^Model:/ })).toBeNull();
   await user.click(screen.getByRole("tab", { name: "Identity" }));
   expect(
     await screen.findByRole("textbox", { name: "Instructions" }),
   ).toHaveValue("First instructions.");
   expect(
-    await screen.findByRole("combobox", { name: "Model" }),
+    await screen.findByRole("button", { name: /^Model:/ }),
   ).toHaveTextContent("Choose a model");
   expect(screen.getByRole("combobox", { name: "Thinking" })).toHaveTextContent(
     "Choose thinking",
@@ -300,16 +304,20 @@ it("keeps the model draft guarded after independently saving instructions", asyn
   const user = userEvent.setup();
   renderTabs(h);
   const field = await screen.findByRole("textbox", { name: "Instructions" });
-  await user.click(await screen.findByRole("combobox", { name: "Model" }));
+  const modelTrigger = await screen.findByRole("button", { name: /^Model:/ });
+  await waitFor(() => expect(modelTrigger).toBeEnabled());
+  await user.click(modelTrigger);
+  (await screen.findByRole("menuitem", { name: "Other" })).focus();
+  await user.keyboard("{ArrowRight}");
   await user.click(
-    await screen.findByRole("option", { name: "Friendly Model" }),
+    await screen.findByRole("menuitemradio", { name: "Friendly Model" }),
   );
   await user.type(field, " Updated.");
   const save = screen.getByRole("button", { name: "Save instructions" });
   await user.click(save);
   await waitFor(() => expect(save).toHaveAttribute("aria-disabled", "true"));
   expect(field).toHaveValue("First instructions. Updated.");
-  expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(
+  expect(screen.getByRole("button", { name: /^Model:/ })).toHaveTextContent(
     "Friendly Model",
   );
   await user.click(screen.getByRole("tab", { name: "Settings" }));
@@ -333,6 +341,6 @@ it("keeps runtime settings available without loading Builderlab configuration", 
   expect(screen.getByText("One session per thread")).toBeVisible();
   expect(screen.getByText("Agent settings")).toBeVisible();
   expect(screen.queryByRole("textbox", { name: "Instructions" })).toBeNull();
-  expect(screen.queryByRole("combobox", { name: "Model" })).toBeNull();
+  expect(screen.queryByRole("button", { name: /^Model:/ })).toBeNull();
   expect(h.request).not.toHaveBeenCalled();
 });

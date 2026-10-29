@@ -3,6 +3,7 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
+import { StrictMode } from "react";
 import { ModelPicker, type ModelChoice } from "./ModelPicker";
 
 afterEach(cleanup);
@@ -315,6 +316,38 @@ it("opens a family before selecting a model and strips only its display prefix",
     await screen.findByRole("menuitemradio", { name: "gpt-6-codex" }),
   );
   expect(onChange).toHaveBeenCalledExactlyOnceWith("databricks-gpt-6-codex");
+});
+
+it("uses a catalog-owned family for grouping and the selected model icon", async () => {
+  const onChange = vi.fn();
+  const user = userEvent.setup();
+  render(
+    <ModelPicker
+      groupByFamily
+      includeDefault={false}
+      models={[
+        { id: "anthropic-looking-id", label: "Sol 6.1", family: "OpenAI" },
+      ]}
+      value="anthropic-looking-id"
+      defaultLabel="Choose model"
+      onChange={onChange}
+    />,
+    { wrapper: StrictMode },
+  );
+  const trigger = screen.getByRole("button", { name: /^Model:/ });
+  expect(trigger.querySelector("svg")).toHaveAttribute(
+    "viewBox",
+    "176 176 364 364",
+  );
+  await user.click(trigger);
+  const family = await screen.findByRole("menuitem", { name: "OpenAI" });
+  expect(screen.queryByRole("menuitem", { name: "Claude" })).toBeNull();
+  family.focus();
+  await user.keyboard("{ArrowRight}");
+  await user.click(
+    await screen.findByRole("menuitemradio", { name: "Sol 6.1" }),
+  );
+  expect(onChange).toHaveBeenCalledExactlyOnceWith("anthropic-looking-id");
 });
 
 it("keeps custom entry and default selection in the family menu", async () => {

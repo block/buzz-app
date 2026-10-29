@@ -73,6 +73,12 @@ model and one of that model's reasoning efforts, then save the pair for new task
 There is no default or fallback selection. Missing or unavailable saved choices
 show the server's setup status and require a supported pair. Changing the model
 clears the effort choice. Instructions and model settings save independently.
+The model control uses the same family submenus as Goose. Builderlab's catalog
+aliases are mapped to families in `adapter-type/models.ts`; update that mapping
+with Builderlab's catalog information until its API supplies family metadata.
+The server still owns available choices, names and thinking levels. Unknown
+aliases remain selectable under Other. Families without a shared brand mark use
+the generic model icon.
 Creation offers the same catalog choices and optional instructions. The provider
 registers and activates the agent before saving the settings together. Unfinished
 setup retains these values on this device so retry continues the same agent,

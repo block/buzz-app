@@ -25,6 +25,8 @@ export type ModelChoice = Readonly<{
   /** The model ID saved in the type's config. */
   id: string;
   label: string;
+  /** Catalog-owned family, when the plugin knows more than the ID/name matcher. */
+  family?: string;
   description?: string | undefined;
   efforts?: readonly { id: string; label: string }[];
   effortScope?: string;

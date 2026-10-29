@@ -1,11 +1,15 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { StrictMode } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Host } from "../../../features/host/service";
-import { createAgentClient, type RemoteAgent } from "../agents/client";
+import {
+  createAgentClient,
+  type RemoteAgent,
+  type RemoteAgentModel,
+} from "../agents/client";
 import { createOAuthSession } from "../oauth/session";
 import { ModelSettings } from "./ModelSettings";
 import { ToastProvider } from "../../../shared/design-system/ui/Toast";
@@ -17,7 +21,10 @@ afterEach(() => {
   cleanup();
   vi.unstubAllEnvs();
 });
-async function fixture(selection: Partial<RemoteAgent> = {}) {
+async function fixture(
+  selection: Partial<RemoteAgent> = {},
+  catalog?: readonly RemoteAgentModel[],
+) {
   let agent: RemoteAgent = {
     id: "agent",
     name: "Helper",
@@ -38,7 +45,11 @@ async function fixture(selection: Partial<RemoteAgent> = {}) {
     let result: unknown;
     if (url.endsWith("/get-model-catalog"))
       result = {
-        models: [
+        models: catalog?.map((model) => ({
+          id: model.id,
+          display_name: model.displayName,
+          supported_reasoning_efforts: model.supportedReasoningEfforts,
+        })) ?? [
           {
             id: "model-one",
             display_name: "Friendly One",
@@ -89,7 +100,7 @@ async function fixture(selection: Partial<RemoteAgent> = {}) {
       </StrictMode>
     ),
   });
-  await screen.findByRole("combobox", { name: "Model" });
+  await screen.findByRole("button", { name: /^Model:/ });
   return {
     request,
     session,
@@ -105,12 +116,21 @@ async function fixture(selection: Partial<RemoteAgent> = {}) {
 }
 async function choose(label: string, value: string) {
   const user = userEvent.setup();
-  await user.click(screen.getByRole("combobox", { name: label }));
-  await user.click(await screen.findByRole("option", { name: value }));
+  if (label === "Model") {
+    const trigger = screen.getByRole("button", { name: /^Model:/ });
+    await waitFor(() => expect(trigger).toBeEnabled());
+    await user.click(trigger);
+    (await screen.findByRole("menuitem", { name: "Other" })).focus();
+    await user.keyboard("{ArrowRight}");
+    await user.click(await screen.findByRole("menuitemradio", { name: value }));
+  } else {
+    await user.click(screen.getByRole("combobox", { name: label }));
+    await user.click(await screen.findByRole("option", { name: value }));
+  }
 }
 it("requires an explicit supported pair, clears effort when the model changes, and reads back server validity", async () => {
   const h = await fixture();
-  expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(
+  expect(screen.getByRole("button", { name: /^Model:/ })).toHaveTextContent(
     "Choose a model",
   );
   expect(screen.getByRole("button", { name: "Save model" })).toBeDisabled();
@@ -141,13 +161,56 @@ it("requires an explicit supported pair, clears effort when the model changes, a
   });
   expect(screen.getByRole("button", { name: "Save model" })).toBeDisabled();
 });
+it("uses Builderlab families in the shared menu and keeps unknown catalog choices selectable", async () => {
+  await fixture(
+    {
+      modelId: "opaque-id",
+      reasoningEffort: "high",
+      modelSelectionStatus: "valid",
+    },
+    [
+      {
+        id: "opaque-id",
+        displayName: "Sol 6.1",
+        supportedReasoningEfforts: ["high"],
+      },
+      {
+        id: "future-id",
+        displayName: "Future Model",
+        supportedReasoningEfforts: ["none"],
+      },
+    ],
+  );
+  const trigger = screen.getByRole("button", { name: "Model: Sol 6.1" });
+  await waitFor(() => expect(trigger).toBeEnabled());
+  expect(trigger.querySelector("svg")).toHaveAttribute(
+    "viewBox",
+    "176 176 364 364",
+  );
+  const user = userEvent.setup();
+  await user.click(trigger);
+  expect(await screen.findByRole("menuitem", { name: "OpenAI" })).toBeVisible();
+  expect(screen.queryByRole("menuitemradio", { name: /Default/ })).toBeNull();
+  const other = screen.getByRole("menuitem", { name: "Other" });
+  other.focus();
+  await user.keyboard("{ArrowRight}");
+  await user.click(
+    await screen.findByRole("menuitemradio", { name: "Future Model" }),
+  );
+  expect(trigger).toHaveTextContent("Future Model");
+  expect(screen.getByRole("combobox", { name: "Thinking" })).toHaveTextContent(
+    "Choose thinking",
+  );
+  expect(screen.getByRole("button", { name: "Save model" })).toBeDisabled();
+});
+
 it("shows no warning or success message when opening valid saved preferences", async () => {
   await fixture({
     modelId: "model-one",
     reasoningEffort: "high",
     modelSelectionStatus: "valid",
   });
-  expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(
+  expect(screen.getByRole("button", { name: /^Model:/ })).toHaveTextContent(
     "Friendly One",
   );
   expect(screen.getByRole("combobox", { name: "Thinking" })).toHaveTextContent(

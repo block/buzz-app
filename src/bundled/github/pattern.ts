@@ -43,7 +43,8 @@ export class Pattern {
     const ESCAPE = unicode
       ? // An escaped surrogate pair is one character.
         /^\\(?:ud[89ab][\da-f]{2}\\ud[c-f][\da-f]{2}|x[\da-f]{2}|u[\da-f]{4}|u\{[\da-f]+\}|c[a-z]|[pP]\{[^}]*\}|[\s\S])/iu
-      : /^\\(?:x[\da-f]{2}|u[\da-f]{4}|c[a-z]|[\s\S])/i;
+      : // A legacy octal escape such as \012 is one character too.
+        /^\\(?:x[\da-f]{2}|u[\da-f]{4}|c[a-z]|0[0-7]{0,2}|[\s\S])/i;
     let at = 0;
     const alternation = (): Node => {
       const options = [sequence()];

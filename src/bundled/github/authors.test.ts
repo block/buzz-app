@@ -143,6 +143,12 @@ allow org:Block body:/bug/s`);
     expect(performance.now() - started).toBeLessThan(250);
   });
 
+  it("match a legacy octal escape as the one character it is", () => {
+    const policy = rules("deny body:/\\012/\nallow");
+    expect(admit(by("eve", "first\nsecond"), policy, "j", nobody)).toBe(false);
+    expect(admit(by("eve", "\u000012"), policy, "j", nobody)).toBe(true);
+  });
+
   it("name the line that is not a rule", () => {
     const errors = {
       "allow\nwho knows": "Line 2: it must start with allow or deny",

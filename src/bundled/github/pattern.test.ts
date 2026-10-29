@@ -33,6 +33,12 @@ describe("Pattern", () => {
       ["\\.\\*", ""],
       ["^\\w+@\\w+$", ""],
       ["^(a+)+$", ""],
+      ["\\012", ""],
+      ["^\\0$", ""],
+      ["\\x0012", ""],
+      ["\\0123", ""],
+      ["\\08", ""],
+      ["^\\040*LGTM", ""],
     ];
     const texts = [
       "",
@@ -65,6 +71,12 @@ describe("Pattern", () => {
       "me@host",
       "aaaa",
       "aaa!",
+      "first\nsecond",
+      "\u000012",
+      "\u0000",
+      "\n3",
+      "\u00008",
+      "  LGTM",
     ];
     for (const [source, flags] of patterns) {
       const pattern = new Pattern(source, flags);

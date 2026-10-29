@@ -144,7 +144,7 @@ async function fixture() {
   };
 }
 
-it("updates the mounted sidebar from the exact choice while search keeps Bestie's stable identity", async () => {
+it("shows the exact choice as Bestie in navigation and search", async () => {
   const f = await fixture();
   const select = vi.fn();
   render(
@@ -178,26 +178,32 @@ it("updates the mounted sidebar from the exact choice while search keeps Bestie'
   expect(pollenRow.querySelector("[data-status]")).toBeNull();
   await userEvent.click(screen.getByRole("button", { name: "Search Buzz" }));
   const dialog = screen.getByRole("dialog", { name: "Search Buzz" });
-  expect(
-    within(dialog).getByRole("option", { name: "Bestie" }),
-  ).toBeInTheDocument();
+  const pollenSearch = within(dialog).getByRole("option", {
+    name: /Pollen.*Bestie/,
+  });
+  expect(pollenSearch.querySelector("img")).toHaveAttribute(
+    "src",
+    portrait.preview,
+  );
   const search = within(dialog).getByRole("combobox", { name: "Search Buzz" });
   await userEvent.type(search, "Pollen");
   expect(
-    within(dialog).queryByRole("option", { name: "Pollen" }),
-  ).not.toBeInTheDocument();
+    within(dialog).getByRole("option", { name: /Pollen.*Bestie/ }),
+  ).toBeInTheDocument();
   await userEvent.clear(search);
   await userEvent.type(search, "Bestie");
   expect(
-    within(dialog).getByRole("option", { name: "Bestie" }),
+    within(dialog).getByRole("option", { name: /Pollen.*Bestie/ }),
   ).toBeInTheDocument();
   act(() => {
     setDefaultAgent(scope, fizz);
   });
   expect(
-    within(dialog).getByRole("option", { name: "Bestie" }),
+    within(dialog).getByRole("option", { name: /Fizz.*Bestie/ }),
   ).toBeInTheDocument();
-  await userEvent.click(within(dialog).getByRole("option", { name: "Bestie" }));
+  await userEvent.click(
+    within(dialog).getByRole("option", { name: /Fizz.*Bestie/ }),
+  );
   expect(select).toHaveBeenCalledWith(page.key);
   const fizzRow = await within(nav).findByRole("button", { name: "Fizz" });
   expect(fizzRow.querySelector("img")).toBeNull();

@@ -70,6 +70,7 @@ export function BestieNavigationProvider({
   const mark: BestieMark | undefined = agent
     ? {
         label: agent.managedName ?? agent.name,
+        detail: "Bestie",
         avatar: { src: avatar, shape: "squircle" },
       }
     : undefined;
@@ -121,7 +122,7 @@ export function BestieUnreadBadge({ pageKey }: { pageKey: string }) {
   );
 }
 
-/** Decorate navigation without changing the page's stable search identity. */
+/** Decorate Bestie's navigation and search destination with its exact choice. */
 export function usePagePresentation() {
   const bestie = useContext(BestieNavigationContext);
   return (page: RegisteredPage) => ({

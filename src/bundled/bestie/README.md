@@ -23,11 +23,11 @@ ordinary row and clears any old device-local hidden-DM intent. Replacing or
 deleting the Bestie, disabling the plugin, changing communities, or losing the
 exact roster match releases the promotion and restores the ordinary DM row.
 
-Navigation presentation and search identity intentionally differ: the pinned
-row shows the agent's name and avatar, while Search Buzz continues to list the
-page as **Bestie**. Searching the agent's name therefore keeps the same New chat,
-chat and Direct messages results as every other agent instead of adding a second
-route to the same DM.
+The pinned row and Search Buzz destination show the agent's name and avatar.
+Search adds **Bestie** as supporting text and matches either name, so the pinned
+DM remains recognizable without presenting a placeholder identity. Agent rows
+remain separate **New chat** actions; namesakes stay distinct by exact public key
+and use readable owner labels before abbreviated-key fallbacks.
 
 ### Hosted setup fallback
 

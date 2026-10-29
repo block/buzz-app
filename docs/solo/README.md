@@ -139,9 +139,9 @@ behavior on the label, so a rename touches copy only.
   store. While promoted, that DM is omitted from the ordinary Messages inventory;
   replacing or deleting the Bestie, disabling the plugin, or losing the exact
   roster match restores the ordinary row. The pinned navigation row adopts the
-  agent's name and avatar, while global search keeps the stable **Bestie** page
-  identity so an agent-name search does not duplicate the existing Direct
-  messages result.
+  agent's name and avatar. Global search shows the same identity with **Bestie**
+  as supporting text and matches either name; the separate agent result remains
+  a **New chat** action rather than another route to the pinned DM.
 
   Nothing is picked until the account record has been read and its archive read
   has settled, so a new chat is never tagged for a stale pick. A new chat tags the

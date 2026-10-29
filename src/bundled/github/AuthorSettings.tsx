@@ -12,7 +12,10 @@ export function AuthorSettings({ active }: { active(): boolean }) {
   const [saved, setSaved] = useState(loadPolicy);
   const [draft, setDraft] = useState(saved.text);
   const [fallback, setFallback] = useState(saved.fallback);
+  /** Why the rules could not be saved, apart from why they are not rules. */
   const [error, setError] = useState("");
+  // After a Save, each edit checks the rules again.
+  const [checked, setChecked] = useState(false);
   const parsed = parse(draft);
   const dirty =
     typeof parsed === "string" ||
@@ -29,10 +32,13 @@ export function AuthorSettings({ active }: { active(): boolean }) {
         onSubmit={(event) => {
           event.preventDefault();
           if (!active() || !dirty) return;
+          setChecked(true);
+          if (typeof parsed === "string") return;
           try {
             const policy = savePolicy(draft, fallback);
             setSaved(policy);
             setDraft(policy.text);
+            setChecked(false);
             setError("");
           } catch (reason) {
             setError(reason instanceof Error ? reason.message : String(reason));
@@ -49,6 +55,7 @@ export function AuthorSettings({ active }: { active(): boolean }) {
           )}
           <Field
             label="Rules"
+            error={checked && typeof parsed === "string" ? parsed : undefined}
             description="One per line: allow or deny, then any of author:login, author:/pattern/, org:organization, body:/pattern/ and prefix:text, which runs to the end of the line. Patterns are JavaScript regular expressions without backreferences or lookaround. body: sees a comment's first 1,000 characters, the most a wake quotes. A bare allow or deny matches everyone. author:@me is your GitHub account, a bot's login ends in [bot], and logins match case aside. The first rule that matches decides. Membership your GitHub account cannot see, or of a misspelled organization, counts as none."
           >
             <Textarea

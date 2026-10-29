@@ -25,10 +25,17 @@ it("shows the default rules, and saves only rules that parse", async () => {
   await user.clear(rules);
   await user.type(rules, "deny author:@me prefix:🤖{Enter}allow author:/(/");
   await user.click(save);
-  expect(screen.getByRole("alert")).toHaveTextContent(
-    "Line 2: Invalid regular expression",
+  expect(rules).toBeInvalid();
+  expect(rules).toHaveAccessibleDescription(
+    expect.stringContaining("Line 2: Invalid regular expression"),
   );
   expect(loadPolicy().text).toBe(DEFAULT_RULES);
+  // Editing checks the rules again, so restoring the saved ones clears it.
+  await user.clear(rules);
+  await user.type(rules, DEFAULT_RULES);
+  expect(rules).toBeValid();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(save).toBeDisabled();
   await user.clear(rules);
   await user.type(
     rules,

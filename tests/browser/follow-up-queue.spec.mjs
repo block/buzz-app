@@ -179,6 +179,13 @@ async function startWorkingAgent(page, app) {
   await expect
     .poll(() => page.evaluate(() => !!window.localAgentFixture))
     .toBe(true);
+  await expect
+    .poll(() =>
+      app.report.agentPublications?.some(({ event }) =>
+        event.tags.some(([name, value]) => name === "d" && value === agent),
+      ),
+    )
+    .toBe(true);
   const editor = page.getByRole("textbox", {
     name: "Message your agents",
     exact: true,

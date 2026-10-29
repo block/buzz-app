@@ -51,7 +51,7 @@ export function addPullStateTool(
   agents.addTool({
     name: "github_pr_state",
     description:
-      "Reads a GitHub pull request's state as the owner's links show it: open, draft, merged or closed, its checks, failed check names and conflicts, and when it was read. With details true it also gives what the owner's GitHub panel shows: title, branches, files changed, the review decision and reviewers, unresolved review threads, the merge state and auto-merge. It is at most a minute old unless fresh is true, or the last read failed: then last_read_failed says why and age_seconds how old it is. Checks and conflicts need the gh CLI signed in; without it only the state is known.",
+      "Reads a GitHub pull request's state as the owner's links show it: open, draft, merged or closed, its checks, failed check names and conflicts, and when it was read. With details true it also gives what the owner's GitHub panel shows: title, branches, files changed, the review decision and reviewers, unresolved review threads, the merge state and auto-merge. It is at most a minute old unless fresh is true, or the last read failed: then last_read_failed says why and age_seconds how old it is. Checks and conflicts need the gh CLI signed in; without it a lookup gives only the state, and with details true also the title, branches and the head's public checks.",
     inputSchema: {
       type: "object",
       properties: {

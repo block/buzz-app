@@ -113,7 +113,9 @@ sidebar, the side panel, watches and agents' lookups each ask it for a level:
 `state`, `feedback` (reviews and comments with their text) or `details` (what
 the side panel shows and acts on). It reads
 each pull request once for all of them, in one batched `gh` query, at every
-level asked of it, and holds a level's data only while someone asks for it.
+level asked of it. It drops a level's data at the first read without that
+level, and forgets a pull request nobody follows at the first read 15 minutes
+after its last poll; with no later read, the data stays in memory.
 Each reader also says how often it wants its pull request read again; the
 store reads each one as often as its most eager reader wants, and every poll
 reads all that are due together.
@@ -124,7 +126,8 @@ checks, failed check names and conflicts, with when it was read. With
 `details: true` it also gives what the side panel shows: title, branches, files
 changed, the review decision and reviewers, unresolved review threads, the
 merge state and auto-merge. The answer is at most a minute old unless the agent
-asks for a fresh read.
+asks for a fresh read, or the last read failed: then the answer says so, and
+how old it is.
 
 The GitHub plugin also adds `github_watch_pr`, so an agent can wait on a pull
 request without a model checking it. An agent calls it with a pull request URL

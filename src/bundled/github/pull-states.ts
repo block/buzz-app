@@ -745,6 +745,10 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
     ];
     const at = (url: string, level: PullLevel) =>
       !!asked.get(url)?.levels.has(level) || watchedAt(url, level);
+    // The open panel, not an agent's lookup of its details, reads
+    // GitHub's public API outside the links' budget.
+    const panelAsked = (url: string) =>
+      watchedAt(url, "details") && !!asked.get(url)?.levels.has("details");
     // What each is asked for is fixed when the read starts, so what is parsed
     // is what was queried; a level asked for meanwhile is read next.
     const plan = new Map<string, Asked>();
@@ -757,7 +761,7 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
         feedback: at(url, "feedback"),
         details: at(url, "details"),
         publicly: at(url, "state") || at(url, "details"),
-        checks: !!asked.get(url)?.levels.has("details"),
+        checks: panelAsked(url),
         wantsText: (id) =>
           [
             ...[...(listeners.get(url) ?? [])]
@@ -772,13 +776,11 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
       return asking;
     };
     // The panel's reads are its own, not the links' share.
-    const free = due.filter((url) => at(url, "details")).length;
+    const free = due.filter((url) => watchedAt(url, "details")).length;
     // While GitHub holds public reads for its limit, only the panel's own
     // reads, which its reader asked for, try it again.
     const reading =
-      readsPublic() && now < publicHeldUntil
-        ? due.filter((url) => asked.get(url)?.levels.has("details"))
-        : due;
+      readsPublic() && now < publicHeldUntil ? due.filter(panelAsked) : due;
     /** Whether this read asked for every level its readers want; a level
      * asked for once it started is read next. */
     const plannedAll = (url: string) => {
@@ -798,7 +800,8 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
       const found = await readAll(
         // The panel's first, so they are the free ones.
         reading.sort(
-          (a, b) => Number(at(b, "details")) - Number(at(a, "details")),
+          (a, b) =>
+            Number(watchedAt(b, "details")) - Number(watchedAt(a, "details")),
         ),
         asks,
         Math.min(free, reading.length),

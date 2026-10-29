@@ -1,3 +1,8 @@
+[role="dialog"]:has(.layout > .generalAccess) {
+  /* Reserve room for the access footer as text grows; retain the usual gutter
+     when the viewport has enough height. Narrow windows retain the fallback. */
+  --dialog-top: clamp(1rem, calc(100dvh - 40rem), 8rem);
+}
 .layout {
   display: flex;
   flex-direction: column;
@@ -166,6 +171,7 @@
 }
 
 .generalAccess {
+  container-type: inline-size;
   border-top: 1px solid var(--border-standard);
   padding: var(--space-2) 0 0 var(--space-row-gap);
 }
@@ -220,6 +226,9 @@
   .member:has(> .addAction[data-split]) .name {
     max-width: 100%;
   }
+}
+/* Reflow against the dialog's available space, including enlarged text. */
+@container (max-width: 28rem) {
   .accessRow {
     grid-template-columns: var(--size-control-sm) minmax(0, 1fr);
   }

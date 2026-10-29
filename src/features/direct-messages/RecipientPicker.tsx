@@ -236,7 +236,9 @@ export function RecipientPicker({
         !excludedPubkeys.includes(person.pubkey) &&
         !agentUnavailable(session, person.pubkey) &&
         // Agents still loading are not yet known to be uncontrolled.
-        (!person.isAgent || controlled.has(person.pubkey) || agents.pending) &&
+        (!person.isAgent ||
+          controlled.has(person.pubkey) ||
+          agents.managedPending) &&
         !selected.some((item) => item.pubkey === person.pubkey),
     );
     const picked = usage.pick(
@@ -322,7 +324,7 @@ export function RecipientPicker({
     };
   }, [
     agents.selectable,
-    agents.pending,
+    agents.managedPending,
     channels,
     profiles,
     directory.people,
@@ -401,7 +403,7 @@ export function RecipientPicker({
     !directory.loading &&
     !directory.error &&
     !directory.tooShort &&
-    !agents.pending
+    !agents.managedPending
       ? exactName(
           eligible,
           (person) => [...namesOf(person), ...(person.profileNames ?? [])],
@@ -433,7 +435,9 @@ export function RecipientPicker({
       person.pubkey === session.viewer ||
       excludedPubkeys.includes(person.pubkey) ||
       agentUnavailable(session, person.pubkey) ||
-      (person.isAgent && !controlled.has(person.pubkey) && !agents.pending) ||
+      (person.isAgent &&
+        !controlled.has(person.pubkey) &&
+        !agents.managedPending) ||
       selection.current.some((item) => item.pubkey === person.pubkey)
     )
       return;
@@ -807,7 +811,7 @@ export function RecipientPicker({
                       );
                     }}
                   </Virtualizer>
-                  {(channelsOnly || (!directory.loading && !directory.error && !agents.pending)) &&
+                  {(channelsOnly || (!directory.loading && !directory.error && !agents.managedPending)) &&
                     !candidates.length &&
                     !matchingChannels.length && (
                       <p>

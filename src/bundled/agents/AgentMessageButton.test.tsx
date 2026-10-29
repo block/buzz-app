@@ -21,6 +21,7 @@ function setup({ dm = true } = {}) {
   const choices: {
     identities: { pubkey: string; managed: boolean; messageable?: true }[];
     pending?: boolean;
+    managedPending?: boolean;
     error?: string;
   } = { identities: [{ pubkey: agent, managed: true }] };
   const refresh = vi.fn(async () => {});
@@ -188,7 +189,7 @@ it.each([true, false])(
     const user = userEvent.setup();
     const f = setup();
     f.choices.identities = [];
-    f.choices.pending = true;
+    f.choices.managedPending = true;
     let finish!: () => void;
     f.refresh.mockImplementationOnce(
       () =>
@@ -197,14 +198,16 @@ it.each([true, false])(
             f.choices.identities = managed
               ? [{ pubkey: "agent", managed }]
               : [];
-            f.choices.pending = false;
+            f.choices.managedPending = false;
             resolve();
           };
         }),
     );
     render(<AgentMessageButton {...f} pubkey="agent" navigation={undefined} />);
     await user.click(screen.getByRole("button", { name: "Message" }));
-    await waitFor(() => expect(f.refresh).toHaveBeenCalledOnce());
+    await waitFor(() =>
+      expect(f.refresh).toHaveBeenCalledExactlyOnceWith(false),
+    );
     expect(screen.queryByRole("alert")).toBeNull();
     expect(f.open).not.toHaveBeenCalled();
     await act(async () => finish());
@@ -217,6 +220,20 @@ it.each([true, false])(
     }
   },
 );
+it("does not wait for the agent library, which cannot control an agent", async () => {
+  const user = userEvent.setup();
+  const f = setup();
+  f.choices.identities = [];
+  f.choices.pending = true;
+  f.choices.managedPending = false;
+  render(<AgentMessageButton {...f} pubkey="agent" navigation={undefined} />);
+  await user.click(screen.getByRole("button", { name: "Message" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Agent details are still loading",
+  );
+  expect(f.refresh).not.toHaveBeenCalled();
+  expect(f.open).not.toHaveBeenCalled();
+});
 it("shows an opening error and allows retry", async () => {
   const user = userEvent.setup();
   const f = setup();

@@ -315,7 +315,7 @@ export function NewMessage({
       attempt.current?.abort();
     };
   }, [outbox, session.viewer, session.directMessages, scope]);
-  async function validateAgents() {
+  async function validateAgents(signal: AbortSignal) {
     const uncontrolled = () => {
       const controlled = new Set(
         session.agentChoices
@@ -334,9 +334,9 @@ export function NewMessage({
       );
     };
     // Agents still loading are not missing: wait for the list before refusing.
-    if (uncontrolled() && session.agentChoices.snapshot().pending) {
-      await session.agentChoices.refresh();
-      attempt.current?.signal.throwIfAborted();
+    if (uncontrolled() && session.agentChoices.snapshot().managedPending) {
+      await session.agentChoices.refresh(false);
+      signal.throwIfAborted();
     }
     if (uncontrolled())
       throw new Error(
@@ -417,7 +417,7 @@ export function NewMessage({
         uploaded[0]?.url,
       ).tags;
       if (current && session.directMessages.delivery(current.id) === "failed")
-        await validateAgents();
+        await validateAgents(controller.signal);
       if (
         current &&
         (current.recipients !== key ||
@@ -431,7 +431,7 @@ export function NewMessage({
           throw new Error(
             "Retry the earlier message to confirm its delivery before editing.",
           );
-        await validateAgents();
+        await validateAgents(controller.signal);
         await outbox?.dismiss(current.id);
         controller.signal.throwIfAborted();
         current = undefined;
@@ -439,7 +439,7 @@ export function NewMessage({
         writeView(scope, "direct-message:pending", null);
       }
       if (!current) {
-        await validateAgents();
+        await validateAgents(controller.signal);
         onPreparing?.(recipients.map((person) => person.pubkey));
         // The relay picks the DM of these people, which can differ from the
         // one shown, and named agents join it with its history. The message
@@ -451,7 +451,7 @@ export function NewMessage({
           true,
         );
         controller.signal.throwIfAborted();
-        await validateAgents();
+        await validateAgents(controller.signal);
         const messageId = sendWithOwnerMentions(
           session,
           explicitRecipientIds,

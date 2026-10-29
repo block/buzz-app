@@ -35,7 +35,6 @@ import type { RelaySession } from "../relay/session";
 import {
   addressedTo,
   CHAT_KINDS,
-  tagsAgent,
   watchMatches,
   type AttentionObject,
   type AttentionValue,
@@ -275,7 +274,7 @@ type Runner = {
   /** Watch jobs released from `waiting`, oldest first, going into the queue
    * as it has room. */
   readonly later: Job[];
-  /** Events seen, and events it wrote (so reactions to them reach no watch). */
+  /** Events seen. */
   readonly seen: Set<string>;
   /** Events seen in each channel, as many as a reconnect replays of it, so
    * other channels' traffic cannot push out one a replay sends again. Only the
@@ -287,7 +286,6 @@ type Runner = {
   /** A missed event catch-up is still giving out, with delivered and rejected
    * matches retained while its other watches wait. */
   fanning?: { id: string; done: ReadonlySet<string> };
-  readonly wrote: Set<string>;
   /** Turns still counted as working, which a change of type waits out. */
   working: number;
   /** Its typing pulses, one per conversation it is working in. */
@@ -808,7 +806,6 @@ export class AgentRunners {
       seen: new Set(),
       seenIn: new Map(),
       backlog: [],
-      wrote: new Set(),
       working: 0,
       typing: new Map(),
       transitioning: false,
@@ -872,7 +869,7 @@ export class AgentRunners {
           continue;
         }
         this.markSeen(runner, event.id, channel);
-        if (this.isOwn(runner, agent, event)) continue;
+        if (this.isOwn(agent, event)) continue;
         // A replay waits for room rather than take the drops a burst of
         // live traffic would.
         runner.backlog.push({
@@ -893,12 +890,9 @@ export class AgentRunners {
       (!!channel && !!runner.seenIn.get(channel)?.has(id))
     );
   }
-  /** An agent never hears itself; its own events keep reactions to them from
-   * its watches. */
-  private isOwn(runner: Runner, agent: Agent, event: RelayEvent) {
-    if (event.pubkey !== agent.pubkey) return false;
-    bounded(runner.wrote, event.id);
-    return true;
+  /** An agent never hears itself. */
+  private isOwn(agent: Agent, event: RelayEvent) {
+    return event.pubkey === agent.pubkey;
   }
   private markSeen(runner: Runner, id: string, channel: string | undefined) {
     bounded(runner.seen, id);
@@ -1025,7 +1019,7 @@ export class AgentRunners {
     const channel = event.tags.find((tag) => tag[0] === "h")?.[1];
     if (this.hasSeen(runner, event.id, channel)) return;
     this.markSeen(runner, event.id, channel);
-    if (this.isOwn(runner, agent, event)) return;
+    if (this.isOwn(agent, event)) return;
     this.deliver(runner, agent, event, channelId);
   }
   /** Saves `event` as heard by each of the agent's streams it is in and has
@@ -1430,7 +1424,6 @@ export class AgentRunners {
       const channel = channelOf(event);
       if (this.hasSeen(runner, event.id, channel)) continue;
       this.markSeen(runner, event.id, channel);
-      this.isOwn(runner, agent, event);
     }
     this.give(runner, agent, mentions, watches, slug, skipped);
     return taken;
@@ -1822,14 +1815,6 @@ export class AgentRunners {
   ): Heard {
     if (this.stopped[runner.key]?.[event.id] !== undefined)
       return { triggers: [] };
-    const wrote = (id: string) => runner.wrote.has(id);
-    // Another of the owner's agents wakes it only by naming it, wherever: were a
-    // watch enough, two agents replying to each other would never stop. The
-    // claimed owner only narrows this; the type verifies it before answering.
-    if (event.tags.some((tag) => tag[0] === "auth" && tag[1] === agent.owner))
-      return CHAT_KINDS.includes(event.kind) && tagsAgent(event, agent.pubkey)
-        ? { triggers: [{ type: "mention", event }] }
-        : { triggers: [] };
     // A one-to-one DM is always addressed to the other member, whoever else it
     // names, so no mention is needed. Only new messages: an edit is not a new
     // turn, and a reaction is not conversation. A group DM still needs the
@@ -1840,9 +1825,10 @@ export class AgentRunners {
       this.host.dm(agent, event)
     )
       return { triggers: [{ type: "mention", event }] };
-    // Addressed events never reach a watch. Only conversation starts a run: not
-    // an encrypted DM (kind 4) it cannot read yet, nor a reaction to its message.
-    if (addressedTo(event, agent.pubkey, wrote))
+    // Addressed events never reach a watch. Only conversation starts a run, not
+    // an encrypted DM (kind 4) it cannot read yet. A reaction to its message is
+    // not addressed, so a watch can still hear it.
+    if (addressedTo(event, agent.pubkey))
       return CHAT_KINDS.includes(event.kind)
         ? { triggers: [{ type: "mention", event }] }
         : { triggers: [] };
@@ -2798,9 +2784,7 @@ export class AgentRunners {
       lifetime.throwIfAborted();
     }
     check?.();
-    const signed = await this.require().publish(runner.member, event);
-    bounded(runner.wrote, signed.id);
-    return signed;
+    return this.require().publish(runner.member, event);
   }
 }
 

@@ -57,13 +57,15 @@ servers do not support these operations.
 
 ## Agent Attention
 
-The Agent Attention tab groups the selected community's local agents' subscriptions by Interest. It shows instructions, listening and delivery destinations, enabled state and available wake history. Ask an agent to create watches through its Attention tools; pausing or removing one preserves the other saved objects. Empty Interests remain visible and can be deleted after their watches are removed.
+Attention itself (the runtime, tools, storage and sources) is core, but it runs on this device only while a plugin that shows it is on. The bundled Agent Attention UI plugin (`buzz.watching`, on by default) adds a Watching tab to the settings of every agent running on this device, whatever its type. The tab explains Attention, holds the switch that lets this device run the agent's watches, then groups that agent's subscriptions by Interest. It shows instructions, listening and delivery destinations, enabled state and available wake history, and suggests asks while the agent has none. Ask an agent to create watches through its Attention tools; pausing or removing one preserves the other saved objects. Empty Interests remain visible and can be deleted after their watches are removed. Turning the plugin off hides the tab and turns every agent's Attention off on this device; mentions still wake agents, and each agent keeps its saved switch for when the plugin is back on. The former standalone Agent Attention page is gone, so an old link to `buzz.agents/attention` opens as an unavailable destination.
 
 ## Agent types and providers
 
 Harness plugins register agent types with the Agents service. An agent type owns
 the defaults, migration policy, per-agent settings tabs, model discovery and run
-behavior for its agents. The host appends the shared Attention tab.
+behavior for its agents. Plugins can add a tab to every local agent with
+`ctx.agents.registerTab`; the Agent Attention UI plugin's Watching tab holds the
+device Attention switch.
 
 Attention is shared by every harness, and a harness has no attention code.
 `src/buzz-mcp/session-tools.ts` exports `BUZZ_SESSION`: the Buzz tools and the
@@ -105,20 +107,47 @@ tool's name, description or schema changes, so edit those deliberately.
 `addedKey` covers only plugins' tools, so a resumed Codex thread keeps the Buzz
 tools, and their `load`, that it started with.
 
-On desktop the GitHub plugin adds `github_watch_pr`, so an agent can wait on a pull
-request without a model checking it. An agent calls it with a pull request URL,
-from a thread or a Solo chat. While the app is open the plugin reads the pull
-request through the signed-in `gh` CLI once a minute. It wakes the agent when CI
+The GitHub plugin keeps one store of pull request data (`pull-states.ts`), and
+it is the only place the plugin reads pull requests from GitHub. Links, the Solo
+sidebar, the side panel, watches and agents' lookups each ask it for a level:
+`state`, `feedback` (reviews and comments with their text) or `details` (what
+the side panel shows and acts on). It reads
+each pull request once for all of them, in one batched `gh` query, at every
+level asked of it. It drops a level's data at the first read without that
+level, and forgets a pull request nobody follows at the first read 15 minutes
+after its last poll; with no later read, the data stays in memory.
+Each reader also says how often it wants its pull request read again; the
+store reads each one as often as its most eager reader wants, and every poll
+reads all that are due together.
+
+On desktop the GitHub plugin adds `github_pr_state`, so an agent can read a pull
+request's state as its owner's links show it: open, draft, merged or closed,
+checks, failed check names and conflicts, with when it was read. With
+`details: true` it also gives what the side panel shows: title, branches, files
+changed, the review decision and reviewers, unresolved review threads, the
+merge state and auto-merge. The answer is at most a minute old unless the agent
+asks for a fresh read, or the last read failed: then the answer says so, and
+how old it is.
+
+The GitHub plugin also adds `github_watch_pr`, so an agent can wait on a pull
+request without a model checking it. An agent calls it with a pull request URL
+and the id of one of its own Interests, from a thread or a Solo chat. The tool is a
+convenience over `watch_add`: it adds an `attention/github-pr` source watch to that
+Interest through the same attention tool code, and refuses an Interest that does
+not exist. The plugin never writes an Interest. While the app is open the watch asks the store to
+follow the pull request's feedback, which it reads through the signed-in `gh`
+CLI once a minute, also while the window is hidden. It wakes the agent when CI
 settles on the head commit, once per commit and result, or when new feedback has
-been quiet for 90 seconds. The tool creates an Attention source subscription. Attention delivers the wake
+been quiet for 90 seconds, and once more when the pull request merges or closes,
+so the agent can finish and retire its Interest. Attention delivers the wake
 in the conversation where it called the tool: no message is sent, and the agent
 is told its text is data. It quotes the failed checks' names and the new
 comments, line by line, each clipped, with GitHub's links. Agents comment as the
 `gh` account, as their owner does, so GitHub cannot tell them apart: a comment of
 that account that starts with 🤖, as an agent's do, wakes nobody, and the owner's
-other comments wake the agent. A watch is saved in Attention on the device and respects its on/off switch. Existing device-local GitHub watches are imported once with their feedback cursor and destination. It ends when the
-pull request merges or closes, after 20 wakes, after 30 failed polls in a row,
-or when the agent calls it with `stop: true`.
+other comments wake the agent. A watch is saved in Attention on the device and respects its on/off switch. Device-local GitHub watches saved before Attention are dropped, not imported: they name no Interest. It ends when the
+pull request merges or closes, after 20 wakes, after 30 minutes without a
+successful read, or when the agent calls it with `stop: true`.
 
 The Agents runner starts a mention run from a `p` tag, or from any new message
 by the other member of a one-to-one DM the agent is in; group DMs still need
@@ -395,7 +424,23 @@ chooser is unavailable because activation failed.
 The picker shows keys alongside names (namesakes remain separate), reads optional
 profiles only on demand, and keeps selected identity spans in scoped drafts.
 Typing a name alone does not notify anyone. Plain Space after a unique exact name
-selects its recipient; ambiguous names require Tab, Enter or click. Editing a
+selects its recipient; ambiguous names require Tab, Enter or click. While the
+chooser is still waiting on members, names, agents or a directory search, Space
+holds the name as a pending chip (a spinner in place of its `@`) and applies the
+same rule once the evidence arrives, within 8 s, or returns it to prose; sending
+waits for a pending chip, and when one it waited for returns to prose it keeps
+the draft and says which name was not tagged and why (not confirmed as one
+person or agent, not taggable here, the recipient limit or the message
+length), so the next send sends the text knowingly. A name already known to
+continue the query (`Mira Example` for `mira`) is a declined Space, not a
+pending one, so the next word
+can still complete it; a longer name learned only after the chip was held
+extends the chip over the words typed after it when they spell one of those
+names up to a name boundary, the longest they complete (`@mira Example hi`
+tags `Mira Example`), and otherwise returns it to prose, where the reopened
+chooser answers the rest of the name from the page already read for the chip
+(a complete directory page settles every query extending its own, with no
+further read), so the Space that completes the name selects it. Editing a
 selected span removes its notification intent. Native beforeinput ranges preserve untouched spans; missing
 range evidence, IME/history edits and collapsed deletions clear selections rather
 than guess. Even a same-text replacement drops the edited identity. Selected mentions appear as inline identity chips in the composer. Namesakes
@@ -473,10 +518,17 @@ recipients among the destination's members plus the draft recipients.
 
 Plain Space selects only a unique exact name/alias/label across the full uncapped
 candidate set, and only if that identity is displayed and still eligible. A known
-longer name beginning with that name plus a space prevents selection. Partial
-names, ambiguous names, modified Space, IME composition, code and protected literal
-ranges keep ordinary editing behavior. Selection rechecks available evidence and
-stores only `{pubkey, name}`; qualifiers are presentation, not wire data.
+longer name beginning with that name plus a space prevents selection, unless it is
+another name of that same identity. Partial names, ambiguous names, modified Space,
+IME composition, code and protected literal ranges keep ordinary editing behavior. Selection rechecks available evidence and
+stores only `{pubkey, name}`; qualifiers are presentation, not wire data. A Space
+the chooser cannot decide yet, because its evidence is still loading, holds the
+name as a pending chip that the plugin's headless resolver settles by the same
+rule (`resolve-space-mention.ts`); a known longer name declines Space outright
+rather than holding it, while one found after the chip was held extends the
+chip over the typed words that complete it or returns it to prose; the host
+admits the result like any selection, and a pending chip is never stored in a
+draft or sent as a tag.
 
 The composer rejects already-known archived recipients (never the viewer) at
 send entry. The next draft keeps only agents that the sent message notified. This is not an archive transaction: archive
@@ -679,9 +731,10 @@ in its home record and applies everywhere.
   agent's memory in that community stay, so they come back if it is added again;
   its attention there does not.
 - **Teams** work like agents: a team shows in every community where it has a
-  member (or in all of them while it has none), but has one home community. A
-  local team is shared by every community; a member's roster lists only teammates
-  in the same community, and the editor keeps members that are only elsewhere.
+  member (or in all of them while it has none), and a synced team always shows
+  in its one home community. A local team is shared by every community; a
+  member's roster lists only teammates in the same community, and the editor
+  keeps members that are only elsewhere.
   Where the community's relay supports config channels, a new team, or one
   imported from old Buzz, is synced: its NIP-AP config channel (name and
   instructions) is created only in the community it was made in, and its members
@@ -695,6 +748,17 @@ in its home record and applies everywhere.
   one at a time per team, and report anything left part way. Existing local
   teams are not migrated.
 - **Hosted agents** stay in one community, as their provider holds the key.
+  Only a synced team homed there can have them as members, so the team editor
+  offers them only for such a team, or for a new one that will sync there. One
+  picked in a community Save doesn't put the team in, as when another is
+  selected before a new team's first Save, is left off unless the team already
+  has it. One picked where Save puts the team stays, shown checked, while that
+  community's agent list is read again, but Save refuses it until the list is
+  read, and refuses it once the list is read without it. Unchecking it leaves
+  it off. They do not get its instructions, but rosters name them.
+  Until the community's agent list is read, which tells hosted agents from
+  ones on other devices, the team's roster there names each member not on this
+  device by npub alone.
 
 `removeRelayAgent` applies the same steps to a relay-only agent: archive when
 consent exists, delete the owner's kind 30177 record (NIP-09), then remove it from
@@ -901,9 +965,13 @@ the agent would share now, and publishes that, still shared.
 
 **Export agent** saves `{name}.agent.png` or, by **File format**,
 `{name}.agent.json` in the `buzz-agent-snapshot` version 1 format that block/buzz
-and earlier Buzz write, without memory. The PNG is the picture redrawn at
-512×512, or a transparent pixel when it is missing or takes over 5 seconds to
-load, with the manifest in a `buzz_agent_snapshot` tEXt chunk. Desktop saves it
+and earlier Buzz write, without memory. The PNG is an 820×1230 agent card
+(`src/features/agents/share-card.ts`): foil around the picture, the name, and
+its harness and model, with the letter tile when the picture is missing, takes
+over 5 seconds to load, or can't be read back, and a transparent pixel when no
+card can be drawn. The manifest is in a `buzz_agent_snapshot` tEXt chunk.
+Exporting the card previews it first and saves the bytes shown; sending the
+agent uploads the same card. Desktop saves it
 to Downloads through `file_download` (`src-tauri/src/relay.rs`), as media is
 saved, since WKWebView cannot save a `blob:` link cleanly, and returns the
 saved path, which the dialog shows. It takes only
@@ -1048,7 +1116,7 @@ Use `watch_add` with `type: "source"`, a `provider` in `plugin/source` form and 
 
 Source output accepts the same optional classifier questions as event watches. Classification preserves output ordering and completion until the resulting delivery settles. `agents.attentionProviders()` lists active registered provider keys with their optional `description` and `configExample`, including providers from unrelated plugins. Disabled and unloaded registrations disappear from discovery.
 
-The bundled Agents plugin owns the command producer and discovery tool. The GitHub plugin owns the GitHub PR producer. Saved provider IDs remain `attention/command` and `attention/github-pr`, and discovery marks them `builtIn: true`. The bundled Agents plugin also owns the Agent Attention overview and controls for existing watches. The GitHub source uses the same PR parser and feedback policy as `github_watch_pr`; it requires the signed-in `gh` CLI. The tool configures Attention subscriptions rather than owning a separate polling loop. Other plugins can register their own source producers through the same lifecycle. Legacy Monitor command registrations and pending wakes are not imported; recreate needed command watches in Attention.
+The bundled Agents plugin owns the command producer and discovery tool. The GitHub plugin owns the GitHub PR producer. Saved provider IDs remain `attention/command` and `attention/github-pr`, and discovery marks them `builtIn: true`. The bundled Agent Attention UI plugin owns the per-agent overview and controls for existing watches. The GitHub source uses the same PR parser and feedback policy as `github_watch_pr`; it requires the signed-in `gh` CLI. The tool configures Attention subscriptions rather than owning a separate polling loop. Other plugins can register their own source producers through the same lifecycle. Legacy Monitor command registrations and pending wakes are not imported; recreate needed command watches in Attention.
 
 ## Attention delivery destinations
 

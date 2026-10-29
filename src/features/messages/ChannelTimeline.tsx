@@ -1149,6 +1149,22 @@ function Timeline({
           bufferSize={1600}
           // Reflow must not evict the focused control or a row's open report.
           keepMounted={keptIndices}
+          onResize={() => {
+            const element = scroller.current;
+            // Rows can measure after native scrollend without moving the
+            // scroll offset. Do not carry their estimated Y into the next hold.
+            if (
+              element &&
+              settled.current &&
+              element.clientWidth === size.width &&
+              element.clientHeight === size.height &&
+              !follow.current &&
+              !restoredAnchor.current &&
+              heldReader.current?.intent !== intent.current
+            )
+              // A size change refreshes geometry, never bottom-follow intent.
+              savedPosition.current = { ...positionAt(element), bottom: false };
+          }}
           as="ol"
           item="li"
           startMargin={size.edgeHeight}
@@ -1273,7 +1289,11 @@ function Timeline({
             <EmptyState
               icon={<ChatCircleIcon />}
               title="No messages yet."
-              description="Start the conversation below."
+              description={
+                queries.channels.get?.(channelId)?.readOnly
+                  ? undefined
+                  : "Start the conversation below."
+              }
             />
           </div>
         )}

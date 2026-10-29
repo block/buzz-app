@@ -22,6 +22,15 @@
   &:where([data-color-mode="dark"], [data-color-mode="dark"] *)
 );
 
+/* Set by the appearance service while a palette change commits. */
+:root[data-palette-changing],
+:root[data-palette-changing] *,
+:root[data-palette-changing] ::before,
+:root[data-palette-changing] ::after {
+  /* biome-ignore lint/complexity/noImportantStyles: The guard must suppress every component transition for one palette commit. */
+  transition: none !important;
+}
+
 /* Legacy utility compatibility. Prefix-specific primary avoids stealing the
    system's text-primary and border-primary meanings. */
 @theme inline {

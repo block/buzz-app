@@ -306,12 +306,15 @@ jobs:
         id: pins
         shell: pwsh
         run: |
-          foreach ($tool in @('rust', 'node', 'pnpm')) {
+          foreach ($tool in @('node', 'pnpm')) {
             $pins = @(Get-ChildItem "bin/.$tool-*.pkg")
             if ($pins.Count -ne 1) { throw "Expected one $tool pin" }
             $version = $pins[0].Name -replace "^\.$tool-(.*)\.pkg$", '$1'
             "$tool=$version" >> $env:GITHUB_OUTPUT
           }
+          $rust = (Select-String -Path rust-toolchain.toml -Pattern '^channel = "(.+)"$').Matches.Groups[1].Value
+          if (!$rust) { throw "Expected a rust-toolchain.toml channel" }
+          "rust=$rust" >> $env:GITHUB_OUTPUT
       - name: Select pinned Rust
         shell: pwsh
         env:

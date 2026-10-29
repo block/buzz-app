@@ -49,13 +49,16 @@ mod nsec_backup;
 mod nsec_backup_choice;
 mod nsec_backup_config;
 use nsec_backup::{
-    nsec_backup_available, nsec_backup_retry, nsec_backup_session, nsec_restore_begin,
-    nsec_restore_cancel, nsec_restore_install, nsec_restore_wait, NsecBackupHost,
+    nsec_backup_available, nsec_backup_retry, nsec_backup_session, nsec_backup_state,
+    nsec_backup_watch, nsec_restore_begin, nsec_restore_cancel, nsec_restore_install,
+    nsec_restore_wait, NsecBackupHost,
 };
 use nsec_backup_choice::{nsec_backup_choice, nsec_backup_set_choice};
 mod image_clipboard;
 mod jev;
 mod keep_awake;
+#[cfg(target_os = "macos")]
+mod legacy_cli_shortcut;
 mod legacy_communities;
 #[cfg(any(not(target_os = "macos"), test))]
 mod microphone;
@@ -587,6 +590,8 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         nsec_backup_available,
         nsec_backup_session,
         nsec_backup_retry,
+        nsec_backup_state,
+        nsec_backup_watch,
         nsec_restore_begin,
         nsec_restore_wait,
         nsec_restore_install,
@@ -741,6 +746,12 @@ pub fn run() {
             }
             #[cfg(target_os = "macos")]
             notifications::macos::init();
+            #[cfg(target_os = "macos")]
+            if let Some(home) = dirs::home_dir() {
+                if let Err(error) = legacy_cli_shortcut::remove_stale(&home.join(".local/bin")) {
+                    eprintln!("Could not remove old Buzz's CLI shortcut: {error}");
+                }
+            }
             tauri::async_runtime::spawn(host_command::load_login_shell_path());
             deep_links::setup(app.handle());
             app.state::<MeshHost>().initialize_preferences(

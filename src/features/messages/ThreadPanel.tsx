@@ -506,6 +506,7 @@ function ThreadMessages({
     channelId,
     (listed) => {
       const channel = listed ?? session.channels?.get?.(channelId);
+      if (channel?.viewerRole === "guest") return "guest";
       if (channel?.readOnly && !channel.cached) {
         return !channel.archived &&
           (channel.channelType === "stream" || channel.channelType === "forum")
@@ -517,7 +518,15 @@ function ThreadMessages({
         : "other";
     },
   );
-  const preview = channelAccess === "joinable" || channelAccess === "preview";
+  const preview =
+    channelAccess === "joinable" ||
+    channelAccess === "preview" ||
+    channelAccess === "guest";
+  const joinRole = useListedChannel(
+    session.channels,
+    channelId,
+    (listed) => (listed ?? session.channels?.get?.(channelId))?.joinRole,
+  );
   const cached = useListedChannel(
     session.channels,
     channelId,
@@ -855,9 +864,14 @@ function ThreadMessages({
   const [sent, setSent] = useState<string>();
   const [replyFocus, setReplyFocus] = useState(0);
   useEffect(() => {
-    if (!joining || channelAccess !== "member") return;
+    if (!joining || (channelAccess !== "member" && channelAccess !== "guest"))
+      return;
     setJoining(false);
-    if (active) setReplyFocus((value) => value + 1);
+    if (active) {
+      if (channelAccess === "guest")
+        scroller.current?.focus({ preventScroll: true });
+      else setReplyFocus((value) => value + 1);
+    }
   }, [joining, channelAccess, active]);
   const focusReply = useCallback(() => {
     setReplyParent(undefined);
@@ -1602,6 +1616,8 @@ function ThreadMessages({
               !!rows.length)
           }
           channelId={channelId}
+          guest={channelAccess === "guest"}
+          joinRole={joinRole}
           lifecycle={session.channelLifecycle}
           joinable={channelAccess === "joinable"}
           onJoin={() => setJoining(true)}

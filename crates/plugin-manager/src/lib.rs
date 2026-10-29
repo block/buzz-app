@@ -227,6 +227,8 @@ pub fn valid_id(id: &str) -> Result<()> {
 }
 /// The `BUZZ_BUILDERLAB_URL` build input's origin, or empty when unconfigured.
 pub const BUILDERLAB_ORIGIN: &str = env!("BUZZ_BUILDERLAB_ORIGIN");
+/// Exact Apps domain paired with the build's login origin, or empty when native SSO is unconfigured.
+pub const BUILDERLAB_APPS_DOMAIN: &str = env!("BUZZ_BUILDERLAB_APPS_DOMAIN");
 /// The Apps Platform control plane of the tenant whose Builderlab sign-in
 /// `origin` is, which the bundled Builderlab plugin deploys apps to. Kept in
 /// step with `src/bundled/builderlab/apps/environment.ts`.
@@ -306,6 +308,8 @@ pub fn bundled_manifests() -> Vec<Manifest> {
             .expect("projects manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/agents/manifest.json"))
             .expect("agents manifest"),
+        serde_json::from_str(include_str!("../../../src/bundled/watching/manifest.json"))
+            .expect("watching manifest"),
         serde_json::from_str(include_str!(
             "../../../src/bundled/claude-code/manifest.json"
         ))
@@ -320,10 +324,6 @@ pub fn bundled_manifests() -> Vec<Manifest> {
             .expect("workflows manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/feedback/manifest.json"))
             .expect("feedback manifest"),
-        serde_json::from_str(include_str!(
-            "../../../src/bundled/hosted-communities/manifest.json"
-        ))
-        .expect("hosted communities manifest"),
         serde_json::from_str(include_str!(
             "../../../src/bundled/moderation/manifest.json"
         ))
@@ -357,6 +357,7 @@ fn enabled_by_default(id: &str) -> bool {
             | "buzz.voice-notes"
             | "buzz.huddles"
             | "buzz.github"
+            | "buzz.watching"
             | "buzz.pairing"
             | "buzz.inbox"
             | "buzz.reminders"
@@ -366,7 +367,6 @@ fn enabled_by_default(id: &str) -> bool {
             | "buzz.codex"
             | "buzz.goose"
             | "buzz.workflows"
-            | "block.hosted-communities"
             | "block.builderlab"
             | "buzz.moderation"
             | "buzz.relay-staff"

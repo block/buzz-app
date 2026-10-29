@@ -19,7 +19,7 @@ const row = {
   at: 1791940000000,
   channelId: "channel",
 };
-const transcript = { turns: [], unknownThread: 0, more: false };
+const transcript = { turns: [], more: false };
 
 it("shows a held read, then a read-only saved transcript using host components", async () => {
   let release!: (value: typeof transcript) => void;

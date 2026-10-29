@@ -1,4 +1,8 @@
 import { useChatLinkSharing } from "./useChatLinkSharing";
+import {
+  draftGif,
+  useGifDraftPreview,
+} from "../../bundled/emoji/GifDraftPreview";
 import { accentButtonStyle } from "../../shared/theme/accent";
 import { stageChatCards } from "./composer-chat-cards";
 import { chatCardIds } from "./chat-cards";
@@ -94,10 +98,14 @@ import { messageViewKey } from "./view-key";
 import { isEmojiOnly, usesLargeEmojiPresentation } from "./emoji-size";
 import {
   legacyFollowupDraft,
+  MAX_DRAFT_GIFS,
+  mentionBoundary,
   mentionDraft,
+  stageableGif,
   type MentionDraft,
   type MentionRecipient,
 } from "./mention-draft";
+import { normalizeName } from "../search/person-match";
 import { ComposerAccessories } from "../conversation/ComposerAccessories";
 import { ComposerTools } from "../conversation/ComposerTools";
 import { ComposerLinkDialog } from "./ComposerLinkDialog";
@@ -108,11 +116,14 @@ import type { MentionPicks } from "../relay/messages";
 import type {
   ConversationExtensions,
   CompletionEdit,
+  CompletionPending,
   CompletionQuery,
+  CompletionResolution,
   ComposerObservation,
   ComposerResource,
 } from "../conversation/contracts";
 import { ComposerCompletions } from "../conversation/ComposerCompletions";
+import { MENTION_RESOLVE_TIMEOUT_MS } from "../conversation/completion";
 import { useCompletionEditor } from "../conversation/useCompletionEditor";
 import { formatMediaTime, mediaTimeReply } from "./media-timecode";
 import { RichComposerInput } from "./RichComposerInput";
@@ -189,6 +200,28 @@ function errorForRecovery(reason: unknown) {
       ? String(reason)
       : undefined;
 }
+/** What `MentionRecipient` promises, checked where one arrives from a
+ * contribution: a 64-hex pubkey and a non-empty name. */
+function wellFormedRecipient(
+  recipient: unknown,
+): recipient is MentionRecipient {
+  if (typeof recipient !== "object" || recipient === null) return false;
+  const { pubkey, name } = recipient as { pubkey?: unknown; name?: unknown };
+  return (
+    typeof pubkey === "string" &&
+    /^[0-9a-f]{64}$/.test(pubkey) &&
+    typeof name === "string" &&
+    !!name.trim()
+  );
+}
+/** Why a pending mention returned to prose, as the send it held tells it. */
+const pendingRefusals = {
+  unresolved: "could not be confirmed as one person or agent",
+  unavailable: "could not be tagged here",
+  limit: "could not be tagged: a message can tag at most 32 recipients",
+  length: "could not be tagged: the message would be too long",
+} as const;
+type PendingRefusal = { name: string; reason: keyof typeof pendingRefusals };
 function subscribeRecovery(
   session: ComposerSession,
   key: string,
@@ -334,9 +367,35 @@ function PersonalComposer(props: MessageComposerProps) {
       session.viewer,
     ],
   );
+  // The agents still loading may include the name a Space was typed for. That
+  // pending mention resolves against the first roster committed once they
+  // settle. Each loading period has its own promise: a Retry after a failed
+  // read must not hand out the one the failure settled with an empty roster.
+  const loading = choices.pending && choices.status !== "ready";
+  const settling = useRef<{
+    promise: Promise<readonly MentionRecipient[]>;
+    resolve: (roster: readonly MentionRecipient[]) => void;
+  }>(undefined);
+  if (loading && !settling.current) {
+    let resolve!: (roster: readonly MentionRecipient[]) => void;
+    const promise = new Promise<readonly MentionRecipient[]>((done) => {
+      resolve = done;
+    });
+    settling.current = { promise, resolve };
+  }
+  const pending = loading ? settling.current?.promise : undefined;
+  useLayoutEffect(() => {
+    if (loading || !settling.current) return;
+    settling.current.resolve(roster);
+    settling.current = undefined;
+  }, [loading, roster]);
+  const value = useMemo(
+    () => ({ recipients: roster, ...(pending ? { pending } : {}) }),
+    [roster, pending],
+  );
 
   return (
-    <DraftMentionRoster.Provider value={roster}>
+    <DraftMentionRoster.Provider value={value}>
       <Composer {...props} />
       {choices.error && (
         <p role="alert">
@@ -350,9 +409,14 @@ function PersonalComposer(props: MessageComposerProps) {
   );
 }
 
-/** No text, mention or chat card: nothing the user has put in yet. */
+/** No text, mention, chat card or GIF: nothing the user has put in yet. */
 function untouchedDraft(draft: MentionDraft) {
-  return !draft.text && !draft.recipients.length && !draft.chatCards?.length;
+  return (
+    !draft.text &&
+    !draft.recipients.length &&
+    !draft.chatCards?.length &&
+    !draft.gifs?.length
+  );
 }
 
 function sameAttachmentSelection(
@@ -446,7 +510,10 @@ function Composer({
       live.current = false;
     };
   }, []);
-  const mentionRoster = useContext(DraftMentionRoster);
+  const mentionRoster = useContext(DraftMentionRoster)?.recipients;
+  // A pending mention settles after later renders; admit it against the roster then.
+  const currentRoster = useRef(mentionRoster);
+  currentRoster.current = mentionRoster;
   const solo = !!soloConversation || ownSoloConversation;
   // Only a saved Solo chat subscribes; other composers never read this.
   const withPeople = useSoloHasPeople(session, channelId, solo && !submission);
@@ -538,9 +605,10 @@ function Composer({
     initial.automatic ? JSON.stringify(initial.value) : undefined,
   );
   const chatCards = value.chatCards;
+  const gifs = value.gifs;
   const editorDraft = useMemo(() => {
-    if (!value.chatCards) return value;
-    const { chatCards: _cards, ...caption } = value;
+    if (!value.chatCards && !value.gifs) return value;
+    const { chatCards: _cards, gifs: _gifs, ...caption } = value;
     return caption;
   }, [value]);
   const draft = value.text;
@@ -602,7 +670,7 @@ function Composer({
       session,
       channelId,
       agentChoices,
-      mentionRoster,
+      currentRoster.current,
       new Set((agents?.joinable() ?? []).map((agent) => agent.pubkey)),
     );
   const sessionPlace = useMemo(
@@ -755,6 +823,9 @@ function Composer({
               chatCards: next.chatCards ?? valueRef.current.chatCards ?? [],
             }
           : {}),
+        ...((next.gifs ?? valueRef.current.gifs)
+          ? { gifs: next.gifs ?? valueRef.current.gifs ?? [] }
+          : {}),
       },
       list.channels,
     );
@@ -833,6 +904,7 @@ function Composer({
     ? "Edit message"
     : (customLabel ??
       (threadRootId ? "Reply to thread" : `Message #${channelName}`));
+  const gifPreview = useGifDraftPreview(extensions?.tools);
   const attachments = useAttachmentDraft(
     session,
     `${scope}:${draftKey}`,
@@ -1121,6 +1193,15 @@ function Composer({
       }
     };
   }, [editScope]);
+  // DOM props are committed before child layout effects; closures can still
+  // carry the preceding render's enabled state during that interval.
+  const editable = () =>
+    permitted.current &&
+    !editingDisabled &&
+    !!outbox?.supports(9) &&
+    !!input.current?.isConnected &&
+    !input.current.disabled &&
+    !input.current.readOnly;
   function insert(
     text: string,
     recipient?: MentionRecipient,
@@ -1128,18 +1209,8 @@ function Composer({
     terminator?: ":",
     focus = true,
   ) {
-    if (
-      !permitted.current ||
-      editingDisabled ||
-      !outbox?.supports(9) ||
-      !input.current?.isConnected ||
-      // DOM props are committed before child layout effects; closures can still
-      // carry the preceding render's enabled state during that interval.
-      input.current.disabled ||
-      input.current.readOnly ||
-      typeof text !== "string"
-    )
-      return false;
+    const field = input.current;
+    if (!editable() || !field || typeof text !== "string") return false;
     // Edits replace prose; they do not change the original notification recipients.
     if (editing.target && recipient) {
       text = editMentionText(recipient);
@@ -1156,7 +1227,7 @@ function Composer({
       return false;
     }
     completion.invalidate();
-    if (!input.current.insertText(text, recipient, range, terminator, focus)) {
+    if (!field.insertText(text, recipient, range, terminator, focus)) {
       setError("Message is too long to insert text");
       return false;
     }
@@ -1164,15 +1235,227 @@ function Composer({
     setError(undefined);
     return true;
   }
-  function insertMention(recipient: MentionRecipient) {
+  /** A tool's lone GIF joins the attachment row, sent after the caption like
+   * the row's other media, rather than sitting in prose at the caret. An edit
+   * has no attachment row, so its GIF stays in the text. */
+  function attachGif(text: string) {
     if (
-      !recipient ||
-      typeof recipient.pubkey !== "string" ||
-      !/^[0-9a-f]{64}$/.test(recipient.pubkey) ||
-      typeof recipient.name !== "string" ||
-      !recipient.name.trim()
+      !gifPreview ||
+      editing.target ||
+      !stageableGif(text) ||
+      !draftGif(text, session.media)
     )
-      return false;
+      return;
+    if (!editable()) return false;
+    const current = valueRef.current.gifs ?? [];
+    if (!current.includes(text)) {
+      if (current.length >= MAX_DRAFT_GIFS) {
+        setError(`Attach at most ${MAX_DRAFT_GIFS} GIFs per message.`);
+        return false;
+      }
+      const next = { ...valueRef.current, gifs: [...current, text] };
+      if (composerMarkdown(next).length > 16000) {
+        setError("Message is too long to attach this GIF");
+        return false;
+      }
+      saveDraft(next);
+    }
+    setError(undefined);
+    input.current?.focus();
+    return true;
+  }
+  // A Space typed before the chooser could decide holds its name as a chip
+  // with no recipient; the provider's resolver settles it off-screen. The
+  // chip's id keys its resolver here, and the draft says which chips exist.
+  const pendingMentions = useRef(
+    new Map<
+      string,
+      {
+        resolve: CompletionPending["resolve"];
+        controller?: AbortController | undefined;
+        /** Settles with the typed name and why when the chip returned to prose. */
+        settled?: Promise<PendingRefusal | undefined> | undefined;
+      }
+    >(),
+  );
+  function settlePendingMention(
+    id: string,
+    recipient: MentionRecipient | null,
+    signal: AbortSignal,
+  ) {
+    const entry = pendingMentions.current.get(id);
+    if (!entry || signal.aborted) return;
+    // Exactly what Tab would have inserted: well formed (the resolution is a
+    // provider's answer), admitted now, within the cap.
+    const reason: PendingRefusal["reason"] | undefined = !wellFormedRecipient(
+      recipient,
+    )
+      ? "unresolved"
+      : !admits()(recipient.pubkey)
+        ? "unavailable"
+        : valueRef.current.recipients.length >= 32
+          ? "limit"
+          : undefined;
+    const accepted =
+      recipient && !reason
+        ? { pubkey: recipient.pubkey, name: recipient.name }
+        : null;
+    const name = valueRef.current.pending?.find((chip) => chip.id === id)?.name;
+    // Held through an IME composition, the outcome is a promise: the chip is
+    // still pending until the replay, so the entry stays until it lands.
+    return Promise.resolve(
+      input.current?.settlePendingMention(id, accepted) ?? false,
+    ).then((applied) => settled(id, accepted, applied, name ?? "", reason));
+  }
+  function settled(
+    id: string,
+    accepted: MentionRecipient | null,
+    applied: boolean,
+    name: string,
+    reason: PendingRefusal["reason"] | undefined,
+  ): PendingRefusal | undefined {
+    const entry = pendingMentions.current.get(id);
+    if (!entry) return;
+    if (!applied) {
+      // The chip left the draft in the commit before the effect below could
+      // abort this resolution. Keep its resolver: redo restores the chip under
+      // the same id, and the effect starts it again.
+      entry.controller = undefined;
+      entry.settled = undefined;
+      return;
+    }
+    pendingMentions.current.delete(id);
+    if (
+      accepted &&
+      valueRef.current.recipients.some((p) => p.pubkey === accepted.pubkey)
+    ) {
+      rememberMention(session, channelId, accepted.pubkey);
+      return;
+    }
+    // Accepted but written as text: its current name overran the length limit.
+    return { name, reason: reason ?? "length" };
+  }
+  function resolvePendingMention(id: string) {
+    const entry = pendingMentions.current.get(id);
+    if (!entry) return;
+    if (!entry.controller) {
+      const controller = new AbortController();
+      entry.controller = controller;
+      entry.settled = resolveChip(
+        id,
+        (s) => bounded(entry.resolve, s),
+        controller.signal,
+      );
+    }
+    return entry.settled;
+  }
+  /** One resolution per chip, through the longer names it continues into:
+   * a chip whose name only longer known names kept from selecting extends
+   * over the words typed after it when they complete one, and that name is
+   * resolved under the same signal. Anything else returns it to prose, and
+   * the promise settles with the typed name it returned and why. */
+  async function resolveChip(
+    id: string,
+    resolve: CompletionPending["resolve"],
+    signal: AbortSignal,
+  ): Promise<PendingRefusal | undefined> {
+    const outcome = await resolve(signal).catch(() => null);
+    if (signal.aborted) return;
+    if (!outcome || !("continued" in outcome))
+      return settlePendingMention(id, outcome, signal);
+    const next = typedContinuation(id, outcome.continued);
+    const extended =
+      next &&
+      (await Promise.resolve(
+        input.current?.extendPendingMention(id, next.remainder) ?? false,
+      ));
+    if (signal.aborted) return;
+    if (next && extended)
+      return resolveChip(id, (s) => bounded(next.resolve, s), signal);
+    return settlePendingMention(id, null, signal);
+  }
+  /** `resolve` held to `MENTION_RESOLVE_TIMEOUT_MS`. The contract does not
+   * ask a provider to time itself, so the host bounds every link: the first
+   * resolution and each longer name a chip extends into. The bundled resolver
+   * races its first resolution against the same constant, redundant under
+   * this but harmless, and answers a chained resolve at once over the page it
+   * already read. Expiry is null, prose, as the resolver's own bound is.
+   * The provider gets its own signal, which follows the chip's and is also
+   * aborted at expiry, so work that outlives the bound is told to stop; and
+   * the chip's abort clears the timer, so a provider that ignores it leaves
+   * nothing running after Backspace or unmount. */
+  function bounded(
+    resolve: CompletionPending["resolve"],
+    signal: AbortSignal,
+  ): Promise<CompletionResolution> {
+    return new Promise((settle) => {
+      const own = new AbortController();
+      const timer = setTimeout(() => {
+        settle(null);
+        end();
+      }, MENTION_RESOLVE_TIMEOUT_MS);
+      const end = () => {
+        clearTimeout(timer);
+        signal.removeEventListener("abort", end);
+        own.abort();
+      };
+      signal.addEventListener("abort", end, { once: true });
+      resolve(own.signal)
+        .then(settle, () => settle(null))
+        .finally(end);
+    });
+  }
+  /** The longest of `continued` that the chip's name plus the words typed
+   * after it, up to a name boundary, spell: the name Space would have needed
+   * typed in full. None when the words complete no name or stop mid-word.
+   * The remainder ends on the name's last character: `normalizeName` trims,
+   * so `Example ` spells the same name as `Example`, and extending over the
+   * separator would join the chip to whatever is typed after it. */
+  function typedContinuation(
+    id: string,
+    continued: readonly CompletionPending[],
+  ) {
+    const chip = valueRef.current.pending?.find((item) => item.id === id);
+    if (!chip) return undefined;
+    const { text } = valueRef.current;
+    const names = new Map(continued.map((c) => [normalizeName(c.name), c]));
+    const longest = Math.max(...[...names.keys()].map((n) => n.length));
+    let found:
+      | { remainder: string; resolve: CompletionPending["resolve"] }
+      | undefined;
+    for (let end = chip.end + 1; end <= text.length; end++) {
+      const remainder = text.slice(chip.end, end);
+      const name = normalizeName(chip.name + remainder);
+      if (name.length > longest) break;
+      if (/\s$/u.test(remainder) || !mentionBoundary(text, end)) continue;
+      const next = names.get(name);
+      if (next) found = { remainder, resolve: next.resolve };
+    }
+    return found;
+  }
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Reconciles resolvers against the chips in the draft; the helpers read current refs.
+  useEffect(() => {
+    const alive = new Set(value.pending?.map((chip) => chip.id));
+    for (const [id, entry] of pendingMentions.current) {
+      if (alive.has(id)) resolvePendingMention(id);
+      else if (entry.controller) {
+        // Backspace, undo or Clear removed the chip. Redo brings it back under
+        // the same id, and this effect starts its resolution again.
+        entry.controller.abort();
+        entry.controller = undefined;
+        entry.settled = undefined;
+      }
+    }
+  }, [value.pending]);
+  useEffect(
+    () => () => {
+      for (const entry of pendingMentions.current.values())
+        entry.controller?.abort();
+    },
+    [],
+  );
+  function insertMention(recipient: MentionRecipient) {
+    if (!wellFormedRecipient(recipient)) return false;
     if (!solo || editing.target)
       return insert(`@${recipient.name} `, recipient);
     return keepProseCaret((at) =>
@@ -1343,6 +1626,18 @@ function Composer({
       )
         return false;
     }
+    if ("pending" in edit && edit.pending) {
+      // Edits replace prose and add no recipients, so a chip that may become
+      // one has no place there: the typed Space stays literal.
+      const field = input.current;
+      if (editing.target || !editable() || !field) return false;
+      completion.invalidate();
+      const id = field.insertPendingMention(edit.pending.name, query);
+      if (!id) return false;
+      pendingMentions.current.set(id, { resolve: edit.pending.resolve });
+      setError(undefined);
+      return true;
+    }
     if ("mentions" in edit && edit.mentions)
       return insertMentions(edit.mentions, query);
     if ("mention" in edit && edit.mention)
@@ -1498,8 +1793,12 @@ function Composer({
   const recipientHint = submission
     ? "Tag an agent to send"
     : "Tag a person or agent to send";
+  // A pending mention may yet become the recipient; sending waits for it.
   const untagged =
-    needsRecipient && !editing.target && !value.recipients.length;
+    needsRecipient &&
+    !editing.target &&
+    !value.recipients.length &&
+    !value.pending?.length;
   async function prepareRecipients(explicit: readonly string[]) {
     const channel = await session.channelWrites.refreshMembership(channelId);
     if (!currentAdmission())
@@ -1593,15 +1892,79 @@ function Composer({
       !outbox
     )
       return;
+    if (valueRef.current.pending?.length) {
+      // Enter straight after Space is the case a pending mention exists for.
+      // Wait for its recipient rather than send prose; the composer shows
+      // its sending state meanwhile. The wait is bounded: `resolveChip`
+      // holds each link of a resolution, the first and each longer name the
+      // chip extends into, to `MENTION_RESOLVE_TIMEOUT_MS` (the contract
+      // lets a provider's resolve do I/O without timing itself); plus an IME
+      // composition that was already open when Send was clicked, since a
+      // settle landing under it is held until the composition ends.
+      const wait = new AbortController();
+      sendAttempt.current = wait;
+      setSending(true);
+      setError(undefined);
+      let outcomes:
+        | PromiseSettledResult<PendingRefusal | undefined>[]
+        | undefined;
+      try {
+        outcomes =
+          (await Promise.race([
+            Promise.allSettled(
+              valueRef.current.pending.map((chip) =>
+                resolvePendingMention(chip.id),
+              ),
+            ),
+            new Promise<void>((resolve) => {
+              wait.signal.addEventListener("abort", () => resolve(), {
+                once: true,
+              });
+            }),
+          ])) || undefined;
+      } finally {
+        if (sendAttempt.current === wait) {
+          sendAttempt.current = null;
+          if (live.current) setSending(false);
+        }
+      }
+      if (wait.signal.aborted || !live.current || !permitted.current) return;
+      // A chip this send waited on that returned to prose would go out as a
+      // name that notifies no one, after the user saw it held. Keep the
+      // draft and say why, so the user can fix it (a recipient over the cap)
+      // or send again to send it as text, since nothing is pending by then.
+      const prose = (outcomes ?? []).flatMap((outcome) =>
+        outcome.status === "fulfilled" && outcome.value ? [outcome.value] : [],
+      );
+      if (prose.length) {
+        const why = Object.entries(pendingRefusals).flatMap(
+          ([reason, says]) => {
+            const names = prose
+              .filter((chip) => chip.reason === reason)
+              .map((chip) => `@${chip.name}`);
+            return names.length ? [`${names.join(", ")} ${says}.`] : [];
+          },
+        );
+        setError(
+          [
+            ...why,
+            needsRecipient && !valueRef.current.recipients.length
+              ? `${recipientHint}.`
+              : `Send again to send ${prose.length > 1 ? "them" : "it"} as text.`,
+          ].join(" "),
+        );
+        return;
+      }
+    }
     if (needsRecipient && !valueRef.current.recipients.length) {
       setError(recipientHint);
       return;
     }
-    // A new conversation is named from its message, so files alone cannot start it.
+    // A new conversation is named from its message, so media alone cannot start it.
     if (
       !draft.trim() &&
       !chatCards?.length &&
-      (!!submission || !attachments.items.length)
+      (!!submission || (!attachments.items.length && !gifs?.length))
     )
       return;
     const recovering = !submission && recoveryFor(session).get(recoveryKey);
@@ -1948,7 +2311,9 @@ function Composer({
                 JSON.stringify(valueRef.current.recipients) !==
                   JSON.stringify(next.recipients) ||
                 JSON.stringify(valueRef.current.chatCards ?? []) !==
-                  JSON.stringify(next.chatCards ?? [])) &&
+                  JSON.stringify(next.chatCards ?? []) ||
+                JSON.stringify(valueRef.current.gifs ?? []) !==
+                  JSON.stringify(next.gifs ?? [])) &&
               JSON.stringify(valueRef.current) !== capturedRevision
             )
               return "conflict";
@@ -1967,7 +2332,9 @@ function Composer({
                 JSON.stringify(valueRef.current.recipients) ===
                   JSON.stringify(next.recipients) &&
                 JSON.stringify(valueRef.current.chatCards ?? []) ===
-                  JSON.stringify(next.chatCards ?? [])
+                  JSON.stringify(next.chatCards ?? []) &&
+                JSON.stringify(valueRef.current.gifs ?? []) ===
+                  JSON.stringify(next.gifs ?? [])
               )
             )
               return "conflict";
@@ -2054,7 +2421,7 @@ function Composer({
   // The attachments section animates out over 150 ms; the form's gap and
   // padding (data-attachments) collapse when it has, not when the list empties.
   // An edit unmounts the section at once, so no exit completes during one.
-  const hasAttachments = attachments.items.length > 0;
+  const hasAttachments = attachments.items.length > 0 || !!gifs?.length;
   const [attachmentsExiting, setAttachmentsExiting] = useState(false);
   const [hadAttachments, setHadAttachments] = useState(hasAttachments);
   if (hadAttachments !== hasAttachments) {
@@ -2254,6 +2621,22 @@ function Composer({
               media={session.media}
               renderers={extensions?.attachments}
               items={attachments.items}
+              gifs={gifs?.map((markdown) => ({
+                markdown,
+                // The alt text names the tile even when its media is unavailable.
+                title: markdown.slice(2, markdown.indexOf("](")) || "GIF",
+                source: draftGif(markdown, session.media)?.source,
+              }))}
+              removeGif={(markdown) => {
+                saveDraft({
+                  ...valueRef.current,
+                  gifs:
+                    valueRef.current.gifs?.filter(
+                      (item) => item !== markdown,
+                    ) ?? [],
+                });
+                input.current?.focus();
+              }}
               disabled={editingDisabled}
               onExitComplete={() => setAttachmentsExiting(false)}
               remove={(id) => {
@@ -2349,10 +2732,10 @@ function Composer({
               maxLength={Math.max(
                 0,
                 16000 -
-                  (chatCards?.reduce(
+                  [...(chatCards ?? []), ...(gifs ?? [])].reduce(
                     (size, card) => size + card.length + 2,
                     0,
-                  ) ?? 0),
+                  ),
               )}
               aria-label={label}
               placeholder={placeholder ?? label}
@@ -2402,6 +2785,7 @@ function Composer({
                     automaticTag.current ===
                       JSON.stringify(valueRef.current)) &&
                   !valueRef.current.chatCards?.length &&
+                  !valueRef.current.gifs?.length &&
                   !attachments.items.length
                 ) {
                   const target = lastEditableMessage(session, editableRows());
@@ -2479,7 +2863,7 @@ function Composer({
                     disabled={editingDisabled}
                     inviteAgents={agentChoices && !editing.target}
                     recipients={recipients}
-                    insertText={(text) => insert(text)}
+                    insertText={(text) => attachGif(text) ?? insert(text)}
                     insertMention={insertMention}
                     insertMentions={insertMentions}
                     replaceRecipients={replaceRecipients}
@@ -2509,7 +2893,10 @@ function Composer({
             )}
             <IconButton
               variant={
-                draft.trim() || chatCards?.length || attachments.items.length
+                draft.trim() ||
+                chatCards?.length ||
+                gifs?.length ||
+                attachments.items.length
                   ? "primary"
                   : "ghost"
               }
@@ -2541,7 +2928,8 @@ function Composer({
                 (!editing.target && attachments.blocked) ||
                 (!draft.trim() &&
                   !chatCards?.length &&
-                  (!!submission || !attachments.items.length) &&
+                  (!!submission ||
+                    (!attachments.items.length && !gifs?.length)) &&
                   !(
                     editing.target &&
                     requestDeletion &&

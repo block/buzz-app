@@ -27,6 +27,8 @@ import profilesManifest from "./profiles/manifest.json";
 import * as profiles from "./profiles";
 import agentsManifest from "./agents/manifest.json";
 import * as agents from "./agents";
+import watchingManifest from "./watching/manifest.json";
+import * as watching from "./watching";
 import claudeCodeManifest from "./claude-code/manifest.json";
 import * as claudeCode from "./claude-code";
 import codexManifest from "./codex/manifest.json";
@@ -54,8 +56,6 @@ import * as workflows from "./workflows";
 import type { BundledPlugin } from "../plugins/manager";
 import linksManifest from "./links/manifest.json";
 import * as links from "./links";
-import hostedManifest from "./hosted-communities/manifest.json";
-import * as hosted from "./hosted-communities";
 import moderationManifest from "./moderation/manifest.json";
 import * as moderation from "./moderation";
 import relayStaffManifest from "./relay-staff/manifest.json";
@@ -183,6 +183,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
     enabledByDefault: true,
   },
   {
+    manifest: { ...watchingManifest, apiVersion: 1 },
+    module: watching,
+    enabledByDefault: true,
+  },
+  {
     manifest: { ...claudeCodeManifest, apiVersion: 1 },
     module: claudeCode,
     enabledByDefault: true,
@@ -205,11 +210,6 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...workflowsManifest, apiVersion: 1 },
     module: workflows,
-    enabledByDefault: true,
-  },
-  {
-    manifest: { ...hostedManifest, apiVersion: 1 },
-    module: hosted,
     enabledByDefault: true,
   },
   {

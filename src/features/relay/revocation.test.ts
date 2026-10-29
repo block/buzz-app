@@ -19,7 +19,8 @@ import {
 const relay = keypair(),
   viewer = keypair(),
   alice = keypair(),
-  bob = keypair();
+  bob = keypair(),
+  carol = keypair();
 const owners: ReturnType<typeof createRelaySession>[] = [];
 afterEach(() => {
   for (const owner of owners.splice(0)) owner.dispose();
@@ -554,11 +555,9 @@ it("a denied read's second profile clear does not abort the retained window's re
     expect(h.session.channels.window("a").status).toBe("error"),
   );
   expect(h.session.profiles.snapshot().size).toBe(0);
-  await vi.waitFor(() =>
-    expect(h.pending.filter((read) => !read.signal?.aborted)).toHaveLength(1),
-  );
-  const reread = h.pending.find((read) => !read.signal?.aborted);
-  assert.exists(reread);
+  await vi.waitFor(() => expect(h.pending).toHaveLength(1));
+  const reread = h.next();
+  expect(reread.signal?.aborted).toBe(false);
   expect(reread.filters).toEqual(profileRead(alice));
   reread.respond([profile(alice, { name: "Alice again" })]);
   await vi.waitFor(() =>
@@ -566,6 +565,9 @@ it("a denied read's second profile clear does not abort the retained window's re
       "Alice again",
     ),
   );
+  // Background reads are serial: a second live read surfaces only now.
+  await flush();
+  expect(h.pending).toEqual([]);
 });
 
 it("does not reread names whose only evidence was in the revoked channel", async () => {
@@ -575,11 +577,61 @@ it("does not reread names whose only evidence was in the revoked channel", async
   await openNamed(h, "a", alice);
   h.emit([roster(relay, "a", [], 11)]);
   expect(h.session.profiles.snapshot().size).toBe(0);
-  // Bob's reread is the barrier: the purge's one profile pass has run.
   await vi.waitFor(() => expect(h.pending).toHaveLength(1));
-  expect(h.next().filters).toEqual(profileRead(bob));
+  const reread = h.next();
+  expect(reread.filters).toEqual(profileRead(bob));
+  reread.respond([profile(bob, { name: "Bob again" })]);
+  await vi.waitFor(() =>
+    expect(h.session.profiles.snapshot().get(bob.pubkey)?.name).toBe(
+      "Bob again",
+    ),
+  );
+  // Background reads are serial: an Alice read queued behind Bob's surfaces only now.
   await flush();
   expect(h.pending).toEqual([]);
+});
+
+it("rereads a mounted thread's reply-only mention after another channel's roster revokes access", async () => {
+  const h = setup();
+  h.emit(["a", "b"].map((id) => roster(relay, id, [viewer.pubkey], 10)));
+  await openNamed(h, "b", alice);
+  const root = message(alice, "b", "root", 11);
+  h.emit([
+    root,
+    message(bob, "b", "reply", 12, [
+      ["e", root.id, "", "root"],
+      ["e", root.id, "", "reply"],
+      ["p", carol.pubkey],
+    ]),
+  ]);
+  const thread = h.session.thread("b", root.id);
+  expect(thread.snapshot().replies.map((row) => row.mentions)).toEqual([
+    [carol.pubkey],
+  ]);
+  void h.session.profiles.ensure([carol.pubkey]);
+  await vi.waitFor(() => expect(h.pending).toHaveLength(1));
+  h.next().respond([profile(carol, { name: "Carol" })]);
+  await vi.waitFor(() =>
+    expect(h.session.profiles.snapshot().get(carol.pubkey)?.name).toBe("Carol"),
+  );
+  h.emit([roster(relay, "a", [], 13)]);
+  expect(h.session.profiles.snapshot().size).toBe(0);
+  // The window rows name only Alice; Bob and Carol come from the thread.
+  await vi.waitFor(() => expect(h.pending).toHaveLength(1));
+  const window = h.next();
+  expect(window.filters).toEqual(profileRead(alice));
+  window.respond([profile(alice, { name: "Alice again" })]);
+  await vi.waitFor(() => expect(h.pending).toHaveLength(1));
+  const reread = h.next();
+  expect(reread.filters).toEqual([
+    { kinds: [0], authors: [bob.pubkey, carol.pubkey].sort(), limit: 500 },
+  ]);
+  reread.respond([profile(carol, { name: "Carol again" })]);
+  await vi.waitFor(() =>
+    expect(h.session.profiles.snapshot().get(carol.pubkey)?.name).toBe(
+      "Carol again",
+    ),
+  );
 });
 
 it("an ambiguous multi-channel read failure does not revoke unrelated evidence", async () => {

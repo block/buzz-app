@@ -1160,13 +1160,14 @@ including hidden/archived deletion, stale in-flight replies and unsuccessful nam
 reads. `tests/browser/dm-labels.spec.mjs` guards the production page wiring and DOM
 labels through the real Refresh channels control and broker.
 
-Open timelines recover the same way. After an access-loss purge, each retained
-window of a channel the viewer can still read requests its rows' names once, at
-background priority. Names whose only evidence was in the lost channel are not
-requested. A channel opened afterwards from a head read shortly before the purge
-is not covered: its next head read or an older page restores its names, while new
-traffic and the viewer's own sends restore only its latest rows.
-`revocation.test.ts` covers roster omission and denied reads.
+Open channel timelines and mounted thread/media-comment views also recover: after
+an access-loss purge, each retained window and each mounted thread of a channel the
+viewer can still read requests its rows' names once, at background priority. Names
+whose only evidence was in the lost channel are not requested. A channel opened
+afterwards from a head read shortly before the purge is not covered: its next head
+read or an older page restores its names, while new traffic and the viewer's own
+sends restore only its latest rows. `revocation.test.ts` covers roster omission,
+denied reads and a mention that appears only in a thread reply.
 
 These are foundational recovery constraints, not a new shared-session API or a
 guarantee of general profile retry after every cache clear/network failure. See

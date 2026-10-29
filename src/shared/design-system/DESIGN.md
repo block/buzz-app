@@ -307,13 +307,11 @@ focus is deliberate, so it opens hints and previews at once, and anything that
 opens on hover also opens with Enter; Escape dismisses them all. Every hover
 surface belongs to exactly one bucket, and the timings live in
 `ui/hoverIntent.ts`. The components accept a bucket, never a delay: to change a
-timing, change the bucket for everyone. Submenus inside an open menu open on
-hover at once, as menus conventionally do.
+timing, change the bucket for everyone.
 
-The Harness menu has a narrow exception to the disabled-control hint recipe:
-its side explanation for a group of unavailable choices uses
-`PopoverTrigger openOnHover="control"` (0.1s) while the menu is open. Keep each
-disabled choice keyboard reachable and connected to the shared description.
+Inside an open menu, submenus open immediately. A side explanation for grouped
+unavailable choices uses `PopoverTrigger openOnHover="control"` (100 ms). Keep
+each disabled choice keyboard reachable and connected to the shared description.
 
 | Bucket | Use for | Timing | API |
 | --- | --- | --- | --- |

@@ -334,7 +334,7 @@
     color: var(--text-standard);
   }
   .buzz-select[data-variant="compact"]
-    .buzz-button:is(:disabled, [data-disabled]) {
+    .buzz-button:is(:disabled, [data-disabled]):not([data-loading]) {
     color: var(--text-unavailable);
   }
   .buzz-select[data-variant="compact"] .buzz-button-label {

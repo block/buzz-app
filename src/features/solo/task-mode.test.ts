@@ -4,6 +4,7 @@ import { keypair, signed } from "../relay/testing";
 import {
   recordTaskFirstEvent,
   taskFirstEventRecovery,
+  validateTaskMembers,
   validateTaskPublication,
   TASK_MODE_LABEL,
 } from "./task-mode";
@@ -13,13 +14,18 @@ const cleanups: (() => unknown)[] = [];
 afterEach(async () => {
   for (const close of cleanups.splice(0)) await close();
 });
-async function fixture() {
+async function fixture(allowHistorical = false) {
   const viewer = keypair();
   const h = createSoloRegionFixture(viewer.pubkey);
   cleanups.push(h.dispose);
   const a = "a".repeat(64),
     b = "b".repeat(64);
   const eligible = new Set([a, b]);
+  const historical = new Set([a, b]);
+  const isParticipant = vi.fn(
+    (channelId: string, key: string) =>
+      channelId === "task" && historical.has(key),
+  );
   const recordFirstEvent = vi.fn(async (input: { preparationId: string }) => {
     if (input.preparationId !== "prepared:7")
       throw new Error("Prepared revision changed");
@@ -31,6 +37,7 @@ async function fixture() {
       recordFirstEvent,
       participants: {
         eligible: (key) => eligible.has(key),
+        ...(allowHistorical ? { isParticipant } : {}),
         defaultRecipient: () => a,
         makePrimary: async () => {},
         maxRecipients: 1,
@@ -61,6 +68,7 @@ async function fixture() {
     viewer,
     source,
     eligible,
+    isParticipant,
     recordFirstEvent,
     a,
     b,
@@ -97,6 +105,49 @@ it("checks the whole membership and exact explicit target before local delivery"
   f.eligible.add(f.b);
   expect(() => validateTaskPublication(f.session, f.event([f.a, f.b]))).toThrow(
     "Tag one agent",
+  );
+});
+
+it("retains confirmed historical members without authorizing revoked recipients or additions", async () => {
+  const f = await fixture(true);
+  f.eligible.delete(f.a);
+  expect(validateTaskPublication(f.session, f.event([f.b]))?.region).toBe(
+    "work",
+  );
+  expect(() => validateTaskPublication(f.session, f.event([f.a]))).toThrow(
+    "selected task agent",
+  );
+  for (const key of [f.a, f.viewer.pubkey, "c".repeat(64)]) {
+    expect(() =>
+      validateTaskPublication(f.session, {
+        ...f.event(),
+        kind: 9000,
+        tags: [
+          ["h", "task"],
+          ["p", key],
+        ],
+      }),
+    ).toThrow("participant");
+  }
+});
+
+it("refuses unknown roster keys, mismatched channel evidence and unreadable historical policy", async () => {
+  const f = await fixture(true);
+  for (const key of ["c".repeat(64), "d".repeat(64)]) {
+    f.roster([{ ...f.channel, members: [...f.channel.members, key] }]);
+    expect(() => validateTaskMembers(f.session, "task")).toThrow("participant");
+  }
+  f.eligible.delete(f.a);
+  f.roster([{ ...f.channel, id: "other" }]);
+  expect(() => validateTaskMembers(f.session, "other")).toThrow("participant");
+  f.roster([f.channel]);
+  f.isParticipant.mockReturnValue("yes" as unknown as boolean);
+  expect(() => validateTaskMembers(f.session, "task")).toThrow("participant");
+  f.isParticipant.mockImplementation(() => {
+    throw new Error("Historical policy unavailable");
+  });
+  expect(() => validateTaskMembers(f.session, "task")).toThrow(
+    "Historical policy unavailable",
   );
 });
 

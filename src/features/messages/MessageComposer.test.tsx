@@ -10046,7 +10046,7 @@ it("guards automatic recipient changes using the current draft prose", () => {
   act(() => expect(replace?.([second])).toBe(true));
 });
 
-async function taskComposerFixture() {
+async function taskComposerFixture(allowHistorical = false) {
   const { createSoloRegionFixture } = await import(
     "../channel-navigation/solo-navigation-testing"
   );
@@ -10054,14 +10054,24 @@ async function taskComposerFixture() {
   const viewer = "f".repeat(64),
     region = createSoloRegionFixture(viewer);
   const eligible = new Set([first.pubkey, second.pubkey]);
+  const historical = new Set([first.pubkey, second.pubkey]);
   let primary = first.pubkey;
   const source = await region.register({
     task: {
       prepare: async () => ({ ok: false, reason: "unused" }),
       markChannelStarted: async () => "resume",
       recordFirstEvent: async () => {},
+      ...(allowHistorical
+        ? { header: ({ ui: { Title } }) => <Title title="Task repair" /> }
+        : {}),
       participants: {
         eligible: (key) => eligible.has(key),
+        ...(allowHistorical
+          ? {
+              isParticipant: (channelId: string, key: string) =>
+                channelId === "channel" && historical.has(key),
+            }
+          : {}),
         defaultRecipient: () => primary,
         makePrimary: async (_channel, key) => {
           primary = key;
@@ -10163,6 +10173,35 @@ it("task primary A survives explicit B; later Make primary B changes untagged ro
   h.present(false);
   h.present(true);
   expect(h.input()).toHaveValue("");
+});
+
+it("keeps task repair visible with revoked historical A, then sends only to eligible primary B", async () => {
+  const { h, session, eligible, addAgents } = await taskComposerFixture(true);
+  act(() => h.commands().insertMention({ ...second, name: "Bea" }));
+  await h.user.type(h.input(), "Admit B");
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledTimes(1));
+  eligible.delete(first.pubkey);
+  h.retarget({ session });
+  expect(screen.getByText("Task repair")).toBeVisible();
+  await h.user.click(screen.getByRole("button", { name: "Choose primary" }));
+  expect(screen.queryByRole("menuitem", { name: /Ada/ })).toBeNull();
+  await h.user.click(
+    await screen.findByRole("menuitem", { name: "Make Bea primary" }),
+  );
+  expect(await screen.findByRole("button", { name: "To Bea" })).toBeVisible();
+  h.fill("Continue with B");
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledTimes(2));
+  expect(h.messages.send.mock.calls[1]?.[2]).toEqual([second.pubkey]);
+  pasteText(h.input(), `[@Ada](${profileTarget(first.pubkey)}) Refuse A `);
+  h.submit();
+  await waitFor(() =>
+    expect(screen.getByRole("alert")).toHaveTextContent("eligible task agent"),
+  );
+  expect(h.messages.send).toHaveBeenCalledTimes(2);
+  expect(addAgents).toHaveBeenCalledOnce();
+  expect(session.channels.list().channels[0]?.members).toContain(first.pubkey);
 });
 
 it("task sends reject multiple or revoked explicit targets before admission and never fall back", async () => {

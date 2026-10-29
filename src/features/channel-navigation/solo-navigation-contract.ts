@@ -31,6 +31,9 @@ export type TaskPrepareResult =
     }>;
 export type ParticipantPolicy = Readonly<{
   eligible(pubkey: string): boolean;
+  /** Cache-only historical membership from the current bound, nonarchived v1
+   * record for this exact channel/scope. Never grants recipient or tool access. */
+  isParticipant?(channelId: string, pubkey: string): boolean;
   defaultRecipient(channelId: string): string | undefined;
   makePrimary(channelId: string, pubkey: string): Promise<void>;
   maxRecipients?: number;

@@ -86,9 +86,13 @@ export function validateTaskMembers(
   const policy = context.mode.participants;
   if (
     !channel?.members ||
-    [...channel.members, ...additions].some(
-      (key) => key !== session.viewer && !policy.eligible(key),
-    )
+    channel.members.some(
+      (key) =>
+        key !== session.viewer &&
+        !policy.eligible(key) &&
+        policy.isParticipant?.(channelId, key) !== true,
+    ) ||
+    additions.some((key) => !policy.eligible(key))
   )
     throw new Error(
       "A task participant is no longer eligible. Repair task membership before sending.",

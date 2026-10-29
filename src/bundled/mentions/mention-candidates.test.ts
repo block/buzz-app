@@ -28,6 +28,7 @@ function rows(
     ...mentionCandidates(session, "c", false, undefined, directory, elsewhere),
   ].sort((a, b) => a.recipient.pubkey.localeCompare(b.recipient.pubkey));
 }
+const archives = { status: "ready", archived: [key(5)] };
 function fresh() {
   return {
     viewer: key(1),
@@ -39,11 +40,7 @@ function fresh() {
     },
     agentChoices: { snapshot: () => ({ identities: agents }) },
     profiles: { snapshot: () => profiles },
-    archives: {
-      snapshot: () => ({}),
-      state: (pubkey: string) =>
-        pubkey === key(5) ? "archived" : "not-archived",
-    },
+    archives: { snapshot: () => archives },
     outbox: { supports: () => true },
   } as unknown as ComposerSession;
 }

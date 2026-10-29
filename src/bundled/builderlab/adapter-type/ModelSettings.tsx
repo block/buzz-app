@@ -214,7 +214,6 @@ export function ModelSettings({
           )}
       <Field
         label="Instructions"
-        description="Saved in Builderlab. Leave empty to clear instructions."
         error={
           !validInstructions(instructions)
             ? "Use text or leave this empty."

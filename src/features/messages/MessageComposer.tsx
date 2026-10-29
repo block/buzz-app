@@ -2331,11 +2331,18 @@ function Composer({
   return (
     <SelectedMentionContext.Provider value={value.recipients}>
       {taskContext?.mode.header && !threadRootId && !editing.target && (
-        <taskContext.mode.header
-          channelId={channelId}
-          binding={taskContext.binding}
-          ui={taskHeaderUI}
-        />
+        <section
+          className={`${styles.composerColumn} ${styles.taskHeader}`}
+          aria-label="Task details and status"
+          // biome-ignore lint/a11y/noNoninteractiveTabindex: The bounded task region must support keyboard scrolling.
+          tabIndex={0}
+        >
+          <taskContext.mode.header
+            channelId={channelId}
+            binding={taskContext.binding}
+            ui={taskHeaderUI}
+          />
+        </section>
       )}
       {submissionHeader && (
         <div className={styles.composerColumn}>{submissionHeader}</div>

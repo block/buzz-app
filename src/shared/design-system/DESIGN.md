@@ -1687,9 +1687,11 @@ pairings in both themes; a numbered step alone does not guarantee contrast.
 For example, warning boundaries use amber-11 in light mode and amber-9 in dark,
 because the lighter amber steps cannot identify a control against a light panel.
 
-Palette values are based on Radix Colors (MIT), with authored neutral ramps and
-documented adjustments in `tokens.css`. These are values, not a component or
-behavior dependency. Base UI remains the component behavior layer, with Sonner owning Toast.
+The utility hues (gray, purple, red, green, amber, blue, cyan and orange) use
+Radix Colors (MIT) values. The six accent families (Honey, Magenta, Iris, Cobalt,
+Citrus and Mono) are Buzz's own values on the same twelve-step structure, and the
+neutral ramps are authored. Step 10 is each accent's hover. These are values, not
+a component or behavior dependency. Base UI remains the component behavior layer, with Sonner owning Toast.
 
 ### Naming and usage
 
@@ -1756,12 +1758,31 @@ Mentions are people, not destinations, so they are chips rather than links.
 Spend the accent on mentions of you, not on mentions in general: ordinary
 mentions repeat in almost every message, so they stay a neutral chip
 (`text-mention` on `affordance-mention`) at every level, matching the composer.
-A mention of you asks for your attention and joins the strong group:
-`text-mention-self` on `affordance-mention-self`, the prominent fill and its ink
-in light mode, and a neutral chip with the prominent mark as ink in dark mode,
-where fills stay neutral. Inside your own bubble the `-own` pair wins; on the
-solid accent bubble (at Buzzin’) it is tone-on-tone: a deeper step of the bubble's fill with the bubble's ink, deeper again on hover. System notices
-name people as quiet text, never as chips.
+The chip is a see-through overlay, so it works on any bubble: a shade (black 10%,
+14% on hover) on light and mid-tone fills, and a tint (white 16%, 20% on hover)
+on dark ones. The direction follows how light the fill is, not its text color.
+Strength follows the text: a chip under light text needs more to show, so the
+tint is stronger than the shade, and a mid-tone fill with light text takes a
+strong shade (black 16%, 22% on hover).
+A mention of you asks for your attention and joins the strong group in both
+modes: `text-mention-self` on `affordance-mention-self`, the prominent fill and
+its ink, with the accent's own hover step rather than an overlay, which would
+muddy it. Inside your own bubble the `-own` pair wins; on the solid accent
+bubble (at Buzzin’) it overlays the bubble's fill with the bubble's ink. That is
+a shade on every accent except Mono in light mode, whose near-black bubble takes
+a tint. Magenta, Iris and Cobalt carry white text there, so they take the
+strong shade. System notices name people as quiet text, never as chips.
+
+Reactions sit on `affordance-reaction`, a softer overlay than a chip: black 6%
+or white 10%, in the same direction as the chips. Hovering the add control lays
+the same overlay again on top of the strip. Inside your bubble reactions take
+its ink and `affordance-reaction-own`; outside it, under an emoji-only message,
+they keep the standard ink and overlay of the panel they sit on.
+
+Hovering your own message lays a quieter overlay across the whole bubble
+(`affordance-message-own-hover`: black 4% or white 8%), in the same direction as
+its chips, so a bright bubble never takes a white wash in dark mode. Received
+bubbles keep the quiet surface their reaction strip shares and take no hover.
 
 These pairs have no link-specific contrast exemptions.
 The contrast guard checks APCA and WCAG AA (4.5:1) on opaque text pairs, including

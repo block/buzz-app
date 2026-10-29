@@ -299,7 +299,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
           void services.navigation.open({
             version: 1,
             kind: "settings",
-            section: "block.hosted-communities/hosted",
+            section: "block.builderlab/login",
           })
         }
       />

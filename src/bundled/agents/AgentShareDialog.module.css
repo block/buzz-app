@@ -45,3 +45,13 @@
 .note {
   padding-inline: var(--space-2);
 }
+/* The export preview takes the room the share step's layout had. Its loading
+   region passes that on: feedback at its own height, then the card, whole, in
+   what is left, at any window or text size. */
+.preview,
+.preview > * {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}

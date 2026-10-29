@@ -85,7 +85,7 @@ the signing key across rebuilds therefore extends trust to those programs.
 
 Desktop builds configured with `BUZZ_NSEC_BACKUP_SERVICE_URL` and
 `BUZZ_NSEC_BACKUP_NAMESPACE` back up a local identity only after an explicit saved
-automatic-backup choice, Builderlab or Hosted communities login, and matching key
+automatic-backup choice, Builderlab login, and matching key
 binding. Unset, self-managed, corrupt or mismatched consent prevents all backup
 requests, including retries. These are paired
 native build-process inputs; unset leaves the feature disabled. The service URL

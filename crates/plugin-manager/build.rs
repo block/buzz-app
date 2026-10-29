@@ -4,13 +4,14 @@ use std::path::{Path, PathBuf};
 mod build_env;
 
 const BUILDERLAB_URL_KEY: &str = "BUZZ_BUILDERLAB_URL";
+const BUILDERLAB_APPS_DOMAIN_KEY: &str = "BUZZ_BUILDERLAB_APPS_DOMAIN";
 
 fn builderlab_origin(local: &Path, process: Option<String>) -> Result<String, &'static str> {
     let values = build_env::load(local, &[BUILDERLAB_URL_KEY], |_| process.clone())?;
     let raw = values
         .get(BUILDERLAB_URL_KEY)
         .map(String::as_str)
-        .unwrap_or("");
+        .unwrap_or("https://app.builderlab.xyz");
     if raw.is_empty() {
         return Ok(String::new());
     }
@@ -26,24 +27,66 @@ fn builderlab_origin(local: &Path, process: Option<String>) -> Result<String, &'
     Ok(url.origin().ascii_serialization())
 }
 
+fn builderlab_apps_domain(
+    local: &Path,
+    origin: &str,
+    process: Option<String>,
+) -> Result<String, &'static str> {
+    let values = build_env::load(local, &[BUILDERLAB_APPS_DOMAIN_KEY], |_| process.clone())?;
+    let domain = values
+        .get(BUILDERLAB_APPS_DOMAIN_KEY)
+        .map(String::as_str)
+        .unwrap_or(if origin == "https://app.builderlab.xyz" {
+            "apps.builderlab.xyz"
+        } else {
+            ""
+        });
+    if domain.is_empty() {
+        return Ok(String::new());
+    }
+    let url = url::Url::parse(&format!("https://{domain}"))
+        .map_err(|_| "Invalid Builderlab Apps build domain")?;
+    if origin.is_empty()
+        || !domain.contains('.')
+        || domain.len() > 253
+        || url.domain() != Some(domain)
+        || domain.split('.').any(|label| {
+            label.is_empty()
+                || label.len() > 63
+                || label.starts_with('-')
+                || label.ends_with('-')
+                || !label
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+        })
+    {
+        return Err("Builderlab Apps build domain must be an exact DNS domain with a login origin");
+    }
+    Ok(domain.into())
+}
+
 #[cfg_attr(test, allow(dead_code))]
 fn main() {
     let root = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap()).join("../..");
     let local = root.join(".env.local");
     println!("cargo:rerun-if-changed={}", local.display());
     println!("cargo:rerun-if-env-changed={BUILDERLAB_URL_KEY}");
+    println!("cargo:rerun-if-env-changed={BUILDERLAB_APPS_DOMAIN_KEY}");
     println!(
         "cargo:rerun-if-changed={}",
         root.join("crates/build_env.rs").display()
     );
-    let process = match std::env::var(BUILDERLAB_URL_KEY) {
+    let process = |key| match std::env::var(key) {
         Ok(value) => Some(value),
         Err(std::env::VarError::NotPresent) => None,
         Err(std::env::VarError::NotUnicode(_)) => panic!("Native build inputs must be UTF-8"),
     };
-    let origin =
-        builderlab_origin(&local, process).expect("Invalid Builderlab build configuration");
+    let origin = builderlab_origin(&local, process(BUILDERLAB_URL_KEY))
+        .expect("Invalid Builderlab build configuration");
+    let apps_domain = builderlab_apps_domain(&local, &origin, process(BUILDERLAB_APPS_DOMAIN_KEY))
+        .expect("Invalid Builderlab Apps build configuration");
     println!("cargo:rustc-env=BUZZ_BUILDERLAB_ORIGIN={origin}");
+    println!("cargo:rustc-env=BUZZ_BUILDERLAB_APPS_DOMAIN={apps_domain}");
 }
 
 #[cfg(test)]
@@ -51,18 +94,90 @@ mod tests {
     use super::*;
 
     #[test]
+    fn exact_apps_domain_uses_trusted_build_input_and_public_default() {
+        let directory = tempfile::tempdir().unwrap();
+        let local = directory.path().join(".env.local");
+        assert_eq!(
+            builderlab_apps_domain(&local, "https://app.builderlab.xyz", None).unwrap(),
+            "apps.builderlab.xyz"
+        );
+        assert_eq!(
+            builderlab_apps_domain(&local, "https://login.example", None).unwrap(),
+            ""
+        );
+        std::fs::write(&local, "BUZZ_BUILDERLAB_APPS_DOMAIN=apps.example\n").unwrap();
+        assert_eq!(
+            builderlab_apps_domain(&local, "https://login.example", None).unwrap(),
+            "apps.example"
+        );
+        assert_eq!(
+            builderlab_apps_domain(
+                &local,
+                "https://login.example",
+                Some("apps.other.example".into())
+            )
+            .unwrap(),
+            "apps.other.example"
+        );
+        assert_eq!(
+            builderlab_apps_domain(&local, "https://app.builderlab.xyz", Some(String::new()))
+                .unwrap(),
+            ""
+        );
+        for domain in [
+            "com",
+            "https://apps.example",
+            "apps.example:443",
+            "apps.example/path",
+            "apps.example?query",
+            "apps.example#part",
+            "user@apps.example",
+            "127.0.0.1",
+            ".apps.example",
+        ] {
+            assert!(
+                builderlab_apps_domain(&local, "https://login.example", Some(domain.into()))
+                    .is_err()
+            );
+        }
+        assert!(builderlab_apps_domain(&local, "", Some("apps.example".into())).is_err());
+    }
+
+    #[test]
+    fn defaults_to_production_unless_explicitly_disabled() {
+        let directory = tempfile::tempdir().unwrap();
+        let local = directory.path().join(".env.local");
+        assert_eq!(
+            builderlab_origin(&local, None).unwrap(),
+            "https://app.builderlab.xyz"
+        );
+        assert_eq!(
+            builderlab_apps_domain(&local, &builderlab_origin(&local, None).unwrap(), None)
+                .unwrap(),
+            "apps.builderlab.xyz"
+        );
+        assert_eq!(builderlab_origin(&local, Some(String::new())).unwrap(), "");
+        std::fs::write(&local, "BUZZ_BUILDERLAB_URL=\n").unwrap();
+        assert_eq!(builderlab_origin(&local, None).unwrap(), "");
+        assert_eq!(
+            builderlab_apps_domain(&local, &builderlab_origin(&local, None).unwrap(), None)
+                .unwrap(),
+            ""
+        );
+    }
+
+    #[test]
     fn local_url_and_process_overrides_produce_an_exact_origin() {
         let directory = tempfile::tempdir().unwrap();
         let local = directory.path().join(".env.local");
-        assert_eq!(builderlab_origin(&local, None).unwrap(), "");
         std::fs::write(
             &local,
-            "\u{feff}export BUZZ_BUILDERLAB_URL=\"https://APP.BUILDERLAB.XYZ:443/deployment/\" # comment\n",
+            "\u{feff}export BUZZ_BUILDERLAB_URL=\"https://OVERRIDE.EXAMPLE:443/deployment/\" # comment\n",
         )
         .unwrap();
         assert_eq!(
             builderlab_origin(&local, None).unwrap(),
-            "https://app.builderlab.xyz"
+            "https://override.example"
         );
         assert_eq!(
             builderlab_origin(&local, Some("https://login.example:8443/path/".into())).unwrap(),
@@ -99,19 +214,22 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let local = directory.path().join(".env.local");
         std::fs::write(&local, "PRIVATE_VALUE='unterminated").unwrap();
-        assert_eq!(builderlab_origin(&local, None).unwrap(), "");
+        assert_eq!(
+            builderlab_origin(&local, None).unwrap(),
+            "https://app.builderlab.xyz"
+        );
 
         for quote in ["'", "\"", "`"] {
             std::fs::write(
                 &local,
                 format!(
-                    "PRIVATE_VALUE={quote}multiline\nBUZZ_BUILDERLAB_URL=https://hidden.example\n{quote}\nINVALID=unquoted value\nexport BUZZ_BUILDERLAB_URL=https://app.builderlab.xyz/\nTRAILING='unfinished\n"
+                    "PRIVATE_VALUE={quote}multiline\nBUZZ_BUILDERLAB_URL=https://hidden.example\n{quote}\nINVALID=unquoted value\nexport BUZZ_BUILDERLAB_URL=https://after-multiline.example/\nTRAILING='unfinished\n"
                 ),
             )
             .unwrap();
             assert_eq!(
                 builderlab_origin(&local, None).unwrap(),
-                "https://app.builderlab.xyz"
+                "https://after-multiline.example"
             );
         }
         for quote in ["'", "\""] {
@@ -122,7 +240,10 @@ mod tests {
                 ),
             )
             .unwrap();
-            assert_eq!(builderlab_origin(&local, None).unwrap(), "");
+            assert_eq!(
+                builderlab_origin(&local, None).unwrap(),
+                "https://app.builderlab.xyz"
+            );
         }
     }
 }

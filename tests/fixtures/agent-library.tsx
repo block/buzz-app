@@ -277,6 +277,9 @@ const agents = {
         ]
       : [],
   configHistory: () => undefined,
+  addedTabs: () => [],
+  registerTab: () => {},
+  controlAttention: () => {},
   joinable: () => (teamImport ? joining : []),
   join: async (key: string) => {
     joined.push(key);

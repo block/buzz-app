@@ -25,6 +25,17 @@ import { avatarMedia } from "../../shared/avatar-source";
 
 const noExclusions: readonly string[] = [];
 const personKey = (pubkey: string) => `person:${pubkey}`;
+const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+/** At most 24 characters, cut between characters rather than inside one. */
+function shortened(text: string) {
+  const characters = Array.from(
+    graphemes.segment(text),
+    (part) => part.segment,
+  );
+  return characters.length > 24
+    ? `${characters.slice(0, 23).join("").trimEnd()}…`
+    : text;
+}
 
 export function RecipientPicker({
   session,
@@ -35,6 +46,7 @@ export function RecipientPicker({
   initiallyOpen = true,
   onChange,
   onComplete,
+  onTyped,
 }: {
   session: RelaySession;
   /** View-state partition whose DM visits and earlier choices rank people. */
@@ -46,6 +58,8 @@ export function RecipientPicker({
   initiallyOpen?: boolean;
   onChange(people: Recipient[]): void;
   onComplete(): void;
+  /** Whether the To field holds text that is not a recipient yet. */
+  onTyped(typed: boolean): void;
 }) {
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(initiallyOpen);
@@ -259,6 +273,7 @@ export function RecipientPicker({
     selection.current = [...selection.current, person];
     onChange(selection.current);
     setQuery("");
+    onTyped(false);
     focus();
   }
   function remove(pubkey: string, point?: { x: number; y: number }) {
@@ -408,6 +423,7 @@ export function RecipientPicker({
             onFocus={() => setOpen(true)}
             onChange={(event) => {
               setQuery(event.target.value);
+              onTyped(!!event.target.value.trim());
               setOpen(true);
             }}
             onKeyDown={(event) => {
@@ -465,6 +481,16 @@ export function RecipientPicker({
             }}
           />
         </div>
+        {/* Text left in To holds Send, so say why once the list closes, not
+            while a name is typed. Below the list's anchor, so the list keeps
+            its place. A polite status, read after whatever focus moved to:
+            any To edit opens the list and unmounts it, so its text never
+            changes while shown. */}
+        {!open && !!query.trim() && selected.length > 0 && (
+          <p role="status" className="mt-1 text-body-sm text-danger">
+            “{shortened(query.trim())}” is not a valid recipient
+          </p>
+        )}
         <Popover.Portal>
           <Popover.Positioner
             anchor={anchor}

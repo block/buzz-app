@@ -175,6 +175,7 @@ impl AppAgentHost {
     /// The agent in the community at `relay`, if it still has its key there.
     /// One deleted elsewhere loses its cached key.
     async fn agent(&self, pubkey: String, relay: String) -> Result<AppAgent, String> {
+        crate::relay_policy::allowed(&relay)?;
         let host = self.clone();
         blocking(move || {
             let agent = host.agents.clone()?.get(&pubkey, &relay);
@@ -348,6 +349,7 @@ pub(crate) async fn app_agent_create(
     agent_type: String,
     name: String,
 ) -> Result<AppAgentSummary, String> {
+    crate::relay_policy::allowed(&destination)?;
     let agents = state.agents.clone()?;
     let prepared = AppAgents::prepare(&destination, &owner, &agent_type, &name)?;
     let auth = identity
@@ -389,6 +391,7 @@ pub(crate) async fn app_agent_port(
     owner: String,
     agent_type: String,
 ) -> Result<Ported, String> {
+    crate::relay_policy::allowed(&destination)?;
     let agents = state.agents.clone()?;
     let old = state.old.clone()?;
     let credentials = state.credentials.clone();
@@ -511,6 +514,8 @@ pub(crate) async fn app_agent_join(
     destination: String,
     picture: Option<String>,
 ) -> Result<AppAgentSummary, String> {
+    crate::relay_policy::allowed(&from)?;
+    crate::relay_policy::allowed(&destination)?;
     let host = state.inner().clone();
     blocking(move || {
         // Held so no first key read meets this write in the credential store.

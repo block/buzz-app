@@ -36,6 +36,7 @@ pub(crate) enum EnterpriseLoginGateStatus {
 pub(crate) async fn enterprise_login_gate(
     relay_url: String,
 ) -> Result<EnterpriseLoginGateStatus, String> {
+    crate::relay_policy::allowed(&relay_url)?;
     let trusted = configured_trusted_relays()?;
     if trusted.is_empty() {
         return Ok(EnterpriseLoginGateStatus::NotRequired);

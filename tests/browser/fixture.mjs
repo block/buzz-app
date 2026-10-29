@@ -34,6 +34,7 @@ export const historySize = 640;
 // broker/subscriber and model only the upstream relay policy with ephemeral keys.
 export const test = base.extend({
   productionBroker: [false, { option: true }],
+  relayPolicy: [undefined, { option: true, scope: "worker" }],
   /** The production broker's live setup deadline. It runs in Node, so the
    * page clock cannot hold it; a test that keeps EOSE pending sets it longer. */
   liveSetupTimeoutMs: [undefined, { option: true }],
@@ -105,6 +106,7 @@ export const test = base.extend({
       browserName,
       browser,
       productionBroker,
+      relayPolicy,
       liveSetupTimeoutMs,
       actionProfile,
       agentMessageDeletion,
@@ -2270,6 +2272,7 @@ export const test = base.extend({
                   next();
                 });
                 const broker = relayBrokerPlugin({
+                  relayPolicy,
                   archiveFile: ":memory:",
                   relayUrl: fixtureRelayUrl,
                   communityAliases: fixtureAliases,

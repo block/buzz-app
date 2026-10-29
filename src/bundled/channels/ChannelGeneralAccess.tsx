@@ -86,7 +86,7 @@ export function ChannelGeneralAccess({
               {channel.visibility === "public"
                 ? "Anyone in the community can read."
                 : channel.visibility === "private"
-                  ? "Only invited people can read."
+                  ? "Only channel members can read."
                   : "Reading access could not be confirmed."}
             </p>
             <p className="text-caption text-subtle">
@@ -245,7 +245,7 @@ function ChannelGeneralAccessEditor({
                   },
                   {
                     value: "private",
-                    label: "Invited people only",
+                    label: "Channel members only",
                     leading: <LockIcon size={20} />,
                   },
                 ],
@@ -266,7 +266,7 @@ function ChannelGeneralAccessEditor({
                 : "Channel access could not be confirmed."
               : base.visibility === "public"
                 ? `Anyone in the community can find and ${base.joinRole === "guest" ? "view" : "participate"}.`
-                : `Invited people can ${base.joinRole === "guest" ? "view" : "participate"}.`}
+                : `Channel members can ${base.joinRole === "guest" ? "view" : "participate"}.`}
           </p>
         </div>
         <div className={styles.accessRole}>

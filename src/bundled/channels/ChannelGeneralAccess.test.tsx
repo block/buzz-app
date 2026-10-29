@@ -95,7 +95,7 @@ it.each(["public", "private"] as const)(
     ).toHaveTextContent(
       visibility === "public"
         ? "Anyone in the community can read."
-        : "Only invited people can read.",
+        : "Only channel members can read.",
     );
     expect(
       screen.getByRole("region", { name: "General access" }),
@@ -169,7 +169,7 @@ it.each(["public", "private"] as const)(
     );
     const option =
       visibility === "public"
-        ? "Invited people only"
+        ? "Channel members only"
         : "Anyone in the community";
     const control = await select(user, "Who can read", option);
     const confirm = screen.getByRole("alertdialog", {
@@ -189,7 +189,7 @@ it.each(["public", "private"] as const)(
     expect(control).toHaveTextContent(
       visibility === "public"
         ? "Anyone in the community"
-        : "Invited people only",
+        : "Channel members only",
     );
     await select(user, "Who can read", option);
     const next = {
@@ -225,7 +225,7 @@ it("confirms new people's View only/Participate access independently of private 
   );
   expect(
     screen.getByRole("combobox", { name: "Who can read" }),
-  ).toHaveTextContent("Invited people only");
+  ).toHaveTextContent("Channel members only");
 });
 it("shows the absent Member default without saving, and a declined save reloads current access", async () => {
   const h = harness();

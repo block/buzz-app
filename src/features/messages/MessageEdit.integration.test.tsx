@@ -135,10 +135,12 @@ it("real ThreadPanel edits its own reply and recovers emoji preparation without 
       "Community emoji unavailable",
     );
     expect(publish).not.toHaveBeenCalled();
+    // The refused edit retried the catalog; recovery is offered once that fails.
+    const retry = await screen.findByRole("button", {
+      name: "Retry message preparation",
+    });
     emojiAvailable = true;
-    fireEvent.click(
-      screen.getByRole("button", { name: "Retry message preparation" }),
-    );
+    fireEvent.click(retry);
     await waitFor(() =>
       expect(form.queryByRole("alert")).not.toBeInTheDocument(),
     );

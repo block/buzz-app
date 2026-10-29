@@ -900,6 +900,8 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     await page.getByRole("button", { name: "Switch community" }).click();
     await expect(draft()).toHaveJSProperty("value", "A draft");
     await picker.click();
+    // A failed refresh keeps the loaded catalog: its error and Retry show
+    // beside the custom category, and sends keep resolving its tags.
     await page.evaluate(async () => {
       window.emojiFixture.fail(true);
       await window.emojiFixture.refresh();
@@ -907,6 +909,12 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     await expect(page.getByRole("alert")).toContainText(
       "Fixture catalog offline",
     );
+    expect(await page.evaluate(() => window.emojiFixture.status("a"))).toBe(
+      "ready",
+    );
+    await expect(
+      page.locator('em-emoji-picker [data-id="buzz-custom"]'),
+    ).toHaveCount(1);
     await search.fill("grinning");
     await page.getByRole("button", { name: "😀", exact: true }).click();
     await expect(draft()).toHaveJSProperty("value", "😀A draft");
@@ -915,14 +923,29 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     await expect(region).toHaveCount(0);
     await draft().fill(":party:");
     await draft().press("Enter");
-    await expect(draft()).toHaveJSProperty("value", ":party:");
-    await expect(page.getByRole("alert")).toContainText(
-      "Community emoji unavailable",
+    await expect
+      .poll(() =>
+        page.evaluate(() => window.emojiFixture.report.publications.length),
+      )
+      .toBe(4);
+    const sent = await page.evaluate(
+      () => window.emojiFixture.report.publications[3],
     );
+    expect(sent.community).toBe("a");
+    expect(sent.event.tags).toContainEqual([
+      "emoji",
+      "party",
+      "https://a.test/media/2.png",
+    ]);
+    await expect(draft()).toHaveJSProperty("value", "");
     await picker.click();
     await expect(region.getByRole("alert")).toContainText(
       "Fixture catalog offline",
     );
+    const reads = await page.evaluate(
+      () => window.emojiFixture.report.reads.length,
+    );
+    const mounted = await page.locator("em-emoji-picker").elementHandle();
     await page.evaluate(() => {
       window.emojiFixture.fail(false);
       window.emojiFixture.holdCatalog();
@@ -932,19 +955,27 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
         .getByRole("button", { name: "Retry emoji", exact: true })
         .click();
       await expect
-        .poll(() => page.evaluate(() => window.emojiFixture.status("a")))
-        .toBe("loading");
-      // A usable Unicode-only picker during loading is not the recovered mount.
+        .poll(() =>
+          page.evaluate(() => window.emojiFixture.report.reads.length),
+        )
+        .toBe(reads + 1);
+      // The held revalidation clears the error and keeps the custom category.
+      expect(await page.evaluate(() => window.emojiFixture.status("a"))).toBe(
+        "ready",
+      );
+      await expect(region.getByRole("alert")).toHaveCount(0);
       await expect(search).toHaveAttribute("data-buzz-search-ready", "true");
       await expect(
         page.locator('em-emoji-picker [data-id="buzz-custom"]'),
-      ).toHaveCount(0);
+      ).toHaveCount(1);
     } finally {
       await page.evaluate(() => window.emojiFixture.releaseCatalog());
     }
-    await expect
-      .poll(() => page.evaluate(() => window.emojiFixture.status("a")))
-      .toBe("ready");
+    // A read in flight is shared, so this waits for the released retry.
+    await page.evaluate(() => window.emojiFixture.refresh());
+    await expect(region.getByRole("alert")).toHaveCount(0);
+    // Status-only publishes do not remount Emoji Mart.
+    expect(await mounted.evaluate((element) => element.isConnected)).toBe(true);
     await expect(
       page.locator('em-emoji-picker [data-id="buzz-custom"]'),
     ).toHaveCount(1);

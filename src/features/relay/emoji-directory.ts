@@ -122,7 +122,11 @@ export function createEmojiDirectory(
     }
     const owned = new AbortController();
     controller = owned;
-    publish({ status: "loading", error: undefined });
+    // A loaded catalog stays ready while it revalidates: sends keep their tags
+    // and pickers their custom category. Only a cold catalog shows loading.
+    if (snapshot.status !== "ready")
+      publish({ status: "loading", error: undefined });
+    else if (snapshot.error) publish({ error: undefined });
     pending = (async () => {
       try {
         const events = await retryRead(
@@ -136,14 +140,21 @@ export function createEmojiDirectory(
         if (closed || owned.signal.aborted) return;
         accept(events);
         if (closed || owned.signal.aborted || limited) return;
-        if (events.length >= LIMIT)
-          throw new Error(
-            "Community emoji catalog may be incomplete (500-set read limit). Retry after reducing the catalog.",
-          );
-        publish({ status: "ready", error: undefined });
+        // A capped read still resolves the shortcodes it holds.
+        publish({
+          status: "ready",
+          error:
+            events.length >= LIMIT
+              ? "Community emoji catalog may be incomplete (500-set read limit). Retry after reducing the catalog."
+              : undefined,
+        });
       } catch (error) {
+        // A failed revalidation keeps the loaded catalog, with its error.
         if (!closed && !owned.signal.aborted)
-          publish({ status: "error", error: String(error) });
+          publish({
+            status: snapshot.status === "ready" ? "ready" : "error",
+            error: String(error),
+          });
       } finally {
         if (controller === owned) {
           controller = undefined;
@@ -154,7 +165,9 @@ export function createEmojiDirectory(
     return pending;
   }
   function ensure() {
-    if (snapshot.status === "idle") return refresh();
+    // A cold failure retries on the next demand; refresh() shares a pending read.
+    if (snapshot.status === "idle" || snapshot.status === "error")
+      return refresh();
     return pending ?? Promise.resolve();
   }
   /** Read-modify-write of the viewer's own set; an absent URL removes the shortcode. */
@@ -319,12 +332,14 @@ export function createEmojiDirectory(
       if (!codes.length) return [];
       if (closed) throw new Error("Community session is closed");
       if (snapshot.status !== "ready") {
-        void ensure();
-        throw new Error(
+        // Name the refusal before ensure() starts a retry.
+        const refusal = new Error(
           snapshot.status === "error"
             ? `Community emoji unavailable. Retry message preparation or open the emoji picker. ${snapshot.error ?? ""}`
             : "Community emoji is loading. Your draft is kept; try sending again shortly.",
         );
+        void ensure();
+        throw refusal;
       }
       const used = new Map<string, string>();
       for (const part of messageParts(content)) {

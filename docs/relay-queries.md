@@ -133,12 +133,13 @@ for those separate requirements.
 
 `session.emoji` owns the current community's kind-30030 `d=buzz:custom-emoji`
 member sets. `snapshot()` / `subscribe()` provide an immutable catalog; `ensure()`
-is lazy and background-priority, and `refresh()` explicitly retries. The shared
-composer warms it on mount. Each author's newest complete set replaces their old
-one (including empty removal sets); the union picks newer sets, then smaller URLs,
-for shortcode conflicts. The directory retains at most 500 member sets / 2 MiB;
-read caps and overflow expose errors rather than silently evicting replacements.
-An explicit retry after overflow starts a fresh bounded catalog read.
+is lazy and background-priority and retries a catalog that failed before it ever
+loaded, and `refresh()` explicitly retries. The shared composer warms it on mount.
+Each author's newest complete set replaces their old one (including empty removal
+sets); the union picks newer sets, then smaller URLs, for shortcode conflicts. The directory retains at most 500 member sets / 2 MiB.
+A read that reaches the 500-set cap stays usable with an incompleteness error;
+overflow exposes an error rather than silently evicting replacements. A retry
+after overflow starts a fresh bounded catalog read.
 
 `snapshot().mine` lists the viewer's own set. When the session has an attachment
 uploader and its writer admits kind 30030, the directory also exposes `upload()`
@@ -155,6 +156,8 @@ broker admits kind 30030 only for the canonical own-set template
 Live kind-30030 updates share the existing profile route, not another socket or
 subscription slot. Global establishment repairs an already requested catalog;
 cache/access clearing and disposal cancel its reads and fence stale results.
+A loaded catalog stays ready while that repair or any refresh reads, and a failed
+refresh keeps it ready with the error attached.
 The development broker imports the live subscription code at startup: an already
 running broker needs one coordinated restart to gain the new filter. Reopening
 the picker reuses its ready catalog; it is not a manual refresh fallback for an
@@ -162,9 +165,10 @@ older broker.
 
 `session.messages.send`, `reply`, `edit`, and `react` resolve referenced `:shortcodes:`
 into original-URL emoji tags **before** the outbox assigns identity or signs. Text
-without shortcode candidates does not wait. A cold/unavailable catalog throws
-synchronously, so a composer retains its draft; plugins can await `ensure()` or
-explicitly retry `refresh()`. Unknown codes in a ready catalog remain literal.
+without shortcode candidates does not wait. A catalog that has not loaded yet,
+or failed before loading, throws synchronously, so a composer retains its draft;
+the refusal starts a retry, and plugins can await `ensure()` or explicitly retry
+`refresh()`. Unknown codes in a ready catalog remain literal.
 Retries retain the exact original event and URL even if the palette changes.
 Low-level `outbox.send` remains raw intent; callers supply its tags themselves.
 

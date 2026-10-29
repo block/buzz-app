@@ -1646,8 +1646,9 @@ it("offers emoji catalog refresh after an attachment publication fails preparati
   expect(within(h.form()).getByRole("alert")).toHaveTextContent(
     "Community emoji unavailable",
   );
+  // The refused send retried the catalog; recovery is offered once that fails.
   expect(
-    screen.getByRole("button", { name: "Retry message preparation" }),
+    await screen.findByRole("button", { name: "Retry message preparation" }),
   ).toBeVisible();
   available = true;
   fireEvent.click(
@@ -1931,6 +1932,9 @@ it("retains preparation retry when recovery is deferred by an edit then unmounte
     h.uploadCalls[0]?.result.resolve(uploadDescriptor("edit-remount.txt")),
   );
   expect(h.input()).toHaveAccessibleName("Edit message");
+  await waitFor(() =>
+    expect(h.owner.session.emoji.snapshot().status).toBe("error"),
+  );
   expect(
     within(h.form()).queryByRole("button", {
       name: "Retry message preparation",
@@ -1955,8 +1959,9 @@ it("retains preparation retry when recovery is deferred by an edit then unmounte
   expect(composer.getByRole("alert")).toHaveTextContent(
     "Community emoji unavailable",
   );
+  // The remount retried the catalog; recovery is offered once that fails.
   expect(
-    composer.getByRole("button", { name: "Retry message preparation" }),
+    await composer.findByRole("button", { name: "Retry message preparation" }),
   ).toBeVisible();
 });
 
@@ -1998,10 +2003,12 @@ it("offers message preparation retry after a failed attachment send remounts", a
   expect(composer.getByRole("alert")).toHaveTextContent(
     "Community emoji unavailable",
   );
+  // The remount retried the catalog; recovery is offered once that fails.
+  const retry = await composer.findByRole("button", {
+    name: "Retry message preparation",
+  });
   available = true;
-  fireEvent.click(
-    composer.getByRole("button", { name: "Retry message preparation" }),
-  );
+  fireEvent.click(retry);
   await waitFor(() =>
     expect(h.owner.session.emoji.snapshot().status).toBe("ready"),
   );

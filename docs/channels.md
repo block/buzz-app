@@ -1359,7 +1359,9 @@ follow the operating system.
 
 The session owns the catalog and its live updates. Reopening reuses the ready
 catalog, without hiding custom results behind a fresh read. Catalog failures expose
-Retry while leaving Unicode available and retaining drafts. Only one picker owns
+Retry while leaving Unicode available and retaining drafts. A catalog that has loaded
+stays usable for sending and in the picker while it refreshes, such as after a
+reconnect, and when that refresh fails. Only one picker owns
 Emoji Mart's global dictionary at a time; scoped custom IDs and disposal prevent
 old community entries leaking into search or Frequent. Historical messages and
 existing reactions keep their signed emoji URLs after catalog changes.

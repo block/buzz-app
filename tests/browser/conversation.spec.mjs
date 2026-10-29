@@ -352,21 +352,10 @@ test("independent packed author consumer and native-installed contribution survi
     await page.keyboard.press("Escape");
     expect(await textarea.evaluate((el) => el.isConnected)).toBe(true);
     await expect(draft).toHaveJSProperty("value", "Channels draft");
-    // Plugin-independent recovery when the catalog is unavailable.
+    // A failed refresh keeps the loaded catalog; plugin-independent sends
+    // still resolve its tags without asking for message preparation retry.
     await page.evaluate(() => window.conversationFixture.fail(true));
     await draft.fill(":party:");
-    await draft.press("Enter");
-    await expect(
-      page.getByRole("button", { name: "Retry message preparation" }),
-    ).toBeVisible();
-    await page.evaluate(() => window.conversationFixture.fail(false));
-    await page
-      .getByRole("button", { name: "Retry message preparation" })
-      .click();
-    await expect(
-      page.getByRole("button", { name: "Retry message preparation" }),
-    ).toHaveCount(0);
-    await expect(draft).toHaveJSProperty("value", ":party:");
     await draft.press("Enter");
     await expect
       .poll(() =>
@@ -378,6 +367,10 @@ test("independent packed author consumer and native-installed contribution survi
         () => window.conversationFixture.report.signed[0].tags,
       ),
     ).toContainEqual(["emoji", "party", "https://a.test/media/current.png"]);
+    await expect(
+      page.getByRole("button", { name: "Retry message preparation" }),
+    ).toHaveCount(0);
+    await page.evaluate(() => window.conversationFixture.fail(false));
     await expect(
       page.getByRole("button", { name: "Emoji and GIFS", exact: true }),
     ).toHaveCount(1);

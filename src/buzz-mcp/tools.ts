@@ -1602,7 +1602,8 @@ class Tools {
    * author and its claimed (unverified) agent owner, channel and thread,
    * omitting what `scope` names. Other agent read surfaces trim the same
    * fields, so change them together, including the `buzz` CLI's agent format
-   * (block/buzz `crates/buzz-cli/src/commands/event_output.rs`). */
+   * (block/buzz `crates/buzz-cli/src/commands/event_output.rs`). Content is a
+   * JSON string so embedded newlines cannot impersonate message metadata. */
   async messages(
     events: readonly BuzzEvent[],
     scope: Readonly<{ channel?: string; root?: string }>,
@@ -1630,7 +1631,7 @@ class Tools {
         reference &&
           reference.parentId !== thread &&
           `reply_to ${reference.parentId}`,
-        `at ${time(event.created_at)}: ${event.content}`,
+        `at ${time(event.created_at)}: ${JSON.stringify(event.content)}`,
       ]
         .filter(Boolean)
         .join(" ");

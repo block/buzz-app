@@ -280,7 +280,7 @@ falling back to the sidebar without failing activation. Older hosts ignore place
 and continue to show primary pages in their sidebar.
 
 Harness plugins register an agent type with `ctx.agents.register`. Per-agent
-configuration belongs in its `tabs`; the Agents host adds the device Attention switch. An optional
+configuration belongs in its `tabs`; the plugin that controls Attention shows the device switch. An optional
 `provider` contribution exposes a stable readiness snapshot, subscription,
 read-only `check()` and `DialogBody`. The Agents page supplies the Providers
 health submenu plus provider title, registered icon, modal framing, dismissal,
@@ -301,10 +301,12 @@ removed when the plugin is turned off or its scope ends. The bundled Agent
 Attention UI plugin uses it.
 
 A plugin that shows Attention and its device switch calls
-`ctx.agents.controlAttention()`. Agents' watches, timers and sources run on this
+`ctx.agents.controlAttention()`. Installed plugins may call it too, and one that
+does should show that switch. Agents' watches, timers and sources run on this
 device only while such a plugin is on. With none on, every agent's
 `attentionEnabled` reads false and each keeps its saved switch. Messages from
-then wake no kind 9 watch later, even across a restart. While plugins are still
+then wake no kind 9 watch later, even across a restart, though a relay replay
+after a reconnect can still deliver one, as it can after the switch is off. While plugins are still
 starting and none has shown Attention yet, kind 9 watches keep their catch-up
 place, so startup still catches up on what the app missed while closed, and the
 events an agent with its switch on would hear wait to be matched once startup

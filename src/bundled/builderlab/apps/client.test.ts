@@ -364,7 +364,7 @@ it.each([
   },
 );
 
-it("tells the agent to deploy before sharing an app with no live version", async () => {
+it("tells the agent to deploy before sharing an app with no sharing lifecycle", async () => {
   for (const response of [
     json(409, {
       error: {
@@ -377,7 +377,7 @@ it("tells the agent to deploy before sharing an app with no live version", async
     await expect(
       client.community("demo", "buzz-alpha", "grant"),
     ).rejects.toThrow(
-      "This app has no live version to share yet. Deploy it with apps_deploy, then try again.",
+      "This app isn't set up for sharing yet. Deploy it with apps_deploy, then try again.",
     );
     expect(requests).toHaveLength(1);
   }

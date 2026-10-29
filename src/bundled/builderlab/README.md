@@ -26,7 +26,7 @@ bindings, even when its handler serves all content itself.
 Sharing follows the one-workspace model: `apps_visibility` switches an app
 between everyone in the owner's workspace and only the owner, and
 `apps_community` grants or revokes a Buzz community at the grant revision it just
-read. Both keep existing viewers and community grants.
+read. `apps_visibility` keeps existing viewers and community grants.
 
 BBBlock is the employee pilot. BBPublic uses the same authenticated control-plane
 boundary: the server must grant Builderlab access to the current workspace/account.

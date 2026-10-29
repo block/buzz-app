@@ -250,17 +250,18 @@ export function createAppsClient(
         id,
         `sharing/communities/${encodeURIComponent(community)}`,
       );
-      const undeployed = new Error(
-        "This app has no live version to share yet. Deploy it with apps_deploy, then try again.",
+      const unprepared = new Error(
+        "This app isn't set up for sharing yet. Deploy it with apps_deploy, then try again.",
       );
-      // Compose answers this read with 409 only when no version is live.
+      // Compose answers this read with 409 only when the app has no sharing
+      // lifecycle yet. Reservation sets one, and a deploy sets it on older apps.
       const current = await call(
         "GET",
         path,
         "Reading community sharing",
       ).catch((error: unknown) => {
         throw error instanceof Error && error.message.includes("(HTTP 409)")
-          ? undeployed
+          ? unprepared
           : error;
       });
       const lifecycle = text(current.lifecycle_id);

@@ -38,10 +38,18 @@ visible rows, and 300 ms dwell. Scroll/content/focus changes cancel/restart dwel
 scheduler when positioning finishes, even if an empty history page changes no
 rows or geometry.
 The list and its own composer share a reading surface; focus anywhere in an open
-thread panel also qualifies, including its selected owning tab header. Explicitly returning to a channel resumes reading in its visible selected thread for that channel; a hidden pane or another channel’s tab keeps the main conversation’s focus. Pane motion completion restarts observation after unchanged rows enter the viewport. Inactive
-or hidden tab content and passive restoration do not qualify. Another pane, a
-dialog, background window, preload,
-and mounted virtualizer overscan do not qualify.
+thread panel also qualifies, including its selected owning tab header. Explicitly
+returning to a channel reads both its main conversation and its visible selected
+side-pane thread tab for that channel: while focus stays anywhere in that
+channel's workspace (normally the main composer), that side-pane thread
+qualifies too. A thread in the main pane never borrows this grant. A link to
+a message or thread (Activity, a message link) is not a plain visit and reads
+only what holds focus. A hidden or collapsed pane, another channel's tab, a
+members or media-review view, and a passive restoration (`preserve` focus) keep
+the main conversation as the only reading surface. Inactive or hidden tab
+content does not qualify. Pane motion completion restarts observation after
+unchanged rows enter the viewport. Another pane, a dialog, background window,
+preload, and mounted virtualizer overscan do not qualify.
 
 Away from the bottom, observations mark individual fully visible messages. At the
 physical bottom, 300 ms visibility of the newest message's bottom edge also earns

@@ -232,15 +232,17 @@ it("cancels an in-flight Gloopy swap before switching to Emoji", async () => {
   });
   const { dialog, user } = setup([echo]);
   const dock = within(dialog).getByRole("group", { name: "Agent avatars" });
-  const slot = within(dock).getAllByRole("button")[0]!;
+  const slot = within(dock).getAllByRole("button")[0];
+  if (!slot) throw new Error("The dock has an avatar");
   fireEvent.click(slot, { detail: 1 });
   expect(animations).toHaveLength(2);
+  const swapAnimations = [...animations];
   expect(slot.style.visibility).toBe("hidden");
   await user.click(within(dialog).getByRole("tab", { name: "Emoji" }));
   expect(
     within(dialog).getByRole("button", { name: "Choose emoji" }),
   ).toBeVisible();
-  for (const animation of animations)
+  for (const animation of swapAnimations)
     expect(animation.cancel).toHaveBeenCalledOnce();
   expect(slot.style.visibility).toBe("");
   expect(document.querySelector('body > img[aria-hidden="true"]')).toBeNull();

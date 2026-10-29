@@ -45,9 +45,9 @@ export function CanvasEditor({
     useCallback((notify) => subscribeView(scope, notify), [scope]),
     () => viewRevision(scope, key),
   );
-  // Only edits are stored. Once a stored draft disappears, another editor saved
-  // or discarded it; this editor reloads unless it retired the draft itself or
-  // holds text typed here.
+  // Only edits are stored. When a stored draft disappears, another editor
+  // saved, discarded or reverted it. Unless this editor removed it, it reloads,
+  // or only rereads the Canvas while it holds text typed here.
   const retiredDraft = useRef(true);
   const retire = useCallback(
     (expected: string | null | undefined) => {
@@ -201,7 +201,8 @@ export function CanvasEditor({
         setError(reason instanceof Error ? reason.message : String(reason));
       throw reason;
     } finally {
-      // The snapshot only covered the write; an absent key held no edits.
+      // The snapshot only covered the write. A restore can be dirty without
+      // edits, after Refresh history moved the head, so remove it either way.
       if (snapshot) retire(stored);
       if (generation === operation.current) setBusy(false);
     }
@@ -229,7 +230,9 @@ export function CanvasEditor({
       if (generation === operation.current)
         setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
-      if (snapshot) retire(stored);
+      // Save is enabled only on the loaded head, so a dirty snapshot holds text
+      // typed here. A failed write keeps it as the draft.
+      if (snapshot && !dirty) retire(stored);
       if (generation === operation.current) setBusy(false);
     }
   };

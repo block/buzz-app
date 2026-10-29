@@ -490,6 +490,33 @@ it("keeps another editor's typed text when an edit back to the Canvas removes th
   ).toBeEnabled();
 });
 
+it("keeps typed text stored when its save fails after another editor removed the draft", async () => {
+  const user = userEvent.setup();
+  const { second, editing, other } = await twoEditors();
+  const region = screen.getAllByRole("region", {
+    name: "Channel Canvas",
+  })[1] as HTMLElement;
+  fireEvent.change(other, { target: { value: "Mine" } });
+  fireEvent.change(editing, { target: { value: "Theirs" } });
+  fireEvent.change(editing, { target: { value: head.content } });
+  await waitFor(() => {
+    expect(second.read).toHaveBeenCalledTimes(2);
+    expect(region).toHaveAttribute("aria-busy", "false");
+  });
+  // No draft is stored, so the save writes a snapshot of the typed text.
+  expect(viewRevision(scope, `canvas-draft-v1:${channelId}`)).toBeNull();
+  second.save.mockRejectedValueOnce(new Error("Offline: draft kept"));
+  await user.click(within(region).getByRole("button", { name: "Save Canvas" }));
+  expect(await within(region).findByRole("alert")).toHaveTextContent(
+    "Offline: draft kept",
+  );
+  expect(other).toHaveValue("Mine");
+  expect(readView(scope, `canvas-draft-v1:${channelId}`, null)).toEqual({
+    content: "Mine",
+    base: head.id,
+  });
+});
+
 it("keeps another editor's typed text and blocks its Save after a save", async () => {
   const user = userEvent.setup();
   const { saved, second, editing, other } = await twoEditors();

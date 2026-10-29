@@ -6,9 +6,4 @@ export type AttentionValue = NonNullable<
 export type Agent = ReturnType<
   Context["agents"]["snapshot"]
 >["running"][number];
-type StoredWatch = Exclude<NonNullable<AttentionValue>, { type: "interest" }>;
-export type Watch =
-  | Exclude<StoredWatch, { type: "event" }>
-  | (Extract<StoredWatch, { type: "event" }> & {
-      keywords?: readonly string[];
-    });
+export type Watch = Exclude<NonNullable<AttentionValue>, { type: "interest" }>;

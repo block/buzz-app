@@ -560,8 +560,7 @@ export function createPage({
               ),
             ),
           watch.type === "event" &&
-            (watch.keywords?.length ||
-              technicalFilters ||
+            (technicalFilters ||
               watch.classifier ||
               watch.is_reply !== undefined) &&
             section(
@@ -569,12 +568,6 @@ export function createPage({
               h(
                 "div",
                 { className: "text-body-sm" },
-                watch.keywords?.length &&
-                  h(
-                    "p",
-                    null,
-                    `Message keywords (any): ${watch.keywords.join(", ")}`,
-                  ),
                 watch.is_reply !== undefined &&
                   h(
                     "p",

@@ -7516,6 +7516,47 @@ it("runs a spent timer again when its owner restarts it", async () => {
   expect(run).toHaveBeenCalledTimes(2);
 });
 
+it("turns a stored keyword watch off at startup, and retries its notice after a failed turn", async () => {
+  vi.useFakeTimers({ now: 1_000_000 });
+  const storage = memoryStorage();
+  const first = await setup({ storage, identities: [echo] });
+  await first.service.save(bot, { attentionEnabled: true });
+  // Saved by a build that still had keywords, then the app quits.
+  const key = `buzz.agent.v1:${bot}`;
+  const record = JSON.parse(storage.getItem(key) ?? "{}");
+  record.attention = {
+    ...record.attention,
+    "watch/w": {
+      slug: "watch/w",
+      value: {
+        type: "event",
+        interest_id: "default",
+        enabled: true,
+        since: 1,
+        channels: "all",
+        kinds: [9],
+        keywords: ["x"],
+      },
+      modifiedAt: 1,
+    },
+  };
+  storage.setItem(key, JSON.stringify(record));
+  const { service, run } = await setup({ storage, identities: [echo] });
+  expect(service.find(bot)?.attention["watch/w"]?.value).toMatchObject({
+    enabled: false,
+  });
+  expect(service.find(bot)?.attention["watch/fix-w"]?.value.type).toBe("timer");
+  run.mockRejectedValueOnce(new Error("harness failed to start"));
+  await vi.advanceTimersByTimeAsync(50_000);
+  expect(run).not.toHaveBeenCalled();
+  // The notice first runs a minute after startup, not an interval later.
+  await vi.advanceTimersByTimeAsync(15_000);
+  expect(run).toHaveBeenCalledTimes(1);
+  expect(service.find(bot)?.attention["watch/fix-w"]).toBeDefined();
+  await vi.advanceTimersByTimeAsync(3_600_000);
+  expect(run).toHaveBeenCalledTimes(2);
+});
+
 it("keeps an Interest while a watch still uses it", async () => {
   const { service } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });

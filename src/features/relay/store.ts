@@ -3111,6 +3111,11 @@ export function createChannelStore(
       } catch (error) {
         if (!valid())
           throw new DOMException("Stale live catch-up", "AbortError");
+        // A denied head has purged in requestHead; a page denied after it must too.
+        if (readErrorKind(error) === "denied") {
+          denyChannel(channelId, error);
+          throw error;
+        }
         // An interrupted fill would show its open hole as history until the
         // next catch-up closes it. Settle on the pages that landed; a cancelled
         // read's stream drop has already marked the window cached.

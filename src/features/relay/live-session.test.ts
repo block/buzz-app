@@ -656,6 +656,29 @@ it.each<
   },
 );
 
+it("a catch-up fill page denied after its head purges the channel as a denied head would", async () => {
+  // Settling on the pages read would keep the head just fetched on screen
+  // after the relay refused the reader.
+  const h = reconnectHarness();
+  try {
+    const seen = message(h.alice, "c", "seen", 10),
+      fresh = message(h.alice, "c", "fresh", 30);
+    await h.reconnect(seen);
+    h.read().respond(h.page("head", [fresh], fresh));
+    await flush();
+    expect(h.rows()).toEqual([seen.id, fresh.id]);
+    h.read().fail(new ReadError("denied", "restricted: not a member", 403));
+    await flush();
+    expect(h.rows()).toEqual([]);
+    expect(h.window().status).toBe("error");
+    expect(
+      h.owner.session.channels.list().channels.map((channel) => channel.id),
+    ).not.toContain("c");
+  } finally {
+    h.owner.dispose();
+  }
+});
+
 it("rows the re-established stream replays before catch-up are not overlap with the rows kept across the drop", async () => {
   // Replay covers the five minutes before reconnect, so the head always
   // overlaps it. The rows kept across the drop are what the fill must reach.

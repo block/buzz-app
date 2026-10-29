@@ -68,13 +68,13 @@ it.each([true, false])(
     const f = setup({
       snapshot: () => ({
         identities: loaded && managed ? [{ pubkey: "agent", managed }] : [],
-        pending: !loaded,
+        managedPending: !loaded,
       }),
       refresh,
     });
     render(<AgentMessageButton {...f} pubkey="agent" navigation={undefined} />);
     await user.click(screen.getByRole("button", { name: "Message" }));
-    await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
+    await waitFor(() => expect(refresh).toHaveBeenCalledExactlyOnceWith(false));
     expect(screen.queryByRole("alert")).toBeNull();
     expect(f.open).not.toHaveBeenCalled();
     await act(async () => finish());
@@ -87,6 +87,21 @@ it.each([true, false])(
     }
   },
 );
+it("does not wait for the agent library, which cannot control an agent", async () => {
+  const user = userEvent.setup();
+  const refresh = vi.fn(async () => {});
+  const f = setup({
+    snapshot: () => ({ identities: [], pending: true, managedPending: false }),
+    refresh,
+  });
+  render(<AgentMessageButton {...f} pubkey="agent" navigation={undefined} />);
+  await user.click(screen.getByRole("button", { name: "Message" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "This agent is not ready to message in this community.",
+  );
+  expect(refresh).not.toHaveBeenCalled();
+  expect(f.open).not.toHaveBeenCalled();
+});
 it("shows an opening error and allows retry", async () => {
   const user = userEvent.setup();
   const f = setup();

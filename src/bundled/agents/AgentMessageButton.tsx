@@ -64,7 +64,8 @@ export function AgentMessageButton({
     try {
       if (!controlled()) {
         // Agents still loading are not missing: wait for the list first.
-        if (agentChoices.snapshot().pending) await agentChoices.refresh();
+        if (agentChoices.snapshot().managedPending)
+          await agentChoices.refresh(false);
         if (!controlled())
           throw new Error(
             "This agent is not ready to message in this community.",

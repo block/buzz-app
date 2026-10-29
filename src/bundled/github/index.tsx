@@ -56,6 +56,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   ctx.panels.register({
     id: "object",
     title: "GitHub",
+    deferUntilShown: true,
     matches: (target) => !!parseGitHubReference(target),
     component: (props: PanelProps) => {
       const channelId = props.context?.channelId;

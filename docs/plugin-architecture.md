@@ -652,6 +652,12 @@ A tab a link opens is a transient detail: the next link or thread replaces it. A
 that sets `keepOpen: true` keeps each target it opens from links as its own tab until
 the viewer closes it, as a launcher's tab is kept.
 
+A panel may set `deferUntilShown: true` to mount tab content on its first selection
+in a workspace visit, then retain it for that visit. The default remains eager.
+Component-provided titles (`usePanelTabTitle`) and local detail tabs (`PanelLocalTab`)
+are also deferred; opt in when the contribution's static title is sufficient until
+selection.
+
 Channels keeps layout and channel/thread selection. The Terminal plugin binds its
 mounted launcher into the existing shortcut dispatcher, and owns sessions separately
 from drawer mounts. No global selected-channel store, extra shortcut listener or

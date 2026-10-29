@@ -23,6 +23,11 @@ tenant's runtimes and schema location. Creation checks that contract and support
 initialization. The executable profile returns the required asset manifest and
 bindings, even when its handler serves all content itself.
 
+Sharing follows the one-workspace model: `apps_visibility` switches an app
+between everyone in the owner's workspace and only the owner, and
+`apps_community` grants or revokes a Buzz community at the grant revision it just
+read. Both keep existing viewers and community grants.
+
 BBBlock is the employee pilot. BBPublic uses the same authenticated control-plane
 boundary: the server must grant Builderlab access to the current workspace/account.
 Existing workspace early-preview enablement can provide that access; these tools

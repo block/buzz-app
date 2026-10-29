@@ -1234,9 +1234,16 @@ export function SearchResults({
       open={open}
       // Enter before any row, or on the scope action alone, waits for a
       // channel or person row, or for the lookups to settle, rather than
-      // opening a message that lands first.
+      // opening a message that lands first. A cold joined list has not yet
+      // started the open-channel lookup.
       pending={
-        (directoryPending || operatorLookupPending || search.loading) &&
+        (directoryPending ||
+          operatorLookupPending ||
+          search.loading ||
+          (!scopedChannelId &&
+            !!query.trim() &&
+            list.status === "loading" &&
+            !list.channels.length)) &&
         !groups.some(
           (group) =>
             group.rank !== Infinity &&

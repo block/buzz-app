@@ -3504,6 +3504,71 @@ it("holds an early Enter while an in: channel is still being found", async () =>
   }
 });
 
+it("holds an early Enter while the joined list is still loading", async () => {
+  const relay = keypair(),
+    viewer = keypair();
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  const discovery = [
+    metadata(relay, "engineering", "engineering"),
+    roster(relay, "engineering", [viewer.pubkey]),
+  ];
+  const reads: Promise<unknown>[] = [];
+  let listRead!: () => void;
+  const listStarted = new Promise<void>((resolve) => (listRead = resolve));
+  let releaseList!: () => void;
+  const listHeld = new Promise<void>((release) => (releaseList = release));
+  const owner = createRelaySession({
+    ...wire.transport,
+    async query(filters) {
+      if (filters.some((filter) => filter.kinds?.includes(39002))) {
+        listRead();
+        await listHeld;
+      }
+      const read = Promise.resolve(
+        discovery.filter((event) =>
+          filters.some((filter) => matchFilter(filter as Filter, event)),
+        ),
+      );
+      reads.push(read);
+      return read;
+    },
+  });
+  const openConversation = vi.fn();
+  try {
+    render(
+      <SearchResults
+        session={owner.session}
+        query="eng"
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        openConversation={openConversation}
+      />,
+    );
+    await listStarted;
+    fireEvent.keyDown(screen.getByRole("combobox", { name: "Search Buzz" }), {
+      key: "Enter",
+    });
+    // Message search and the people lookup settle empty before the list.
+    expect(
+      await screen.findByText(
+        "No matching messages in accessible conversations.",
+      ),
+    ).toBeVisible();
+    await act(async () => {
+      await Promise.all(reads);
+    });
+    expect(screen.getByText("Loading joined conversations…")).toBeVisible();
+    await act(async () => releaseList());
+    await waitFor(() =>
+      expect(openConversation).toHaveBeenCalledExactlyOnceWith("engineering"),
+    );
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
 it("matches an in: operator against the rendered DM participant label", async () => {
   const relay = keypair(),
     viewer = keypair(),

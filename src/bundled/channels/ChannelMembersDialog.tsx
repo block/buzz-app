@@ -927,7 +927,11 @@ export function ChannelMembersDialog({
     !initialLoading &&
     canAdd &&
     roleFilter === "All" &&
-    (!!text || (!solo && available.length > 0));
+    (!!text ||
+      (!solo &&
+        members.size === 1 &&
+        members.has(session.viewer ?? "") &&
+        available.length > 0));
   const invitationGroups = [
     "Your agents",
     "People",

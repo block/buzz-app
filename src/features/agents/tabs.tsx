@@ -18,8 +18,9 @@ import { AgentSaveButton, useAgentSaveState } from "./AgentSaveButton";
 import { AgentConfigHistory } from "./AgentConfigHistory";
 
 export type AgentSection = Readonly<{
-  /** `agent:<type tab id>`, `agent:settings`, `agent:activity`
-   * or `agent:memory`; never collides with a host tab. */
+  /** `agent:<type tab id>`, `agent:settings`, `agent:activity`,
+   * `agent:added:<plugin>/<tab id>` or `agent:memory`; never collides with a
+   * host tab. */
   value: `agent:${string}`;
   label: string;
   render(): ReactNode;
@@ -110,6 +111,13 @@ export function agentSections({
         </>
       ),
     });
+  if (agent.place === "here")
+    for (const { key, title, component: Component } of agents.addedTabs())
+      tabs.push({
+        value: `agent:added:${key}`,
+        label: title,
+        render: () => <Component agent={agent} />,
+      });
   if (agent.place === "here" && agents.configHistory(agent.pubkey))
     tabs.push({
       value: "agent:history",

@@ -1,4 +1,4 @@
-// The device-local runtime control. Agent Attention owns Interests and watches.
+// The device-local runtime control. The Agent Attention UI plugin owns Interests and watches.
 import { useState } from "react";
 import {
   AgentCommunityScope,
@@ -133,9 +133,6 @@ export function AttentionPanel({
           }
         />
       </SettingsGroup>
-      <p className="m-0 text-body-sm text-secondary">
-        Manage Interests and watches in Agent Attention.
-      </p>
     </div>
   );
 }

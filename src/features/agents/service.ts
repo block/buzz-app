@@ -293,6 +293,15 @@ export type AgentTab<Config = unknown> = Readonly<{
   splitSettings?: boolean;
   component: ComponentType<AgentViewProps<Config>>;
 }>;
+/** A tab a plugin adds to the settings of every agent running on this device,
+ * whatever its type. It reads the agent and saves through the plugin's own
+ * `agents`. */
+export type AgentAddedTab = Readonly<{
+  id: string;
+  title: string;
+  component: ComponentType<{ agent: Agent }>;
+}>;
+export type RegisteredAgentAddedTab = Contribution<AgentAddedTab>;
 /** One of an agent's conversation sessions on this device. Without `root` it
  * is the channel's one session: a channel-scoped agent's, a DM's or a Solo
  * chat's; with it, the thread's. `at` is when it last took in a message
@@ -981,6 +990,11 @@ export type Agents = {
   }>[];
   register<Config>(type: AgentType<Config>): void;
   types(): readonly RegisteredAgentType[];
+  /** Adds a tab to the settings of every agent running on this device,
+   * whatever its type, after Activity. It shows while the plugin is on. */
+  registerTab(tab: AgentAddedTab): void;
+  /** The tabs active plugins add now. */
+  addedTabs(): readonly RegisteredAgentAddedTab[];
   /** Adds a tool to every agent session in the app, beside the Buzz tools.
    * The tool acts as the agent, like the rest of a trusted plugin's code
    * acts as its owner. A session lists
@@ -1432,6 +1446,7 @@ export class AgentsService extends Service implements Agents {
     );
   }
   private readonly contributions;
+  private readonly tabContributions;
   private readonly addedTools;
   /** Every added tool's name, its plugin active or still starting. */
   private readonly toolNames = new Set<string>();
@@ -1543,6 +1558,7 @@ export class AgentsService extends Service implements Agents {
     super(ctx, "agents");
     this.contributions = createContributions<AgentType>(ctx);
     this.hookContributions = createAgentHooks(ctx);
+    this.tabContributions = createContributions<AgentAddedTab>(ctx);
     this.addedTools = createContributions<AddedTool & { id: string }>(ctx);
     this.attentionSources = createContributions<AttentionProducer>(ctx);
     // Each changes the copy at once and logs a failed save itself.
@@ -1816,6 +1832,11 @@ export class AgentsService extends Service implements Agents {
           this.update();
           this.notify();
         }),
+        // A new state object, so views reading `addedTabs()` render again.
+        this.tabContributions.subscribe(() => {
+          this.state = Object.freeze({ ...this.state });
+          this.notify();
+        }),
         communities.subscribe(() => {
           const { viewer } = communities.snapshot();
           const kept = this.requests.filter(
@@ -1904,6 +1925,16 @@ export class AgentsService extends Service implements Agents {
     this.contributions.register(this.ctx, type as unknown as AgentType);
   }
   types = () => this.contributions.snapshot();
+  registerTab(tab: AgentAddedTab) {
+    if (
+      !/^[a-z0-9][a-z0-9._-]*$/.test(tab.id ?? "") ||
+      !tab.title ||
+      typeof tab.component !== "function"
+    )
+      throw new Error("Agent tabs need an id, a title and a component");
+    this.tabContributions.register(this.ctx, tab);
+  }
+  addedTabs = () => this.tabContributions.snapshot();
   addTool(tool: AddedTool) {
     if (
       !/^[a-z][a-z0-9_]{0,63}$/.test(tool.name ?? "") ||

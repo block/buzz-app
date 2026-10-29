@@ -11,7 +11,7 @@ fn builderlab_origin(local: &Path, process: Option<String>) -> Result<String, &'
     let raw = values
         .get(BUILDERLAB_URL_KEY)
         .map(String::as_str)
-        .unwrap_or("");
+        .unwrap_or("https://app.builderlab.xyz");
     if raw.is_empty() {
         return Ok(String::new());
     }
@@ -144,18 +144,40 @@ mod tests {
     }
 
     #[test]
+    fn defaults_to_production_unless_explicitly_disabled() {
+        let directory = tempfile::tempdir().unwrap();
+        let local = directory.path().join(".env.local");
+        assert_eq!(
+            builderlab_origin(&local, None).unwrap(),
+            "https://app.builderlab.xyz"
+        );
+        assert_eq!(
+            builderlab_apps_domain(&local, &builderlab_origin(&local, None).unwrap(), None)
+                .unwrap(),
+            "apps.builderlab.xyz"
+        );
+        assert_eq!(builderlab_origin(&local, Some(String::new())).unwrap(), "");
+        std::fs::write(&local, "BUZZ_BUILDERLAB_URL=\n").unwrap();
+        assert_eq!(builderlab_origin(&local, None).unwrap(), "");
+        assert_eq!(
+            builderlab_apps_domain(&local, &builderlab_origin(&local, None).unwrap(), None)
+                .unwrap(),
+            ""
+        );
+    }
+
+    #[test]
     fn local_url_and_process_overrides_produce_an_exact_origin() {
         let directory = tempfile::tempdir().unwrap();
         let local = directory.path().join(".env.local");
-        assert_eq!(builderlab_origin(&local, None).unwrap(), "");
         std::fs::write(
             &local,
-            "\u{feff}export BUZZ_BUILDERLAB_URL=\"https://APP.BUILDERLAB.XYZ:443/deployment/\" # comment\n",
+            "\u{feff}export BUZZ_BUILDERLAB_URL=\"https://OVERRIDE.EXAMPLE:443/deployment/\" # comment\n",
         )
         .unwrap();
         assert_eq!(
             builderlab_origin(&local, None).unwrap(),
-            "https://app.builderlab.xyz"
+            "https://override.example"
         );
         assert_eq!(
             builderlab_origin(&local, Some("https://login.example:8443/path/".into())).unwrap(),
@@ -192,19 +214,22 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let local = directory.path().join(".env.local");
         std::fs::write(&local, "PRIVATE_VALUE='unterminated").unwrap();
-        assert_eq!(builderlab_origin(&local, None).unwrap(), "");
+        assert_eq!(
+            builderlab_origin(&local, None).unwrap(),
+            "https://app.builderlab.xyz"
+        );
 
         for quote in ["'", "\"", "`"] {
             std::fs::write(
                 &local,
                 format!(
-                    "PRIVATE_VALUE={quote}multiline\nBUZZ_BUILDERLAB_URL=https://hidden.example\n{quote}\nINVALID=unquoted value\nexport BUZZ_BUILDERLAB_URL=https://app.builderlab.xyz/\nTRAILING='unfinished\n"
+                    "PRIVATE_VALUE={quote}multiline\nBUZZ_BUILDERLAB_URL=https://hidden.example\n{quote}\nINVALID=unquoted value\nexport BUZZ_BUILDERLAB_URL=https://after-multiline.example/\nTRAILING='unfinished\n"
                 ),
             )
             .unwrap();
             assert_eq!(
                 builderlab_origin(&local, None).unwrap(),
-                "https://app.builderlab.xyz"
+                "https://after-multiline.example"
             );
         }
         for quote in ["'", "\""] {
@@ -215,7 +240,10 @@ mod tests {
                 ),
             )
             .unwrap();
-            assert_eq!(builderlab_origin(&local, None).unwrap(), "");
+            assert_eq!(
+                builderlab_origin(&local, None).unwrap(),
+                "https://app.builderlab.xyz"
+            );
         }
     }
 }

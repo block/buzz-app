@@ -386,6 +386,8 @@ function setup(
     registerHook: vi.fn(),
     dispatchHook: vi.fn(async () => undefined),
     configHistory: () => undefined,
+    addedTabs: () => [],
+    registerTab: () => {},
   } satisfies Agents;
   const disconnected = { status: "disconnected", generation: 0 };
   const relay = {
@@ -2502,6 +2504,27 @@ it("offers New team again when the team being edited disappears", async () => {
   await act(() => agents.removeTeam("gone"));
   expect(screen.getByRole("button", { name: "Crew" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "New team" })).toBeInTheDocument();
+});
+
+it("explains an unavailable harness without claiming the key is on another device", async () => {
+  const user = userEvent.setup();
+  setup([
+    {
+      ...agent("Starf", 3),
+      type: "block.builderlab/builderlab",
+      place: "elsewhere",
+    },
+  ]);
+  const grid = screen.getByRole("grid", { name: "Agents" });
+  expect(within(grid).getByText("Harness unavailable")).toBeInTheDocument();
+  expect(screen.queryByText("On another device")).not.toBeInTheDocument();
+
+  await user.click(within(grid).getByText("Starf"));
+  expect(screen.getByText(/Check Settings → Plugins/)).toBeInTheDocument();
+  expect(screen.queryByText(/another of your devices/)).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Delete agent" }),
+  ).not.toBeInTheDocument();
 });
 
 it("shows an agent on another device read-only, and offers only Finish setup and Delete for an unfinished hosted one", async () => {

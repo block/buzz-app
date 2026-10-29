@@ -1,14 +1,14 @@
 # Deployment configuration: current-feature parity
 
 Buzz Foundation supports configuration for capabilities that exist here, not a
-port of every OG Buzz feature. Keep deployment values in local/CI configuration,
-not in source. Build defaults are readable binary data, **never secret storage**.
+port of every OG Buzz feature. Keep deployment overrides in local/CI configuration.
+Build defaults are readable binary data, **never secret storage**.
 
 ## Supported inputs and surfaces
 
 | Input | Consumer and boundary |
 | --- | --- |
-| `BUZZ_BUILDERLAB_URL` | Shared frontend/native build: public login URL and the bundled plugin's exact HTTPS host grant; no runtime override. |
+| `BUZZ_BUILDERLAB_URL` | Shared frontend/native build: public login URL and the bundled plugin's native grants; no runtime override. |
 | `BUZZ_BUILDERLAB_APPS_DOMAIN` | Shared frontend/native build: exact Apps cookie domain paired with the login origin for native viewer SSO; no runtime override. |
 | `BUZZ_DEFAULT_COMMUNITY_URL` | Packaged frontend build: secure relay origin to select once, after identity setup, only when this viewer has no saved community record. Saved choices, including Personal space, always win. Unset in OSS builds. |
 | `BUZZ_DATABRICKS_HOST` | Frontend build and dev server: `https://` Databricks workspace URL passed as `DATABRICKS_HOST` to every bundled `goose-acp`, which then prefers it to the host in goose's config. Unset in OSS builds. See [Databricks host](#databricks-host). |
@@ -68,8 +68,10 @@ builds.
 
 ## Builderlab URL build input
 
-Set `BUZZ_BUILDERLAB_URL` in repository-root `.env.local` for development, or in
-the process running `bin/pnpm build` / `bin/pnpm tauri build` for packaging:
+Development and packaged builds default to `https://app.builderlab.xyz`, matching
+the desktop release workflow. To use another deployment, set `BUZZ_BUILDERLAB_URL`
+in repository-root `.env.local` for development, or in the process running
+`bin/pnpm build` / `bin/pnpm tauri build` for packaging:
 
 ```sh
 BUZZ_BUILDERLAB_URL=https://app.builderlab.xyz bin/pnpm tauri build
@@ -80,14 +82,23 @@ repository-root `.env.local` and process values using the native dotenv pattern.
 For desktop, supply the full URL in `.env.local` or the build process environment
 so both stages receive it. Vite's additional `.env` and mode-specific files do
 not configure native grants. Process values take precedence, including an
-explicit empty value. When unset or empty, login is unconfigured and no network
-origin is granted. Local builds have no deployment default. The desktop release
-workflow supplies the production URL by default; see [release configuration](releases.md#builderlab-url).
+explicit empty value. Set `BUZZ_BUILDERLAB_URL=` to leave login unconfigured and
+clear the bundled plugin's native grants. The desktop release workflow supplies the
+production URL by default; see [release configuration](releases.md#builderlab-url).
 
 Any HTTPS host is supported, including an explicit port or deployment path. URL
 credentials, query parameters and fragments are rejected by the native build.
 The desktop's native plugin catalog supplies the effective manifest, granting
-only the configured URL's exact origin. Never put credentials in this input.
+the configured URL's exact origin. For recognized Builderlab deployments, its
+existing Apps policy also grants file access and the mapped control-plane origin
+(`https://compose-ctrl.builderlab.xyz` for production). Never put credentials in
+this input.
+
+The build origin also controls whether a Builderlab session can be reused by
+identity backup when its separately configured service URL has the same origin.
+Backup still requires its own service URL, namespace and user choice. The existing
+identity-binding validator accepts production Builderlab or the configured origin;
+production binding was already allowed before this default.
 
 The bundled Builderlab login consumes this public URL and appends `/api/goose`.
 

@@ -441,9 +441,9 @@ export function SelectExamples() {
           groups={workspaceGroups}
         />
         <Select
-          label="Unframed row choice"
+          label="Text link choice"
           variant="compact"
-          appearance="ghost"
+          appearance="link"
           value={inline}
           onValueChange={setInline}
           groups={workspaceGroups}

@@ -2994,10 +2994,14 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   color: var(--text-standard);
   /* Neutral inset surfaces keep their own link palette inside colored bubbles. */
   --message-link: var(--text-link);
-  /* Neutral insets drop own-bubble mention pairing back to the shared role. */
+  /* Neutral insets drop own-bubble mention and state icon pairing back to the
+     shared roles. */
   --mention-fill: initial;
   --mention-hover: initial;
   --mention-text: initial;
+  --message-icon-subtle: initial;
+  --message-icon-success: initial;
+  --message-icon-categorical-purple: initial;
 }
 .messageContent {
   position: relative;
@@ -3038,6 +3042,10 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   --mention-fill: var(--affordance-mention-own);
   --mention-hover: var(--affordance-mention-own-hover);
   --mention-text: var(--text-mention-own);
+  /* State icons inside the bubble take their -own pair: the link ink at Buzzin’. */
+  --message-icon-subtle: var(--icon-subtle-own);
+  --message-icon-success: var(--icon-success-own);
+  --message-icon-categorical-purple: var(--icon-categorical-purple-own);
 }
 /* Neutral content and unboxed renderers keep selection paired with their surface. */
 .messageBubble[data-emoji-only],
@@ -3073,10 +3081,14 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   background: var(--surface-panel);
   color: var(--text-standard);
   --message-link: var(--text-link);
-  /* Neutral insets drop own-bubble mention pairing back to the shared role. */
+  /* Neutral insets drop own-bubble mention and state icon pairing back to the
+     shared roles. */
   --mention-fill: initial;
   --mention-hover: initial;
   --mention-text: initial;
+  --message-icon-subtle: initial;
+  --message-icon-success: initial;
+  --message-icon-categorical-purple: initial;
 }
 
 .threadAvatar:nth-child(1) {

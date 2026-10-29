@@ -383,4 +383,48 @@ describe("semantic contrast contract", () => {
       expect(result.output).toContain(`on --affordance-${role}`);
     },
   );
+
+  // Green-10 still clears the page surfaces and falls short only on the light
+  // tinted own bubbles, through the -own pair. Purple-10 passes the whole
+  // guard (3.01–3.22:1 on the dark bubbles), so purple-9 is the first step it
+  // can see; purple-9 also fails the dark popover, but the pinned pairing is
+  // the dark received bubble. At Buzzin’ the own bubble is solid accent-9,
+  // which the base role never clears: pointing the -own pair back at it fails
+  // the own-bubble pairing on the high level. Subtle grey falls short of that
+  // fill on most families in both modes (1.04–2.98:1); the dark pairing from
+  // the report, 1.07:1 on citrus, is the one pinned here.
+  it.each([
+    [
+      "success",
+      "--icon-success: var(--green-11);",
+      "--icon-success: var(--green-10);",
+      "--icon-success-own on --surface-message-own",
+    ],
+    [
+      "categorical purple",
+      "--icon-categorical-purple: var(--purple-11);",
+      "--icon-categorical-purple: var(--purple-9);",
+      "--icon-categorical-purple on --surface-message",
+    ],
+    [
+      "high-level own success",
+      "--icon-success-own: var(--text-message-link-own);",
+      "--icon-success-own: var(--icon-success);",
+      "/high/light: --icon-success-own on --surface-message-own",
+    ],
+    [
+      "high-level own subtle",
+      "--icon-subtle-own: var(--text-message-link-own);",
+      "--icon-subtle-own: var(--icon-subtle);",
+      "/high/dark: --icon-subtle-own on --surface-message-own",
+    ],
+  ])(
+    "checks the %s state icon against the message bubbles, not only the page",
+    (_name, from, to, pairing) => {
+      expect(tokens).toContain(from);
+      const result = check(tokens.replaceAll(from, to));
+      expect(result.status, result.output).toBe(1);
+      expect(result.output).toContain(pairing);
+    },
+  );
 });

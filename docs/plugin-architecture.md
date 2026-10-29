@@ -1414,7 +1414,14 @@ does not fetch metadata or infer a service from names in paths or query strings.
 Its `order` is a function: recognised services and Buzz entities claim the default
 band, the globe case the catch-all band, so a renderer dedicated to one website
 wins it at the default.
-It does not fetch titles. Messages currently recognize
+It does not fetch titles. The bundled GitHub plugin contributes a pull request
+renderer at a lower `order` for github.com pull request URLs: the same label
+with the pull request's state (open, draft, merged, closed) as a coloured icon,
+read with the person's `gh` sign-in or the public API and kept current while
+shown. Repositories, issues and commits, and every pull request link when that
+plugin is disabled, keep the Links presentation. If the renderer fails, a pull
+request link shows as a plain link.
+Messages currently recognize
 credential-free HTTP(S) and supported Buzz links. Markdown labels preserve their
 formatting, escaped pasted wrappers are normalized outside code, and paired `<…>`
 autolink wrappers are hidden in display. Buzz links use known channel names with corresponding icons, falling back
@@ -1429,7 +1436,11 @@ link to the same destination, routed through the same host navigation handler. O
 session's bounded thread reader; closing disposes it. The reader supplies verified
 message content, author and timestamp and preserves edit/deletion/access handling.
 Previewing never acknowledges reading or switches community. The host offers a
-resolved label to the bundled presentation via `LinkLabelContext`; no author API
+resolved label to the bundled presentation via `LinkLabelContext`, and whether
+the link is live or a composer decoration or preview via `LinkInteractiveContext`,
+so a renderer reads nothing for a draft. A renderer that shows a status, such as
+a pull request's state, describes the host anchor via `LinkDescriptionContext`,
+so the link keeps its label or URL as its name; no author API
 contract or relay protocol changes are required. Known channel references and
 unambiguous signed person/agent mentions share the inline hover styling. Names in
 ordinary prose never create notification intent or establish an identity.

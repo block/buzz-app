@@ -303,7 +303,7 @@
   }
   .buzz-select[data-appearance="link"] .buzz-button {
     @apply text-body-sm;
-    align-items: flex-start;
+    align-items: flex-end;
     min-height: var(--space-6);
     padding: 0;
   }

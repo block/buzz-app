@@ -80,7 +80,7 @@ export function ChannelGeneralAccess({
               <LockIcon size={24} />
             )}
           </span>
-          <div className="min-w-0 space-y-1">
+          <div className="min-w-0">
             <p className="text-body-sm">
               {channel.visibility === "public"
                 ? "Anyone in the community can read."

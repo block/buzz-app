@@ -21,6 +21,8 @@ export type OpenTarget =
       version: 1;
       kind: "settings";
       section?: string;
+      /** Nested provider controls within Agent setup; presentation only. */
+      provider?: string;
       scope?: NavigationScope | null;
       pluginImport?: GitPluginSource;
     }>
@@ -43,12 +45,15 @@ export type OpenTarget =
       threadRootId?: string;
       /** Presentation within this conversation; never mutation or confirmation state. */
       panel?: "members";
+      /** Read-only content selected beside this conversation; never an action. */
+      detail?: Readonly<{ target: string; rootId?: string }>;
     }>;
 
 const MAX_BYTES = 8192;
 const token = /^[a-z0-9][a-z0-9._-]{0,127}$/;
 // Built-in section, or a grouped plugin card's contribution key (`plugin/card`).
 const section = /^[a-z0-9][a-z0-9._-]{0,127}(?:\/[a-z0-9][a-z0-9._-]{0,127})?$/;
+const provider = /^[a-z0-9][a-z0-9._-]{0,127}\/[a-z0-9][a-z0-9._-]{0,127}$/;
 const hex = /^[a-f0-9]{64}$/i;
 const invalid = () => new Error("Invalid or unsupported navigation target");
 function record(value: unknown): Record<string, unknown> {
@@ -163,7 +168,16 @@ export function parseOpenTarget(input: unknown): OpenTarget {
         target = { version: 1, kind: "home" };
         break;
       case "settings":
-        fields(value, ["version", "kind", "section", "scope", "pluginImport"]);
+        fields(value, [
+          "version",
+          "kind",
+          "section",
+          "provider",
+          "scope",
+          "pluginImport",
+        ]);
+        if (value.provider !== undefined && value.section !== "agents")
+          throw invalid();
         if (value.pluginImport !== undefined && value.section !== "plugins")
           throw invalid();
         target = {
@@ -171,6 +185,9 @@ export function parseOpenTarget(input: unknown): OpenTarget {
           kind: "settings",
           ...(value.section !== undefined
             ? { section: text(value.section, section) }
+            : {}),
+          ...(value.provider !== undefined
+            ? { provider: text(value.provider, provider) }
             : {}),
           ...(value.scope !== undefined
             ? { scope: value.scope === null ? null : boundScope(value.scope) }
@@ -212,7 +229,7 @@ export function parseOpenTarget(input: unknown): OpenTarget {
         };
         break;
       }
-      case "conversation":
+      case "conversation": {
         fields(value, [
           "version",
           "kind",
@@ -221,6 +238,7 @@ export function parseOpenTarget(input: unknown): OpenTarget {
           "messageId",
           "threadRootId",
           "panel",
+          "detail",
         ]);
         if (value.threadRootId !== undefined && value.messageId === undefined)
           throw invalid();
@@ -231,6 +249,17 @@ export function parseOpenTarget(input: unknown): OpenTarget {
           value.panel !== "shared-sessions"
         )
           throw invalid();
+        let detail: { target: string; rootId?: string } | undefined;
+        if (value.detail !== undefined) {
+          const input = record(value.detail);
+          fields(input, ["target", "rootId"]);
+          detail = Object.freeze({
+            target: text(input.target, /^[!-~]{1,4096}$/),
+            ...(input.rootId !== undefined
+              ? { rootId: text(input.rootId, hex).toLowerCase() }
+              : {}),
+          });
+        }
         target = {
           version: 1,
           kind: "conversation",
@@ -246,8 +275,10 @@ export function parseOpenTarget(input: unknown): OpenTarget {
             ? { threadRootId: text(value.threadRootId, hex).toLowerCase() }
             : {}),
           ...(value.panel === "members" ? { panel: value.panel } : {}),
+          ...(detail ? { detail } : {}),
         };
         break;
+      }
       default:
         throw invalid();
     }

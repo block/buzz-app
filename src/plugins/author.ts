@@ -112,6 +112,7 @@ export type { VoiceRecording } from "../features/relay/voice-media";
 
 export type {
   Agents,
+  AgentAddedTab,
   AgentType,
   AgentSession,
   AgentSessions,
@@ -126,6 +127,9 @@ export type {
   SoloChatInput,
   SoloRegionHandle,
   SoloRegionProps,
-  SoloDestinationProps,
+  SoloConversationProps,
+  SoloConversation,
+  SoloConversationLinkProps,
+  SoloCardProps,
   SoloDisclosureProps,
 } from "../features/channel-navigation/solo-navigation-contract";

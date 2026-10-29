@@ -28,7 +28,7 @@ export function CommunityLanding({
   const [error, setError] = useState("");
   const [joining, setJoining] = useState<InviteLink>();
   const hostedAvailable = useSyncExternalStore(settingsCards.subscribe, () =>
-    settingsCards.has("block.hosted-communities/hosted"),
+    settingsCards.has("block.builderlab/login"),
   );
   const opened = invite ?? joining;
   return (

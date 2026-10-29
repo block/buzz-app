@@ -13,6 +13,8 @@ export type MentionDraft = {
   text: string;
   /** Chat links staged above the editor; serialized with the caption. */
   chatCards?: readonly string[];
+  /** GIF image Markdown staged in the attachment row; sent after the caption. */
+  gifs?: readonly string[];
   recipients: readonly DraftRecipient[];
   document?: ComposerSnapshot;
 };
@@ -22,6 +24,15 @@ export type MentionDraft = {
 // name suffix, as it does on the timeline.
 export const mentionBoundary = (text: string, end: number) =>
   end === text.length || /[\s.,!?;:()[\]{}*~`]/u.test(text[end] ?? "");
+export const MAX_DRAFT_GIFS = 10;
+/** The lone image Markdown a staged GIF keeps, as the picker writes it. */
+export function stageableGif(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length <= 2048 &&
+    /^!\[[^\]]*\]\([^()\s]+\)$/.test(value)
+  );
+}
 /** Old text-only drafts remain text-only: restoring prose never creates notifications. */
 export function mentionDraft(value: unknown): MentionDraft {
   if (typeof value === "string") return { text: value, recipients: [] };
@@ -63,19 +74,28 @@ export function mentionDraft(value: unknown): MentionDraft {
             .slice(0, 32),
         }
       : {}),
+    ...(Array.isArray(record.gifs) && record.gifs.length
+      ? {
+          gifs: [...new Set(record.gifs.filter(stageableGif))].slice(
+            0,
+            MAX_DRAFT_GIFS,
+          ),
+        }
+      : {}),
     ...(doc ? { document: document as ComposerSnapshot } : {}),
     recipients: safe
       .slice(0, 32)
       .map(({ pubkey, name, start, end }) => ({ pubkey, name, start, end })),
   };
 }
-/** What counts as a draft everywhere: text, an attached chat, or `files`.
+/** What counts as a draft everywhere: text, an attached chat or GIF, or `files`.
  * A typed tag is text the person put there; the composer no longer saves
  * tags of its own, and the ones earlier releases saved are not content. */
 export function hasDraftContent(value: MentionDraft, files = 0): boolean {
   return (
     files > 0 ||
     !!value.chatCards?.length ||
+    !!value.gifs?.length ||
     (!!value.text.trim() && !legacyFollowupDraft(value))
   );
 }
@@ -86,9 +106,10 @@ export function legacyFollowupDraft(value: MentionDraft): boolean {
   return !value.document && addressingOnly(value);
 }
 /** Selected recipients and nothing else: no prose outside their spans and no
- * attached chat. */
+ * attached chat or GIF. */
 export function addressingOnly(value: MentionDraft): boolean {
-  if (!value.recipients.length || value.chatCards?.length) return false;
+  if (!value.recipients.length || value.chatCards?.length || value.gifs?.length)
+    return false;
   let rest = value.text;
   for (const { start, end } of [...value.recipients].sort(
     (a, b) => b.start - a.start,

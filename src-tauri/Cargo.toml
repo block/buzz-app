@@ -28,7 +28,9 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "aws_
 webpki-roots = "1"
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 
-tauri = { version = "=2.12.4", features = ["unstable"] }
+# Not "unstable": it builds the main webview as a child, and Wry then sends
+# Cmd shortcuts straight to the menu, so the page never sees Cmd+Z (tauri#9426).
+tauri = { version = "=2.12.4", features = [] }
 wry = { version = "=0.57.0", default-features = false, features = ["os-webview"] }
 buzzodz-plugins = { path = "../crates/plugin-manager" }
 buzz-credential-store = { path = "../crates/credential-store" }
@@ -94,7 +96,7 @@ objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["NSS
 objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSObject", "NSThread", "NSBundle", "NSString", "NSError", "NSUserDefaults", "NSProcessInfo"] }
 objc2-user-notifications = { version = "=0.3.2", default-features = false, features = ["UNUserNotificationCenter", "UNNotificationSettings", "UNNotification", "UNNotificationContent", "UNNotificationRequest", "UNNotificationResponse", "UNNotificationTrigger", "block2"] }
 
-objc2-web-kit = { version = "=0.3.2", default-features = false, features = ["std", "objc2-app-kit", "block2", "WKWebView", "WKUIDelegate", "WKFrameInfo", "WKSecurityOrigin"] }
+objc2-web-kit = { version = "=0.3.2", default-features = false, features = ["std", "objc2-app-kit", "block2", "WKWebView", "WKUIDelegate", "WKFrameInfo", "WKSecurityOrigin", "WKWebViewConfiguration", "WKWebsiteDataStore", "WKHTTPCookieStore"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 webview2-com = "=0.39.1"

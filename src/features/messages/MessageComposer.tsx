@@ -1,4 +1,8 @@
 import { useChatLinkSharing } from "./useChatLinkSharing";
+import {
+  draftGif,
+  useGifDraftPreview,
+} from "../../bundled/emoji/GifDraftPreview";
 import { accentButtonStyle } from "../../shared/theme/accent";
 import { stageChatCards } from "./composer-chat-cards";
 import { chatCardIds } from "./chat-cards";
@@ -94,7 +98,9 @@ import { messageViewKey } from "./view-key";
 import { isEmojiOnly, usesLargeEmojiPresentation } from "./emoji-size";
 import {
   legacyFollowupDraft,
+  MAX_DRAFT_GIFS,
   mentionDraft,
+  stageableGif,
   type MentionDraft,
   type MentionRecipient,
 } from "./mention-draft";
@@ -350,9 +356,14 @@ function PersonalComposer(props: MessageComposerProps) {
   );
 }
 
-/** No text, mention or chat card: nothing the user has put in yet. */
+/** No text, mention, chat card or GIF: nothing the user has put in yet. */
 function untouchedDraft(draft: MentionDraft) {
-  return !draft.text && !draft.recipients.length && !draft.chatCards?.length;
+  return (
+    !draft.text &&
+    !draft.recipients.length &&
+    !draft.chatCards?.length &&
+    !draft.gifs?.length
+  );
 }
 
 function sameAttachmentSelection(
@@ -538,9 +549,10 @@ function Composer({
     initial.automatic ? JSON.stringify(initial.value) : undefined,
   );
   const chatCards = value.chatCards;
+  const gifs = value.gifs;
   const editorDraft = useMemo(() => {
-    if (!value.chatCards) return value;
-    const { chatCards: _cards, ...caption } = value;
+    if (!value.chatCards && !value.gifs) return value;
+    const { chatCards: _cards, gifs: _gifs, ...caption } = value;
     return caption;
   }, [value]);
   const draft = value.text;
@@ -746,7 +758,7 @@ function Composer({
   const [activeFormats, setActiveFormats] = useState<readonly ComposerFormat[]>(
     [],
   );
-  const saveDraft = (next: MentionDraft) => {
+  const saveDraft = (next: MentionDraft, save = true) => {
     next = stageChatCards(
       {
         ...next,
@@ -755,13 +767,16 @@ function Composer({
               chatCards: next.chatCards ?? valueRef.current.chatCards ?? [],
             }
           : {}),
+        ...((next.gifs ?? valueRef.current.gifs)
+          ? { gifs: next.gifs ?? valueRef.current.gifs ?? [] }
+          : {}),
       },
       list.channels,
     );
     if (JSON.stringify(next) === JSON.stringify(valueRef.current)) return false;
     valueRef.current = next;
     updateDraft(next);
-    if (!editing.target) {
+    if (save && !editing.target) {
       if (submission) writeView(scope, draftKey, next);
       else {
         dirty.current = true;
@@ -833,6 +848,7 @@ function Composer({
     ? "Edit message"
     : (customLabel ??
       (threadRootId ? "Reply to thread" : `Message #${channelName}`));
+  const gifPreview = useGifDraftPreview(extensions?.tools);
   const attachments = useAttachmentDraft(
     session,
     `${scope}:${draftKey}`,
@@ -1128,18 +1144,7 @@ function Composer({
     terminator?: ":",
     focus = true,
   ) {
-    if (
-      !permitted.current ||
-      editingDisabled ||
-      !outbox?.supports(9) ||
-      !input.current?.isConnected ||
-      // DOM props are committed before child layout effects; closures can still
-      // carry the preceding render's enabled state during that interval.
-      input.current.disabled ||
-      input.current.readOnly ||
-      typeof text !== "string"
-    )
-      return false;
+    if (!writable() || !input.current || typeof text !== "string") return false;
     // Edits replace prose; they do not change the original notification recipients.
     if (editing.target && recipient) {
       text = editMentionText(recipient);
@@ -1162,6 +1167,47 @@ function Composer({
     }
     if (recipient) rememberMention(session, channelId, recipient.pubkey);
     setError(undefined);
+    return true;
+  }
+  function writable() {
+    return (
+      permitted.current &&
+      !editingDisabled &&
+      !!outbox?.supports(9) &&
+      !!input.current?.isConnected &&
+      // DOM props are committed before child layout effects; closures can still
+      // carry the preceding render's enabled state during that interval.
+      !input.current.disabled &&
+      !input.current.readOnly
+    );
+  }
+  /** A tool's lone GIF joins the attachment row, sent after the caption like
+   * the row's other media, rather than sitting in prose at the caret. An edit
+   * has no attachment row, so its GIF stays in the text. */
+  function attachGif(text: string) {
+    if (
+      !gifPreview ||
+      editing.target ||
+      !stageableGif(text) ||
+      !draftGif(text, session.media)
+    )
+      return;
+    if (!writable()) return false;
+    const current = valueRef.current.gifs ?? [];
+    if (!current.includes(text)) {
+      if (current.length >= MAX_DRAFT_GIFS) {
+        setError(`Attach at most ${MAX_DRAFT_GIFS} GIFs per message.`);
+        return false;
+      }
+      const next = { ...valueRef.current, gifs: [...current, text] };
+      if (composerMarkdown(next).length > 16000) {
+        setError("Message is too long to attach this GIF");
+        return false;
+      }
+      saveDraft(next);
+    }
+    setError(undefined);
+    input.current?.focus();
     return true;
   }
   function insertMention(recipient: MentionRecipient) {
@@ -1367,19 +1413,44 @@ function Composer({
   // A new Solo chat is seeded with its default agent each time it is shown,
   // while its draft is empty and untagged; a saved chat seeds from its window
   // like every other composer. Once it has content, respect edits and
-  // removals until the composer is shown again.
+  // removals until the composer is shown again. Like the window's seed, the
+  // tag is this composer's own prefill and isn't saved until the viewer edits
+  // the draft, so showing the chat again tags the current default agent.
   const seedMention = defaultMention;
   const autoTagged = useRef<string | undefined>(undefined);
+  const seeding = useRef(false);
+  const prefill = (apply: () => boolean) => {
+    seeding.current = true;
+    try {
+      if (!apply()) return false;
+    } finally {
+      seeding.current = false;
+    }
+    automaticTag.current = JSON.stringify(valueRef.current);
+    return true;
+  };
   useEffect(() => {
     if (!presented) autoTagged.current = undefined;
     if (
       !presented ||
       sendPending ||
       completion.composing.current ||
-      editing.target ||
-      autoTagged.current === draftKey
+      editing.target
     )
       return;
+    if (autoTagged.current === draftKey) return;
+    // Shown again untouched, the prefill retags for the current default. A
+    // saved draft is the viewer's, however it was addressed.
+    if (automaticTag.current === JSON.stringify(valueRef.current)) {
+      // Until the default can be tagged, as when its evidence is loading.
+      if (
+        seedMention &&
+        (seedMention.pubkey === valueRef.current.recipients[0]?.pubkey ||
+          prefill(() => replaceRecipients([seedMention])))
+      )
+        autoTagged.current = draftKey;
+      return;
+    }
     // A shortcut may seed an ordinary editable link. Still add the default
     // agent once while that freshly seeded text is untouched; a restored draft
     // keeps its recipients as saved, so a removed tag never returns.
@@ -1393,15 +1464,16 @@ function Composer({
     }
     if (seedMention && admits()(seedMention.pubkey)) {
       if (
-        insert(
-          `@${seedMention.name} `,
-          seedMention,
-          { start: 0, end: 0, query: "" },
-          undefined,
-          false,
+        prefill(() =>
+          insert(
+            `@${seedMention.name} `,
+            seedMention,
+            { start: 0, end: 0, query: "" },
+            undefined,
+            false,
+          ),
         )
       ) {
-        automaticTag.current = JSON.stringify(valueRef.current);
         input.current?.setSelectionRange(
           valueRef.current.text.length,
           valueRef.current.text.length,
@@ -1571,11 +1643,11 @@ function Composer({
       setError(recipientHint);
       return;
     }
-    // A new conversation is named from its message, so files alone cannot start it.
+    // A new conversation is named from its message, so media alone cannot start it.
     if (
       !draft.trim() &&
       !chatCards?.length &&
-      (!!submission || !attachments.items.length)
+      (!!submission || (!attachments.items.length && !gifs?.length))
     )
       return;
     const recovering = !submission && recoveryFor(session).get(recoveryKey);
@@ -1922,7 +1994,9 @@ function Composer({
                 JSON.stringify(valueRef.current.recipients) !==
                   JSON.stringify(next.recipients) ||
                 JSON.stringify(valueRef.current.chatCards ?? []) !==
-                  JSON.stringify(next.chatCards ?? [])) &&
+                  JSON.stringify(next.chatCards ?? []) ||
+                JSON.stringify(valueRef.current.gifs ?? []) !==
+                  JSON.stringify(next.gifs ?? [])) &&
               JSON.stringify(valueRef.current) !== capturedRevision
             )
               return "conflict";
@@ -1941,7 +2015,9 @@ function Composer({
                 JSON.stringify(valueRef.current.recipients) ===
                   JSON.stringify(next.recipients) &&
                 JSON.stringify(valueRef.current.chatCards ?? []) ===
-                  JSON.stringify(next.chatCards ?? [])
+                  JSON.stringify(next.chatCards ?? []) &&
+                JSON.stringify(valueRef.current.gifs ?? []) ===
+                  JSON.stringify(next.gifs ?? [])
               )
             )
               return "conflict";
@@ -2028,7 +2104,7 @@ function Composer({
   // The attachments section animates out over 150 ms; the form's gap and
   // padding (data-attachments) collapse when it has, not when the list empties.
   // An edit unmounts the section at once, so no exit completes during one.
-  const hasAttachments = attachments.items.length > 0;
+  const hasAttachments = attachments.items.length > 0 || !!gifs?.length;
   const [attachmentsExiting, setAttachmentsExiting] = useState(false);
   const [hadAttachments, setHadAttachments] = useState(hasAttachments);
   if (hadAttachments !== hasAttachments) {
@@ -2228,6 +2304,22 @@ function Composer({
               media={session.media}
               renderers={extensions?.attachments}
               items={attachments.items}
+              gifs={gifs?.map((markdown) => ({
+                markdown,
+                // The alt text names the tile even when its media is unavailable.
+                title: markdown.slice(2, markdown.indexOf("](")) || "GIF",
+                source: draftGif(markdown, session.media)?.source,
+              }))}
+              removeGif={(markdown) => {
+                saveDraft({
+                  ...valueRef.current,
+                  gifs:
+                    valueRef.current.gifs?.filter(
+                      (item) => item !== markdown,
+                    ) ?? [],
+                });
+                input.current?.focus();
+              }}
               disabled={editingDisabled}
               onExitComplete={() => setAttachmentsExiting(false)}
               remove={(id) => {
@@ -2279,6 +2371,11 @@ function Composer({
               emoji={emojiCatalog.entries}
               onDraftChange={(next) => {
                 const textChanged = next.text !== valueRef.current.text;
+                // The default tag's prefill shows without being saved.
+                if (seeding.current) {
+                  saveDraft(next, false);
+                  return;
+                }
                 if (!editing.target) {
                   // The user's edit settles the seed on screen, as settled
                   // evidence does: clearing it lasts until the composer is
@@ -2318,10 +2415,10 @@ function Composer({
               maxLength={Math.max(
                 0,
                 16000 -
-                  (chatCards?.reduce(
+                  [...(chatCards ?? []), ...(gifs ?? [])].reduce(
                     (size, card) => size + card.length + 2,
                     0,
-                  ) ?? 0),
+                  ),
               )}
               aria-label={label}
               placeholder={placeholder ?? label}
@@ -2371,6 +2468,7 @@ function Composer({
                     automaticTag.current ===
                       JSON.stringify(valueRef.current)) &&
                   !valueRef.current.chatCards?.length &&
+                  !valueRef.current.gifs?.length &&
                   !attachments.items.length
                 ) {
                   const target = lastEditableMessage(session, editableRows());
@@ -2448,7 +2546,7 @@ function Composer({
                     disabled={editingDisabled}
                     inviteAgents={agentChoices && !editing.target}
                     recipients={recipients}
-                    insertText={(text) => insert(text)}
+                    insertText={(text) => attachGif(text) ?? insert(text)}
                     insertMention={insertMention}
                     insertMentions={insertMentions}
                     replaceRecipients={replaceRecipients}
@@ -2478,7 +2576,10 @@ function Composer({
             )}
             <IconButton
               variant={
-                draft.trim() || chatCards?.length || attachments.items.length
+                draft.trim() ||
+                chatCards?.length ||
+                gifs?.length ||
+                attachments.items.length
                   ? "primary"
                   : "ghost"
               }
@@ -2510,7 +2611,8 @@ function Composer({
                 (!editing.target && attachments.blocked) ||
                 (!draft.trim() &&
                   !chatCards?.length &&
-                  (!!submission || !attachments.items.length) &&
+                  (!!submission ||
+                    (!attachments.items.length && !gifs?.length)) &&
                   !(
                     editing.target &&
                     requestDeletion &&

@@ -1007,19 +1007,19 @@ async fn save_media(
     })
 }
 
-/// Writes one memory entry, encrypted to the agent's owner. `after` is the
-/// `created_at` of the entry it replaces, or 0.
+/// Writes one memory entry, encrypted to the agent's owner; a null body
+/// deletes it. `after` is the `created_at` of the entry it replaces, or 0.
 #[tauri::command]
 pub(crate) async fn app_agent_remember(
     state: tauri::State<'_, AppAgentHost>,
     pubkey: String,
     relay: String,
     slug: String,
-    body: String,
+    body: Option<String>,
     after: u64,
 ) -> Result<Value, String> {
     let (agent, key) = state.key(state.agent(pubkey, relay).await?).await?;
-    let signed = agent.memory(&key, &slug, &body, after)?;
+    let signed = agent.memory(&key, &slug, body.as_deref(), after)?;
     post(&agent, &key, signed).await
 }
 

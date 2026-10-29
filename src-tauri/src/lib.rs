@@ -52,6 +52,8 @@ use nsec_backup_choice::{nsec_backup_choice, nsec_backup_set_choice};
 mod image_clipboard;
 mod jev;
 mod keep_awake;
+#[cfg(target_os = "macos")]
+mod legacy_cli_shortcut;
 mod legacy_communities;
 #[cfg(any(not(target_os = "macos"), test))]
 mod microphone;
@@ -730,13 +732,19 @@ pub fn run() {
                     })?;
                 }
             }
-            if let Some(window) = app.get_window("main") {
-                if let Err(error) = window_state::restore(&window) {
+            if let Some(window) = app.get_webview_window("main") {
+                if let Err(error) = window_state::restore(&window.as_ref().window()) {
                     eprintln!("Could not restore Buzz window: {error}");
                 }
             }
             #[cfg(target_os = "macos")]
             notifications::macos::init();
+            #[cfg(target_os = "macos")]
+            if let Some(home) = dirs::home_dir() {
+                if let Err(error) = legacy_cli_shortcut::remove_stale(&home.join(".local/bin")) {
+                    eprintln!("Could not remove old Buzz's CLI shortcut: {error}");
+                }
+            }
             tauri::async_runtime::spawn(host_command::load_login_shell_path());
             deep_links::setup(app.handle());
             app.manage(relay::Spools::new(

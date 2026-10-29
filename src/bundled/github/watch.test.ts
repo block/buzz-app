@@ -186,9 +186,14 @@ describe("step", () => {
     );
   });
 
-  it("ends when the pull request merges or closes, and after the wake limit", () => {
-    expect(step(watch, snap({ state: "MERGED" }), 0).ended).toBe("merged");
-    expect(step(watch, snap({ state: "CLOSED" }), 0).ended).toBe("closed");
+  it("ends when the pull request merges or closes, telling the agent, and after the wake limit", () => {
+    const merged = step(watch, snap({ state: "MERGED" }), 0);
+    expect(merged.ended).toBe("merged");
+    expect(merged.wake).toMatch(/was merged, so this watch has ended/);
+    expect(merged.wake).toMatch(/interest_remove/);
+    const closed = step(watch, snap({ state: "CLOSED" }), 0);
+    expect(closed.ended).toBe("closed");
+    expect(closed.wake).toMatch(/was closed/);
     const last = step(
       { ...watch, wakes: WAKE_LIMIT - 1 },
       snap({ settled: true }),

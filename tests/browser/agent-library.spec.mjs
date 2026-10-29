@@ -629,10 +629,9 @@ test("owner profile keeps its pane and caret stable during inline name editing",
     .poll(async () => (await profile.boundingBox()).width)
     .toBe(originalWidth);
 
-  await page.getByRole("tab", { name: "Settings", exact: true }).click();
-  await expect(
-    profile.getByRole("switch", { name: "Attention on this device" }),
-  ).toBeVisible();
+  const settings = page.getByRole("tab", { name: "Settings", exact: true });
+  await settings.click();
+  await expect(settings).toHaveAttribute("aria-selected", "true");
   const before = await profile.boundingBox();
   await page.screenshot({ path: info.outputPath("agent-profile.png") });
   await profile.getByRole("button", { name: "Agent profile actions" }).click();

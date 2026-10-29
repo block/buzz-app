@@ -318,6 +318,11 @@ it.each([
   "desktop login respects identity ownership in VITE_BUZZ_LIVE=%s with remote agents=%s",
   async (live, canUseRemoteAgents) => {
     vi.stubEnv("VITE_BUZZ_LIVE", live);
+    // Without the development broker, its communities report unavailable.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({ error: "missing" }, { status: 404 })),
+    );
     const viewer = "01".repeat(32);
     const linkFinished = deferred<void>();
     native.invoke.mockImplementation(async (command, input) => {
@@ -341,9 +346,12 @@ it.each([
       else if (url.endsWith("/me"))
         result = {
           subject: "synthetic-account",
+          expires_at: "2030",
           capabilities: { can_use_remote_agents: canUseRemoteAgents },
         };
       else if (url.endsWith("/list-agents")) result = { status: 1, agents: [] };
+      else if (url.endsWith("/v1/buzz/communities/list"))
+        result = { communities: [], can_create: true };
       else if (url.endsWith("/nostr-identities/current")) {
         result = { identity: { pubkey_hex: viewer } };
         linkFinished.resolve();
@@ -392,6 +400,20 @@ it.each([
           canUseRemoteAgents ? "No remote agents yet." : "Coming soon",
         ),
       ).toBeInTheDocument();
+      if (live === "1")
+        // Live development keeps communities on the broker.
+        expect(fetch).toHaveBeenCalledWith("/api/builderlab/auth");
+      else {
+        // Communities share the one sign-in and its identity link.
+        expect(
+          await screen.findByText("No hosted communities yet"),
+        ).toBeInTheDocument();
+        expect(screen.getByText(/Buzz identity connected/)).toBeVisible();
+        expect(
+          screen.getAllByRole("button", { name: "Sign out" }),
+        ).toHaveLength(1);
+        expect(fetch).not.toHaveBeenCalled();
+      }
       if (live === "0") {
         await linkFinished.promise;
         await waitFor(() =>
@@ -486,6 +508,7 @@ it.each([
       result = {
         subject: "user",
         email: "a@example.com",
+        expires_at: "2030",
         capabilities: { can_use_remote_agents: true },
       };
     } else if (url.endsWith("/list-agents")) {
@@ -541,6 +564,8 @@ it.each([
       result = { status: 1 };
     } else if (url.endsWith("/known-communities/list")) {
       result = { communities: [] };
+    } else if (url.endsWith("/v1/buzz/communities/list")) {
+      result = { communities: [], can_create: true };
     } else {
       throw new Error(`Unexpected Builderlab request ${url}`);
     }
@@ -611,8 +636,8 @@ it.each([
       expect(
         await screen.findByText("No remote agents yet."),
       ).toBeInTheDocument();
-      expect(screen.getByRole("status")).toHaveTextContent(
-        "Signed in as a@example.com.",
+      expect(screen.getByText("Signed in as a@example.com.")).toHaveRole(
+        "status",
       );
       expect(document.body).not.toHaveTextContent("private-token");
       expect(native.invoke).toHaveBeenCalledWith("oauth_callback_wait", {
@@ -620,14 +645,24 @@ it.each([
       });
       // Sign-in also checks the account's linked Buzz identity, and the
       // account's community list follows through the same wiring: the complete
-      // list is read under the session credential.
+      // list is read under the session credential. The card's Communities
+      // section reads the account, its identity and its hosted communities.
       await waitFor(() => expect(knownCommunities.apply).toHaveBeenCalled());
       await waitFor(() =>
         expect(
           hostRequests()
             .map((input) => input.request.url.split("/").at(-1))
             .sort(),
-        ).toEqual(["current", "exchange", "list", "list-agents", "me"]),
+        ).toEqual([
+          "current",
+          "current",
+          "exchange",
+          "list",
+          "list",
+          "list-agents",
+          "me",
+          "me",
+        ]),
       );
       const requests = hostRequests();
       const [account, sync] = [
@@ -636,7 +671,7 @@ it.each([
           input.request.url.includes("/v1/buzz/known-communities/"),
         ),
       ];
-      expect(account).toHaveLength(3);
+      expect(account).toHaveLength(4);
       expect(
         requests.every(
           (input) =>

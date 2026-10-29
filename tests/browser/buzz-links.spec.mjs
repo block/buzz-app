@@ -149,10 +149,11 @@ test("Buzz channel and message links render, reveal verified targets, and preser
     .click();
   await expect(panel).toHaveCount(0);
   await button(page, "Go back").click();
-  await expect(
-    panel.locator(`[data-message-id="${target.id}"]`),
-  ).toBeInViewport();
-  await button(page, "Go back").click();
+  // X retires this thread's visits; Back skips them. Passive restoration was
+  // exercised above, before explicit dismissal.
+  await expect(panel).toHaveCount(0);
+  await expect(button(page, "Go forward")).toBeEnabled();
+  await button(page, "Go forward").click();
   await expect(panel).toHaveCount(0);
   expect(libraryReads()).toBe(1);
   await row.getByRole("link", { name: "#Beta", exact: true }).click();
@@ -224,11 +225,14 @@ test("a message link's context menu opens its thread as a tab without leaving th
   await expect(link).toBeVisible();
   await virtuaIdle(page);
   const before = (await state(page)).entry;
-  // Target the link itself instead of a cached coordinate: under load WebKit can
-  // spend the first pointer move opening the preview and toolbar, shifting the
-  // actionable point before the contextmenu event. The test is about the link's
-  // composed context-menu owner, not stale coordinate hit-testing.
-  await link.click({ button: "right" });
+  // A right-click that meets Virtua's 150ms pointer-event hold is intercepted by
+  // the scroller; Playwright's retry scrolls the list, restarting the hold, and
+  // the contextmenu event can then reach the scroller instead of the link. This
+  // test is about the link's composed context-menu owner, not hit testing: open
+  // it by keyboard, which no scroll can intercept.
+  await link.focus();
+  await expect(link).toBeFocused();
+  await link.press("Shift+F10");
   const menu = page.getByRole("menu");
   await expect(menu.getByRole("menuitem")).toHaveText([
     "Open link",

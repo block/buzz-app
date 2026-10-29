@@ -12,22 +12,16 @@ type Archive = Readonly<{
 const maxBytes = 512 * 1024;
 const maxEntries = 1000;
 
-// Saving forgets archives rather than refuse a choice or save more than
-// readArchives accepts. The oldest watermark goes first, not the oldest
-// action: its conversation is the least likely to be loaded again, and a
-// future-dated one, which Inbox would list first, is kept. Ties keep action
-// order.
+// Saving forgets the oldest choices rather than refuse one or save more than
+// readArchives accepts. Archives stay in action order, so the choice just
+// made is last and kept: 4,096 message IDs fit well within the byte bound.
 function bounded(archives: readonly Archive[]) {
   let bytes = JSON.stringify(archives).length;
   if (archives.length <= maxEntries && bytes <= maxBytes) return archives;
-  const dropped = new Set<Archive>();
-  for (const archive of [...archives].sort((a, b) => a.through - b.through)) {
-    if (archives.length - dropped.size <= maxEntries && bytes <= maxBytes)
-      break;
-    dropped.add(archive);
-    bytes -= JSON.stringify(archive).length + 1;
-  }
-  return archives.filter((archive) => !dropped.has(archive));
+  let start = 0;
+  while (archives.length - start > maxEntries || bytes > maxBytes)
+    bytes -= JSON.stringify(archives[start++]).length + 1;
+  return archives.slice(start);
 }
 
 export function readArchives(

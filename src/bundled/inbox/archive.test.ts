@@ -563,24 +563,25 @@ function thread(
 }
 const stored = (scope: string) => readArchives(viewRevision(scope, archiveKey));
 
-it("forgets the archive with the oldest watermark instead of refusing one past the bound", () => {
+it("forgets the oldest choice, never the one just made, instead of refusing one past the bound", () => {
   const h = fixture();
-  const items = Array.from({ length: 1001 }, (_, index) =>
-    thread(h, [hex(index + 1)]),
-  );
-  // A future-dated message keeps the first archive's watermark the newest.
-  const [first] = items;
-  if (!first) throw new Error("Missing first row");
-  items[0] = {
-    ...first,
-    messages: [{ id: hex(1), createdAt: 5000, mentioned: false }],
-  };
+  // Future-dated messages give every earlier choice a later watermark than
+  // the one just made, and the first choice the latest.
+  const items = Array.from({ length: 1001 }, (_, index) => {
+    const item = thread(h, [hex(index + 1)]);
+    if (index === 1000) return item;
+    const createdAt = 6000 - index;
+    return {
+      ...item,
+      messages: item.messages.map((entry) => ({ ...entry, createdAt })),
+    };
+  });
   for (const [index, item] of items.entries())
     updateArchive(h.scope, item, true, 100 + index);
   expect(stored(h.scope)).toHaveLength(1000);
   const index = archiveIndex(stored(h.scope));
   expect(items.map((item) => isArchived(index, item))).toEqual(
-    items.map((_, position) => position !== 1),
+    items.map((_, position) => position !== 0),
   );
 });
 

@@ -15,9 +15,9 @@ import {
  * results arrive: a row inserted above cannot redirect Enter. When the
  * highlighted row leaves, the highlight returns to the first row rather than
  * reviving the old one. Enter before any row arrives, while results are
- * pending, chooses the first row once they are not, unless an edit, a move
- * of the highlight, Escape or closing comes first. Enter on an action row
- * waits the same way while no result row has arrived, unless the user
+ * pending, chooses the first row once they are not, unless an edit, moving
+ * the highlight, a choice, Escape or closing comes first. Enter on an action
+ * row waits the same way while no result row has arrived, unless the user
  * highlighted that row. The hook draws nothing; rows keep their own markup. */
 export function useSearchHighlight({
   query,
@@ -84,13 +84,14 @@ export function useSearchHighlight({
   /** The text whose Enter waits for its first row. */
   const [awaiting, setAwaiting] = useState<string>();
   if (awaiting !== undefined && awaiting !== query) setAwaiting(undefined);
-  const waiting = open && awaiting === query;
-  const first = keys[0];
-  useEffect(() => {
-    if (!waiting || pending) return;
+  const choose = (key: string | undefined) => {
     setAwaiting(undefined);
-    if (first) onChoose(first);
-  }, [waiting, first, pending, onChoose]);
+    if (key) onChoose(key);
+  };
+  // biome-ignore lint/correctness/useExhaustiveDependencies: choose calls the latest onChoose.
+  useEffect(() => {
+    if (open && awaiting === query && !pending) choose(keys[0]);
+  }, [open, awaiting, query, keys[0], pending]);
   const rowId = (key: string) => `${id}-${key}`;
   /** Highlights a row for the user, which drops a waiting Enter. */
   const select = (key: string, pointer = false) => {
@@ -161,6 +162,7 @@ export function useSearchHighlight({
     /** The highlighted row's key, or "" for none. */
     active,
     select,
+    choose,
     listId: id,
     rowId,
     /** Spread on the search field. */
@@ -275,8 +277,7 @@ export function useSearchHighlight({
       }
       if (event.key === "Enter" && index >= 0) {
         event.preventDefault();
-        setAwaiting(undefined);
-        onChoose(active);
+        choose(active);
         return true;
       }
       if (event.key === "Escape") setAwaiting(undefined);

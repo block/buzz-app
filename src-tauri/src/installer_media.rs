@@ -597,9 +597,9 @@ mod macos {
         // than being overwritten in place. If trashing fails (e.g. a
         // read-only /Applications) we bail before the rename and discard the
         // staged copy, leaving the existing install untouched. Any running
-        // instance of the installed bundle is quit first; trashing a running
-        // bundle still succeeds, so a copy that won't quit never blocks the
-        // move.
+        // instance of the installed bundle is asked to quit first, without
+        // waiting for it: trashing a running bundle still succeeds, so a copy
+        // that is still quitting, or won't quit, never blocks the move.
         if target.exists() {
             terminate_running_copies(&target);
             if let Err(error) = move_to_trash(&target) {
@@ -641,24 +641,21 @@ mod macos {
             })
     }
 
-    /// How long a running copy of the installed bundle gets to quit politely
-    /// before it is force-quit so the move can proceed. The old block/buzz
-    /// Buzz never refuses to quit, but its quit stops its agents first:
-    /// SIGTERM, up to 2 s, then SIGKILL for any still running. Force-quitting
-    /// it inside that window would orphan those agents, still running from
-    /// the Trash, so the cap leaves room for it. The wait ends as soon as the
-    /// app exits, so the cap only costs time while it is still stopping.
-    const TERMINATE_GRACE: std::time::Duration = std::time::Duration::from_secs(3);
-
-    /// Quit every running application whose bundle is `target`, so the copy
-    /// about to be trashed doesn't linger with a stale tray icon or write a
-    /// later self-update into the Trash. Matched by bundle *path*, not bundle
+    /// Ask every running application whose bundle is `target` to quit, so the
+    /// copy about to be trashed doesn't linger with a stale tray icon or write
+    /// a later self-update into the Trash. Matched by bundle *path*, not bundle
     /// identifier: `tauri_plugin_single_instance` already guarantees a previous
     /// build of this app isn't running, but the old block/buzz Buzz uses a
     /// different identifier, keeps running after its window is closed, and
-    /// must be quit the same way without naming it. Best-effort: the outcome
-    /// is logged and the move continues regardless, because trashing a running
-    /// bundle succeeds on macOS.
+    /// must be quit the same way without naming it.
+    ///
+    /// A copy that accepts `terminate()` is left to finish quitting on its own,
+    /// from the Trash if need be, because trashing a running bundle succeeds on
+    /// macOS. Old Buzz closes its terminals and stops its agents and their
+    /// workers before it exits, and that takes as long as it takes, so
+    /// force-quitting it after any fixed wait could orphan agents that nothing
+    /// would ever clean up. Only a copy that doesn't accept the request is
+    /// force-quit. The outcome is logged and the move continues regardless.
     fn terminate_running_copies(target: &Path) {
         use objc2_app_kit::NSWorkspace;
 
@@ -671,38 +668,19 @@ mod macos {
             if normalized_bundle_path(Path::new(&path.to_string())) != target {
                 continue;
             }
-            let pid = app.processIdentifier();
-            let asked = app.terminate();
-            let deadline = std::time::Instant::now() + TERMINATE_GRACE;
-            while asked && !has_exited(&app, pid) && std::time::Instant::now() < deadline {
-                std::thread::sleep(std::time::Duration::from_millis(50));
-            }
-            let outcome = if has_exited(&app, pid) {
-                "quit before replacement"
+            let outcome = if app.terminate() {
+                "asked to quit before replacement"
             } else if app.forceTerminate() {
                 "force-quit before replacement"
             } else {
                 "would not quit; replacing it anyway"
             };
             eprintln!(
-                "Running copy of {} (pid {pid}): {outcome}",
-                target.display()
+                "Running copy of {} (pid {}): {outcome}",
+                target.display(),
+                app.processIdentifier()
             );
         }
-    }
-
-    /// Whether a running application has exited. `isTerminated` only updates
-    /// when the main run loop spins, which it doesn't while we sleep-poll on
-    /// the main thread, so the kernel's view of the pid is checked as well.
-    fn has_exited(app: &objc2_app_kit::NSRunningApplication, pid: libc::pid_t) -> bool {
-        if app.isTerminated() {
-            return true;
-        }
-        // `kill(-1, 0)` would probe every process, so only a real pid counts.
-        // SAFETY: signal 0 performs no action beyond the existence check.
-        pid > 0
-            && unsafe { libc::kill(pid, 0) } == -1
-            && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
     }
 
     /// Spawn a detached shell that waits for this process to exit, launches the

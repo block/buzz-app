@@ -1,5 +1,7 @@
 import { assert, expect, it, vi } from "vitest";
+import type { EventTemplate } from "nostr-tools";
 import { createRelaySession } from "./session";
+import { PublishRejected } from "./outbox";
 import {
   flush,
   keypair,
@@ -29,33 +31,41 @@ function setup() {
         pending.push({ ids, signal, resolve, reject }),
       ),
   );
+  const publish = vi.fn(async (_event: RelayEvent) => {});
   const sort: Record<string, "recent"> = {};
   const filters: Record<string, "active" | "unreads"> = {};
-  const owner = createRelaySession({
-    ...wire.transport,
-    channelActivity: activity,
-    decodeSidebarPreferences: async () => ({
-      sections: [],
-      assignments: {},
-      starred: [],
-      muted: [],
-      sort: {},
-    }),
-    writeSidebarSort: async (group, mode) => {
-      if (mode === "recent") sort[group] = mode;
-      else delete sort[group];
-      return { ...sort };
+  const owner = createRelaySession(
+    {
+      ...wire.transport,
+      writer: {
+        sign: async (template: EventTemplate) => signed(viewer, template),
+        publish,
+      },
+      channelActivity: activity,
+      decodeSidebarPreferences: async () => ({
+        sections: [],
+        assignments: {},
+        starred: [],
+        muted: [],
+        sort: {},
+      }),
+      writeSidebarSort: async (group, mode) => {
+        if (mode === "recent") sort[group] = mode;
+        else delete sort[group];
+        return { ...sort };
+      },
+      writeSidebarFilter: async (group, mode) => {
+        if (mode === "all") delete filters[group];
+        else filters[group] = mode;
+        return { filters: { ...filters }, activeWindowSeconds: {} };
+      },
+      subscribe(callbacks) {
+        live = callbacks;
+        return { update() {}, dispose() {}, retry() {} };
+      },
     },
-    writeSidebarFilter: async (group, mode) => {
-      if (mode === "all") delete filters[group];
-      else filters[group] = mode;
-      return { filters: { ...filters }, activeWindowSeconds: {} };
-    },
-    subscribe(callbacks) {
-      live = callbacks;
-      return { update() {}, dispose() {}, retry() {} };
-    },
-  });
+    { outboxStorage: { load: () => [], save() {} } },
+  );
   const channels = owner.session.channels;
   const preferences = owner.session.sidebarPreferences;
   async function initial() {
@@ -81,6 +91,7 @@ function setup() {
     preferences,
     pending,
     activity,
+    publish,
     wire,
     viewer,
     relay,
@@ -157,6 +168,68 @@ it("reads no roster activity for A–Z, deduplicates Recent demand, and projects
     h.owner.dispose();
   }
 });
+// Own sends updated the row preview at once but moved it in Recent and Active
+// only when the live socket echoed them.
+it.each(["connected", "retrying"] as const)(
+  "projects an own send the relay accepted while live is %s, before any echo",
+  async (status) => {
+    const h = setup();
+    try {
+      await h.initial();
+      await h.preferences.setSort("channels", "recent", []);
+      take(h.pending).resolve([message(h.peer, "alpha", "history", 50)]);
+      await flush();
+      h.live().state({ status, routes: [] });
+      const beta = () =>
+        h.channels.list().channels.find(({ id }) => id === "beta");
+      expect(beta()?.lastActivityAt).toBeUndefined();
+      h.owner.session.outbox?.send({
+        kind: 9,
+        content: "mine",
+        tags: [["h", "beta"]],
+      });
+      await vi.waitFor(() => expect(h.publish).toHaveBeenCalledOnce());
+      await flush();
+      const sent = h.publish.mock.calls[0]?.[0];
+      assert.exists(sent);
+      expect(beta()?.lastActivityAt).toBe(sent.created_at);
+      if (status !== "connected") return;
+      const summary = beta();
+      h.live().receive([sent]);
+      expect(beta()).toBe(summary);
+    } finally {
+      h.owner.dispose();
+    }
+  },
+);
+it.each([
+  ["refused", new PublishRejected("blocked"), "failed"],
+  ["left unanswered", new Error("timed out"), "unknown"],
+] as const)(
+  "does not project an own send the relay %s",
+  async (_outcome, error, delivery) => {
+    const h = setup();
+    try {
+      await h.initial();
+      h.publish.mockRejectedValueOnce(error);
+      h.owner.session.outbox?.send({
+        kind: 9,
+        content: "mine",
+        tags: [["h", "beta"]],
+      });
+      await vi.waitFor(() =>
+        expect(h.owner.session.outbox?.snapshot()[0]?.delivery).toBe(delivery),
+      );
+      await flush();
+      expect(
+        h.channels.list().channels.find(({ id }) => id === "beta")
+          ?.lastActivityAt,
+      ).toBeUndefined();
+    } finally {
+      h.owner.dispose();
+    }
+  },
+);
 it("keeps other channels' summaries when one channel's live activity advances", async () => {
   const h = setup();
   try {

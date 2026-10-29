@@ -270,6 +270,20 @@ export function createRelaySession(
             onAccepted: (event) => {
               // Product feedback is accepted into a private sidecar, not queryable history.
               if (event.kind !== PRODUCT_FEEDBACK_KIND) confirm(event);
+              // The relay's ACK verifies an own send before any live echo; an
+              // attempt left `unknown` after entering the publisher does not.
+              const channelId = event.tags.find(([name]) => name === "h")?.[1];
+              if (
+                !closed &&
+                !cacheClearing &&
+                channelId &&
+                canReadRemote(channelId) &&
+                writes?.outbox
+                  .snapshot()
+                  .find((item) => item.event.id === event.id)?.delivery !==
+                  "unknown"
+              )
+                channelActivity.accept([event]);
             },
             needsReceipt: isWorkflowOperation,
             onReceipt: (event, message) => workflows.receipt(event, message),

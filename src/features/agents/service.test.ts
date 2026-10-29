@@ -125,6 +125,14 @@ const UNFINISHED =
   "Echo isn't deleted yet and may still be in some channels. It stays stopped; Delete it again to finish.";
 
 type Config = { reply: string };
+/** Turns on a plugin that shows Attention, as the Agent Attention UI does. */
+const showAttention = (ctx: Context, revision: string) =>
+  ctx
+    .extend({ pluginOwner: Object.freeze({ id: "buzz.watching", revision }) })
+    .plugin({
+      inject: ["agents"],
+      apply: (scope: Context) => scope.agents.controlAttention(),
+    });
 async function setup({
   storage = memoryStorage() as AgentStore,
   identities = [] as AgentIdentity[],
@@ -144,11 +152,15 @@ async function setup({
   answer = undefined as AgentType<Config>["run"],
   pluginActive = (): boolean => true,
   subscribePlugin = (_listener: () => void) => () => {},
+  /** Whether the Agent Attention UI plugin is on once startup is over. */
+  attention = true,
 } = {}) {
   const ctx = new Context();
+  let settled = false;
   ctx.provide("pluginStatus", {
     isActive: pluginActive,
     subscribe: subscribePlugin,
+    settled: () => settled,
   });
   const fake = fakeRelay();
   const second = fakeRelay("https://other.example.test");
@@ -255,16 +267,10 @@ async function setup({
     ...(syncedSettings ? { syncedSettings } : {}),
   };
   plugin.agents.register(type);
-  // The Agent Attention UI plugin, so agents' Attention runs.
-  const watching = ctx
-    .extend({
-      pluginOwner: Object.freeze({ id: "buzz.watching", revision: "one" }),
-    })
-    .plugin({
-      inject: ["agents"],
-      apply: (scope: Context) => scope.agents.controlAttention(),
-    });
+  // The Agent Attention UI plugin starts after the type, then startup is over.
+  const watching = attention ? showAttention(ctx, "one") : undefined;
   await watching;
+  settled = true;
   await vi.waitFor(() => expect(service.snapshot().status).toBe("ready"), {
     // Keep fake-clock advancement unchanged in the timer behavior cases.
     interval: vi.isFakeTimers() ? 50 : 1,
@@ -7203,16 +7209,9 @@ it("wakes nothing from the time no plugin showed its attention", async () => {
     await service.save(bot, { attentionEnabled: true, attention: chat });
     await settle();
     vi.setSystemTime((start + 5) * 1000);
-    await watching.dispose();
+    await watching?.dispose();
     history.push(posted("while hidden", start + 5));
-    await ctx
-      .extend({
-        pluginOwner: Object.freeze({ id: "buzz.watching", revision: "two" }),
-      })
-      .plugin({
-        inject: ["agents"],
-        apply: (scope: Context) => scope.agents.controlAttention(),
-      });
+    await showAttention(ctx, "two");
     // A reconnect a minute later catches up from when it was shown again.
     vi.setSystemTime((start + 60) * 1000);
     history.push(posted("after", start + 30));
@@ -8974,24 +8973,50 @@ it("stops watches and timers while attention is off, keeps every object, and res
   ]);
 });
 
+it("wakes nothing from the time no plugin showed its attention, across a restart", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  try {
+    const start = nowSeconds();
+    const storage = memoryStorage();
+    const first = await setup({ storage, identities: [echo] });
+    await first.service.save(bot, { attentionEnabled: true, attention: chat });
+    await settle();
+    vi.setSystemTime((start + 5) * 1000);
+    await first.watching?.dispose();
+    await settle();
+    first.connect(false);
+    // The app starts again with the plugin still off, then it is turned on.
+    vi.setSystemTime((start + 20) * 1000);
+    const second = await setup({
+      storage,
+      identities: [echo],
+      history: [...first.history, posted("while hidden", start + 10)],
+      attention: false,
+    });
+    await settle();
+    await showAttention(second.ctx, "two");
+    vi.setSystemTime((start + 60) * 1000);
+    second.history.push(posted("after", start + 30));
+    second.recover();
+    await vi.waitFor(() => expect(second.run).toHaveBeenCalledTimes(1));
+    await settle();
+    expect(heard(second.run)).toEqual(["after"]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("turns every agent's attention off while no plugin shows it, keeps its switch, and resumes it", async () => {
   vi.useFakeTimers({ now: 1_000_000 });
   const { service, run, emit, watching, ctx } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
   await service.save(bot, { attentionEnabled: true });
-  await watching.dispose();
+  await watching?.dispose();
   expect(service.find(bot)?.attentionEnabled).toBe(false);
   emit({ events: [deploy("w")] });
   await vi.advanceTimersByTimeAsync(5_000);
   expect(run).not.toHaveBeenCalled();
-  await ctx
-    .extend({
-      pluginOwner: Object.freeze({ id: "buzz.watching", revision: "two" }),
-    })
-    .plugin({
-      inject: ["agents"],
-      apply: (scope: Context) => scope.agents.controlAttention(),
-    });
+  await showAttention(ctx, "two");
   expect(service.find(bot)?.attentionEnabled).toBe(true);
   emit({ events: [deploy("w2")] });
   await vi.advanceTimersByTimeAsync(5_000);

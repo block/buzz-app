@@ -1634,6 +1634,7 @@ export class AgentsService extends Service implements Agents {
       scope: (agent) => this.bindingOf(agent)?.scope,
       saved: (key) => this.records[key],
       attentionShown: () => this.attentionShown(),
+      pluginsSettled: () => this.ctx.pluginStatus.settled?.() ?? true,
       record: (key) => {
         const member = this.liveMember(key);
         if (!member) throw new Error("No such agent on this device");

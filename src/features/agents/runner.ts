@@ -410,6 +410,8 @@ export type RunnerHost = {
   saved(key: AgentKey): AgentRecord | undefined;
   /** Whether a plugin that shows Attention is on; Attention runs only then. */
   attentionShown(): boolean;
+  /** Whether plugins have finished starting. */
+  pluginsSettled(): boolean;
   /** Its record as its attention handle reads it; throws once it is gone. */
   record(key: AgentKey): AgentRecord;
   /** Changes its record after the changes sent before it, from the newest
@@ -531,8 +533,8 @@ export class AgentRunners {
    * nothing from the time it was off; across a restart, its saved
    * checkpoint, moved while it was off, does the same. */
   private quiet = new Set<string>();
-  /** Whether a plugin has shown Attention since this copy started. */
-  private shown = false;
+  /** Whether plugins have finished starting since this copy started. */
+  private settled = false;
   /** Mention turns working now, which closing or reloading the app would
    * stop, and those the app left working last time until they are given
    * again or forgotten, as saved. */
@@ -1091,12 +1093,11 @@ export class AgentRunners {
       this.setCheckpoint(key, checkpoint);
       changed = true;
     };
-    // Until a plugin first shows Attention, as while plugins start, every
-    // checkpoint stays put, so the first catch-up still reads what the app
-    // missed while closed. Hiding it later is like turning Attention off.
-    const shown = this.host.attentionShown();
-    const held = !shown && !this.shown;
-    this.shown ||= shown;
+    // Until plugins finish starting, every checkpoint stays put, so the first
+    // catch-up still reads what the app missed while closed. After that, no
+    // plugin showing Attention is like turning it off.
+    this.settled ||= this.host.pluginsSettled();
+    const held = !this.host.attentionShown() && !this.settled;
     for (const runner of this.runners.values()) {
       this.resumeTurns(runner);
       const agent = this.host.agent(runner.key);

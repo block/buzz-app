@@ -78,6 +78,8 @@ export function createPluginManager(
       ),
       storage.readModule,
     ),
+    undefined,
+    () => configuration.status === "loading",
   );
   let configuration: ConfigurationState = { status: "loading" };
   let busy = false;

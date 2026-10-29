@@ -8,7 +8,7 @@ Build defaults are readable binary data, **never secret storage**.
 
 | Input | Consumer and boundary |
 | --- | --- |
-| `BUZZ_BUILDERLAB_URL` | Shared frontend/native build: public login URL and the bundled plugin's exact HTTPS host grant; no runtime override. |
+| `BUZZ_BUILDERLAB_URL` | Shared frontend/native build: public login URL and the bundled plugin's native grants; no runtime override. |
 | `BUZZ_DEFAULT_COMMUNITY_URL` | Packaged frontend build: secure relay origin to select once, after identity setup, only when this viewer has no saved community record. Saved choices, including Personal space, always win. Unset in OSS builds. |
 | `BUZZ_DATABRICKS_HOST` | Frontend build and dev server: `https://` Databricks workspace URL passed as `DATABRICKS_HOST` to every bundled `goose-acp`, which then prefers it to the host in goose's config. Unset in OSS builds. See [Databricks host](#databricks-host). |
 | `BUZZ_RELAY_URL` | Live development broker's default community, not an agent relay override or a packaged default. |
@@ -82,13 +82,22 @@ For desktop, supply the full URL in `.env.local` or the build process environmen
 so both stages receive it. Vite's additional `.env` and mode-specific files do
 not configure native grants. Process values take precedence, including an
 explicit empty value. Set `BUZZ_BUILDERLAB_URL=` to leave login unconfigured and
-grant no Builderlab network origin. The desktop release workflow supplies the
+clear the bundled plugin's native grants. The desktop release workflow supplies the
 production URL by default; see [release configuration](releases.md#builderlab-url).
 
 Any HTTPS host is supported, including an explicit port or deployment path. URL
 credentials, query parameters and fragments are rejected by the native build.
 The desktop's native plugin catalog supplies the effective manifest, granting
-only the configured URL's exact origin. Never put credentials in this input.
+the configured URL's exact origin. For recognized Builderlab deployments, its
+existing Apps policy also grants file access and the mapped control-plane origin
+(`https://compose-ctrl.builderlab.xyz` for production). Never put credentials in
+this input.
+
+The build origin also controls whether a Builderlab session can be reused by
+identity backup when its separately configured service URL has the same origin.
+Backup still requires its own service URL, namespace and user choice. The existing
+identity-binding validator accepts production Builderlab or the configured origin;
+production binding was already allowed before this default.
 
 The bundled Builderlab login consumes this public URL and appends `/api/goose`.
 

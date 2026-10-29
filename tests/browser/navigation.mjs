@@ -26,6 +26,11 @@ export async function newChat(page) {
   await expect(
     page.getByRole("button", { name: /^Community switcher:/ }),
   ).toBeVisible();
+  await settleShellToggle(page);
+  const showNavigation = page.getByRole("button", {
+    name: /^(Show navigation|Show sidebar)$/,
+  });
+  if (await showNavigation.isVisible()) await showNavigation.click();
   await page.getByRole("button", { name: "New", exact: true }).click();
   await page.getByRole("menuitem", { name: "New chat", exact: true }).click();
 }

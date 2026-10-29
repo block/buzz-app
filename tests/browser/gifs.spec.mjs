@@ -414,10 +414,13 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
   await page.screenshot({ path: testInfo.outputPath("gif-picker.png") });
 
   await trending.click();
-  await expect(draft).toHaveJSProperty(
-    "value",
-    "![Trending Hello](https://gif.fixture.invalid/1.gif)",
-  );
+  // A picked GIF joins the attachment row, where it sends, not the prose.
+  await expect(
+    page
+      .getByRole("region", { name: "Attachments", exact: true })
+      .getByRole("button", { name: "Remove Trending Hello", exact: true }),
+  ).toBeAttached();
+  await expect(draft).toHaveJSProperty("value", "");
   await expect(
     page.getByRole("searchbox", { name: "Search GIFs" }),
   ).toHaveCount(0);
@@ -528,16 +531,12 @@ test("GIF shortcut retry keeps keyboard focus through repeated discovery failure
 
 // WebKit sizes the caret from the line box, so an inline GIF stretched the
 // caret to GIF height and floated prose beside it. jsdom has no layout.
+// Picked GIFs join the attachment row; GIF Markdown typed or pasted into
+// prose, or in a message being edited, still previews in place.
 test("a GIF draft preview takes its own row so prose and the caret keep text height", async ({
   page,
   app,
 }) => {
-  await page.route("**/api/relay/*/gif-info", fulfillGifInfo);
-  await page.route("**/api/relay/*/gifs", (route) =>
-    route.fulfill({
-      json: { result: true, data: { data: [gifResult(7, "Row Gif", 240)] } },
-    }),
-  );
   await page.route("https://gif.fixture.invalid/**", fulfillGifImage);
   await page.goto(app.origin);
   await openPage(page, "Messages");
@@ -547,11 +546,9 @@ test("a GIF draft preview takes its own row so prose and the caret keep text hei
   });
   await draft.click();
   await page.keyboard.type("before ");
-  await page.keyboard.press("ControlOrMeta+g");
-  await page
-    .getByRole("button", { name: "Choose Row Gif", exact: true })
-    .click();
-  await expect(draft).toBeFocused();
+  await page.keyboard.insertText(
+    "![Row Gif](https://gif.fixture.invalid/7.gif)",
+  );
   await page.keyboard.type(" after");
   await expect(draft).toHaveJSProperty(
     "value",
@@ -643,29 +640,26 @@ test.describe("GIF send roundtrip", () => {
     await page
       .getByRole("button", { name: "Choose Roundtrip Gif", exact: true })
       .click();
-    await expect(draft).toHaveJSProperty(
-      "value",
-      "![Roundtrip Gif](https://gif.fixture.invalid/7.gif)",
-    );
-
-    const preview = draft.getByRole("img", {
-      name: "Roundtrip Gif",
-      exact: true,
-    });
+    // The GIF waits in the attachment row, as it will appear once sent:
+    // after the caption, never between its words.
+    const row = page.getByRole("region", { name: "Attachments", exact: true });
+    const preview = row.locator("img");
     await expect(preview).toBeVisible();
     await expect(preview).toHaveJSProperty("naturalWidth", 160);
-    expect((await preview.boundingBox()).height).toBeGreaterThan(64);
-    await expect(draft).not.toHaveText(
-      "![Roundtrip Gif](https://gif.fixture.invalid/7.gif)",
-    );
+    await expect(
+      row.getByRole("button", { name: "Remove Roundtrip Gif", exact: true }),
+    ).toBeAttached();
+    await expect(draft).toHaveJSProperty("value", "");
     await expect(draft).toBeFocused();
+    await page.keyboard.type("Look at this");
     await page.screenshot({
       path: testInfo.outputPath("gif-draft-preview.png"),
     });
     await draft.press("Enter");
+    await expect(row).toHaveCount(0);
 
     const expectedContent =
-      "![Roundtrip Gif](https://gif.fixture.invalid/7.gif)";
+      "Look at this\n\n![Roundtrip Gif](https://gif.fixture.invalid/7.gif)";
     const expectedEvent = () =>
       app.report.publications.find(
         ({ event }) =>
@@ -699,6 +693,7 @@ test.describe("GIF send roundtrip", () => {
       "href",
       "https://gif.fixture.invalid/7.gif",
     );
+    await expect(sent.getByText("Look at this", { exact: true })).toBeVisible();
     await expect(sent.getByText("![Roundtrip Gif]")).toHaveCount(0);
     expect(app.report.unexpected).toEqual([]);
   });

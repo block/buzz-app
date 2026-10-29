@@ -355,7 +355,10 @@ export function DraftsView({
                       >
                         {entry.draft.text.trim()
                           ? entry.draft.text
-                          : "Chat attachment"}
+                          : entry.draft.gifs?.length &&
+                              !entry.draft.chatCards?.length
+                            ? "GIF"
+                            : "Chat attachment"}
                       </span>
                     </span>
                   }

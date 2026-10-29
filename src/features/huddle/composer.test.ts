@@ -648,7 +648,7 @@ it("carries owner-authorized GIF media into companion previews across searches",
   expect(next.remote.media(url)).toBeUndefined();
 });
 
-it("previews a selected GIF in the standalone composer and sends its Markdown", async () => {
+it("stages a selected GIF in the standalone composer and sends its Markdown", async () => {
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -684,12 +684,21 @@ it("previews a selected GIF in the standalone composer and sends its Markdown", 
   fireEvent.click(
     await screen.findByRole("button", { name: "Choose Chosen GIF" }),
   );
+  const row = await screen.findByRole("region", { name: "Attachments" });
   await waitFor(() =>
-    expect(draft.querySelector("img[data-gif-preview]")).toHaveAttribute(
-      "src",
-      asset.url,
-    ),
+    expect(row.querySelector("img")).toHaveAttribute("src", asset.url),
   );
+  expect(draft).toHaveValue("");
+  fireEvent.click(screen.getByRole("button", { name: "Remove Chosen GIF" }));
+  await waitFor(() =>
+    expect(screen.queryByRole("region", { name: "Attachments" })).toBeNull(),
+  );
+  expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+  fireEvent.keyDown(draft, { key: "g", ctrlKey: true });
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Choose Chosen GIF" }),
+  );
+  await screen.findByRole("button", { name: "Remove Chosen GIF" });
   fireEvent.click(screen.getByRole("button", { name: "Send message" }));
   await waitFor(() =>
     expect(h.send).toHaveBeenCalledWith(

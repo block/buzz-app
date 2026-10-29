@@ -3,7 +3,10 @@ import type {
   ComposerTool,
   ContributionReader,
 } from "../../features/conversation/contracts";
-import { safeMessageUrl } from "../../features/relay/message-content";
+import {
+  safeMessageUrl,
+  scanMarkdown,
+} from "../../features/relay/message-content";
 import styles from "./Emoji.module.css";
 
 const emptyTools = { subscribe: () => () => {}, snapshot: () => false };
@@ -27,10 +30,8 @@ export function useGifDraftPreview(
   return active ? gifDraftPreview : undefined;
 }
 
-/** Presentation only: the editor retains the exact Markdown for undo and sending. */
-export function gifDraftPreview(
+function gifSource(
   url: string | undefined,
-  title: string | null | undefined,
   media: (url: string) => string | undefined,
 ) {
   if (!url || !safeMessageUrl(url)) return;
@@ -41,7 +42,35 @@ export function gifDraftPreview(
     return;
   }
   if (!/\.gif$/i.test(parsed.pathname)) return;
-  const source = media(url);
+  return media(url);
+}
+
+/** The GIF that `markdown` attaches when it is exactly one GIF image, as the
+ * picker inserts it. The Markdown stays the sent source. */
+export function draftGif(
+  markdown: string,
+  media: (url: string) => string | undefined,
+) {
+  const { images, tooDeep } = scanMarkdown(markdown);
+  const image = images[0];
+  if (
+    tooDeep ||
+    images.length !== 1 ||
+    image?.position?.start.offset !== 0 ||
+    image.position.end.offset !== markdown.length
+  )
+    return;
+  const source = gifSource(image.url, media);
+  return source ? { source, title: image.alt || "GIF" } : undefined;
+}
+
+/** Presentation only: the editor retains the exact Markdown for undo and sending. */
+export function gifDraftPreview(
+  url: string | undefined,
+  title: string | null | undefined,
+  media: (url: string) => string | undefined,
+) {
+  const source = gifSource(url, media);
   if (!source) return;
   return (
     <span className={styles.gifDraftPreview}>

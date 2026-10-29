@@ -1,7 +1,48 @@
 // An agent's lookup of a pull request's state: what the owner's links and
 // sidebar show, from the same store, with how old it is.
 import type { AddedTool } from "../../buzz-mcp/session-tools";
-import { PULL_REFRESH_MS, type PullStates } from "./pull-states";
+import type { GitHubDetails } from "./data";
+import {
+  PULL_REFRESH_MS,
+  type PullDetails,
+  type PullStates,
+} from "./pull-states";
+
+/** The panel's facts, such as files changed, as plain values under
+ * snake_case keys. */
+const factsOf = (facts: GitHubDetails["facts"]) =>
+  Object.fromEntries(
+    facts.map(([label, value]) => [
+      label.toLowerCase().replaceAll(" ", "_"),
+      typeof value !== "object"
+        ? value
+        : "additions" in value
+          ? `+${value.additions} -${value.deletions}`
+          : `${value.head.label} -> ${value.base.label}`,
+    ]),
+  );
+
+/** What the panel shows beyond the state, for `details: true`. */
+const detailsOf = ({ details, checklist, publicChecks }: PullDetails) => ({
+  title: details.title,
+  author: details.author,
+  ...factsOf(details.facts),
+  ...(checklist
+    ? {
+        review: {
+          decision: checklist.review.decision,
+          approved: checklist.review.approved,
+          changes_requested: checklist.review.changes,
+          waiting: checklist.review.waiting,
+        },
+        unresolved_threads: checklist.unresolved,
+        ...(checklist.moreThreads ? { more_threads_unread: true } : {}),
+        merge_state: checklist.merge,
+        auto_merge: checklist.autoMerge ?? null,
+        can_update_branch: checklist.canUpdateBranch,
+      }
+    : { checks: publicChecks?.state ?? "unknown" }),
+});
 
 export function addPullStateTool(
   agents: { addTool(tool: AddedTool): void },
@@ -10,7 +51,7 @@ export function addPullStateTool(
   agents.addTool({
     name: "github_pr_state",
     description:
-      "Reads a GitHub pull request's state as the owner's links show it: open, draft, merged or closed, its checks, failed check names and conflicts, and when it was read. It is at most a minute old unless fresh is true, or the last read failed: then last_read_failed says why and age_seconds how old it is. Checks and conflicts need the gh CLI signed in; without it only the state is known.",
+      "Reads a GitHub pull request's state as the owner's links show it: open, draft, merged or closed, its checks, failed check names and conflicts, and when it was read. With details true it also gives what the owner's GitHub panel shows: title, branches, files changed, the review decision and reviewers, unresolved review threads, the merge state and auto-merge. It is at most a minute old unless fresh is true, or the last read failed: then last_read_failed says why and age_seconds how old it is. Checks and conflicts need the gh CLI signed in; without it only the state is known.",
     inputSchema: {
       type: "object",
       properties: {
@@ -22,6 +63,11 @@ export function addPullStateTool(
           type: "boolean",
           description: "Read it from GitHub now rather than within the minute",
         },
+        details: {
+          type: "boolean",
+          description:
+            "Also give what the panel shows: reviews, unresolved threads, merge state and branches",
+        },
       },
       required: ["url"],
       additionalProperties: false,
@@ -31,6 +77,7 @@ export function addPullStateTool(
         throw new Error("url must be a GitHub pull request URL");
       const { state, readAt, error } = await states.read(args.url, {
         maxAge: args.fresh === true ? 0 : PULL_REFRESH_MS,
+        ...(args.details === true ? { level: "details" as const } : {}),
       });
       if (state === "failed")
         throw new Error(
@@ -47,6 +94,9 @@ export function addPullStateTool(
                 conflicts: state.conflicts,
                 head: state.head,
               }
+            : {}),
+          ...(args.details === true && state.details
+            ? { details: detailsOf(state.details) }
             : {}),
           read_at: new Date(readAt).toISOString(),
           age_seconds: Math.max(0, Math.round((Date.now() - readAt) / 1000)),

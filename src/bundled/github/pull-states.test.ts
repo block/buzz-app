@@ -781,10 +781,10 @@ it("reads a pull request once at every level its readers ask for", async () => {
   const states = createPullStates(gh);
   states.watch(pull, () => {});
   states.watch(pull, () => {}, "feedback");
-  states.watch(pull, () => {}, "panel");
+  states.watch(pull, () => {}, "details");
   states.watch(second, () => {});
   await vi.waitFor(() =>
-    expect(states.get(pull)).toMatchObject({ panel: expect.anything() }),
+    expect(states.get(pull)).toMatchObject({ details: expect.anything() }),
   );
   // One listing for both, and only the followed one lists its feedback.
   expect(listings(gh)).toHaveLength(1);
@@ -805,14 +805,14 @@ it("reads a pull request once at every level its readers ask for", async () => {
       viewer: "baxen",
       ids: ["review/R1", "inline/C1", "review/R2", "comment/I1"],
     },
-    panel: {
+    details: {
       signedIn: true,
       details: { title: "A change" },
       checklist: { id: "PR_1", head: "abc123", base: "main" },
     },
   });
   expect(states.get(second)).not.toHaveProperty("feedback");
-  expect(states.get(second)).not.toHaveProperty("panel");
+  expect(states.get(second)).not.toHaveProperty("details");
 });
 
 it("is not settled while a check runs, more are unread, or the rollup waits", async () => {
@@ -923,10 +923,10 @@ it("polls a pull request open in the panel twice a minute", async () => {
   states.watch(pull, () => {});
   await vi.waitFor(() => expect(states.get(pull)).toBeDefined());
   // Opening the panel reads what it adds now, then on the panel's interval.
-  const close = states.watch(pull, () => {}, "panel");
+  const close = states.watch(pull, () => {}, "details");
   await vi.advanceTimersByTimeAsync(0);
   expect(listings(gh)).toHaveLength(2);
-  expect(states.get(pull)).toHaveProperty("panel");
+  expect(states.get(pull)).toHaveProperty("details");
   await vi.advanceTimersByTimeAsync(PANEL_REFRESH_MS);
   expect(listings(gh)).toHaveLength(3);
   // Closed, the links' minute after the last poll follows, and drops what
@@ -936,7 +936,7 @@ it("polls a pull request open in the panel twice a minute", async () => {
   expect(listings(gh)).toHaveLength(3);
   await vi.advanceTimersByTimeAsync(1);
   expect(listings(gh)).toHaveLength(4);
-  expect(states.get(pull)).not.toHaveProperty("panel");
+  expect(states.get(pull)).not.toHaveProperty("details");
 });
 
 it("answers a reader from what it holds within the age asked, and reads otherwise", async () => {
@@ -1044,10 +1044,10 @@ it("reads the panel without gh apart from the links' share, with the head's chec
   await vi.waitFor(() =>
     expect(states.get(pulls[PUBLIC_READS_PER_POLL - 1] ?? "")).toBeDefined(),
   );
-  const { state } = await states.read(pull, { maxAge: 0, level: "panel" });
+  const { state } = await states.read(pull, { maxAge: 0, level: "details" });
   expect(state).toMatchObject({
     state: "open",
-    panel: {
+    details: {
       signedIn: false,
       details: { title: "A" },
       publicChecks: { state: "success" },
@@ -1075,10 +1075,10 @@ it("lets the panel's own read try GitHub while its public limit holds the links"
   expect(fetch).toHaveBeenCalledOnce();
   // The panel asks GitHub each time: refused, then read.
   await expect(
-    states.read(pull, { maxAge: 0, level: "panel" }),
+    states.read(pull, { maxAge: 0, level: "details" }),
   ).rejects.toBeInstanceOf(GitHubRateLimited);
-  const { state } = await states.read(pull, { maxAge: 0, level: "panel" });
-  expect(state).toMatchObject({ panel: { details: { title: "Recovered" } } });
+  const { state } = await states.read(pull, { maxAge: 0, level: "details" });
+  expect(state).toMatchObject({ details: { details: { title: "Recovered" } } });
   expect(fetch).toHaveBeenCalledTimes(3);
 });
 
@@ -1157,7 +1157,7 @@ it("keeps each reader's own pace: the panel stops at a closed pull request, link
     r0: { ...full(), pullRequest: { ...full().pullRequest, state } },
   }));
   const states = createPullStates(gh);
-  const close = states.watch(pull, () => {}, "panel");
+  const close = states.watch(pull, () => {}, "details");
   await vi.advanceTimersByTimeAsync(0);
   expect(listings(gh)).toHaveLength(1);
   state = "CLOSED";
@@ -1202,8 +1202,8 @@ it("reads the panel without gh when opened and with its links, apart from their 
     fetch.mock.calls.filter(([url]) => url.endsWith("/pulls/7")).length;
   const checkReads = () =>
     fetch.mock.calls.filter(([url]) => url.includes("/commits/abc")).length;
-  states.watch(pull, () => {}, "panel");
-  await vi.waitFor(() => expect(states.get(pull)).toHaveProperty("panel"));
+  states.watch(pull, () => {}, "details");
+  await vi.waitFor(() => expect(states.get(pull)).toHaveProperty("details"));
   expect([pullReads(), checkReads()]).toEqual([1, 2]);
   // The panel alone does not poll the public API.
   await vi.advanceTimersByTimeAsync(PULL_SLOW_REFRESH_MS);
@@ -1233,11 +1233,11 @@ it("parses only the levels a read asked for, and reads a level asked for meanwhi
   states.watch(pull, () => {});
   await vi.waitFor(() => expect(gh).toHaveBeenCalledOnce());
   // The panel opens while the links' read is in flight.
-  states.watch(pull, () => {}, "panel");
+  states.watch(pull, () => {}, "details");
   states.watch(pull, () => {}, "feedback");
   answer({ r0: rollup("OPEN") });
   await vi.waitFor(() => expect(states.get(pull)).toBeDefined());
-  expect(states.get(pull)).not.toHaveProperty("panel");
+  expect(states.get(pull)).not.toHaveProperty("details");
   expect(states.get(pull)).not.toHaveProperty("feedback");
   // What they asked for is read next, not a poll later.
   await vi.waitFor(() => expect(gh).toHaveBeenCalledTimes(2));
@@ -1282,21 +1282,21 @@ it("records why GitHub answered for none, and reads again as its readers want", 
     return { r0: full() };
   });
   const states = createPullStates(gh);
-  states.watch(pull, () => {}, "panel");
-  await vi.waitFor(() => expect(states.get(pull)).toHaveProperty("panel"));
+  states.watch(pull, () => {}, "details");
+  await vi.waitFor(() => expect(states.get(pull)).toHaveProperty("details"));
   const { readAt } = states.readAt(pull) ?? {};
   down = true;
   await vi.advanceTimersByTimeAsync(PANEL_REFRESH_MS);
   expect(listings(gh)).toHaveLength(2);
   // What is held stays, with why it could not be read again, also for a
   // reader answered from what is held.
-  expect(states.get(pull)).toHaveProperty("panel");
+  expect(states.get(pull)).toHaveProperty("details");
   expect(states.readAt(pull)).toMatchObject({
     readAt,
     error: { type: "SERVICE_UNAVAILABLE" },
   });
   expect(
-    (await states.read(pull, { maxAge: Infinity, level: "panel" })).error,
+    (await states.read(pull, { maxAge: Infinity, level: "details" })).error,
   ).toMatchObject({ type: "SERVICE_UNAVAILABLE" });
   // The panel is read again at its own pace.
   await vi.advanceTimersByTimeAsync(PANEL_REFRESH_MS);
@@ -1351,14 +1351,14 @@ it("reads the panel's public checks once gh drops out, rather than keeping none"
     };
   });
   const states = createPullStates(gh);
-  states.watch(pull, () => {}, "panel");
+  states.watch(pull, () => {}, "details");
   await vi.waitFor(() =>
-    expect(states.get(pull)).toMatchObject({ panel: { signedIn: true } }),
+    expect(states.get(pull)).toMatchObject({ details: { signedIn: true } }),
   );
   signedIn = false;
   await vi.advanceTimersByTimeAsync(PANEL_REFRESH_MS);
   expect(states.get(pull)).toMatchObject({
-    panel: { signedIn: false, publicChecks: { state: "success" } },
+    details: { signedIn: false, publicChecks: { state: "success" } },
   });
 });
 
@@ -1373,7 +1373,7 @@ it("reads a pull request a panel and a watch share without gh once, not again an
   );
   vi.stubGlobal("fetch", fetch);
   const states = createPullStates(undefined);
-  states.watch(pull, () => {}, "panel");
+  states.watch(pull, () => {}, "details");
   states.watch(pull, () => {}, "feedback");
   await vi.advanceTimersByTimeAsync(PULL_REFRESH_MS);
   // The pull request and its two kinds of checks, once; public data has no

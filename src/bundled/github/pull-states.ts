@@ -48,9 +48,10 @@ export const BODY_CHARS = 1_000;
  * - `state`: draft, merged or closed, checks and conflicts, as links show;
  * - `feedback`: its reviews and comments with their text, for agents'
  *   watches, read whether or not the window is visible;
- * - `panel`: everything the panel shows and acts on.
+ * - `details`: everything the panel shows and acts on: details, review,
+ *   threads, merge state and what the viewer may do.
  * A pull request is read with every level its readers ask for. */
-export type PullLevel = "state" | "feedback" | "panel";
+export type PullLevel = "state" | "feedback" | "details";
 
 /** A review, inline comment or comment on a pull request. */
 export type Feedback = Readonly<{
@@ -66,8 +67,8 @@ export type Feedback = Readonly<{
   path?: string | undefined;
 }>;
 
-/** What the panel shows of a pull request. */
-export type PullPanel = Readonly<{
+/** A pull request's details: what the panel shows and acts on. */
+export type PullDetails = Readonly<{
   details: GitHubDetails;
   /** Read with `gh` only. */
   checklist?: PullChecklist | undefined;
@@ -98,8 +99,8 @@ export type PullState = Readonly<{
         items: readonly Feedback[];
       }>
     | undefined;
-  /** At `panel`. */
-  panel?: PullPanel | undefined;
+  /** At `details`. */
+  details?: PullDetails | undefined;
 }>;
 
 /** A pull request's latest state and when it was read, and why the last
@@ -161,7 +162,7 @@ export const WATCH_POLLING: Polling = (_, { public: publicly }) =>
 const POLLING: Readonly<Record<PullLevel, Polling>> = {
   state: LINK_POLLING,
   feedback: WATCH_POLLING,
-  panel: PANEL_POLLING,
+  details: PANEL_POLLING,
 };
 
 /** Which feedback a reader wants the text of, by id; by default all. A
@@ -274,7 +275,7 @@ function idsOf(pull: StateData) {
   ];
 }
 
-/** The state in `pull`, an alias's answer, without its feedback or panel. */
+/** The state in `pull`, an alias's answer, without its feedback or details. */
 function stateOf(pull: StateData): PullState {
   const rollup = pull.commits?.nodes?.[0]?.commit?.statusCheckRollup;
   const contexts = (rollup?.contexts?.nodes ?? []).filter(
@@ -356,8 +357,8 @@ export function parseFeedback(found: unknown): Feedback[] {
 /** What one read asks of each pull request. */
 type Asked = Readonly<{
   feedback: boolean;
-  panel: boolean;
-  /** Someone wants what the public API can read: its state or the panel. */
+  details: boolean;
+  /** Someone wants what the public API can read: its state or details. */
   publicly: boolean;
   /** The panel asked for it, so its public checks are read again. */
   checks: boolean;
@@ -385,9 +386,9 @@ async function readStates(
     variables[`o${i}`] = owner;
     variables[`n${i}`] = name;
     variables[`p${i}`] = Number(url.split("/").at(-1));
-    const { feedback, panel } = asks(url);
-    return `r${i}:repository(owner:$o${i},name:$n${i}){${panel ? PANEL_REPOSITORY_FIELDS : ""}
-      pullRequest(number:$p${i}){${STATE}${feedback ? `\n${FEEDBACK}` : ""}${panel ? `\n${PANEL_PULL_FIELDS}` : ""}}}`;
+    const { feedback, details } = asks(url);
+    return `r${i}:repository(owner:$o${i},name:$n${i}){${details ? PANEL_REPOSITORY_FIELDS : ""}
+      pullRequest(number:$p${i}){${STATE}${feedback ? `\n${FEEDBACK}` : ""}${details ? `\n${PANEL_PULL_FIELDS}` : ""}}}`;
   });
   const declared = urls
     .map((_, i) => `$o${i}:String!,$n${i}:String!,$p${i}:Int!`)
@@ -421,15 +422,15 @@ async function readStates(
         : new Error(failure.message);
     const state = stateOf(pull);
     const reference = parseGitHubReference(url);
-    const { feedback, panel, held } = asks(url);
+    const { feedback, details, held } = asks(url);
     return {
       ...state,
       ...(feedback && {
         feedback: { viewer, ids: idsOf(pull), items: held },
       }),
-      ...(panel &&
+      ...(details &&
         reference && {
-          panel: {
+          details: {
             ...parsePull({ repository } as PullData, reference),
             signedIn: true,
           },
@@ -493,14 +494,14 @@ async function readText(
   }
 }
 
-/** `url` from the public API, with the panel's details when `panel`. Its
+/** `url` from the public API, with its details when `withDetails`. Its
  * checks cost two more reads, so they are read only when `checks` or for a
  * new head; a poll keeps the public ones `held` for the same head. */
 async function readPublicState(
   url: string,
-  panel: boolean,
+  withDetails: boolean,
   checks: boolean,
-  held: PullPanel | undefined,
+  held: PullDetails | undefined,
   signal: AbortSignal,
 ): Promise<PullState> {
   const reference = parseGitHubReference(url);
@@ -516,8 +517,8 @@ async function readPublicState(
           : details.state === "Draft"
             ? "draft"
             : "open",
-    ...(panel && {
-      panel: {
+    ...(withDetails && {
+      details: {
         details,
         signedIn: false,
         publicChecks: !sha
@@ -545,14 +546,14 @@ const same = (a: PullState | "failed" | undefined, b: PullState | "failed") =>
     a.settled === b.settled &&
     sameList(a.failed, b.failed) &&
     JSON.stringify(a.feedback) === JSON.stringify(b.feedback) &&
-    JSON.stringify(a.panel) === JSON.stringify(b.panel));
+    JSON.stringify(a.details) === JSON.stringify(b.details));
 
 /** Whether `state` has what `level` asks for. */
 const holds = (state: PullState | "failed" | undefined, level: PullLevel) =>
   !!state &&
   (state === "failed" ||
     level === "state" ||
-    (level === "feedback" ? !!state.feedback : !!state.panel));
+    (level === "feedback" ? !!state.feedback : !!state.details));
 
 /** The pull request `url` names, as the store keys it: its canonical URL, so
  * a link pasted with a query string or trailing slash shares the entry, and
@@ -660,10 +661,10 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
       notBefore.get(url) ?? 0,
     );
   };
-  /** What the panel holds of `url`. */
+  /** The details held of `url`, as the panel shows them. */
   const held = (url: string) => {
     const state = states.get(url);
-    return typeof state === "object" ? state.panel : undefined;
+    return typeof state === "object" ? state.details : undefined;
   };
   /** Forgets the pull requests nobody has watched or asked for in a while. */
   const forget = (now: number) => {
@@ -754,9 +755,9 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
       const feedback = typeof held === "object" ? held.feedback : undefined;
       const asking: Asked = {
         feedback: at(url, "feedback"),
-        panel: at(url, "panel"),
-        publicly: at(url, "state") || at(url, "panel"),
-        checks: !!asked.get(url)?.levels.has("panel"),
+        details: at(url, "details"),
+        publicly: at(url, "state") || at(url, "details"),
+        checks: !!asked.get(url)?.levels.has("details"),
         wantsText: (id) =>
           [
             ...[...(listeners.get(url) ?? [])]
@@ -771,12 +772,12 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
       return asking;
     };
     // The panel's reads are its own, not the links' share.
-    const free = due.filter((url) => at(url, "panel")).length;
+    const free = due.filter((url) => at(url, "details")).length;
     // While GitHub holds public reads for its limit, only the panel's own
     // reads, which its reader asked for, try it again.
     const reading =
       readsPublic() && now < publicHeldUntil
-        ? due.filter((url) => asked.get(url)?.levels.has("panel"))
+        ? due.filter((url) => asked.get(url)?.levels.has("details"))
         : due;
     /** Whether this read asked for every level its readers want; a level
      * asked for once it started is read next. */
@@ -796,7 +797,9 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
       for (const url of reading) asks(url);
       const found = await readAll(
         // The panel's first, so they are the free ones.
-        reading.sort((a, b) => Number(at(b, "panel")) - Number(at(a, "panel"))),
+        reading.sort(
+          (a, b) => Number(at(b, "details")) - Number(at(a, "details")),
+        ),
         asks,
         Math.min(free, reading.length),
         signal,
@@ -918,7 +921,7 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
       reading.map((url) =>
         readPublicState(
           url,
-          asks(url).panel,
+          asks(url).details,
           asks(url).checks,
           held(url),
           signal,

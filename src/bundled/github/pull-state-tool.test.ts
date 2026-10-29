@@ -136,3 +136,77 @@ it("answers the last state read when GitHub answered for nothing", async () => {
     last_read_failed: "socket hang up",
   });
 });
+
+it("gives what the panel shows with details, from the panel's read when it has one", async () => {
+  const pull = {
+    r0: {
+      viewerDefaultMergeMethod: "SQUASH",
+      squashMergeAllowed: true,
+      pullRequest: {
+        id: "PR_7",
+        title: "A change",
+        state: "OPEN",
+        isDraft: false,
+        body: "",
+        author: { login: "wes" },
+        baseRefName: "main",
+        headRefName: "fix",
+        headRefOid: "abc123",
+        headRepository: { nameWithOwner: "block/buzz-app" },
+        headRepositoryOwner: { login: "block" },
+        baseRepository: { nameWithOwner: "block/buzz-app" },
+        additions: 3,
+        deletions: 1,
+        changedFiles: 2,
+        mergeStateStatus: "BLOCKED",
+        reviewDecision: "REVIEW_REQUIRED",
+        viewerCanUpdate: true,
+        viewerCanUpdateBranch: false,
+        viewerCanMergeAsAdmin: false,
+        viewerCanEnableAutoMerge: true,
+        viewerCanDisableAutoMerge: false,
+        autoMergeRequest: null,
+        reviewRequests: { nodes: [{ requestedReviewer: { login: "rae" } }] },
+        latestOpinionatedReviews: { nodes: [] },
+        reviewThreads: {
+          totalCount: 2,
+          nodes: [{ isResolved: false }, { isResolved: true }],
+        },
+        commits: answer.r0.pullRequest.commits,
+      },
+    },
+  };
+  const gh = vi.fn(async () => pull) as unknown as GitHubCli &
+    ReturnType<typeof vi.fn>;
+  const { states, call } = setup(gh);
+  // The panel open on it: the agent is answered from the panel's read.
+  const unwatch = states.watch(url, () => {}, "details");
+  await vi.waitFor(() =>
+    expect(states.get(url)).toHaveProperty("details.checklist"),
+  );
+  const result = JSON.parse(String(await call({ url, details: true })));
+  expect(gh).toHaveBeenCalledOnce();
+  expect(result).toMatchObject({
+    state: "open",
+    details: {
+      title: "A change",
+      author: "wes",
+      branch: "fix -> main",
+      files_changed: 2,
+      changes: "+3 -1",
+      review: {
+        decision: "REVIEW_REQUIRED",
+        approved: [],
+        changes_requested: [],
+        waiting: ["rae"],
+      },
+      unresolved_threads: 1,
+      merge_state: "BLOCKED",
+      auto_merge: null,
+      can_update_branch: false,
+    },
+  });
+  // Without details, the answer is what links show.
+  expect(JSON.parse(String(await call({ url })))).not.toHaveProperty("details");
+  unwatch();
+});

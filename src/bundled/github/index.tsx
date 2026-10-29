@@ -33,7 +33,7 @@ import { createSoloPulls, writeLink, type SoloPulls } from "./solo-pull";
 import {
   createPullStates,
   PANEL_REFRESH_MS,
-  type PullPanel,
+  type PullDetails,
   type PullStates,
 } from "./pull-states";
 import { addPullStateTool } from "./pull-state-tool";
@@ -216,36 +216,29 @@ function useGitHubObject(
   return { loaded, load };
 }
 
-/** A pull request from the store at the panel's level, kept current while
- * shown: always the latest the store has. Its first read retries transient
- * failures quietly, and shows an error only while nothing is held. */
-function usePullPanel(
-  states: PullStates,
-  url: string,
-  fresh: boolean,
-  enabled: boolean,
-) {
+/** A pull request's details from the store, kept current while shown:
+ * always the latest the store has. Opening it reads GitHub; that read
+ * retries transient failures quietly, and shows an error only while nothing
+ * is held. */
+function usePullPanel(states: PullStates, url: string, enabled: boolean) {
   const subscribe = useCallback(
     (listener: () => void) =>
-      enabled ? states.watch(url, listener, "panel") : () => {},
+      enabled ? states.watch(url, listener, "details") : () => {},
     [states, url, enabled],
   );
   const state = useSyncExternalStore(subscribe, () =>
     enabled ? states.get(url) : undefined,
   );
-  const held = typeof state === "object" ? state.panel : undefined;
+  const held = typeof state === "object" ? state.details : undefined;
   const [error, setError] = useState<string>();
   useEffect(() => {
     if (!enabled) return;
     const controller = new AbortController();
-    let attempt = 0;
+    // Opening the panel reads GitHub, as it always has.
     retryRead(
       async () => {
-        const read = await states.read(url, {
-          maxAge: fresh || attempt++ ? 0 : PANEL_REFRESH_MS,
-          level: "panel",
-        });
-        if (typeof read.state !== "object" || !read.state.panel)
+        const read = await states.read(url, { maxAge: 0, level: "details" });
+        if (typeof read.state !== "object" || !read.state.details)
           throw read.error ?? new Error("GitHub did not answer");
         return read;
       },
@@ -259,10 +252,10 @@ function usePullPanel(
       if (!controller.signal.aborted) setError(readable(failure).message);
     });
     return () => controller.abort();
-  }, [states, url, fresh, enabled]);
+  }, [states, url, enabled]);
   const load = useCallback(async () => {
     // What changed is shown once read; a failed read keeps what is shown.
-    await states.read(url, { maxAge: 0, level: "panel" }).catch(() => {});
+    await states.read(url, { maxAge: 0, level: "details" }).catch(() => {});
   }, [states, url]);
   const loaded: GitHubObject | string | undefined = held ?? error;
   return { loaded, load };
@@ -315,7 +308,6 @@ export function GitHubPanel({
       reference={reference}
       gh={gh}
       states={states}
-      fresh={attempt > 0}
       chatLink={chatLink}
       resolveActions={resolveActions}
       retry={() => retry(attempt + 1)}
@@ -329,7 +321,6 @@ function ObjectPanel({
   reference,
   gh,
   states,
-  fresh,
   chatLink,
   resolveActions,
   retry,
@@ -337,8 +328,6 @@ function ObjectPanel({
   reference: GitHubReference;
   gh: GitHubCli | undefined;
   states: PullStates;
-  /** Read again rather than show what the store holds, as after Retry. */
-  fresh: boolean;
   chatLink: ((url: string) => ReactNode) | undefined;
   resolveActions:
     | ((
@@ -350,7 +339,7 @@ function ObjectPanel({
   retry(): void;
 }) {
   const isPull = reference.kind === "pull";
-  const pull = usePullPanel(states, reference.url, fresh, isPull);
+  const pull = usePullPanel(states, reference.url, isPull);
   const other = useGitHubObject(reference, gh, !isPull);
   const loaded = isPull ? pull.loaded : other.loaded;
   const load = isPull ? pull.load : other.load;
@@ -600,7 +589,7 @@ function ObjectPanel({
                   sha={result.headSha}
                   checks={
                     typeof loaded === "object" && "publicChecks" in loaded
-                      ? (loaded as PullPanel).publicChecks
+                      ? (loaded as PullDetails).publicChecks
                       : undefined
                   }
                 />

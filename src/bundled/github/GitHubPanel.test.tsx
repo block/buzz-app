@@ -1197,6 +1197,25 @@ it("reads through the plugin's store, so a link and the panel on one pull reques
   unwatch();
 });
 
+it("reads GitHub each time the panel opens, even with the details just read", async () => {
+  const gh = vi.fn(async (_query: string) => pullData());
+  const states = createPullStates(gh as unknown as GitHubCli);
+  const panel = () => (
+    <GitHubPanel
+      target={pull}
+      close={() => {}}
+      gh={gh as unknown as GitHubCli}
+      states={states}
+    />
+  );
+  const first = render(panel());
+  await screen.findByRole("heading", { name: "Private change #9" });
+  first.unmount();
+  expect(gh).toHaveBeenCalledOnce();
+  render(panel());
+  await waitFor(() => expect(gh).toHaveBeenCalledTimes(2));
+});
+
 it("shows public checks the store read for the head, without gh", async () => {
   const fetch = vi.fn(async (input: string) =>
     Response.json(

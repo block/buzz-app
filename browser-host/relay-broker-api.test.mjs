@@ -2,6 +2,7 @@ import { createConsola } from "consola";
 import { Context } from "@deepseek-ai/cordis";
 import { HostService } from "../src/features/host/service.ts";
 import { authTagOwner } from "../src/features/agents/owner-attestation.ts";
+import { publishAgentRecord } from "../src/features/agents/relay-removal.ts";
 import { logSocketFrame } from "../src/features/developer/traffic.ts";
 import { getLogger, setLogLevel } from "../src/features/developer/logging.ts";
 import { brokerSocket, openBrokerSocket } from "../tests/broker-socket.mjs";
@@ -2012,6 +2013,109 @@ test("message/reaction deletions pass real signing and publication without admit
         expect((await h.post(route, { ...event, tags })).status).toBe(400);
     }
     expect(h.publications).toHaveLength(1);
+  } finally {
+    await h.close();
+  }
+});
+
+test("agent profile saves publish owner-signed listings through the broker outbox", async () => {
+  const h = await harness(success);
+  let traffic;
+  let owner;
+  try {
+    const transport = await connectBrokerTransport(h.base);
+    traffic = await openBrokerSocket(transport);
+    owner = createOutbox(transport.viewer, transport.writer, {
+      load: () => [],
+      save: () => {},
+    });
+    const entry = {
+      pubkey: "ab".repeat(32),
+      name: "Renamed agent",
+      picture: "https://example.com/new.png",
+      runtime: "block.builderlab/builderlab",
+      prior: {
+        content: {
+          name: "Old name",
+          picture: "https://example.com/old.png",
+          parallelism: 2,
+          respond_to: "mentions",
+        },
+        tags: [
+          ["d", "ab".repeat(32)],
+          ["runtime", "block.builderlab/builderlab"],
+          ["legacy-setting", "kept"],
+        ],
+      },
+    };
+    const record = await publishAgentRecord(
+      { outbox: owner.outbox },
+      entry,
+      new AbortController().signal,
+    );
+    expect(h.publications).toHaveLength(1);
+    const published = h.publications[0];
+    expect(verifyEvent(published)).toBe(true);
+    expect(published).toMatchObject({
+      kind: 30177,
+      pubkey: transport.viewer,
+      content: JSON.stringify(record.content),
+    });
+    expect(JSON.parse(published.content)).toEqual({
+      name: entry.name,
+      picture: entry.picture,
+      parallelism: 2,
+      respond_to: "mentions",
+    });
+    expect(published.tags).toEqual([
+      ["d", entry.pubkey],
+      ["runtime", entry.runtime],
+      ["legacy-setting", "kept"],
+      ["client-id", expect.any(String)],
+    ]);
+    expect(owner.outbox.snapshot()).toEqual([]);
+    const stranger = finalizeEvent({ ...published }, generateSecretKey());
+    expect((await h.post("publish", stranger)).status).toBe(400);
+    expect(
+      (await h.post("publish", { ...published, sig: "00".repeat(64) })).status,
+    ).toBe(400);
+    expect(h.publications).toHaveLength(1);
+  } finally {
+    owner?.dispose();
+    traffic?.dispose();
+    await h.close();
+  }
+});
+
+test("agent record signing refuses malformed coordinates, content and timestamps", async () => {
+  const h = await harness(success);
+  const template = {
+    kind: 30177,
+    created_at: 1700000000,
+    content: JSON.stringify({ name: "Agent" }),
+    tags: [["d", "ab".repeat(32)]],
+  };
+  try {
+    for (const invalid of [
+      { tags: [] },
+      { tags: [...template.tags, ...template.tags] },
+      { tags: [["d", "AB".repeat(32)]] },
+      { tags: [["d", "agent"]] },
+      { tags: [["d", "ab".repeat(32), "extra"]] },
+      { tags: [null] },
+      { tags: [...template.tags, ["extra", 1]] },
+      { created_at: -1 },
+      { created_at: 1.5 },
+      { content: "not JSON" },
+      { content: "null" },
+      { content: "[]" },
+      { content: JSON.stringify({ name: " " }) },
+      { content: JSON.stringify({ name: "é".repeat(16000) }) },
+    ])
+      expect((await h.post("sign", { ...template, ...invalid })).status).toBe(
+        400,
+      );
+    expect(h.publications).toEqual([]);
   } finally {
     await h.close();
   }

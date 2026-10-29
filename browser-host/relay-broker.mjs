@@ -610,6 +610,42 @@ export function validAgentEnrollment(event) {
     )
   );
 }
+/** Owner-signed agent listings; preserve prior settings and extension tags. */
+function validAgentRecord(event) {
+  if (
+    event?.kind !== 30177 ||
+    typeof event.content !== "string" ||
+    Buffer.byteLength(event.content) > 32000 ||
+    !Number.isSafeInteger(event.created_at) ||
+    event.created_at < 0 ||
+    !Array.isArray(event.tags) ||
+    !event.tags.every(
+      (tag) =>
+        Array.isArray(tag) && tag.every((value) => typeof value === "string"),
+    )
+  )
+    return false;
+  const coordinates = event.tags.filter(([name]) => name === "d");
+  if (
+    coordinates.length !== 1 ||
+    coordinates[0].length !== 2 ||
+    !/^[0-9a-f]{64}$/.test(coordinates[0][1])
+  )
+    return false;
+  try {
+    const body = JSON.parse(event.content);
+    return (
+      body !== null &&
+      typeof body === "object" &&
+      !Array.isArray(body) &&
+      typeof body.name === "string" &&
+      !!body.name.trim()
+    );
+  } catch {
+    return false;
+  }
+}
+
 /** Base Buzz agent delete: only removal of one member, relay-authorized. */
 /** The owner's NIP-09 deletion of one of their own kind 30177 agent records. */
 export function validAgentRecordDeletion(event, owner) {
@@ -1437,6 +1473,7 @@ export function relayBrokerPlugin({
                 9001,
                 30078,
                 30175,
+                30177,
                 30178,
                 40100,
                 1984,
@@ -2630,6 +2667,12 @@ export function relayBrokerPlugin({
                   sent: false,
                 });
               }
+            } else if (filters?.kind === 30177) {
+              if (!validAgentRecord(filters))
+                return json(res, 400, {
+                  error: "Malformed agent record",
+                  sent: false,
+                });
             } else if ([30175, 30178].includes(filters?.kind)) {
               if (!validCatalogEnvelope(filters))
                 return json(res, 400, {

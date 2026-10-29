@@ -365,17 +365,13 @@ fn parse_callback(
     if codes.len() != 1 || codes[0].1.is_empty() || codes[0].1.len() > 4096 {
         return invalid;
     }
-    (
-        200,
-        "Sign-in received. Return to the app to finish verification.",
-        Some(OAuthCallback { parameters: fields }),
-    )
+    (200, "", Some(OAuthCallback { parameters: fields }))
 }
 
 async fn reply(stream: &mut TcpStream, status: u16, message: &str) {
     // All copy comes from the fixed responses above, never from callback values.
     let heading = match status {
-        200 => "Return to Buzz",
+        200 => "You're now signed in.",
         404 => "Page not found",
         _ => "Sign-in needs attention",
     };

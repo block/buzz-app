@@ -77,6 +77,10 @@ p {
   letter-spacing: -0.005em;
 }
 
+p:empty {
+  display: none;
+}
+
 .brand {
   display: flex;
   align-items: center;
@@ -106,12 +110,33 @@ h1 {
 
 .hint {
   color: var(--text-subtle);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
 }
 
-.actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
+/* Same Tabler loader and motion as the shared Button's CircleNotchIcon. */
+#close-spinner {
+  inline-size: 1.125rem;
+  block-size: 1.125rem;
+  flex-shrink: 0;
+  animation: spin 1s linear infinite;
+}
+
+#close-spinner[hidden] {
+  display: none;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #close-spinner {
+    animation: none;
+  }
 }
 
 button {
@@ -138,16 +163,6 @@ button {
 
 button:active {
   background: var(--affordance-prominent-pressed);
-}
-
-button.secondary {
-  background: transparent;
-  color: var(--text-subtle);
-}
-
-button.secondary:is(:hover, :active) {
-  color: var(--text-standard);
-  text-decoration: underline;
 }
 
 button:focus-visible {

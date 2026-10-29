@@ -198,12 +198,11 @@ async fn real_listener_preserves_callback_parameters_and_closes_after_completion
         assert!(response.contains("Referrer-Policy: no-referrer"));
         assert!(response.contains("<title>Buzz sign-in</title>"));
         assert!(response.contains(include_str!("../../../public/buzz-mark.svg")));
-        assert!(response.contains("<h1 id=\"heading\">Return to Buzz</h1>"));
-        assert!(response.contains("Return to the app"));
-        assert!(response.contains("finish verification"));
+        assert!(response.contains("<h1 id=\"heading\">You're now signed in.</h1>"));
         assert!(response.contains("data-complete=\"true\""));
-        assert!(response.contains("data-close-delay=\"2\""));
-        assert!(response.contains("Close this window</button>"));
+        assert!(response.contains("data-close-delay=\"3\""));
+        assert!(response.contains("Close now</button>"));
+        assert!(response.contains("id=\"close-spinner\""));
         assert!(!response.contains("{{"));
         let (headers, body) = response.split_once("\r\n\r\n").unwrap();
         let style = body

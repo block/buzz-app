@@ -83,8 +83,8 @@ is within ten seconds after the reading delay. Slow verification never causes a
 late focus jump. This checks
 applications, not browser tabs. Other platforms skip automatic focus return until
 they have a reliable foreground-browser check; no desktop-control permission is
-requested. The callback's **Keep open** control only cancels closing its tab;
-native focus return follows the verified-login policy independently.
+requested. **Close now** skips the browser delay; native focus return follows
+the verified-login policy independently.
 
 ## Callback handling and limits
 
@@ -101,14 +101,18 @@ native focus return follows the verified-login policy independently.
   shell/panel, spacing and type roles, browser light/dark mode, `no-store`,
   and `no-referrer`. Its Content Security Policy permits only the exact embedded
   stylesheet and close-window script by hash, with no external assets or network
-  requests. A valid callback shows a two-second countdown before trying to close
-  its page; **Close now** skips the countdown and **Keep open** cancels it. The
+  requests. A valid callback shows the headline **You're now signed in.** and a
+  spinner for three seconds before trying to close its page; **Close now** skips
+  the wait. No supporting copy appears unless closing is blocked or JavaScript
+  is disabled. The spinner respects reduced motion
+  and stops if closing is blocked, leaving manual-close guidance. The
   reading delay and native focus-return delay share one native constant. Error
   pages remain open. Close controls are shown when JavaScript is enabled,
   with manual-close guidance if browser policy refuses `window.close()`. Restoring
   an unclosed tab later can still fail because the loopback listener is temporary.
-  Receipt of a callback does not establish successful account verification;
-  users return to Buzz for that result.
+  The headline acknowledges the browser sign-in callback. Receipt of a callback
+  does not establish successful account verification; Buzz still performs code
+  exchange and account validation, and reports failures in the app.
   The standalone stylesheet mirrors the shared roles without loading the app;
   Inter uses the system fallback when unavailable locally. It does not inherit
   the app's Appearance preference.

@@ -11,11 +11,13 @@
       <div class="brand">{{brand}}<span>Buzz</span></div>
       <h1 id="heading">{{heading}}</h1>
       <p>{{message}}</p>
-      <div class="actions">
-        <button id="close-window" type="button" hidden>Close this window</button>
-        <button id="keep-open" class="secondary" type="button" hidden>Keep open</button>
-      </div>
-      <p id="close-hint" class="hint" role="status">You can close this window.</p>
+      <button id="close-window" type="button" hidden>Close now</button>
+      <p class="hint" role="status">
+        <svg id="close-spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true" hidden>
+          <path d="M12 3a9 9 0 1 0 9 9" />
+        </svg>
+        <span id="close-hint">You can close this window.</span>
+      </p>
     </main>
     <script>{{script}}</script>
   </body>

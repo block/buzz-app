@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use tauri::Manager;
 use tokio::time::{sleep_until, Duration, Instant};
 
-pub(super) const READABLE_DELAY: Duration = Duration::from_secs(2);
+pub(super) const READABLE_DELAY: Duration = Duration::from_secs(3);
 const RETURN_WINDOW: Duration = Duration::from_secs(10);
 
 struct Pending {

@@ -172,9 +172,11 @@ it.each(["{}", "malformed JSON"])(
   "uses an abbreviated public key for a nameless profile: %s",
   async (content) => {
     const owner = keypair();
+    const namesake = keypair();
     const profiles = createProfileDirectory({
       read: async () => [signed(owner, { kind: 0, content, tags: [] })],
     });
+    profiles.accept([profile(namesake, { name: owner.pubkey.slice(0, 10) })]);
     const library = createAgentLibrary(undefined);
     const names = bindNames(
       { profiles: profiles.queries, agentLibrary: library.queries },
@@ -184,10 +186,22 @@ it.each(["{}", "malformed JSON"])(
       },
     );
     try {
-      mount(fixtureYaml, owner.pubkey, true, {
+      const fixture = mount(fixtureYaml, owner.pubkey, true, {
         profiles: profiles.queries,
         names,
       });
+      act(() =>
+        fixture.setChannels({
+          status: "ready",
+          channels: [
+            {
+              id: fixtureChannel,
+              name: "Fixture channel",
+              members: [owner.pubkey, namesake.pubkey],
+            },
+          ],
+        }),
+      );
       fireEvent.click(
         screen.getByRole("button", { name: "Owner: My workflows" }),
       );

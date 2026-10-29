@@ -461,12 +461,7 @@ function WorkflowOwner({
     profile && !profile.nameIsFallback
       ? profile.name
       : (formatPublicKey(owner) ?? "Unknown owner");
-  const resolved = name(owner, fallback);
-  // The naming view can return the directory's synthetic profile name.
-  // Preserve genuine aliases without promoting that placeholder to a name.
-  const shown =
-    profile?.nameIsFallback && resolved === profile.name ? fallback : resolved;
-  return <>Owner: {shown}</>;
+  return <>Owner: {name(owner, fallback)}</>;
 }
 
 function WorkflowCard({

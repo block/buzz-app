@@ -104,6 +104,16 @@ function serialize(
       : fence(node.getAttribute("data-copy-language") ?? "", code);
   }
   const inner = children(node, format, range);
+  // A triple-click ends its range at the next block's start, often past an
+  // empty reaction row, and a drag can start at a block's end. An empty layout
+  // container, or a block holding none of the selection, copies as nothing,
+  // not as an empty line, item or code block.
+  if (
+    !inner &&
+    (/^(DIV|SECTION)$/.test(tag) ||
+      (range && blockTag.test(tag) && !covers(node, range)))
+  )
+    return "";
   // Revealed or not, a spoiler is authored content, and every flavor shows
   // its delimiters so other editors see where it was masked; HTML also carries
   // the composer's mark, which `copyDocument` reads back alone.
@@ -172,8 +182,9 @@ function serialize(
           (range
             ? Math.max(
                 0,
+                // The first item the copy keeps, not one it only touches.
                 [...node.children].findIndex((item) =>
-                  range.intersectsNode(item),
+                  serialize(item, format, range, true),
                 ),
               )
             : 0)
@@ -361,13 +372,18 @@ function whole(element: Element, range?: Range): boolean {
 /** Whether a selection covers an element or some of its text, not merely
  * ends inside it, as a triple-click on the paragraph above leaves it. */
 function holds(element: Element, range?: Range): boolean {
-  if (!range) return true;
+  return (
+    !range || covers(element, range) || within(element, range).toString() !== ""
+  );
+}
+
+/** Whether a range contains all of an element. */
+function covers(element: Element, range: Range): boolean {
   const bounds = element.ownerDocument.createRange();
   bounds.selectNode(element);
   return (
-    (range.compareBoundaryPoints(Range.START_TO_START, bounds) <= 0 &&
-      range.compareBoundaryPoints(Range.END_TO_END, bounds) >= 0) ||
-    within(element, range).toString() !== ""
+    range.compareBoundaryPoints(Range.START_TO_START, bounds) <= 0 &&
+    range.compareBoundaryPoints(Range.END_TO_END, bounds) >= 0
   );
 }
 

@@ -3246,6 +3246,46 @@ it("pastes a copied rule after existing text without turning it into a heading",
   expect(sent.container.querySelector("h1, h2")).toBeNull();
 });
 
+it.each([
+  ["## Title\n\nbody", "h2", "foo## Title"],
+  ["first\n\nbody", "p", "foofirst"],
+])(
+  "pastes a triple-clicked block of %j into the current line, as when selected exactly",
+  (content, block, pasted) => {
+    const view = render(
+      <MessageMarkdown
+        row={{
+          id: "m",
+          channelId: "general",
+          authorId: mic,
+          content,
+          createdAt: 1,
+          mentions: [],
+          participants: [],
+          attachments: [],
+          reactions: [],
+          replyCount: 0,
+        }}
+        media={() => undefined}
+        onOpenLink={() => false}
+      />,
+    );
+    // Chromium and WebKit end a triple-click at the next block's start.
+    const range = document.createRange();
+    range.setStart(view.container.querySelector(block)?.firstChild as Text, 0);
+    range.setEnd(view.container.querySelector(`${block} + p`) as Element, 0);
+    const target = mount("foo");
+    act(() => target.input.setSelectionRange(3, 3));
+    paste(
+      target.input,
+      serializeNode(view.container, "text", range),
+      `<div data-buzz-copy="timeline">${serializeNode(view.container, "html", range)}</div>`,
+    );
+    expect(target.markdown()).toBe(pasted);
+    expect(target.input.querySelector("p > br:only-child")).toBeNull();
+  },
+);
+
 it.each(["-", "3."])(
   "pastes a phrase selected across formatting in a %s list item as prose",
   (marker) => {

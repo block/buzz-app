@@ -589,6 +589,80 @@ describe("serializeNode", () => {
     });
   });
 
+  it.each([
+    ["<h2>Title</h2>\n<p>body</p>", "p", "Title", "## Title", "<h2>Title</h2>"],
+    [
+      "<p>first</p>\n<blockquote>\n<p>quoted</p>\n</blockquote>",
+      "blockquote p",
+      "first",
+      "first",
+      "<p>first</p>",
+    ],
+    [
+      "<p>first</p>\n<pre><code>code\n</code></pre>",
+      "pre",
+      "first",
+      "first",
+      "<p>first</p>",
+    ],
+    [
+      "<ul>\n<li>\n<p>one</p>\n</li>\n<li>\n<p>two</p>\n</li>\n</ul>",
+      "li + li p",
+      "one",
+      "- one",
+      "<ul><li><p>one</p></li></ul>",
+    ],
+  ])(
+    "leaves out the block after %j that a triple-click's range ends at",
+    (html, next, text, markdown, copied) => {
+      // Chromium and WebKit end it at offset 0 of the next block element.
+      const body = mount(row(html));
+      const message = query("[data-message-id]", body);
+      const first = query("h2, p", message).firstChild as Text;
+      const { range } = select(first, 0, query(next, body), 0);
+      expect(each(message, range)).toEqual({ text, markdown, html: copied });
+    },
+  );
+
+  it("leaves out the next row and an empty reaction row when a triple-click crosses into it", () => {
+    // The real shape: a message's last paragraph to offset 0 of the next row's
+    // first element, past the first row's empty reaction row.
+    const body = mount(
+      row(
+        '<div><p>only</p><div role="group" aria-label="Reactions"></div></div>',
+      ) + row("<div><span>Name</span><p>next</p></div>", "m2"),
+    );
+    const { range } = select(
+      query("p", body).firstChild as Text,
+      0,
+      query('[data-message-id="m2"] span', body),
+      0,
+    );
+    expect(each(body, range)).toEqual({
+      text: "only",
+      markdown: "only",
+      html: "<p>only</p>",
+    });
+  });
+
+  it("numbers a list from its first item a selection holds, keeping a whole empty item", () => {
+    const body = mount(
+      row('<ol start="3">\n<li>one</li>\n<li></li>\n<li>three</li>\n</ol>'),
+    );
+    const message = query("[data-message-id]", body);
+    // A drag from the end of the first item's text holds none of it.
+    const { range } = select(
+      lastText(query("li", message)),
+      3,
+      lastText(query("li:last-child", message)),
+      5,
+    );
+    expect(serializeNode(message, "html", range)).toBe(
+      '<ol start="4"><li></li><li>three</li></ol>',
+    );
+    expect(serializeNode(message, "markdown", range)).toBe("4. \n5. three");
+  });
+
   it("degrades unknown elements to text and escapes HTML", () => {
     const paragraph = query(
       "p",

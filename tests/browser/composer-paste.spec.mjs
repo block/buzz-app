@@ -231,6 +231,60 @@ test("pasting copied messages into the composer restores chips, the recipient an
   );
 });
 
+// Browser-only contract: each engine's native triple-click range. On a
+// one-heading message it ends in the next row, past the empty reaction row,
+// yet copies the heading alone, which pastes into the current line. The range
+// shapes this crosses are modelled in selection-copy.test.tsx.
+test("a triple-clicked heading message pastes into the current line", async ({
+  page,
+  app,
+  browserName,
+}) => {
+  await open(page, app);
+  const event = app.append("primary", "alpha", "## Title");
+  app.append("primary", "alpha", "next");
+  const heading = page
+    .locator(`[data-channel-timeline] [data-message-id="${event.id}"]`)
+    .getByRole("heading", { name: "Title" });
+  await expect(page.getByText("next", { exact: true })).toBeVisible();
+  await heading.click({ clickCount: 3 });
+  await expect
+    .poll(() => page.evaluate(() => window.getSelection()?.toString()))
+    .toContain("Title");
+  await page.evaluate(() => {
+    window.__copyPayload = undefined;
+    document.addEventListener(
+      "copy",
+      (event) => {
+        window.__copyPayload = {
+          text: event.clipboardData?.getData("text/plain"),
+          html: event.clipboardData?.getData("text/html"),
+        };
+      },
+      { once: true },
+    );
+  });
+  // See timeline-copy.spec.mjs for the WebKit copy command.
+  if (browserName === "webkit")
+    expect(await page.evaluate(() => document.execCommand("copy"))).toBe(true);
+  else await page.keyboard.press("ControlOrMeta+c");
+  const copied = {
+    text: "Title",
+    html: '<div data-buzz-copy="timeline"><h2>Title</h2></div>',
+  };
+  await expect
+    .poll(() => page.evaluate(() => window.__copyPayload))
+    .toEqual(copied);
+  const input = page.getByRole("textbox", {
+    name: "Message #Alpha",
+    exact: true,
+  });
+  await input.click();
+  await input.pressSequentially("foo");
+  await pasteInto(input, copied);
+  await expect(input).toHaveJSProperty("value", "foo## Title");
+});
+
 // Browser integration: external clipboard HTML paints a labelled link in the
 // actual composer and survives publication through the session.
 test("external linked text stays linked in the composer and sent message", async ({

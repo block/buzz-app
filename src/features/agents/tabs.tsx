@@ -12,6 +12,7 @@ import type {
   AgentSettingsHost,
   Agents,
   RegisteredAgentType,
+  TranscriptRequest,
 } from "./service";
 import { AgentSaveButton, useAgentSaveState } from "./AgentSaveButton";
 import { AgentConfigHistory } from "./AgentConfigHistory";
@@ -29,6 +30,8 @@ export function agentSections({
   agent,
   type,
   conversation,
+  initialTranscript,
+  close,
   settingsHost,
   memories,
   communities,
@@ -39,6 +42,10 @@ export function agentSections({
   agent: Agent;
   type: RegisteredAgentType | undefined;
   conversation?: AgentConversation | undefined;
+  /** Asks to show the conversation's transcript first; see AgentViewProps. */
+  initialTranscript?: TranscriptRequest | undefined;
+  /** Closes the panel the sections are shown in. */
+  close?: (() => void) | undefined;
   settingsHost?: AgentSettingsHost;
   settingsSection?: "identity" | "runtime";
   settingsContent?: ReactNode;
@@ -77,6 +84,10 @@ export function agentSections({
               ? { settingsContent: content }
               : {})}
             {...(conversation && { conversation })}
+            {...(role === "activity" &&
+              conversation &&
+              initialTranscript && { initialTranscript })}
+            {...(role === "activity" && close && { close })}
             save={(config) =>
               settingsHost?.pendingSave
                 ? settingsHost.pendingSave(config)

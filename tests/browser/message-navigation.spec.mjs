@@ -192,7 +192,28 @@ test("old root and reply beyond the first thread page open exactly; reclick and 
   await expect(
     page.locator(`[data-message-id="${app.exact.target.id}"]`),
   ).toHaveCount(0);
+  // Local tab removal precedes the dismissal's native return. Let that land
+  // before Back, so neither pending traversal can supersede the fresh open.
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => window.fixtureNavigation.snapshot().entry.target.messageId,
+      ),
+    )
+    .toBeUndefined();
+  await expect.poll(() => status(page)).toBe("opened");
+  const closedVisit = await page.evaluate(
+    () => window.fixtureNavigation.snapshot().entry.id,
+  );
   await page.getByRole("button", { name: "Go back", exact: true }).click();
+  // The thread was already absent before Back. Wait for the traversal itself
+  // before issuing a fresh open, or its late pop can supersede that intent.
+  await expect
+    .poll(() =>
+      page.evaluate(() => window.fixtureNavigation.snapshot().entry.id),
+    )
+    .not.toBe(closedVisit);
+  await expect.poll(() => status(page)).toBe("opened");
   // Explicit close retires the thread's visits; reopening is a fresh intent.
   await expect(thread(page)).toHaveCount(0);
   expect(await openTarget(page, target(app))).toEqual({ status: "opened" });

@@ -1380,7 +1380,8 @@ semantics, hug their contents up to a 12rem maximum with ellipsis, use 18px corn
 actions, and a subtle selected fill, accept avatars/icons, and place a sibling close
 button over reserved trailing space. Tab close icons use 1rem artwork to match
 container header actions while retaining their compact hit areas. Close buttons stay visible on the active tab; inactive tabs reveal them on hover or keyboard focus. Touch devices keep close buttons visible. Navigation tab strips scroll only horizontally. Their rounded thumb uses the sidebar’s quiet scrollbar role, with a 3px visible thumb in the header’s 4px bottom inset. The tab row keeps its vertical position as overflow starts or stops. It appears only while the strip is hovered; touch devices retain the thumb without requiring hover. The main
-channel header uses the same control with a single non-closable tab with `showSelection={false}` (no selection or hover fill); channel
+channel header uses the same control with a single non-closable tab with `showSelection={false}` (no selection or hover fill); that
+title tab fills the header's title slot instead of stopping at 12rem, truncating only when the header runs out of room; channel
 actions remain in the header action slot. The settings launcher uses
 `data-highlight-expanded="false"` to preserve disclosure semantics without a
 sticky pressed treatment; the selected tab owns the open-state indicator.
@@ -1395,6 +1396,45 @@ NavigationItem
 offers an `option` variant for picker rows with even 8px padding and immediate
 hover feedback. It forwards normal button events, refs and data attributes so unread observation,
 preloading and product shortcuts remain with the caller.
+`multiline` lets a stacked navigation label grow with its content. Use
+`NavigationCard` when a destination has supporting detail or separate sibling
+controls: the primary NavigationItem owns focus and `aria-current`, while the
+card owns the shared hover and selected surface. Put details in its `footer`,
+not inside the primary button. Nested destinations keep their own selection.
+Use `tone="tonal"` for task trees: the shared card uses neutral selected and hover
+surfaces. Use `tone="inset"` for a lead destination whose own hover, focus, menu,
+and selection use `surface-inset`. Both tones rest transparent, including open
+cards. A contained active branch clears its enclosing cards' fill and border.
+Own row hover, focus, or menu can paint over contained selection; that enclosure
+has one uniform surface until a contained interaction takes priority. A
+task card hovered inside `SidebarNavigation` temporarily clears the other task
+cards' shading; selected shading returns when the pointer leaves the cards. A Solo
+card's `dropTarget` uses `affordance-sidebar-hover` across its full enclosure;
+it takes priority over selection and clears contained card fills while active.
+Put nested destinations in `body`. Solo sources compose rows from
+`ui.Conversation` parts and `ui.Disclosure`; see
+[Solo regions](../../../docs/solo-regions.md). Task rows keep worker disclosures in
+`footer` by default; show their summary only while that task or a worker is
+selected. A project heading puts an independent caret immediately after the
+project title. Only the caret toggles the container; the title and supporting
+metadata navigate to the project chat, and double-click does not rename the title.
+Own-row hover, keyboard focus, or menu interaction reveals the caret through
+`Reveal`; expansion alone does not. More stays at the row end, aligned with the
+same status column as ordinary tasks.
+Keep the worker body mounted and its saved expansion state. Footer disclosures
+put the caret at the inline end:
+closed rows show worker avatars; hover, expansion, or keyboard focus replaces the
+avatars with the caret. Worker rows and their summary add no hierarchy indentation.
+Solo task headings use `text-body-sm`; workers use `text-caption`, and inset
+project headings use `text-label`. Task and worker supporting text uses
+`text-caption`; project rollups keep `text-body-sm`. Footer summary text and its
+caret use the unselected row role `text-navigation` and align to the inline start.
+Worker status glyphs are 12px; task and project glyphs remain 14px. Worker unread
+counts appear in the summary; retain accessible row unread evidence without
+painting a dot. Task and project unread dots stay in the card's trailing flow,
+separate from status text and the overflow action.
+Selected rows can expand without painting the entire branch in the accent color.
+
 Its `text` variant is a text-only row action, such as a capped list's Show
 more and Show less: the base navigation item's type and padding with no fill, resting in
 `--text-subtle` and strengthening to `--text-standard` on hover and keyboard
@@ -1533,8 +1573,9 @@ to remain visible on conversation surfaces in both modes.
 
 One device-local accent choice colors message bubbles and their related content,
 the composer Send button, and sidebar row hover/selection. General buttons,
-checked controls, segmented filters, tabs, menus, links outside bubbles, and drag
-indicators keep their neutral appearance. Status colors, focus, categorical
+checked controls, segmented filters, tabs, menus, and links outside bubbles keep
+their neutral appearance. Solo card drop destinations use the sidebar hover tint;
+other drag indicators stay neutral. Status colors, focus, categorical
 purple, shadows, and media-specific roles stay independent.
 
 **Chillin’** (the default) uses soft accent fills for your messages; **Buzzin’**

@@ -32,6 +32,7 @@ import {
   SharedImportDialog,
 } from "./AgentBrowse";
 import { AgentShareDialog } from "./AgentShareDialog";
+import type { SharedAgent } from "../../features/agents/shared-agents";
 import { AgentCard, AgentPortrait, TeamCard } from "./AgentCard";
 import { AgentCreateDialog, TypeIcon } from "./AgentCreateDialog";
 import { NewAgentTile } from "./NewAgentTile";
@@ -61,9 +62,9 @@ import {
   type SharedDefinition,
 } from "../../features/agents/agent-share";
 import {
-  setDefaultAgent,
-  useChosenAgent,
+  chooseDefaultAgent,
   useDefaultAgent,
+  useSavedAgent,
 } from "../../features/solo/default-agent";
 import type { RelayData } from "../../features/relay/service";
 import type { Navigation } from "../../features/navigation/controller";
@@ -110,7 +111,7 @@ import { Textarea } from "../../shared/design-system/ui/Textarea";
 import { Tooltip } from "../../shared/design-system/ui/Tooltip";
 import { publicKeyLabels } from "../../shared/identity/public-key";
 import { readView, writeView } from "../../shared/view-state";
-import { agentProviderRoute, agentProviderTarget } from "./routes";
+import { agentProviderRoute, agentProviderTarget, agentRoute } from "./routes";
 
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
@@ -285,6 +286,19 @@ export function AgentsPage({
     if (next !== "marketplace") setSharedSelection(undefined);
     setTab(next);
   };
+  // Opened for one of your agents, such as from a card sent in chat.
+  const routedAgent =
+    routed && navigation.target.kind === "page"
+      ? agentRoute(navigation.target.route?.params)
+      : undefined;
+  const routedEntry = navigation?.entryId;
+  useEffect(() => {
+    if (!routedAgent || !routedEntry) return;
+    setEditingTeam(undefined);
+    setSharedSelection(undefined);
+    setTab("yours");
+    setSelectedKey(routedAgent);
+  }, [routedAgent, routedEntry]);
   const returnTo = (next: Tab) => () => {
     setFlow(undefined);
     changeTab(next);
@@ -435,6 +449,17 @@ export function AgentsPage({
       onSelect: browse,
       onBuild: build,
       newAgent: !toolbarAction && starts,
+      // A published agent's toast opens it where everyone else finds it.
+      onViewListing: (agent: SharedAgent) => {
+        if (connection.status !== "ready") return;
+        sharedTrigger.current = null;
+        changeTab("marketplace");
+        setSharedSelection({
+          agent,
+          session: connection.session,
+          community: connection.origin,
+        });
+      },
     };
     return connection.status === "ready" ? (
       <DefaultAgentInventory
@@ -595,6 +620,11 @@ export function AgentsPage({
                           });
                           document.getElementById("agents-yours-tab")?.focus();
                         }}
+                        onOpen={(agent) => {
+                          setSharedSelection(undefined);
+                          returnToAgents();
+                          browse(agent.pubkey);
+                        }}
                       />
                     ),
                   },
@@ -688,12 +718,14 @@ type InventoryProps = {
   newAgent: ReactNode;
   /** The agent new Berd messages are tagged for, in this community. */
   defaultAgent?: string | undefined;
-  /** False while another agent stands in for a missing chosen one. */
+  /** False until the main agent is saved to the account, as while another
+   * agent stands in for a missing chosen one. */
   defaultPinned?: boolean;
   onMakeDefault?: ((pubkey: string) => void) | undefined;
   defaultChoices?: ReadonlySet<string>;
   /** The community connection Share publishes through, while it is ready. */
   session?: RelaySession;
+  onViewListing?: ((agent: SharedAgent) => void) | undefined;
 };
 
 /** The inventory with this community's default agent marked and settable. */
@@ -703,24 +735,28 @@ function DefaultAgentInventory({
   ...props
 }: InventoryProps & { session: RelaySession; scope: string }) {
   const current = useDefaultAgent(session, scope);
-  const chosen = useChosenAgent(scope);
+  // Pinned once saved to the account, so an automatic pick can be saved too.
+  const saved = useSavedAgent(session, scope);
   const choices = useAgentChoices(session, true, true);
   const [error, setError] = useState("");
+  // Only the latest choice reports its failure.
+  const latest = useRef(0);
   return (
     <>
       <Inventory
         {...props}
         session={session}
         defaultAgent={current?.pubkey}
-        defaultPinned={!!current && current.pubkey === chosen}
+        defaultPinned={!!current && current.pubkey === saved}
         defaultChoices={
           new Set(choices.selectable.map((agent) => agent.pubkey))
         }
         onMakeDefault={(pubkey) => {
-          setError(
-            setDefaultAgent(scope, pubkey)
-              ? ""
-              : "The main agent couldn't be saved on this device.",
+          const choice = ++latest.current;
+          setError("");
+          chooseDefaultAgent(session, scope, pubkey).catch(
+            (failure: Error) =>
+              choice === latest.current && setError(failure.message),
           );
         }}
       />
@@ -797,6 +833,7 @@ function Inventory({
   defaultChoices,
   onMakeDefault,
   session,
+  onViewListing,
 }: InventoryProps) {
   const grid = useRef<HTMLDivElement>(null);
   const index = agents.findIndex((agent) => agent.pubkey === selected);
@@ -884,6 +921,7 @@ function Inventory({
                   service={service}
                   session={session}
                   type={type}
+                  onViewListing={onViewListing}
                   onBuild={() => onBuild(agent.pubkey)}
                   onRemoved={() => onSelect()}
                   role="gridcell"
@@ -932,6 +970,7 @@ function InventoryCard({
   onBuild,
   onRemoved,
   main,
+  onViewListing,
   ...props
 }: Omit<React.ComponentProps<typeof AgentCard>, "agent"> & {
   agent: Agent;
@@ -940,6 +979,7 @@ function InventoryCard({
   type: RegisteredAgentType | undefined;
   onBuild(): void;
   onRemoved(): void;
+  onViewListing?: ((agent: SharedAgent) => void) | undefined;
   /** Whether it is the community's main agent and can be made it. */
   main?:
     | { isMain: boolean; pinned: boolean; available: boolean; onMake(): void }
@@ -969,7 +1009,7 @@ function InventoryCard({
   const actions = (remove?: () => void, leave?: () => void) => (
     <>
       {main &&
-        // A stand-in for a missing chosen agent can be made main for good.
+        // An automatic pick or stand-in can be made main for good.
         (main.pinned ? (
           <MenuNote>Main agent</MenuNote>
         ) : (
@@ -1081,6 +1121,7 @@ function InventoryCard({
           agent={agent}
           type={type}
           session={session}
+          onViewListing={onViewListing}
           onClose={() => setSharing(false)}
         />
       )}

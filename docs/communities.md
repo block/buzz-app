@@ -115,6 +115,26 @@ empty state there. Try drafting in A, switching to B, then returning to A.
 Selected channels, drafts and reading offsets are partitioned by the canonical
 community origin and viewer; channel IDs alone are not sufficient keys.
 
+## Import from the previous desktop app
+
+After native startup, Buzz offers the previous desktop app's saved communities
+for the signed-in identity. The dialog lists eligible secure origins and warns
+that importing may restore communities previously removed. Nothing is added or
+queued for account sync until **Import communities** is chosen. **Skip import**,
+Close, or Escape declines the import and keeps that decision across launches.
+
+Every nonempty import requires consent. An empty local record or account list
+cannot establish an untouched account: acknowledged removals leave no history,
+and pending or unsuccessful sync cannot establish it either. Existing memberships
+and settings stay unchanged. Memberships and removals observed while the read or
+consent is pending are checked again before adding anything.
+
+The native reader opens the previous app's macOS WebKit storage read-only and
+skips symlinks. An absent root reads as empty; traversal or database errors leave
+the import retryable on the next launch. A read or save that does not complete
+does not record approval; disposing a pending prompt does not record a decline.
+Other platforms have no supported legacy storage source.
+
 ## Known communities
 
 The device record also carries which saved destinations the account service

@@ -46,10 +46,12 @@ import { PanelLaunchers } from "./shell/PanelLaunchers";
 import { PanelCard } from "../features/panels/PanelCard";
 import { communityDestination } from "../features/communities/destination";
 import { CommunityLanding } from "../features/communities/CommunityLanding";
+import { LegacyCommunityImport } from "../features/communities/LegacyCommunityImport";
 import { launchVisible, setLaunchReady, subscribeLaunch } from "./launch";
 
 export function App({ services }: { services: AppServices }) {
   const identity = services.identity;
+  const launching = useSyncExternalStore(subscribeLaunch, launchVisible);
   useEffect(() => {
     if (!identity) return;
     const update = () => {
@@ -69,6 +71,9 @@ export function App({ services }: { services: AppServices }) {
         {services.identity ? (
           <IdentitySetup identity={services.identity}>
             <ConnectedApp services={services} />
+            {!launching && (
+              <LegacyCommunityImport communities={services.communities} />
+            )}
           </IdentitySetup>
         ) : (
           <ConnectedApp services={services} />
@@ -95,6 +100,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
     undefined,
   );
   const discardSettings = useRef(false);
+  const settingsEditorScope = useRef<string | undefined>(undefined);
   useLayoutEffect(() => {
     if (!settingsUnsaved) return;
     return services.navigationHost.guardDeparture((next, decide) => {
@@ -154,8 +160,10 @@ function ConnectedApp({ services }: { services: AppServices }) {
     client.memberships.length === 0;
   // The prompt is stale once Settings ends another way or nothing is left to
   // discard, such as when a pending save is sent behind it.
-  if (confirmSettingsDiscard && (!settings || !settingsUnsaved))
+  if (confirmSettingsDiscard && (!settings || !settingsUnsaved)) {
+    settingsTraversal.current = undefined;
     setConfirmSettingsDiscard(false);
+  }
   const settingsFocus = useRef<HTMLElement | null>(null);
   const wasSettings = useRef(false);
   const workspaceEntry = useRef<string | undefined>(undefined);
@@ -312,6 +320,17 @@ function ConnectedApp({ services }: { services: AppServices }) {
         : { scope: null }),
     });
   };
+  const settingsUnavailable =
+    (!route.state.ingress && !!route.failure) ||
+    route.state.status === "failed";
+  const settingsBlocked = settingsUnavailable || route.waiting;
+  const settingsScope =
+    route.target.kind === "settings"
+      ? JSON.stringify(route.target.scope)
+      : undefined;
+  // Preserve Settings' completion/focus state across admitted scope changes.
+  // A blocked destination may retain only its own scope's dirty editor.
+  if (settings && !settingsBlocked) settingsEditorScope.current = settingsScope;
   const destinationFailure = (
     <div role="alert" className="notice">
       <h1>This destination couldn’t open</h1>
@@ -513,45 +532,53 @@ function ConnectedApp({ services }: { services: AppServices }) {
             }}
           >
             <div id="settings-content" className="h-full" tabIndex={-1}>
-              {(!route.state.ingress && route.failure) ||
-              route.state.status === "failed" ? (
+              {settingsUnavailable ? (
                 destinationFailure
               ) : route.waiting ? (
                 <p role="status">Opening destination…</p>
-              ) : (
-                <Settings
-                  agents={services.agents}
-                  decisions={services.decisions}
-                  plugins={plugins}
-                  cards={services.settingsCards}
-                  adminAccess={services.adminAccess}
-                  communities={services.communities}
-                  identity={services.identity}
-                  appearance={services.appearance}
-                  shortcuts={services.shortcuts}
-                  shortcutBindings={services.shortcutBindings}
-                  notifications={services.notifications}
-                  updates={services.updates}
-                  navigation={route.request}
-                  navigationPane
-                  onDeparturePending={(pending) => {
-                    const client = services.communities.snapshot();
-                    const attempt = route.state.attempt;
-                    if (pending && client.viewer && client.selected)
-                      setDeparture({
-                        attempt,
-                        viewer: client.viewer,
-                        communityId: client.selected,
-                      });
-                    else if (!pending)
-                      setDeparture((current) =>
-                        current?.attempt === attempt ? null : current,
-                      );
-                  }}
-                  onSection={openSettingsSection}
-                  onProvider={route.setSettingsProvider}
-                  onUnsavedChange={setSettingsUnsaved}
-                />
+              ) : null}
+              {(!settingsBlocked ||
+                (settingsUnsaved &&
+                  settingsEditorScope.current === settingsScope)) && (
+                <div
+                  className="h-full"
+                  hidden={settingsBlocked}
+                  inert={settingsBlocked}
+                >
+                  <Settings
+                    agents={services.agents}
+                    decisions={services.decisions}
+                    plugins={plugins}
+                    cards={services.settingsCards}
+                    adminAccess={services.adminAccess}
+                    communities={services.communities}
+                    identity={services.identity}
+                    appearance={services.appearance}
+                    shortcuts={services.shortcuts}
+                    shortcutBindings={services.shortcutBindings}
+                    notifications={services.notifications}
+                    updates={services.updates}
+                    navigation={route.request}
+                    navigationPane
+                    onDeparturePending={(pending) => {
+                      const client = services.communities.snapshot();
+                      const attempt = route.state.attempt;
+                      if (pending && client.viewer && client.selected)
+                        setDeparture({
+                          attempt,
+                          viewer: client.viewer,
+                          communityId: client.selected,
+                        });
+                      else if (!pending)
+                        setDeparture((current) =>
+                          current?.attempt === attempt ? null : current,
+                        );
+                    }}
+                    onSection={openSettingsSection}
+                    onProvider={route.setSettingsProvider}
+                    onUnsavedChange={setSettingsUnsaved}
+                  />
+                </div>
               )}
             </div>
             {confirmSettingsDiscard && settings && settingsUnsaved && (

@@ -151,6 +151,28 @@ belong to this persistent sidebar. Rows in saved groups, **Starred** and **Chann
 can also be dragged with a pointer onto another saved group, **Starred** or
 **Channels**; the drop is the same Move intent, with the same gate, optimistic
 placement, rollback notice and Retry.
+The **Channels** ellipsis menu also offers **Create section**, which creates an
+empty section without moving a channel. Its dialog retains the name and section
+ID after an attempted write fails and waits for confirmation before closing.
+The submitted name stays read-only and focused; a rejected gate that attempted
+no write leaves the draft editable. Failed confirmation uses plain copy and
+offers Retry preferences whenever preferences are unavailable, with Create
+disabled until recovery. After a failed creation,
+the session refreshes preferences from the writer before allowing dismissal so
+an accepted save stays visible even after Cancel. If that read fails too, new
+creation is gated across menu, drop and create-and-move paths, and Retry retains
+writer routing until reconciliation succeeds. Recovery waits for all queued
+preference writes and repeats a writer read invalidated by a concurrent write.
+Ordinary startup remains replica-eligible. Dragging a channel into
+the gap above the first custom section expands an **Add to new section** drop
+target inside the sidebar. With no custom sections, the target is above
+**Channels**; **Starred** keeps its pinned position. The created section appears
+at that same first position. The target stays revealed for the rest of that drag, with
+reduced motion opening it immediately; other section destinations remain available.
+Dropping there opens the existing create-and-move dialog; cancelling leaves the
+channel in place, and no preference is written until submission. These entry
+points supplement the per-channel **Move channel → Create new…** route and use
+the existing gated preference queue and encrypted section record.
 Only a channel's select surface starts a drag, the surface its row menu wraps.
 **Starred** accepts drops only when it is already visible; starting a drag does
 not reveal an empty section. Use the row menu to star the first channel.
@@ -268,8 +290,9 @@ A register is `[version, device, value]`, with a nonnegative safe-integer millis
 version and 16 lowercase hex device ID. Meta-less relay heads import at event
 seconds × 1,000 with the zero device ID. Edits exceed every observed register
 version and use a random in-memory device ID. Sections sort by canonical `(order,id)`
-and project dense display orders; new sections append after the canonical live
-maximum. Orphan assignments are omitted from the legacy projection, not deleted
+and project dense display orders; menu-created sections append after the canonical
+live maximum, while drop-created sections precede the live minimum. Orphan
+assignments are omitted from the legacy projection, not deleted
 from metadata. Read projection accepts Desktop string values on retained section
 name/icon registers; only projected live text receives UI length limits. Already
 satisfied intents return without rewriting the head, including assignment removal
@@ -1174,7 +1197,10 @@ path. No native or relay changes are required.
 
 Click a message's reply count to open its root and replies in the right column.
 Up to three overlapping participant avatars appear beside the count, with `+N`
-for additional summary participants; missing/unavailable pictures use initials.
+for additional participants; missing/unavailable pictures use initials. Like the
+count, participants come from the relay's summary, with the authors of replies
+this client has sent since that summary placed first, so your own reply's avatar
+is among the visible three as soon as you send it.
 They reuse the channel's existing shared profile/media path, not extra per-row reads.
 On a supporting relay, the panel opens at the newest 10 replies and loads older
 pages of 50 when you scroll upward; there is no Load more replies button. It validates
@@ -1217,13 +1243,17 @@ Replies show a day divider only when their day differs from the previous row.
 
 Ordinary replies remain flat beneath the root. Replies to those replies form nested
 lists, with ascending timestamp/event-ID order among siblings. Nested branches start
-closed and expand one level at a time; once opened, they stay open for the lifetime
-of the thread view, including through child disappearance and rearrival. Expanding
-moves focus to the first revealed reply; deleting a focused reply returns focus to
+closed and expand one level deep; once opened, they stay open for the lifetime
+of the thread view, including through child disappearance and rearrival, until the
+reader collapses them from their thread line. Expanding moves focus to the first
+revealed reply and collapsing returns it to the branch's summary; deleting a focused reply returns focus to
 its available parent or thread history. Labeled expansion controls remain available
 when visual indentation is capped in narrow panels. Exact links reveal available
 ancestors; a reply whose parent is outside loaded history remains visible with a
 notice.
+Agents reply beneath the root with `send`. Their core `reply_in_subthread` tool
+replies under a named message instead, recording that message as the parent exactly
+as a person's Reply does.
 Retry appears only after a failed read; there is no routine Refresh control. Names
 are optional shared background enrichment. The panel describes **replies loaded**,
 not visible rows or complete history.

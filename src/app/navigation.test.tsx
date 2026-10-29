@@ -568,6 +568,9 @@ it("keeps the confirmed departure mounted through removal, then opens Personal P
   );
   expect(screen.queryByRole("alertdialog")).toBeNull();
   expect(screen.queryByText("This destination couldn’t open")).toBeNull();
+  await waitFor(() =>
+    expect(document.getElementById("settings-content")).toHaveFocus(),
+  );
   // The presentation lease never makes a removed community navigable again.
   await act(async () => {
     void current.navigation.open(target);

@@ -15,6 +15,8 @@ import { DiscoveryState } from "../relay/discovery";
 import { keypair, metadata, roster, signed } from "../relay/testing";
 import { huddleDescription } from "../huddle/lifecycle";
 import { createRelaySession } from "../relay/session";
+import { createChannelLifecycle } from "../relay/channel-lifecycle";
+import { ReadError } from "../relay/errors";
 import { createSidebarPreferencesStore } from "../relay/sidebar-preferences-store";
 import type {
   SidebarGroups,
@@ -152,6 +154,12 @@ function fixture(
       };
       for (const listener of listeners) listener();
     });
+  // A discovery commit, as live roster events produce.
+  const commit = () =>
+    act(() => {
+      list = { ...list, asOf: (list.asOf ?? 0) + 1 };
+      for (const listener of listeners) listener();
+    });
   const drop = (id: string) =>
     act(() => {
       list = {
@@ -223,6 +231,7 @@ function fixture(
     list,
     session,
     publish,
+    commit,
     drop,
     connection(next: RelaySnapshot) {
       act(() => {
@@ -232,6 +241,86 @@ function fixture(
     },
   };
 }
+
+function visibilityFixture() {
+  const f = fixture();
+  const read = vi
+    .fn()
+    .mockRejectedValue(new ReadError("unavailable", "offline", 503));
+  const lifecycle = createChannelLifecycle({
+    reader: { read },
+    viewer: f.session.viewer,
+    relayAuthor: "b".repeat(64),
+    canAccess: () => true,
+    acceptDiscovery() {},
+    removed() {},
+  });
+  f.session.channelLifecycle = lifecycle.capability;
+  return { f, read, lifecycle };
+}
+
+it("keeps visibility recovery quiet, then offers the existing retry after exhaustion", async () => {
+  vi.useFakeTimers();
+  const random = vi.spyOn(Math, "random").mockReturnValue(0.5);
+  const { f, read, lifecycle } = visibilityFixture();
+  try {
+    render(f.view("alpha"));
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    expect(read).toHaveBeenCalledOnce();
+    expect(
+      screen.queryByText("Hidden conversations could not be refreshed."),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Retry hidden conversations" }),
+    ).not.toBeInTheDocument();
+    f.commit();
+    await act(() => vi.advanceTimersByTimeAsync(1000));
+    f.commit();
+    await act(() => vi.advanceTimersByTimeAsync(4250));
+    expect(read).toHaveBeenCalledTimes(4);
+    expect(
+      screen.getByText("Hidden conversations could not be refreshed."),
+    ).toBeVisible();
+    read.mockResolvedValue([]);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Retry hidden conversations" }),
+    );
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    expect(read).toHaveBeenCalledTimes(5);
+    expect(
+      screen.queryByRole("button", { name: "Retry hidden conversations" }),
+    ).not.toBeInTheDocument();
+  } finally {
+    cleanup();
+    lifecycle.dispose();
+    random.mockRestore();
+    vi.useRealTimers();
+  }
+});
+
+it("cancels visibility retries on sidebar unmount and session changes", async () => {
+  vi.useFakeTimers();
+  const { f, read, lifecycle } = visibilityFixture();
+  try {
+    const mounted = render(f.view("alpha"));
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    expect(read).toHaveBeenCalledOnce();
+    const next = fixture();
+    mounted.rerender(next.view("beta"));
+    await act(() => vi.advanceTimersByTimeAsync(120_000));
+    expect(read).toHaveBeenCalledOnce();
+    mounted.rerender(f.view("alpha"));
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    expect(read).toHaveBeenCalledTimes(2);
+    mounted.unmount();
+    await act(() => vi.advanceTimersByTimeAsync(120_000));
+    expect(read).toHaveBeenCalledTimes(2);
+  } finally {
+    cleanup();
+    lifecycle.dispose();
+    vi.useRealTimers();
+  }
+});
 
 it.each(["Retry", "Dismiss"] as const)(
   "%s restores mute recovery focus after cached-to-live session handoff without remounting",
@@ -649,7 +738,9 @@ it("offers DMs a Move conversation menu and relocates them into a saved group", 
   let assignments: Record<string, string> = {};
   const read = vi.fn(async () => ({ ...saved, assignments }));
   const write = vi.fn(
-    async (intent: { channelId: string; sectionId?: string }) => {
+    async (intent: { channelId?: string; sectionId?: string }) => {
+      if (intent.channelId === undefined)
+        throw new Error("Expected channel move");
       const changedAssignments = intent.sectionId
         ? { ...assignments, [intent.channelId]: intent.sectionId }
         : Object.fromEntries(
@@ -1092,10 +1183,67 @@ it("rejects a deferred header Create section after its navigation origin retires
     for (const frame of frames.splice(0)) frame(0);
   });
   expect(
-    screen.queryByRole("dialog", { name: "Create new section" }),
+    screen.queryByRole("dialog", { name: "Move to new section" }),
   ).not.toBeInTheDocument();
   expect(preferences.queries.snapshot().data?.sections).toEqual([]);
   preferences.dispose();
+});
+
+it("gates all creation entry points while uncertain creation reconciles, preserving ordinary moves", async () => {
+  const data = { sections: [], assignments: {}, starred: [], muted: [] };
+  let finish!: (value: SidebarPreferences) => void;
+  let entered!: () => void;
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const read = new Promise<SidebarPreferences>((resolve) => {
+    finish = resolve;
+  });
+  const preferences = createSidebarPreferencesStore({
+    read: async () => data,
+    readAfterWrite: () => {
+      entered();
+      return read;
+    },
+    available: true,
+    write: vi.fn().mockRejectedValue(new Error("response lost")),
+    writeStar: vi.fn(async () => []),
+  });
+  await preferences.queries.ensure();
+  const creating = expect(
+    preferences.queries.createSection({ id: "saved", name: "Saved" }),
+  ).rejects.toThrow("response lost");
+  try {
+    await started;
+    const h = fixture(preferences.queries);
+    const user = userEvent.setup();
+    render(h.view("alpha"));
+    const row = await screen.findByRole("button", { name: "beta" });
+    expect(document.querySelector("[data-create-section-trigger]")).toBeNull();
+    fireEvent.keyDown(row, { key: "ContextMenu" });
+    await user.hover(
+      await screen.findByRole("menuitem", { name: "Move channel" }),
+    );
+    expect(
+      await screen.findByRole("menuitem", { name: "Create new…" }),
+    ).toHaveAttribute("aria-disabled", "true");
+    expect(
+      screen.getByRole("menuitemradio", { name: "Starred" }),
+    ).not.toHaveAttribute("aria-disabled", "true");
+    await act(async () => {
+      finish(data);
+      await creating;
+    });
+    await waitFor(() =>
+      expect(
+        document.querySelector("[data-create-section-trigger]"),
+      ).not.toBeNull(),
+    );
+  } finally {
+    finish(data);
+    await creating;
+    preferences.dispose();
+  }
 });
 
 it("clears only the removed section's collapsed intent after confirmation, never on cancel or failure", async () => {
@@ -1552,6 +1700,11 @@ it("moves a saved group from its menu, rolls back a failed save, and retries it"
     await waitFor(() =>
       expect(groups()).toEqual(["group:work", "group:later"]),
     );
+    expect(
+      document.querySelector(
+        "[data-create-section-slot] + [data-sidebar-section]",
+      ),
+    ).toHaveAttribute("data-sidebar-section", "group:work");
     await user.click(
       screen.getByRole("button", { name: "More actions for Work" }),
     );
@@ -1582,6 +1735,11 @@ it("moves a saved group from its menu, rolls back a failed save, and retries it"
     await waitFor(() =>
       expect(groups()).toEqual(["group:later", "group:work"]),
     );
+    expect(
+      document.querySelector(
+        "[data-create-section-slot] + [data-sidebar-section]",
+      ),
+    ).toHaveAttribute("data-sidebar-section", "group:later");
     expect(order).toHaveBeenLastCalledWith(
       ["later", "work"],
       expect.any(AbortSignal),

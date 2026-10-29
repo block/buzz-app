@@ -28,6 +28,8 @@ import {
   defineExtension,
   defineTool,
   Harness,
+  hook,
+  ToolTask,
   SessionFailed,
   section,
   UsageDoc,
@@ -571,6 +573,30 @@ export function serve({
           { tag: false },
         ),
       ],
+      hooks: [
+        hook(ToolTask, {
+          beforeTool: (input, api, context) =>
+            awaitWithContext(
+              call("hook", {
+                agent: opened.agent,
+                conversation: api.conversationId,
+                event: "beforeTool",
+                input,
+              }),
+              context,
+            ).then((value) => value ?? undefined),
+          afterTool: (input, result, api, context) =>
+            awaitWithContext(
+              call("hook", {
+                agent: opened.agent,
+                conversation: api.conversationId,
+                event: "afterTool",
+                input: { call: input, result },
+              }),
+              context,
+            ).then((value) => value ?? undefined),
+        }),
+      ],
       tools: tools.map((tool) =>
         defineTool({
           name: `${PREFIX}${tool.name}`,
@@ -597,7 +623,7 @@ export function serve({
                   : { type: "text", text: JSON.stringify(part) },
               ),
               ...(result.isError ? { isError: true } : {}),
-              // A final `send` answered the run; Pi ends it without another
+              // A final message answered the run; Pi ends it without another
               // model call, and starts a new one for what arrived meanwhile.
               ...(result.final ? { control: { terminate: true } } : {}),
             };
@@ -1117,7 +1143,7 @@ export function serve({
       const pending = calls.get(message.id);
       calls.delete(message.id);
       if (message.error) pending?.reject(new Error(message.error));
-      else pending?.resolve(message.result ?? {});
+      else pending?.resolve(message.result);
     }
   });
   // The plugin closes stdin to stop the host; each agent's storage closes

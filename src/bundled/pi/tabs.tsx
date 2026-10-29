@@ -8,6 +8,8 @@ import {
   useSyncExternalStore,
 } from "react";
 import { errorText } from "../../buzz-mcp/rpc";
+import { isRetryableRead, retryRead } from "../../features/relay/read-retry";
+import { PiStopped } from "./pi";
 import activityStyles from "../../features/agents/ActivityLayout.module.css";
 import { ActivityTranscript } from "../../features/agents/ActivityTranscript";
 import { AgentInstructions } from "../../features/agents/AgentInstructions";
@@ -113,7 +115,12 @@ function useRead<T>(
         ? {}
         : { value: prior.value, scope };
     setState((prior) => ({ status: "loading", ...kept(prior) }));
-    read(abort.signal).then(
+    retryRead(
+      read,
+      abort.signal,
+      // The next request starts another host.
+      (error) => error instanceof PiStopped || isRetryableRead(error),
+    ).then(
       (value) => {
         if (!abort.signal.aborted) setState({ status: "ready", value, scope });
       },
@@ -689,9 +696,11 @@ export function createTabs({
   function ActivityTab({
     agent,
     conversation,
+    initialTranscript,
   }: {
     agent: AgentViewProps<Config>["agent"];
     conversation?: AgentViewProps<Config>["conversation"];
+    initialTranscript?: AgentViewProps<Config>["initialTranscript"];
   }) {
     const working = useSyncExternalStore(
       (listener) => runtime.subscribe(listener),
@@ -704,6 +713,12 @@ export function createTabs({
       agent.key,
     );
     const places = listing.value;
+    // Pi lists its conversations only after the tab shows, so its transcript
+    // would open late, under whatever the reader turned to meanwhile. The
+    // request is settled without opening it.
+    const opening = initialTranscript?.opening;
+    // biome-ignore lint/correctness/useExhaustiveDependencies: once per opening.
+    useEffect(() => initialTranscript?.done(), [opening]);
     if (!places)
       return listing.status === "error" ? (
         <div className="grid gap-2">
@@ -817,6 +832,7 @@ export function createTabs({
             onBack={back}
           >
             <TranscriptView
+              key={open.key}
               agent={agent}
               place={open}
               working={working.includes(open.conversation)}

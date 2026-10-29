@@ -144,7 +144,7 @@ async function fixture() {
   };
 }
 
-it("updates the mounted sidebar and search from the exact shared choice, including replacement and missing artwork", async () => {
+it("updates the mounted sidebar from the exact choice while search keeps Bestie's stable identity", async () => {
   const f = await fixture();
   const select = vi.fn();
   render(
@@ -179,20 +179,25 @@ it("updates the mounted sidebar and search from the exact shared choice, includi
   await userEvent.click(screen.getByRole("button", { name: "Search Buzz" }));
   const dialog = screen.getByRole("dialog", { name: "Search Buzz" });
   expect(
-    within(dialog).getByRole("option", { name: "Pollen" }).querySelector("img"),
-  ).toHaveAttribute("src", portrait.preview);
+    within(dialog).getByRole("option", { name: "Bestie" }),
+  ).toBeInTheDocument();
   const search = within(dialog).getByRole("combobox", { name: "Search Buzz" });
+  await userEvent.type(search, "Pollen");
+  expect(
+    within(dialog).queryByRole("option", { name: "Pollen" }),
+  ).not.toBeInTheDocument();
+  await userEvent.clear(search);
   await userEvent.type(search, "Bestie");
   expect(
-    within(dialog).getByRole("option", { name: "Pollen" }),
+    within(dialog).getByRole("option", { name: "Bestie" }),
   ).toBeInTheDocument();
   act(() => {
     setDefaultAgent(scope, fizz);
   });
   expect(
-    within(dialog).getByRole("option", { name: "Fizz" }),
+    within(dialog).getByRole("option", { name: "Bestie" }),
   ).toBeInTheDocument();
-  await userEvent.click(within(dialog).getByRole("option", { name: "Fizz" }));
+  await userEvent.click(within(dialog).getByRole("option", { name: "Bestie" }));
   expect(select).toHaveBeenCalledWith(page.key);
   const fizzRow = await within(nav).findByRole("button", { name: "Fizz" });
   expect(fizzRow.querySelector("img")).toBeNull();

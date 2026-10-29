@@ -1,5 +1,4 @@
 import { useSearchSettings } from "./SearchSettings";
-import { usePagePresentation } from "./BestieNavigation";
 import {
   useCallback,
   useEffect,
@@ -23,7 +22,11 @@ import type { ShortcutBindingsSnapshot } from "../../features/shortcuts/preferen
 import type { AppServices } from "../services";
 import { HOST_SHORTCUT_ORDER } from "../shortcuts";
 import { conversationComposerFocusTarget } from "../focus-navigation";
-import { orderPages, shellPresentation } from "./presentation";
+import {
+  orderPages,
+  pagePresentation,
+  shellPresentation,
+} from "./presentation";
 import { matchName } from "../../features/search/match";
 import {
   SearchChoices,
@@ -61,7 +64,6 @@ export function PageSearch({
   onSelect: (key: string) => void;
   services?: SearchServices | undefined;
 }) {
-  const pagePresentation = usePagePresentation();
   const [open, setOpen] = useState(false);
   const [contentPresent, setContentPresent] = useState(false);
   const [query, setQuery] = useState("");
@@ -144,11 +146,6 @@ export function PageSearch({
     .flatMap((page) => {
       if (!needle) return [{ page, rank: 0 }];
       const match = matchName(page.label, needle);
-      const alias =
-        "searchLabel" in page && typeof page.searchLabel === "string"
-          ? matchName(page.searchLabel, needle)
-          : undefined;
-      if (!match && alias) return [{ page, rank: alias.rank }];
       return match
         ? [{ page: { ...page, matches: match.positions }, rank: match.rank }]
         : [];

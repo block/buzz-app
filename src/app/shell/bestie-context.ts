@@ -4,7 +4,6 @@ import type { RelaySession } from "../../features/relay/session";
 export const BESTIE_PAGE = "buzz.bestie/bestie";
 export type BestieMark = {
   label: string;
-  searchLabel: "Bestie";
   avatar: { src: string | undefined; shape: "squircle" };
 };
 export const BestieNavigationContext = createContext<BestieMark | undefined>(

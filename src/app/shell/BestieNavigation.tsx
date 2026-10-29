@@ -60,7 +60,6 @@ export function BestieNavigationProvider({
   const mark: BestieMark | undefined = agent
     ? {
         label: agent.managedName ?? agent.name,
-        searchLabel: "Bestie",
         avatar: { src: avatar, shape: "squircle" },
       }
     : undefined;
@@ -112,7 +111,7 @@ export function BestieUnreadBadge({ pageKey }: { pageKey: string }) {
   );
 }
 
-/** One presentation for sidebar and page search, without mutating registration. */
+/** Decorate navigation without changing the page's stable search identity. */
 export function usePagePresentation() {
   const bestie = useContext(BestieNavigationContext);
   return (page: RegisteredPage) => ({

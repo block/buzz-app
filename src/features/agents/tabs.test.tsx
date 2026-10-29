@@ -66,6 +66,24 @@ it("leaves the device Attention switch out of Settings", () => {
   expect(screen.queryByRole("switch")).not.toBeInTheDocument();
 });
 
+it("adds no Settings tab when the host has nothing to set", () => {
+  const sections = agentSections({
+    agents: {
+      save: async () => {},
+      subscribe: () => () => {},
+      memberships: () => [],
+      configHistory: () => undefined,
+      addedTabs: () => [],
+      registerTab: () => {},
+    } as unknown as Agents,
+    agent,
+    type: undefined,
+    memories: undefined,
+    settingsHost: {},
+  });
+  expect(sections.map((tab) => tab.value)).toEqual(["agent:memory"]);
+});
+
 it("shows each synced side's History as its own named section", () => {
   const side = (name: "settings" | "instructions") => ({
     side: name,

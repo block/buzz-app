@@ -422,7 +422,7 @@ it("opens settings for a selected agent beside the grid and follows the arrow ke
   expect(
     within(profilePane).getByRole("tablist", { name: "Panel tabs" }),
   ).toBeVisible();
-  expect(screen.getByRole("tab", { name: "Identity" })).toHaveAttribute(
+  expect(screen.getByRole("tab", { name: "Reply" })).toHaveAttribute(
     "aria-selected",
     "true",
   );
@@ -436,9 +436,7 @@ it("opens settings for a selected agent beside the grid and follows the arrow ke
   expect(screen.getByRole("gridcell", { name: /Bo/ })).toHaveFocus();
 
   await user.keyboard("{Escape}");
-  expect(
-    screen.queryByRole("tab", { name: "Identity" }),
-  ).not.toBeInTheDocument();
+  expect(screen.queryByRole("tab", { name: "Reply" })).not.toBeInTheDocument();
   expect(grid).toBeInTheDocument();
 });
 
@@ -455,7 +453,6 @@ it("opens the side panel with the type's tabs and the app's Settings and Memory 
     "Your teams",
     "Marketplace",
     "AAda",
-    "Identity",
     "Reply",
     "Memory",
     "Settings",
@@ -2563,7 +2560,7 @@ it("shows an agent on another device read-only, and offers only Finish setup and
   expect(screen.getByRole("grid")).toBeInTheDocument();
 });
 
-it("moves focus from Finish setup to Identity once the setup finishes", async () => {
+it("moves focus from Finish setup to the first tab once the setup finishes", async () => {
   const user = userEvent.setup();
   const finished: Agent = {
     ...agent("Sky", 4),
@@ -2578,7 +2575,7 @@ it("moves focus from Finish setup to Identity once the setup finishes", async ()
   await user.click(screen.getByText("Sky"));
   screen.getByRole("button", { name: "Finish setup" }).focus();
   await user.keyboard("{Enter}");
-  expect(await screen.findByRole("tab", { name: "Identity" })).toHaveFocus();
+  expect(await screen.findByRole("tab", { name: "Reply" })).toHaveFocus();
 });
 
 it("keeps a failed Delete's agent and its warning on screen", async () => {
@@ -2719,7 +2716,7 @@ it("opens deletion from the card menu without selecting it and requires confirma
   await user.click(
     await screen.findByRole("menuitem", { name: "Open settings" }),
   );
-  expect(screen.getByRole("tab", { name: "Identity" })).toHaveAttribute(
+  expect(screen.getByRole("tab", { name: "Reply" })).toHaveAttribute(
     "aria-selected",
     "true",
   );
@@ -3024,7 +3021,7 @@ it("shares the editable owner profile with chat profile targets", async () => {
       />,
     );
     expect(screen.getByRole("heading", { name: "Ada" })).toBeVisible();
-    expect(screen.getByRole("tab", { name: "Identity" })).toBeVisible();
+    expect(screen.getByRole("tab", { name: "Reply" })).toBeVisible();
     expect(screen.queryByRole("tab", { name: "Info" })).not.toBeInTheDocument();
     const user = userEvent.setup();
     await user.click(
@@ -3125,7 +3122,7 @@ it("opens the owned agent provider Activity tab for the originating conversation
         close={close}
       />,
     );
-    expect(screen.getByRole("tab", { name: "Identity" })).toHaveAttribute(
+    expect(screen.getByRole("tab", { name: "Reply" })).toHaveAttribute(
       "aria-selected",
       "true",
     );
@@ -3145,10 +3142,8 @@ it("opens the owned agent provider Activity tab for the originating conversation
     expect(
       screen.getByText(`Transcript: ${ada.pubkey} / channel-a`),
     ).toBeVisible();
-    await userEvent
-      .setup()
-      .click(screen.getByRole("tab", { name: "Identity" }));
-    expect(screen.getByRole("tab", { name: "Identity" })).toHaveAttribute(
+    await userEvent.setup().click(screen.getByRole("tab", { name: "Reply" }));
+    expect(screen.getByRole("tab", { name: "Reply" })).toHaveAttribute(
       "aria-selected",
       "true",
     );

@@ -90,7 +90,7 @@ export function agentSections({
       </EditorBase>
     ),
   }));
-  if (!settingsTab && settingsHost)
+  if (!settingsTab && (settingsHost?.typeControl || settingsHost?.pendingSave))
     tabs.unshift({
       value: "agent:settings",
       label: "Settings",

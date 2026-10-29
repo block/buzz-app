@@ -724,7 +724,7 @@ export type AgentType<Config = unknown> = {
   /** Device-wide readiness and management. Agents supplies the menu row,
    * provider identity, modal framing and focus behavior. */
   provider?: AgentProvider;
-  /** The type's settings tabs, in order. The host adds Attention after them. */
+  /** The type's settings tabs, in order. */
   tabs?: readonly AgentTab<Config>[];
   /** Each agent's sessions, for views across agents. */
   sessions?: AgentSessions;

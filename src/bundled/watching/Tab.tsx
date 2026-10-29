@@ -911,7 +911,7 @@ export function createTab({
       {
         "data-buzz-ui": "",
         className: "attention-page",
-        "aria-label": "Watching",
+        "aria-label": "Attention",
         ref: page,
         tabIndex: -1,
       },

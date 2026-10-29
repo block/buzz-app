@@ -24,6 +24,7 @@ export { stepLabel } from "../../features/agent-harness/acp/steps";
 export type {
   ActivityReceipt,
   Choice,
+  PlatformExtension,
   ServeMcp,
   Settled,
   Spawn,
@@ -83,24 +84,34 @@ export const GOOSE: AcpHooks = {
         },
         () => true,
       ),
-  newSessionMeta: (buzz, { title, provider }) => ({
+  newSessionMeta: (buzz, { title, provider, platform }) => ({
     // The session's whole tool set: goose's developer tools and the Buzz
     // tools, so extensions in the owner's goose config and plugins never load
     // into a Buzz agent. The pinned Goose persists this list, including the
     // Buzz MCP token; aaif-goose/goose#12908 is not in v1.57.0. Keep the entry
     // until upstream supports client MCP servers alongside this allowlist.
     // The non-persistence acceptance test remains a known failure.
-    enabledExtensions: buzz ? [DEVELOPER, { type: "mcp", server: buzz }] : [],
+    // Mesh sessions pass a narrower `platform` set (see mesh-compute).
+    enabledExtensions: buzz
+      ? [...(platform ?? [DEVELOPER]), { type: "mcp", server: buzz }]
+      : [],
     ...(title ? { sessionTitle: title } : {}),
     // On the provider's default model, whatever goose's config holds.
     ...(provider ? { provider } : {}),
   }),
   // Appended under goose's own prompt, which carries each extension's
-  // instructions; `set` would replace it, and render ours as a template.
-  systemPrompt: async (goose, sessionId, text) => {
+  // instructions. `set` replaces that prompt and renders the text as a
+  // template, so ours goes in raw.
+  systemPrompt: async (goose, sessionId, text, replace) => {
     await goose.request(
       "_goose/unstable/session/system-prompt/set",
-      { sessionId, mode: "append", key: "buzz", text },
+      replace
+        ? {
+            sessionId,
+            mode: "set",
+            text: `{% raw %}${text.replace(/{%-?\s*endraw\s*-?%}/g, "")}{% endraw %}`,
+          }
+        : { sessionId, mode: "append", key: "buzz", text },
       REQUEST_TIMEOUT_MS,
     );
   },

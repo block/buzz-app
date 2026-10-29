@@ -8436,7 +8436,6 @@ describe("repository resource picker", () => {
             p.homes.mock.calls.filter(([id]) => id === "channel").length,
           ).toBeGreaterThan(1),
         );
-        expect(trigger()).toBeDisabled();
         // Closing formatting fades the toolbar back in; wait for that entrance.
         await waitFor(() => expect(trigger()).toBeVisible());
         expect(trigger()).toBeDisabled();

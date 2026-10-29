@@ -39,6 +39,10 @@ mod host_files;
 mod host_mcp;
 mod host_process;
 mod host_request;
+mod mesh_compute;
+use buzz_mesh_compute::desktop::usb_display::{self, UsbDisplay};
+use buzz_mesh_compute::desktop::{self as mesh, agent, sharing, widget};
+use mesh_compute::MeshHost;
 mod identity;
 mod native_mcp;
 mod nsec_backup;
@@ -750,6 +754,12 @@ pub fn run() {
             }
             tauri::async_runtime::spawn(host_command::load_login_shell_path());
             deep_links::setup(app.handle());
+            app.state::<MeshHost>().initialize_preferences(
+                app.path()
+                    .app_data_dir()
+                    .map(|root| root.join("mesh-sharing.json"))
+                    .map_err(|error| error.to_string()),
+            );
             app.manage(relay::Spools::new(
                 app.path()
                     .app_cache_dir()
@@ -774,6 +784,7 @@ pub fn run() {
                 }
                 Err(error) => eprintln!("Could not start the media listener: {error}"),
             }
+
             // Only app-owned storage is created; a development build keeps its agents
             // in the installed app's (`legacy_identifier::agents`). Preview uses the
             // OS-resolved legacy parent, never a browser-supplied path or a
@@ -848,8 +859,12 @@ pub fn run() {
     };
     builder
         .manage(image_clipboard::ImageClipboard::default())
+        .manage(mesh_compute::identity(identity.clone()))
         .manage(keep_awake::KeepAwake::default())
         .manage(identity)
+        .manage(MeshHost::default())
+        .manage(UsbDisplay::default())
+
         .manage(archive::ArchiveHost::default())
         .manage(jev::JevHost::new())
         .manage(decisions::DecisionsHost::new())
@@ -881,8 +896,31 @@ pub fn run() {
                 browser_action,
                 browser_status
             ];
+            let mesh_commands: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![
+                    mesh::mesh_compute_inventory,
+                    mesh::mesh_compute_status,
+                    mesh::mesh_compute_stop,
+                    mesh::mesh_compute_catalog,
+                    mesh::mesh_compute_start,
+                    mesh::mesh_compute_select,
+                    mesh::mesh_compute_release,
+                    mesh::mesh_compute_disarm,
+                    widget::mesh_compute_widget_open,
+                    widget::mesh_compute_widget_close,
+                    widget::mesh_compute_widget_status,
+                    usb_display::mesh_compute_widget_usb_connect,
+                    usb_display::mesh_compute_widget_usb_frame,
+                    usb_display::mesh_compute_widget_usb_disconnect,
+                    sharing::mesh_compute_share,
+                    agent::mesh_compute_prepare_inference,
+                    agent::mesh_compute_inference_current,
+                    agent::mesh_compute_chat
+                ];
             // Browser embeds a real native view; existing commands also support MockRuntime.
             move |request: tauri::ipc::Invoke<tauri::Wry>| {
+                if request.message.command().starts_with("mesh_compute_") {
+                    return mesh_commands(request);
+                }
                 if request.message.command().starts_with("browser_") {
                     browser_commands(request)
                 } else {
@@ -934,12 +972,21 @@ pub fn run() {
             }
             if matches!(event, tauri::RunEvent::Exit) {
                 shut_down(app);
+                // AppKit exits through libc exit(), whose C++ static destructors can
+                // abort in the embedded ggml/Metal runtime (block/buzz desktop
+                // `hard_exit_after_mesh_shutdown`). Teardown above is complete.
+                #[cfg(target_os = "macos")]
+                // SAFETY: Buzz and Mesh shutdown have run; skip only global destructors.
+                unsafe {
+                    libc::_exit(0)
+                }
             }
         });
 }
 
 /// Best-effort native teardown when Buzz exits, from Quit or a fenced sign-out.
 pub(crate) fn shut_down<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    app.state::<MeshHost>().shutdown();
     app.state::<NsecBackupHost>().close();
     app.state::<relay::Spools>()
         .cancel_all(&app.state::<relay::Uploads>());

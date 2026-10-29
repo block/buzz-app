@@ -16,6 +16,14 @@ export type ServeMcp = (handler: McpHandler) => Promise<HostMcpServer>;
 /** The host's absolute path for a directory, resolving `~/…`. */
 export type ResolveDirectory = (path: string) => Promise<string>;
 
+/** A built-in extension entry for `session/new`; `available_tools` limits
+ * it to the listed tools. */
+export type PlatformExtension = Readonly<{
+  type: "platform";
+  name: string;
+  available_tools?: readonly string[];
+}>;
+
 /** How a burst of work ended: every message sent so far has been answered,
  * or the session or its process is gone. One message of the burst owns its
  * `error` and `text`, to post them once; the others get only `ok`. */
@@ -28,6 +36,8 @@ export type Settled = Readonly<{
   text?: string;
   /** The message gave up before any turn took it in. */
   undelivered?: true;
+  /** A successful Buzz answer tool ran, rather than a merely empty response. */
+  answered?: true;
   /** The owner's interrupt ended the turn. */
   stopped?: true;
 }>;
@@ -91,7 +101,11 @@ export type AcpHooks = Readonly<{
   /** `session/new`'s `_meta`. */
   newSessionMeta?(
     buzz: McpServer | undefined,
-    open: Readonly<{ title?: string; provider: string }>,
+    open: Readonly<{
+      title?: string;
+      provider: string;
+      platform?: readonly PlatformExtension[];
+    }>,
   ): Record<string, unknown>;
   /** Appends `text` to a new session's system prompt; a throw closes it.
    * Without it, ACP's `systemPrompt` carries it when advertised, else it
@@ -100,6 +114,7 @@ export type AcpHooks = Readonly<{
     process: AcpProcess,
     sessionId: string,
     text: string,
+    replace?: boolean,
   ): Promise<void>;
   /** Steers a message into the running turn. Without it, a message sent
    * mid-turn runs as the next turn. */

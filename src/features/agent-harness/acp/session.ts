@@ -175,7 +175,7 @@ export class AcpSession {
    * its turn with one more model call, whose text nobody posts. */
   finished() {
     if (this.pending === 1 && !this.queue.length && !this.steering.size)
-      this.settle({ ok: true });
+      this.settle({ ok: true, answered: true });
   }
 
   /** Stops the work: the running turn, as ACP's `session/cancel` does, and
@@ -492,6 +492,7 @@ export class AcpSession {
     this.settle({
       ...(failure?.error ? { ok: false, ...failure } : { ok: true }),
       ...(text ? { text } : {}),
+      ...(this.acted ? { answered: true } : {}),
       ...(!failure?.error && this.stopped?.ended ? { stopped: true } : {}),
     });
   }

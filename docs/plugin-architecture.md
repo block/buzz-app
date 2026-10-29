@@ -100,6 +100,12 @@ create a second connection, cache or outbox inside a page. The conversation prev
 source imports are not a versioned external SDK. See
 [conversation component ownership](channels.md#reusing-conversation-ui).
 
+Plugin-owned Rust may live under `bundled/<plugin>/compute/` as a Cargo workspace
+member (currently Mesh), including its Tauri commands. `src-tauri/` keeps only
+the identity/relay adapter it lends the plugin and command registration; source colocation does not make Rust dynamically installable.
+When adding such a crate, include its path in the Rust input selection in
+`scripts/check-push.mjs` and cover that selection in the hook tests.
+
 ## The `buzzodz` CLI
 
 Run `pnpm buzzodz --help` from this repository, or install the standalone executable:
@@ -510,7 +516,7 @@ contracts with their own layout and local navigation.
 Todos and Usage are off by default. Feedback, Diff viewer, Identity
 Naming, Agent Activity, Terminal, Links, GitHub, Inbox,
 Repositories, Agents, Claude, Codex, Workflows, Builderlab,
-Membership, and Moderation are on by default, but optional. Both browser and
+Shared compute, Membership, and Moderation are on by default, but optional. Both browser and
 native catalogs declare that policy.
 
 Solo is part of Channels, not a plugin: Solo chats are channels opened in

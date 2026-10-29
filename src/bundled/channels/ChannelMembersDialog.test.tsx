@@ -985,6 +985,7 @@ it("DMs are view-only and never search outside their members", async () => {
 });
 it("Escape closes the dialog and restores focus to its header button", async () => {
   const t = await setup();
+  // Visible content can precede Base UI's queued initial-focus handoff.
   await vi.waitFor(() => expect(screen.getByRole("searchbox")).toHaveFocus());
   await t.user.keyboard("{Escape}");
   await vi.waitFor(() =>

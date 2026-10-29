@@ -126,6 +126,9 @@ export type {
   SoloChatInput,
   SoloRegionHandle,
   SoloRegionProps,
-  SoloDestinationProps,
+  SoloConversationProps,
+  SoloConversation,
+  SoloConversationLinkProps,
+  SoloCardProps,
   SoloDisclosureProps,
 } from "../features/channel-navigation/solo-navigation-contract";

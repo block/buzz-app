@@ -10,6 +10,30 @@ const conversation = {
 } as const;
 
 describe("open target boundary", () => {
+  it("bounds nested provider addresses to Agent setup and keeps their scope", () => {
+    const target = {
+      version: 1,
+      kind: "settings",
+      section: "agents",
+      provider: "buzz.codex/codex",
+      scope: { viewer, communityOrigin: "https://relay.example" },
+    } as const;
+    expect(parseOpenTarget(target)).toEqual(target);
+    expect(targetKey(target)).not.toBe(
+      targetKey({
+        version: 1,
+        kind: "settings",
+        section: "agents",
+        scope: target.scope,
+      }),
+    );
+    for (const invalid of [
+      { ...target, section: "appearance" },
+      { ...target, provider: "invalid" },
+      { ...target, provider: `plugin/${"a".repeat(129)}` },
+    ])
+      expect(() => parseOpenTarget(invalid)).toThrow();
+  });
   it("canonicalizes and freezes a detached, bounded identity-scoped target", () => {
     const input = {
       ...conversation,
@@ -44,6 +68,28 @@ describe("open target boundary", () => {
       panel: "shared-sessions",
     });
     expect(target).toEqual(parseOpenTarget(conversation));
+  });
+  it("copies and bounds a read-only detail address independently of Members", () => {
+    const detail = { target: "nostr:npub1example", rootId: "C".repeat(64) };
+    const target = parseOpenTarget({ ...conversation, detail });
+    detail.target = "changed";
+    expect(target.kind === "conversation" && target.detail).toEqual({
+      target: "nostr:npub1example",
+      rootId: "c".repeat(64),
+    });
+    expect(
+      Object.isFrozen(target.kind === "conversation" && target.detail),
+    ).toBe(true);
+    expect(targetKey(target)).not.toBe(targetKey(conversation));
+    for (const detail of [
+      null,
+      {},
+      { target: "with space" },
+      { target: "x".repeat(4097) },
+      { target: "profile:x", rootId: "invalid" },
+      { target: "profile:x", action: "delete" },
+    ])
+      expect(() => parseOpenTarget({ ...conversation, detail })).toThrow();
   });
   it("supports local targets without account or relay and gives routes stable identity", () => {
     for (const target of [

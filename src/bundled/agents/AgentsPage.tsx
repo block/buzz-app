@@ -62,12 +62,13 @@ import {
   type SharedDefinition,
 } from "../../features/agents/agent-share";
 import {
-  setDefaultAgent,
-  useChosenAgent,
+  chooseDefaultAgent,
   useDefaultAgent,
+  useSavedAgent,
 } from "../../features/solo/default-agent";
 import type { RelayData } from "../../features/relay/service";
 import type { Navigation } from "../../features/navigation/controller";
+import { targetKey } from "../../features/navigation/targets";
 import type { PageNavigation } from "../../features/navigation/service";
 import {
   BrainIcon,
@@ -230,7 +231,7 @@ export function AgentsPage({
           : undefined,
       )
     : localProviderKey;
-  const setProviderKey = (provider?: string, replace = false) => {
+  const setProviderKey = (provider?: string) => {
     if (!navigation || !navigator) {
       setLocalProviderKey(provider);
       return;
@@ -244,9 +245,18 @@ export function AgentsPage({
     )
       return;
     const target = agentProviderTarget(navigation.target, provider);
-    void (replace
-      ? navigator.open(target, { replace: true })
-      : navigator.open(target));
+    if (provider) void navigator.open(target);
+    else {
+      const closing = providerKey;
+      const pageKey = targetKey(target);
+      navigator.dismiss(
+        (visit) =>
+          visit.kind === "page" &&
+          agentProviderRoute(visit.route?.params) === closing &&
+          targetKey(agentProviderTarget(visit)) === pageKey,
+        target,
+      );
+    }
   };
   const typeOf = (agent: Agent) =>
     types.find((type) => type.key === agent.type);
@@ -691,7 +701,7 @@ export function AgentsPage({
         <ProviderDialog
           type={types.find((type) => type.key === providerKey)}
           finalFocus={newAgentButton}
-          onClose={() => setProviderKey(undefined, true)}
+          onClose={() => setProviderKey(undefined)}
         />
       )}
     </div>
@@ -708,7 +718,8 @@ type InventoryProps = {
   newAgent: ReactNode;
   /** The agent new Berd messages are tagged for, in this community. */
   defaultAgent?: string | undefined;
-  /** False while another agent stands in for a missing chosen one. */
+  /** False until the main agent is saved to the account, as while another
+   * agent stands in for a missing chosen one. */
   defaultPinned?: boolean;
   onMakeDefault?: ((pubkey: string) => void) | undefined;
   defaultChoices?: ReadonlySet<string>;
@@ -724,24 +735,28 @@ function DefaultAgentInventory({
   ...props
 }: InventoryProps & { session: RelaySession; scope: string }) {
   const current = useDefaultAgent(session, scope);
-  const chosen = useChosenAgent(scope);
+  // Pinned once saved to the account, so an automatic pick can be saved too.
+  const saved = useSavedAgent(session, scope);
   const choices = useAgentChoices(session, true, true);
   const [error, setError] = useState("");
+  // Only the latest choice reports its failure.
+  const latest = useRef(0);
   return (
     <>
       <Inventory
         {...props}
         session={session}
         defaultAgent={current?.pubkey}
-        defaultPinned={!!current && current.pubkey === chosen}
+        defaultPinned={!!current && current.pubkey === saved}
         defaultChoices={
           new Set(choices.selectable.map((agent) => agent.pubkey))
         }
         onMakeDefault={(pubkey) => {
-          setError(
-            setDefaultAgent(scope, pubkey)
-              ? ""
-              : "The main agent couldn't be saved on this device.",
+          const choice = ++latest.current;
+          setError("");
+          chooseDefaultAgent(session, scope, pubkey).catch(
+            (failure: Error) =>
+              choice === latest.current && setError(failure.message),
           );
         }}
       />
@@ -994,7 +1009,7 @@ function InventoryCard({
   const actions = (remove?: () => void, leave?: () => void) => (
     <>
       {main &&
-        // A stand-in for a missing chosen agent can be made main for good.
+        // An automatic pick or stand-in can be made main for good.
         (main.pinned ? (
           <MenuNote>Main agent</MenuNote>
         ) : (

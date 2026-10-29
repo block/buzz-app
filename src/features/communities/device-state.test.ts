@@ -1,5 +1,8 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from "vitest";
+import { act, cleanup, renderHook } from "@testing-library/react";
+import type { RelaySession } from "../relay/session";
+import { useChannelTabState } from "../../bundled/channels/useChannelTabState";
 import { recordReaction } from "../messages/quick-reactions";
 import { readView, writeView } from "../../shared/view-state";
 import { purgeCommunityDeviceState } from "./device-state";
@@ -41,6 +44,7 @@ const reactions = (scope: string) => `buzz.quick-reactions.v1:${scope}`;
 const follows = (scope: string) => `buzz.thread-follows.v1:${scope}`;
 
 afterEach(() => {
+  cleanup();
   localStorage.clear();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -160,4 +164,61 @@ it("reports each failed relay store by name, closes heads and still clears the o
     [`Couldn't clear channel heads for ${origin} on this device`, heads],
     [`Couldn't clear read state for ${origin} on this device`, reads],
   ]);
+});
+
+it("leave purges retained tab visit addresses before same-window rejoin and rejects late writes", async () => {
+  const left = `https://${crypto.randomUUID()}.example`;
+  const scope = `${left}:${viewer}`;
+  const mount = (scope: string, account = viewer) =>
+    renderHook(() =>
+      useChannelTabState({ scope, viewer: account } as RelaySession, "alpha"),
+    );
+  const old = mount(scope);
+  const otherAccount = mount(`${left}:${other}`, other);
+  const otherCommunity = mount(`${kept}:${viewer}`);
+  for (const hook of [old, otherAccount, otherCommunity])
+    act(() => {
+      hook.result.current.enterVisit("profile:detail", undefined, true, {
+        channelId: "alpha",
+        target: "nostr:profile",
+      });
+      hook.result.current.enterVisit("thread:thread", {
+        channelId: "alpha",
+        messageId: "reply",
+        rootId: "verified",
+      });
+    });
+  expect(await purgeCommunityDeviceState(left, viewer)).toEqual([]);
+  act(() =>
+    old.result.current.enterVisit("late:detail", undefined, true, {
+      channelId: "alpha",
+      target: "nostr:profile",
+    }),
+  );
+  const rejoined = mount(scope);
+  expect(
+    rejoined.result.current.detailVisits("alpha", "nostr:profile"),
+  ).toEqual([]);
+  expect(rejoined.result.current.threadVisits("alpha", "verified")).toEqual([]);
+  act(() => rejoined.result.current.select("new-selection"));
+  // A further successor must not rediscover metadata in the purged old store.
+  const successor = mount(scope);
+  expect(
+    successor.result.current.detailVisits("alpha", "nostr:profile"),
+  ).toEqual([]);
+  expect(successor.result.current.threadVisits("alpha", "verified")).toEqual(
+    [],
+  );
+  for (const [partition, account] of [
+    [`${left}:${other}`, other],
+    [`${kept}:${viewer}`, viewer],
+  ] as const) {
+    const retained = mount(partition, account);
+    expect(
+      retained.result.current.detailVisits("alpha", "nostr:profile"),
+    ).toEqual(["profile"]);
+    expect(retained.result.current.threadVisits("alpha", "verified")).toEqual([
+      "thread",
+    ]);
+  }
 });

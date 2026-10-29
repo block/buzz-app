@@ -637,7 +637,7 @@ it("checks providers in Agent setup and opens their host-owned dialogs", async (
   }
 });
 
-it("restores legacy provider links and writes close visits", async () => {
+it("restores provider links and retires only that provider's visits after close guards permit it", async () => {
   const user = userEvent.setup();
   const base = {
     version: 1,
@@ -655,9 +655,11 @@ it("restores legacy provider links and writes close visits", async () => {
     target: base,
   };
   const open = vi.fn(async () => ({ status: "opened" as const }));
+  const dismiss = vi.fn();
   const navigator = {
     snapshot: () => ({ entry: current }),
     open,
+    dismiss,
   } as unknown as Navigation;
   const request = (): PageNavigation => {
     const navigation = {
@@ -693,10 +695,29 @@ it("restores legacy provider links and writes close visits", async () => {
 
   current = { id: "provider", target: routed };
   restored.rerender(pageView(view.agents, view.relay));
+  act(() => view.echoProvider.set({ readiness: "ready", blocking: true }));
+  await user.keyboard("{Escape}");
+  expect(dismiss).not.toHaveBeenCalled();
+  expect(await screen.findByRole("button", { name: "Close" })).toBeDisabled();
+  act(() => view.echoProvider.set({ readiness: "ready" }));
   await user.click(await screen.findByRole("button", { name: "Close" }));
-  await vi.waitFor(() =>
-    expect(open).toHaveBeenLastCalledWith(base, { replace: true }),
-  );
+  expect(dismiss).toHaveBeenCalledOnce();
+  const [matches, fallback] = dismiss.mock.calls[0] as unknown as [
+    (target: OpenTarget) => boolean,
+    OpenTarget,
+  ];
+  expect(fallback).toEqual(base);
+  expect(matches(routed)).toBe(true);
+  expect(matches(base)).toBe(false);
+  expect(
+    matches({
+      ...routed,
+      route: { version: 1, params: { provider: "test/other" } },
+    }),
+  ).toBe(false);
+  const { scope: _scope, ...unscoped } = routed;
+  expect(matches(unscoped)).toBe(false);
+  expect(open).not.toHaveBeenCalled();
 });
 
 it("opens the agent a link names, on Your agents", async () => {
@@ -3404,4 +3425,78 @@ it("offers Make main agent on a stand-in for a missing chosen agent", async () =
       await screen.findByRole("menu", { name: "Actions for Ada" }),
     ).queryByRole("menuitem", { name: "Make main agent" }),
   ).toBeNull();
+});
+
+it("offers to save an automatic main agent to the account, and again after a failed save", async () => {
+  const ada = agent("Ada", 1);
+  const bea = agent("Bea", 2);
+  const view = setup([ada, bea]);
+  const choices = {
+    status: "ready",
+    complete: true,
+    pending: false,
+    selectable: [
+      { pubkey: ada.pubkey, name: ada.name, managed: true },
+      { pubkey: bea.pubkey, name: bea.name, managed: true },
+    ],
+    archives: { status: "unavailable", archived: [] },
+  };
+  const writes: Array<(failure?: Error) => void> = [];
+  const mainAgent = {
+    read: async () => undefined,
+    write: () =>
+      new Promise<void>((resolve, reject) =>
+        writes.push((failure) => (failure ? reject(failure) : resolve())),
+      ),
+  };
+  const connection = {
+    status: "ready",
+    scope: "account-save",
+    session: {
+      mainAgent,
+      agentChoices: {
+        snapshot: () => choices,
+        subscribe: () => () => {},
+        retain: () => () => {},
+      },
+    },
+  };
+  const relay = {
+    snapshot: () => connection,
+    subscribe: () => () => {},
+  } as unknown as RelayData;
+  view.rerender(<AgentsPage agents={view.agents} relay={relay} />);
+  const make = async (name: string) => {
+    fireEvent.contextMenu(
+      await screen.findByRole("gridcell", { name: new RegExp(`^${name}`) }),
+    );
+    const menu = await screen.findByRole("menu", {
+      name: `Actions for ${name}`,
+    });
+    return within(menu).queryByRole("menuitem", { name: "Make main agent" });
+  };
+  // Picked automatically, so not yet saved to the account.
+  await screen.findByRole("gridcell", { name: "Ada, Main agent" });
+  fireEvent.click((await make("Ada")) as HTMLElement);
+  await act(async () => writes[0]?.(new Error("offline")));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "The main agent couldn't be saved to your account. Try again.",
+  );
+  fireEvent.keyDown(document.activeElement ?? document.body, {
+    key: "Escape",
+  });
+  // A failed save can be tried again; a newer choice hides an older failure.
+  fireEvent.click((await make("Ada")) as HTMLElement);
+  fireEvent.keyDown(document.activeElement ?? document.body, {
+    key: "Escape",
+  });
+  fireEvent.click((await make("Bea")) as HTMLElement);
+  await act(async () => writes[2]?.());
+  await act(async () => writes[1]?.(new Error("offline")));
+  expect(screen.queryByRole("alert")).toBeNull();
+  await screen.findByRole("gridcell", { name: "Bea, Main agent" });
+  fireEvent.keyDown(document.activeElement ?? document.body, {
+    key: "Escape",
+  });
+  expect(await make("Bea")).toBeNull();
 });

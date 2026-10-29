@@ -186,17 +186,15 @@ export function watchPulls(
     }
   };
   /** `watch` and `snapshot` with waiting and newly read feedback checked
-   * against the rules, as they are now. What they deny is dropped; what needs
-   * an unread membership is unseen, to be read later. */
-  const recheck = async (
+   * against the rules, as they are now, and the feedback that needs a
+   * membership not yet read. What they deny is dropped; what needs an unread
+   * membership is unseen, to be told once it is read. */
+  const recheck = (
     watch: Watch,
     snapshot: PullSnapshot,
-    stopped: () => boolean,
-  ): Promise<[Watch, PullSnapshot]> => {
+  ): [Watch, PullSnapshot, Feedback[]] => {
     const items = [...(watch.pending ?? []), ...snapshot.feedback];
-    if (!items.length) return [watch, snapshot];
-    await lookUp(items, loadPolicy(), snapshot.viewer, stopped);
-    // The rules are read again, as they may have changed during the lookup.
+    if (!items.length) return [watch, snapshot, []];
     const policy = loadPolicy();
     const member = membership(organizations(policy), MEMBERSHIP_MS);
     const admitted = new Map(
@@ -220,6 +218,7 @@ export function watchPulls(
         ids: snapshot.ids.filter(known),
         feedback: snapshot.feedback.filter((item) => admitted.get(item.id)),
       },
+      items.filter((item) => unknown.has(item.id)),
     ];
   };
 
@@ -275,9 +274,45 @@ export function watchPulls(
           signal.removeEventListener("abort", finish);
           resolve();
         };
+        /** Whether a membership read is under way, and when the last began
+         * and whom it asked about. */
+        let reading = false;
+        let readAt = -Infinity;
+        let asked = new Set<string>();
+        /** Reads the memberships `unread` needs apart from deciding, so CI
+         * and state are told meanwhile, then looks again. One that failed is
+         * tried a poll later, unless someone new needs one. */
+        const readMembership = (
+          unread: readonly Feedback[],
+          viewer: string,
+        ) => {
+          const logins = new Set(
+            unread.map((item) => item.author.toLowerCase()),
+          );
+          if (
+            reading ||
+            (Date.now() - readAt < POLL_MS &&
+              [...logins].every((login) => asked.has(login)))
+          )
+            return;
+          reading = true;
+          readAt = Date.now();
+          asked = logins;
+          void lookUp(
+            unread,
+            loadPolicy(),
+            viewer,
+            () => done || signal.aborted || disposed,
+          )
+            .catch(() => {})
+            .finally(() => {
+              reading = false;
+              look(false);
+            });
+        };
         /** Decides from what the store holds now; `minute` counts a minute
          * without a usable read. */
-        const decide = async (minute: boolean) => {
+        const look = (minute: boolean) => {
           if (done) return;
           if (signal.aborted || disposed) return finish();
           const state = states.get(pull.url);
@@ -290,16 +325,13 @@ export function watchPulls(
             looked = read.readAt;
             fresh = true;
           }
-          const checked =
-            snapshot &&
-            (await recheck(watch, snapshot, () => signal.aborted || disposed));
-          if (done) return;
-          if (signal.aborted || disposed) return finish();
           let ended = false;
           let unsent = false;
-          if (checked)
+          if (snapshot) {
+            const [checked, news, unread] = recheck(watch, snapshot);
+            if (unread.length) readMembership(unread, news.viewer);
             try {
-              const next = step(...checked, Date.now());
+              const next = step(checked, news, Date.now());
               if (next.wake)
                 emit(
                   next.ended === "limit"
@@ -313,6 +345,7 @@ export function watchPulls(
               console.warn(`GitHub watch failed for ${pull.url}`, error);
               unsent = true;
             }
+          }
           // Each minute counts as failed without a usable read since the
           // last, or when the agent could not be woken.
           if (minute) {
@@ -344,23 +377,6 @@ export function watchPulls(
           const due = (watch.arrived ?? 0) + QUIET_MS - Date.now();
           if (watch.pending?.length && due > 0)
             quiet = setTimeout(() => look(false), due);
-        };
-        /** Decisions run one at a time, as one may wait on membership reads;
-         * those asked for meanwhile run once after, as a minute if any was. */
-        let deciding = false;
-        let again: boolean | undefined;
-        const look = (minute: boolean) => {
-          if (deciding) {
-            again = !!again || minute;
-            return;
-          }
-          deciding = true;
-          void decide(minute).finally(() => {
-            deciding = false;
-            const next = again;
-            again = undefined;
-            if (next !== undefined) look(next);
-          });
         };
         const tick = () => {
           timer = setTimeout(() => {
@@ -476,10 +492,8 @@ export function watchPulls(
       const moved =
         prior && (prior.channel !== watch.channel || prior.root !== watch.root);
       // What is already there is answered now rather than by a wake.
-      const first = step(
-        ...(await recheck(watch, snapshot, () => disposed)),
-        Date.now(),
-      );
+      const [checked, news] = recheck(watch, snapshot);
+      const first = step(checked, news, Date.now());
       if (first.ended && first.ended !== "limit")
         return `${pull.url} is ${first.ended}; nothing to watch.`;
       const fields = subscription({ ...first.watch, wakes: watch.wakes });

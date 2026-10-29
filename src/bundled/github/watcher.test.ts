@@ -1046,6 +1046,26 @@ describe("github_watch_pr", () => {
     app.dispose();
   });
 
+  it("tells CI while a membership read hangs", async () => {
+    savePolicy("allow org:block");
+    const pending = [{ name: "ci", conclusion: null }];
+    const app = setup(answer({ checks: pending }));
+    await app.call({ url });
+    const run = app.github.getMockImplementation();
+    app.github.mockImplementation(async (query, variables) =>
+      membershipRead(query) ? new Promise(() => {}) : run?.(query, variables),
+    );
+    app.gh(
+      answer({
+        checks: [{ name: "ci", conclusion: "SUCCESS" }],
+        comments: [{ id: "I1", login: "alice", body: "body-alice" }],
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+    expect(app.texts()).toEqual([`CI passed on 111111111 for ${url}.`]);
+    app.dispose();
+  });
+
   it("tells newly read feedback rules saved while membership is read allow", async () => {
     savePolicy("allow org:block");
     const app = setup();

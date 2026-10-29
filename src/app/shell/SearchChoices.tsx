@@ -224,7 +224,7 @@ export function SearchChoices({
             const destination = destinations[Number(shortcutNumber) - 1];
             if (destination) {
               event.preventDefault();
-              if (!event.repeat) destination.run();
+              if (!event.repeat) highlight.choose(destination.key);
             }
             return;
           }
@@ -273,7 +273,6 @@ export function SearchChoices({
                           icon,
                           image,
                           avatar,
-                          run,
                         }) =>
                           content ? (
                             // biome-ignore lint/a11y/useSemanticElements: Interactive search grid, not a data table.
@@ -301,7 +300,7 @@ export function SearchChoices({
                                   )
                                 )
                                   return;
-                                run();
+                                highlight.choose(key);
                               }}
                               onKeyDownCapture={(event) => {
                                 const target = event.target as HTMLElement;
@@ -322,7 +321,7 @@ export function SearchChoices({
                                   event.key === " "
                                 ) {
                                   event.preventDefault();
-                                  run();
+                                  highlight.choose(key);
                                 } else highlight.rowProps(key).onKeyDown(event);
                               }}
                             >
@@ -359,7 +358,7 @@ export function SearchChoices({
                                         event.key === "Enter"
                                       ) {
                                         event.preventDefault();
-                                        run();
+                                        highlight.choose(key);
                                       } else
                                         highlight
                                           .rowProps(key)
@@ -426,7 +425,7 @@ export function SearchChoices({
                                       )}
                                     </>
                                   }
-                                  onClick={run}
+                                  onClick={() => highlight.choose(key)}
                                 />
                               </div>
                             </div>

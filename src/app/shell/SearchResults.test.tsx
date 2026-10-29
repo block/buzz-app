@@ -1598,6 +1598,84 @@ it("holds an early Enter on the scope action for an open channel, and scopes onc
   }
 });
 
+it.each(["a click that does not focus the row", "its shortcut"])(
+  "drops a held Enter when the scope action is chosen by %s",
+  async (way) => {
+    vi.useFakeTimers();
+    const relay = keypair();
+    const viewer = keypair();
+    const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+    const discovery = [
+      metadata(relay, "general", "general"),
+      roster(relay, "general", [viewer.pubkey]),
+      metadata(relay, "lobby", "crew-lobby", 1700000000, [
+        ["public", ""],
+        ["t", "stream"],
+      ]),
+      roster(relay, "lobby", [keypair().pubkey]),
+    ];
+    let resolved!: () => void;
+    const held = new Promise<void>((release) => (resolved = release));
+    const owner = createRelaySession({
+      ...wire.transport,
+      async query(filters, signal) {
+        if (
+          filters.some(
+            (filter) =>
+              filter.search !== undefined && !filter.kinds?.includes(0),
+          )
+        )
+          return wire.transport.query(filters, signal);
+        if (filters.some((filter) => filter["#d"]?.includes("lobby")))
+          await held;
+        return discovery.filter((event) =>
+          filters.some((filter) => matchFilter(filter as Filter, event)),
+        );
+      },
+    });
+    const openConversation = vi.fn();
+    const changeScope = vi.fn();
+    try {
+      render(
+        <SearchResults
+          session={owner.session}
+          query="crew"
+          onQueryChange={() => {}}
+          input={createRef<HTMLInputElement>()}
+          pages={[]}
+          currentChannelId="general"
+          onScopeChange={changeScope}
+          openConversation={openConversation}
+        />,
+      );
+      await act(async () => vi.advanceTimersByTimeAsync(180));
+      const field = screen.getByRole("combobox", { name: "Search Buzz" });
+      const scope = screen.getByRole("option");
+      expect(scope).toHaveTextContent("Search in general");
+      fireEvent.keyDown(field, { key: "Enter" });
+      expect(changeScope).not.toHaveBeenCalled();
+      if (way === "its shortcut")
+        fireEvent.keyDown(field, {
+          key: "!",
+          code: "Digit1",
+          shiftKey: true,
+          ctrlKey: true,
+        });
+      else fireEvent.click(scope);
+      expect(scope).not.toHaveFocus();
+      expect(changeScope).toHaveBeenCalledExactlyOnceWith("general");
+      await act(async () => resolved());
+      await act(async () => wire.next().respond([]));
+      expect(screen.getByRole("option", { name: /crew-lobby/ })).toBeVisible();
+      expect(openConversation).not.toHaveBeenCalled();
+      expect(changeScope).toHaveBeenCalledOnce();
+    } finally {
+      cleanup();
+      owner.dispose();
+    }
+  },
+);
+
 it("returns keyboard focus to search when channel lookup retries, through repeated failure and recovery", async () => {
   Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
     configurable: true,

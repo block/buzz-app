@@ -157,7 +157,7 @@ deny author:@me prefix:🤖
 ```
 
 with When no rule matches set to Wake the agent. Adding, say,
-`allow org:block` and `allow author:/^copilot/` and choosing Don't wake it
+`allow org:block` and `allow author:copilot-pull-request-reviewer[bot]` and choosing Don't wake it
 limits feedback to those. Membership is asked of `gh` only for organizations the rules
 name, and kept for an hour; feedback whose author's membership cannot be read
 waits for a later poll, until ten polls in a row fail for that login alone and

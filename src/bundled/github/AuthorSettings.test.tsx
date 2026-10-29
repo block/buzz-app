@@ -39,12 +39,12 @@ it("shows the default rules, and saves only rules that parse", async () => {
   await user.clear(rules);
   await user.type(
     rules,
-    "deny author:@me prefix:🤖{Enter}allow org:block{Enter}  allow author:/^copilot/  ",
+    "deny author:@me prefix:🤖{Enter}allow org:block{Enter}  allow author:copilot-pull-request-reviewer[[bot]  ",
   );
   await user.click(screen.getByRole("radio", { name: "Don’t wake it" }));
   await user.click(save);
   expect(loadPolicy().text).toBe(
-    "deny author:@me prefix:🤖\nallow org:block\nallow author:/^copilot/",
+    "deny author:@me prefix:🤖\nallow org:block\nallow author:copilot-pull-request-reviewer[bot]",
   );
   expect(loadPolicy().fallback).toBe("deny");
   expect(rules).toHaveValue(loadPolicy().text);

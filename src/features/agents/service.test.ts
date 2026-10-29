@@ -125,7 +125,7 @@ const UNFINISHED =
   "Echo isn't deleted yet and may still be in some channels. It stays stopped; Delete it again to finish.";
 
 type Config = { reply: string };
-/** Turns on a plugin that shows Attention, as the Agent Attention UI does. */
+/** Turns on a plugin that shows Attention, as the Attention plugin does. */
 const showAttention = (ctx: Context, revision: string) =>
   ctx
     .extend({ pluginOwner: Object.freeze({ id: "buzz.watching", revision }) })
@@ -152,7 +152,7 @@ async function setup({
   answer = undefined as AgentType<Config>["run"],
   pluginActive = (): boolean => true,
   subscribePlugin = (_listener: () => void) => () => {},
-  /** Whether the Agent Attention UI plugin is on once startup is over. */
+  /** Whether the Attention plugin is on once startup is over. */
   attention = true,
   /** Whether another plugin is still starting after setup, so startup is not
    * over. */
@@ -270,7 +270,7 @@ async function setup({
     ...(syncedSettings ? { syncedSettings } : {}),
   };
   plugin.agents.register(type);
-  // The Agent Attention UI plugin starts after the type, then startup is over.
+  // The Attention plugin starts after the type, then startup is over.
   const watching = attention ? showAttention(ctx, "one") : undefined;
   await watching;
   settled = !starting;

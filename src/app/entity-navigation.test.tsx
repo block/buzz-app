@@ -40,7 +40,7 @@ vi.mock("../bundled", async () => ({
     {
       manifest: {
         id: "buzz.watching",
-        name: "Agent Attention UI",
+        name: "Attention",
         apiVersion: 1,
       },
       module: await import("../bundled/watching"),

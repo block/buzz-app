@@ -2091,7 +2091,12 @@ function Teams({
       <TeamEditor
         key={editing}
         agents={agents}
-        saved={saved}
+        // A team kept on this device can have only agents here.
+        saved={
+          team && !team.revision
+            ? saved.filter((agent) => agent.place === "here")
+            : saved
+        }
         {...(team ? { team } : {})}
         onDone={() => onEdit(undefined)}
       />

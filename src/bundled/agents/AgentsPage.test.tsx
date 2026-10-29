@@ -2496,6 +2496,33 @@ it("offers hosted agents as members, warning that they may not get the instructi
   expect(instructions).toHaveAccessibleDescription(local);
 });
 
+it("offers hosted agents only to new and synced teams", async () => {
+  const user = userEvent.setup();
+  const ada = agent("Ada", 1);
+  setup([ada, { ...agent("Sky", 2), place: "hosted" }], {
+    teams: [
+      { id: "crew", name: "Crew", instructions: "", members: [ada.pubkey] },
+      {
+        id: "synced",
+        name: "Synced",
+        instructions: "",
+        members: [ada.pubkey],
+        revision: "1",
+      },
+    ],
+  });
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  await user.click(screen.getByRole("button", { name: "Crew" }));
+  expect(screen.getByRole("checkbox", { name: "Ada" })).toBeChecked();
+  expect(
+    screen.queryByRole("checkbox", { name: "Sky" }),
+  ).not.toBeInTheDocument();
+  await user.keyboard("{Escape}");
+  await user.click(screen.getByRole("button", { name: "Synced" }));
+  expect(screen.getByRole("checkbox", { name: "Ada" })).toBeChecked();
+  expect(screen.getByRole("checkbox", { name: "Sky" })).toBeInTheDocument();
+});
+
 it("closes the team editor when leaving Your teams", async () => {
   const user = userEvent.setup();
   const { agents } = setup([agent("Ada", 1)]);

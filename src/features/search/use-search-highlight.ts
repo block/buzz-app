@@ -16,8 +16,9 @@ import {
  * highlighted row leaves, the highlight returns to the first row rather than
  * reviving the old one. Enter before any row arrives, while results are
  * pending, chooses the first row once they are not, unless an edit, an arrow
- * key, Escape, a pointer move or closing comes first. The hook draws nothing;
- * rows keep their own markup. */
+ * key, Escape, a pointer move or closing comes first. Enter on an action row
+ * waits the same way while no result row has arrived, unless the user
+ * highlighted that row. The hook draws nothing; rows keep their own markup. */
 export function useSearchHighlight({
   query,
   keys,
@@ -27,6 +28,7 @@ export function useSearchHighlight({
   highlightEmpty = false,
   wrap = false,
   pending = false,
+  isAction,
 }: {
   query: string;
   /** Row keys, in display order. */
@@ -46,6 +48,9 @@ export function useSearchHighlight({
   wrap?: boolean;
   /** A row that should lead may still arrive for this text. */
   pending?: boolean;
+  /** Whether a row acts on the search, such as narrowing it, rather than
+   * being a result. */
+  isAction?: ((key: string) => boolean) | undefined;
 }) {
   const id = useId();
   const [selection, setSelection] = useState({
@@ -264,14 +269,20 @@ export function useSearchHighlight({
         return true;
       }
       const index = keys.indexOf(active);
-      if (event.key === "Enter" && index >= 0) {
-        event.preventDefault();
-        onChoose(active);
-        return true;
-      }
-      if (event.key === "Enter" && !keys.length && pending) {
+      if (
+        event.key === "Enter" &&
+        pending &&
+        !(valid && (selection.moves || selection.pointer)) &&
+        keys.every((key) => isAction?.(key))
+      ) {
         event.preventDefault();
         setAwaiting(query);
+        return true;
+      }
+      if (event.key === "Enter" && index >= 0) {
+        event.preventDefault();
+        setAwaiting(undefined);
+        onChoose(active);
         return true;
       }
       if (arrow || event.key === "Escape") setAwaiting(undefined);

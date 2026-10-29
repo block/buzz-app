@@ -1525,6 +1525,79 @@ it("opens an open channel from the first directory page after an early Enter, wh
   }
 });
 
+it("holds an early Enter on the scope action for an open channel, and scopes once chosen or settled", async () => {
+  vi.useFakeTimers();
+  const relay = keypair();
+  const viewer = keypair();
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  const discovery = [
+    metadata(relay, "general", "general"),
+    roster(relay, "general", [viewer.pubkey]),
+    metadata(relay, "lobby", "crew-lobby", 1700000000, [
+      ["public", ""],
+      ["t", "stream"],
+    ]),
+    roster(relay, "lobby", [keypair().pubkey]),
+  ];
+  let resolved!: () => void;
+  const held = new Promise<void>((release) => (resolved = release));
+  const owner = createRelaySession({
+    ...wire.transport,
+    async query(filters, signal) {
+      if (
+        filters.some(
+          (filter) => filter.search !== undefined && !filter.kinds?.includes(0),
+        )
+      )
+        return wire.transport.query(filters, signal);
+      if (filters.some((filter) => filter["#d"]?.includes("lobby"))) await held;
+      return discovery.filter((event) =>
+        filters.some((filter) => matchFilter(filter as Filter, event)),
+      );
+    },
+  });
+  const openConversation = vi.fn();
+  const changeScope = vi.fn();
+  const enter = (key = "Enter") =>
+    fireEvent.keyDown(screen.getByRole("combobox", { name: "Search Buzz" }), {
+      key,
+    });
+  try {
+    const props = {
+      session: owner.session,
+      onQueryChange: () => {},
+      input: createRef<HTMLInputElement>(),
+      pages: [],
+      currentChannelId: "general",
+      onScopeChange: changeScope,
+      openConversation,
+    };
+    const mounted = render(<SearchResults {...props} query="crew" />);
+    await act(async () => vi.advanceTimersByTimeAsync(180));
+    expect(screen.getByRole("option")).toHaveTextContent("Search in general");
+    enter();
+    expect(changeScope).not.toHaveBeenCalled();
+    await act(async () => resolved());
+    expect(openConversation).toHaveBeenCalledExactlyOnceWith("lobby");
+    await act(async () => wire.next().respond([]));
+    // While message search is still pending, an arrow key chooses the
+    // scope action for Enter.
+    mounted.rerender(<SearchResults {...props} query="nope" />);
+    await act(async () => vi.advanceTimersByTimeAsync(180));
+    enter("ArrowDown");
+    enter();
+    expect(changeScope).toHaveBeenCalledExactlyOnceWith("general");
+    // Once the lookups settle, Enter on it scopes without an arrow key.
+    await act(async () => wire.next().respond([]));
+    enter();
+    expect(changeScope).toHaveBeenCalledTimes(2);
+    expect(openConversation).toHaveBeenCalledOnce();
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
 it("returns keyboard focus to search when channel lookup retries, through repeated failure and recovery", async () => {
   Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
     configurable: true,
@@ -3373,6 +3446,58 @@ it("keeps a pending in: lookup pending, then retries its failure and resumes sco
       await screen.findByRole("option", { name: /deploy found/ }),
     ).toBeVisible();
     expect(reads).toContainEqual([expect.objectContaining({ "#h": ["dev"] })]);
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
+it("holds an early Enter while an in: channel is still being found", async () => {
+  const relay = keypair(),
+    viewer = keypair();
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  const discovery = [
+    metadata(relay, "dev", "dev", 1700000000, [["public", ""]]),
+  ];
+  const found = message(viewer, "dev", "deploy found", 1700000001);
+  let listRead!: () => void;
+  const listStarted = new Promise<void>((resolve) => (listRead = resolve));
+  let releaseList!: () => void;
+  const listHeld = new Promise<void>((release) => (releaseList = release));
+  const owner = createRelaySession({
+    ...wire.transport,
+    async query(filters) {
+      if (filters.some((filter) => filter.search !== undefined)) return [found];
+      // The joined list must load before the in: channel can resolve.
+      if (filters.some((filter) => filter.kinds?.includes(39002))) {
+        listRead();
+        await listHeld;
+      }
+      return discovery.filter((event) =>
+        filters.some((filter) => matchFilter(filter as Filter, event)),
+      );
+    },
+  });
+  const openConversation = vi.fn();
+  try {
+    render(
+      <SearchResults
+        session={owner.session}
+        query="deploy in:#dev"
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        openConversation={openConversation}
+      />,
+    );
+    await listStarted;
+    fireEvent.keyDown(screen.getByRole("combobox", { name: "Search Buzz" }), {
+      key: "Enter",
+    });
+    await act(async () => releaseList());
+    await waitFor(() =>
+      expect(openConversation).toHaveBeenCalledExactlyOnceWith("dev", found.id),
+    );
   } finally {
     cleanup();
     owner.dispose();

@@ -74,12 +74,16 @@ export function SearchChoices({
   inlineSettings,
   open = true,
   pending = false,
+  isAction,
 }: SearchInputProps & {
   groups: readonly SearchGroup[];
   children?: ReactNode;
   /** A row that should lead may still arrive, so Enter before any row
    * waits until it has. */
   pending?: boolean;
+  /** Whether a row acts on the search rather than being a result, so Enter
+   * on it can wait for `pending` like Enter before any row. */
+  isAction?: (key: string) => boolean;
 }) {
   const resultsViewport = useRef<HTMLDivElement>(null);
   const resultsContent = useRef<HTMLDivElement>(null);
@@ -146,6 +150,7 @@ export function SearchChoices({
     onChoose: (key) => destinations.find((row) => row.key === key)?.run(),
     open,
     pending,
+    isAction,
   });
   const selected = highlight.active;
   useEffect(() => {

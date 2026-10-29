@@ -47,9 +47,11 @@ export function CanvasEditor({
     () => viewRevision(scope, key),
   );
   // Only edits are stored. When a stored draft disappears, another editor
-  // saved, discarded or reverted it. Unless this editor removed it, it reloads.
-  // An editor holding text typed here stores that text again and only rereads.
+  // saved, discarded or reverted it. Unless this editor removed it, it reloads
+  // once idle, even if another draft is stored by then. An editor holding text
+  // typed here stores that text again and only rereads.
   const retiredDraft = useRef(true);
+  const retirement = useRef(false);
   const retire = useCallback(
     (expected: string | null | undefined) => {
       if (expected == null || viewRevision(scope, key) !== expected) return;
@@ -113,7 +115,7 @@ export function CanvasEditor({
     [],
   );
   const load = useCallback(
-    async (replace = false) => {
+    async (replace = false, discard = false) => {
       const generation = ++operation.current;
       // A draft stored while this read is pending is newer than its result.
       const stored = viewRevision(scope, key);
@@ -128,7 +130,7 @@ export function CanvasEditor({
           setDraft(event?.content ?? "");
           setAdopted(event?.content ?? "");
           setBase(event?.id ?? null);
-          if (replace) retire(stored);
+          if (discard) retire(stored);
         } else if ((event?.id ?? null) !== base)
           setError(
             "Canvas changed since this draft began. Your draft is kept. Copy any edits you want to keep before reloading the saved Canvas.",
@@ -153,19 +155,18 @@ export function CanvasEditor({
   const dirty = differs(draft);
   const edited = dirty && draft !== adopted;
   useEffect(() => {
-    if (draftRevision !== null) {
-      retiredDraft.current = false;
-      return;
-    }
-    if (!loaded || busy || retiredDraft.current) return;
-    retiredDraft.current = true;
+    if (draftRevision !== null) retiredDraft.current = false;
+    else if (!retiredDraft.current)
+      retiredDraft.current = retirement.current = true;
+    if (!retirement.current || !loaded || busy) return;
+    retirement.current = false;
     if (edited) replaceView(scope, key, null, { content: draft, base });
     void load(!edited);
   }, [draftRevision, loaded, busy, edited, load, scope, key, draft, base]);
   const recover = (replace: boolean) => {
     handoff.current = recovery.current;
     setRecovering(true);
-    void load(replace).finally(() => setRecovering(false));
+    void load(replace, replace).finally(() => setRecovering(false));
   };
   const restore = async (revision: RelayEvent) => {
     if (readOnly) return;

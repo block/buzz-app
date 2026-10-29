@@ -395,14 +395,15 @@ it.each([
   },
 );
 
-async function twoEditors() {
-  const saved = { ...head, content: "Edited", id: "b".repeat(64) };
-  const editor = () => ({
-    available: true,
-    history: vi.fn<ChannelCanvas["history"]>(),
-    read: vi.fn(async () => head),
-    save: vi.fn(async () => saved),
-  });
+const edited = { ...head, content: "Edited", id: "b".repeat(64) };
+const editor = () => ({
+  available: true,
+  history: vi.fn<ChannelCanvas["history"]>(),
+  read: vi.fn(async () => head),
+  save: vi.fn(async () => edited),
+});
+async function twoEditors(third?: ReturnType<typeof editor>) {
+  const saved = edited;
   const first = editor();
   const second = editor();
   render(
@@ -419,6 +420,14 @@ async function twoEditors() {
         scope={scope}
         channelId={channelId}
       />
+      {third && (
+        <CanvasEditor
+          canvas={third}
+          profiles={profiles}
+          scope={scope}
+          channelId={channelId}
+        />
+      )}
     </>,
   );
   const [editing, other] = screen.getAllByRole("textbox", {
@@ -552,6 +561,48 @@ it("keeps another editor's typed text through a reopen and blocks its Save after
     "Canvas changed since this draft began",
   );
   expect(screen.getByRole("button", { name: "Save Canvas" })).toBeDisabled();
+});
+
+it("reloads a busy clean editor after a save even when another editor stores its text again meanwhile", async () => {
+  const user = userEvent.setup();
+  const third = editor();
+  const land = hold(third.read);
+  const { saved, second, editing, other } = await twoEditors(third);
+  const region = screen.getAllByRole("region", {
+    name: "Channel Canvas",
+  })[2] as HTMLElement;
+  const busy = within(region).getByRole("textbox", { name: "Canvas Markdown" });
+  expect(busy).toBeDisabled();
+  fireEvent.change(other, { target: { value: "Mine" } });
+  fireEvent.change(editing, { target: { value: "Edited" } });
+  second.read.mockResolvedValue(saved);
+  third.read.mockResolvedValue(saved);
+  await user.click(
+    screen.getAllByRole("button", { name: "Save Canvas" })[0] as HTMLElement,
+  );
+  // The save removed the shared draft and the second editor stored "Mine"
+  // again before the third editor's held read landed.
+  await waitFor(() =>
+    expect(readView(scope, `canvas-draft-v1:${channelId}`, null)).toEqual({
+      content: "Mine",
+      base: head.id,
+    }),
+  );
+  expect(third.read).toHaveBeenCalledOnce();
+  await act(() => land(head));
+  await waitFor(() => expect(busy).toHaveValue("Edited"));
+  expect(third.read).toHaveBeenCalledTimes(2);
+  expect(within(region).queryByRole("alert")).toBeNull();
+  expect(
+    within(region).getByRole("button", { name: "Save Canvas" }),
+  ).toBeEnabled();
+  // The reload left the stored draft alone, so its editor did not reread.
+  expect(second.read).toHaveBeenCalledTimes(2);
+  expect(other).toHaveValue("Mine");
+  expect(readView(scope, `canvas-draft-v1:${channelId}`, null)).toEqual({
+    content: "Mine",
+    base: head.id,
+  });
 });
 
 function hold(operation: ReturnType<typeof vi.fn>) {

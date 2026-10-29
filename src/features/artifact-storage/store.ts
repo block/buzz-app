@@ -488,7 +488,7 @@ export function createArtifactStore(viewer: string, relay: string) {
                 record.id,
                 (row) => ({
                   row:
-                    row.record.local !== undefined || row.record.current
+                    row.record.local !== undefined
                       ? row
                       : {
                           ...row,

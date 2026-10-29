@@ -344,7 +344,7 @@ it("shares only a restricted app, at its current grant revision", async () => {
   );
 });
 
-it("deploys to the sign-in's own tenant and opens only its app hosts", () => {
+it("deploys to the sign-in's own tenant", () => {
   expect(controlPlane("https://app.builderlabstaging.xyz")).toBe(BASE);
   expect(controlPlane("https://block.builderlab.xyz/")).toBe(
     "https://compose-ctrl.block.builderlab.xyz",
@@ -354,13 +354,26 @@ it("deploys to the sign-in's own tenant and opens only its app hosts", () => {
   );
   expect(controlPlane("https://builderlab.example")).toBeUndefined();
   expect(controlPlane("")).toBeUndefined();
+});
+
+it("recognizes deployed app hosts across tenants", () => {
   for (const url of [
     "https://tiny-counter--bpsites.apps.builderlab.xyz/",
     "https://demo--bpsites.apps.block.builderlab.xyz/",
     "https://demo--bpsites.apps.builderlabstaging.xyz/path?x=1",
-    "https://demo--bpsites.apps.block.builderlabstaging.xyz/",
+    "https://demo--workspace.apps.acme.builderlab.xyz/",
+    "https://demo--workspace.apps.acme.builderlabstaging.xyz/",
+    "https://demo.apps.acme-2.builderlab.xyz/",
+    "https://demo.apps.7.builderlabstaging.xyz/",
+    "https://nested.demo.apps.builderlab.xyz/",
+    "https://nested.demo.apps.acme.builderlabstaging.xyz/",
+    "https://DEMO.APPS.ACME.BUILDERLABSTAGING.XYZ:8443/path?x=1#section",
+    `https://${"a".repeat(63)}.apps.${"b".repeat(63)}.builderlab.xyz/`,
   ])
     expect(isAppUrl(url), url).toBe(true);
+});
+
+it("rejects URLs outside the deployed app hostname shapes", () => {
   for (const url of [
     "http://demo--bpsites.apps.builderlab.xyz/",
     "https://apps.builderlab.xyz/",
@@ -372,6 +385,37 @@ it("deploys to the sign-in's own tenant and opens only its app hosts", () => {
     "https://demo.apps.block.builderlab.xyz.example.org/",
     "https://evilapps.block.builderlab.xyz/",
     "https://user:pass@demo.apps.block.builderlab.xyz/",
+    "http://demo.apps.acme.builderlabstaging.xyz/",
+    "https://user@demo.apps.acme.builderlab.xyz/",
+    "https://:pass@demo.apps.acme.builderlabstaging.xyz/",
+    "https://demo.apps.acme.builderlab.xyz@evil.example/",
+    "https://apps.builderlabstaging.xyz/",
+    "https://apps.acme.builderlab.xyz/",
+    "https://apps.acme.builderlabstaging.xyz/",
+    "https://demo.apps.acme.builderlabstaging.xyz.example.org/",
+    "https://demo.evilapps.acme.builderlab.xyz/",
+    "https://demo.apps.acme.builderlabstaging-evil.xyz/",
+    "https://demo.apps.acme.builderlab.xyz.evil/",
+    "https://demo.apps.acme.other.builderlab.xyz/",
+    "https://apps.demo.acme.builderlabstaging.xyz/",
+    "https://demo.acme.builderlab.xyz/",
+    "https://demo.apps.builderlab.example/",
+    "https://demo.apps.acme.blockstaging.build/",
+    "https://demo.apps.blockstaging.build/",
+    "https://demo.apps..builderlab.xyz/",
+    "https://demo.apps.-acme.builderlab.xyz/",
+    "https://demo.apps.acme-.builderlabstaging.xyz/",
+    "https://demo.apps.ac_me.builderlab.xyz/",
+    "https://.demo.apps.builderlab.xyz/",
+    "https://demo..apps.acme.builderlabstaging.xyz/",
+    "https://-demo.apps.builderlab.xyz/",
+    "https://demo-.apps.acme.builderlabstaging.xyz/",
+    "https://de_mo.apps.builderlab.xyz/",
+    "https://demo.apps.builderlab.xyz./",
+    `https://${"a".repeat(64)}.apps.builderlab.xyz/`,
+    `https://demo.apps.${"a".repeat(64)}.builderlabstaging.xyz/`,
+    "https://",
+    "",
     "not a url",
   ])
     expect(isAppUrl(url), url).toBe(false);

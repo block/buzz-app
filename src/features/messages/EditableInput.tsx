@@ -464,6 +464,9 @@ export function EditableInput({
     );
     let editor: EditorView;
     let separateHistory = false;
+    // Mod+Shift+V (and Apple's ⌥⇧⌘V) pastes plain text verbatim. The native
+    // command fires the paste event; the held chord is what marks it as raw.
+    let plainPaste = false;
     const editable = () => !current.current.disabled && !locked.current;
     // A projection depends only on the immutable document, but selection events
     // and completion read value/selection several times per keystroke.
@@ -1651,6 +1654,10 @@ export function EditableInput({
             : event.ctrlKey && !event.metaKey;
           const named = keyboardKey(event);
           const key = named.toLowerCase();
+          plainPaste =
+            primary &&
+            event.shiftKey &&
+            (key === "v" || (event.altKey && event.code === "KeyV"));
           if (primary && !event.altKey && !event.shiftKey && key === "a")
             return selectAll(editor.state, editor.dispatch);
           const format =
@@ -1750,6 +1757,14 @@ export function EditableInput({
             syncNativeSelection();
             return false;
           },
+          keyup() {
+            plainPaste = false;
+            return false;
+          },
+          mousedown() {
+            plainPaste = false;
+            return false;
+          },
           click(_view, event) {
             // Composer links are editable text, never navigation targets.
             if (event.target instanceof Element && event.target.closest("a"))
@@ -1834,6 +1849,8 @@ export function EditableInput({
           },
           paste(_view, event) {
             event.preventDefault();
+            const raw = plainPaste;
+            plainPaste = false;
             // File paste belongs to the host attachment capture; never replace text.
             if (
               Array.from(event.clipboardData?.items ?? []).some(
@@ -1841,10 +1858,16 @@ export function EditableInput({
               )
             )
               return true;
+            const plain = event.clipboardData?.getData("text/plain") ?? "";
+            // Raw text replaces the selection with the caret's marks: no copied
+            // structure, links, selection linking, URL spacing or recipients.
+            if (raw) {
+              if (plain) insert(plain);
+              return true;
+            }
             const code = editor.state.selection.$from.parent.type.spec.code;
             // Code takes visible text verbatim; prose preserves copied web links.
             const html = event.clipboardData?.getData("text/html") ?? "";
-            const plain = event.clipboardData?.getData("text/plain") ?? "";
             const hasPlain =
               !!plain || event.clipboardData?.types?.includes("text/plain");
             const copy = code ? undefined : buzzCopyDocument(html);

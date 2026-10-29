@@ -9102,6 +9102,35 @@ it("a Solo pill pick replaces the fallback, a team pick sets several, and it is 
   expect(h.input()).toHaveFocus();
 });
 
+it("a Solo menu toggle adds and removes agents but never the last one", () => {
+  const { h, ada, bea, sendingTo } = mountSoloAgents();
+  act(() => h.commands().audience?.toggle(bea));
+  expect(sendingTo("Ada, Bea")).toBeInTheDocument();
+  act(() => h.commands().audience?.toggle(ada));
+  expect(sendingTo("Bea")).toBeInTheDocument();
+  // The last agent stays: a message always goes to someone.
+  act(() => h.commands().audience?.toggle(bea));
+  expect(sendingTo("Bea")).toBeInTheDocument();
+  expect(h.input()).toHaveValue("");
+  expect(h.commands().recipients).toEqual([]);
+});
+
+it("with several Solo agents, each shows as an avatar that removes it, down to one", async () => {
+  const { h, ada, bea, sendingTo } = mountSoloAgents();
+  expect(
+    screen.queryByRole("button", { name: `Remove agent Ada ${ada.pubkey}` }),
+  ).toBeNull();
+  act(() => h.commands().audience?.toggle(bea));
+  await h.user.click(
+    screen.getByRole("button", { name: `Remove agent Ada ${ada.pubkey}` }),
+  );
+  expect(sendingTo("Bea")).toBeInTheDocument();
+  // One agent left: no removable avatars.
+  expect(
+    screen.queryByRole("button", { name: `Remove agent Bea ${bea.pubkey}` }),
+  ).toBeNull();
+});
+
 it("a Solo pill pick returns focus to the draft without moving its caret", () => {
   const { h, bea } = mountSoloAgents();
   h.fill("hello there");

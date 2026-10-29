@@ -105,11 +105,10 @@ export function MentionPicker({
     recipient: (typeof candidates)[number]["recipient"],
   ) => {
     if (!model.canSelect(recipient.pubkey)) return;
-    // Alone with agents: a pick switches to that agent and closes the menu.
+    // Alone with agents: a pick adds or removes that agent, never the last,
+    // and the menu stays open for more.
     if (audience) {
-      audience.only([recipient]);
-      accepted.current = true;
-      setOpen(false);
+      audience.toggle(recipient);
       return;
     }
     if (select(recipient)) {
@@ -190,7 +189,21 @@ export function MentionPicker({
         <PopoverTrigger
           disabled={disabled}
           render={
-            audience ? (
+            audience && audience.recipients.length > 1 ? (
+              // Several agents: the composer shows them as removable
+              // avatars, and this opens the menu.
+              <IconButton
+                disabled={disabled}
+                size="toolbar"
+                ref={trigger}
+                type="button"
+                aria-label={`Sending to ${audience.recipients
+                  .map((person) => person.name)
+                  .join(", ")}. Change agents`}
+                title="Change agents"
+                icon={<CaretDownIcon size={16} aria-hidden="true" />}
+              />
+            ) : audience ? (
               <Button
                 variant="subtle"
                 size="sm"
@@ -217,9 +230,7 @@ export function MentionPicker({
                     shape: "squircle",
                   }))}
                 />
-                {audience.recipients.length === 1
-                  ? audience.recipients[0]?.name
-                  : !audience.recipients.length && "Choose agent"}
+                {audience.recipients[0]?.name ?? "Choose agent"}
                 <CaretDownIcon size={12} aria-hidden="true" />
               </Button>
             ) : (
@@ -347,13 +358,11 @@ export function MentionPicker({
             >
               {candidates.map(
                 ({ recipient, label, agent, elsewhere, disabled: reason }) => {
-                  // One agent addressed: its row is the selected one. Several:
-                  // each shows a read-only check and none is filled.
+                  // Each addressed agent's row shows a check; fill is only
+                  // the keyboard and pointer highlight.
                   const addressed = !!audience?.recipients.some(
                     (person) => person.pubkey === recipient.pubkey,
                   );
-                  const current =
-                    addressed && audience?.recipients.length === 1;
                   const focused =
                     highlight.active === personKey(recipient.pubkey);
                   return (
@@ -363,9 +372,10 @@ export function MentionPicker({
                       type="button"
                       key={recipient.pubkey}
                       {...highlight.rowProps(personKey(recipient.pubkey))}
-                      selected={audience ? current : focused}
+                      selected={audience ? false : focused}
                       highlighted={audience ? focused : false}
-                      aria-current={current ? "true" : false}
+                      aria-current={false}
+                      aria-pressed={audience ? addressed : undefined}
                       aria-label={`${label} ${recipient.pubkey}`}
                       disabled={disabled || !!reason}
                       onClick={() => chooseRecipient(recipient)}
@@ -393,12 +403,12 @@ export function MentionPicker({
                       }
                       title={recipient.pubkey}
                       trailing={
-                        <>
-                          {addressed && !current && (
+                        <span className="flex items-center gap-2">
+                          <code>{recipient.pubkey.slice(0, 12)}</code>
+                          {addressed && (
                             <CheckIcon size={16} aria-hidden="true" />
                           )}
-                          <code>{recipient.pubkey.slice(0, 12)}</code>
-                        </>
+                        </span>
                       }
                       icon={
                         <Avatar
@@ -469,7 +479,7 @@ export function MentionPicker({
               )}
               <p role="status" className="sr-only">
                 {highlightedLabel
-                  ? `${highlightedLabel}. Press Enter to ${audience ? "send to this agent" : "mention"}.`
+                  ? `${highlightedLabel}. Press Enter to ${audience ? "add or remove this agent" : "mention"}.`
                   : ""}
               </p>
             </div>

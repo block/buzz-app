@@ -116,6 +116,13 @@
     width: var(--space-4);
     height: var(--space-4);
   }
+  /* Small identity buttons: leading avatars sit as close to the leading
+     edge as to the top and bottom, and a trailing icon tucks in to match. */
+  .buzz-button[data-size="sm"]:has(
+    > .buzz-button-label > [data-avatar-stack]:first-child
+  ) {
+    padding-inline: var(--space-1h) var(--space-3);
+  }
   .buzz-button[data-size="lg"] {
     min-height: var(--size-control-lg);
     padding-block: calc(var(--space-3) + var(--space-half));

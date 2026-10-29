@@ -861,7 +861,8 @@ Small buttons use 16px
 side padding and 16px icons; medium and large use 24px side padding and 24px icons.
 Proposed: medium labelled buttons with a leading icon use 12px leading and 16px
 trailing padding for optical balance. Text-only and icon-only buttons retain their
-existing insets.
+existing insets. Small buttons that lead with an `AvatarStack`, such as the composer's
+agent pill, use 6px leading padding (matching the vertical inset) and 12px trailing.
 Standard Button labels use the complete `text-label-sm` role with an 8px icon gap; the
 extra-small capsule uses `text-caption`. For a caption-sized inline choice such as
 the composer's model name, `size="inline"` keeps a 24px minimum target with 4px

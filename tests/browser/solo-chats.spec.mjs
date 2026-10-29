@@ -1,6 +1,6 @@
 import { test, expect } from "./fixture.mjs";
 import { generateSecretKey, verifyEvent } from "nostr-tools";
-import { newChat, openPage } from "./navigation.mjs";
+import { newChat, openPage, sendOnlyTo } from "./navigation.mjs";
 
 const id = "33333333-3333-4333-8333-333333333333";
 const destination = "55555555-5555-4555-8555-555555555555";
@@ -194,14 +194,7 @@ test.describe("Berd-style Solo project organization", () => {
     });
     // An existing chat starts addressed to one of its agents.
     await expect(pill).toHaveAccessibleName(/^Sending to .+\. Change agents$/);
-    await pill.click();
-    await page
-      .getByRole("dialog", { name: "Mention a member or agent" })
-      .getByRole("button", {
-        name: `${agent.name} ${agent.pubkey}`,
-        exact: true,
-      })
-      .click();
+    await sendOnlyTo(page, pill, agent);
     const tag = page.getByRole("button", {
       name: `Sending to ${agent.name}. Change agents`,
       exact: true,
@@ -1029,14 +1022,7 @@ test.describe("Solo composer caret", () => {
       name: /Change agents$|^Choose agent$/,
     });
     const pick = async (agent) => {
-      await pill.click();
-      await page
-        .getByRole("dialog", { name: "Mention a member or agent" })
-        .getByRole("button", {
-          name: `${agent.name} ${agent.pubkey}`,
-          exact: true,
-        })
-        .click();
+      await sendOnlyTo(page, pill, agent);
       await expect(pill).toHaveAccessibleName(
         `Sending to ${agent.name}. Change agents`,
       );
@@ -1061,6 +1047,8 @@ test.describe("Solo composer caret", () => {
     // where the caret was.
     await pick(brain);
     await expect.poll(caret).toEqual(["first", 5, 5]);
+    // Closing the menu returns focus to the pill; the draft keeps its caret.
+    await composer.focus();
     await page.keyboard.insertText(" again");
     await expect(composer).toHaveText("first again");
 
@@ -1101,16 +1089,11 @@ test.describe("Solo send focus", () => {
       .getByRole("button", { name: "Alpha", exact: true })
       .click();
     const [agent] = app.soloAgents;
-    await page
-      .getByRole("button", { name: /Change agents$|^Choose agent$/ })
-      .click();
-    await page
-      .getByRole("dialog", { name: "Mention a member or agent" })
-      .getByRole("button", {
-        name: `${agent.name} ${agent.pubkey}`,
-        exact: true,
-      })
-      .click();
+    await sendOnlyTo(
+      page,
+      page.getByRole("button", { name: /Change agents$|^Choose agent$/ }),
+      agent,
+    );
     const composer = page.getByRole("textbox", {
       name: "Message your agents",
       exact: true,

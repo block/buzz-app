@@ -238,6 +238,7 @@ function renderAudiencePicker(
   recipients: readonly { pubkey: string; name: string }[],
 ) {
   const only = vi.fn(),
+    toggle = vi.fn(),
     select = vi.fn(() => true);
   const view = render(
     <MentionPicker
@@ -246,11 +247,11 @@ function renderAudiencePicker(
       channelId="parent"
       disabled={false}
       inviteAgents
-      audience={{ recipients, named: false, only }}
+      audience={{ recipients, named: false, only, toggle }}
       select={select}
     />,
   );
-  return { view, only, select };
+  return { view, only, toggle, select };
 }
 const outsideRow = (test: ReturnType<typeof setup>) =>
   screen.findByRole("button", { name: `Outside agent ${test.key}` });
@@ -270,20 +271,21 @@ it("an agents-only audience pill replaces the mention button and never inserts a
   test.library.dispose();
 });
 
-it("clicking an agent row in the pill menu picks only that agent and closes the menu", async () => {
+it("clicking an agent row in the pill menu toggles that agent and keeps the menu open", async () => {
   const test = setup(),
     user = userEvent.setup(),
     agent = { pubkey: test.key, name: "Outside agent" };
-  const { view, only } = renderAudiencePicker(test, []);
+  const { view, only, toggle } = renderAudiencePicker(test, []);
   await user.click(screen.getByRole("button", { name: "Choose agent" }));
   await user.click(await outsideRow(test));
-  expect(only).toHaveBeenCalledExactlyOnceWith([agent]);
-  await waitFor(() => expect(screen.queryByRole("searchbox")).toBeNull());
+  expect(toggle).toHaveBeenCalledExactlyOnceWith(agent);
+  expect(only).not.toHaveBeenCalled();
+  expect(screen.getByRole("searchbox")).toBeInTheDocument();
   view.unmount();
   test.library.dispose();
 });
 
-it("with one agent addressed, its row is the selected one and shows no check", async () => {
+it("with one agent addressed, its row shows a check and is pressed, not filled", async () => {
   const test = setup(),
     user = userEvent.setup(),
     agent = { pubkey: test.key, name: "Outside agent" };
@@ -294,14 +296,14 @@ it("with one agent addressed, its row is the selected one and shows no check", a
     }),
   );
   const row = await outsideRow(test);
-  expect(row).toHaveAttribute("data-selected");
-  expect(row).toHaveAttribute("aria-current", "true");
-  expect(row.querySelector("svg")).toBeNull();
+  expect(row).not.toHaveAttribute("data-selected");
+  expect(row).toHaveAttribute("aria-pressed", "true");
+  expect(row.querySelector("svg")).not.toBeNull();
   view.unmount();
   test.library.dispose();
 });
 
-it("with several agents addressed, each addressed row shows a check and none is selected", async () => {
+it("with several agents addressed, the pill is a menu button and each addressed row shows a check", async () => {
   const test = setup(),
     user = userEvent.setup(),
     agent = { pubkey: test.key, name: "Outside agent" };
@@ -316,17 +318,17 @@ it("with several agents addressed, each addressed row shows a check and none is 
   );
   const row = await outsideRow(test);
   expect(row).not.toHaveAttribute("data-selected");
-  expect(row).toHaveAttribute("aria-current", "false");
+  expect(row).toHaveAttribute("aria-pressed", "true");
   expect(row.querySelector("svg")).not.toBeNull();
   view.unmount();
   test.library.dispose();
 });
 
-it("picking a row while several agents are addressed switches to just that agent", async () => {
+it("picking an addressed row while several agents are addressed toggles it", async () => {
   const test = setup(),
     user = userEvent.setup(),
     agent = { pubkey: test.key, name: "Outside agent" };
-  const { view, only } = renderAudiencePicker(test, [
+  const { view, toggle } = renderAudiencePicker(test, [
     agent,
     { pubkey: "c".repeat(64), name: "Another" },
   ]);
@@ -336,8 +338,8 @@ it("picking a row while several agents are addressed switches to just that agent
     }),
   );
   await user.click(await outsideRow(test));
-  expect(only).toHaveBeenCalledExactlyOnceWith([agent]);
-  await waitFor(() => expect(screen.queryByRole("searchbox")).toBeNull());
+  expect(toggle).toHaveBeenCalledExactlyOnceWith(agent);
+  expect(screen.getByRole("searchbox")).toBeInTheDocument();
   view.unmount();
   test.library.dispose();
 });
@@ -363,17 +365,17 @@ it("the pill menu highlights a row only while the pointer is on it", async () =>
   test.library.dispose();
 });
 
-it("in the pill menu, Enter on a row picks only that agent and closes the menu", async () => {
+it("in the pill menu, Enter on a row toggles that agent and keeps the menu open", async () => {
   const test = setup(),
     user = userEvent.setup(),
     agent = { pubkey: test.key, name: "Outside agent" };
-  const { view, only } = renderAudiencePicker(test, []);
+  const { view, toggle } = renderAudiencePicker(test, []);
   await user.click(screen.getByRole("button", { name: "Choose agent" }));
   const row = await outsideRow(test);
   row.focus();
   await user.keyboard("{Enter}");
-  expect(only).toHaveBeenCalledExactlyOnceWith([agent]);
-  await waitFor(() => expect(screen.queryByRole("searchbox")).toBeNull());
+  expect(toggle).toHaveBeenCalledExactlyOnceWith(agent);
+  expect(screen.getByRole("searchbox")).toBeInTheDocument();
   view.unmount();
   test.library.dispose();
 });
@@ -393,6 +395,7 @@ it("an audience pill says so when the message's own mentions decide", async () =
         recipients: [agent],
         named: true,
         only: vi.fn(),
+        toggle: vi.fn(),
       }}
       select={() => true}
     />,
@@ -424,6 +427,7 @@ it("a disabled composer disables the audience pill", () => {
         recipients: [],
         named: false,
         only: vi.fn(),
+        toggle: vi.fn(),
       }}
       select={() => true}
     />,

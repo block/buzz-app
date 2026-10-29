@@ -751,6 +751,18 @@ function Composer({
               // Typing resumes in the draft, at its caret.
               input.current?.focus();
             },
+            toggle({ pubkey, name }: MentionRecipient) {
+              setReplacedKey(undefined);
+              setRouted((current) =>
+                !current.some((person) => person.pubkey === pubkey)
+                  ? current.length < 32
+                    ? [...current, { pubkey, name }]
+                    : current
+                  : current.length > 1
+                    ? current.filter((person) => person.pubkey !== pubkey)
+                    : current,
+              );
+            },
           }
         : undefined,
     [routing, addressed, recipients.length],
@@ -2056,17 +2068,36 @@ function Composer({
       )}
     </div>
   );
+  // Several agents show as avatars that remove on hover, ahead of the
+  // toolbar's agent menu; one stays, since a message always goes to someone.
+  const severalAddressed = routing && addressed.length > 1;
   const renderLeadingTools = (tools: ReactNode) => (
     <>
       <div
         className={styles.composerLeadingTools}
-        data-recipients={!!value.recipients.length || undefined}
+        data-recipients={
+          (routing ? severalAddressed : !!value.recipients.length) || undefined
+        }
       >
+        {severalAddressed && (
+          <RecipientAvatars
+            session={session}
+            recipients={addressed}
+            mentions={!!recipients.length}
+            disabled={editingDisabled}
+            remove={(pubkey) => {
+              const person = addressed.find((item) => item.pubkey === pubkey);
+              if (recipients.length) input.current?.removeRecipient(pubkey);
+              else if (person) audience?.toggle(person);
+            }}
+          />
+        )}
         {tools}
         {!routing && !!value.recipients.length && (
           <RecipientAvatars
             session={session}
             recipients={value.recipients}
+            mentions
             disabled={editingDisabled}
             remove={(pubkey) => input.current?.removeRecipient(pubkey)}
           />
@@ -2619,11 +2650,14 @@ function ComposerContext({ children }: { children: ReactNode }) {
 function RecipientAvatars({
   session,
   recipients,
+  mentions,
   disabled,
   remove,
 }: {
   session: ComposerSession | RelaySession;
   recipients: readonly MentionRecipient[];
+  /** Whether these come from mentions in the text, or the agents menu. */
+  mentions: boolean;
   disabled: boolean;
   remove(pubkey: string): void;
 }) {
@@ -2657,7 +2691,7 @@ function RecipientAvatars({
   return (
     <section
       className={styles.mentionRecipients}
-      aria-label="Explicit mentions"
+      aria-label={mentions ? "Explicit mentions" : "Sending to"}
     >
       {unique.map((recipient) => {
         const profile = profiles.get(recipient.pubkey);
@@ -2671,8 +2705,8 @@ function RecipientAvatars({
             data-avatar-shape={
               agentPubkeys.has(recipient.pubkey) ? "squircle" : "circle"
             }
-            title={`Remove explicit mention of ${recipient.name} (${recipient.pubkey.slice(0, 8)})`}
-            aria-label={`Remove mention ${recipient.name} ${recipient.pubkey}`}
+            title={`Remove ${mentions ? "explicit mention of " : ""}${recipient.name} (${recipient.pubkey.slice(0, 8)})`}
+            aria-label={`Remove ${mentions ? "mention" : "agent"} ${recipient.name} ${recipient.pubkey}`}
             disabled={disabled}
             onClick={() => remove(recipient.pubkey)}
             icon={

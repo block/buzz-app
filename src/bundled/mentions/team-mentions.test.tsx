@@ -358,7 +358,7 @@ it("a team pick in an agents-only audience replaces the audience with the team",
       channelId="parent"
       disabled={false}
       inviteAgents
-      audience={{ recipients: [], named: false, only }}
+      audience={{ recipients: [], named: false, only, toggle: vi.fn() }}
       select={() => true}
       selectTeam={() => true}
     />,

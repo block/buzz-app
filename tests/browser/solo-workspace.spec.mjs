@@ -7,6 +7,7 @@ import {
   openPage,
   openSettings,
   selectSettingsSection,
+  sendOnlyTo,
 } from "./navigation.mjs";
 import { npubEncode } from "nostr-tools/nip19";
 const id = "33333333-3333-4333-8333-333333333333";
@@ -577,22 +578,7 @@ test.describe("personal recipients", () => {
         /^Sending to .+\. Change agents$/,
       );
       // Choose an owned recipient from the pill.
-      await pill(workspace).click();
-      const picker = page.getByRole("dialog", {
-        name: "Mention a member or agent",
-      });
-      await expect(
-        picker.getByRole("button", {
-          name: `${brain.name} ${brain.pubkey}`,
-          exact: true,
-        }),
-      ).toBeVisible();
-      await picker
-        .getByRole("button", {
-          name: `${brain.name} ${brain.pubkey}`,
-          exact: true,
-        })
-        .click();
+      await sendOnlyTo(page, pill(workspace), brain);
       await composer.press("End");
       await page.keyboard.insertText("Only this agent from Beta");
       await composer.press("Enter");

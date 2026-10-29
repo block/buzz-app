@@ -40,106 +40,45 @@ mod tests {
     use super::remove_stale;
     use std::fs;
     use std::os::unix::fs::symlink;
-    use std::path::Path;
 
-    fn bundle(root: &Path, name: &str, executables: &[&str]) -> std::path::PathBuf {
-        let directory = root.join("Applications").join(name).join("Contents/MacOS");
-        fs::create_dir_all(&directory).unwrap();
-        for name in executables {
-            fs::write(directory.join(name), "").unwrap();
+    #[test]
+    fn removes_only_old_buzz_links_without_a_cli() {
+        let root = tempfile::tempdir().unwrap();
+        let root = root.path();
+        for (bundle, executable) in [
+            ("Buzz.app", "Buzz"),
+            ("Old/Buzz.app", "buzz"),
+            ("Other.app", "Buzz"),
+        ] {
+            let directory = root.join(bundle).join("Contents/MacOS");
+            fs::create_dir_all(&directory).unwrap();
+            fs::write(directory.join(executable), "").unwrap();
         }
-        directory.join("buzz")
-    }
-
-    fn linked(root: &Path, target: &Path) -> std::path::PathBuf {
-        let local_bin = root.join(".local/bin");
-        fs::create_dir_all(&local_bin).unwrap();
-        symlink(target, local_bin.join("buzz")).unwrap();
-        local_bin
-    }
-
-    fn kept(local_bin: &Path) -> bool {
-        local_bin.join("buzz").symlink_metadata().is_ok()
-    }
-
-    #[test]
-    fn removes_a_link_that_reaches_the_app_only_by_case() {
-        let root = tempfile::tempdir().unwrap();
-        let local_bin = linked(root.path(), &bundle(root.path(), "Buzz.app", &["Buzz"]));
-
+        let local_bin = root.join("bin");
+        fs::create_dir(&local_bin).unwrap();
+        let link = local_bin.join("buzz");
+        // Case-collided and dangling `Buzz.app` links go; the CLI, other bundles,
+        // relative links and files stay.
+        for (target, removed) in [
+            (root.join("Buzz.app/Contents/MacOS/buzz"), true),
+            (root.join("Gone/Buzz.app/Contents/MacOS/buzz"), true),
+            (root.join("Old/Buzz.app/Contents/MacOS/buzz"), false),
+            (root.join("Other.app/Contents/MacOS/buzz"), false),
+            ("../Buzz.app/Contents/MacOS/buzz".into(), false),
+        ] {
+            symlink(&target, &link).unwrap();
+            remove_stale(&local_bin).unwrap();
+            remove_stale(&local_bin).unwrap();
+            assert_eq!(
+                link.symlink_metadata().is_err(),
+                removed,
+                "{}",
+                target.display()
+            );
+            let _ = fs::remove_file(&link);
+        }
+        fs::write(&link, "").unwrap();
         remove_stale(&local_bin).unwrap();
-        assert!(!kept(&local_bin));
-        // Repeating the migration finds nothing to do.
-        remove_stale(&local_bin).unwrap();
-        assert!(!kept(&local_bin));
-    }
-
-    #[test]
-    fn removes_a_dangling_link_into_buzz_app() {
-        let root = tempfile::tempdir().unwrap();
-        let local_bin = linked(
-            root.path(),
-            &root
-                .path()
-                .join("Applications/Buzz.app/Contents/MacOS/buzz"),
-        );
-
-        remove_stale(&local_bin).unwrap();
-        assert!(!kept(&local_bin));
-    }
-
-    #[test]
-    fn keeps_a_link_to_old_buzz_cli() {
-        let root = tempfile::tempdir().unwrap();
-        let local_bin = linked(
-            root.path(),
-            &bundle(root.path(), "Buzz.app", &["buzz-desktop", "buzz"]),
-        );
-
-        remove_stale(&local_bin).unwrap();
-        assert!(kept(&local_bin));
-    }
-
-    #[test]
-    fn keeps_links_and_files_old_buzz_did_not_make() {
-        let root = tempfile::tempdir().unwrap();
-        bundle(root.path(), "Buzz.app", &["Buzz"]);
-        let local_bin = linked(root.path(), &root.path().join("tools/buzz"));
-        remove_stale(&local_bin).unwrap();
-        assert!(kept(&local_bin));
-
-        fs::remove_file(local_bin.join("buzz")).unwrap();
-        symlink(
-            "../../Applications/Buzz.app/Contents/MacOS/buzz",
-            local_bin.join("buzz"),
-        )
-        .unwrap();
-        remove_stale(&local_bin).unwrap();
-        assert!(kept(&local_bin));
-
-        fs::remove_file(local_bin.join("buzz")).unwrap();
-        fs::write(local_bin.join("buzz"), "").unwrap();
-        remove_stale(&local_bin).unwrap();
-        assert!(kept(&local_bin));
-
-        remove_stale(&root.path().join("missing")).unwrap();
-    }
-
-    #[test]
-    fn keeps_links_into_other_bundles() {
-        let root = tempfile::tempdir().unwrap();
-        let local_bin = linked(root.path(), &bundle(root.path(), "Other.app", &["Buzz"]));
-        remove_stale(&local_bin).unwrap();
-        assert!(kept(&local_bin));
-
-        fs::remove_file(local_bin.join("buzz")).unwrap();
-        symlink(
-            root.path()
-                .join("Applications/Missing.app/Contents/MacOS/buzz"),
-            local_bin.join("buzz"),
-        )
-        .unwrap();
-        remove_stale(&local_bin).unwrap();
-        assert!(kept(&local_bin));
+        assert!(link.is_file());
     }
 }

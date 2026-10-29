@@ -551,8 +551,9 @@ it("keeps current status when old delta frames follow a removed and re-added cha
     f.accept(0);
     await tick();
     delta(1, [row]);
+    f.frame("established", { channels: ["a"], interestRevision: 1 });
     await tick();
-    expect(established).toHaveBeenCalledExactlyOnceWith("a");
+    expect(established).toHaveBeenCalledExactlyOnceWith(["a"]);
     owner.update([]);
     owner.update(["a"], ["a"]);
     delta(1, [row]);
@@ -561,6 +562,7 @@ it("keeps current status when old delta frames follow a removed and re-added cha
       routes: [expect.objectContaining({ channelId: "a", status: "pending" })],
     });
     delta(3, [row]);
+    f.frame("established", { channels: ["a"], interestRevision: 3 });
     await tick();
     delta(1, [], ["channel:a"]);
     await tick();
@@ -572,3 +574,33 @@ it("keeps current status when old delta frames follow a removed and re-added cha
     owner.dispose();
   }
 });
+
+it.each([
+  { id: "unknown", status: "live", replay: "unknown" },
+  { id: "fake-channel:a", channelId: "a", status: "live", replay: "unknown" },
+])(
+  "rejects a delta key outside the current route namespace: $id",
+  async (route) => {
+    vi.useFakeTimers();
+    const f = fixture();
+    const t = await connectBrokerTransport();
+    const owner = required(t.subscribe)(f.callbacks);
+    try {
+      f.accept(0);
+      await tick();
+      f.frame("state-delta", {
+        status: "connected",
+        interestRevision: 0,
+        removed: [],
+        routes: [route],
+      });
+      await tick();
+      expect(f.snapshots.at(-1)).toMatchObject({
+        status: "retrying",
+        error: "Invalid live status delta",
+      });
+    } finally {
+      owner.dispose();
+    }
+  },
+);

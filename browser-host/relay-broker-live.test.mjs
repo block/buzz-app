@@ -1528,10 +1528,8 @@ test("joined batches survive the real HTTP boundary and retirement only rebuilds
     expect(h.requests).toHaveLength(30);
     const retained = joined.slice(1);
     traffic.update([...retained, "preview"], retained);
-    await until(() =>
-      h.frames.some((frame) => frame.kind === "CLOSE" && frame.id === old.id),
-    );
-    expect(established).toHaveBeenCalledTimes(4);
+    await until(() => established.mock.calls.length === 5);
+    expect(established).toHaveBeenCalledTimes(5);
     expect(h.requests).toHaveLength(31);
     expect(
       h.frames.filter((f) => f.kind === "CLOSE" && f.id === old.id),
@@ -2123,3 +2121,57 @@ test("real broker keeps 100,000 joined channels and delivers outside the first b
     await h.close();
   }
 }, 60_000);
+
+test("broker renewals retain establishment signals while channel status stays live", async () => {
+  const scheduled = vi.spyOn(globalThis, "setTimeout");
+  const h = await harness();
+  let traffic;
+  try {
+    browserFetch(h.base);
+    const transport = await connectBrokerTransport(h.base);
+    const established = vi.fn();
+    const states = [];
+    traffic = transport.subscribe({
+      ...callbacks,
+      established,
+      state: (state) => states.push(state),
+    });
+    const ids = Array.from({ length: 20 }, (_, i) => `c${i}`);
+    traffic.update(ids, ids);
+    await until(
+      () =>
+        established.mock.calls.filter(([value]) => Array.isArray(value))
+          .length === 1,
+    );
+    const index = scheduled.mock.calls.findIndex(
+      ([, delay]) => delay === 60_000,
+    );
+    expect(index).toBeGreaterThanOrEqual(0);
+    const timer = scheduled.mock.results[index].value;
+    const renew = scheduled.mock.calls[index][0];
+    clearTimeout(timer);
+    const before = states.length;
+    renew();
+    await until(
+      () =>
+        established.mock.calls.filter(([value]) => Array.isArray(value))
+          .length === 2,
+    );
+    expect(
+      states
+        .slice(before)
+        .every((state) =>
+          state.routes
+            .filter((route) => route.channelId)
+            .every((route) => route.status === "live"),
+        ),
+    ).toBe(true);
+    expect(established.mock.calls.at(-1)).toEqual([ids.sort()]);
+    expect(h.sockets).toHaveLength(1);
+  } finally {
+    traffic?.dispose();
+    scheduled.mockRestore();
+    vi.unstubAllGlobals();
+    await h.close();
+  }
+});

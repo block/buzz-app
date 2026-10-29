@@ -169,10 +169,11 @@ export function createRelaySession(
       channels.queries.list().channels.some((channel) => channel.id === id),
     notify,
   );
-  const recent = new ByteLru<{ event: RelayEvent; revision: number }>(
-    4096,
-    8 * 1024 * 1024,
-  );
+  const recent = new ByteLru<{
+    event: RelayEvent;
+    revision: number;
+    incoming?: "replay" | "live";
+  }>(4096, 8 * 1024 * 1024);
   const observations = new Set<(events: readonly RelayEvent[]) => void>();
   const incomingListeners = new Set<IncomingListener>();
   const liveEventListeners = new Set<LiveListener>();
@@ -584,6 +585,7 @@ export function createRelaySession(
       raw: readonly RelayEvent[],
     ) => void,
     signal?: AbortSignal,
+    incomingPhase?: "replay" | "live",
   ): readonly RelayEvent[] {
     if (closed) return [];
     // Authority precedes every projection, even in a batch containing both a
@@ -616,8 +618,24 @@ export function createRelaySession(
       "events.reconcile",
       events[0]?.id ?? "empty",
       () => {
-        for (const event of visible)
-          recent.set(event.id, { event, revision: ++revision });
+        for (const event of visible) {
+          const previous = recent.peek(event.id);
+          // Replay can precede a fresh live copy. Keep alert receipt separate from content receipt.
+          const incoming = [9, 40002, 40008].includes(event.kind)
+            ? incomingPhase === "live" || previous?.incoming === "live"
+              ? "live"
+              : incomingPhase === "replay" &&
+                  (previous?.incoming === "replay" ||
+                    (!previous && !unread.event(event.id)))
+                ? "replay"
+                : undefined
+            : undefined;
+          recent.set(event.id, {
+            event,
+            revision: ++revision,
+            ...(incoming ? { incoming } : {}),
+          });
+        }
         activity.messagesChanged(visible);
         if (closed || epoch !== accessEpoch) return;
         reads.accept(visible);
@@ -2655,8 +2673,8 @@ export function createRelaySession(
                   event.pubkey !== transport.viewer &&
                   destinations.length === 1 &&
                   destinations[0]?.[1] === provenance.channelId &&
-                  !recent.peek(event.id) &&
-                  !unread.event(event.id) &&
+                  (recent.peek(event.id)?.incoming === "replay" ||
+                    (!recent.peek(event.id) && !unread.event(event.id))) &&
                   !rawLocal().some((item) => item.event.id === event.id)
                 );
               })
@@ -2677,7 +2695,13 @@ export function createRelaySession(
       );
       const epoch = accessEpoch;
       const generation = liveGeneration;
-      const visible = accept(events);
+      const visible = accept(
+        events,
+        true,
+        undefined,
+        undefined,
+        provenance?.channelId ? provenance.phase : undefined,
+      );
       // Completion subscribers can synchronously clear, revoke or retire this
       // live delivery. Do not admit its remaining pulses into the new lifetime.
       if (

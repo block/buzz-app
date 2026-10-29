@@ -204,6 +204,16 @@ export function subscribeBrokerTraffic(
                   !Number.isSafeInteger(delta.interestRevision) ||
                   (delta.interestRevision as number) < 0 ||
                   (delta.interestRevision as number) > interestRevision ||
+                  snapshot.routes.some((route) =>
+                    route.channelId
+                      ? route.id !== `channel:${route.channelId}`
+                      : ![
+                          "profiles",
+                          "membership",
+                          "observer",
+                          "presence",
+                        ].includes(route.id),
+                  ) ||
                   snapshot.routes.length > 512 ||
                   !Array.isArray(delta.removed) ||
                   delta.removed.length + snapshot.routes.length > 512 ||
@@ -231,28 +241,17 @@ export function subscribeBrokerTraffic(
                   )
                     routeState.delete(id);
                 }
-                const established: string[] = [];
                 for (const route of snapshot.routes)
                   if (
                     !route.channelId ||
                     currentChannel(route.channelId, delta.interestRevision)
                   ) {
-                    if (
-                      route.channelId &&
-                      route.status === "live" &&
-                      routeState.get(route.id)?.status !== "live"
-                    )
-                      established.push(route.channelId);
                     routeState.set(route.id, route);
                   }
                 for (const [id, route] of routeState)
                   if (route.channelId && !addedAt.has(route.channelId))
                     routeState.delete(id);
                 publish({ ...snapshot, routes: [...routeState.values()] });
-                if (established.length)
-                  callbacks.established(
-                    established.length === 1 ? established[0] : established,
-                  );
               } else if (kind === "state") {
                 const snapshot = liveSnapshot(data);
                 const revision = (data as { interestRevision?: unknown })

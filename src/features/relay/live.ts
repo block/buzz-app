@@ -269,12 +269,10 @@ export function subscribeRelayTraffic(
   const notify = () => {
     setupState();
     if (closed) return;
-    const replayErrors = new Map(
+    const replayFailures = new Map(
       [...routes.values()]
-        .filter((route) => route.history && route.status === "error")
-        .flatMap((route) =>
-          scope(route).map((id) => [id, route.error] as const),
-        ),
+        .filter((route) => route.history && route.error !== undefined)
+        .flatMap((route) => scope(route).map((id) => [id, route] as const)),
     );
     const next = new Map<string, LiveRoute>();
     for (const route of routes.values()) {
@@ -285,12 +283,18 @@ export function subscribeRelayTraffic(
           : undefined;
       for (const channelId of route.channelIds ?? [route.channelId]) {
         const id = channelId ? `channel:${channelId}` : route.id;
-        const status =
+        const replayFailure = channelId
+          ? replayFailures.get(channelId)
+          : undefined;
+        const sourceStatus =
           channelId !== undefined && retained?.has(channelId)
             ? "live"
             : route.status;
-        const error =
-          route.error ?? (channelId ? replayErrors.get(channelId) : undefined);
+        const status =
+          sourceStatus === "live" && replayFailure
+            ? replayFailure.status
+            : sourceStatus;
+        const error = route.error ?? replayFailure?.error;
         const previous = routeSnapshots.get(id);
         next.set(
           id,
@@ -614,7 +618,6 @@ export function subscribeRelayTraffic(
         }
       }
     }
-    if (route.history && route.status === "error") replayStopped = true;
     if (reason === "restricted: not a channel member") {
       const current = generation;
       const denied = new Set(scope(route));
@@ -1044,7 +1047,9 @@ export function subscribeRelayTraffic(
           );
       } else if (data[0] === "EOSE" && route.status === "pending") {
         if (route.history) {
+          const failed = route.error !== undefined;
           remove(route);
+          if (failed) notify();
           pump();
           return;
         }

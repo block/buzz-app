@@ -2970,3 +2970,123 @@ it("covers 100,000 channels with protocol-sized live batches and a bounded repla
   }
   expect(vi.getTimerCount()).toBe(0);
 }, 60_000);
+
+it("reports a replay failure to recovery, continues other channels, and exposes its retry", async () => {
+  vi.useFakeTimers();
+  const ids = Array.from(
+    { length: 80 },
+    (_, i) => `c${String(i).padStart(3, "0")}`,
+  );
+  const h = setup([], createLiveAdmission(), 2048);
+  try {
+    h.owner.update(ids, ids);
+    await h.first.auth();
+    for (const request of [...h.first.requests()])
+      await h.first.receive(["EOSE", request[1]]);
+    const replay = h.first
+      .requests()
+      .find((request) => scopeOf(request).length && request[2].limit === 500);
+    assert.exists(replay);
+    const id = scopeOf(replay)[0];
+    assert.exists(id);
+    const before = h.first.requests().length;
+    await h.first.receive(["CLOSED", replay[1], "error: replay unavailable"]);
+    expect(h.first.requests()).toHaveLength(before + 1);
+    const snapshot = h.callbacks.state.mock.lastCall?.[0];
+    assert.exists(snapshot);
+    expect(
+      snapshot.routes.find((route) => route.channelId === id),
+    ).toMatchObject({ status: "error", error: "error: replay unavailable" });
+    expect(
+      liveRecoveryStatus({
+        ...snapshot,
+        roster: { state: "verified" },
+        heads: [],
+      }),
+    ).toBe("failed");
+    h.owner.retry();
+    expect(
+      h.callbacks.state.mock.lastCall?.[0].routes.find(
+        (route) => route.channelId === id,
+      ),
+    ).toMatchObject({ status: "pending" });
+    let retry: WireRequest | undefined;
+    for (let i = before; i < h.first.requests().length; i++) {
+      const request = h.first.requests()[i];
+      assert.exists(request);
+      if (scopeOf(request).includes(id)) {
+        retry = request;
+        break;
+      }
+      await h.first.receive(["EOSE", request[1]]);
+    }
+    assert.exists(retry);
+    await h.first.receive(["EOSE", retry[1]]);
+    expect(
+      h.callbacks.state.mock.lastCall?.[0].routes.find(
+        (route) => route.channelId === id,
+      ),
+    ).toMatchObject({ status: "live" });
+    expect(
+      h.callbacks.state.mock.lastCall?.[0].routes.find(
+        (route) => route.channelId === id,
+      )?.error,
+    ).toBeUndefined();
+  } finally {
+    h.owner.dispose();
+  }
+});
+
+it.each(["replay-first", "live-first", "known-history"])(
+  "keeps incoming alerts correct across duplicate sources: %s",
+  async (order) => {
+    vi.useFakeTimers({ now: 1_700_000_100_000 });
+    const h = setup([], createLiveAdmission(), 2048);
+    const relay = keypair(),
+      author = keypair();
+    const wire = scriptedTransport(h.key.pubkey, relay.pubkey);
+    const owner = createRelaySession({
+      ...wire.transport,
+      subscribe(callbacks) {
+        h.callbacks.receive.mockImplementation(callbacks.receive);
+        h.callbacks.state.mockImplementation(callbacks.state);
+        return h.owner;
+      },
+    });
+    try {
+      const ids = Array.from(
+        { length: 11 },
+        (_, i) => `c${String(i).padStart(2, "0")}`,
+      );
+      h.callbacks.receive(ids.map((id) => roster(relay, id, [h.key.pubkey])));
+      await h.first.auth();
+      for (const request of [...h.first.requests()])
+        await h.first.receive(["EOSE", request[1]]);
+      const source = h.first
+        .requests()
+        .find((r) => scopeOf(r).includes("c00") && r[2].limit === 0);
+      const replay = h.first
+        .requests()
+        .find((r) => scopeOf(r).includes("c00") && r[2].limit === 500);
+      assert.exists(source);
+      assert.exists(replay);
+      const incoming = vi.fn();
+      owner.session.subscribeIncoming(incoming);
+      const event = message(author, "c00", "fresh input", 1_700_000_100);
+      if (order === "known-history") h.callbacks.receive([event]);
+      if (order === "live-first")
+        await h.first.receive(["EVENT", source[1], event]);
+      await h.first.receive(["EVENT", replay[1], event]);
+      await h.first.receive(["EVENT", replay[1], event]);
+      expect(incoming).toHaveBeenCalledTimes(order === "live-first" ? 1 : 0);
+      await h.first.receive(["EVENT", source[1], event]);
+      const count = order === "known-history" ? 0 : 1;
+      expect(incoming).toHaveBeenCalledTimes(count);
+      await h.first.receive(["EVENT", replay[1], event]);
+      await h.first.receive(["EVENT", source[1], event]);
+      expect(incoming).toHaveBeenCalledTimes(count);
+    } finally {
+      owner.dispose();
+    }
+  },
+);

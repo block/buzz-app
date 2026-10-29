@@ -1709,6 +1709,7 @@ export function relayBrokerPlugin({
             };
             let knownRoutes = new Map();
             const dirtyRoutes = new Map();
+            const pendingEstablished = new Map();
             let deltaHeader;
             const sameRoute = (a, b) =>
               a?.status === b.status &&
@@ -1716,7 +1717,7 @@ export function relayBrokerPlugin({
               a?.error === b.error;
             const flushDeltas = () => {
               if (!deltaHeader) return;
-              do {
+              while (dirtyRoutes.size && !res.destroyed) {
                 const routes = [],
                   removed = [];
                 for (const [id, route] of dirtyRoutes) {
@@ -1726,11 +1727,32 @@ export function relayBrokerPlugin({
                   if (routes.length + removed.length === 512) break;
                 }
                 write("state-delta", { ...deltaHeader, routes, removed });
-              } while (
-                dirtyRoutes.size &&
-                !res.writableNeedDrain &&
-                !res.destroyed
-              );
+                if (res.writableNeedDrain) return;
+              }
+              while (pendingEstablished.size && !res.destroyed) {
+                const [first, entry] = pendingEstablished
+                  .entries()
+                  .next().value;
+                const { interestRevision, singleton } = entry;
+                if (singleton) {
+                  pendingEstablished.delete(first);
+                  write("established", { channelId: first, interestRevision });
+                } else {
+                  const channels = [];
+                  for (const [id, pending] of pendingEstablished) {
+                    if (
+                      pending.interestRevision !== interestRevision ||
+                      pending.singleton
+                    )
+                      continue;
+                    pendingEstablished.delete(id);
+                    channels.push(id);
+                    if (channels.length === 512) break;
+                  }
+                  write("established", { channels, interestRevision });
+                }
+                if (res.writableNeedDrain) return;
+              }
             };
             const writeState = statusDeltas
               ? (state) => {
@@ -1738,6 +1760,7 @@ export function relayBrokerPlugin({
                     !deltaHeader || state.status !== deltaHeader.status;
                   if (reset) {
                     dirtyRoutes.clear();
+                    pendingEstablished.clear();
                     knownRoutes.clear();
                     write("state-delta", {
                       status: state.status,
@@ -1776,7 +1799,11 @@ export function relayBrokerPlugin({
                     }
                   }
                   for (const id of knownRoutes.keys())
-                    if (!next.has(id)) dirtyRoutes.set(id, null);
+                    if (!next.has(id)) {
+                      dirtyRoutes.set(id, null);
+                      if (id.startsWith("channel:"))
+                        pendingEstablished.delete(id.slice(8));
+                    }
                   for (let offset = 0; offset < urgent.length; offset += 512) {
                     const routes = urgent.slice(offset, offset + 512);
                     for (const route of routes) dirtyRoutes.delete(route.id);
@@ -1838,14 +1865,24 @@ export function relayBrokerPlugin({
                     ...state,
                     interestRevision: stream.interestRevision,
                   }),
-                established: (channelId) =>
-                  (!statusDeltas || channelId === undefined) &&
-                  write("established", {
-                    ...(Array.isArray(channelId)
-                      ? { channels: channelId }
-                      : { channelId }),
-                    interestRevision: stream.interestRevision,
-                  }),
+                established: (channelId) => {
+                  if (statusDeltas && channelId !== undefined) {
+                    for (const id of typeof channelId === "string"
+                      ? [channelId]
+                      : channelId)
+                      pendingEstablished.set(id, {
+                        interestRevision: stream.interestRevision,
+                        singleton: typeof channelId === "string",
+                      });
+                    if (!res.writableNeedDrain) flushDeltas();
+                  } else
+                    write("established", {
+                      ...(Array.isArray(channelId)
+                        ? { channels: channelId }
+                        : { channelId }),
+                      interestRevision: stream.interestRevision,
+                    });
+                },
                 recover: () => write("recover", {}),
                 denied: (channelId, reason) =>
                   write("denied", {
@@ -1875,6 +1912,7 @@ export function relayBrokerPlugin({
               principal.streams--;
               pendingState = undefined;
               dirtyRoutes.clear();
+              pendingEstablished.clear();
               knownRoutes.clear();
               res.off("drain", flushState);
               traffic.dispose();

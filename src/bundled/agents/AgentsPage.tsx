@@ -2150,6 +2150,15 @@ function TeamEditor({
   const choices = agents.teamHere(opened ? { id: opened.id } : { draft })
     ? saved
     : saved.filter((agent) => agent.place === "here");
+  // What Save gets: members among these choices, ones the team already has,
+  // and agents here in other communities. Not a hosted agent picked while
+  // another community was selected, which this one can't have.
+  const kept = members.filter(
+    (pubkey) =>
+      choices.some((agent) => agent.pubkey === pubkey) ||
+      opened?.members.includes(pubkey) ||
+      agents.memberships(pubkey).length > 0,
+  );
   // Members not in this community, which it doesn't list but keeps.
   const away = members.filter(
     (pubkey) =>
@@ -2178,7 +2187,7 @@ function TeamEditor({
         ...(opened ? { id: opened.id, opened } : { draft }),
         name: name.trim(),
         instructions,
-        members,
+        members: kept,
       }),
     );
   return (

@@ -2537,6 +2537,64 @@ it("offers hosted agents only to a team Save puts in this community", async () =
   expect(sky()).not.toBeInTheDocument();
 });
 
+it("leaves a hosted agent picked in another community off a new team, keeping the rest", async () => {
+  const user = userEvent.setup();
+  const ada = agent("Ada", 1);
+  const sky: Agent = { ...agent("Sky", 2), place: "hosted" };
+  const { agents, show } = setup([ada, sky], {
+    teams: [
+      {
+        id: "sky",
+        name: "Sky crew",
+        instructions: "",
+        members: [sky.pubkey],
+        revision: "1",
+      },
+    ],
+  });
+  // Ada runs on this device, in the first community only.
+  agents.memberships.mockImplementation((pubkey) =>
+    pubkey === ada.pubkey
+      ? [{ key: ada.key, origin: "https://relay.example", connected: true }]
+      : [],
+  );
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  await user.click(screen.getByRole("button", { name: "New team" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Create a new team" }),
+  );
+  await user.type(screen.getByRole("textbox", { name: "Name" }), "Crew");
+  await user.click(screen.getByRole("checkbox", { name: "Ada" }));
+  await user.click(screen.getByRole("checkbox", { name: "Sky" }));
+  // Another community that syncs teams, with its own hosted agent.
+  act(() => show([agent("Bo", 3), { ...agent("Kai", 5), place: "hosted" }]));
+  expect(screen.getByRole("form", { name: "New team" })).toBeInTheDocument();
+  expect(
+    screen.queryByRole("checkbox", { name: "Sky" }),
+  ).not.toBeInTheDocument();
+  expect(screen.getByRole("checkbox", { name: "Kai" })).not.toBeChecked();
+  expect(
+    screen.getByText("+1 in your other communities, who stay on the team."),
+  ).toBeInTheDocument();
+  const instructions = screen.getByRole("textbox", { name: "Instructions" });
+  expect(instructions).toHaveAccessibleDescription(
+    "Every member follows these after its own instructions.",
+  );
+  await user.click(screen.getByRole("button", { name: "Create team" }));
+  expect(agents.saveTeam).toHaveBeenLastCalledWith({
+    draft: expect.any(String),
+    name: "Crew",
+    instructions: "",
+    members: [ada.pubkey],
+  });
+  // A hosted member the team already has stays, though not listed here.
+  await user.click(screen.getByRole("button", { name: "Sky crew" }));
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  expect(agents.saveTeam).toHaveBeenLastCalledWith(
+    expect.objectContaining({ id: "sky", members: [sky.pubkey] }),
+  );
+});
+
 it("closes the team editor when leaving Your teams", async () => {
   const user = userEvent.setup();
   const { agents } = setup([agent("Ada", 1)]);

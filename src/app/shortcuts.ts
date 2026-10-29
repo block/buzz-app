@@ -19,6 +19,7 @@ export const HOST_SHORTCUT_ORDER = {
   textSizeDecrease: 50,
   textSizeReset: 60,
   search: 70,
+  newMenu: 75,
   settings: 80,
   nextTab: 82,
   previousTab: 84,

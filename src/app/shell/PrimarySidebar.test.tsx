@@ -9,7 +9,7 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it, onTestFinished, vi } from "vitest";
 import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
 import { readView, writeView } from "../../shared/view-state";
 import {
@@ -23,8 +23,112 @@ import { createSoloRegionFixture } from "../../features/channel-navigation/solo-
 import { PrimarySidebar } from "./PrimarySidebar";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { SOLO_LABEL } from "../../features/solo/labels";
+import { createSidebarPreferencesStore } from "../../features/relay/sidebar-preferences-store";
 import type { ChannelDetailsCapability } from "../../features/relay/channel-details";
 stubAvatarBrowserApis();
+it("creates a sidebar section from New in Solo and reveals it without navigating", async () => {
+  const preferences = createSidebarPreferencesStore({
+    available: true,
+    read: async () => ({
+      sections: [],
+      assignments: {},
+      starred: [],
+      muted: [],
+    }),
+    write: async ({ createSection: section }) => ({
+      sections: section ? [{ ...section, order: 0 }] : [],
+      assignments: {},
+    }),
+    writeStar: async () => [],
+  });
+  onTestFinished(() => preferences.dispose());
+  await preferences.queries.ensure();
+  const f = fixture(true, true);
+  Object.assign(f.session, { sidebarPreferences: preferences.queries });
+  f.navigate(soloDraftTarget(scope));
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("tab", { name: "Solo" }));
+  const trigger = screen.getByRole("button", { name: "New" });
+  await user.click(trigger);
+  await screen.findByRole("menuitem", { name: "New section" });
+  await user.keyboard("5");
+  const dialog = await screen.findByRole("dialog", {
+    name: "Create new section",
+  });
+  const input = within(dialog).getByRole("textbox", { name: "Section name" });
+  await waitFor(() => expect(input).toHaveFocus());
+  await user.type(input, "Research");
+  await user.click(within(dialog).getByRole("button", { name: "Create" }));
+  await waitFor(() => expect(dialog).not.toBeInTheDocument());
+  expect(preferences.queries.snapshot().data?.sections).toEqual([
+    { id: expect.any(String), name: "Research", order: 0 },
+  ]);
+  expect(screen.getByRole("tab", { name: "All" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await waitFor(() => expect(trigger).toHaveFocus());
+  expect(f.open).not.toHaveBeenCalled();
+});
+
+it.each([
+  ["2", "New workspace"],
+  ["4", "Create a channel"],
+])("activates %s only inside the New menu", async (key, title) => {
+  fixture(true, true);
+  const user = userEvent.setup();
+  const trigger = screen.getByRole("button", { name: "New" });
+  trigger.focus();
+  await user.keyboard(key);
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  await user.click(trigger);
+  await screen.findByRole("menu");
+  await user.keyboard(key);
+  const dialog = await screen.findByRole("dialog", { name: title });
+  const input = within(dialog).getByRole("textbox", { name: "Name" });
+  await user.type(input, "12345");
+  expect(input).toHaveValue("12345");
+  expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+});
+
+it.each(["1", "3"])(
+  "activates navigation shortcut %s only while New is open",
+  async (key) => {
+    const f = fixture(true, true);
+    const user = userEvent.setup();
+    const trigger = screen.getByRole("button", { name: "New" });
+    trigger.focus();
+    await user.keyboard(key);
+    expect(f.open).not.toHaveBeenCalled();
+    await user.click(trigger);
+    await screen.findByRole("menu");
+    await user.keyboard(key);
+    expect(f.open).toHaveBeenCalledWith(
+      key === "1"
+        ? soloDraftTarget(scope)
+        : {
+            version: 1,
+            kind: "page",
+            pluginId: "buzz.channels",
+            pageId: "channels",
+            scope: { viewer, communityOrigin: "https://relay.test" },
+            route: { version: 1, params: "new-message" },
+          },
+    );
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+  },
+);
+
+it("ignores disabled and modified New shortcuts", async () => {
+  fixture(true, false);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "New" }));
+  await screen.findByRole("menu");
+  await user.keyboard("4{Control>}2{/Control}");
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(screen.getByRole("menu")).toBeInTheDocument();
+});
+
 afterEach(() => {
   cleanup();
   for (const owner of owners.splice(0)) owner.dispose();
@@ -230,9 +334,22 @@ it("filters the combined sidebar without navigating or resetting Solo sections",
   await user.click(all);
   expect(f.open).not.toHaveBeenCalled();
   await user.click(screen.getByRole("button", { name: "New" }));
-  expect(
-    (await screen.findAllByRole("menuitem")).map((item) => item.textContent),
-  ).toEqual(["New chat", "New workspace", "New DM", "New channel"]);
+  const items = await screen.findAllByRole("menuitem");
+  const actions = [
+    "New chat",
+    "New workspace",
+    "New DM",
+    "New channel",
+    "New section",
+  ];
+  expect(items).toHaveLength(actions.length);
+  actions.forEach((name, index) => {
+    expect(items[index]).toHaveAccessibleName(name);
+    expect(items[index]).toHaveAttribute(
+      "aria-keyshortcuts",
+      String(index + 1),
+    );
+  });
   await user.click(screen.getByRole("menuitem", { name: "New chat" }));
   expect(f.open).toHaveBeenCalledWith(soloDraftTarget(scope));
   await user.click(solo);

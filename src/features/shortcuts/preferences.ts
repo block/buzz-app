@@ -41,16 +41,20 @@ const freezeOverrides = (
 };
 const NO_OVERRIDES = freezeOverrides([]);
 
-/** Keeps every well-formed entry and drops only malformed ones. */
+/** Restores valid bindings and carries retired action keys to their current owner. */
 export function parseOverrides(raw: unknown): ShortcutOverrides {
   if (!raw || typeof raw !== "object" || Array.isArray(raw))
     return NO_OVERRIDES;
-  return freezeOverrides(
-    Object.entries(raw as Record<string, unknown>).filter(
-      (entry): entry is [string, KeyBinding] =>
-        entry[0].length > 0 && isKeyBinding(entry[1]),
-    ),
+  const entries = Object.entries(raw as Record<string, unknown>).filter(
+    (entry): entry is [string, KeyBinding] =>
+      entry[0].length > 0 && isKeyBinding(entry[1]),
   );
+  // Creation moved from Channels to the host; keep existing user rebinds.
+  const previousKey = "buzz.channels/new-conversation";
+  const previous = entries.find(([key]) => key === previousKey);
+  if (previous && !entries.some(([key]) => key === "new-menu"))
+    entries.push(["new-menu", previous[1]]);
+  return freezeOverrides(entries.filter(([key]) => key !== previousKey));
 }
 
 export function createShortcutBindings(

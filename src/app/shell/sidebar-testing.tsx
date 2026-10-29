@@ -8,7 +8,6 @@ import type { RelayData, RelaySnapshot } from "../../features/relay/service";
 import type { Navigation } from "../../features/navigation/controller";
 import { ChannelNavigationProvider } from "../../features/channel-navigation/ChannelNavigationState";
 import type { OpenTarget } from "../../features/navigation/targets";
-import { NewMenu } from "./NewMenu";
 import type { Agents } from "../../features/agents/service";
 import { PrimarySidebar } from "./PrimarySidebar";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
@@ -195,20 +194,18 @@ export function fixture(
     <ToastProvider>
       <ChannelNavigationProvider relay={relay}>
         {combined ? (
-          <>
-            <NewMenu relay={relay} navigator={navigator} agents={agents} />
-            {sidebarVisible && (
-              <PrimarySidebar
-                relay={relay}
-                navigator={navigator}
-                target={target}
-                chatIcons={chatIcons}
-                chatMenus={chatMenus}
-              >
-                <button type="button">Inbox</button>
-              </PrimarySidebar>
-            )}
-          </>
+          sidebarVisible && (
+            <PrimarySidebar
+              relay={relay}
+              agents={agents}
+              navigator={navigator}
+              target={target}
+              chatIcons={chatIcons}
+              chatMenus={chatMenus}
+            >
+              <button type="button">Inbox</button>
+            </PrimarySidebar>
+          )
         ) : (
           <SoloInventory
             session={snapshot.session}

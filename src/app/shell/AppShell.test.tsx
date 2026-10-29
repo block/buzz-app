@@ -13,6 +13,13 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { RegisteredPage } from "../../features/pages/service";
 import { createServices, type AppServices } from "../services";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
+import {
+  MenuRoot,
+  MenuTrigger,
+  MenuPopup,
+  MenuItem,
+} from "../../shared/design-system/ui/Menu";
+import { SHORTCUT_BINDINGS_KEY } from "../../features/shortcuts/preferences";
 import { AppShell } from "./AppShell";
 import { createAppearance } from "../../shared/theme/service";
 
@@ -43,6 +50,7 @@ afterEach(async () => {
   cleanup();
   await services?.dispose();
   services = undefined;
+  localStorage.removeItem(SHORTCUT_BINDINGS_KEY);
   vi.unstubAllGlobals();
 });
 
@@ -870,5 +878,65 @@ it.each([false, true])(
     expect(
       within(nav).queryByRole("tab", { selected: true }),
     ).not.toBeInTheDocument();
+  },
+);
+
+it.each([
+  ["default", {}, "n"],
+  [
+    "existing customization",
+    { "buzz.channels/new-conversation": { key: "j", mod: true } },
+    "j",
+  ],
+  [
+    "new customization takes precedence",
+    {
+      "buzz.channels/new-conversation": { key: "j", mod: true },
+      "new-menu": { key: "u", mod: true },
+    },
+    "u",
+  ],
+] as const)(
+  "opens New from %s after revealing a collapsed sidebar",
+  async (_name, overrides, key) => {
+    localStorage.setItem(SHORTCUT_BINDINGS_KEY, JSON.stringify(overrides));
+    const current = createServices();
+    services = current;
+    const user = userEvent.setup();
+    render(
+      <ToastProvider>
+        <AppShell
+          pages={[]}
+          selected="buzz.channels/channels"
+          navigationAttempt=""
+          onSelect={() => {}}
+          tone="default"
+          communities={current.communities}
+          accountActions={current.accountActions}
+          appearance={testAppearance}
+          searchServices={current}
+          sidebar={() => (
+            <MenuRoot>
+              <MenuTrigger data-new-menu-trigger="">New</MenuTrigger>
+              <MenuPopup>
+                <MenuItem>New chat</MenuItem>
+              </MenuPopup>
+            </MenuRoot>
+          )}
+        >
+          content
+        </AppShell>
+      </ToastProvider>,
+    );
+    await user.click(screen.getByRole("button", { name: "Hide sidebar" }));
+    const navigation = document.getElementById("shell-navigation");
+    expect(navigation).toHaveAttribute("inert");
+    fireEvent.keyDown(window, { key, ctrlKey: true });
+    expect(navigation).not.toHaveAttribute("inert");
+    expect(
+      await screen.findByRole("menuitem", { name: "New chat" }),
+    ).toBeVisible();
+    await user.keyboard("{Escape}");
+    expect(screen.getByRole("button", { name: "New" })).toHaveFocus();
   },
 );

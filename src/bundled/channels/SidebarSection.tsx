@@ -527,12 +527,16 @@ export function SidebarSection({
                 </>
               }
             >
-              {removeError && <p role="alert">{removeError}</p>}
-              {removing && (
-                <p role="status" className="sr-only">
-                  Removing section and waiting for confirmation…
-                </p>
-              )}
+              {removeError || removing ? (
+                <>
+                  {removeError && <p role="alert">{removeError}</p>}
+                  {removing && (
+                    <p role="status" className="sr-only">
+                      Removing section and waiting for confirmation…
+                    </p>
+                  )}
+                </>
+              ) : null}
             </Dialog>
           )}
           {createChannel && (

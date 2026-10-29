@@ -681,9 +681,10 @@ panel fill. Use it over artwork, not on ordinary neutral profile headers.
 
 ### Match controls to their surface
 
-The shell groups creation, page tabs, and search in one `chrome-navigation`
-track. Nested chrome tabs retain their selected fill without a second track.
-Layout and overflow remain shell-owned.
+The shell places page tabs and a separate Search button in independent
+`chrome-navigation` capsules. Creation sits beside the sidebar scope filters.
+Nested chrome tabs retain their selected fill without a second track. Layout
+and overflow remain shell-owned.
 
 Use `Tabs variant="segmented"` for grouped filters on an opaque surface, with
 a capsule track and raised capsule selection (for example, sidebar scope).

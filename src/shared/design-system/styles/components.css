@@ -2038,8 +2038,11 @@
     color: var(--text-subtle);
   }
   .buzz-menu-group-label {
-    padding: var(--space-2) var(--space-2) var(--space-1);
+    padding: var(--space-2) var(--space-3) var(--space-1);
     color: var(--text-subtle);
+  }
+  .buzz-menu-popup[data-size="compact"] .buzz-menu-group-label {
+    padding-inline: var(--space-2);
   }
   .buzz-menu-group-label[data-emphasis="quiet"] {
     color: var(--text-metadata);

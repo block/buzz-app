@@ -1,7 +1,6 @@
 // FOUNDATION: Startup, navigation, contributed pages, and built-in Settings.
 import { AgentAvatarArtworkProvider } from "../features/agents/AgentAvatarArtworkProvider";
 import { IdentitySetup } from "../features/identity/IdentitySetup";
-import { NewMenu } from "./shell/NewMenu";
 import { PrimarySidebar } from "./shell/PrimarySidebar";
 import { ChannelNavigationProvider } from "../features/channel-navigation/ChannelNavigationState";
 import { AgentsContext } from "../features/agents/react";
@@ -372,13 +371,6 @@ function ConnectedApp({ services }: { services: AppServices }) {
       <ChannelNavigationProvider relay={services.relay}>
         <AgentsContext.Provider value={services.agents}>
           <AppShell
-            creationAction={
-              <NewMenu
-                relay={services.relay}
-                navigator={services.navigation}
-                agents={services.agents}
-              />
-            }
             workspaceRef={setWorkspaceElement}
             sidebar={(pageNavigation) =>
               workspace.page?.sidebar && pageSidebarReady ? (

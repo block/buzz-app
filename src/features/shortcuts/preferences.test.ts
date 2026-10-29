@@ -186,3 +186,25 @@ it.each(["constructor", "__proto__", "toString", "hasOwnProperty"])(
     }
   },
 );
+
+it("moves the retired New conversation binding and does not revive it after reset", () => {
+  localStorage.setItem(
+    SHORTCUT_BINDINGS_KEY,
+    JSON.stringify({
+      "buzz.channels/new-conversation": { key: "j", mod: true },
+      settings: { key: ";", mod: true },
+    }),
+  );
+  const bindings = createShortcutBindings(window);
+  expect(bindings.snapshot().overrides).toEqual({
+    "new-menu": { key: "j", mod: true },
+    settings: { key: ";", mod: true },
+  });
+  bindings.set("new-menu", null);
+  bindings.dispose();
+  const restored = createShortcutBindings(window);
+  expect(restored.resolve("new-menu")).toBeUndefined();
+  expect(restored.resolve("buzz.channels/new-conversation")).toBeUndefined();
+  expect(restored.resolve("settings")).toEqual([{ key: ";", mod: true }]);
+  restored.dispose();
+});

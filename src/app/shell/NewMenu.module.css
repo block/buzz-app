@@ -1,3 +1,10 @@
+.createSurface {
+  display: flex;
+  flex: none;
+  border-radius: var(--radius-pill);
+  background: var(--surface-inset);
+}
+
 .createIcon {
   transition: transform var(--duration-state) var(--easing-state);
 }

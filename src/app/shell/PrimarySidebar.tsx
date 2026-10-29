@@ -23,6 +23,7 @@ import type { OpenTarget } from "../../features/navigation/targets";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
 import styles from "./PrimarySidebar.module.css";
+import { NewMenu } from "./NewMenu";
 
 import { useRelayConnection } from "../../features/relay/react";
 import { relayPartition } from "../../features/relay/partition";
@@ -165,7 +166,7 @@ function ScopedSidebar({
   const filter = view.filter;
   const setFilter = (filter: Filter) => setView({ filter, location });
   const panelId = `sidebar-${filter}`;
-  const header = (
+  const header = (creationAction: ReactNode) => (
     <>
       <div className={styles.sidebarControls}>
         <div className={styles.sidebarScope}>
@@ -181,6 +182,7 @@ function ScopedSidebar({
             onValueChange={setFilter}
           />
         </div>
+        {creationAction}
       </div>
       {props.children && (
         <div className={styles.destinations}>{props.children}</div>
@@ -194,129 +196,144 @@ function ScopedSidebar({
       </div>
     );
   return (
-    <SidebarBoundary
-      key={`${scope}:${connection.generation}`}
-      header={header}
-      panelId={panelId}
+    <NewMenu
+      relay={props.relay}
+      navigator={props.navigator}
+      agents={props.agents}
+      onSectionCreated={() => setFilter("all")}
     >
-      {connection.session &&
-      (connection.status === "ready" || connection.cached) ? (
-        <ChannelInventory
-          relay={props.relay}
-          navigator={props.navigator}
-          agents={props.agents}
-          target={props.target}
-          queries={connection.session}
-          scope={scope}
-          viewer={connection.viewer}
-          sidebarSections={props.sidebarSections}
-          cached={!!connection.cached}
-          layoutReady={filter === "team" || soloReady}
-          connectionError={connection.error}
-          render={({
-            sidebar,
-            dmPreviews,
-            frame,
-            before,
-            content,
-            after,
-            dialogs,
-          }) => (
-            <ResizableSidebar scope={scope} className="shell-sidebar">
-              <SidebarFrame
-                label="Sidebar"
-                header={header}
-                panelId={panelId}
-                {...frame}
-              >
-                {/* Relay outages for every inventory recover through one
-                    automatic owner; its notice is the single Retry. */}
-                {!connection.cached && (
-                  <RecoveryNotice recovery={connection.session.recovery} />
-                )}
-                {before}
-                <SidebarUnread listRef={sidebar.list} dmPreviews={dmPreviews}>
-                  <section
-                    aria-label={soloTitle}
-                    className={styles.sidebarGroup}
-                    hidden={filter === "team"}
+      {(creationAction) => (
+        <SidebarBoundary
+          key={`${scope}:${connection.generation}`}
+          header={header(creationAction)}
+          panelId={panelId}
+        >
+          {connection.session &&
+          (connection.status === "ready" || connection.cached) ? (
+            <ChannelInventory
+              relay={props.relay}
+              navigator={props.navigator}
+              agents={props.agents}
+              target={props.target}
+              queries={connection.session}
+              scope={scope}
+              viewer={connection.viewer}
+              sidebarSections={props.sidebarSections}
+              cached={!!connection.cached}
+              layoutReady={filter === "team" || soloReady}
+              connectionError={connection.error}
+              render={({
+                sidebar,
+                dmPreviews,
+                frame,
+                before,
+                content,
+                after,
+                dialogs,
+              }) => (
+                <ResizableSidebar scope={scope} className="shell-sidebar">
+                  <SidebarFrame
+                    label="Sidebar"
+                    header={header(creationAction)}
+                    panelId={panelId}
+                    {...frame}
                   >
-                    <SoloInventory
-                      key={`${scope}:${connection.generation}`}
-                      session={connection.session}
-                      scope={scope}
-                      navigator={props.navigator}
-                      target={props.target}
-                      chatIcons={props.chatIcons}
-                      chatMenus={props.chatMenus}
-                      renderContents={(
-                        ordinary,
-                        ordinaryActions,
-                        header,
-                        creationTrigger,
-                        pendingClick,
-                      ) => (
-                        <SoloRegions
-                          key={`regions:${scope}:${connection.generation}`}
+                    {/* Relay outages for every inventory recover through one
+                    automatic owner; its notice is the single Retry. */}
+                    {!connection.cached && (
+                      <RecoveryNotice recovery={connection.session.recovery} />
+                    )}
+                    {before}
+                    <SidebarUnread
+                      listRef={sidebar.list}
+                      dmPreviews={dmPreviews}
+                    >
+                      <section
+                        aria-label={soloTitle}
+                        className={styles.sidebarGroup}
+                        hidden={filter === "team"}
+                      >
+                        <SoloInventory
+                          key={`${scope}:${connection.generation}`}
                           session={connection.session}
                           scope={scope}
                           navigator={props.navigator}
                           target={props.target}
-                          sidebar={sidebar}
-                          ordinary={ordinary}
-                          ordinaryActions={ordinaryActions}
-                          creationTrigger={creationTrigger}
-                          pendingClick={pendingClick}
-                          fallback={
-                            <>
-                              {header}
-                              {ordinary}
-                            </>
-                          }
+                          chatIcons={props.chatIcons}
+                          chatMenus={props.chatMenus}
+                          renderContents={(
+                            ordinary,
+                            ordinaryActions,
+                            header,
+                            creationTrigger,
+                            pendingClick,
+                          ) => (
+                            <SoloRegions
+                              key={`regions:${scope}:${connection.generation}`}
+                              session={connection.session}
+                              scope={scope}
+                              navigator={props.navigator}
+                              target={props.target}
+                              sidebar={sidebar}
+                              ordinary={ordinary}
+                              ordinaryActions={ordinaryActions}
+                              creationTrigger={creationTrigger}
+                              pendingClick={pendingClick}
+                              fallback={
+                                <>
+                                  {header}
+                                  {ordinary}
+                                </>
+                              }
+                            />
+                          )}
                         />
-                      )}
-                    />
-                  </section>
-                  <div
-                    className={styles.sidebarGroup}
-                    hidden={filter === "solo"}
-                  >
-                    {filter === "all" && (
-                      <div className={styles.teamHeading}>{label("Team")}</div>
-                    )}
-                    {content}
-                  </div>
-                </SidebarUnread>
-                {after}
-              </SidebarFrame>
-              {dialogs}
-            </ResizableSidebar>
-          )}
-        />
-      ) : (
-        <div className="shell-sidebar-default">
-          <SidebarFrame
-            label="Sidebar"
-            header={header}
-            panelId={panelId}
-            launchPending={
-              connection.status === "connecting" ? "required" : undefined
-            }
-          >
-            <SidebarList>
-              <p className={styles.connectionMessage}>
-                {connection.status === "connecting"
-                  ? "Connecting to your relay…"
-                  : (connection.error ?? "Choose a community to see channels.")}
-              </p>
-              {connection.status === "error" && (
-                <Button onClick={props.relay.retry}>Retry channels</Button>
+                      </section>
+                      <div
+                        className={styles.sidebarGroup}
+                        hidden={filter === "solo"}
+                      >
+                        {filter === "all" && (
+                          <div className={styles.teamHeading}>
+                            {label("Team")}
+                          </div>
+                        )}
+                        {content}
+                      </div>
+                    </SidebarUnread>
+                    {after}
+                  </SidebarFrame>
+                  {dialogs}
+                </ResizableSidebar>
               )}
-            </SidebarList>
-          </SidebarFrame>
-        </div>
+            />
+          ) : (
+            <div className="shell-sidebar-default">
+              <SidebarFrame
+                label="Sidebar"
+                header={header(creationAction)}
+                panelId={panelId}
+                launchPending={
+                  connection.status === "connecting" ? "required" : undefined
+                }
+              >
+                <SidebarList>
+                  <p className={styles.connectionMessage}>
+                    {connection.status === "connecting"
+                      ? "Connecting to your relay…"
+                      : (connection.error ??
+                        "Choose a community to see channels.")}
+                  </p>
+                  {connection.status === "error" && (
+                    <Button onClick={props.relay.retry}>Retry channels</Button>
+                  )}
+                </SidebarList>
+              </SidebarFrame>
+            </div>
+          )}
+        </SidebarBoundary>
       )}
-    </SidebarBoundary>
+    </NewMenu>
   );
 }
 

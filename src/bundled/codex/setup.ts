@@ -33,7 +33,8 @@ const TARGETS: Readonly<Record<string, string>> = {
  * plugin starts by name. */
 const STEPS: Readonly<Record<string, readonly string[]>> = {
   codex: ["run"],
-  "app-server": ["run", "app-server"],
+  // Buzz owns alerts; inherited completion hooks would also fire for quiet timers.
+  "app-server": ["run", "app-server", "-c", "notify=[]"],
   install: ["install"],
   use: ["use"],
   adopt: ["adopt"],

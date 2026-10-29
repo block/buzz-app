@@ -340,7 +340,10 @@ it("starts Codex, its app server and install steps as steps of codex.sh", async 
   await run("platform");
   expect(calls).toEqual([
     { id: "codex-sh", args: [script, "codex.sh", "run", "--version"] },
-    { id: "codex-sh", args: [script, "codex.sh", "run", "app-server"] },
+    {
+      id: "codex-sh",
+      args: [script, "codex.sh", "run", "app-server", "-c", "notify=[]"],
+    },
     { id: "codex-sh", args: [script, "codex.sh", "use", "0.163.0"] },
     { id: "platform", args: [] },
   ]);

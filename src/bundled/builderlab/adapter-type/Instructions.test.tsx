@@ -163,6 +163,7 @@ it.each([false, true])(
       );
       expect(region).toHaveAttribute("aria-busy", "true");
       expect(model).toBeDisabled();
+      expect(model.querySelector(".buzz-select-leading")).toBeNull();
       expect(thinking).toBeDisabled();
       expect(field).toBeDisabled();
       expect(field).toHaveValue("");
@@ -192,6 +193,7 @@ it.each([false, true])(
         );
         expect(await screen.findByRole("alert")).toHaveTextContent("HTTP 400");
         expect(model).toHaveTextContent("Unavailable");
+        expect(model.querySelector(".buzz-select-leading")).toBeNull();
         expect(model).toBeDisabled();
         expect(thinking).toBeDisabled();
         h.request.mockImplementation(request);

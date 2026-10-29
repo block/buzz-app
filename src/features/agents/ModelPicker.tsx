@@ -43,7 +43,13 @@ const CUSTOM_MODEL_ACTION: ModelChoice = {
 };
 
 /** Recognizes the vendor from a model's ID or name. */
-export function ModelIcon({ model }: { model: string }) {
+export function ModelIcon({
+  model,
+  className,
+}: {
+  model: string;
+  className?: string;
+}) {
   const name = model.toLowerCase();
   const Icon = /claude|anthropic|opus|sonnet|haiku/.test(name)
     ? ClaudeLogoIcon
@@ -62,7 +68,9 @@ export function ModelIcon({ model }: { model: string }) {
                 : /kimi|moonshot/.test(name)
                   ? KimiLogoIcon
                   : null;
-  return Icon ? <Icon size={20} aria-hidden="true" /> : null;
+  return Icon ? (
+    <Icon className={className} size={20} aria-hidden="true" />
+  ) : null;
 }
 
 /** The custom-model form. Create hosts it outside its closing menu; Settings

@@ -40,6 +40,9 @@ it.each([
     );
     const trigger = screen.getByRole("button", { name: /^Model:/ });
     expect(trigger.querySelector("svg")?.innerHTML).toBe(artwork);
+    expect(trigger.querySelector(".buzz-select-leading")).toContainElement(
+      trigger.querySelector("svg"),
+    );
     await user.click(trigger);
     const submenu = await screen.findByRole("menuitem", { name: family });
     expect(submenu.querySelector("svg")?.innerHTML).toBe(artwork);

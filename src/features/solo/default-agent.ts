@@ -125,12 +125,18 @@ function useAdopted(session: RelaySession, scope: string) {
   return { read, agent };
 }
 
+/** The account-saved choice and whether its first read settled. Without an
+ * account capability, the local explicit choice is already authoritative. */
+export function useSavedAgentState(session: RelaySession, scope: string) {
+  const local = useChosenAgent(scope);
+  const account = useAdopted(session, scope);
+  return session.mainAgent ? account : { read: true, agent: local };
+}
+
 /** The agent saved as main on the viewer's account, when it has one; without
  * an account record, the agent saved on this device. */
 export function useSavedAgent(session: RelaySession, scope: string) {
-  const local = useChosenAgent(scope);
-  const account = useAdopted(session, scope);
-  return session.mainAgent ? account.agent : local;
+  return useSavedAgentState(session, scope).agent;
 }
 
 function chosenAgent(scope: string) {

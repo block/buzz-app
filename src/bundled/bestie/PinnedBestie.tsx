@@ -1,0 +1,240 @@
+import { useEffect, useState } from "react";
+import { AgentPortrait } from "../agents/AgentCard";
+import { ChannelBody } from "../channels/ChannelBody";
+import {
+  ConversationChannel,
+  ConversationComposer,
+  ConversationThread,
+} from "../../features/conversation/Conversation";
+import type { ConversationExtensions } from "../../features/conversation/contracts";
+import type { ConversationHostServices } from "../../features/conversation/ConversationHost";
+import { messageViewKey } from "../../features/messages/view-key";
+import { useAgentChoices } from "../../features/agents/use-choices";
+import { useChannelList, useRelayConnection } from "../../features/relay/react";
+import type { ChannelSummary } from "../../features/relay/contracts";
+import type { RelayData } from "../../features/relay/service";
+import type { RelaySession } from "../../features/relay/session";
+import { useSavedAgent } from "../../features/solo/default-agent";
+import { SoloColumn } from "../../features/solo/SoloPresentation";
+import { RobotIcon } from "../../shared/design-system/icons";
+import { Button } from "../../shared/design-system/ui/Button";
+import { EmptyState } from "../../shared/design-system/ui/EmptyState";
+import { FullPageSurface } from "../../shared/design-system/ui/FullPageSurface";
+import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
+import {
+  PanelHeader,
+  PanelHeaderLabel,
+} from "../../shared/design-system/ui/PanelHeader";
+import { bestieChat } from "./chat";
+
+/** Account-saved Besties use their canonical verified DM. No saved choice means
+ * the caller keeps Riley's hosted setup page. */
+export function PinnedBestie({
+  relay,
+  host,
+  extensions,
+}: {
+  relay: RelayData;
+  host: ConversationHostServices;
+  extensions: ConversationExtensions;
+}) {
+  const connection = useRelayConnection(relay);
+  const { session, scope, viewer } = connection;
+  const saved = useSavedAgent(session, scope ?? "");
+  const active =
+    connection.status === "ready" &&
+    !!scope &&
+    !!viewer &&
+    scope.endsWith(`:${viewer}`);
+  const choices = useAgentChoices(session, active, active);
+  const agent = active
+    ? choices.selectable.find((choice) => choice.pubkey === saved)
+    : undefined;
+  const channels = useChannelList(session.channels);
+  if (!agent || !scope) return null;
+  const channel = bestieChat(channels.channels, viewer, agent.pubkey);
+  const name = agent.managedName ?? agent.name;
+  return (
+    <div className="h-full min-h-0">
+      <FullPageSurface aria-label="Bestie">
+        <div className="flex h-full min-h-0 flex-col">
+          <PanelHeader
+            title={
+              <PanelHeaderLabel
+                title={name}
+                icon={
+                  <AgentPortrait
+                    agent={{ name, picture: agent.avatar }}
+                    community={connection.origin}
+                  />
+                }
+              />
+            }
+          />
+          <DirectMessage
+            key={agent.pubkey}
+            session={session}
+            scope={scope}
+            host={host}
+            extensions={extensions}
+            agent={{ pubkey: agent.pubkey, name }}
+            channel={channel}
+          />
+        </div>
+      </FullPageSurface>
+    </div>
+  );
+}
+
+function DirectMessage({
+  session,
+  scope,
+  host,
+  extensions,
+  agent,
+  channel,
+}: {
+  session: RelaySession;
+  scope: string;
+  host: ConversationHostServices;
+  extensions: ConversationExtensions;
+  agent: { pubkey: string; name: string };
+  channel: ChannelSummary | undefined;
+}) {
+  const [attempt, retry] = useState(0);
+  const [error, setError] = useState<string>();
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Retry deliberately starts a fresh open attempt.
+  useEffect(() => {
+    if (channel) return;
+    const controller = new AbortController();
+    setError(undefined);
+    void session.directMessages
+      .open([agent.pubkey], controller.signal)
+      .catch((reason) => {
+        if (!controller.signal.aborted)
+          setError(
+            reason instanceof Error
+              ? reason.message
+              : "Buzz couldn’t open this conversation.",
+          );
+      });
+    return () => controller.abort();
+  }, [session, agent.pubkey, channel, attempt]);
+  if (channel)
+    return (
+      <BestieConversation
+        key={messageViewKey(session, scope, channel.id)}
+        session={session}
+        scope={scope}
+        host={host}
+        extensions={extensions}
+        channel={channel}
+        bestie={agent.name}
+      />
+    );
+  if (error)
+    return (
+      <Notice
+        title="Couldn’t open this conversation"
+        description={error}
+        action={
+          <Button onClick={() => retry((value) => value + 1)}>Try again</Button>
+        }
+      />
+    );
+  return (
+    <LoadingRegion
+      pending
+      label={`Opening your conversation with ${agent.name}…`}
+    >
+      <Notice
+        title="Opening your conversation…"
+        description={`Connecting to your DM with ${agent.name}.`}
+      />
+    </LoadingRegion>
+  );
+}
+
+function BestieConversation({
+  session,
+  scope,
+  host,
+  extensions,
+  channel,
+  bestie,
+}: {
+  session: RelaySession;
+  scope: string;
+  host: ConversationHostServices;
+  extensions: ConversationExtensions;
+  channel: ChannelSummary;
+  bestie: string;
+}) {
+  const [sent, setSent] = useState<string>();
+  const [thread, setThread] = useState<string>();
+  const [composerFocus, focusComposer] = useState(0);
+  return (
+    <ConversationChannel
+      session={session}
+      scope={scope}
+      extensions={extensions}
+      host={host}
+      channel={channel}
+      channelName={channel.name || bestie}
+      active
+    >
+      <section
+        data-attachment-drop-zone=""
+        className="flex min-h-0 flex-1 flex-col"
+        aria-label={`Chat with ${bestie}`}
+      >
+        {thread ? (
+          <ConversationThread
+            messageId={thread}
+            close={() => {
+              setThread(undefined);
+              focusComposer((value) => value + 1);
+            }}
+          />
+        ) : (
+          <SoloColumn>
+            <ChannelBody
+              viewer={session.viewer}
+              cached={!!channel.cached}
+              activityLane={!channel.cached}
+              revealMessageId={sent}
+              marksRead
+              onOpenThread={setThread}
+            />
+            <ConversationComposer
+              label={`Message ${bestie}`}
+              focusRequest={composerFocus}
+              onSend={setSent}
+            />
+          </SoloColumn>
+        )}
+      </section>
+    </ConversationChannel>
+  );
+}
+
+function Notice({
+  title,
+  description,
+  action,
+}: {
+  title: string;
+  description: string;
+  action?: React.ReactNode;
+}) {
+  return (
+    <div className="flex min-h-0 flex-1 flex-col items-center justify-center p-6">
+      <EmptyState
+        icon={<RobotIcon />}
+        title={title}
+        description={description}
+        action={action}
+      />
+    </div>
+  );
+}

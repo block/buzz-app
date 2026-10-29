@@ -29,6 +29,10 @@ import {
   type RemoteBestie,
 } from "./setup";
 import type { RemoteAgentModel } from "../builderlab/agents/client";
+import { useRelayConnection } from "../../features/relay/react";
+import { useSavedAgentState } from "../../features/solo/default-agent";
+import type { RelayData } from "../../features/relay/service";
+import { PinnedBestie } from "./PinnedBestie";
 
 export const inject = [
   "pages",
@@ -78,8 +82,9 @@ export const apply: PluginModule["apply"] = (ctx) => {
         source.snapshot,
       );
       return (
-        <BestiePage
+        <BestieDestination
           bestie={current}
+          relay={ctx.relay}
           navigation={ctx.navigation}
           extensions={ctx.conversation}
           host={ctx}
@@ -88,6 +93,51 @@ export const apply: PluginModule["apply"] = (ctx) => {
     },
   });
 };
+
+function BestieDestination({
+  relay,
+  ...props
+}: {
+  bestie?: RemoteBestie | undefined;
+  relay: RelayData;
+  navigation: Navigation;
+  extensions: ConversationExtensions;
+  host: ConversationHostServices;
+}) {
+  const connection = useRelayConnection(relay);
+  const saved = useSavedAgentState(connection.session, connection.scope ?? "");
+  if (!saved.read)
+    return (
+      <div className="h-full min-h-0">
+        <FullPageSurface aria-label="Bestie">
+          <div className="flex h-full min-h-0 flex-col">
+            <PanelHeader
+              title={
+                <PanelHeaderLabel
+                  title="Bestie"
+                  icon={<BestieIcon size="1rem" />}
+                />
+              }
+            />
+            <Intro>
+              <p className="m-0 text-body-sm text-muted" role="status">
+                Loading your Bestie…
+              </p>
+            </Intro>
+          </div>
+        </FullPageSurface>
+      </div>
+    );
+  return saved.agent ? (
+    <PinnedBestie
+      relay={relay}
+      host={props.host}
+      extensions={props.extensions}
+    />
+  ) : (
+    <BestiePage {...props} />
+  );
+}
 
 export function BestiePage({
   bestie,

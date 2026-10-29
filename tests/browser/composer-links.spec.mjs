@@ -681,11 +681,14 @@ test("Up and Down move one line at a time through links that wrap", async ({
     await input.fill(text);
     const links = input.locator('[data-link-kind="github"]');
     await expect(links).toHaveCount(2);
-    const lines = await input
-      .locator("[data-source]")
-      .evaluateAll((elements) =>
-        elements.map((element) => element.getClientRects().length),
-      );
+    // How many rects each link draws, more than one where it wraps.
+    const rects = () =>
+      input
+        .locator("[data-source]")
+        .evaluateAll((elements) =>
+          elements.map((element) => element.getClientRects().length),
+        );
+    const lines = await rects();
     expect(lines[0]).toBeGreaterThanOrEqual(2);
     expect(lines[1]).toBeGreaterThanOrEqual(3);
     expect(
@@ -808,6 +811,7 @@ test("Up and Down move one line at a time through links that wrap", async ({
     await input.fill("");
     await input.fill(draft);
     await expect(links).toHaveCount(2);
+    for (const count of await rects()) expect(count).toBeGreaterThanOrEqual(2);
     const thirdFrom = draft.indexOf(link(title, 3));
     const thirdTo = thirdFrom + link(title, 3).length;
     const fourthFrom = draft.indexOf(link(title, 4));
@@ -845,6 +849,44 @@ test("Up and Down move one line at a time through links that wrap", async ({
         0,
       ]);
     }
+
+    // Unchanged: entering a line that only a link holds stops at the edge it
+    // holds, which has no position at the caret's column, so Shift+Down from
+    // the end of the line above adds only the break.
+    await input.evaluate(
+      (el, at) => el.setSelectionRange(at, at),
+      edges[0].length,
+    );
+    await rendered();
+    await page.keyboard.press("Shift+ArrowDown");
+    await expect
+      .poll(caret)
+      .toEqual({ head: thirdFrom, anchor: edges[0].length });
+
+    // The nearest position on the neighbouring line is a character boundary,
+    // never inside an emoji or a cluster, where a caret is drawn at the glyph
+    // and a Shift selection would split the character.
+    const thumb = "👍🏽";
+    const emoji = ["😀😀😀 words above", link(title, 1), thumb.repeat(20)];
+    const emojiDraft = emoji.join("\n");
+    await input.fill("");
+    await input.fill(emojiDraft);
+    await expect(links).toHaveCount(1);
+    expect((await rects())[0]).toBeGreaterThanOrEqual(2);
+    const emojiFrom = emoji[0].length + 1;
+    const emojiTo = emojiFrom + emoji[1].length;
+    for (const shift of ["", "Shift+"]) {
+      const [below] = await walk(
+        `${shift}ArrowDown`,
+        emojiTo,
+        emojiDraft.length,
+      );
+      expect((below - emojiTo - 1) % thumb.length).toBe(0);
+      expect(await walk(`${shift}ArrowUp`, emojiFrom, 0)).toEqual([0]);
+    }
+    // Deleting that Shift selection leaves no half of the first emoji behind.
+    await page.keyboard.press("Backspace");
+    await expect(input).toHaveJSProperty("value", emojiDraft.slice(emojiFrom));
 
     // WebKit splits this link into two rects on one line, reordering its
     // Hebrew with the text after it. That is still one line, and native Down

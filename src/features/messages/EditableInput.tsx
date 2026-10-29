@@ -110,6 +110,7 @@ export type EditorDecoration = {
 const CONTROL_CHARACTERS = /[\p{Cc}\uF700-\uF747]/gu;
 /** The control characters typed text holds: tab, newline and carriage return. */
 const TYPED_CONTROLS = /[\t\n\r]/u;
+const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 /** True when a native text insertion holds only control characters. Text that
  * mixes them with real characters is not control text and passes untouched. */
 function controlCharacterText(text: string | null | undefined) {
@@ -220,20 +221,29 @@ function crossTokenLine(
   // only the line break to a Shift selection, which looks like no move at all.
   // Positions are measured rather than hit-tested, so a line scrolled out of
   // the composer still counts. Each is measured where a caret there is drawn,
-  // so a soft wrap belongs to the line after it.
+  // so a soft wrap belongs to the line after it. Only grapheme boundaries
+  // count: a position inside an emoji is drawn at its glyph, and a Shift
+  // selection ending there splits the character. Each inline leaf reads as
+  // one character, so the text's offsets are the textblock's positions.
   const column = (
     edge: number | undefined,
     line?: { top: number; bottom: number },
   ) => {
     if (edge === undefined) return edge;
     const $edge = doc.resolve(edge);
+    const { parent } = $edge;
+    const text = parent.textBetween(
+      0,
+      parent.content.size,
+      undefined,
+      "\uFFFC",
+    );
+    const positions = [...graphemes.segment(text), { index: text.length }]
+      .map(({ index }) => $edge.start() + index)
+      .filter((pos) => (up ? pos <= edge : pos >= edge));
     let head = edge;
     let gap = Number.POSITIVE_INFINITY;
-    for (
-      let pos = edge;
-      pos >= $edge.start() && pos <= $edge.end();
-      pos += up ? -1 : 1
-    ) {
+    for (const pos of up ? positions.reverse() : positions) {
       const point = editor.coordsAtPos(pos, 1);
       if (!holds(line, point)) break;
       const distance = Math.abs(point.left - caret.left);

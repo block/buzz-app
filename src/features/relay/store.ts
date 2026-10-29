@@ -290,6 +290,8 @@ export function createChannelStore(
         old.description === channel.description &&
         old.metadataPending === pending &&
         old.visibility === channel.visibility &&
+        old.joinRole === channel.joinRole &&
+        old.viewerRole === channel.viewerRole &&
         old.preview === preview &&
         old.hidden === channel.hidden &&
         old.private === channel.private &&
@@ -1659,7 +1661,16 @@ export function createChannelStore(
               (event.kind === 39002 && hasTag(event, "p", transport.viewer))),
         )
       )
-        resumed = discovery.resume(id) || resumed;
+        resumed =
+          discovery.resume(
+            id,
+            events.find(
+              (event) =>
+                event.kind === 39000 &&
+                event.pubkey === transport.relayAuthor &&
+                tag(event, "d") === id,
+            ),
+          ) || resumed;
     }
     for (const id of ids) checkedMetadata.add(id);
     // A bounded exact roster fills omissions from capped discovery. Apply grants
@@ -2060,7 +2071,10 @@ export function createChannelStore(
   /** An open channel's current read-only preview, as name search admits it. */
   function previewable(id: string) {
     const channel = discovery?.get(id);
-    return channel?.readOnly && !channel.archived && !channel.cached
+    return channel?.readOnly &&
+      !discovery?.authorized(id) &&
+      !channel.archived &&
+      !channel.cached
       ? channel
       : undefined;
   }
@@ -2991,6 +3005,7 @@ export function createChannelStore(
     restore,
     canAccess: authorized,
     canParticipate: (id: string) => discovery?.canParticipate(id) ?? false,
+    canWrite: (id: string) => discovery?.canWrite(id) ?? false,
     purgeAccess,
     /** After an access purge's commit, reread names for retained authorized rows.
      * One ensure per window, so one window over the directory budget spares the others. */

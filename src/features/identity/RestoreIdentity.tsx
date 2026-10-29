@@ -4,7 +4,7 @@ import { publicKeyLabels } from "../../shared/identity/public-key";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Radio, RadioGroup } from "../../shared/design-system/ui/RadioGroup";
-import type { Identity, RecoveryState } from "./service";
+import { type Identity, type RecoveryState, recoveryOff } from "./service";
 
 export function RestoreIdentity({
   identity,
@@ -104,7 +104,7 @@ export function RestoreIdentity({
           >
             Restore this identity
           </Button>
-        ) : recovery.status === "error" ||
+        ) : (recovery.status === "error" && !recoveryOff(recovery)) ||
           (recovery.status === "choosing" && candidates.length === 0) ? (
           <Button
             variant="primary"

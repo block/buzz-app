@@ -48,7 +48,7 @@ export function RichComposerInput({
     (channel) => channel?.members,
   );
   const archives = useMentionArchives(session);
-  const roster = useContext(DraftMentionRoster);
+  const roster = useContext(DraftMentionRoster)?.recipients;
   const resolveName = useIdentityNames(session.names);
   // Recipients, not keystrokes, change chip names: typing prose must not
   // copy every profile or scan every member of a large channel.

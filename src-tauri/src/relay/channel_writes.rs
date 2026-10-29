@@ -19,7 +19,7 @@ fn common(event: &EventTemplate) -> bool {
     event.content.is_empty() && event.created_at <= i64::MAX as u64
 }
 fn details(event: &EventTemplate) -> bool {
-    if event.kind != 9002 || !common(event) || !(3..=13).contains(&event.tags.len()) {
+    if event.kind != 9002 || !common(event) || !(3..=14).contains(&event.tags.len()) {
         return false;
     }
     let (Some(id), Some(name), Some(about)) = (
@@ -47,6 +47,12 @@ fn details(event: &EventTemplate) -> bool {
         index += 1;
     }
     // NIP-CL: trailing `t` tags replace the label set; one `["t", ""]` clears it.
+    if let Some(role) = tag(event, index, "join_role") {
+        if !matches!(role, "member" | "guest") {
+            return false;
+        }
+        index += 1;
+    }
     let labels = &event.tags[index..];
     let labels_valid = details_labels(labels);
     uuid(id)
@@ -565,6 +571,41 @@ mod boundary_tests {
                 altered["tags"][1][1] = Value::String("Tampered".into());
                 assert!(validate("channel-details", &altered, altered["pubkey"].as_str()).is_err());
             }
+        }
+    }
+
+    #[test]
+    fn details_admit_only_member_and_guest_admission_defaults() {
+        let host = IdentityHost::fixture();
+        for role in ["member", "guest"] {
+            let event =
+                serde_json::to_value(details_event(vec![vec!["join_role".into(), role.into()]]))
+                    .unwrap();
+            let parsed = validate("channel-details", &event, None).unwrap();
+            assert!(validate("channel-lifecycle", &event, None).is_err());
+            let signed = tauri::async_runtime::block_on(host.sign(parsed)).unwrap();
+            assert!(validate("channel-details", &signed, signed["pubkey"].as_str()).is_ok());
+        }
+        for extra in [
+            vec![vec!["join_role", "owner"]],
+            vec![vec!["join_role", "admin"]],
+            vec![vec!["join_role", "bot"]],
+            vec![vec!["join_role", ""]],
+            vec![vec!["join_role"]],
+            vec![vec!["join_role", "guest", "extra"]],
+            vec![vec!["join_role", "member"], vec!["join_role", "guest"]],
+            vec![vec!["join_role", "guest"], vec!["ttl", "60"]],
+        ] {
+            let template = details_event(
+                extra
+                    .iter()
+                    .map(|tag| tag.iter().map(|s| (*s).into()).collect())
+                    .collect(),
+            );
+            let event = serde_json::to_value(&template).unwrap();
+            assert!(validate("channel-details", &event, None).is_err());
+            let signed = tauri::async_runtime::block_on(host.sign(template)).unwrap();
+            assert!(validate("channel-details", &signed, signed["pubkey"].as_str()).is_err());
         }
     }
 

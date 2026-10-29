@@ -1050,6 +1050,40 @@ describe("github_watch_pr", () => {
     app.dispose();
   });
 
+  it("stops asking each login alone once the watch stops", async () => {
+    savePolicy("allow org:block");
+    const app = setup();
+    await app.call({ url });
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const run = app.runCommand.getMockImplementation();
+    const asked: string[] = [];
+    app.runCommand.mockImplementation(async (id, input) => {
+      if ("variables" in JSON.parse(input)) return run?.(id, input) ?? null;
+      asked.push(input);
+      await gate;
+      return null;
+    });
+    app.gh(
+      answer({
+        comments: ["alice", "bob", "carol"].map((login, index) => ({
+          id: `I${index}`,
+          login,
+          body: `body-${login}`,
+        })),
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+    expect(asked).toHaveLength(1);
+    app.attentionEnabled(false);
+    release();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(asked).toHaveLength(1);
+    app.dispose();
+  });
+
   it("by default tells the viewer's comments but not its 🤖 ones", async () => {
     const app = setup();
     await app.call({ url });

@@ -110,11 +110,12 @@ export function watchPulls(ctx: Context) {
         : undefined;
     };
   /** Looks up the organization membership `feedback` needs, keeping what a
-   * failed read leaves unknown unknown. */
+   * failed read leaves unknown unknown. It asks nothing more once `stopped`. */
   const lookUp = async (
     feedback: readonly Feedback[],
     policy: AuthorPolicy,
     viewer: string,
+    stopped: () => boolean,
   ) => {
     const orgs = organizations(policy);
     const fresh = membership(orgs, MEMBERSHIP_MS);
@@ -149,10 +150,16 @@ export function watchPulls(ctx: Context) {
       else batches.push([login]);
     }
     for (const batch of batches) {
+      if (stopped()) return;
       // One login GitHub cannot answer for fails its whole batch, so each
       // is then asked alone.
       if (await ask(batch)) continue;
-      if (batch.length > 1) for (const login of batch) await ask([login]);
+      if (batch.length > 1)
+        for (const login of batch) {
+          if (stopped()) return;
+          await ask([login]);
+        }
+      if (stopped()) return;
       for (const login of batch) {
         const key = memberKey(orgs, login);
         if (members.get(key)?.at === now) continue;
@@ -196,10 +203,11 @@ export function watchPulls(ctx: Context) {
   const recheck = async (
     watch: Watch,
     snapshot: PullSnapshot,
+    stopped: () => boolean,
   ): Promise<[Watch, PullSnapshot]> => {
     const items = [...(watch.pending ?? []), ...snapshot.feedback];
     if (!items.length) return [watch, snapshot];
-    await lookUp(items, loadPolicy(), snapshot.viewer);
+    await lookUp(items, loadPolicy(), snapshot.viewer, stopped);
     // The rules are read again, as they may have changed during the lookup.
     const policy = loadPolicy();
     const member = membership(organizations(policy), MEMBERSHIP_MS);
@@ -265,7 +273,11 @@ export function watchPulls(ctx: Context) {
           const snapshot = await read(pull.url, watch.seen);
           if (signal.aborted || disposed) return;
           if (!snapshot) throw new Error("gh could not read it");
-          const checked = await recheck(watch, snapshot);
+          const checked = await recheck(
+            watch,
+            snapshot,
+            () => signal.aborted || disposed,
+          );
           if (signal.aborted || disposed) return;
           const next = step(...checked, Date.now());
           if (next.wake)
@@ -393,7 +405,10 @@ export function watchPulls(ctx: Context) {
       const moved =
         prior && (prior.channel !== watch.channel || prior.root !== watch.root);
       // What is already there is answered now rather than by a wake.
-      const first = step(...(await recheck(watch, snapshot)), Date.now());
+      const first = step(
+        ...(await recheck(watch, snapshot, () => disposed)),
+        Date.now(),
+      );
       if (first.ended && first.ended !== "limit")
         return `${pull.url} is ${first.ended}; nothing to watch.`;
       const fields = subscription({ ...first.watch, wakes: watch.wakes });

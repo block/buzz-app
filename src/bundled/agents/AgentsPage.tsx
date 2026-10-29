@@ -2147,27 +2147,34 @@ function TeamEditor({
   const [opened] = useState(team);
   const [draft] = useState(() => crypto.randomUUID());
   const which = opened ? { id: opened.id } : { draft };
-  // The community each hosted member was picked in, the only one with it.
-  const [picked, setPicked] = useState<ReadonlyMap<string, string>>(
+  // Each hosted agent picked, as listed then in the only community with it.
+  const [picked, setPicked] = useState<ReadonlyMap<string, Agent>>(
     () => new Map(),
   );
   // Only a team Save puts in this community can have its hosted agents.
-  const choices = agents.teamHere(which)
+  const listed = agents.teamHere(which)
     ? saved
     : saved.filter((agent) => agent.place === "here");
+  // Hosted agents picked where Save puts the team stay choices while not
+  // listed, as while its agent list is read again or once one is deleted, so
+  // each can be unchecked. Not one picked in another community, as before
+  // selecting this one, which can't have it.
+  const choices = [
+    ...listed,
+    ...[...picked.values()].filter(
+      (agent) =>
+        agents.teamHere(which, agent.relay) &&
+        !listed.some((item) => item.pubkey === agent.pubkey),
+    ),
+  ];
   // What Save gets: members among these choices, ones the team already has,
-  // agents here in other communities, and hosted agents picked where Save
-  // puts the team, which may not be listed again yet. Not one picked in
-  // another community, as before selecting this one, which can't have it.
-  const kept = members.filter((pubkey) => {
-    const from = picked.get(pubkey);
-    return (
+  // and agents here in other communities.
+  const kept = members.filter(
+    (pubkey) =>
       choices.some((agent) => agent.pubkey === pubkey) ||
       opened?.members.includes(pubkey) ||
-      agents.memberships(pubkey).length > 0 ||
-      (from !== undefined && agents.teamHere(which, from))
-    );
-  });
+      agents.memberships(pubkey).length > 0,
+  );
   // Members not in this community, which it doesn't list but keeps.
   const away = members.filter(
     (pubkey) =>
@@ -2264,9 +2271,7 @@ function TeamEditor({
                 disabled={pending}
                 onCheckedChange={(checked) => {
                   if (agent.place === "hosted")
-                    setPicked((last) =>
-                      new Map(last).set(agent.pubkey, agent.relay),
-                    );
+                    setPicked((last) => new Map(last).set(agent.pubkey, agent));
                   setMembers((last) =>
                     checked
                       ? [...last, agent.pubkey]

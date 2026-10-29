@@ -2626,11 +2626,10 @@ it("keeps a hosted agent picked for a new team while its community lists agents 
   await user.click(screen.getByRole("checkbox", { name: "Ada" }));
   await user.click(screen.getByRole("checkbox", { name: "Sky" }));
   // The community reconnects and still syncs teams, but its hosted agents
-  // are unlisted until their records are read again, so Save refuses Sky.
+  // are unlisted until their records are read again, so Save refuses Sky,
+  // which still shows checked.
   act(() => show([ada]));
-  expect(
-    screen.queryByRole("checkbox", { name: "Sky" }),
-  ).not.toBeInTheDocument();
+  expect(screen.getByRole("checkbox", { name: "Sky" })).toBeChecked();
   const refusal = "Can't tell yet whether Sky is in relay.example";
   agents.saveTeam.mockRejectedValueOnce(new Error(refusal));
   await user.click(screen.getByRole("button", { name: "Create team" }));
@@ -2643,8 +2642,9 @@ it("keeps a hosted agent picked for a new team while its community lists agents 
     instructions: "",
     members: [ada.pubkey, sky.pubkey],
   });
-  // Once they are, Sky shows checked again, and Create keeps the draft.
+  // Once they are, Sky is listed again, and Create keeps the draft.
   act(() => show([ada, sky]));
+  expect(screen.getAllByRole("checkbox", { name: "Sky" })).toHaveLength(1);
   expect(screen.getByRole("checkbox", { name: "Sky" })).toBeChecked();
   await user.click(screen.getByRole("button", { name: "Create team" }));
   expect(agents.saveTeam).toHaveBeenLastCalledWith({
@@ -2652,6 +2652,45 @@ it("keeps a hosted agent picked for a new team while its community lists agents 
     name: "Crew",
     instructions: "",
     members: [ada.pubkey, sky.pubkey],
+  });
+});
+
+it("lets a hosted agent picked for a new team be unchecked once it is no longer listed", async () => {
+  const user = userEvent.setup();
+  const ada = agent("Ada", 1);
+  const sky: Agent = { ...agent("Sky", 2), place: "hosted" };
+  const { agents, show } = setup([ada, sky]);
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  await user.click(screen.getByRole("button", { name: "New team" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Create a new team" }),
+  );
+  await user.type(screen.getByRole("textbox", { name: "Name" }), "Crew");
+  await user.click(screen.getByRole("checkbox", { name: "Ada" }));
+  await user.click(screen.getByRole("checkbox", { name: "Sky" }));
+  // Sky is deleted from another device, and the community's agent list is
+  // read without it, so Save refuses it. It still shows, named in the warning.
+  act(() => show([ada]));
+  expect(
+    screen.getByRole("textbox", { name: "Instructions" }),
+  ).toHaveAccessibleDescription(
+    /\(Sky\) will not get these team instructions\.$/,
+  );
+  const refusal = "Add Sky to relay.example first";
+  agents.saveTeam.mockRejectedValueOnce(new Error(refusal));
+  await user.click(screen.getByRole("button", { name: "Create team" }));
+  const form = screen.getByRole("form", { name: "New team" });
+  expect(await within(form).findByRole("alert")).toHaveTextContent(refusal);
+  const draft = agents.saveTeam.mock.calls.at(-1)?.[0].draft;
+  // Unchecking it keeps the draft, and Create leaves it off.
+  await user.click(screen.getByRole("checkbox", { name: "Sky" }));
+  expect(screen.getByRole("checkbox", { name: "Sky" })).not.toBeChecked();
+  await user.click(screen.getByRole("button", { name: "Create team" }));
+  expect(agents.saveTeam).toHaveBeenLastCalledWith({
+    draft,
+    name: "Crew",
+    instructions: "",
+    members: [ada.pubkey],
   });
 });
 

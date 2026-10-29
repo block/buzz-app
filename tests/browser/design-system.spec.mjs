@@ -90,6 +90,8 @@ test("shared tokens reach app controls without history or chip overrides", async
             const disabled = document.createElement("div");
             disabled.className = "buzz-menu-item";
             disabled.dataset.disabled = "";
+            disabled.dataset.highlighted = "";
+            disabled.dataset.popupOpen = "";
             const choice = document.createElement("span");
             choice.className = "buzz-choice-row";
             choice.dataset.buzzUi = "";
@@ -226,6 +228,9 @@ test("shared tokens reach app controls without history or chip overrides", async
       await expect(
         page.locator("#probe-buzz-menu-popup .buzz-choice-row-label"),
       ).toHaveCSS("color", "rgb(60, 70, 80)");
+      await expect(
+        page.locator("#probe-buzz-menu-popup [data-disabled]"),
+      ).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
     } finally {
       await override.evaluate((node) => node.remove());
     }

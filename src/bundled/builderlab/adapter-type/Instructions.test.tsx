@@ -248,11 +248,13 @@ it("dismisses Harness help before allowing Escape to close the agent pane", asyn
   await screen.findByRole("menuitemradio", { name: "Codex" });
   await user.keyboard("{End}{Enter}");
   expect(
-    await screen.findByRole("dialog", { name: "Codex hosting" }),
+    await screen.findByRole("dialog", { name: "Harness availability" }),
   ).toBeVisible();
   await user.keyboard("{Escape}");
   await waitFor(() =>
-    expect(screen.queryByRole("dialog", { name: "Codex hosting" })).toBeNull(),
+    expect(
+      screen.queryByRole("dialog", { name: "Harness availability" }),
+    ).toBeNull(),
   );
   expect(screen.getByRole("complementary", { name: "Agent" })).toBeVisible();
   expect(screen.getByRole("menuitemradio", { name: "Codex" })).toHaveFocus();

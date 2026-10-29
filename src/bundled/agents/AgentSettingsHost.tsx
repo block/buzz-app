@@ -144,6 +144,7 @@ function TypeField({
 }) {
   const available = types;
   const others = available.filter((item) => item.key !== agent.type);
+  const unavailable = others.filter((item) => type?.remote || item.remote);
   const selectedType = available.find((item) => item.key === selected) ?? type;
   const TypeIcon = selectedType?.icon;
   const [error, setError] = useState("");
@@ -229,33 +230,30 @@ function TypeField({
                     value={selected}
                     onValueChange={(next) => choose(String(next))}
                   >
-                    {available.map((item) => {
-                      if (
-                        item.key !== agent.type &&
-                        (type?.remote || item.remote)
-                      )
+                    {available
+                      .filter((item) => !unavailable.includes(item))
+                      .map((item) => {
+                        const Icon = item.icon;
                         return (
-                          <UnavailableHarnessChoice
+                          <MenuRadioItem
                             key={item.key}
-                            type={item}
-                            source={type}
-                          />
+                            value={item.key}
+                            selection="highlight"
+                            closeOnClick
+                          >
+                            <ChoiceRow
+                              label={item.title}
+                              leading={Icon ? <Icon size={20} /> : undefined}
+                            />
+                          </MenuRadioItem>
                         );
-                      const Icon = item.icon;
-                      return (
-                        <MenuRadioItem
-                          key={item.key}
-                          value={item.key}
-                          selection="highlight"
-                          closeOnClick
-                        >
-                          <ChoiceRow
-                            label={item.title}
-                            leading={Icon ? <Icon size={20} /> : undefined}
-                          />
-                        </MenuRadioItem>
-                      );
-                    })}
+                      })}
+                    {unavailable.length > 0 && (
+                      <UnavailableHarnessChoices
+                        types={unavailable}
+                        source={type}
+                      />
+                    )}
                   </MenuRadioGroup>
                 </MenuPopup>
               </MenuRoot>
@@ -325,18 +323,18 @@ function TypeField({
   );
 }
 
-function UnavailableHarnessChoice({
-  type,
+function UnavailableHarnessChoices({
+  types,
   source,
 }: {
-  type: RegisteredAgentType;
+  types: readonly RegisteredAgentType[];
   source: RegisteredAgentType | undefined;
 }) {
   const triggerId = useId();
-  const trigger = useRef<HTMLElement>(null);
+  const trigger = useRef<HTMLDivElement>(null);
   const description = useId();
   const [open, setOpen] = useState(false);
-  const Icon = type.icon;
+  const hosted = types[0];
   return (
     <PopoverRoot
       open={open}
@@ -360,9 +358,15 @@ function UnavailableHarnessChoice({
         id={triggerId}
         openOnHover="preview"
         nativeButton={false}
-        role="menuitemradio"
+        role="group"
+        aria-label="Unavailable harnesses"
+        tabIndex={-1}
         onFocus={(event) => {
-          if (event.currentTarget.matches(":focus-visible")) setOpen(true);
+          if (
+            event.target instanceof HTMLElement &&
+            event.target.matches(":focus-visible")
+          )
+            setOpen(true);
         }}
         onKeyDownCapture={(event) => {
           if (event.key === "Escape" && open) {
@@ -374,25 +378,32 @@ function UnavailableHarnessChoice({
             setOpen(true);
           }
         }}
-        aria-describedby={open ? description : undefined}
         render={
-          <MenuRadioItem
-            ref={trigger}
-            value={type.key}
-            selection="highlight"
-            disabled
-          >
-            <ChoiceRow
-              label={type.title}
-              leading={Icon ? <Icon size={20} /> : undefined}
-            />
-          </MenuRadioItem>
+          <div ref={trigger}>
+            {types.map((item) => {
+              const Icon = item.icon;
+              return (
+                <MenuRadioItem
+                  key={item.key}
+                  value={item.key}
+                  selection="highlight"
+                  disabled
+                  aria-describedby={open ? description : undefined}
+                >
+                  <ChoiceRow
+                    label={item.title}
+                    leading={Icon ? <Icon size={20} /> : undefined}
+                  />
+                </MenuRadioItem>
+              );
+            })}
+          </div>
         }
       />
       <PopoverPopup
         side="right"
         align="start"
-        aria-label={`${type.title} hosting`}
+        aria-label="Harness availability"
         initialFocus={false}
         finalFocus={false}
       >
@@ -406,8 +417,8 @@ function UnavailableHarnessChoice({
           ) : (
             <>
               This agent’s signing key is stored on this device. Buzz can’t move
-              that identity to {type.title} yet. To run hosted, create a new{" "}
-              {type.title} agent.
+              that identity to {hosted?.title} yet. To run hosted, create a new{" "}
+              {hosted?.title} agent.
             </>
           )}
         </PopoverDescription>

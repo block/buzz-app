@@ -1983,8 +1983,8 @@
   }
   /* Floating rows need more separation than controls on a darker panel.
      Supporting copy follows the brighter fill so it remains readable. */
-  .buzz-menu-item[data-highlighted],
-  .buzz-menu-item[data-popup-open],
+  .buzz-menu-item[data-highlighted]:not([data-disabled]),
+  .buzz-menu-item[data-popup-open]:not([data-disabled]),
   .buzz-select-option[data-highlighted] {
     --text-subtle: var(--text-standard);
     --text-metadata: var(--text-standard);

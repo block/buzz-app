@@ -175,7 +175,7 @@ test("a joined guest can read and leave without receiving a composer or Join pro
     .getByRole("button", { name: "Manage members", exact: true })
     .click();
   const members = page.getByRole("dialog", {
-    name: "Manage members",
+    name: "Channel access",
     exact: true,
   });
   await expect(members.getByRole("searchbox")).toHaveAttribute(

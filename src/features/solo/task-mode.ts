@@ -8,6 +8,7 @@ export { TASK_MODE_LABEL } from "./region-labels";
 import type { ChannelSummary } from "../relay/contracts";
 import type { EventData, RelayEvent } from "../relay/events";
 import type { OutboxRecovery } from "../relay/outbox";
+import type { RelaySession } from "../relay/session";
 import { readTaskTokens } from "../messages/task-tokens";
 
 export const TASK_UNAVAILABLE =
@@ -217,7 +218,7 @@ export function readTaskFirstEventRecovery(
 }
 
 export async function recordTaskFirstEvent(
-  session: TaskSession,
+  session: TaskSession & Pick<RelaySession, "channelWrites">,
   event: RelayEvent,
   recovery: OutboxRecovery | undefined,
   signal: AbortSignal,
@@ -232,6 +233,24 @@ export async function recordTaskFirstEvent(
     throw new Error("The prepared task does not match this saved message.");
   const bound = AbortSignal.any([signal, context.signal]);
   bound.throwIfAborted();
+  const starting = session.channelWrites.starting(input.channelId);
+  if (starting) {
+    let abort = () => {};
+    try {
+      await Promise.race([
+        starting,
+        new Promise<never>((_resolve, reject) => {
+          abort = () => reject(bound.reason);
+          bound.addEventListener("abort", abort, { once: true });
+          if (bound.aborted) abort();
+        }),
+      ]);
+    } finally {
+      bound.removeEventListener("abort", abort);
+    }
+  }
+  bound.throwIfAborted();
+  validateTaskPublication(session, event);
   await context.mode.recordFirstEvent(
     {
       draftId: input.draftId,

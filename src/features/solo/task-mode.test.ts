@@ -1,6 +1,8 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { createSoloRegionFixture } from "../channel-navigation/solo-navigation-testing";
 import { keypair, signed } from "../relay/testing";
+import { createOutbox, type OutgoingEvent } from "../relay/outbox";
+import * as soloNavigation from "../channel-navigation/solo-navigation";
 import {
   recordTaskFirstEvent,
   taskFirstEventRecovery,
@@ -241,3 +243,178 @@ it("applies task policy to every signed member addition, including a direct outb
     "Nexus is unavailable",
   );
 });
+
+it.each(["ready", "cancel", "abort", "revoked", "ordinary"] as const)(
+  "checks creation readiness at the durable binding boundary (%s)",
+  async (outcome) => {
+    const f = await fixture();
+    let resolve = () => {},
+      reject = (_error: Error) => {};
+    const ready = new Promise<void>((done, failed) => {
+      resolve = done;
+      reject = failed;
+    });
+    const starting = vi.fn(() => ready);
+    const session = {
+      ...f.session,
+      channelWrites: { ...f.session.channelWrites, starting },
+    };
+    const lookup = vi
+      .spyOn(soloNavigation, "soloNavigationFor")
+      .mockReturnValue(f.service);
+    cleanups.push(() => lookup.mockRestore());
+    const controller = new AbortController();
+    const recovery = taskFirstEventRecovery({
+      draftId: "draft",
+      revision: 7,
+      preparationId: "prepared:7",
+      channelId: "task",
+      regionLabel: f.source.handle.label,
+    });
+    const pending = recordTaskFirstEvent(
+      session,
+      f.event(),
+      outcome === "ordinary" ? undefined : recovery,
+      controller.signal,
+    );
+    try {
+      if (outcome === "ordinary") {
+        await pending;
+        expect(starting).not.toHaveBeenCalled();
+        expect(f.recordFirstEvent).not.toHaveBeenCalled();
+        return;
+      }
+      expect(starting).toHaveBeenCalledWith("task");
+      expect(f.recordFirstEvent).not.toHaveBeenCalled();
+      if (outcome === "cancel") {
+        const failed = expect(pending).rejects.toThrow("Create cancelled");
+        reject(new Error("Create cancelled"));
+        await failed;
+      } else if (outcome === "abort") {
+        const failed = expect(pending).rejects.toThrow("Binding ended");
+        controller.abort(new Error("Binding ended"));
+        await failed;
+        resolve();
+        await ready;
+      } else {
+        if (outcome === "revoked") f.eligible.delete(f.a);
+        const completed =
+          outcome === "revoked"
+            ? expect(pending).rejects.toThrow("participant")
+            : pending;
+        resolve();
+        await completed;
+      }
+      expect(f.recordFirstEvent).toHaveBeenCalledTimes(
+        outcome === "ready" ? 1 : 0,
+      );
+    } finally {
+      resolve();
+    }
+  },
+);
+
+it.each(["cancel", "timeout", "rebind"] as const)(
+  "retains and retries the same signed first message after a creation wait %s",
+  async (outcome) => {
+    const f = await fixture();
+    let resolve = () => {},
+      reject = (_error: Error) => {},
+      entered = () => {},
+      published = () => {};
+    const ready = new Promise<void>((done, failed) => {
+      resolve = done;
+      reject = failed;
+    });
+    const waiting = new Promise<void>((done) => {
+      entered = done;
+    });
+    const delivery = new Promise<void>((done) => {
+      published = done;
+    });
+    let barrier: Promise<void> | undefined = ready;
+    let records: readonly OutgoingEvent[] = [];
+    const session = {
+      ...f.session,
+      channelWrites: { ...f.session.channelWrites, starting: () => barrier },
+    };
+    const lookup = vi
+      .spyOn(soloNavigation, "soloNavigationFor")
+      .mockReturnValue(f.service);
+    cleanups.push(() => lookup.mockRestore());
+    const recovery = taskFirstEventRecovery({
+      draftId: "draft",
+      revision: 7,
+      preparationId: "prepared:7",
+      channelId: "task",
+      regionLabel: f.source.handle.label,
+    });
+    const sign = vi.fn(async (template: Parameters<typeof signed>[1]) =>
+      signed(f.viewer, template),
+    );
+    const publish = vi.fn(async (_event: ReturnType<typeof signed>) => {
+      published();
+    });
+    vi.useFakeTimers();
+    const owner = createOutbox(
+      f.viewer.pubkey,
+      { sign, publish },
+      {
+        load: () => [],
+        save: (next) => {
+          records = structuredClone(next);
+        },
+      },
+      {
+        afterSigned: (event, saved, signal) => {
+          entered();
+          return recordTaskFirstEvent(session, event, saved, signal);
+        },
+      },
+    );
+    try {
+      await owner.ready;
+      const event = f.event();
+      const id = owner.outbox.send(
+        { kind: 9, content: event.content, tags: event.tags },
+        recovery,
+      );
+      const failure = expect(owner.outbox.whenPrepared(id)).rejects.toThrow();
+      await waiting;
+      const original = records.find((item) => item.event.id === id)?.signed;
+      expect(original).toBeDefined();
+      expect(f.recordFirstEvent).not.toHaveBeenCalled();
+      expect(publish).not.toHaveBeenCalled();
+      if (outcome === "cancel") reject(new Error("Create cancelled"));
+      else if (outcome === "timeout") await vi.advanceTimersByTimeAsync(10_000);
+      else f.reconnect();
+      await failure;
+      expect(
+        owner.outbox.snapshot().find((item) => item.event.id === id),
+      ).toMatchObject({
+        delivery: "failed",
+        signed: original,
+        recovery,
+        ...(outcome === "timeout"
+          ? { error: "Delivery timed out; check or retry this message" }
+          : {}),
+      });
+      resolve();
+      if (outcome !== "cancel") await ready;
+      barrier = Promise.resolve();
+      owner.outbox.retry(id);
+      await owner.outbox.whenPrepared(id);
+      await delivery;
+      expect(f.recordFirstEvent).toHaveBeenCalledTimes(1);
+      expect(sign).toHaveBeenCalledTimes(1);
+      expect(publish).toHaveBeenCalledTimes(1);
+      expect(JSON.stringify(publish.mock.calls[0]?.[0])).toBe(
+        JSON.stringify(original),
+      );
+    } finally {
+      resolve();
+      owner.dispose();
+      vi.useRealTimers();
+    }
+  },
+);

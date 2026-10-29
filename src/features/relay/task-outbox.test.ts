@@ -316,10 +316,11 @@ it("restores the guarded create and first message with fresh policy and their or
     outbox.retry(messageId, () => eligible);
     await vi.waitFor(() => expect(publish).toHaveBeenCalled());
     await createEntered.promise;
-    await vi.waitFor(() => expect(recordFirstEvent).toHaveBeenCalledTimes(2));
+    expect(recordFirstEvent).not.toHaveBeenCalled();
     expect(publish.mock.calls.map(([event]) => event.kind)).toEqual([9007]);
     allowCreate.resolve();
     await resumed.ready;
+    await vi.waitFor(() => expect(recordFirstEvent).toHaveBeenCalledTimes(1));
     // The create's roster refresh can invalidate the simultaneous mention
     // preflight. That safe refusal is retried deliberately with the same event.
     await vi.waitFor(() => {

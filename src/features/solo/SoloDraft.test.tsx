@@ -14,13 +14,13 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { RelaySession } from "../relay/session";
+import { createRelaySession, type RelaySession } from "../relay/session";
 import { readView, writeView } from "../../shared/view-state";
 import { linkedDraftKey, type LinkedChat } from "./linked-chat";
 import { SoloDraft, resetNewChatProject } from "./SoloDraft";
 import { ChatNotStarted, createChannelWrites } from "../relay/channel-writes";
 import { createOutbox } from "../relay/outbox";
-import { keypair, signed } from "../relay/testing";
+import { keypair, metadata, roster, signed } from "../relay/testing";
 import { SOLO_LABEL } from "./labels";
 import { attachmentDraft } from "../messages/attachment-draft";
 import { createSoloRegionFixture } from "../channel-navigation/solo-navigation-testing";
@@ -2386,3 +2386,454 @@ it.each([false, true])(
     }
   },
 );
+
+it.each(["refresh", "stable", "revoked", "startup"] as const)(
+  "persists first-message intent before waiting for task creation (%s)",
+  async (mode) => {
+    const viewer = keypair(),
+      agent = keypair(),
+      authority = keypair();
+    const region = createSoloRegionFixture(viewer.pubkey);
+    const channelId = "22222222-2222-4222-8222-222222222222";
+    const draftId = "33333333-3333-4333-8333-333333333333";
+    const gate = () => {
+      let resolve = () => {};
+      const promise = new Promise<void>((done) => {
+        resolve = done;
+      });
+      return { promise, resolve };
+    };
+    const createGate = gate();
+    const createEntered = gate();
+    const messageGate = gate();
+    const archiveGate = gate();
+    const archiveEntered = gate();
+    let refreshingFirstEvent = false;
+    let recordCalls = 0;
+    const signs: number[] = [];
+    let records: readonly import("../relay/outbox").OutgoingEvent[] = [];
+    let created = false;
+    let authorized = true;
+    const publish = vi.fn(async (event: Parameters<typeof signed>[1]) => {
+      if (event.kind === 9007) created = true;
+    });
+    const native = {
+      status: "ready" as const,
+      agents: [
+        {
+          pubkey: agent.pubkey,
+          name: "Task agent",
+          owner: viewer.pubkey,
+          relayUrl: "https://relay.test",
+        },
+      ],
+    };
+    const owner = createRelaySession(
+      {
+        viewer: viewer.pubkey,
+        scope: "https://relay.test",
+        relayAuthor: authority.pubkey,
+        archiveAuthority: authority.pubkey,
+        channelIdentity: true,
+        media: () => undefined,
+        query: async (filters) => {
+          if (
+            refreshingFirstEvent &&
+            filters.some((filter) => filter.kinds?.includes(13535))
+          ) {
+            archiveEntered.resolve();
+            await archiveGate.promise;
+          }
+          if (!created) return [];
+          return [
+            roster(authority, channelId, [viewer.pubkey, agent.pubkey]),
+            metadata(authority, channelId, "Task", undefined, [
+              ["t", "stream"],
+              ["private"],
+              ["t", SOLO_LABEL],
+              ["t", source.handle.label],
+              ["t", "solo-task-mode:v1"],
+              ["P", viewer.pubkey],
+            ]),
+          ].filter((event) =>
+            filters.some((filter) => filter.kinds?.includes(event.kind)),
+          );
+        },
+        writer: {
+          kinds: [9, 9007],
+          sign: async (template) => {
+            signs.push(template.kind);
+            if (template.kind === 9007) {
+              createEntered.resolve();
+              await createGate.promise;
+            }
+            if (template.kind === 9) await messageGate.promise;
+            return signed(viewer, template);
+          },
+          publish,
+        },
+      },
+      {
+        outboxStorage: {
+          load: () => [],
+          save: (next) => {
+            records = structuredClone(next);
+          },
+        },
+        agentChoices: {
+          snapshot: () => native,
+          subscribe: () => () => {},
+          refresh: async () => {},
+        },
+      },
+    );
+    const samples: {
+      archives: string;
+      eligible: boolean;
+      incarnation: string;
+      aborted: boolean;
+    }[] = [];
+    const source = await region.register({
+      task: {
+        prepare: async (draft) => ({
+          ok: true,
+          channelId,
+          revision: draft.revision,
+          preparationId: "first-send",
+          members: [viewer.pubkey, agent.pubkey],
+        }),
+        markChannelStarted: async () => "start",
+        // Exact plugin16 authorization boundary: fresh template refresh includes archives.
+        recordFirstEvent: async () => {
+          recordCalls++;
+          if (mode === "stable") return;
+          refreshingFirstEvent = true;
+          await owner.session.agentChoices.refresh("templates", {
+            fresh: true,
+          });
+        },
+        participants: {
+          eligible: (key) => {
+            const archives =
+              owner.session.agentChoices.snapshot().archives.status;
+            const eligible =
+              authorized && key === agent.pubkey && archives === "ready";
+            samples.push({
+              archives,
+              eligible,
+              incarnation: source.binding().incarnation,
+              aborted: source.signal().aborted,
+            });
+            return eligible;
+          },
+          defaultRecipient: () => agent.pubkey,
+          makePrimary: async () => {},
+        },
+      },
+    });
+    const lookup = vi
+      .spyOn(soloNavigation, "soloNavigationFor")
+      .mockReturnValue(region.service);
+    const started = vi.fn();
+    let mounted: ReturnType<typeof render> | undefined;
+    try {
+      await owner.session.outbox?.ready();
+      if (mode !== "startup") {
+        owner.session.channels.ensureList();
+        await waitFor(() =>
+          expect(owner.session.channels.list().status).toBe("ready"),
+        );
+      }
+      expect(owner.session.channels.list().channels).toHaveLength(0);
+      expect(created).toBe(false);
+      await owner.session.agentChoices.refresh("templates", { fresh: true });
+      const incarnation = source.binding().incarnation;
+      writeView(
+        "first-send-order",
+        `solo:task:${draftId}:new-draft`,
+        taggedDraft("Original task request", agent.pubkey, "Task agent"),
+      );
+      mounted = render(
+        <SoloDraft
+          session={owner.session}
+          scope="first-send-order"
+          task={{ region: source.handle.label, draftId }}
+          onStarted={started}
+        />,
+      );
+      await userEvent
+        .setup()
+        .click(screen.getByRole("button", { name: "Send message" }));
+      await createEntered.promise;
+      await act(async () => {
+        messageGate.resolve();
+      });
+      await waitFor(() =>
+        expect(
+          records.find((item) => item.event.kind === 9)?.signed,
+        ).toBeDefined(),
+      );
+      expect(refreshingFirstEvent).toBe(false);
+      expect(
+        owner.session.outbox?.snapshot().map((item) => item.event.kind),
+      ).toEqual([9007, 9]);
+      expect(started).not.toHaveBeenCalled();
+      expect(screen.getByRole("textbox")).toHaveTextContent(
+        "Original task request",
+      );
+      authorized = mode !== "revoked";
+      await act(async () => {
+        createGate.resolve();
+      });
+      if (mode === "revoked") {
+        await waitFor(() =>
+          expect(
+            records.find((item) => item.event.kind === 9007),
+          ).toMatchObject({
+            signed: expect.anything(),
+            delivery: "failed",
+            guarded: true,
+            error: expect.stringContaining("Channel addition cancelled"),
+          }),
+        );
+        await waitFor(() =>
+          expect(screen.getByRole("alert")).toHaveTextContent(
+            "Channel addition cancelled",
+          ),
+        );
+        await waitFor(() =>
+          expect(records.find((item) => item.event.kind === 9)).toMatchObject({
+            signed: expect.anything(),
+            recovery: expect.anything(),
+            delivery: "failed",
+          }),
+        );
+        expect(started).not.toHaveBeenCalled();
+        expect(publish).not.toHaveBeenCalled();
+        expect(recordCalls).toBe(0);
+        return;
+      }
+      await waitFor(() =>
+        expect(
+          owner.session.channels
+            .list()
+            .channels.find(
+              (channel) => channel.id === channelId && !channel.pending,
+            ),
+        ).toBeDefined(),
+      );
+      await act(async () => {
+        messageGate.resolve();
+      });
+      if (mode === "refresh" || mode === "startup") {
+        await archiveEntered.promise;
+        expect(owner.session.agentChoices.snapshot().archives.status).toBe(
+          "loading",
+        );
+        expect(samples).toContainEqual({
+          archives: "ready",
+          eligible: true,
+          incarnation,
+          aborted: false,
+        });
+        expect(source.binding().incarnation).toBe(incarnation);
+        expect(source.signal().aborted).toBe(false);
+        await act(async () => {
+          archiveGate.resolve();
+        });
+      }
+      await waitFor(() =>
+        expect(
+          owner.session.outbox?.snapshot().find((item) => item.event.kind === 9)
+            ?.delivery,
+        ).not.toBe("sending"),
+      );
+      let retriedRecordCalls = 0;
+      if (mode === "startup") {
+        const original = records.find((item) => item.event.kind === 9);
+        expect(original).toMatchObject({
+          signed: expect.anything(),
+          recovery: expect.anything(),
+          delivery: "failed",
+        });
+        await waitFor(() =>
+          expect(screen.getByRole("alert")).toHaveTextContent("participant"),
+        );
+        expect(started).not.toHaveBeenCalled();
+        await owner.session.agentChoices.refresh("templates", { fresh: true });
+        await waitFor(() =>
+          expect(owner.session.channels.list().status).toBe("ready"),
+        );
+        retriedRecordCalls = recordCalls;
+        await userEvent
+          .setup()
+          .click(screen.getByRole("button", { name: "Send message" }));
+        await waitFor(() =>
+          expect(publish.mock.calls.map(([event]) => event.kind)).toEqual([
+            9007, 9,
+          ]),
+        );
+        expect(records.find((item) => item.event.kind === 9)?.event.id).toBe(
+          original?.event.id,
+        );
+      }
+      expect(
+        owner.session.outbox?.snapshot().find((item) => item.event.kind === 9)
+          ?.error,
+      ).toBeUndefined();
+      await waitFor(() =>
+        expect(publish.mock.calls.map(([event]) => event.kind)).toEqual([
+          9007, 9,
+        ]),
+      );
+      expect(records.find((item) => item.event.kind === 9007)?.delivery).toBe(
+        "accepted",
+      );
+      expect(
+        records.find((item) => item.event.kind === 9)?.error,
+      ).toBeUndefined();
+      expect(started).toHaveBeenCalledWith(channelId);
+      expect(recordCalls).toBe(retriedRecordCalls + 1);
+      expect(signs).toEqual([9007, 9]);
+    } finally {
+      createGate.resolve();
+      messageGate.resolve();
+      archiveGate.resolve();
+      mounted?.unmount();
+      owner.dispose();
+      lookup.mockRestore();
+      await region.dispose();
+    }
+  },
+);
+
+it("shows pending accepted-message recovery and cancels binding when its draft region ends", async () => {
+  const f = setup(),
+    viewer = keypair(),
+    agent = "a".repeat(64);
+  Object.assign(f.session, { viewer: viewer.pubkey });
+  const region = createSoloRegionFixture(viewer.pubkey);
+  const record = vi.fn(async () => {}),
+    started = vi.fn(),
+    retry = vi.fn();
+  const channelId = "22222222-2222-4222-8222-222222222222",
+    draftId = "33333333-3333-4333-8333-333333333333";
+  let resolve = () => {};
+  const ready = new Promise<void>((done) => {
+    resolve = done;
+  });
+  const starting = vi.fn(() => ready);
+  const source = await region.register({
+    task: {
+      prepare: async () => ({ ok: false, reason: "Saved message only" }),
+      markChannelStarted: async () => "resume",
+      recordFirstEvent: record,
+      participants: {
+        eligible: (key) => key === agent,
+        defaultRecipient: () => agent,
+        makePrimary: async () => {},
+      },
+    },
+  });
+  const lookup = vi
+    .spyOn(soloNavigation, "soloNavigationFor")
+    .mockReturnValue(region.service);
+  const labels = [SOLO_LABEL, source.handle.label, "solo-task-mode:v1"];
+  const event = signed(viewer, {
+    kind: 9,
+    content: "@Member agent Saved request",
+    tags: [
+      ["h", channelId],
+      ["p", agent],
+    ],
+  });
+  const create = signed(viewer, {
+    kind: 9007,
+    content: "",
+    tags: [
+      ["h", channelId],
+      ["name", "Saved task"],
+      ["visibility", "private"],
+      ["channel_type", "stream"],
+      ...labels.map((label) => ["t", label]),
+      ["p", viewer.pubkey],
+      ["p", agent],
+    ],
+  });
+  const recovery = {
+    key: `solo-task:${draftId}`,
+    value: JSON.stringify({
+      draftId,
+      revision: 7,
+      preparationId: "prepared:7",
+      channelId,
+      regionLabel: source.handle.label,
+    }),
+  };
+  const operations = [
+    { event, signed: event, delivery: "accepted", recovery },
+    { event: create, signed: create, delivery: "accepted" },
+  ];
+  const channelList = {
+    channels: [
+      {
+        id: channelId,
+        channelType: "solo",
+        creator: viewer.pubkey,
+        members: [viewer.pubkey, agent],
+        labels,
+      },
+    ],
+  };
+  Object.assign(f.session.channels, { list: () => channelList });
+  Object.assign(f.session.channelWrites, {
+    starting,
+    resumeStart: () => ({ create: create.id, ready }),
+  });
+  Object.assign(f.session.outbox as object, {
+    snapshot: () => operations,
+    retry,
+  });
+  const key = `solo:task:${draftId}:new-draft`;
+  writeView("accepted-recovery", key, taggedDraft("Saved request"));
+  const view = render(
+    <SoloDraft
+      session={f.session}
+      scope="accepted-recovery"
+      task={{ region: source.handle.label, draftId }}
+      onStarted={started}
+    />,
+  );
+  try {
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(starting).toHaveBeenCalledWith(channelId));
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+    expect(record).not.toHaveBeenCalled();
+    expect(started).not.toHaveBeenCalled();
+    await act(async () => {
+      region.cache();
+    });
+    expect(screen.getByRole("alert")).toHaveTextContent(/abort/i);
+    await act(async () => {
+      resolve();
+    });
+    expect(record).not.toHaveBeenCalled();
+    expect(started).not.toHaveBeenCalled();
+    expect(retry).not.toHaveBeenCalled();
+    expect(operations[0]).toMatchObject({
+      event: { id: event.id },
+      signed: event,
+      recovery,
+    });
+    expect(readView("accepted-recovery", key, null)).toMatchObject({
+      text: expect.stringContaining("Saved request"),
+    });
+  } finally {
+    resolve();
+    view.unmount();
+    lookup.mockRestore();
+    await region.dispose();
+  }
+});

@@ -329,8 +329,22 @@ it("shows the absent Member default without saving, and a declined save reloads 
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Channel details changed",
   );
-  h.load.mockResolvedValue({ ...base, canEdit: false });
-  await user.click(screen.getByRole("button", { name: "Reload access" }));
+  let reload!: (details: ChannelDetails) => void;
+  const gate = new Promise<ChannelDetails>((resolve) => {
+    reload = resolve;
+  });
+  h.load.mockReturnValueOnce(gate);
+  try {
+    await user.click(screen.getByRole("button", { name: "Reload access" }));
+    expect(
+      screen.getByRole("region", { name: "General access" }),
+    ).toHaveFocus();
+  } finally {
+    await act(async () => {
+      reload({ ...base, canEdit: false });
+      await gate;
+    });
+  }
   await waitFor(() =>
     expect(
       screen.getByRole("combobox", { name: "New people can" }),
@@ -340,6 +354,7 @@ it("shows the absent Member default without saving, and a declined save reloads 
     screen.getByRole("combobox", { name: "New people can" }),
   ).toBeDisabled();
   expect(h.save).toHaveBeenCalledOnce();
+  expect(screen.getByRole("region", { name: "General access" })).toHaveFocus();
 });
 it("locks both choices while saving and recovers an uncertain save after remount without resending", async () => {
   const h = harness();
@@ -388,10 +403,25 @@ it("locks both choices while saving and recovers an uncertain save after remount
     name: "Check save status",
   });
   await waitFor(() => expect(check).toBeEnabled());
+  let finishCheck!: () => void;
+  const checking = new Promise<void>((resolve) => {
+    finishCheck = resolve;
+  });
   h.check.mockImplementationOnce(async () => {
+    await checking;
     h.setAttempt(undefined);
   });
-  await user.click(check);
+  try {
+    await user.click(check);
+    expect(
+      screen.getByRole("region", { name: "General access" }),
+    ).toHaveFocus();
+  } finally {
+    await act(async () => {
+      finishCheck();
+      await checking;
+    });
+  }
   await waitFor(() =>
     expect(h.check).toHaveBeenCalledExactlyOnceWith(
       "alpha",
@@ -399,6 +429,7 @@ it("locks both choices while saving and recovers an uncertain save after remount
     ),
   );
   expect(h.save).toHaveBeenCalledOnce();
+  expect(screen.getByRole("region", { name: "General access" })).toHaveFocus();
 });
 it("retires an open confirmation and late reads when the destination changes", async () => {
   const h = harness();

@@ -199,6 +199,7 @@ function ChannelGeneralAccessEditor({
       (check ? attempt?.status !== "unconfirmed" : !base || !choice || locked)
     )
       return;
+    if (check) section.current?.focus();
     busy.current = true;
     setPending(true);
     setError("");
@@ -341,6 +342,7 @@ function ChannelGeneralAccessEditor({
           <Button
             disabled={loading || pending}
             onClick={() => {
+              section.current?.focus();
               if (lifetime.current) void load(lifetime.current.signal);
             }}
           >

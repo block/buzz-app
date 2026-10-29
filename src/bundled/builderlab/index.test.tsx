@@ -977,7 +977,7 @@ it.each([
     const instructions = await screen.findByRole("textbox", {
       name: "Instructions",
     });
-    expect(instructions).toHaveValue("Be concise.");
+    await waitFor(() => expect(instructions).toHaveValue("Be concise."));
     await user.clear(instructions);
     await user.type(instructions, "New direction.");
     const save = screen.getByRole("button", { name: "Save" });

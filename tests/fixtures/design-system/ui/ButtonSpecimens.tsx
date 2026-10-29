@@ -19,9 +19,12 @@ import {
   MenuItem,
   MenuRadioGroup,
   MenuRadioItem,
+  MenuGroup,
+  MenuGroupLabel,
 } from "../../../../src/shared/design-system/ui/Menu";
 import { SurfaceButton } from "../../../../src/shared/design-system/ui/SurfaceButton";
 import { Button } from "../../../../src/shared/design-system/ui/Button";
+import { ChoiceRow } from "../../../../src/shared/design-system/ui/ChoiceRow";
 import { IconButton } from "../../../../src/shared/design-system/ui/IconButton";
 import { SplitButton } from "../../../../src/shared/design-system/ui/SplitButton";
 
@@ -159,11 +162,27 @@ export function ButtonSpecimen() {
           variant="prominent"
           menuLabel="Other add options"
           menu={
-            <>
-              <MenuItem>Add as participant</MenuItem>
-              <MenuItem>Add with view-only access</MenuItem>
-              <MenuItem>Add as admin</MenuItem>
-            </>
+            <MenuGroup>
+              <MenuGroupLabel>Add as</MenuGroupLabel>
+              <MenuItem>
+                <ChoiceRow
+                  label="Participate"
+                  description="Send messages, reply, and react."
+                />
+              </MenuItem>
+              <MenuItem>
+                <ChoiceRow
+                  label="View only"
+                  description="Read messages and threads."
+                />
+              </MenuItem>
+              <MenuItem>
+                <ChoiceRow
+                  label="Admin"
+                  description="Manage this channel and its members."
+                />
+              </MenuItem>
+            </MenuGroup>
           }
         >
           Add

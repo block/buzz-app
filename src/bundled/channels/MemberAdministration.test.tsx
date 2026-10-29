@@ -286,10 +286,10 @@ it.each([
       await screen.findByRole("menuitem", {
         name:
           role === "guest"
-            ? "Add with view-only access"
+            ? "View only Read messages and threads."
             : role === "member"
-              ? "Add as participant"
-              : "Add as admin",
+              ? "Participate Send messages, reply, and react."
+              : "Admin Manage this channel and its members.",
       }),
     );
     const dialog = await screen.findByRole("dialog", { name: "Add member?" });
@@ -342,7 +342,9 @@ it("cancels an addition from the split menu and retains the search and keyboard 
   trigger.focus();
   await t.user.keyboard("{Enter}");
   await t.user.click(
-    await screen.findByRole("menuitem", { name: "Add as admin" }),
+    await screen.findByRole("menuitem", {
+      name: "Admin Manage this channel and its members.",
+    }),
   );
   const dialog = await screen.findByRole("dialog", { name: "Add member?" });
   await t.user.click(within(dialog).getByRole("button", { name: "Cancel" }));
@@ -381,7 +383,9 @@ it("disables an addition confirmation if the person joins with a different role"
     await screen.findByRole("button", { name: /^Add Morgan .* as$/ }),
   );
   await t.user.click(
-    await screen.findByRole("menuitem", { name: "Add as admin" }),
+    await screen.findByRole("menuitem", {
+      name: "Admin Manage this channel and its members.",
+    }),
   );
   const dialog = await screen.findByRole("dialog", { name: "Add member?" });
   await act(async () => {

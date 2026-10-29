@@ -59,7 +59,12 @@ import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Button, type ButtonProps } from "../../shared/design-system/ui/Button";
 import { SplitButton } from "../../shared/design-system/ui/SplitButton";
-import { MenuItem } from "../../shared/design-system/ui/Menu";
+import {
+  MenuGroup,
+  MenuGroupLabel,
+  MenuItem,
+} from "../../shared/design-system/ui/Menu";
+import { ChoiceRow } from "../../shared/design-system/ui/ChoiceRow";
 import { Select } from "../../shared/design-system/ui/Select";
 import { SearchField } from "../../shared/design-system/ui/SearchField";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
@@ -96,18 +101,21 @@ const INVITATION_GROUP_SIZE = 4;
 const additionRoles = [
   {
     role: "member",
+    label: "Participate",
     action: "Add as participant",
-    description: "Participants can send messages, reply, and react.",
+    description: "Send messages, reply, and react.",
   },
   {
     role: "guest",
+    label: "View only",
     action: "Add with view-only access",
-    description: "Viewing only allows reading messages and threads.",
+    description: "Read messages and threads.",
   },
   {
     role: "admin",
+    label: "Admin",
     action: "Add as admin",
-    description: "Admins can manage this channel and its members.",
+    description: "Manage this channel and its members.",
   },
 ] as const;
 
@@ -338,20 +346,28 @@ const MemberIdentityRow = memo(function MemberIdentityRow({
                 {...addButtonProps}
                 menuLabel={`Add ${name} (${keyLabel}) as`}
                 menuDisabled={busy}
-                menu={additionRoles.map((option) => (
-                  <MenuItem
-                    key={option.role}
-                    onClick={() =>
-                      onChange({
-                        pubkey,
-                        expectedRole: "absent",
-                        role: option.role,
-                      })
-                    }
-                  >
-                    {option.action}
-                  </MenuItem>
-                ))}
+                menu={
+                  <MenuGroup>
+                    <MenuGroupLabel>Add as</MenuGroupLabel>
+                    {additionRoles.map((option) => (
+                      <MenuItem
+                        key={option.role}
+                        onClick={() =>
+                          onChange({
+                            pubkey,
+                            expectedRole: "absent",
+                            role: option.role,
+                          })
+                        }
+                      >
+                        <ChoiceRow
+                          label={option.label}
+                          description={option.description}
+                        />
+                      </MenuItem>
+                    ))}
+                  </MenuGroup>
+                }
               />
             ) : (
               <Button {...addButtonProps} />

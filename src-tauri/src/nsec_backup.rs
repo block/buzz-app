@@ -177,7 +177,8 @@ impl From<String> for Stop {
 #[derive(Debug)]
 enum ReadError {
     /// kgoose answers 401 for every expired, revoked, unknown or missing session
-    /// credential on `me` and `current`.
+    /// credential on `me` and `current`; `me` also reports a session that has
+    /// expired by this device's clock.
     SignedOut,
     /// A 403 on `current` (`me` only ever answers 401): the session lacks the
     /// Buzz user capability or the account its USER role (kgoose's
@@ -502,9 +503,12 @@ impl NsecBackupHost {
         let unreachable = |_| Stop::Failed(Failure::Unreachable);
         let config = self.config.as_ref().as_ref().ok_or(UNAVAILABLE)?;
         self.valid(epoch)?;
-        // Without a local key there is nothing to describe.
-        let Ok(pubkey) = identity.viewer().await else {
-            return Ok(Outcome::Idle);
+        let pubkey = match identity.saved_viewer().await {
+            Ok(Some(pubkey)) => pubkey,
+            // Without a local key there is nothing to describe.
+            Ok(None) => return Ok(Outcome::Idle),
+            // A denied, busy or locked store is not an absent key.
+            Err(_) => return Err(Stop::Failed(Failure::Storage)),
         };
         let consent = crate::nsec_backup_choice::read(
             &self.root.as_ref().ok_or(UNAVAILABLE)?.join("choice.json"),
@@ -1053,9 +1057,12 @@ impl Api {
         if account.subject.is_empty()
             || account.subject.len() > 1024
             || account.subject.chars().any(char::is_control)
-            || expiry <= now as i64
         {
             return Err(RETRY.into());
+        }
+        // Expired by this device's clock; a new sign-in clears it, a retry cannot.
+        if expiry <= now as i64 {
+            return Err(ReadError::SignedOut);
         }
         Ok(account)
     }

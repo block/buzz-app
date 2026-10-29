@@ -26,6 +26,7 @@ fn recovery(keys: &[[u8; 32]], failed: usize) -> serde_json::Value {
 }
 struct FixtureState {
     me_status: u16,
+    expires_at: String,
     mapping: Option<String>,
     mapping_status: u16,
     mapping_body: Option<serde_json::Value>,
@@ -64,6 +65,7 @@ impl Service {
         let root = format!("http://{}", listener.local_addr().unwrap());
         let state = Arc::new(Mutex::new(FixtureState {
             me_status: 200,
+            expires_at: "2999-01-01T00:00:00Z".into(),
             mapping: Some(pubkey([1; 32])),
             mapping_status: 200,
             mapping_body: None,
@@ -197,7 +199,7 @@ async fn serve(
         *state.requests.entry(path.clone()).or_default() += 1;
         match path.as_str() {
             "/v1/auth/login/exchange" => (200, serde_json::json!({"session_credential":"synthetic-cli-credential"})),
-            "/v1/auth/me" => (state.me_status, serde_json::json!({"subject":state.subject,"expires_at":"2999-01-01T00:00:00Z"})),
+            "/v1/auth/me" => (state.me_status, serde_json::json!({"subject":state.subject,"expires_at":state.expires_at})),
             "/v1/buzz/nostr-identities/current" => (state.mapping_status,state.mapping_body.clone().unwrap_or_else(||serde_json::json!({"correlation_id":"synthetic-correlation","identity":state.mapping.as_ref().map(|key|serde_json::json!({"pubkey_hex":key}))}))),
             "/v1/buzz/nsec-backups/enrollment" => {
                 let fixture: serde_json::Value = serde_json::from_str(include_str!("fixtures/hpke_nsec_backup_v1.json")).unwrap();
@@ -1323,7 +1325,7 @@ async fn a_pass_publishes_running_then_its_outcome_under_the_returned_ticket() {
 #[tokio::test]
 async fn each_stopped_pass_publishes_its_waiting_reason_or_failure_kind() {
     type Knob = fn(&mut FixtureState);
-    let cases: [(Knob, &str); 23] = [
+    let cases: [(Knob, &str); 24] = [
         (|s| s.mapping = None, "waiting:not_linked"),
         (
             |s| s.mapping = Some(pubkey([2; 32])),
@@ -1333,6 +1335,11 @@ async fn each_stopped_pass_publishes_its_waiting_reason_or_failure_kind() {
         // kgoose's answer to an expired, revoked or unknown session credential.
         (|s| s.me_status = 401, "failed:signed_out"),
         (|s| s.mapping_status = 401, "failed:signed_out"),
+        // A session `me` accepts but this device's clock has already expired.
+        (
+            |s| s.expires_at = "2000-01-01T00:00:00Z".into(),
+            "failed:signed_out",
+        ),
         // A missing capability or USER role on `current`, which no retry or
         // sign-in changes; kgoose's own refusal for the role is `unauthorized`.
         (|s| s.mapping_status = 403, "failed:not_offered"),
@@ -1401,6 +1408,19 @@ async fn each_stopped_pass_publishes_its_waiting_reason_or_failure_kind() {
             .await,
         Err(Stop::Failed(Failure::Busy))
     );
+    // Only a confirmed absent key is idle; a key that cannot be read is storage.
+    for (identity, expected) in [
+        (IdentityHost::fixture_without_key(true), Ok(Outcome::Idle)),
+        (
+            IdentityHost::fixture_without_key(false),
+            Err(Stop::Failed(Failure::Storage)),
+        ),
+    ] {
+        assert_eq!(
+            host.backup(&identity, &service.session(), 0).await,
+            expected
+        );
+    }
     assert!(service.state.lock().unwrap().requests.is_empty());
 }
 

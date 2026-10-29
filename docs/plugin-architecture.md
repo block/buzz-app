@@ -305,8 +305,8 @@ A plugin that shows Attention and its device switch calls
 device only while such a plugin is on. With none on, every agent's
 `attentionEnabled` reads false and each keeps its saved switch. Messages from
 then wake nothing later, even across a restart. While plugins are still
-starting, kind 9 watches keep their catch-up place, so startup still catches up
-on what the app missed while closed. The bundled Agent Attention UI plugin calls
+starting and none has shown Attention yet, kind 9 watches keep their catch-up
+place, so startup still catches up on what the app missed while closed. The bundled Agent Attention UI plugin calls
 it.
 
 A plugin, bundled or installed, can add a tool to every agent session in the

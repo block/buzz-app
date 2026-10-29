@@ -533,7 +533,8 @@ export class AgentRunners {
    * nothing from the time it was off; across a restart, its saved
    * checkpoint, moved while it was off, does the same. */
   private quiet = new Set<string>();
-  /** Whether plugins have finished starting since this copy started. */
+  /** Whether startup is over for catch-up: plugins have finished starting,
+   * or Attention has been shown, since this copy started. */
   private settled = false;
   /** Mention turns working now, which closing or reloading the app would
    * stop, and those the app left working last time until they are given
@@ -1093,11 +1094,11 @@ export class AgentRunners {
       this.setCheckpoint(key, checkpoint);
       changed = true;
     };
-    // Until plugins finish starting, every checkpoint stays put, so the first
-    // catch-up still reads what the app missed while closed. After that, no
-    // plugin showing Attention is like turning it off.
-    this.settled ||= this.host.pluginsSettled();
+    // Until plugins finish starting or Attention is shown, every checkpoint
+    // stays put, so the first catch-up still reads what the app missed while
+    // closed. After that, no plugin showing Attention is like turning it off.
     const shown = this.host.attentionShown();
+    this.settled ||= shown || this.host.pluginsSettled();
     const held = !shown && !this.settled;
     for (const runner of this.runners.values()) {
       this.resumeTurns(runner);

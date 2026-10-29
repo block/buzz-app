@@ -718,14 +718,23 @@ test("Up and Down move one line at a time through links that wrap", async ({
     // can cross the break alone.
     const empty = (value, pos) =>
       [value[pos - 1], value[pos]].every((char) => (char ?? "\n") === "\n");
-    // Presses `key` until the head reaches `stop`, returning where each press
+    // Presses `key` from a head at `start`, with a Shift selection's anchor
+    // at `anchor`, until the head reaches `stop`, returning where each press
     // lands. A press that leaves the head in place fails the poll, and so does
     // one that crosses nothing but a line break, unless onto or off an empty
     // line: the caret jumps to the far end of a line, and a Shift selection
     // grows by the break alone, which looks like no move at all.
-    const walk = async (key, start, stop) => {
+    const walk = async (key, start, stop, anchor = start) => {
       const value = await input.evaluate((el) => el.value);
-      await input.evaluate((el, at) => el.setSelectionRange(at, at), start);
+      await input.evaluate(
+        (el, [anchor, head]) =>
+          el.setSelectionRange(
+            Math.min(anchor, head),
+            Math.max(anchor, head),
+            head < anchor ? "backward" : "forward",
+          ),
+        [anchor, start],
+      );
       await rendered();
       const heads = [];
       let head = start;
@@ -741,7 +750,7 @@ test("Up and Down move one line at a time through links that wrap", async ({
             value.slice(Math.min(previous, head), Math.max(previous, head)),
           ).toMatch(/[^\n]/);
         expect((await caret()).anchor).toBe(
-          key.startsWith("Shift+") ? start : head,
+          key.startsWith("Shift+") ? anchor : head,
         );
         heads.push(head);
         await rendered();
@@ -896,29 +905,99 @@ test("Up and Down move one line at a time through links that wrap", async ({
       ownDraft.length,
     );
     expect(ownDown).toBe(ownTo);
-    // Undoing such a press goes back to just past the break, rather than
-    // leave the break alone selected.
-    const undo = async (from, to) => {
-      for (const [key, back, start, edge] of [
-        ["Shift+ArrowUp", "Shift+ArrowDown", to + 1, from],
-        ["Shift+ArrowDown", "Shift+ArrowUp", from - 1, to],
-      ]) {
-        await input.evaluate((el, at) => el.setSelectionRange(at, at), start);
-        await rendered();
-        await page.keyboard.press(key);
-        await expect.poll(caret).toEqual({ head: edge, anchor: start });
-        await rendered();
-        await page.keyboard.press(back);
-        await expect.poll(caret).toEqual({ head: start, anchor: start });
-      }
+
+    // The draft's links, and the visual line of a head: the newlines before
+    // it, plus the lines each link before it wraps onto. A head past a link's
+    // start is at or past its end, on its last line.
+    const layout = async () => {
+      const value = await input.evaluate((el) => el.value);
+      const counts = await rects();
+      const links = [...value.matchAll(/\[[^\]]*\]\([^)]*\)/g)].map(
+        (match, index) => ({
+          from: match.index,
+          to: match.index + match[0].length,
+          count: counts[index],
+        }),
+      );
+      const visual = (head) =>
+        value.slice(0, head).split("\n").length -
+        1 +
+        links.reduce(
+          (lines, { from, count }) => lines + (head > from ? count - 1 : 0),
+          0,
+        );
+      return { value, links, visual };
     };
-    await undo(ownFrom, ownTo);
+    // Presses `key` and returns the caret once its head leaves `head`.
+    const press = async (key, head, message) => {
+      await page.keyboard.press(key);
+      let now;
+      await expect
+        .poll(
+          async () => {
+            now = await caret();
+            return now.head;
+          },
+          { message },
+        )
+        .not.toBe(head);
+      return now;
+    };
+    // From either end of each line and link, a plain press moves exactly one
+    // visual line. A Shift press and then the opposite one keep the anchor,
+    // never carry the head past it, and never leave a lone line break
+    // selected. Most return to the start, but entering a line that only a
+    // link holds stops at an edge chosen by direction, not by the caret's
+    // column, so the second press can stop short of it.
+    const moves = async ({ value, links, visual }) => {
+      const ends = new Set([0, value.length]);
+      for (const { index } of value.matchAll(/\n/g))
+        ends.add(index).add(index + 1);
+      for (const { from, to } of links) ends.add(from).add(to);
+      for (const at of ends)
+        for (const [key, back, step] of [
+          ["ArrowUp", "ArrowDown", -1],
+          ["ArrowDown", "ArrowUp", 1],
+        ]) {
+          const target = visual(at) + step;
+          if (target < 0 || target > visual(value.length)) continue;
+          const message = `${key} from ${at}`;
+          await input.evaluate((el, at) => el.setSelectionRange(at, at), at);
+          await rendered();
+          await page.keyboard.press(key);
+          await expect
+            .poll(async () => visual((await caret()).head), { message })
+            .toBe(target);
+          await input.evaluate((el, at) => el.setSelectionRange(at, at), at);
+          await rendered();
+          const there = await press(`Shift+${key}`, at, `Shift+${message}`);
+          expect(there.anchor, `Shift+${message}`).toBe(at);
+          if (!empty(value, at) && !empty(value, there.head))
+            expect(
+              value.slice(Math.min(at, there.head), Math.max(at, there.head)),
+              `Shift+${message}`,
+            ).toMatch(/[^\n]/);
+          await rendered();
+          const backMessage = `Shift+${key} then Shift+${back} from ${at}`;
+          const { head, anchor } = await press(
+            `Shift+${back}`,
+            there.head,
+            backMessage,
+          );
+          expect(anchor, backMessage).toBe(at);
+          expect(Math.sign(head - at), backMessage).not.toBe(-step);
+          if (head !== at)
+            expect(
+              value.slice(Math.min(at, head), Math.max(at, head)),
+              backMessage,
+            ).toMatch(/[^\n]/);
+        }
+    };
+    await moves(await layout());
 
     // fill() makes a paragraph of each line, but a text/plain paste, like
     // Shift+Enter, puts newline characters in one paragraph. A newline is
-    // drawn at the end of its line, apart from a caret just past it. From
-    // either end of each line of such a draft, a plain press moves exactly
-    // one visual line.
+    // drawn at the end of its line, apart from a caret just past it.
     const pasted = link(title, 6);
     const paste = async (lines) => {
       const value = lines.join("\n");
@@ -936,54 +1015,30 @@ test("Up and Down move one line at a time through links that wrap", async ({
       }, value);
       await expect(input).toHaveJSProperty("value", value);
       await expect(input.locator(":scope > p")).toHaveCount(1);
-      const [count] = await rects();
-      expect(count).toBeGreaterThanOrEqual(2);
-      const from = value.indexOf(pasted);
-      const to = from + pasted.length;
-      // The link's start is on its first visual line and its end on its last.
-      const visual = (head) =>
-        value.slice(0, head).split("\n").length -
-        1 +
-        (head > from ? count - 1 : 0);
-      const ends = new Set([0, value.length]);
-      for (const { index } of value.matchAll(/\n/g))
-        ends.add(index).add(index + 1);
-      for (const at of ends)
-        for (const [key, step] of [
-          ["ArrowUp", -1],
-          ["ArrowDown", 1],
-        ]) {
-          const target = visual(at) + step;
-          if (target < 0 || target > visual(value.length)) continue;
-          await input.evaluate((el, at) => el.setSelectionRange(at, at), at);
-          await rendered();
-          await page.keyboard.press(key);
-          await expect
-            .poll(async () => visual((await caret()).head), {
-              message: `${key} from ${at}`,
-            })
-            .toBe(target);
-        }
-      return { value, from, to };
+      const draft = await layout();
+      // Links titled `title` wrap, and shorter ones do not.
+      for (const { from, to, count } of draft.links)
+        expect(count > 1).toBe(value.slice(from, to).includes(title));
+      await moves(draft);
+      return draft;
     };
     {
       const lines = ["Please review", pasted, "X line", "Thanks"];
-      const { value, from, to } = await paste(lines);
+      const {
+        value,
+        links: [{ from, to }],
+      } = await paste(lines);
       const thanks = value.length - lines.at(-1).length;
       expect(await walk("Shift+ArrowUp", thanks, 0)).toEqual([to + 1, from, 0]);
       const down = await walk("Shift+ArrowDown", 0, value.length);
       expect(down.slice(0, 2)).toEqual([from, to]);
-      await undo(from, to);
     }
     {
       // An empty line beside the link is a line of its own.
-      const { value, from, to } = await paste([
-        "Please review",
-        "",
-        pasted,
-        "",
-        "Thanks",
-      ]);
+      const {
+        value,
+        links: [{ from, to }],
+      } = await paste(["Please review", "", pasted, "", "Thanks"]);
       expect(await walk("Shift+ArrowDown", 0, value.length)).toEqual([
         from - 1,
         to,
@@ -997,8 +1052,47 @@ test("Up and Down move one line at a time through links that wrap", async ({
         from - 1,
         0,
       ]);
-      await undo(from, to);
     }
+    {
+      // With an empty line below the link alone, three Shift presses down
+      // from the line above and three back retrace each other, collapsing at
+      // the start rather than undoing two presses at once.
+      const {
+        links: [{ from, to }],
+      } = await paste(["Please review", pasted, "", "Thanks"]);
+      expect(await walk("Shift+ArrowDown", from - 1, to + 2)).toEqual([
+        to,
+        to + 1,
+        to + 2,
+      ]);
+      expect(await walk("Shift+ArrowUp", to + 2, from - 1, from - 1)).toEqual([
+        to + 1,
+        to,
+        from - 1,
+      ]);
+    }
+    // A link short enough not to wrap still holds its line alone.
+    await paste(["Please review", link("PR 7", 7), "Thanks"]);
+    {
+      // On consecutive lines, each Shift press across two links takes a whole
+      // one, rather than the line break between them.
+      const {
+        value,
+        links: [first, second],
+      } = await paste(["PRs:", link(title, 8), link(title, 9), "Thanks"]);
+      expect(
+        (await walk("Shift+ArrowDown", 0, value.length)).slice(0, 3),
+      ).toEqual([first.from, first.to, second.to]);
+      expect(await walk("Shift+ArrowUp", value.length, 0)).toEqual([
+        second.to,
+        second.from,
+        first.from,
+        0,
+      ]);
+    }
+    // A draft that starts with an empty line: Chromium draws no rect before
+    // its leading newline.
+    await paste(["", pasted, ""]);
 
     // The nearest position on the neighbouring line is a character boundary,
     // never inside an emoji or a cluster, where a caret is drawn at the glyph

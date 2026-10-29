@@ -168,10 +168,9 @@ function moveHead(editor: EditorView, head: number, extend: boolean) {
  * caret position besides the token's edge, so native Up and Down stall there
  * in WebKit and jump to a document edge in Chromium, entering such a line and
  * leaving it alike. Such a line is entered at the token edge it holds, or
- * crossed to the far edge when it holds neither or a Shift selection would
- * otherwise grow by the line break alone, and left for the position on the
- * neighbouring line nearest the caret's column. The token's client rects give
- * its lines, so a line scrolled out of the composer still counts.
+ * crossed to the far edge when it holds neither, and left for the position on
+ * the neighbouring line nearest the caret's column. The token's client rects
+ * give its lines, so a line scrolled out of the composer still counts.
  * A caret at a soft wrap is measured on the line it leaves: a move may go one
  * line too far but never stalls. Every other line move stays native, from a
  * DOM caret the browser can move. The Mac's emacs-style Ctrl+N and Ctrl+P
@@ -204,9 +203,13 @@ function crossTokenLine(
     doc.textBetween(Math.max(pos - 1, 0), pos) === "\n";
   // Where a caret at `pos` is drawn. Side -1 measures the character before,
   // which keeps a token's end on the token's line, but past a line break that
-  // is the break itself, drawn at the end of the line above.
+  // is the break itself, drawn at the end of the line above. A textblock start
+  // has nothing before it, and Chromium draws no rect before a leading newline.
   const at = (pos: number, side: -1 | 1) =>
-    editor.coordsAtPos(pos, broken(pos) ? 1 : side);
+    editor.coordsAtPos(
+      pos,
+      broken(pos) || !doc.resolve(pos).parentOffset ? 1 : side,
+    );
   const caret = at(origin, up ? -1 : 1);
   const level = (line: { top: number; bottom: number }) =>
     (line.top + line.bottom) / 2;
@@ -254,6 +257,26 @@ function crossTokenLine(
     }
     return head;
   };
+  // A Shift press then settles the head by the selection it leaves. Toward
+  // the anchor, it may reach the anchor but never pass it, and it collapses
+  // there rather than leave a lone line break selected, which looks collapsed
+  // and which typing would replace, joining two lines. Away from the anchor,
+  // growing by a lone break onto a token's near edge looks like no move at
+  // all, so it takes the token. Collapsing only applies toward the anchor: from
+  // a collapsed caret, a lone break onto an empty line is the whole move, as
+  // that line holds nothing else.
+  const { anchor } = selection;
+  const lone = (start: number, end: number) =>
+    doc.textBetween(Math.min(start, end), Math.max(start, end), "\n") === "\n";
+  const shifted = (head: number) => {
+    if (up ? origin > anchor : origin < anchor)
+      return (up ? head <= anchor : head >= anchor) || lone(anchor, head)
+        ? anchor
+        : head;
+    const from = up ? head - 1 : head;
+    const token = [...tokens.values()].some((host) => host.position() === from);
+    return token && lone(origin, head) ? (up ? from : from + 1) : head;
+  };
   for (const [element, host] of tokens) {
     const from = host.position();
     if (from === undefined) continue;
@@ -283,14 +306,8 @@ function crossTokenLine(
         : (lines[index - 1] ?? above);
       let head: number | undefined;
       // Entering: stop at the edge this line holds, or cross a middle line.
-      // From just past the line break beside the token, a Shift selection
-      // would grow by the break alone, which looks like no move at all, so it
-      // takes the whole token instead.
-      if (holds(previous) && !holds(line)) {
+      if (holds(previous) && !holds(line))
         head = up ? (index === last ? to : from) : index === 0 ? from : to;
-        if (extend && head !== origin && origin === (up ? after : before))
-          head = up ? from : to;
-      }
       // Leaving from the edge: cross the rest of the token, or step off it.
       else if (
         alone &&
@@ -304,18 +321,9 @@ function crossTokenLine(
           : index < last
             ? to
             : column(after, below);
-      // Undoing a Shift press that took the whole token from just past the
-      // line break beside it goes back there: the token's far edge would leave
-      // the break alone selected.
-      if (
-        extend &&
-        head === (up ? from : to) &&
-        selection.anchor === (up ? before : after)
-      )
-        head = selection.anchor;
       if (head === undefined || (up ? head >= origin : head <= origin))
         continue;
-      moveHead(editor, head, extend);
+      moveHead(editor, extend ? shifted(head) : head, extend);
       return true;
     }
   }

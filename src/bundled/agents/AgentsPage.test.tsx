@@ -386,6 +386,8 @@ function setup(
     registerHook: vi.fn(),
     dispatchHook: vi.fn(async () => undefined),
     configHistory: () => undefined,
+    addedTabs: () => [],
+    registerTab: () => {},
   } satisfies Agents;
   const disconnected = { status: "disconnected", generation: 0 };
   const relay = {

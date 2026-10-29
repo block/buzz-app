@@ -280,7 +280,7 @@ falling back to the sidebar without failing activation. Older hosts ignore place
 and continue to show primary pages in their sidebar.
 
 Harness plugins register an agent type with `ctx.agents.register`. Per-agent
-configuration belongs in its `tabs`; the Agents host adds Attention. An optional
+configuration belongs in its `tabs`; the Agents host adds the device Attention switch. An optional
 `provider` contribution exposes a stable readiness snapshot, subscription,
 read-only `check()` and `DialogBody`. The Agents page supplies the Providers
 health submenu plus provider title, registered icon, modal framing, dismissal,
@@ -290,6 +290,15 @@ authentication work as blocking and supplies its cancellation control. Only
 active registered types appear there; plugin activation remains owned by
 Settings → Plugins → Manage plugins. Provider defaults are versioned device preferences, not
 agent-record migrations; blank per-agent values inherit them.
+
+A plugin, bundled or installed, can add a tab to the settings of every agent
+running on this device, whatever its type, with
+`ctx.agents.registerTab({ id, title, component })`. The component receives
+`{ agent }`; it reads and saves through the plugin's own `ctx.agents`. The tab
+follows Activity and precedes History and Settings, in the agent's Build view and
+its profile panel, and is not offered for hosted or elsewhere agents. It is
+removed when the plugin is turned off or its scope ends. The bundled Agent
+Attention UI plugin uses it.
 
 A plugin, bundled or installed, can add a tool to every agent session in the
 app with `ctx.agents.addTool({ name, description, inputSchema, call })`. `call`

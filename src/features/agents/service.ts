@@ -1,3 +1,4 @@
+import type {} from "../navigation/service";
 import { appClient } from "../../buzz-mcp/app-client";
 import { respond } from "../../buzz-mcp/rpc";
 import { connectMcp } from "../../buzz-mcp/connection";
@@ -64,6 +65,7 @@ import { ownerReads } from "./reads";
 // can show it: as here, hosted, or on another device.
 import { migrateAgentStorage } from "./migrate-storage";
 import { migrateWatchFilters } from "./migrate-filter";
+import { migrateWatchKeywords } from "./migrate-keywords";
 import { agentStorage, type AgentStore } from "./state";
 import { Service, type Context } from "@deepseek-ai/cordis";
 import { npubEncode } from "nostr-tools/nip19";
@@ -1546,6 +1548,7 @@ export class AgentsService extends Service implements Agents {
     // Each changes the copy at once and logs a failed save itself.
     void migrateAgentStorage(storage);
     void migrateWatchFilters(storage);
+    void migrateWatchKeywords(storage);
     this.records = readRecords(storage);
     void splitLegacyRecords(storage, this.records);
     void splitLegacyCheckpoints(storage);
@@ -1745,7 +1748,7 @@ export class AgentsService extends Service implements Agents {
       },
       tabs: (agent) => {
         const session = this.bindingOf(agent)?.session;
-        return session && channelTabs(session);
+        return session && channelTabs(session, ctx.navigation);
       },
       classifier: () => this.classifier(),
       decisions: () => this.decisions,

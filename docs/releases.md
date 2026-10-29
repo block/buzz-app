@@ -203,14 +203,52 @@ the first eligible auto-promotion, before wider preview distribution.
 ## Bundled goose-acp
 
 Every package ships `goose-acp` in its `bin` resources, so Goose agents need no
-install. `scripts/build-goose-acp.mjs` builds it from the goose commit pinned in
-`runtime/goose-acp.json`, with only the features the Goose plugin uses, in the
-small `lean` profile (about 15 MB on macOS). `tauri build` runs the script
-through `beforeBuildCommand`; `just desktop` runs it with `--dev`, Cargo's faster
-dev profile. It skips the build when the staged binary already matches the pin.
-To move to a newer goose, change `revision` in the pin. The app's own signature
-covers the binary; nothing else checks it at launch. Each release job checks that
-its package contains it.
+install. `scripts/build-goose-acp.mjs` downloads the upstream standalone release
+pinned in `runtime/goose-acp.json`. These use Goose's `lean` profile and
+`rustls-tls,system-keyring,online-model-meta` features (about 15 MB on macOS).
+`tauri build` runs the script through `beforeBuildCommand`; `just desktop` uses
+the same release bytes (`--dev` remains accepted). The script selects
+`TAURI_ENV_TARGET_TRIPLE` or the host reported by `rustc -vV` (matching Cargo,
+including under Rosetta) and rejects unsupported targets.
+The pin covers macOS and Linux ARM64/x64 and Windows x64 MSVC.
+The upstream macOS executable requires macOS 12.0; Buzz's packaged minimum is
+12.0 too, raised from the previous source build's 11.0 deployment target.
+
+Downloads are cached under `target/goose-acp-download`. Every run checks the
+archive SHA-256 before reading its sole expected executable member, then repairs
+missing or changed staged bytes by atomic replacement. No source checkout or
+Goose Rust compilation is needed. Native hosts need `tar` (Windows explicitly uses
+`%SystemRoot%\System32\tar.exe`, avoiding Git Bash's GNU tar on PATH);
+cross-staging Windows on Unix also needs `unzip`. macOS staging retains the
+system-library check. The app's own signature covers the executable; nothing
+else checks it at launch. Each release job checks package presence.
+
+To update Goose, verify every target archive against the exact release identity:
+
+```sh
+gh attestation verify <archive> --repo aaif-goose/goose \
+  --signer-workflow aaif-goose/goose/.github/workflows/release.yml \
+  --source-ref refs/tags/v1.57.0 \
+  --source-digest 30bba95105e59bc3e7df624cf6b4d433690cfe12 \
+  --cert-oidc-issuer https://token.actions.githubusercontent.com \
+  --deny-self-hosted-runners
+```
+
+Then update version, source revision, versioned asset URLs and SHA-256 values
+together, and review upstream license/notice changes. This release is mutable;
+committed hashes bind the downloaded bytes. Never resolve `latest` at build time.
+The obsolete `target/goose-acp-src` and `target/goose-acp-build` caches are unused
+and can be removed locally when no old source build is running.
+Version 1.57.0 also advances Goose 26 commits from the previous source pin;
+distribution parity alone does not establish runtime compatibility. Before
+shipping, exercise provider sessions, HTTP MCP, steering/cancellation, secret
+non-persistence and session history, plus native Windows/Linux startup and
+packaged signing/installers.
+The candidate is known to fail the MCP credential non-persistence check: the
+client HTTP URL and bearer header are stored in session data and export.
+An isolated canary probe reproduced this in both the old source-built 1.56.0
+executable and v1.57.0; upstream #12908 is not included in either version. This
+remains a separate existing acceptance failure, not a distribution regression.
 
 ## Windows and Linux installers and candidate-only runs
 

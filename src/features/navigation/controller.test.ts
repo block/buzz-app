@@ -28,6 +28,84 @@ afterEach(() => {
 });
 
 describe("navigation attempts over one history driver", () => {
+  it("dismissing an inactive visit preserves the selected attempt and its signal", () => {
+    const { navigation: nav } = setup();
+    void nav.open(settings);
+    const dismissed = nav.snapshot().entry.id;
+    void nav.open(page);
+    const attempt = nav.snapshot().attempt;
+    nav.dismiss([dismissed], homeTarget);
+    expect(nav.snapshot().attempt).toBe(attempt);
+    expect(attempt.signal.aborted).toBe(false);
+    nav.back();
+    expect(nav.snapshot().entry.target).toEqual(homeTarget);
+  });
+  it("keeps Members through passive traversal but retires an explicit dismissal", async () => {
+    const { host, navigation: nav } = setup();
+    const conversation: OpenTarget = {
+      version: 1,
+      kind: "conversation",
+      scope: {
+        viewer: "a".repeat(64),
+        communityOrigin: "https://relay.example",
+      },
+      channelId: "alpha",
+    };
+    const members: OpenTarget = { ...conversation, panel: "members" };
+    void nav.open(settings);
+    void nav.open(conversation);
+    const channel = nav.snapshot().entry;
+    // Opening is a visit: Back closes Members on the same channel.
+    const opened = nav.open(members, { replace: false });
+    expect(nav.snapshot().entry.target).toEqual(members);
+    expect(nav.snapshot().entry.id).not.toBe(channel.id);
+    const membersId = nav.snapshot().entry.id;
+    expect(nav.snapshot().canGoForward).toBe(false);
+    host.complete(nav.snapshot().attempt, { status: "opened" });
+    await expect(opened).resolves.toEqual({ status: "opened" });
+    nav.back();
+    expect(nav.snapshot().entry).toEqual(channel);
+    expect(nav.snapshot().canGoForward).toBe(true);
+    nav.forward();
+    expect(nav.snapshot().entry.target).toEqual(members);
+    // X removes the return path without adding a closed-dialog visit.
+    nav.dismiss([membersId], conversation);
+    expect(nav.snapshot().entry).toEqual(channel);
+    expect(nav.snapshot().entry.target).toEqual(conversation);
+    expect(nav.snapshot().canGoForward).toBe(false);
+    nav.back();
+    expect(nav.snapshot().entry.target).toEqual(settings);
+    nav.forward();
+    expect(nav.snapshot().entry.target).toEqual(conversation);
+    expect(nav.snapshot().canGoForward).toBe(false);
+    // Explicitly reopening remains possible, including over an exact message.
+    void nav.open({ ...members, messageId: "b".repeat(64) });
+    nav.back();
+    expect(nav.snapshot().entry.target).toEqual(conversation);
+  });
+  it.each([true, false])(
+    "keeps one channel visit beneath a Members handoff (warm: %s)",
+    (warm) => {
+      const { navigation: nav } = setup();
+      const conversation: OpenTarget = {
+        version: 1,
+        kind: "conversation",
+        scope: {
+          viewer: "a".repeat(64),
+          communityOrigin: "https://relay.example",
+        },
+        channelId: "alpha",
+      };
+      if (warm) void nav.open(conversation);
+      void nav.open({ ...conversation, panel: "members" });
+      void nav.open({ ...conversation, channelId: "dm" });
+      nav.back();
+      expect(nav.snapshot().entry.target).toEqual(conversation);
+      nav.back();
+      expect(nav.snapshot().entry.target).toEqual(homeTarget);
+    },
+  );
+
   it("pushes, traverses without a push, preserves forward on retry, and truncates new branches", async () => {
     const { host, navigation: nav } = setup();
     const initial = nav.snapshot().entry;
@@ -310,4 +388,70 @@ it("resolution observers may introduce real competing intent without capturing t
   await expect(first).resolves.toEqual({ status: "superseded" });
   await expect(next).resolves.toEqual({ status: "opened" });
   off();
+});
+
+it("guards driver traversal before aborting the current presentation", () => {
+  const { host, navigation: nav } = setup();
+  void nav.open(page);
+  void nav.open(settings);
+  const original = nav.snapshot().attempt;
+  let decide: ((proceed: boolean) => void) | undefined;
+  host.guardDeparture((_next, decision) => {
+    decide = decision;
+    return true;
+  });
+  nav.back();
+  expect(nav.snapshot().attempt).toBe(original);
+  expect(original.signal.aborted).toBe(false);
+  decide?.(false);
+  expect(nav.snapshot().entry.target).toEqual(settings);
+  nav.back();
+  decide?.(true);
+  expect(nav.snapshot().entry.target).toEqual(page);
+  expect(original.signal.aborted).toBe(true);
+  nav.forward();
+  expect(nav.snapshot().entry.target).toEqual(page);
+  decide?.(true);
+  expect(nav.snapshot().entry.target).toEqual(settings);
+});
+
+it("settles guarded open callers only after the user's decision and destination completion", async () => {
+  const { host, navigation: nav } = setup();
+  void nav.open(settings);
+  host.complete(nav.snapshot().attempt, { status: "opened" });
+  let decide: ((proceed: boolean) => void) | undefined;
+  host.guardDeparture((_next, decision) => {
+    decide = decision;
+    return true;
+  });
+  const retained = nav.snapshot().retainedVisits;
+  const cancelled = nav.open(page);
+  decide?.(false);
+  expect(await cancelled).toEqual({ status: "cancelled" });
+  expect(nav.snapshot().retainedVisits).toEqual(retained);
+  expect(nav.snapshot().canGoForward).toBe(false);
+  const opened = nav.open(page);
+  decide?.(true);
+  host.complete(nav.snapshot().attempt, { status: "opened" });
+  expect(await opened).toEqual({ status: "opened" });
+});
+
+it("continues Discard to the preceding eligible visit if its destination was dismissed", () => {
+  const { host, navigation: nav } = setup();
+  void nav.open(page);
+  const closed = nav.snapshot().entry.id;
+  void nav.open(settings);
+  const original = nav.snapshot().attempt;
+  let decide: ((proceed: boolean) => void) | undefined;
+  const guard = vi.fn((_next, decision) => {
+    decide = decision;
+    return true;
+  });
+  host.guardDeparture(guard);
+  nav.back();
+  nav.dismiss([closed], homeTarget);
+  decide?.(true);
+  expect(nav.snapshot().entry.target).toEqual(homeTarget);
+  expect(original.signal.aborted).toBe(true);
+  expect(guard).toHaveBeenCalledTimes(1);
 });

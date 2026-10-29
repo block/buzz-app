@@ -652,8 +652,8 @@ export class CodexRuntime {
     // creation and changes; v9 added Attention delivery; v10 added plugin sources;
     // v11 added literal message keywords; v12 added self-handoff; v13 added
     // memory versions and search; v14 splits canvas into canvas_get and
-    // canvas_set.
-    return `buzz.codex.sessions.v14:${scope}:${agent}`;
+    // canvas_set; v15 removes message keywords.
+    return `buzz.codex.sessions.v15:${scope}:${agent}`;
   }
   private save(request: Request, entry: Entry, key: string, saved: Saved) {
     // Reinserted so the bounded set keeps the most recently used bindings.

@@ -3063,6 +3063,11 @@ export function createChannelStore(
         if (event) return event;
       }
     },
+    retainedEvents(): RelayEvent[] {
+      return [...windows.values()].flatMap((state) =>
+        authorized(state.channelId) ? [...state.events] : [],
+      );
+    },
     demandedChannels: () => [
       ...new Set([
         ...(current && windows.has(current) ? [current] : []),

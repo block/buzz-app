@@ -68,7 +68,15 @@ type Reply = { status: number; body: unknown };
 /** Real Builderlab and Bestie plugins, Agents service, relay session and
  * Outbox. Only the native bridge (Beekeeper HTTP, login, owner signing) and the
  * relay wire are simulated. `invoke` is the test file's mocked Tauri invoke. */
-export async function bestieFixture(invoke: Mock) {
+export async function bestieFixture(
+  invoke: Mock,
+  options: {
+    mainAgent?: {
+      read(signal: AbortSignal): Promise<string | undefined>;
+      write(agent: string, signal: AbortSignal): Promise<void>;
+    };
+  } = {},
+) {
   const identity = keypair();
   const authority = keypair();
   const remote = keypair();
@@ -273,6 +281,12 @@ export async function bestieFixture(invoke: Mock) {
           publish,
         },
         workflows: { runs: async () => ({ runs: [], next: null }) },
+        ...(options.mainAgent
+          ? {
+              readMainAgent: options.mainAgent.read,
+              writeMainAgent: options.mainAgent.write,
+            }
+          : {}),
       },
       {
         outboxStorage: {

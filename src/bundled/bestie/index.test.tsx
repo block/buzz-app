@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { composerDOMFixture } from "../../features/messages/composer-testing";
@@ -8,6 +8,7 @@ import type { ConversationExtensions } from "../../features/conversation/contrac
 import type { ConversationHostServices } from "../../features/conversation/ConversationHost";
 import type { Navigation } from "../../features/navigation/controller";
 import { BestiePage } from "./index";
+import { deferred } from "../builderlab/test-helpers";
 import { bestieFixture, cleanups, HOME } from "./testing";
 
 const native = vi.hoisted(() => ({ isTauri: () => true, invoke: vi.fn() }));
@@ -80,6 +81,46 @@ const chooseModel = async () => {
   await user.click(await screen.findByRole("option", { name: "high" }));
 };
 const composer = () => screen.getByRole("textbox", { name: "Message #Bestie" });
+
+it("waits for the account choice before deciding whether to show setup", async () => {
+  const choice = deferred<string | undefined>();
+  const h = await bestieFixture(native.invoke, {
+    mainAgent: {
+      read: () => choice.promise,
+      write: async () => {},
+    },
+  });
+  renderPage(h);
+  expect(await screen.findByRole("status")).toHaveTextContent(
+    "Loading your Bestie…",
+  );
+  expect(
+    screen.queryByRole("button", { name: "Set up Bestie" }),
+  ).not.toBeInTheDocument();
+  await act(async () => choice.resolve(undefined));
+  expect(
+    await screen.findByRole("button", { name: "Set up Bestie" }),
+  ).toBeVisible();
+});
+
+it("routes an account-saved Bestie to its canonical DM instead of hosted setup", async () => {
+  const choice = deferred<string | undefined>();
+  const h = await bestieFixture(native.invoke, {
+    mainAgent: {
+      read: () => choice.promise,
+      write: async () => {},
+    },
+  });
+  await h.bestie.setup();
+  renderPage(h);
+  await act(async () => choice.resolve(h.agent));
+  expect(
+    await screen.findByText("This connection cannot start direct messages."),
+  ).toBeVisible();
+  expect(
+    screen.queryByRole("button", { name: "Set up Bestie" }),
+  ).not.toBeInTheDocument();
+});
 
 it("sets up Bestie on the model the owner chose and hands focus to its conversation", async () => {
   const h = await bestieFixture(native.invoke);

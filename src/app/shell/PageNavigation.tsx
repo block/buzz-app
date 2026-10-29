@@ -9,11 +9,10 @@ import { Tabs } from "../../shared/design-system/ui/Tabs";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { PageIcon } from "./PageIcon";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
-import { pagePresentation } from "./presentation";
 import {
   BestieUnreadBadge,
   BestieUnreadLabel,
-  useBestieMark,
+  usePagePresentation,
 } from "./BestieNavigation";
 import { BESTIE_PAGE } from "./bestie-context";
 
@@ -30,11 +29,7 @@ export function PageNavigation({
   onSelect(key: string, options?: Pick<NavigationOpenOptions, "focus">): void;
   placement?: "sidebar" | "topbar" | "toolbar";
 }) {
-  const bestie = useBestieMark();
-  const presentation = (page: RegisteredPage) => ({
-    ...pagePresentation(page),
-    ...(page.key === BESTIE_PAGE && bestie ? bestie : undefined),
-  });
+  const presentation = usePagePresentation();
   if (placement === "topbar") {
     return (
       <Tabs

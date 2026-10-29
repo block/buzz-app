@@ -26,6 +26,7 @@ import {
   PanelHeaderLabel,
 } from "../../shared/design-system/ui/PanelHeader";
 import { bestieChat } from "./chat";
+import styles from "./PinnedBestie.module.css";
 
 /** Account-saved Besties use their canonical verified DM. No saved choice means
  * the caller keeps Riley's hosted setup page. */
@@ -47,39 +48,145 @@ export function PinnedBestie({
     !!viewer &&
     scope.endsWith(`:${viewer}`);
   const choices = useAgentChoices(session, active, active);
+  const known = choices.identities.find((choice) => choice.pubkey === saved);
   const agent = active
     ? choices.selectable.find((choice) => choice.pubkey === saved)
     : undefined;
   const channels = useChannelList(session.channels);
-  if (!agent || !scope) return null;
-  const channel = bestieChat(channels.channels, viewer, agent.pubkey);
-  const name = agent.managedName ?? agent.name;
+  const identity = agent ?? known;
+  const name = identity ? (identity.managedName ?? identity.name) : "Bestie";
+  const header = (
+    <PanelHeader
+      title={
+        <PanelHeaderLabel
+          title={name}
+          icon={
+            identity ? (
+              <AgentPortrait
+                agent={{ name, picture: identity.avatar }}
+                community={connection.origin}
+              />
+            ) : (
+              <RobotIcon size="1rem" />
+            )
+          }
+        />
+      }
+    />
+  );
+  let content: React.ReactNode;
+  if (!active || !scope) {
+    content = (
+      <Notice
+        title={
+          connection.status === "connecting"
+            ? "Connecting…"
+            : connection.status === "error"
+              ? "This community is unavailable"
+              : "No community selected"
+        }
+        description={
+          connection.status === "connecting"
+            ? "Your bestie conversation opens once this community is connected."
+            : (connection.error ??
+              "Choose a community to chat with your bestie.")
+        }
+        action={
+          connection.status === "error" ? (
+            <Button onClick={relay.retry}>Retry connection</Button>
+          ) : undefined
+        }
+      />
+    );
+  } else if (!agent) {
+    const pending =
+      choices.pending ||
+      choices.archives.status === "idle" ||
+      choices.archives.status === "loading";
+    content =
+      pending && !choices.error ? (
+        <LoadingRegion pending label="Loading your Bestie…">
+          <Notice
+            title="Loading your Bestie…"
+            description="Reading the agents available in this community."
+          />
+        </LoadingRegion>
+      ) : (
+        <Notice
+          title={
+            choices.error
+              ? "Your agents are unavailable"
+              : `${name} is no longer here`
+          }
+          description={
+            choices.error ??
+            "Choose another bestie from an eligible agent’s actions menu."
+          }
+          action={
+            choices.error ? (
+              <Button onClick={() => void session.agentChoices.refresh()}>
+                Try again
+              </Button>
+            ) : undefined
+          }
+        />
+      );
+  } else {
+    const channel = bestieChat(channels.channels, viewer, agent.pubkey);
+    content = channel ? (
+      <DirectMessage
+        key={agent.pubkey}
+        session={session}
+        scope={scope}
+        host={host}
+        extensions={extensions}
+        agent={{ pubkey: agent.pubkey, name }}
+        channel={channel}
+      />
+    ) : channels.status === "error" || channels.status === "unavailable" ? (
+      <Notice
+        title="Your chats are unavailable"
+        description={
+          channels.error ??
+          "Buzz couldn’t read your chats, so this one can’t be opened."
+        }
+        action={
+          <Button
+            onClick={() =>
+              session.channels.refreshList
+                ? session.channels.refreshList()
+                : session.channels.ensureList()
+            }
+          >
+            Try again
+          </Button>
+        }
+      />
+    ) : channels.status !== "ready" ? (
+      <LoadingRegion pending label="Loading your chats…">
+        <Notice
+          title="Loading your conversation…"
+          description={`Looking for your DM with ${name}.`}
+        />
+      </LoadingRegion>
+    ) : (
+      <DirectMessage
+        key={agent.pubkey}
+        session={session}
+        scope={scope}
+        host={host}
+        extensions={extensions}
+        agent={{ pubkey: agent.pubkey, name }}
+        channel={undefined}
+      />
+    );
+  }
   return (
     <div className="h-full min-h-0">
       <FullPageSurface aria-label="Bestie">
         <div className="flex h-full min-h-0 flex-col">
-          <PanelHeader
-            title={
-              <PanelHeaderLabel
-                title={name}
-                icon={
-                  <AgentPortrait
-                    agent={{ name, picture: agent.avatar }}
-                    community={connection.origin}
-                  />
-                }
-              />
-            }
-          />
-          <DirectMessage
-            key={agent.pubkey}
-            session={session}
-            scope={scope}
-            host={host}
-            extensions={extensions}
-            agent={{ pubkey: agent.pubkey, name }}
-            channel={channel}
-          />
+          {header}
+          {content}
         </div>
       </FullPageSurface>
     </div>
@@ -108,16 +215,26 @@ function DirectMessage({
     if (channel) return;
     const controller = new AbortController();
     setError(undefined);
-    void session.directMessages
-      .open([agent.pubkey], controller.signal)
-      .catch((reason) => {
+    void (async () => {
+      try {
+        if (
+          !session.agentChoices
+            .snapshot()
+            .selectable.some((choice) => choice.pubkey === agent.pubkey)
+        )
+          throw new Error(
+            "This agent is no longer available in this community.",
+          );
+        await session.directMessages.open([agent.pubkey], controller.signal);
+      } catch (reason) {
         if (!controller.signal.aborted)
           setError(
             reason instanceof Error
               ? reason.message
               : "Buzz couldn’t open this conversation.",
           );
-      });
+      }
+    })();
     return () => controller.abort();
   }, [session, agent.pubkey, channel, attempt]);
   if (channel)
@@ -185,7 +302,7 @@ function BestieConversation({
     >
       <section
         data-attachment-drop-zone=""
-        className="flex min-h-0 flex-1 flex-col"
+        className={`${styles.work} flex min-h-0 flex-1 flex-col`}
         aria-label={`Chat with ${bestie}`}
       >
         {thread ? (

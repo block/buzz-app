@@ -138,6 +138,12 @@ function mount(
   act(() => {
     input.focus();
     input.setSelectionRange(text.length, text.length);
+    // jsdom's focus() collapses the selection onto the focused element after
+    // its focus events, where a browser keeps the caret the editor placed, and
+    // reports that in a later task; ProseMirror puts its caret back on that
+    // selectionchange. Deliver it now: an empty draft moves no selection above,
+    // so a key typed before the task would land outside the paragraph.
+    document.dispatchEvent(new Event("selectionchange"));
   });
   return {
     input,
@@ -148,6 +154,16 @@ function mount(
     formats: () => formats,
   };
 }
+
+it("types the first character into the empty paragraph with no task between focus and the key", async () => {
+  const h = mount();
+  // The ordering a loaded runner produces: user-event's wait before the key
+  // fires before jsdom's queued selectionchange. With no delay, nothing runs
+  // between mount and the keystroke at all.
+  await userEvent.setup({ delay: null }).keyboard("`");
+  expect(h.input.innerHTML).toBe("<p>`</p>");
+  expect(h.draft().text).toBe("`");
+});
 
 it("refuses a closing-colon conversion when its literal undo source exceeds the limit", () => {
   const h = mount(":-1", { maxLength: 3 });
@@ -3129,6 +3145,348 @@ it("rejects a batch that exceeds message length without partial insertion", () =
     ).toBe(false),
   );
   expect(h.draft()).toEqual(before);
+});
+
+// Pending mentions: Space committed a name before the chooser could decide.
+// The host resolves the chip later; the editor owns its undo and persistence.
+const example = { pubkey: "a".repeat(64), name: "Example Agent" };
+function pendingChip(h: ReturnType<typeof mount>) {
+  return h.input.querySelector('[data-state="loading"]');
+}
+it("inserts a pending chip as one undo step that restores the typed query", () => {
+  const h = mount("hi @example");
+  let id: string | false = false;
+  act(() => {
+    id = h.input.insertPendingMention("example", { start: 3, end: 11 });
+  });
+  expect(id).toMatch(/^pending-/);
+  expect(h.input).toHaveValue("hi @example ");
+  expect([h.input.selectionStart, h.input.selectionEnd]).toEqual([12, 12]);
+  expect(h.draft().recipients).toEqual([]);
+  expect(h.draft().pending).toEqual([
+    { id, name: "example", start: 3, end: 11 },
+  ]);
+  expect(pendingChip(h)).toHaveTextContent("@example");
+  act(() => h.input.undo(false));
+  expect(h.input).toHaveValue("hi @example");
+  expect(h.draft().pending).toBeUndefined();
+  act(() => h.input.undo(true));
+  expect(h.draft().pending?.map((item) => item.id)).toEqual([id]);
+});
+it("refuses a pending chip away from the caret, over other text, or in code", () => {
+  const h = mount("hi @example");
+  act(() => h.input.setSelectionRange(5, 5));
+  act(() =>
+    expect(h.input.insertPendingMention("example", { start: 3, end: 11 })).toBe(
+      false,
+    ),
+  );
+  act(() => h.input.setSelectionRange(11, 11));
+  act(() =>
+    expect(h.input.insertPendingMention("other", { start: 3, end: 11 })).toBe(
+      false,
+    ),
+  );
+  act(() => h.input.toggleFormat("code_block"));
+  act(() =>
+    expect(h.input.insertPendingMention("example", { start: 3, end: 11 })).toBe(
+      false,
+    ),
+  );
+  expect(h.input).toHaveValue("hi @example");
+  expect(h.draft().pending).toBeUndefined();
+});
+it("settles a pending chip into its recipient's current name, keeping the caret and the typed text as the undo target", async () => {
+  const h = mount("hi @example");
+  let id = "";
+  act(() => {
+    id = h.input.insertPendingMention("example", { start: 3, end: 11 }) || "";
+  });
+  await h.user.type(h.input, "there");
+  expect(h.input).toHaveValue("hi @example there");
+  act(() => h.input.setSelectionRange(14, 14));
+  act(() => expect(h.input.settlePendingMention(id, example)).toBe(true));
+  expect(h.input).toHaveValue("hi @Example Agent there");
+  expect(h.draft().pending).toBeUndefined();
+  expect(h.draft().recipients).toEqual([{ ...example, start: 3, end: 17 }]);
+  // The caret kept its place in the prose after the chip.
+  expect([h.input.selectionStart, h.input.selectionEnd]).toEqual([20, 20]);
+  expect(pendingChip(h)).toBeNull();
+  act(() => expect(h.input.settlePendingMention(id, example)).toBe(false));
+  act(() => h.input.undo(false));
+  expect(h.input).toHaveValue("hi @Example Agent ");
+  act(() => h.input.undo(false));
+  expect(h.input).toHaveValue("hi @example");
+  expect(h.draft().recipients).toEqual([]);
+});
+it("settles a pending chip back into plain text while the editor is read-only", () => {
+  const h = mount("@example");
+  let id = "";
+  act(() => {
+    id = h.input.insertPendingMention("example", { start: 0, end: 8 }) || "";
+  });
+  act(() => {
+    h.input.readOnly = true;
+  });
+  act(() => expect(h.input.settlePendingMention(id, null)).toBe(true));
+  expect(h.input).toHaveValue("@example ");
+  expect(h.draft().pending).toBeUndefined();
+  expect(h.draft().recipients).toEqual([]);
+  expect(h.input.querySelector("[data-source]")).toBeNull();
+});
+it("holds a settle that lands during a composition until the composition ends", async () => {
+  const h = mount("hi @example");
+  let id = "";
+  act(() => {
+    id = h.input.insertPendingMention("example", { start: 3, end: 11 }) || "";
+  });
+  act(() => fireEvent.compositionStart(h.input));
+  let held: boolean | Promise<boolean> = false;
+  act(() => {
+    held = h.input.settlePendingMention(id, example);
+  });
+  expect(held).toBeInstanceOf(Promise);
+  expect(h.input).toHaveValue("hi @example ");
+  expect(pendingChip(h)).toHaveTextContent("@example");
+  expect(h.draft().recipients).toEqual([]);
+  await act(async () => fireEvent.compositionEnd(h.input));
+  await expect(held).resolves.toBe(true);
+  expect(h.input).toHaveValue("hi @Example Agent ");
+  expect(h.draft().pending).toBeUndefined();
+  expect(h.draft().recipients).toEqual([{ ...example, start: 3, end: 17 }]);
+  expect(pendingChip(h)).toBeNull();
+});
+it("applies a held settle after the composition's final text has been read", async () => {
+  const h = mount("hi @example");
+  let id = "";
+  act(() => {
+    id = h.input.insertPendingMention("example", { start: 3, end: 11 }) || "";
+  });
+  act(() => fireEvent.compositionStart(h.input));
+  let held: boolean | Promise<boolean> = false;
+  act(() => {
+    held = h.input.settlePendingMention(id, null);
+  });
+  const after = h.input.querySelector("[data-source]")?.nextSibling;
+  if (!(after instanceof Text)) throw new Error("No text after the chip");
+  await act(async () => {
+    // The IME commits its text and ends the composition in one task;
+    // ProseMirror reads the record only after compositionend.
+    after.nodeValue = " ab";
+    fireEvent.compositionEnd(h.input);
+  });
+  await expect(held).resolves.toBe(true);
+  expect(h.input).toHaveValue("hi @example ab");
+  expect(h.draft().pending).toBeUndefined();
+  expect(pendingChip(h)).toBeNull();
+});
+it("answers a held settle false when its chip is gone by the time the composition ends", async () => {
+  const h = mount("hi @example");
+  let id = "";
+  act(() => {
+    id = h.input.insertPendingMention("example", { start: 3, end: 11 }) || "";
+  });
+  act(() => fireEvent.compositionStart(h.input));
+  let held: boolean | Promise<boolean> = false;
+  act(() => {
+    held = h.input.settlePendingMention(id, example);
+  });
+  await act(async () => {
+    h.input.querySelector("[data-source]")?.remove();
+    fireEvent.compositionEnd(h.input);
+  });
+  await expect(held).resolves.toBe(false);
+  expect(h.input).toHaveValue("hi  ");
+  expect(h.draft().pending).toBeUndefined();
+  expect(h.draft().recipients).toEqual([]);
+});
+it("keeps the typed text when the recipient's name would overrun the limit", () => {
+  const h = mount("@example", { maxLength: 12 });
+  let id = "";
+  act(() => {
+    id = h.input.insertPendingMention("example", { start: 0, end: 8 }) || "";
+  });
+  act(() => expect(h.input.settlePendingMention(id, example)).toBe(true));
+  expect(h.input).toHaveValue("@example ");
+  expect(h.draft().recipients).toEqual([]);
+});
+const miraExample = { pubkey: "a".repeat(64), name: "Mira Example" };
+it("extends a pending chip over the typed words that complete a longer name, keeping the caret and the typed text as the undo target", async () => {
+  const h = mount("hi @mira");
+  let id = "";
+  act(() => {
+    id = h.input.insertPendingMention("mira", { start: 3, end: 8 }) || "";
+  });
+  await h.user.type(h.input, "Example there");
+  expect(h.input).toHaveValue("hi @mira Example there");
+  act(() => expect(h.input.extendPendingMention(id, " Example")).toBe(true));
+  expect(h.input).toHaveValue("hi @mira Example there");
+  expect(h.draft().pending).toEqual([
+    { id, name: "mira Example", start: 3, end: 16 },
+  ]);
+  expect(pendingChip(h)).toHaveTextContent("@mira Example");
+  expect(h.input.querySelectorAll("[data-source]")).toHaveLength(1);
+  // The caret kept its place in the prose after the chip.
+  expect([h.input.selectionStart, h.input.selectionEnd]).toEqual([22, 22]);
+  act(() => expect(h.input.settlePendingMention(id, miraExample)).toBe(true));
+  expect(h.input).toHaveValue("hi @Mira Example there");
+  expect(h.draft().pending).toBeUndefined();
+  expect(h.draft().recipients).toEqual([{ ...miraExample, start: 3, end: 16 }]);
+  // Undo takes the words typed after the chip first, then the chip's own
+  // typed query, as it does for a chip that settled unextended.
+  act(() => h.input.undo(false));
+  expect(h.input).toHaveValue("hi @Mira Example");
+  expect(h.draft().recipients).toEqual([{ ...miraExample, start: 3, end: 16 }]);
+  act(() => h.input.undo(false));
+  expect(h.input).toHaveValue("hi @mira");
+  expect(h.draft().recipients).toEqual([]);
+  expect(h.draft().pending).toBeUndefined();
+  act(() => h.input.undo(true));
+  expect(h.input).toHaveValue("hi @Mira Example");
+});
+it("refuses to extend a pending chip over text that no longer begins with the words, or that is gone", async () => {
+  const h = mount("@mira");
+  let id = "";
+  act(() => {
+    id = h.input.insertPendingMention("mira", { start: 0, end: 5 }) || "";
+  });
+  await h.user.type(h.input, "Exam");
+  act(() => expect(h.input.extendPendingMention(id, " Example")).toBe(false));
+  act(() => expect(h.input.extendPendingMention(id, "")).toBe(false));
+  act(() => expect(h.input.extendPendingMention("other", " Exam")).toBe(false));
+  expect(h.input).toHaveValue("@mira Exam");
+  expect(h.draft().pending).toEqual([{ id, name: "mira", start: 0, end: 5 }]);
+  act(() => expect(h.input.settlePendingMention(id, null)).toBe(true));
+  act(() => expect(h.input.extendPendingMention(id, " Exam")).toBe(false));
+  expect(h.input).toHaveValue("@mira Exam");
+});
+it("extends a pending chip while the editor is read-only, and settling it to text restores the typed words", async () => {
+  const h = mount("@mira");
+  let id = "";
+  act(() => {
+    id = h.input.insertPendingMention("mira", { start: 0, end: 5 }) || "";
+  });
+  await h.user.type(h.input, "Example");
+  act(() => {
+    h.input.readOnly = true;
+  });
+  act(() => expect(h.input.extendPendingMention(id, " Example")).toBe(true));
+  expect(h.draft().pending).toEqual([
+    { id, name: "mira Example", start: 0, end: 13 },
+  ]);
+  act(() => expect(h.input.settlePendingMention(id, null)).toBe(true));
+  expect(h.input).toHaveValue("@mira Example");
+  expect(h.draft().pending).toBeUndefined();
+  expect(h.input.querySelector("[data-source]")).toBeNull();
+});
+it("holds an extension that lands during a composition until the composition ends", async () => {
+  const h = mount("@mira");
+  let id = "";
+  act(() => {
+    id = h.input.insertPendingMention("mira", { start: 0, end: 5 }) || "";
+  });
+  await h.user.type(h.input, "Example");
+  act(() => fireEvent.compositionStart(h.input));
+  let held: boolean | Promise<boolean> = false;
+  act(() => {
+    held = h.input.extendPendingMention(id, " Example");
+  });
+  expect(held).toBeInstanceOf(Promise);
+  expect(h.draft().pending).toEqual([{ id, name: "mira", start: 0, end: 5 }]);
+  await act(async () => fireEvent.compositionEnd(h.input));
+  await expect(held).resolves.toBe(true);
+  expect(h.draft().pending).toEqual([
+    { id, name: "mira Example", start: 0, end: 13 },
+  ]);
+  expect(pendingChip(h)).toHaveTextContent("@mira Example");
+});
+it("answers a held extension false when the composition committed name characters after the words", async () => {
+  const h = mount("@mira");
+  let id = "";
+  act(() => {
+    id = h.input.insertPendingMention("mira", { start: 0, end: 5 }) || "";
+  });
+  await h.user.type(h.input, "Example");
+  act(() => fireEvent.compositionStart(h.input));
+  let held: boolean | Promise<boolean> = false;
+  act(() => {
+    held = h.input.extendPendingMention(id, " Example");
+  });
+  const after = h.input.querySelector("[data-source]")?.nextSibling;
+  if (!(after instanceof Text)) throw new Error("No text after the chip");
+  await act(async () => {
+    // The IME commits a longer word than the host read.
+    after.nodeValue = " Examples";
+    fireEvent.compositionEnd(h.input);
+  });
+  await expect(held).resolves.toBe(false);
+  expect(h.input).toHaveValue("@mira Examples");
+  expect(h.draft().pending).toEqual([{ id, name: "mira", start: 0, end: 5 }]);
+});
+it("returns a pending chip to its typed query when a name character is typed right after it", async () => {
+  const h = mount("@mira");
+  let id = "";
+  act(() => {
+    id = h.input.insertPendingMention("mira", { start: 0, end: 5 }) || "";
+  });
+  await h.user.keyboard("{Backspace}nda");
+  expect(h.input).toHaveValue("@miranda");
+  expect(h.draft().pending).toBeUndefined();
+  expect(h.input.querySelector("[data-source]")).toBeNull();
+  act(() => expect(h.input.settlePendingMention(id, miraExample)).toBe(false));
+  expect(h.draft().recipients).toEqual([]);
+  act(() => h.input.undo(false));
+  expect(h.draft().pending?.map((item) => item.id)).toEqual([id]);
+  // Punctuation is a name boundary and keeps the chip, as for a recipient.
+  const p = mount("@mira");
+  act(() => {
+    p.input.insertPendingMention("mira", { start: 0, end: 5 });
+  });
+  await p.user.keyboard("{Backspace},");
+  expect(p.input).toHaveValue("@mira,");
+  expect(p.draft().pending).toHaveLength(1);
+});
+it("leaves a pending chip to the identity link that adopts it, without restoring its typed query", async () => {
+  const h = mount("[@honey", { links: true });
+  let id = "";
+  act(() => {
+    id = h.input.insertPendingMention("honey", { start: 1, end: 7 }) || "";
+  });
+  await h.user.keyboard("{Backspace}");
+  const link = `[@honeysuckle](${profileTarget(example.pubkey)})`;
+  paste(h.input, link.slice(7));
+  expect(h.markdown()).toBe(link);
+  expect(h.input.querySelector(`[data-source="${link}"]`)).not.toBeNull();
+  expect(h.draft().pending).toBeUndefined();
+  act(() => expect(h.input.settlePendingMention(id, example)).toBe(false));
+  expect(h.draft().recipients).toEqual([]);
+});
+it("deletes a pending chip with Backspace like any chip, emptying the projection", () => {
+  const h = mount("@example");
+  act(() => h.input.insertPendingMention("example", { start: 0, end: 8 }));
+  act(() => h.input.setSelectionRange(8, 8));
+  act(() => {
+    fireEvent.keyDown(h.input, { key: "Backspace" });
+  });
+  expect(h.input).toHaveValue("@example ");
+  expect([h.input.selectionStart, h.input.selectionEnd]).toEqual([0, 8]);
+  act(() => {
+    fireEvent.keyDown(h.input, { key: "Backspace" });
+  });
+  expect(h.input).toHaveValue(" ");
+  expect(h.draft().pending).toBeUndefined();
+});
+it("restores a persisted pending chip as plain text and copies it as its text", () => {
+  const h = mount("@example");
+  act(() => h.input.insertPendingMention("example", { start: 0, end: 8 }));
+  act(() => h.input.setSelectionRange(0, 9));
+  expect(clipboard(h.input, "copy").text).toBe("@example ");
+  const saved = JSON.parse(JSON.stringify(h.draft()));
+  expect(saved.pending).toHaveLength(1);
+  const restored = mount(saved);
+  expect(restored.input).toHaveValue("@example ");
+  expect(restored.draft().pending).toBeUndefined();
+  expect(restored.input.querySelector("[data-source]")).toBeNull();
 });
 
 // Clipboard: composer copy/cut write both flavors; paste reads this app's own

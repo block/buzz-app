@@ -150,6 +150,103 @@ function keyboardKey(
     CARET_KEYS.get(event.code) ?? CARET_KEYS.get(event.keyCode) ?? event.key
   );
 }
+/** Moves the head a line up or down where the browser cannot. A line that
+ * holds nothing but a token, or part of a wrapped one, offers no caret
+ * position besides the token's edge, so native Up and Down stall there in
+ * WebKit and jump to a document edge in Chromium, entering such a line and
+ * leaving it alike. Such a line is entered at the token edge it holds, or
+ * crossed to the far edge when it holds neither, and left for the nearest
+ * position on the neighbouring line. The token's client rects give its
+ * lines, so a line scrolled out of the composer still counts. A caret at a
+ * soft wrap is measured on the line it leaves: a move may go one line too
+ * far but never stalls. Every other line move stays native, from a DOM
+ * caret the browser can move. */
+function crossTokenLine(
+  editor: EditorView,
+  tokens: ReadonlyMap<HTMLElement, { position(): number | undefined }>,
+  up: boolean,
+  extend: boolean,
+) {
+  const { selection, doc } = editor.state;
+  if (!(selection instanceof TextSelection) || !tokens.size) return false;
+  const origin = extend ? selection.head : up ? selection.from : selection.to;
+  const caret = editor.coordsAtPos(origin, up ? -1 : 1);
+  const level = (line: { top: number; bottom: number }) =>
+    (line.top + line.bottom) / 2;
+  const holds = (line?: { top: number; bottom: number }) =>
+    !!line && line.top <= level(caret) && level(caret) <= line.bottom;
+  // The position beside a token that is drawn on the neighbouring line when
+  // the token starts or ends its own: past a line break (a hard break or a
+  // typed newline), into the adjacent textblock, or else the token edge.
+  const outside = (pos: number, dir: -1 | 1) => {
+    const $pos = doc.resolve(pos);
+    if (!(dir < 0 ? $pos.nodeBefore : $pos.nodeAfter))
+      return Selection.findFrom(doc.resolve(pos + dir), dir, true)?.head;
+    const next = pos + dir;
+    return doc.textBetween(Math.min(pos, next), Math.max(pos, next)) === "\n"
+      ? next
+      : pos;
+  };
+  for (const [element, host] of tokens) {
+    const from = host.position();
+    if (from === undefined) continue;
+    const to = from + 1;
+    const lines = [...element.getClientRects()];
+    const last = lines.length - 1;
+    const before = outside(from, -1);
+    const after = outside(to, 1);
+    const above =
+      before === undefined ? undefined : editor.coordsAtPos(before, -1);
+    const below =
+      after === undefined ? undefined : editor.coordsAtPos(after, 1);
+    for (const [index, line] of lines.entries()) {
+      const alone =
+        (index > 0 || !above || level(above) < line.top) &&
+        (index < last || !below || level(below) > line.bottom);
+      if (!alone) continue;
+      const previous = up
+        ? (lines[index + 1] ?? below)
+        : (lines[index - 1] ?? above);
+      let head: number | undefined;
+      // Entering: stop at the edge this line holds, or cross a middle line.
+      if (holds(previous))
+        head = up ? (index === last ? to : from) : index === 0 ? from : to;
+      // Leaving from the edge: cross the rest of the token, or step off it.
+      else if (
+        holds(line) &&
+        ((index === 0 && origin === from) || (index === last && origin === to))
+      )
+        head = up ? (index > 0 ? from : before) : index < last ? to : after;
+      if (head === undefined || (up ? head >= origin : head <= origin))
+        continue;
+      editor.dispatch(
+        editor.state.tr
+          .setSelection(
+            TextSelection.create(doc, extend ? selection.anchor : head, head),
+          )
+          .scrollIntoView(),
+      );
+      return true;
+    }
+  }
+  // After a token, the DOM caret sits between its element and the text that
+  // follows. Once WebKit has drawn the caret there beside a wrapped token,
+  // Down stalls; from the text's start, the same position, it moves.
+  const native = editor.dom.ownerDocument.getSelection();
+  const next = native?.focusNode?.childNodes[native.focusOffset];
+  const token = native?.focusNode?.childNodes[native.focusOffset - 1];
+  if (
+    native?.anchorNode &&
+    next?.nodeType === Node.TEXT_NODE &&
+    token instanceof HTMLElement &&
+    tokens.has(token)
+  ) {
+    if (native.isCollapsed) native.collapse(next, 0);
+    else
+      native.setBaseAndExtent(native.anchorNode, native.anchorOffset, next, 0);
+  }
+  return false;
+}
 export type EditableInputProps = Omit<
   HTMLAttributes<ComposerInputElement>,
   "onChange" | "onInput"
@@ -1097,11 +1194,12 @@ export function EditableInput({
     /** Moves the caret for a caret key the host reported as a control character.
      * Left unhandled, such a keydown types the character instead of moving, so
      * the move happens here: in document terms across an inline leaf, where
-     * WebKit offers extra caret positions around uneditable nodes, and otherwise
-     * through the browser's own caret motion with the platform's modifier
-     * meanings (word and line ends sideways, paragraph and document ends
-     * vertically). Page keys scroll without moving the caret, and Home and End
-     * do so too on Apple platforms unless extending the selection. */
+     * WebKit offers extra caret positions around uneditable nodes, or a line
+     * that only a token holds, and otherwise through the browser's own caret
+     * motion with the platform's modifier meanings (word and line ends
+     * sideways, paragraph and document ends vertically). Page keys scroll
+     * without moving the caret, and Home and End do so too on Apple platforms
+     * unless extending the selection. */
     const moveCaret = (key: string, event: globalThis.KeyboardEvent) => {
       const mac = isApplePlatform(navigator.platform);
       const boundary = mac ? event.metaKey : event.ctrlKey;
@@ -1135,6 +1233,13 @@ export function EditableInput({
           return true;
         }
       }
+      if (
+        (key === "ArrowUp" || key === "ArrowDown") &&
+        !event.altKey &&
+        !boundary &&
+        crossTokenLine(editor, hosts.current, key === "ArrowUp", extend)
+      )
+        return true;
       const selection = editor.dom.ownerDocument.getSelection();
       if (!selection || typeof selection.modify !== "function") return true;
       const alter = extend ? "extend" : "move";
@@ -1926,6 +2031,22 @@ export function EditableInput({
             event.preventDefault();
             ref.current?.insertLineBreak();
           }
+          // After the host, which claims Up and Down for a completion list.
+          if (
+            !event.defaultPrevented &&
+            view.current &&
+            (event.key === "ArrowUp" || event.key === "ArrowDown") &&
+            !event.altKey &&
+            !event.metaKey &&
+            !event.ctrlKey &&
+            crossTokenLine(
+              view.current,
+              hosts.current,
+              event.key === "ArrowUp",
+              event.shiftKey,
+            )
+          )
+            event.preventDefault();
         }}
         onCompositionStart={(event) => {
           composing.current = true;

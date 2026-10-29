@@ -627,3 +627,166 @@ test("editable composer renders links and mentions while preserving source and n
     await server.close();
   }
 });
+
+test("Up and Down move one line at a time through links that wrap", async ({
+  page,
+}) => {
+  // A line that holds only part of a wrapped link has no caret position of its
+  // own: left to the browser, Up and Down stall there in WebKit and jump to the
+  // document edge in Chromium. Layout decides where a link wraps, so this needs
+  // a real browser at a width where both links wrap.
+  await page.setViewportSize({ width: 480, height: 900 });
+  await page.addInitScript(() => {
+    localStorage.setItem("buzz-remember-mentioned-agents.v1", "off");
+  });
+  const server = await createServer({
+    root: fileURLToPath(new URL("../../", import.meta.url)),
+    configFile: false,
+    envFile: false,
+    plugins: [react()],
+    logLevel: "error",
+    server: { host: "127.0.0.1", port: 0 },
+  });
+  await server.listen();
+  try {
+    await page.goto(
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/link-messages.html`,
+    );
+    const input = page.getByRole("textbox", {
+      name: "Message #design",
+      exact: true,
+    });
+    await page.evaluate(() => document.fonts.ready);
+    const title =
+      "Add fully custom Auth0 login screens with staging and production rollout tooling";
+    const link = (label, pull) =>
+      `[${label}](https://github.com/block/buzz/pull/${pull})`;
+    // The first link starts its paragraph, so its first line holds only link
+    // text. The second wraps twice, so its middle line does too.
+    const first = link(title, 1);
+    const second = link(`${title} plus a long tail that wraps again`, 2);
+    const [lead, firstTail, secondTail] = [
+      "Words before ",
+      ": wraps once.",
+      " after it.",
+    ];
+    const text = [
+      "Plain words above the links.",
+      `${first}${firstTail}`,
+      `${lead}${second}${secondTail}`,
+      // Enough lines that the composer scrolls the links out of view.
+      ...Array.from({ length: 5 }, (_, line) => `Plain line ${line} below.`),
+    ].join("\n");
+    await input.fill("");
+    await input.fill(text);
+    const links = input.locator('[data-link-kind="github"]');
+    await expect(links).toHaveCount(2);
+    const lines = await input
+      .locator("[data-source]")
+      .evaluateAll((elements) =>
+        elements.map((element) => element.getClientRects().length),
+      );
+    expect(lines[0]).toBeGreaterThanOrEqual(2);
+    expect(lines[1]).toBeGreaterThanOrEqual(3);
+    expect(
+      await input.evaluate((el) => el.scrollHeight > el.clientHeight),
+    ).toBe(true);
+
+    const firstFrom = text.indexOf(first);
+    const firstTo = firstFrom + first.length;
+    const secondFrom = text.indexOf(second);
+    const secondTo = secondFrom + second.length;
+    const caret = () =>
+      input.evaluate((el) =>
+        el.selectionDirection === "backward"
+          ? { head: el.selectionStart, anchor: el.selectionEnd }
+          : { head: el.selectionEnd, anchor: el.selectionStart },
+      );
+    // WebKit settles a caret beside a link when it draws it, and a press
+    // before then can move where a person's press would stall.
+    const rendered = () =>
+      page.evaluate(
+        () =>
+          new Promise((resolve) =>
+            requestAnimationFrame(() => requestAnimationFrame(resolve)),
+          ),
+      );
+    // Presses `key` until the head reaches `stop`, returning where each press
+    // lands. A press that leaves the head in place fails the poll.
+    const walk = async (key, start, stop) => {
+      await input.evaluate((el, at) => el.setSelectionRange(at, at), start);
+      await rendered();
+      const heads = [];
+      let head = start;
+      while (head !== stop && heads.length < 12) {
+        const previous = head;
+        await page.keyboard.press(key);
+        await expect
+          .poll(async () => (head = (await caret()).head))
+          .not.toBe(previous);
+        expect(Math.sign(head - previous)).toBe(key.endsWith("Up") ? -1 : 1);
+        expect((await caret()).anchor).toBe(
+          key.startsWith("Shift+") ? start : head,
+        );
+        heads.push(head);
+        await rendered();
+      }
+      return heads;
+    };
+    for (const shift of ["", "Shift+"]) {
+      const down = await walk(`${shift}ArrowDown`, 0, secondTo);
+      // Onto the first link's own line at its start, then across the link.
+      expect(down.slice(0, 2)).toEqual([firstFrom, firstTo]);
+      // One line down: the words before the second link.
+      expect(down[2]).toBeGreaterThanOrEqual(secondFrom - lead.length);
+      expect(down[2]).toBeLessThanOrEqual(secondFrom);
+      // Across the second link's middle line.
+      expect(down.slice(3)).toEqual([secondTo]);
+
+      const up = await walk(`${shift}ArrowUp`, text.length, firstFrom - 1);
+      const [afterSecond, beforeSecond, afterFirst, ...rest] = up.slice(-5);
+      // The line holding the end of the second link and the words after it.
+      expect(afterSecond).toBeGreaterThanOrEqual(secondTo);
+      expect(afterSecond).toBeLessThanOrEqual(secondTo + secondTail.length);
+      // Across the second link's middle line, then up to the first link's end
+      // line, onto its own first line, and off it to the line above.
+      expect(beforeSecond).toBe(secondFrom);
+      expect(afterFirst).toBeGreaterThanOrEqual(firstTo);
+      expect(afterFirst).toBeLessThanOrEqual(firstTo + firstTail.length);
+      expect(rest).toEqual([firstFrom, firstFrom - 1]);
+    }
+
+    // A typed line break after the first link leaves its end line to it too.
+    await input.evaluate((el, at) => el.setSelectionRange(at, at), firstTo);
+    await input.press("Shift+Enter");
+    await expect(input).toHaveJSProperty(
+      "value",
+      `${text.slice(0, firstTo)}\n${text.slice(firstTo)}`,
+    );
+    for (const shift of ["", "Shift+"])
+      expect(
+        await walk(
+          `${shift}ArrowUp`,
+          firstTo + 1 + firstTail.length,
+          firstFrom,
+        ),
+      ).toEqual([firstTo, firstFrom]);
+
+    // WebKit can report a caret key as a control character; that path moves
+    // across a link line the same way.
+    await input.evaluate((el, at) => el.setSelectionRange(at, at), firstFrom);
+    await input.evaluate((el) =>
+      el.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "\u001F",
+          code: "ArrowDown",
+          bubbles: true,
+          cancelable: true,
+        }),
+      ),
+    );
+    expect((await caret()).head).toBe(firstTo);
+  } finally {
+    await server.close();
+  }
+});

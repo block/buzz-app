@@ -230,6 +230,45 @@ it.each([
     }
   },
 );
+// A send left `unknown` updated its preview once a read proved it landed, but
+// its row stayed put without a live echo.
+it("projects an unanswered own send once its read-back returns it", async () => {
+  const h = setup();
+  try {
+    await h.initial();
+    h.live().state({ status: "retrying", routes: [] });
+    h.publish.mockRejectedValueOnce(new Error("timed out"));
+    h.owner.session.outbox?.send({
+      kind: 9,
+      content: "mine",
+      tags: [["h", "beta"]],
+    });
+    await vi.waitFor(() =>
+      expect(h.owner.session.outbox?.snapshot()[0]?.delivery).toBe("unknown"),
+    );
+    const sent = h.publish.mock.calls[0]?.[0];
+    assert.exists(sent);
+    const beta = () =>
+      h.channels.list().channels.find(({ id }) => id === "beta");
+    expect(beta()?.lastActivityAt).toBeUndefined();
+    const readBack = await vi.waitFor(() => {
+      const entry = h.wire.pending.find(({ filters }) =>
+        filters.some((filter) => filter.ids?.includes(sent.id)),
+      );
+      assert.exists(entry);
+      return entry;
+    });
+    readBack.respond([sent]);
+    // The verified read completes delivery before confirm() sees its result.
+    await vi.waitFor(() =>
+      expect(h.owner.session.outbox?.snapshot()).toEqual([]),
+    );
+    await flush();
+    expect(beta()?.lastActivityAt).toBe(sent.created_at);
+  } finally {
+    h.owner.dispose();
+  }
+});
 it("keeps other channels' summaries when one channel's live activity advances", async () => {
   const h = setup();
   try {

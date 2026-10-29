@@ -267,7 +267,7 @@ function ChannelGeneralAccessEditor({
                 : "Channel access could not be confirmed."
               : base.visibility === "public"
                 ? `Anyone in the community can find and ${base.joinRole === "guest" ? "view" : "participate"}.`
-                : `Channel members can ${base.joinRole === "guest" ? "view" : "participate"}.`}
+                : `New channel members can ${base.joinRole === "guest" ? "view" : "participate"}.`}
           </p>
         </div>
         <div className={styles.accessRole}>

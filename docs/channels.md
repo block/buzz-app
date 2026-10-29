@@ -733,7 +733,7 @@ confirmation. Immutable roles such as Owner and self remain protected.
 icon, a compact audience Select (**Who can read**), a short result description,
 and the trailing **New people can** Select (Participate / View only), with short
 descriptions of the permitted actions. Audience options show the community avatar and
-lock icon inside the dropdown. The audience Select uses the shared ghost Button
+lock icon inside the dropdown. The audience Select uses the shared text-link
 treatment; the participation Select is outlined and vertically centered against
 the audience row, with its popup aligned to the trigger’s right edge. On narrow screens the role control wraps
 under the audience. The confirmation explains “People already in the channel keep
@@ -752,7 +752,8 @@ channels with a Guest default remain intact when changing unrelated details.
 
 Readers see General access as plain text from verified channel discovery metadata,
 without calling the editing capability. Its audience description is followed by
-“Read-only for you. Ask an owner or admin to contribute.” The compact timeline
+“Viewing only. Ask an owner or admin to participate.” The private-channel summary
+describes what new members can do; existing participants keep their roles. The compact timeline
 label says “This channel is read-only.” for Guest-default channels; a Guest in a
 Member-default channel sees “Read-only access.” Guest-default previews never suggest
 joining to add people or agents.

@@ -852,6 +852,24 @@ describe("github_watch_pr", () => {
     app.dispose();
   });
 
+  it("holds waiting feedback while the rules need a membership it cannot read", async () => {
+    const app = setup();
+    await app.call({ url });
+    app.gh(
+      answer({ comments: [{ id: "I1", login: "wes", body: "body-wes" }] }),
+    );
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+    savePolicy("allow org:block");
+    app.members(null);
+    await vi.advanceTimersByTimeAsync(QUIET_MS + POLL_MS);
+    expect(app.texts()).toHaveLength(0);
+    app.members(["wes"]);
+    await vi.advanceTimersByTimeAsync(POLL_MS + QUIET_MS + POLL_MS);
+    expect(app.texts()).toHaveLength(1);
+    expect(app.texts()[0]).toContain("body-wes");
+    app.dispose();
+  });
+
   it("does not trust an expired membership it could not read again", async () => {
     savePolicy("allow org:block");
     const app = setup();

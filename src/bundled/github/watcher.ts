@@ -11,6 +11,7 @@ import {
   step,
   WAKE_LIMIT,
   type Feedback,
+  type PullSnapshot,
   type Watch,
 } from "./watch";
 import {
@@ -202,19 +203,35 @@ export function watchPulls(ctx: Context) {
     };
   };
 
-  /** `watch` without the waiting feedback the rules now deny, as they may
-   * have changed since it was read. */
-  const recheck = async (watch: Watch, viewer: string): Promise<Watch> => {
-    if (!watch.pending?.length) return watch;
+  /** `watch` and `snapshot` with waiting feedback checked against the rules
+   * again, as they may have changed since it was read. What they deny is
+   * dropped; what needs an unread membership is unseen, to be read later. */
+  const recheck = async (
+    watch: Watch,
+    snapshot: PullSnapshot,
+  ): Promise<[Watch, PullSnapshot]> => {
+    if (!watch.pending?.length) return [watch, snapshot];
     const policy = loadPolicy();
-    await lookUp(watch.pending, policy, viewer);
+    await lookUp(watch.pending, policy, snapshot.viewer);
     const member = membership(organizations(policy), MEMBERSHIP_MS);
-    return {
-      ...watch,
-      pending: watch.pending.filter(
-        (item) => admit(item, policy, viewer, member) !== false,
-      ),
-    };
+    const admitted = new Map(
+      watch.pending.map((item) => [
+        item.id,
+        admit(item, policy, snapshot.viewer, member),
+      ]),
+    );
+    const unknown = new Set(
+      [...admitted].flatMap(([id, ok]) => (ok === undefined ? [id] : [])),
+    );
+    const known = (id: string) => !unknown.has(id);
+    return [
+      {
+        ...watch,
+        seen: watch.seen?.filter(known),
+        pending: watch.pending.filter((item) => admitted.get(item.id)),
+      },
+      { ...snapshot, ids: snapshot.ids.filter(known) },
+    ];
   };
 
   ctx.agents.addAttentionSource({
@@ -255,9 +272,9 @@ export function watchPulls(ctx: Context) {
           const snapshot = await read(pull.url, watch.seen);
           if (signal.aborted || disposed) return;
           if (!snapshot) throw new Error("gh could not read it");
-          watch = await recheck(watch, snapshot.viewer);
+          const checked = await recheck(watch, snapshot);
           if (signal.aborted || disposed) return;
-          const next = step(watch, snapshot, Date.now());
+          const next = step(...checked, Date.now());
           if (next.wake)
             emit(
               next.ended === "limit"
@@ -383,11 +400,7 @@ export function watchPulls(ctx: Context) {
       const moved =
         prior && (prior.channel !== watch.channel || prior.root !== watch.root);
       // What is already there is answered now rather than by a wake.
-      const first = step(
-        await recheck(watch, snapshot.viewer),
-        snapshot,
-        Date.now(),
-      );
+      const first = step(...(await recheck(watch, snapshot)), Date.now());
       if (first.ended && first.ended !== "limit")
         return `${pull.url} is ${first.ended}; nothing to watch.`;
       const fields = subscription({ ...first.watch, wakes: watch.wakes });

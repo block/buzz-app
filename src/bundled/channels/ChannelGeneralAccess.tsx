@@ -55,27 +55,28 @@ export function ChannelGeneralAccess({
           (entry) => communityDestination(entry.id).url === origin,
         ),
   );
-  const communityAvatar = community ? (
-    <Avatar
-      alt=""
-      src={community.publishedIcon ?? community.icon}
-      fallback={communityName(community)}
-      shape="squircle"
-      size="compact"
-    />
-  ) : (
-    <GlobeIcon size={24} />
-  );
+  const communityAvatar = (size: "compact" | "default") =>
+    community ? (
+      <Avatar
+        alt=""
+        src={community.publishedIcon ?? community.icon}
+        fallback={communityName(community)}
+        shape="squircle"
+        size={size}
+      />
+    ) : (
+      <GlobeIcon size={24} />
+    );
   // Public previews and Guests can inspect signed discovery metadata without
   // calling the membership/write-gated channel-details capability.
   if (channel?.readOnly)
     return (
       <section aria-label="General access" className={styles.generalAccess}>
         <h3 className="text-label-sm">General access</h3>
-        <div className="flex items-start gap-3">
-          <span className="text-subtle" aria-hidden="true">
+        <div className="flex items-center gap-3">
+          <span className={styles.accessIcon} aria-hidden="true">
             {channel.visibility === "public" ? (
-              communityAvatar
+              communityAvatar("default")
             ) : (
               <LockIcon size={24} />
             )}
@@ -115,7 +116,7 @@ function ChannelGeneralAccessEditor({
 }: {
   capability: ChannelDetailsCapability;
   channelId: string;
-  communityAvatar: ReactNode;
+  communityAvatar: (size: "compact" | "default") => ReactNode;
 }) {
   const attempt = useSyncExternalStore(capability.subscribe, () =>
     capability.snapshot(channelId),
@@ -220,7 +221,7 @@ function ChannelGeneralAccessEditor({
               className="motion-safe:animate-spin"
             />
           ) : base?.visibility === "public" ? (
-            communityAvatar
+            communityAvatar("default")
           ) : (
             <LockIcon size={24} />
           )}
@@ -240,7 +241,7 @@ function ChannelGeneralAccessEditor({
                   {
                     value: "public",
                     label: "Anyone in the community",
-                    leading: communityAvatar,
+                    leading: communityAvatar("compact"),
                   },
                   {
                     value: "private",

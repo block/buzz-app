@@ -1144,6 +1144,146 @@ describe("pasting a bare URL over a selection", () => {
   });
 });
 
+/** Mod+Shift+V: the chord's keydown, then the paste event its native command fires. */
+function pasteRaw(
+  input: ComposerInputElement,
+  text: string,
+  html = "",
+  chord: Partial<KeyboardEventInit> = { key: "V", ctrlKey: true },
+) {
+  act(() => {
+    input.focus();
+    fireEvent.keyDown(input, { code: "KeyV", shiftKey: true, ...chord });
+  });
+  paste(input, text, html);
+}
+
+describe("Mod+Shift+V pastes plain text verbatim", () => {
+  const url = "https://example.com/release-notes";
+  const chord = { key: "V", code: "KeyV", ctrlKey: true, shiftKey: true };
+
+  it("ignores rich flavors, this app's included, and keeps Markdown and line breaks literal", () => {
+    const h = mount("", { links: true });
+    const text =
+      "**bold** and [docs](https://example.com/)\n\n> quote\n- one\n- two";
+    pasteRaw(
+      h.input,
+      text,
+      copyHtml(
+        '<p><strong>bold</strong> and <a href="https://example.com/">docs</a></p><blockquote><p>quote</p></blockquote><ul><li><p>one</p></li><li><p>two</p></li></ul>',
+      ),
+    );
+    expect(h.markdown()).toBe(text);
+    expect(h.input.querySelector("strong, blockquote, ul")).toBeNull();
+    const external = mount();
+    pasteRaw(
+      external.input,
+      "Read the guide",
+      '<p>Read <a href="https://example.com/guide"><b>the guide</b></a></p>',
+    );
+    expect(external.markdown()).toBe("Read the guide");
+  });
+
+  it("replaces a selection with a URL as text in one undo step", () => {
+    const h = mount("Check the release notes before Friday");
+    act(() => h.input.setSelectionRange(10, 23));
+    pasteRaw(h.input, url);
+    expect(h.markdown()).toBe(`Check the ${url} before Friday`);
+    expect([h.input.selectionStart, h.input.selectionEnd]).toEqual([43, 43]);
+    act(() => h.input.undo(false));
+    expect(h.markdown()).toBe("Check the release notes before Friday");
+    expect([h.input.selectionStart, h.input.selectionEnd]).toEqual([10, 23]);
+    act(() => h.input.undo(true));
+    expect(h.markdown()).toBe(`Check the ${url} before Friday`);
+  });
+
+  it("takes the caret's formatting and leaves identity links as source", () => {
+    const accept = vi.fn((pubkey: string) => ({ pubkey, name: "Mic" }));
+    const h = mount("", { links: true, acceptRecipient: accept });
+    act(() => h.input.toggleFormat("bold"));
+    pasteRaw(h.input, `Ping ${micLink}`);
+    expect(h.markdown()).toBe(`**Ping ${micLink}**`);
+    expect(h.draft().recipients).toEqual([]);
+    expect(accept).not.toHaveBeenCalled();
+  });
+
+  it("inserts nothing for a clipboard without text", () => {
+    const h = mount("draft");
+    pasteRaw(h.input, "");
+    expect(h.markdown()).toBe("draft");
+    act(() => {
+      fireEvent.keyDown(h.input, chord);
+      fireEvent.paste(h.input, {
+        clipboardData: {
+          items: [{ kind: "file" }],
+          getData: (type: string) => (type === "text/plain" ? "name.png" : ""),
+        },
+      });
+    });
+    expect(h.markdown()).toBe("draft");
+  });
+
+  it("takes Apple chords on Apple platforms only", () => {
+    const platform = vi.spyOn(navigator, "platform", "get");
+    try {
+      platform.mockReturnValue("MacIntel");
+      for (const apple of [
+        { key: "V", metaKey: true },
+        // Option+Shift+V types ◊; the physical key still names the chord.
+        { key: "◊", metaKey: true, altKey: true },
+      ]) {
+        const h = mount("Check the release notes");
+        act(() => h.input.setSelectionRange(10, 23));
+        pasteRaw(h.input, url, "", apple);
+        expect(h.markdown()).toBe(`Check the ${url}`);
+      }
+      const control = mount("Check the release notes");
+      act(() => control.input.setSelectionRange(10, 23));
+      pasteRaw(control.input, url);
+      expect(control.markdown()).toBe(`Check the [release notes](${url})`);
+    } finally {
+      platform.mockRestore();
+    }
+  });
+
+  it("pastes verbatim after the desktop menu's request without a key", () => {
+    const h = mount("Check the release notes");
+    act(() => h.input.setSelectionRange(10, 23));
+    act(() => {
+      h.input.focus();
+      h.input.dispatchEvent(new Event("buzz:paste-plain"));
+    });
+    paste(h.input, url);
+    expect(h.markdown()).toBe(`Check the ${url}`);
+    // The request covers one paste.
+    act(() => h.input.setSelectionRange(0, 5));
+    paste(h.input, url);
+    expect(h.markdown()).toBe(`[Check](${url}) the ${url}`);
+  });
+
+  it.each([
+    [
+      "the chord is released",
+      (input: Element) => fireEvent.keyUp(input, { key: "Shift" }),
+    ],
+    ["the pointer goes down", (input: Element) => fireEvent.mouseDown(input)],
+    [
+      "another key goes down",
+      (input: Element) =>
+        fireEvent.keyDown(input, { key: "v", code: "KeyV", ctrlKey: true }),
+    ],
+  ])("leaves a later paste ordinary once %s", (_name, after) => {
+    const h = mount("Check the release notes");
+    act(() => {
+      fireEvent.keyDown(h.input, chord);
+      after(h.input);
+    });
+    act(() => h.input.setSelectionRange(10, 23));
+    paste(h.input, url);
+    expect(h.markdown()).toBe(`Check the [release notes](${url})`);
+  });
+});
+
 it("bolds a mention typed between delimiters and keeps its chip and recipient", async () => {
   const h = mount();
   const honey = { pubkey: "a".repeat(64), name: "Honey" };

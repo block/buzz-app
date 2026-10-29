@@ -1293,7 +1293,11 @@ text, including its closing fence line, so Enter after a pasted or edited fenced
 saves as usual and the text still renders as code once sent. Content copied from a rendered
 message or from a composer pastes with its lists, quotes, code blocks and inline formatting as
 the composer's own blocks and formatting; text copied from anywhere else pastes as plain text,
-keeping only its web links. A copied spoiler stays a spoiler whether or not it was revealed, and
+keeping only its web links. Paste and Match Style pastes the clipboard's plain text verbatim
+over the selection with the caret's formatting: no copied blocks, formatting or links, no linked
+selection and no recipients. It is ⌘⇧V or Edit → Paste and Match Style in the macOS app, ⌥⇧⌘V in
+macOS browsers and Ctrl+Shift+V elsewhere.
+A copied spoiler stays a spoiler whether or not it was revealed, and
 keeps its `||` delimiters elsewhere. Headings, task checkboxes and horizontal rules, which the
 composer has no block for, paste as their Markdown source (`# `, `[ ]`/`[x]`, `***`) so they still
 render once sent. Copied with other blocks, each keeps a line of its own; a heading or rule copied

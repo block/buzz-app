@@ -358,3 +358,63 @@ test("pasting a URL over selected text links it in the composer and sent message
   );
   await expect(row.getByRole("link", { name: "release notes" })).toBeVisible();
 });
+
+// Browser-only: the engine's own Ctrl+Shift+V command (Chromium's
+// PasteAndMatchStyle, WebKitGTK's PasteAsPlainText) fires a text/plain-only
+// paste after the real keydown, which must replace the selection verbatim
+// rather than link it, and must not send. macOS engines bind no such key; the
+// desktop app's Edit menu supplies it there. The flavor/selection matrix lives
+// in EditableInput.test.tsx.
+test("Ctrl+Shift+V pastes plain text over the selection without sending", async ({
+  page,
+  app,
+  browserName,
+}) => {
+  test.skip(
+    process.platform === "darwin",
+    "macOS engines bind no native Ctrl/Cmd+Shift+V command",
+  );
+  await open(page, app);
+  const input = page.getByRole("textbox", {
+    name: "Message #Alpha",
+    exact: true,
+  });
+  await input.click();
+  await input.pressSequentially("Check the release notes before Friday");
+  await input.evaluate((element) => element.setSelectionRange(10, 23));
+  // Ordinary paste would link the selection with this URL and drop the break.
+  const text = "https://example.com/release-notes\n";
+  // Put both flavors on the engine's clipboard through a native copy command.
+  await page.evaluate((text) => {
+    document.addEventListener(
+      "copy",
+      (event) => {
+        event.stopImmediatePropagation();
+        event.preventDefault();
+        event.clipboardData?.setData("text/plain", text);
+        event.clipboardData?.setData(
+          "text/html",
+          '<div data-buzz-copy="timeline"><p><strong>Read</strong> <a href="https://example.com/release-notes">notes</a></p><ul><li><p>first</p></li></ul></div>',
+        );
+      },
+      { once: true, capture: true },
+    );
+  }, text);
+  // See timeline-copy.spec.mjs for the WebKit copy command.
+  if (browserName === "webkit")
+    expect(await page.evaluate(() => document.execCommand("copy"))).toBe(true);
+  else await page.keyboard.press("Control+c");
+  const original = "Check the release notes before Friday";
+  const pasted = `Check the ${text} before Friday`;
+  await page.keyboard.press("Control+Shift+V");
+  await expect(input).toHaveJSProperty("value", pasted);
+  await expect(input.locator("strong, ul")).toHaveCount(0);
+  expect(app.report.publications).toHaveLength(0);
+  await page.keyboard.press("Control+z");
+  await expect(input).toHaveJSProperty("value", original);
+  await page.keyboard.press("Control+Shift+z");
+  await expect(input).toHaveJSProperty("value", pasted);
+  await input.press("Enter");
+  await expect.poll(() => app.report.publications.length).toBe(1);
+  expect(app.report.publications[0].event.content).toBe(pasted);
+});

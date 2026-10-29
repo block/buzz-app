@@ -1705,6 +1705,12 @@ it("refuses channel arguments that do not fit, before publishing", async () => {
   const { client, published } = relay();
   const channel = (name: string, args: Record<string, unknown>) =>
     callTool(client, { channel: room }, name, args);
+  await expect(
+    channel("channel_delete", { channel_id: "other" }),
+  ).rejects.toThrow("channel_id cannot be used with channel_delete.");
+  await expect(
+    channel("channel_create", { name: "x", visibility: "open", topic: "t" }),
+  ).rejects.toThrow("topic cannot be used with channel_create.");
   await expect(channel("channel_create", { name: "x" })).rejects.toThrow(
     "visibility must be open or private.",
   );

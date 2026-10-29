@@ -320,6 +320,19 @@ export function callTool(
 ) {
   const handler = HANDLERS[name];
   if (!handler) throw new Error(`No tool ${name}`);
+  // A channel tool refuses arguments it does not list, so a misspelled
+  // target cannot fall back to the current channel.
+  if (name.startsWith("channel_")) {
+    const listed =
+      TOOLS.find((tool) => tool.name === name)?.inputSchema.properties ?? {};
+    const extra = Object.keys(args).filter(
+      (key) => !Object.hasOwn(listed, key),
+    );
+    if (extra.length)
+      return Promise.reject(
+        new Error(`${extra.join(", ")} cannot be used with ${name}.`),
+      );
+  }
   return handler(new Tools(client, context), args);
 }
 

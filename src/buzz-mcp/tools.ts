@@ -47,6 +47,10 @@ const final = {
 } as const;
 /** The channel types a channel list can ask for, as NIP-CL names them. */
 const CHANNEL_TYPES = ["stream", "forum", "dm", "workflow", "system"];
+const ttl = {
+  type: "integer",
+  description: "Seconds without a message before it archives; 0: never.",
+} as const;
 const tool = (
   name: string,
   description: string,
@@ -151,8 +155,8 @@ export const TOOLS: readonly Tool[] = [
     },
   ),
   tool(
-    "channels",
-    "Channels you are in; with all, every one you can see. types lists only channels of those types; system channels are listed only when types has system.",
+    "channel_list",
+    "Channels you are in; with all, every one you can see. System channels are listed only when types has system.",
     {
       q: str,
       all: { type: "boolean" },
@@ -164,41 +168,41 @@ export const TOOLS: readonly Tool[] = [
       },
     },
   ),
+  tool("channel_get", "A channel's details (default: current).", {
+    channel: str,
+  }),
   tool(
-    "channel",
-    "Channel details (default: current), or an action on it. create may use your owner's template, by name. delete is permanent.",
+    "channel_create",
+    "Create a channel. template: one of your owner's, by name.",
     {
-      channel: str,
-      action: {
-        type: "string",
-        enum: [
-          "create",
-          "update",
-          "join",
-          "leave",
-          "archive",
-          "unarchive",
-          "delete",
-        ],
-      },
       name: str,
-      about: str,
       visibility: { type: "string", enum: ["open", "private"] },
+      about: str,
       type: {
         type: "string",
         enum: ["stream", "forum", "system"],
         description:
-          "system: left out of ordinary channel lists. An open one is still found by anyone who lists system channels.",
+          "system: left out of ordinary channel lists; anyone can still list an open one.",
       },
-      ttl: {
-        type: "integer",
-        description: "Seconds without a message before it archives; 0: never.",
-      },
-      topic: str,
-      purpose: str,
+      ttl,
       template: str,
     },
+    ["name", "visibility"],
   ),
+  tool("channel_update", "Change a channel's details.", {
+    channel: str,
+    name: str,
+    about: str,
+    visibility: { type: "string", enum: ["open", "private"] },
+    ttl,
+    topic: str,
+    purpose: str,
+  }),
+  tool("channel_join", "Join a channel.", { channel: str }),
+  tool("channel_leave", "Leave a channel.", { channel: str }),
+  tool("channel_archive", "Archive a channel.", { channel: str }),
+  tool("channel_unarchive", "Unarchive a channel.", { channel: str }),
+  tool("channel_delete", "Delete a channel permanently.", { channel: str }),
   tool(
     "members",
     "A channel's members; add or remove pubkeys or npubs, giving those added a role.",
@@ -298,18 +302,6 @@ const MAX_EVENTS = 10_000;
 const CHANNEL_BYTES = 16_384;
 const CHANNEL_PARTIAL =
   "Partial channel list: scan or output limit reached. Narrow with q or use a known channel ID.";
-/** The `channel` arguments each action takes. */
-const ACTIONS: Readonly<Record<string, readonly string[]>> = {
-  details: [],
-  create: ["name", "about", "visibility", "type", "ttl", "template"],
-  update: ["name", "about", "visibility", "ttl", "topic", "purpose"],
-  join: [],
-  leave: [],
-  archive: [],
-  unarchive: [],
-  delete: [],
-};
-
 type Args = Readonly<Record<string, unknown>>;
 /** A tool's answer: text, or an image (base64 `data`) for the agent to see,
  * with any `text` about it. */
@@ -624,7 +616,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     ].join("\n");
   },
 
-  async channels(tools, args) {
+  async channel_list(tools, args) {
     const { client } = tools;
     const ids = new Set<string>();
     // Each channel-state event carries its type in its first `t` tag. The
@@ -686,7 +678,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
               const size = encoder.encode(row).length + 1;
               if (bytes + size > CHANNEL_BYTES) {
                 // Preserve a usable ID when one channel has oversized details.
-                const brief = `${id} (details omitted; use channel for details)`;
+                const brief = `${id} (details omitted; use channel_get for details)`;
                 if (bytes + encoder.encode(brief).length + 1 <= CHANNEL_BYTES)
                   rows.push(brief);
                 return false;
@@ -700,60 +692,14 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     return rows.join("\n") || "No channels.";
   },
 
-  async channel(tools, args) {
-    const { client } = tools;
-    const action = args.action ?? "details";
-    const fields =
-      typeof action === "string" && Object.hasOwn(ACTIONS, action)
-        ? ACTIONS[action]
-        : undefined;
-    if (typeof action !== "string" || !fields)
-      throw new Error(
-        `action must be one of ${Object.keys(ACTIONS).join(", ")}.`,
-      );
-    const extra = Object.keys(args).filter(
-      (key) => key !== "channel" && key !== "action" && !fields.includes(key),
-    );
-    if (extra.length)
-      throw new Error(`${extra.join(", ")} cannot be used with ${action}.`);
-    if (action === "create") {
-      if (args.channel !== undefined)
-        throw new Error("create makes a new channel; leave out channel.");
-      return tools.create(args);
-    }
-    const channel = target(tools, args);
-    if (action === "details") return tools.details(channel);
-    if (action === "update") return tools.update(channel, args);
-    const { kind, content, tags } = lifecycleTemplate(
-      action as "join" | "leave" | "archive" | "unarchive" | "delete",
-      channel,
-    );
-    await client.publish({ kind, content, tags });
-    // The relay can accept a change it then fails to make, so it is reported
-    // only once the channel shows it.
-    const shown = async () => {
-      if (action === "join" || action === "leave")
-        return (
-          (await tools.roster(channel)).some(
-            (member) => member.pubkey === client.pubkey,
-          ) ===
-          (action === "join")
-        );
-      const metadata = await tools.metadata(channel);
-      if (action === "delete") return !metadata;
-      return !!metadata && has(metadata, "archived") === (action === "archive");
-    };
-    const done: Readonly<Record<string, string>> = {
-      join: "joined",
-      leave: "left",
-      archive: "archived",
-      unarchive: "unarchived",
-      delete: "deleted",
-    };
-    const now = await until(shown, Boolean).catch(unread);
-    if (now === true) return `${done[action]} ${channel}`;
-    return `The community accepted ${action} but ${now ? now.message : "does not show it yet"}.`;
-  },
+  channel_get: (tools, args) => tools.details(target(tools, args)),
+  channel_create: (tools, args) => tools.create(args),
+  channel_update: (tools, args) => tools.update(target(tools, args), args),
+  channel_join: (tools, args) => lifecycle(tools, args, "join"),
+  channel_leave: (tools, args) => lifecycle(tools, args, "leave"),
+  channel_archive: (tools, args) => lifecycle(tools, args, "archive"),
+  channel_unarchive: (tools, args) => lifecycle(tools, args, "unarchive"),
+  channel_delete: (tools, args) => lifecycle(tools, args, "delete"),
 
   async members(tools, args) {
     const channel = target(tools, args);
@@ -767,7 +713,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     if (add.length || remove.length) {
       lifecycleChannelId(channel);
       if ([...add, ...remove].includes(tools.client.pubkey))
-        throw new Error("For yourself, use channel with action join or leave.");
+        throw new Error("For yourself, use channel_join or channel_leave.");
       if (add.some((key) => remove.includes(key)))
         throw new Error("Add or remove someone, not both.");
       if (add.length + remove.length > 50)
@@ -1961,7 +1907,7 @@ async function until<T>(load: () => Promise<T>, done: (value: T) => boolean) {
 /** A channel without visible metadata, including a newly created channel. */
 const unseen = (channel: string) =>
   new Error(
-    `No channel ${channel} that you can see (it may not be visible yet). If you supplied a name, channels with q finds its ID.`,
+    `No channel ${channel} that you can see (it may not be visible yet). If you supplied a name, channel_list with q finds its ID.`,
   );
 
 /** The repositories bound to `channel` by its owners and admins or their
@@ -2085,6 +2031,42 @@ async function canvas(tools: Tools, channel: string) {
   ]);
   if (!head && !(await tools.metadata(channel))) throw unseen(channel);
   return head;
+}
+
+/** Makes lifecycle change `action` to the `channel` argument. The relay can
+ * accept a change it then fails to make, so it is reported only once the
+ * channel shows it. */
+async function lifecycle(
+  tools: Tools,
+  args: Args,
+  action: "join" | "leave" | "archive" | "unarchive" | "delete",
+) {
+  const { client } = tools;
+  const channel = target(tools, args);
+  const { kind, content, tags } = lifecycleTemplate(action, channel);
+  await client.publish({ kind, content, tags });
+  const shown = async () => {
+    if (action === "join" || action === "leave")
+      return (
+        (await tools.roster(channel)).some(
+          (member) => member.pubkey === client.pubkey,
+        ) ===
+        (action === "join")
+      );
+    const metadata = await tools.metadata(channel);
+    if (action === "delete") return !metadata;
+    return !!metadata && has(metadata, "archived") === (action === "archive");
+  };
+  const done = {
+    join: "joined",
+    leave: "left",
+    archive: "archived",
+    unarchive: "unarchived",
+    delete: "deleted",
+  };
+  const now = await until(shown, Boolean).catch(unread);
+  if (now === true) return `${done[action]} ${channel}`;
+  return `The community accepted ${action} but ${now ? now.message : "does not show it yet"}.`;
 }
 
 /** The `channel` argument, or the current channel only when it is left out. */

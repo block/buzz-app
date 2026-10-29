@@ -13,7 +13,7 @@ import {
   savePolicy,
   type AuthorPolicy,
 } from "./authors";
-import type { Feedback } from "./watch";
+import { BODY_CHARS, type Feedback } from "./watch";
 
 const rules = (text: string) => parse(text) as AuthorPolicy;
 const by = (author: string, body = "", bot = false): Feedback => ({
@@ -128,6 +128,21 @@ allow org:Block body:/bug/s`);
     expect(admit(by("eve", body.slice(9)), policy, "j", nobody)).toBe(true);
   });
 
+  it("match a hostile pattern in time the text's length bounds", () => {
+    const policy = rules("deny body:/^(a+)+$/\nallow author:/^(\\w+)*$/");
+    const started = performance.now();
+    for (const length of [25, BODY_CHARS - 1])
+      expect(
+        admit(
+          by(`${"a".repeat(length)}-`, `${"a".repeat(length)}!`),
+          policy,
+          "j",
+          nobody,
+        ),
+      ).toBe(false);
+    expect(performance.now() - started).toBeLessThan(250);
+  });
+
   it("name the line that is not a rule", () => {
     const errors = {
       "allow\nwho knows": "Line 2: it must start with allow or deny",
@@ -147,6 +162,9 @@ allow org:Block body:/bug/s`);
       "allow body:/unclosed": "Line 1: body: needs a /pattern/",
       "allow body:text": "Line 1: body: needs a /pattern/",
       "allow prefix:": "Line 1: prefix: needs text",
+      "allow body:/(a)\\1/": "Line 1: a pattern cannot use backreferences",
+      "allow body:/(?=a)/": "Line 1: a pattern's groups can only be",
+      "allow author:/a{2000}/": "Line 1: a pattern this long or repetitive",
     };
     for (const [text, error] of Object.entries(errors)) {
       expect(parse(text)).toContain(error);

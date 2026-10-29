@@ -5,18 +5,19 @@
 // agents' own comments, as before rules existed. Saved on this device and
 // edited in Settings; each poll reads them again, so a change applies to
 // running watches.
+import { Pattern } from "./pattern";
 import { BODY_CHARS, type Feedback } from "./watch";
 
 export type Rule = Readonly<{
   effect: "allow" | "deny";
   /** An exact login, ME, or a pattern, all matched case aside. A bot's login
    * ends in `[bot]`. */
-  author?: string | RegExp;
+  author?: string | Pattern;
   /** An organization the author is a member of. */
   org?: string;
   /** What the body starts with, leading space aside. */
   prefix?: string;
-  body?: RegExp;
+  body?: Pattern;
 }>;
 
 export type AuthorPolicy = Readonly<{
@@ -45,10 +46,10 @@ function rule(line: string): Rule | string {
   if (effect !== "allow" && effect !== "deny")
     return "it must start with allow or deny";
   const conditions: {
-    author?: string | RegExp;
+    author?: string | Pattern;
     org?: string;
     prefix?: string;
-    body?: RegExp;
+    body?: Pattern;
   } = {};
   let rest = line.slice(effect.length).trimStart();
   while (rest) {
@@ -71,7 +72,7 @@ function rule(line: string): Rule | string {
       if (!/^(?!.*(.).*\1)[imsu]*$/.test(flags))
         return `${whole} may only use the flags i, m, s and u`;
       try {
-        conditions[key] = new RegExp(
+        conditions[key] = new Pattern(
           source,
           key === "author" && !flags.includes("i") ? `${flags}i` : flags,
         );
@@ -183,7 +184,7 @@ export function admit(
     const { author } = rule;
     if (
       author !== undefined &&
-      !(author instanceof RegExp
+      !(author instanceof Pattern
         ? author.test(login)
         : author === ME
           ? !item.bot && item.author.toLowerCase() === viewer.toLowerCase()

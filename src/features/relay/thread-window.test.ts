@@ -678,6 +678,67 @@ it("a refresh completing while the stream is down keeps the replies held across 
   ]);
 });
 
+it("an establishment refresh queued before a drop runs as a plain refresh, keeping the replies held for the next establishment", async () => {
+  // A renewal EOSE while a read runs queues an establishment refresh. Run as
+  // one after the drop, it would clear the drop-time snapshot while offline.
+  const [one, two, three, four] = [at(1), at(2), at(3), at(4)];
+  let reconnected = false;
+  let gate: Promise<void> | undefined;
+  let release = () => {};
+  const pages = reconnectPages(() => reconnected);
+  const h = await setup(async (filter) => {
+    const held = filter.thread_window ? gate : undefined;
+    if (held) gate = undefined;
+    await held;
+    return pages(filter);
+  });
+  h.traffic.state({ status: "connected", routes: [] });
+  await h.view.refresh();
+  expect(h.view.snapshot().replies.map((row) => row.id)).toEqual([one.id]);
+  gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const refreshing = h.view.refresh();
+  let queued = 0;
+  try {
+    await vi.waitFor(() => expect(gate).toBeUndefined());
+    queued = h.requests.length;
+    h.traffic.established(channel);
+    h.traffic.state({ status: "retrying", routes: [] });
+  } finally {
+    release();
+  }
+  await refreshing;
+  await vi.waitFor(() => {
+    expect(h.requests.slice(queued)).toMatchObject([
+      [{ ids: [root.id] }],
+      [{ thread_window: true }],
+    ]);
+    expect(h.view.snapshot().status).toBe("ready");
+  });
+  reconnected = true;
+  h.traffic.state({ status: "connected", routes: [] });
+  h.traffic.receive([four]);
+  const before = h.requests.length;
+  h.traffic.established(channel);
+  await vi.waitFor(() => {
+    const snapshot = h.view.snapshot();
+    expect(snapshot.replies.map((row) => row.id)).toEqual([
+      one.id,
+      two.id,
+      three.id,
+      four.id,
+    ]);
+    expect(snapshot).toMatchObject({ status: "ready", limited: false });
+  });
+  expect(h.requests.slice(before)).toMatchObject([
+    [{ ids: [root.id] }],
+    [{ thread_window: true }],
+    [{ thread_window: true, until: three.created_at, before_id: three.id }],
+    [{ thread_window: true, until: two.created_at, before_id: two.id }],
+  ]);
+});
+
 it("a thread view opened while the stream is down keeps its first read for the establishment refresh to reach", async () => {
   const [one, two, three, four] = [at(1), at(2), at(3), at(4)];
   let reconnected = false;

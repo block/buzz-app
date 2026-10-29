@@ -823,6 +823,8 @@ export function createThreadView({
     stale() {
       dropped = true;
       held ??= unverified();
+      // A queued establishment was for the stream that just dropped.
+      if (again === "established") again = "refresh";
     },
     /** The stream is back: refresh, reaching the replies held across the drop. */
     established: () => run(true, true),

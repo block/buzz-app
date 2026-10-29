@@ -57,13 +57,15 @@ servers do not support these operations.
 
 ## Agent Attention
 
-The Agent Attention tab groups the selected community's local agents' subscriptions by Interest. It shows instructions, listening and delivery destinations, enabled state and available wake history. Ask an agent to create watches through its Attention tools; pausing or removing one preserves the other saved objects. Empty Interests remain visible and can be deleted after their watches are removed.
+Attention itself (the runtime, tools, storage and sources) is core, but it runs on this device only while a plugin that shows it is on. The bundled Agent Attention UI plugin (`buzz.watching`, on by default) adds a Watching tab to the settings of every agent running on this device, whatever its type. The tab explains Attention, holds the switch that lets this device run the agent's watches, then groups that agent's subscriptions by Interest. It shows instructions, listening and delivery destinations, enabled state and available wake history, and suggests asks while the agent has none. Ask an agent to create watches through its Attention tools; pausing or removing one preserves the other saved objects. Empty Interests remain visible and can be deleted after their watches are removed. Turning the plugin off hides the tab and turns every agent's Attention off on this device; mentions still wake agents, and each agent keeps its saved switch for when the plugin is back on. The former standalone Agent Attention page is gone, so an old link to `buzz.agents/attention` opens as an unavailable destination.
 
 ## Agent types and providers
 
 Harness plugins register agent types with the Agents service. An agent type owns
 the defaults, migration policy, per-agent settings tabs, model discovery and run
-behavior for its agents. The host appends the shared Attention tab.
+behavior for its agents. Plugins can add a tab to every local agent with
+`ctx.agents.registerTab`; the Agent Attention UI plugin's Watching tab holds the
+device Attention switch.
 
 Attention is shared by every harness, and a harness has no attention code.
 `src/buzz-mcp/session-tools.ts` exports `BUZZ_SESSION`: the Buzz tools and the
@@ -679,9 +681,10 @@ in its home record and applies everywhere.
   agent's memory in that community stay, so they come back if it is added again;
   its attention there does not.
 - **Teams** work like agents: a team shows in every community where it has a
-  member (or in all of them while it has none), but has one home community. A
-  local team is shared by every community; a member's roster lists only teammates
-  in the same community, and the editor keeps members that are only elsewhere.
+  member (or in all of them while it has none), and a synced team always shows
+  in its one home community. A local team is shared by every community; a
+  member's roster lists only teammates in the same community, and the editor
+  keeps members that are only elsewhere.
   Where the community's relay supports config channels, a new team, or one
   imported from old Buzz, is synced: its NIP-AP config channel (name and
   instructions) is created only in the community it was made in, and its members
@@ -695,6 +698,17 @@ in its home record and applies everywhere.
   one at a time per team, and report anything left part way. Existing local
   teams are not migrated.
 - **Hosted agents** stay in one community, as their provider holds the key.
+  Only a synced team homed there can have them as members, so the team editor
+  offers them only for such a team, or for a new one that will sync there. One
+  picked in a community Save doesn't put the team in, as when another is
+  selected before a new team's first Save, is left off unless the team already
+  has it. One picked where Save puts the team stays, shown checked, while that
+  community's agent list is read again, but Save refuses it until the list is
+  read, and refuses it once the list is read without it. Unchecking it leaves
+  it off. They do not get its instructions, but rosters name them.
+  Until the community's agent list is read, which tells hosted agents from
+  ones on other devices, the team's roster there names each member not on this
+  device by npub alone.
 
 `removeRelayAgent` applies the same steps to a relay-only agent: archive when
 consent exists, delete the owner's kind 30177 record (NIP-09), then remove it from
@@ -901,9 +915,13 @@ the agent would share now, and publishes that, still shared.
 
 **Export agent** saves `{name}.agent.png` or, by **File format**,
 `{name}.agent.json` in the `buzz-agent-snapshot` version 1 format that block/buzz
-and earlier Buzz write, without memory. The PNG is the picture redrawn at
-512×512, or a transparent pixel when it is missing or takes over 5 seconds to
-load, with the manifest in a `buzz_agent_snapshot` tEXt chunk. Desktop saves it
+and earlier Buzz write, without memory. The PNG is an 820×1230 agent card
+(`src/features/agents/share-card.ts`): foil around the picture, the name, and
+its harness and model, with the letter tile when the picture is missing, takes
+over 5 seconds to load, or can't be read back, and a transparent pixel when no
+card can be drawn. The manifest is in a `buzz_agent_snapshot` tEXt chunk.
+Exporting the card previews it first and saves the bytes shown; sending the
+agent uploads the same card. Desktop saves it
 to Downloads through `file_download` (`src-tauri/src/relay.rs`), as media is
 saved, since WKWebView cannot save a `blob:` link cleanly, and returns the
 saved path, which the dialog shows. It takes only
@@ -1048,7 +1066,7 @@ Use `watch_add` with `type: "source"`, a `provider` in `plugin/source` form and 
 
 Source output accepts the same optional classifier questions as event watches. Classification preserves output ordering and completion until the resulting delivery settles. `agents.attentionProviders()` lists active registered provider keys with their optional `description` and `configExample`, including providers from unrelated plugins. Disabled and unloaded registrations disappear from discovery.
 
-The bundled Agents plugin owns the command producer and discovery tool. The GitHub plugin owns the GitHub PR producer. Saved provider IDs remain `attention/command` and `attention/github-pr`, and discovery marks them `builtIn: true`. The bundled Agents plugin also owns the Agent Attention overview and controls for existing watches. The GitHub source uses the same PR parser and feedback policy as `github_watch_pr`; it requires the signed-in `gh` CLI. The tool configures Attention subscriptions rather than owning a separate polling loop. Other plugins can register their own source producers through the same lifecycle. Legacy Monitor command registrations and pending wakes are not imported; recreate needed command watches in Attention.
+The bundled Agents plugin owns the command producer and discovery tool. The GitHub plugin owns the GitHub PR producer. Saved provider IDs remain `attention/command` and `attention/github-pr`, and discovery marks them `builtIn: true`. The bundled Agent Attention UI plugin owns the per-agent overview and controls for existing watches. The GitHub source uses the same PR parser and feedback policy as `github_watch_pr`; it requires the signed-in `gh` CLI. The tool configures Attention subscriptions rather than owning a separate polling loop. Other plugins can register their own source producers through the same lifecycle. Legacy Monitor command registrations and pending wakes are not imported; recreate needed command watches in Attention.
 
 ## Attention delivery destinations
 

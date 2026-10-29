@@ -20,14 +20,12 @@ export function controlPlane(
   }
 }
 
-/** Hosts that serve deployed apps, a subdomain each, per tenant. */
-const APP_DOMAINS = [
-  "apps.builderlab.xyz",
-  "apps.public.builderlab.xyz",
-  "apps.builderlabstaging.xyz",
-  "apps.block.builderlab.xyz",
-  "apps.test.blockstaging.build",
-];
+/** DNS labels are 1–63 alphanumeric characters, with interior hyphens allowed. */
+const DNS_LABEL = "[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?";
+/** App subdomains under apps.[<tenant>.]builderlab[staging].xyz. */
+const APP_DOMAINS = new RegExp(
+  `^(?:${DNS_LABEL}\\.)+apps\\.(?:${DNS_LABEL}\\.)?builderlab(?:staging)?\\.xyz$`,
+);
 
 /** An app's name from its host, `<name>--<workspace>.<apps domain>`. */
 export function appName(target: string) {
@@ -51,6 +49,6 @@ export function isAppUrl(target: string) {
     url.protocol === "https:" &&
     !url.username &&
     !url.password &&
-    APP_DOMAINS.some((domain) => host.endsWith(`.${domain}`))
+    APP_DOMAINS.test(host)
   );
 }

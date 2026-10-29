@@ -79,6 +79,7 @@ import {
   PlusIcon,
   RobotIcon,
   StarFilledIcon,
+  WarningCircleIcon,
   XIcon,
 } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -116,11 +117,16 @@ import { agentProviderRoute, agentProviderTarget, agentRoute } from "./routes";
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 const noSubscribe = () => () => {};
+const names = (agents: readonly Agent[]) =>
+  new Intl.ListFormat(undefined, { type: "conjunction" }).format(
+    agents.map((agent) => agent.name),
+  );
 const importReminderKey = "agent-community-import:dismissed";
 
 /** The type's one-line summary of an agent; its title when it has none. */
 function summaryOf(agent: Agent, type: RegisteredAgentType | undefined) {
-  if (agent.place === "elsewhere") return "On another device";
+  if (agent.place === "elsewhere")
+    return type && !type.remote ? "On another device" : "Harness unavailable";
   if (agent.unfinished) return "Setup unfinished";
   if (!type) return "Type unavailable";
   try {
@@ -268,12 +274,15 @@ export function AgentsPage({
   // Importing gives an agent a key here, so a hosted type cannot take one.
   const runnable = types.filter((type) => !type.remote);
   // Teams are shared by every community; this one shows each with a member
-  // here, or with none in any community.
+  // here, or with none in any community. A synced team always shows in its
+  // home, and elsewhere only with a member there or while it has none.
   const members = new Set(snapshot.agents.map((agent) => agent.pubkey));
   const teams = snapshot.teams.filter(
     (team) =>
       team.members.some((pubkey) => members.has(pubkey)) ||
-      !team.members.some((pubkey) => agents.memberships(pubkey).length),
+      (team.revision
+        ? !team.members.length || agents.teamHere({ id: team.id })
+        : !team.members.some((pubkey) => agents.memberships(pubkey).length)),
   );
   // Only a team still saved, or one being made, keeps its editor open.
   const editing =
@@ -544,7 +553,9 @@ export function AgentsPage({
           ) : (
             <Teams
               agents={agents}
-              saved={snapshot.agents.filter((agent) => agent.place === "here")}
+              saved={snapshot.agents.filter(
+                (agent) => agent.place !== "elsewhere" && !agent.unfinished,
+              )}
               teams={teams}
               editing={editing}
               onEdit={setEditingTeam}
@@ -1186,8 +1197,17 @@ function AgentPeek({
       />
       {agent.place === "elsewhere" ? (
         <p className="m-0 text-body-sm text-secondary">
-          Its key is on another of your devices, which runs it. Open Agents
-          there to change or delete it.
+          {type && !type.remote ? (
+            <>
+              Its key is on another of your devices, which runs it. Open Agents
+              there to change or delete it.
+            </>
+          ) : (
+            <>
+              This agent’s harness is unavailable in this client. Check Settings
+              → Plugins or use a build with this harness configured.
+            </>
+          )}
         </p>
       ) : (
         <>
@@ -2126,12 +2146,45 @@ function TeamEditor({
   // What a synced Save revises, and a new team's id for every retry.
   const [opened] = useState(team);
   const [draft] = useState(() => crypto.randomUUID());
+  const which = opened ? { id: opened.id } : { draft };
+  // Each hosted agent picked, as listed then in the only community with it.
+  const [picked, setPicked] = useState<ReadonlyMap<string, Agent>>(
+    () => new Map(),
+  );
+  // Only a team Save puts in this community can have its hosted agents.
+  const listed = agents.teamHere(which)
+    ? saved
+    : saved.filter((agent) => agent.place === "here");
+  // Hosted agents picked where Save puts the team stay choices while not
+  // listed, as while its agent list is read again or once one is deleted, so
+  // each can be unchecked. Not one picked in another community, as before
+  // selecting this one, which can't have it.
+  const choices = [
+    ...listed,
+    ...[...picked.values()].filter(
+      (agent) =>
+        agents.teamHere(which, agent.relay) &&
+        !listed.some((item) => item.pubkey === agent.pubkey),
+    ),
+  ];
+  // What Save gets: members among these choices, ones the team already has,
+  // and agents here in other communities.
+  const kept = members.filter(
+    (pubkey) =>
+      choices.some((agent) => agent.pubkey === pubkey) ||
+      opened?.members.includes(pubkey) ||
+      agents.memberships(pubkey).length > 0,
+  );
   // Members not in this community, which it doesn't list but keeps.
   const away = members.filter(
     (pubkey) =>
-      !saved.some((agent) => agent.pubkey === pubkey) &&
+      !choices.some((agent) => agent.pubkey === pubkey) &&
       agents.memberships(pubkey).length > 0,
   ).length;
+  // Their provider runs them, so they may not get the team's instructions.
+  const remote = choices.filter(
+    (agent) => agent.place === "hosted" && members.includes(agent.pubkey),
+  );
   const act = async (work: () => Promise<unknown>) => {
     if (pending) return;
     setPending(true);
@@ -2150,7 +2203,7 @@ function TeamEditor({
         ...(opened ? { id: opened.id, opened } : { draft }),
         name: name.trim(),
         instructions,
-        members,
+        members: kept,
       }),
     );
   return (
@@ -2183,7 +2236,22 @@ function TeamEditor({
       </Field>
       <Field
         label="Instructions"
-        description="Every member follows these after its own instructions."
+        description={
+          <>
+            {remote.length > 0
+              ? "Agents on your devices follow these after their own instructions."
+              : "Every member follows these after its own instructions."}
+            {remote.length > 0 && (
+              <>
+                {" "}
+                <span className="mt-1 flex items-start gap-1 text-warning">
+                  <WarningCircleIcon className="mt-0.5 shrink-0" aria-hidden />
+                  {`Agents run by their provider (${names(remote)}) will not get these team instructions.`}
+                </span>
+              </>
+            )}
+          </>
+        }
       >
         <Textarea
           rows={5}
@@ -2193,21 +2261,23 @@ function TeamEditor({
         />
       </Field>
       <Section title="Members">
-        {saved.length ? (
+        {choices.length ? (
           <div className="grid gap-2">
-            {saved.map((agent) => (
+            {choices.map((agent) => (
               <Checkbox
                 key={agent.pubkey}
                 label={agent.name}
                 checked={members.includes(agent.pubkey)}
                 disabled={pending}
-                onCheckedChange={(checked) =>
+                onCheckedChange={(checked) => {
+                  if (agent.place === "hosted")
+                    setPicked((last) => new Map(last).set(agent.pubkey, agent));
                   setMembers((last) =>
                     checked
                       ? [...last, agent.pubkey]
                       : last.filter((pubkey) => pubkey !== agent.pubkey),
-                  )
-                }
+                  );
+                }}
               />
             ))}
           </div>

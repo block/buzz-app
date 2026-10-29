@@ -7,25 +7,30 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { usePanelTabHost } from "../panels/PanelWorkspace";
+import { type ChannelLabel, channelIcon } from "../channels/channel-icon";
 import type { AgentConversation } from "./service";
 
-type Saved = Readonly<{
-  channelId: string;
-  name?: string;
-  root?: string;
-  at?: number;
-}>;
+type Saved = Readonly<
+  Partial<ChannelLabel> & {
+    channelId: string;
+    root?: string;
+    at?: number;
+  }
+>;
 
 type Place = Readonly<{ channelId: string; root?: string }>;
 
 /** The session for `conversation`: its thread's, else its channel's, which is
  * the one session a channel-scoped agent or a DM keeps. This build's saved
  * session comes first; `find` looks in the type's own history for one another
- * build of the app started, since each build saves its own. */
+ * build of the app started, since each build saves its own. That one has no
+ * channel name or kind; `label` gives it the channel's current ones each
+ * render. */
 export function useOpenedSession<T extends Saved>(
   saved: readonly T[],
   conversation: AgentConversation | undefined,
   find: (place: Place, signal: AbortSignal) => Promise<T | undefined>,
+  label?: (channelId: string) => ChannelLabel | undefined,
 ): { session?: T; searching?: boolean; error?: string } {
   const places: Place[] = conversation
     ? [
@@ -78,8 +83,19 @@ export function useOpenedSession<T extends Saved>(
   if (!conversation) return {};
   if (exact) return { session: exact };
   if (found?.key !== key) return { searching: true };
-  const { key: _, ...result } = found;
-  return result;
+  // The place found stays; its row is the one saved now, since a type gives
+  // each render its channel's current name and kind, else the one found,
+  // labelled now in the same way.
+  const { key: _, session, ...result } = found;
+  return session
+    ? {
+        ...result,
+        session: bound(session) ?? {
+          ...session,
+          ...label?.(session.channelId),
+        },
+      }
+    : result;
 }
 
 /** The transcript a type's tab shows over itself as a panel subview, titled
@@ -142,6 +158,33 @@ export function useOpenTranscript<T>(
   };
 }
 
+/** A session's channel as the sidebar shows it: its icon and plain name, or
+ * the start of its id alone when the community does not list it, since its
+ * kind is unknown then. */
+export function ConversationName({
+  session,
+  title,
+  className = "",
+}: {
+  session: Saved;
+  /** The hover text; the name alone by default. */
+  title?: string;
+  className?: string;
+}) {
+  const Icon = session.name === undefined ? undefined : channelIcon(session);
+  return (
+    <span
+      className={`flex min-w-0 items-center gap-1 overflow-hidden ${className}`}
+      title={title ?? (session.name || session.channelId)}
+    >
+      {Icon && <Icon size={16} className="shrink-0" aria-hidden="true" />}
+      <span className="truncate">
+        {session.name || session.channelId.slice(0, 8)}
+      </span>
+    </span>
+  );
+}
+
 export function OpenedConversation({
   conversation,
   harness,
@@ -175,14 +218,7 @@ export function OpenedConversation({
           {session ? (
             <>
               <span className={styles.copy}>
-                <span
-                  className="block truncate text-label-sm"
-                  title={session.name ? `#${session.name}` : session.channelId}
-                >
-                  {session.name
-                    ? `#${session.name}`
-                    : session.channelId.slice(0, 8)}
-                </span>
+                <ConversationName session={session} className="text-label-sm" />
                 <span className="block text-body-sm text-subtle">
                   {[
                     status,
@@ -196,7 +232,7 @@ export function OpenedConversation({
               <Button
                 variant="subtle"
                 size="sm"
-                aria-label={`View transcript: ${session.name ? `#${session.name}` : session.channelId.slice(0, 8)}`}
+                aria-label={`View transcript: ${session.name || session.channelId.slice(0, 8)}`}
                 onClick={onView}
               >
                 View transcript

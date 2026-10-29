@@ -296,12 +296,13 @@ impl AppAgent {
         key.sign_event_after(24242, content.into(), tags, None)
     }
     /// Its memory entry `slug`, encrypted to its owner and newer than the
-    /// entry it replaces (`after`, that entry's `created_at`).
+    /// entry it replaces (`after`, that entry's `created_at`); without a body,
+    /// the tombstone that deletes it.
     pub fn memory(
         &self,
         key: &Secret,
         slug: &str,
-        body: &str,
+        body: Option<&str>,
         after: u64,
     ) -> Result<serde_json::Value> {
         if key.pubkey() != self.pubkey {

@@ -272,6 +272,19 @@ const sessions = ["a", "b"].map((community) => {
     5,
     [["emoji", "party", `${origin}/media/table.png`]],
   );
+  // A grouped count under an own table-only message, whose bubble is unboxed.
+  const tableReactions = new URLSearchParams(location.search).has(
+    "table-reactions",
+  )
+    ? Array.from({ length: 9 }, (_, index) =>
+        signed(keypair(), {
+          kind: 7,
+          content: "👍",
+          created_at: 60 + index,
+          tags: [["e", table.id]],
+        }),
+      )
+    : [];
   const blocks = message(
     viewer,
     "c",
@@ -287,6 +300,7 @@ const sessions = ["a", "b"].map((community) => {
     ...longReactions,
     ...repeatedReactions,
     ...groupedReactions,
+    ...tableReactions,
   ]);
   return {
     ...owner,
@@ -299,6 +313,7 @@ const sessions = ["a", "b"].map((community) => {
       ...longReactions,
       ...repeatedReactions,
       ...groupedReactions,
+      ...tableReactions,
       broken,
       unloaded,
       single,

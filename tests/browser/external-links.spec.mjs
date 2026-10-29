@@ -115,8 +115,10 @@ test("GitHub API errors offer prominent external opening before retry", async ({
 }, testInfo) => {
   const target = github;
   const detailsUrl = "https://api.github.com/repos/block/buzz/pulls/1";
-  // Permit only this injected response's engine console report, once by exact URL.
-  app.report.githubFailures = [detailsUrl];
+  // Permit only this injected response's engine console reports by exact URL:
+  // once for the inline link's state, which then holds its public reads until
+  // GitHub's reset, and once for the panel.
+  app.report.githubFailures = [detailsUrl, detailsUrl];
   await context.route(github, (route) =>
     route.fulfill({
       contentType: "text/html",
@@ -133,8 +135,11 @@ test("GitHub API errors offer prominent external opening before retry", async ({
   );
   await page.goto(app.origin);
   await openMessages(page);
+  const stateRead = page.waitForResponse(detailsUrl);
   app.append("primary", "alpha", target);
   await expect(link(page, target)).toBeAttached();
+  // The inline link reads the state first; the panel's read is then the next.
+  await stateRead;
   await end(page);
   await link(page, target).click();
   const panel = page.getByRole("complementary", {
@@ -814,6 +819,10 @@ test("PR Last updated remains relative in the built pane beside its checklist", 
   await page.goto(app.origin);
   await openMessages(page);
   app.append("primary", "alpha", "https://github.com/sample/project/pull/6");
+  // The inline link reads its state once before the panel opens.
+  await expect(
+    link(page, "https://github.com/sample/project/pull/6"),
+  ).toHaveAccessibleDescription("Pull request, open");
   await link(page, "https://github.com/sample/project/pull/6").click();
   const panel = page.getByRole("complementary", {
     name: "GitHub",
@@ -825,12 +834,14 @@ test("PR Last updated remains relative in the built pane beside its checklist", 
   await expect(panel.locator("time")).toHaveCSS("font-size", "12px");
   await expect(panel.locator("time")).toHaveText("3 minutes ago");
   await expect(panel.locator("time")).toHaveAttribute("datetime", updatedAt);
-  // Without gh, the checklist reads CI on the head commit and nothing else.
+  // Without gh, the checklist reads CI on the head commit and nothing else;
+  // the pull request is read for the inline link's state and for the panel.
   await expect
     .poll(() => requests.slice().sort())
     .toEqual([
       "/repos/sample/project/commits/head-sha/check-runs",
       "/repos/sample/project/commits/head-sha/status",
+      "/repos/sample/project/pulls/6",
       "/repos/sample/project/pulls/6",
     ]);
   for (const mode of ["light", "dark"]) {

@@ -128,7 +128,11 @@ test("a Solo chat link card opens the same authorized conversation in the channe
 
 // Real modal/footer reachability, portal hit-testing and focus in both engines.
 async function reachable(locator, { scroll = true } = {}) {
-  if (scroll) await locator.scrollIntoViewIfNeeded();
+  // Native reveal honors the list's scroll padding below sticky group headings.
+  if (scroll)
+    await locator.evaluate((element) =>
+      element.scrollIntoView({ block: "center", inline: "nearest" }),
+    );
   await expect(locator).toBeInViewport();
   await expect
     .poll(() =>
@@ -397,7 +401,10 @@ test("People search holds loading, lists inline results and restores keyboard fo
   try {
     await search.fill("Morgan");
     await requested;
-    const results = dialog.getByRole("region", { name: "Not in this chat" });
+    const results = dialog.getByRole("region", {
+      name: "Not in this chat",
+      exact: true,
+    });
     await expect(
       results.getByText("Searching…", { exact: true }),
     ).toBeVisible();

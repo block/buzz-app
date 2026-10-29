@@ -26,6 +26,8 @@
   /* A sticky heading plus one reachable row. */
   min-height: calc(var(--size-row) * 2);
   overflow: auto;
+  /* Reveal rows below sticky group headings, including their compact actions. */
+  scroll-padding-block-start: calc(var(--space-6) + var(--space-4));
   gap: var(--space-4);
   /* Align headings with the field while retaining row focus clearance. */
   margin-inline: calc(-1 * var(--member-bleed));

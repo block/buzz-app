@@ -198,8 +198,14 @@ export function createReminders(options: {
     return true;
   };
   async function accept(events: readonly RelayEvent[]) {
+    // An event already held as a head (the one past the previous page, a live
+    // echo of an own write) decodes to the head it is; skip the decrypt.
+    const held = new Set(Array.from(heads.values(), (r) => r.eventId));
     const own = events.filter(
-      (event) => event.kind === REMINDER_KIND && event.pubkey === viewer,
+      (event) =>
+        event.kind === REMINDER_KIND &&
+        event.pubkey === viewer &&
+        !held.has(event.id),
     );
     if (!own.length) return false;
     const byId = new Map(own.map((event) => [event.id, event]));
@@ -287,7 +293,7 @@ export function createReminders(options: {
             // Relay query order is time descending, then ID ascending (also at
             // ties), compared as the relay and `merge` do. One event past the
             // page tells a full page from the end of the list; it lands now and
-            // heads the next page, where it merges as a no-op.
+            // heads the next page, where `accept` already holds it.
             const ordered = [...events].sort(
               (a, b) =>
                 b.created_at - a.created_at ||

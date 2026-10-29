@@ -284,9 +284,13 @@ describe("reminder history paging", () => {
   // Scripted replies in order, whatever the filter asks.
   const paged = (...replies: (RelayEvent[] | Promise<RelayEvent[]>)[]) =>
     walker(() => replies.shift() ?? []);
-  // A relay holding `all` in its query order: serves pages by cursor and limit.
-  const served = (all: RelayEvent[]) =>
-    walker((filter) =>
+  // A relay holding `all`: serves pages in its query order by cursor and limit.
+  const served = (events: RelayEvent[]) => {
+    const all = [...events].sort(
+      (a, b) =>
+        b.created_at - a.created_at || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+    );
+    return walker((filter) =>
       all
         .filter(
           (e) =>
@@ -296,6 +300,7 @@ describe("reminder history paging", () => {
         )
         .slice(0, filter.limit),
     );
+  };
   function deferred() {
     let resolve: (events: RelayEvent[]) => void = () => {};
     let reject: (error: Error) => void = () => {};
@@ -435,6 +440,16 @@ describe("reminder history paging", () => {
     expect(h.snapshot()).toMatchObject({ status: "ready", hydrated: true });
     expect(h.snapshot().error).toBeUndefined();
     expect(h.snapshot().reminders).toHaveLength(202);
+  });
+
+  it("ends on a page holding only the event past the previous one", async () => {
+    const h = served(heads("h", 201, 1_000));
+    await h.model.recover();
+    expect(h.filters).toHaveLength(2);
+    expect(h.filters[1]).toMatchObject({ until: 801, before_id: "h199" });
+    expect(h.statuses).toEqual(["loading", "ready"]);
+    expect(h.snapshot()).toMatchObject({ status: "ready", hydrated: true });
+    expect(h.snapshot().reminders).toHaveLength(201);
   });
 
   it("completes a list of exactly the page bound", async () => {

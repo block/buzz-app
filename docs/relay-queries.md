@@ -464,9 +464,11 @@ The timeline, channel-list preview and filtered plugin views share that operatio
   past it, which tells a full page from the end of the list and heads the next
   page. Pages show as they land, but the list stays loading until the last one.
   Past 10,000 the pages read so far show under "Some reminders could not be
-  loaded" with Retry, older reminders stay hidden, the reminders plugin's saved
-  check time does not advance (so pending reminders due since then notify again
-  on each launch), and every refresh reads all the pages again. Handled
+  loaded" with Retry (a list of exactly 10,001 is in fact complete, but cannot
+  be told from a longer one), anything older stays hidden, the reminders
+  plugin's saved check time does not advance (so pending reminders due since
+  then notify again on each launch), and every refresh reads all the pages
+  again. Handled
   reminders carry an expiration the relay does not enforce yet, so the list
   grows with use.
 - Existing fetched channel history, profile, media and disk budgets remain in place.

@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render, screen } from "@testing-library/react";
-import { afterEach, expect, it } from "vitest";
-import type { ClassifierAvailability } from "./attention-objects";
-import type { Agent, Agents } from "./service";
+import { act, cleanup, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import type { CommunityReader, Membership } from "../communities/service";
+import { afterEach, expect, it, vi } from "vitest";
+import type { Agent, Agents, RegisteredAgentType } from "./service";
 import { agentSections } from "./tabs";
 
 afterEach(cleanup);
@@ -44,33 +45,233 @@ const agent: Agent = {
   },
 } as Agent;
 
-it("updates the classifier warning when the key changes while the agent does not", () => {
-  let classifier: ClassifierAvailability = "unavailable";
-  const listeners = new Set<() => void>();
+it("puts the device runtime control in Settings without a separate Attention tab", () => {
   const agents = {
-    subscribe: (listener: () => void) => {
-      listeners.add(listener);
-      return () => listeners.delete(listener);
-    },
-    classifier: () => classifier,
     save: async () => {},
+    subscribe: () => () => {},
+    memberships: () => [],
+    configHistory: () => undefined,
+    addedTabs: () => [],
+    registerTab: () => {},
   } as unknown as Agents;
-  const set = (next: ClassifierAvailability) =>
-    act(() => {
-      classifier = next;
-      for (const listener of listeners) listener();
-    });
+  const sections = agentSections({
+    agents,
+    agent,
+    type: undefined,
+    memories: undefined,
+  });
+  expect(sections.some((tab) => tab.value === "agent:attention")).toBe(false);
+  const section = sections.find((tab) => tab.value === "agent:settings");
+  render(<div>{section?.render()}</div>);
+  expect(
+    screen.getByRole("switch", { name: "Attention on this device" }),
+  ).toBeInTheDocument();
+  expect(screen.queryByText("Triage.")).not.toBeInTheDocument();
+});
+
+it("supplies the local control once to provider Settings", () => {
+  const sections = agentSections({
+    agents: {
+      save: async () => {},
+      subscribe: () => () => {},
+      memberships: () => [],
+      configHistory: () => undefined,
+      addedTabs: () => [],
+      registerTab: () => {},
+    } as unknown as Agents,
+    agent,
+    type: {
+      tabs: [
+        {
+          id: "settings",
+          title: "Settings",
+          role: "settings",
+          component: ({
+            settingsContent,
+          }: {
+            settingsContent: React.ReactNode;
+          }) => <div>{settingsContent}</div>,
+        },
+      ],
+    } as unknown as RegisteredAgentType,
+    memories: undefined,
+  });
+  expect(sections.filter((tab) => tab.value === "agent:settings")).toHaveLength(
+    1,
+  );
+  render(sections.find((tab) => tab.value === "agent:settings")?.render());
+  expect(
+    screen.getAllByRole("switch", { name: "Attention on this device" }),
+  ).toHaveLength(1);
+});
+
+it("shows each synced side's History as its own named section", () => {
+  const side = (name: "settings" | "instructions") => ({
+    side: name,
+    expected: { channel: "c", d: name, type: `buzz.agent.${name}` },
+    head: undefined,
+    version: 0,
+  });
+  const snapshot = {};
+  const history = {
+    read: async () => [],
+    sides: [side("settings"), side("instructions")],
+    revise: async () => ({ ok: true }),
+  };
+  const agents = {
+    subscribe: () => () => {},
+    snapshot: () => snapshot,
+    classifier: () => "available",
+    save: async () => {},
+    configHistory: () => history,
+    addedTabs: () => [],
+    registerTab: () => {},
+  } as unknown as Agents;
   const section = agentSections({
     agents,
     agent,
     type: undefined,
-    channels: [],
     memories: undefined,
-  }).find((tab) => tab.value === "agent:attention");
+  }).find((tab) => tab.value === "agent:history");
   render(<div>{section?.render()}</div>);
-  expect(screen.getByText(/cannot run on this device/)).toBeInTheDocument();
-  set("available");
-  expect(screen.queryByText(/cannot run/)).not.toBeInTheDocument();
-  set("unavailable");
-  expect(screen.getByText(/cannot run on this device/)).toBeInTheDocument();
+  expect(
+    screen.getByRole("region", { name: "Settings history" }),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole("region", { name: "Instructions history" }),
+  ).toBeInTheDocument();
+});
+
+it("shows Settings Attention scope for the agent relay and follows community updates", async () => {
+  const user = userEvent.setup();
+  let memberships: Membership[] = [
+    { id: "https://other.example", name: "Other" },
+    {
+      id: "https://relay.example",
+      name: "Studio",
+      icon: "https://images.example/studio.png",
+    },
+  ];
+  let known = { memberships };
+  const listeners = new Set<() => void>();
+  const communities = {
+    snapshot: () => known,
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+  } as CommunityReader;
+  const save = vi.fn(async () => {});
+  const agents = {
+    save,
+    subscribe: () => () => {},
+    memberships: () => [
+      { key: agent.key, origin: agent.relay, connected: true },
+      { key: "other", origin: "https://other.example", connected: false },
+    ],
+    configHistory: () => undefined,
+    addedTabs: () => [],
+    registerTab: () => {},
+  } as unknown as Agents;
+  const section = agentSections({
+    agents,
+    agent,
+    type: undefined,
+    memories: undefined,
+    communities,
+  }).find((tab) => tab.value === "agent:settings");
+  const view = render(section?.render());
+  const trigger = screen.getByRole("button", {
+    name: "Attention scope: Studio",
+  });
+  expect(trigger.querySelector("img")).toHaveAttribute(
+    "src",
+    "https://images.example/studio.png",
+  );
+  trigger.focus();
+  await user.keyboard("{Enter}");
+  const popup = await screen.findByRole("dialog", { name: "Attention scope" });
+  expect(within(popup).getByText("Studio")).toBeInTheDocument();
+  expect(popup).toHaveTextContent(
+    "Attention is specific to this community and isn’t shared with other communities.",
+  );
+  await user.keyboard("{Escape}");
+  expect(trigger).toHaveFocus();
+  expect(
+    screen.getByRole("switch", { name: "Attention on this device" }),
+  ).toBeChecked();
+  expect(save).not.toHaveBeenCalled();
+  act(() => {
+    memberships = [
+      {
+        id: "https://relay.example",
+        name: "Studio",
+        localName: "Renamed",
+        publishedIcon: "javascript:alert(1)",
+      },
+    ];
+    known = { memberships };
+    for (const listener of listeners) listener();
+  });
+  expect(
+    screen
+      .getByRole("button", { name: "Attention scope: Renamed" })
+      .querySelector("img"),
+  ).toBeNull();
+  act(() => {
+    memberships = [];
+    known = { memberships };
+    for (const listener of listeners) listener();
+  });
+  expect(
+    screen.getByRole("button", { name: "Attention scope: relay.example" }),
+  ).toBeInTheDocument();
+  view.unmount();
+  expect(listeners.size).toBe(0);
+});
+
+it("adds plugin tabs to local agents only, before History", () => {
+  const added = {
+    id: "watching",
+    key: "buzz.watching/watching",
+    pluginId: "buzz.watching",
+    revision: "1",
+    title: "Watching",
+    component: ({ agent }: { agent: Agent }) => <p>Watching {agent.name}</p>,
+  };
+  const agents = {
+    save: async () => {},
+    subscribe: () => () => {},
+    memberships: () => [],
+    configHistory: () => ({
+      read: async () => [],
+      sides: [],
+      revise: async () => ({ ok: true }),
+    }),
+    addedTabs: () => [added],
+    registerTab: () => {},
+  } as unknown as Agents;
+  const values = (place: Agent["place"]) =>
+    agentSections({
+      agents,
+      agent: { ...agent, place } as Agent,
+      type: undefined,
+      memories: undefined,
+    }).map((tab) => tab.value);
+  expect(values("here")).toEqual([
+    "agent:settings",
+    "agent:added:buzz.watching/watching",
+    "agent:history",
+    "agent:memory",
+  ]);
+  expect(values("hosted")).not.toContain("agent:added:buzz.watching/watching");
+  expect(values("elsewhere")).toEqual([]);
+  render(
+    agentSections({ agents, agent, type: undefined, memories: undefined })
+      .find((tab) => tab.value === "agent:added:buzz.watching/watching")
+      ?.render(),
+  );
+  expect(screen.getByText("Watching Ada")).toBeInTheDocument();
 });

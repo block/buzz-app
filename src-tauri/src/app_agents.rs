@@ -190,8 +190,9 @@ impl AppAgentHost {
 /// Which running copy of the app runs each agent. Every copy on this machine
 /// (the packaged app and any dev builds) shares the agent list and hears the
 /// same events. The packaged app always runs what it can and holds
-/// `<pubkey>.packaged` while it does; there is only ever one, since release
-/// builds are single-instance. Dev builds step aside while that is held, and
+/// `<pubkey>.packaged` while it does; there is only ever one, since only a
+/// release build with the release identifier counts and it is single-instance.
+/// Dev builds step aside while that is held, and
 /// otherwise run each agent from whichever holds `<pubkey>.lock`. The OS lets go
 /// of both when a copy exits, however it exits.
 struct Hosting {
@@ -1006,19 +1007,19 @@ async fn save_media(
     })
 }
 
-/// Writes one memory entry, encrypted to the agent's owner. `after` is the
-/// `created_at` of the entry it replaces, or 0.
+/// Writes one memory entry, encrypted to the agent's owner; a null body
+/// deletes it. `after` is the `created_at` of the entry it replaces, or 0.
 #[tauri::command]
 pub(crate) async fn app_agent_remember(
     state: tauri::State<'_, AppAgentHost>,
     pubkey: String,
     relay: String,
     slug: String,
-    body: String,
+    body: Option<String>,
     after: u64,
 ) -> Result<Value, String> {
     let (agent, key) = state.key(state.agent(pubkey, relay).await?).await?;
-    let signed = agent.memory(&key, &slug, &body, after)?;
+    let signed = agent.memory(&key, &slug, body.as_deref(), after)?;
     post(&agent, &key, signed).await
 }
 
@@ -1487,6 +1488,27 @@ mod tests {
         assert!(dev.claim(&other).unwrap());
         // As when it can no longer run it.
         packaged.held().remove(&agent);
+        assert!(dev.claim(&agent).unwrap());
+        assert!(!another.claim(&agent).unwrap());
+    }
+
+    #[test]
+    fn dev_builds_let_go_while_the_installed_app_runs_an_agent() {
+        use crate::sign_out::legacy_identifier::{agents, CURRENT, DEV};
+        let data = tempfile::tempdir().unwrap();
+        // Where each copy's agent list puts its locks, with separate app data.
+        let hosts =
+            |identifier: &str| Ok(agents(identifier, &data.path().join(identifier)).join("hosts"));
+        let agent = "a".repeat(64);
+        let dev = hosting(hosts(DEV), false);
+        assert!(dev.claim(&agent).unwrap());
+        let packaged = hosting(hosts(CURRENT), true);
+        assert!(packaged.claim(&agent).unwrap());
+        assert!(!dev.claim(&agent).unwrap());
+        let another = hosting(hosts(DEV), false);
+        assert!(!another.claim(&agent).unwrap());
+        // As when the installed app quits.
+        drop(packaged);
         assert!(dev.claim(&agent).unwrap());
         assert!(!another.claim(&agent).unwrap());
     }

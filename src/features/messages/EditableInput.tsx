@@ -32,7 +32,12 @@ import {
   selectAll,
 } from "prosemirror-commands";
 import { sinkListItem, liftListItem } from "prosemirror-schema-list";
-import { Fragment } from "prosemirror-model";
+import {
+  Fragment,
+  Slice,
+  type Node as EditorNode,
+  type ResolvedPos,
+} from "prosemirror-model";
 import {
   composerSchema,
   readComposerDocument,
@@ -47,6 +52,7 @@ import { scanMarkdown } from "../relay/message-content";
 import type { ComposerResource } from "../conversation/contracts";
 import {
   activeBlockFormats,
+  apply,
   toggleComposerBlock,
   composerBlockLineBreak,
   composerBlockPrefix,
@@ -61,7 +67,7 @@ import {
 } from "./composer-inline-input";
 import { composerMarkdown } from "./composer-markdown";
 import {
-  buzzCopyMarkdown,
+  buzzCopyDocument,
   externalLinkMarkdown,
   composerClipboard,
   identityLink,
@@ -81,7 +87,7 @@ import {
   type ComposerInputElement,
 } from "./composer-dom";
 import { isApplePlatform } from "../shortcuts/format";
-import { macWebKit } from "./mac-webkit";
+import { macWebKit, webKit } from "./mac-webkit";
 import { composerLinkUrl } from "./composer-link";
 import { messageLinkParts } from "./message-link-parts";
 import { updatePlainLinks, type PlainLink } from "./composer-link-edit";
@@ -110,6 +116,7 @@ export type EditorDecoration = {
 const CONTROL_CHARACTERS = /[\p{Cc}\uF700-\uF747]/gu;
 /** The control characters typed text holds: tab, newline and carriage return. */
 const TYPED_CONTROLS = /[\t\n\r]/u;
+const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 /** True when a native text insertion holds only control characters. Text that
  * mixes them with real characters is not control text and passes untouched. */
 function controlCharacterText(text: string | null | undefined) {
@@ -149,6 +156,203 @@ function keyboardKey(
   return (
     CARET_KEYS.get(event.code) ?? CARET_KEYS.get(event.keyCode) ?? event.key
   );
+}
+/** Moves the selection head to a document position, keeping the anchor when
+ * extending, and scrolls it into view. */
+function moveHead(editor: EditorView, head: number, extend: boolean) {
+  const { tr, selection, doc } = editor.state;
+  editor.dispatch(
+    tr
+      .setSelection(
+        TextSelection.create(doc, extend ? selection.anchor : head, head),
+      )
+      .scrollIntoView(),
+  );
+}
+/** Moves the head for plain or Shift Up and Down where the browser cannot. A
+ * line that holds nothing but a token, or part of a wrapped one, offers no
+ * caret position besides the token's edge, so native Up and Down stall there
+ * in WebKit and jump to a document edge in Chromium, entering such a line and
+ * leaving it alike. Such a line is entered at the token edge it holds, or
+ * crossed to the far edge when it holds neither, and left for the position on
+ * the neighbouring line nearest the caret's column. The token's client rects
+ * give its lines, so a line scrolled out of the composer still counts.
+ * A caret at a soft wrap is measured on the line it leaves: a move may go one
+ * line too far but never stalls. Every other line move stays native, from a
+ * DOM caret the browser can move. The Mac's emacs-style Ctrl+N and Ctrl+P
+ * line moves stay native too, and can still stall on such a line: they are
+ * rare in a composer and would need a platform key binding here. */
+function crossTokenLine(
+  editor: EditorView,
+  tokens: ReadonlyMap<HTMLElement, { position(): number | undefined }>,
+  key: string,
+  event: Pick<
+    globalThis.KeyboardEvent,
+    "altKey" | "ctrlKey" | "metaKey" | "shiftKey"
+  >,
+) {
+  const up = key === "ArrowUp";
+  const extend = event.shiftKey;
+  const { selection, doc } = editor.state;
+  if (
+    (!up && key !== "ArrowDown") ||
+    event.altKey ||
+    event.ctrlKey ||
+    event.metaKey ||
+    !(selection instanceof TextSelection) ||
+    !tokens.size
+  )
+    return false;
+  const origin = extend ? selection.head : up ? selection.from : selection.to;
+  // A line break, a hard break or a typed newline, directly before `pos`.
+  const broken = (pos: number) =>
+    doc.textBetween(Math.max(pos - 1, 0), pos) === "\n";
+  // Where a caret at `pos` is drawn. Side -1 measures the character before,
+  // which keeps a token's end on the token's line, but past a line break that
+  // is the break itself, drawn at the end of the line above. A textblock start
+  // has nothing before it, and Chromium draws no rect before a leading newline.
+  const at = (pos: number, side: -1 | 1) =>
+    editor.coordsAtPos(
+      pos,
+      broken(pos) || !doc.resolve(pos).parentOffset ? 1 : side,
+    );
+  const caret = at(origin, up ? -1 : 1);
+  const level = (line: { top: number; bottom: number }) =>
+    (line.top + line.bottom) / 2;
+  const holds = (line?: { top: number; bottom: number }, point = caret) =>
+    !!line && line.top <= level(point) && level(point) <= line.bottom;
+  // The position beside a token that is drawn on the neighbouring line when
+  // the token starts or ends its own: past a line break, into the adjacent
+  // textblock, or else the token edge.
+  const outside = (pos: number, dir: -1 | 1) => {
+    const $pos = doc.resolve(pos);
+    if (!(dir < 0 ? $pos.nodeBefore : $pos.nodeAfter))
+      return Selection.findFrom(doc.resolve(pos + dir), dir, true)?.head;
+    const next = pos + dir;
+    return broken(dir < 0 ? pos : next) ? next : pos;
+  };
+  // Stepping off a token keeps the caret's column, as a browser does between
+  // lines: from `edge`, the near end of the neighbouring `line`, the position
+  // on that line drawn nearest the caret. Landing at the near end instead adds
+  // only the line break to a Shift selection, which looks like no move at all.
+  // Positions are measured rather than hit-tested, so a line scrolled out of
+  // the composer still counts. Each is measured where a caret there is drawn,
+  // so a soft wrap belongs to the line after it. Only grapheme boundaries
+  // count: a position inside an emoji is drawn at its glyph, and a Shift
+  // selection ending there splits the character. Each inline leaf reads as a
+  // newline, one character that nothing after it can join, so the text's
+  // offsets are the textblock's positions and the edge after a token counts.
+  const column = (
+    edge: number | undefined,
+    line?: { top: number; bottom: number },
+  ) => {
+    if (edge === undefined) return edge;
+    const $edge = doc.resolve(edge);
+    const { parent } = $edge;
+    const text = parent.textBetween(0, parent.content.size, undefined, "\n");
+    const positions = [...graphemes.segment(text), { index: text.length }]
+      .map(({ index }) => $edge.start() + index)
+      .filter((pos) => (up ? pos <= edge : pos >= edge));
+    let head = edge;
+    let gap = Number.POSITIVE_INFINITY;
+    for (const pos of up ? positions.reverse() : positions) {
+      const point = editor.coordsAtPos(pos, 1);
+      if (!holds(line, point)) break;
+      const distance = Math.abs(point.left - caret.left);
+      if (distance < gap) [head, gap] = [pos, distance];
+    }
+    return head;
+  };
+  // A Shift press then settles the head by the selection it leaves. Toward
+  // the anchor, it may reach the anchor but never pass it, and it collapses
+  // there rather than leave a lone line break selected, which looks collapsed
+  // and which typing would replace, joining two lines. Away from the anchor,
+  // growing by a lone break onto a token's near edge looks like no move at
+  // all, so it takes the token. Collapsing only applies toward the anchor: from
+  // a collapsed caret, a lone break onto an empty line is the whole move, as
+  // that line holds nothing else.
+  const { anchor } = selection;
+  const lone = (start: number, end: number) =>
+    doc.textBetween(Math.min(start, end), Math.max(start, end), "\n") === "\n";
+  const shifted = (head: number) => {
+    if (up ? origin > anchor : origin < anchor)
+      return (up ? head <= anchor : head >= anchor) || lone(anchor, head)
+        ? anchor
+        : head;
+    const from = up ? head - 1 : head;
+    const token = [...tokens.values()].some((host) => host.position() === from);
+    return token && lone(origin, head) ? (up ? from : from + 1) : head;
+  };
+  for (const [element, host] of tokens) {
+    const from = host.position();
+    if (from === undefined) continue;
+    const to = from + 1;
+    // Bidi reordering can split a token into several rects on one line, as
+    // WebKit reports them, so a rect on its predecessor's line is folded in.
+    const rects = [...element.getClientRects()];
+    const lines = rects.filter((rect, index) => !holds(rects[index - 1], rect));
+    const last = lines.length - 1;
+    const before = outside(from, -1);
+    const after = outside(to, 1);
+    const above = before === undefined ? undefined : at(before, -1);
+    const below = after === undefined ? undefined : at(after, 1);
+    for (const [index, line] of lines.entries()) {
+      const alone =
+        (index > 0 || !above || level(above) < line.top) &&
+        (index < last || !below || level(below) > line.bottom);
+      // WebKit's native move onto a line the token is split across can put
+      // the caret inside the token, so such a line is entered here too. It is
+      // left natively, which works from either edge. Text beside the token can
+      // put `previous` on this very line, so a caret already on it is not
+      // entering.
+      const split = rects.filter((rect) => holds(line, rect)).length > 1;
+      if (!alone && !split) continue;
+      const previous = up
+        ? (lines[index + 1] ?? below)
+        : (lines[index - 1] ?? above);
+      let head: number | undefined;
+      // Entering: stop at the edge this line holds, or cross a middle line.
+      if (holds(previous) && !holds(line))
+        head = up ? (index === last ? to : from) : index === 0 ? from : to;
+      // Leaving from the edge: cross the rest of the token, or step off it.
+      else if (
+        alone &&
+        holds(line) &&
+        ((index === 0 && origin === from) || (index === last && origin === to))
+      )
+        head = up
+          ? index > 0
+            ? from
+            : column(before, above)
+          : index < last
+            ? to
+            : column(after, below);
+      if (head === undefined || (up ? head >= origin : head <= origin))
+        continue;
+      moveHead(editor, extend ? shifted(head) : head, extend);
+      return true;
+    }
+  }
+  // After a token, the DOM caret sits between its element and the text that
+  // follows. Once WebKit, on any platform, has drawn the caret there beside a
+  // wrapped token, Down stalls; from the text's start, the same position, it
+  // moves. The step is harmless beside a token that does not wrap, so it is
+  // not limited to wrapped ones. Up and Chromium need no help.
+  const native = editor.dom.ownerDocument.getSelection();
+  const next = native?.focusNode?.childNodes[native.focusOffset];
+  const token = native?.focusNode?.childNodes[native.focusOffset - 1];
+  if (
+    !up &&
+    webKit() &&
+    native &&
+    next?.nodeType === Node.TEXT_NODE &&
+    token instanceof HTMLElement &&
+    tokens.has(token)
+  ) {
+    if (native.isCollapsed) native.collapse(next, 0);
+    else native.extend(next, 0);
+  }
+  return false;
 }
 export type EditableInputProps = Omit<
   HTMLAttributes<ComposerInputElement>,
@@ -603,6 +807,77 @@ export function EditableInput({
       if (terminator && editor.state !== unconverted) separateHistory = true;
       if (focus) editor.focus();
       return true;
+    };
+    /** Paste this app's own copied blocks and marks as the nodes they are. One
+     * paragraph joins the caret's line; anything else lands as sibling blocks,
+     * splitting the caret's paragraph rather than merging into its text. The
+     * caret then ends inside the last pasted block, as ProseMirror leaves it,
+     * so Enter continues a pasted list or quote; that is deliberate. Returns
+     * the range the paste occupies, which can start after the caret's text. */
+    const insertDocument = (doc: EditorNode) => {
+      if (!editable() || composing.current || editor.composing) return null;
+      const { nodes } = composerSchema;
+      const single = doc.childCount === 1 ? doc.firstChild : null;
+      const tr = closeHistory(editor.state.tr);
+      let from = tr.selection.from;
+      if (single?.type === nodes.paragraph)
+        tr.replaceSelection(new Slice(single.content, 0, 0));
+      else {
+        // Delete first so a selection from an item's start is placed like a
+        // caret there, and a fully selected item text like an empty item.
+        tr.deleteSelection();
+        const { $from } = tr.selection;
+        const item = $from.node(-1);
+        const list =
+          item.type === nodes.list_item && single?.type === $from.node(-2).type
+            ? single
+            : null;
+        const blank = $from.parent.content.size === 0;
+        if (
+          $from.parentOffset === 0 &&
+          $from.index(-1) === 0 &&
+          item.type === nodes.list_item &&
+          (list || !blank)
+        ) {
+          // A list item is `paragraph block*`, so no block can precede its
+          // first paragraph; ProseMirror would close that paragraph empty,
+          // which sends as an empty `- ` item. A pasted list of this list's
+          // kind has its items join before the item instead, or take a blank
+          // item's place; any other block, including a list of the other kind,
+          // which keeps its own numbering, follows the item's paragraph.
+          from = list ? $from.before(-1) : $from.after();
+          const to =
+            list && blank && item.childCount === 1 ? $from.after(-1) : from;
+          const content = list ? list.content : doc.content;
+          tr.replaceWith(from, to, content);
+          tr.setSelection(
+            Selection.near(tr.doc.resolve(from + content.size), -1),
+          );
+        } else {
+          // A blank item that no same-kind list replaces leaves its list
+          // first, as Enter there does, until its empty paragraph is no item's
+          // first; a lift can move the following items under it, and they
+          // leave with it. ProseMirror would otherwise keep the empty
+          // paragraph beside the paste, which sends as an empty `- `.
+          const blankItem = ($pos: ResolvedPos) =>
+            $pos.parent.content.size === 0 &&
+            $pos.node(-1).type === nodes.list_item &&
+            $pos.index(-1) === 0;
+          while (blankItem(tr.selection.$from)) {
+            if (!apply(tr, liftListItem(nodes.list_item))) break;
+          }
+          from = tr.selection.from;
+          tr.replaceSelection(new Slice(doc.content, 0, 0));
+        }
+      }
+      if (
+        composerMarkdown(projectComposerDocument(tr.doc).draft).length >
+        current.current.maxLength
+      )
+        return null;
+      editor.dispatch(tr.scrollIntoView());
+      editor.focus();
+      return { from, to: editor.state.selection.to };
     };
     const replaceRecipients = (recipients: readonly MentionRecipient[]) => {
       if (!editable() || composing.current || editor.composing) return false;
@@ -1097,18 +1372,19 @@ export function EditableInput({
     /** Moves the caret for a caret key the host reported as a control character.
      * Left unhandled, such a keydown types the character instead of moving, so
      * the move happens here: in document terms across an inline leaf, where
-     * WebKit offers extra caret positions around uneditable nodes, and otherwise
-     * through the browser's own caret motion with the platform's modifier
-     * meanings (word and line ends sideways, paragraph and document ends
-     * vertically). Page keys scroll without moving the caret, and Home and End
-     * do so too on Apple platforms unless extending the selection. */
+     * WebKit offers extra caret positions around uneditable nodes, or a line
+     * that only a token holds, and otherwise through the browser's own caret
+     * motion with the platform's modifier meanings (word and line ends
+     * sideways, paragraph and document ends vertically). Page keys scroll
+     * without moving the caret, and Home and End do so too on Apple platforms
+     * unless extending the selection. */
     const moveCaret = (key: string, event: globalThis.KeyboardEvent) => {
       const mac = isApplePlatform(navigator.platform);
       const boundary = mac ? event.metaKey : event.ctrlKey;
       const extend = event.shiftKey;
       const sideways = key === "ArrowLeft" || key === "ArrowRight";
       if (sideways && !event.altKey && !boundary) {
-        const { $head, anchor, empty } = editor.state.selection;
+        const { $head, empty } = editor.state.selection;
         const backward = key === "ArrowLeft";
         const leaf = $head.textOffset
           ? null
@@ -1118,23 +1394,15 @@ export function EditableInput({
         // Only an inline leaf is stepped over in document terms. A block beside
         // the head, as after select-all, is left to the browser's caret motion.
         if ((empty || extend) && leaf?.isInline && !leaf.isText) {
-          const head = backward
-            ? $head.pos - leaf.nodeSize
-            : $head.pos + leaf.nodeSize;
-          editor.dispatch(
-            editor.state.tr
-              .setSelection(
-                TextSelection.create(
-                  editor.state.doc,
-                  extend ? anchor : head,
-                  head,
-                ),
-              )
-              .scrollIntoView(),
+          moveHead(
+            editor,
+            backward ? $head.pos - leaf.nodeSize : $head.pos + leaf.nodeSize,
+            extend,
           );
           return true;
         }
       }
+      if (crossTokenLine(editor, hosts.current, key, event)) return true;
       const selection = editor.dom.ownerDocument.getSelection();
       if (!selection || typeof selection.modify !== "function") return true;
       const alter = extend ? "extend" : "move";
@@ -1579,21 +1847,69 @@ export function EditableInput({
             const plain = event.clipboardData?.getData("text/plain") ?? "";
             const hasPlain =
               !!plain || event.clipboardData?.types?.includes("text/plain");
+            const copy = code ? undefined : buzzCopyDocument(html);
+            // Unformatted prose takes the text path: it inherits the caret's
+            // marks and the link spacing below. Structure pastes as nodes.
+            const paragraph = copy?.childCount === 1 ? copy.firstChild : null;
+            const prose =
+              paragraph?.type === composerSchema.nodes.paragraph &&
+              paragraph.childCount <= 1 &&
+              !paragraph.firstChild?.marks.length
+                ? paragraph.textContent
+                : undefined;
+            if (copy && prose === undefined) {
+              // Only the pasted content is offered: an item-start paste lands
+              // after the item's text, whose display-only links stay so.
+              const inserted = insertDocument(copy);
+              if (inserted) {
+                const after = projection();
+                promoteRecipients(
+                  after.source(inserted.from),
+                  after.source(inserted.to),
+                );
+              }
+              return true;
+            }
+            const source = projection(),
+              start = source.source(editor.state.selection.from),
+              end = source.source(editor.state.selection.to);
             let text =
               (!code &&
-                (buzzCopyMarkdown(html) ??
+                (prose ??
                   externalLinkMarkdown(html, hasPlain ? plain : undefined))) ||
               plain ||
               "";
             if (!text) return true;
+            // A bare URL pasted over selected text links the selection, as other
+            // editors do. editLink() owns the guards (code, resources, unsafe
+            // URLs, limits); when it declines, the paste replaces as before.
+            // Like the Link dialog, a selection inside a longer link re-targets
+            // the whole link, while one crossing its edge splits it.
+            const url = text.trim().replace(/^<(.*)>$/, "$1");
+            if (!code && !editor.state.selection.empty) {
+              const bare = (value: string) => {
+                let whole = false;
+                messageLinkParts(value, undefined, (start, end, href) => {
+                  if (start === 0 && end === value.length && href === value)
+                    whole = true;
+                });
+                return whole;
+              };
+              const edit = bare(url) ? editLink() : null;
+              // A whitespace-only label is not a link the timeline recognises,
+              // and pasting over a selected URL swaps it rather than labelling it.
+              if (
+                edit?.text.trim() &&
+                !bare(edit.text.trim()) &&
+                edit.save(edit.text, url)
+              )
+                return true;
+            }
             let link = false;
             if (!code)
               messageLinkParts(text, undefined, (start, end) => {
                 if (start === 0 && end === text.length) link = true;
               });
-            const source = projection(),
-              start = source.source(editor.state.selection.from),
-              end = source.source(editor.state.selection.to);
             const reuse = link && source.draft.text[end] === " ";
             if (
               link &&
@@ -1901,6 +2217,13 @@ export function EditableInput({
             event.preventDefault();
             ref.current?.insertLineBreak();
           }
+          // After the host, which claims Up and Down for a completion list.
+          if (
+            !event.defaultPrevented &&
+            view.current &&
+            crossTokenLine(view.current, hosts.current, event.key, event)
+          )
+            event.preventDefault();
         }}
         onCompositionStart={(event) => {
           composing.current = true;

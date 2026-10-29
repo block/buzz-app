@@ -212,6 +212,42 @@ it("creates with the name, a pack picture and the config from the type's view", 
   expect(onCreated).toHaveBeenCalledExactlyOnceWith(made);
 });
 
+it("cancels an in-flight Gloopy swap before switching to Emoji", async () => {
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    matches: query.includes("(hover: hover)"),
+    addEventListener() {},
+    removeEventListener() {},
+  }));
+  const animations: {
+    cancel: ReturnType<typeof vi.fn>;
+    finished: Promise<void>;
+  }[] = [];
+  Element.prototype.animate = vi.fn(() => {
+    const animation = {
+      cancel: vi.fn(),
+      finished: new Promise<void>(() => {}),
+    };
+    animations.push(animation);
+    return animation as unknown as Animation;
+  });
+  const { dialog, user } = setup([echo]);
+  const dock = within(dialog).getByRole("group", { name: "Agent avatars" });
+  const slot = within(dock).getAllByRole("button")[0];
+  if (!slot) throw new Error("The dock has an avatar");
+  fireEvent.click(slot, { detail: 1 });
+  expect(animations).toHaveLength(2);
+  const swapAnimations = [...animations];
+  expect(slot.style.visibility).toBe("hidden");
+  await user.click(within(dialog).getByRole("tab", { name: "Emoji" }));
+  expect(
+    within(dialog).getByRole("button", { name: "Choose emoji" }),
+  ).toBeVisible();
+  for (const animation of swapAnimations)
+    expect(animation.cancel).toHaveBeenCalledOnce();
+  expect(slot.style.visibility).toBe("");
+  expect(document.querySelector('body > img[aria-hidden="true"]')).toBeNull();
+});
+
 it("switches avatar types directly and restores the emoji draft with the keyboard", async () => {
   const { dialog, user } = setup([echo], undefined, "https://a.example");
   const tabs = within(

@@ -579,6 +579,34 @@ export const ROLE_GROUPS: RoleGroup[] = [
         status: "core",
       },
       {
+        token: "icon-subtle",
+        variable: "--icon-subtle",
+        pointsAt: "text-subtle",
+        use: "Neutral / inactive state icons, including inside message bubbles. Not text.",
+        status: "core",
+      },
+      {
+        token: "icon-subtle-own",
+        variable: "--icon-subtle-own",
+        pointsAt: "icon-subtle; the own bubble's link ink at Buzzin’",
+        use: "Neutral state icons inside your own bubble, where the solid fill clears no grey.",
+        status: "core",
+      },
+      {
+        token: "icon-success",
+        variable: "--icon-success",
+        pointsAt: "green-11 light / green-11 dark",
+        use: "Success / positive state icons, including inside message bubbles. Not text.",
+        status: "core",
+      },
+      {
+        token: "icon-success-own",
+        variable: "--icon-success-own",
+        pointsAt: "icon-success; the own bubble's link ink at Buzzin’",
+        use: "Success state icons inside your own bubble, where the solid fill clears no green.",
+        status: "core",
+      },
+      {
         token: "text-link",
         variable: "--text-link",
         pointsAt: "text-standard (neutral outside message bubbles)",
@@ -626,6 +654,21 @@ export const ROLE_GROUPS: RoleGroup[] = [
         variable: "--text-categorical-purple",
         pointsAt: "purple-12 light / purple-12 dark",
         use: "Accent-independent categorical text, paired with surface-categorical-purple.",
+        status: "core",
+      },
+      {
+        token: "icon-categorical-purple",
+        variable: "--icon-categorical-purple",
+        pointsAt: "purple-11 light / purple-11 dark",
+        use: "Accent-independent categorical state icons, the icon tier of text-categorical-purple. Not text.",
+        status: "core",
+      },
+      {
+        token: "icon-categorical-purple-own",
+        variable: "--icon-categorical-purple-own",
+        pointsAt:
+          "icon-categorical-purple; the own bubble's link ink at Buzzin’",
+        use: "Categorical state icons inside your own bubble, where the solid fill clears no purple.",
         status: "core",
       },
       {
@@ -852,7 +895,7 @@ export const ROLE_GROUPS: RoleGroup[] = [
         token: "affordance-sidebar-hover",
         variable: "--affordance-sidebar-hover",
         pointsAt: "accent 2 light / accent 3 dark",
-        use: "Sidebar row hover, quieter than selection.",
+        use: "Sidebar row hover and Solo card drop destinations, quieter than selection.",
         status: "core",
       },
       {

@@ -21,13 +21,13 @@ import type {
   Agents,
   AgentConversation,
   RegisteredAgentType,
+  TranscriptRequest,
 } from "../../features/agents/service";
 import {
   AgentArchiveRetry,
   AgentDelete,
   AgentRemoveHere,
   inSeveral,
-  sharedAgentSettings,
 } from "../../features/agents/AgentManage";
 import {
   CopyIcon,
@@ -43,9 +43,7 @@ import {
   PopoverPopup,
 } from "../../shared/design-system/ui/Popover";
 import type { CommunityReader } from "../../features/communities/service";
-import { communityDestination } from "../../features/communities/destination";
-import { communityIcon } from "../../features/communities/community-icon";
-import { communityName } from "../../features/communities/names";
+import { communityPresentation } from "../../features/communities/community-icon";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   MenuRoot,
@@ -81,6 +79,8 @@ export function AgentDetails({
   messageAction,
   conversation,
   initialActivity,
+  initialTranscript,
+  close,
   communities,
 }: {
   agents: Agents;
@@ -93,6 +93,9 @@ export function AgentDetails({
   messageAction: (variant: "glass" | "subtle") => ReactNode;
   conversation?: AgentConversation | undefined;
   initialActivity?: boolean;
+  initialTranscript?: TranscriptRequest | undefined;
+  /** Closes the panel showing the agent. */
+  close?: () => void;
   communities?: CommunityReader | undefined;
 }) {
   const { pack, src: backdrop } = useAgentPortraitSource(agent, agent.relay);
@@ -354,8 +357,8 @@ export function AgentDetails({
               <AgentIdentityDialog
                 agent={agent}
                 agents={agents}
+                communities={communities}
                 finalFocus={identityMenu}
-                initialAvatarPicker
                 onClose={() => setEditingIdentity(false)}
               />
             )}
@@ -377,6 +380,8 @@ export function AgentDetails({
               channels={channels}
               conversation={conversation}
               initialActivity={initialActivity}
+              initialTranscript={initialTranscript}
+              close={close}
               settingsHost={settings.settingsHost}
               onDiscard={settings.discard}
               memories={memories}
@@ -514,20 +519,10 @@ function SharedSettingsNotice({
     .filter((membership) => !membership.deleting)
     .sort((a, b) => Number(b.key === agent.key) - Number(a.key === agent.key));
   if (memberships.length < 2) return null;
-  const items = memberships.map(({ origin }) => {
-    const destination = communityDestination(origin);
-    const membership = known?.memberships.find(
-      (item) => communityDestination(item.id).url === destination.url,
-    );
-    return {
-      id: destination.url,
-      name: membership ? communityName(membership) : destination.name,
-      src: membership
-        ? communityIcon(membership.publishedIcon ?? membership.icon)
-        : undefined,
-      shape: "squircle" as const,
-    };
-  });
+  const items = memberships.map(({ origin }) => ({
+    ...communityPresentation(origin, known?.memberships),
+    shape: "squircle" as const,
+  }));
   const names = items.map((item) => item.name).join(", ");
   return (
     <div className={styles.sharedSettingsNotice}>
@@ -537,7 +532,7 @@ function SharedSettingsNotice({
           render={
             <Button variant="plain" size="inline" style={{ maxWidth: "100%" }}>
               <span className="flex min-w-0 flex-wrap items-center justify-center gap-1 whitespace-normal text-subtle">
-                Changes apply in
+                Shared across
                 <AvatarStack items={items} size="mini" />
                 <span className="sr-only">{names}</span>
               </span>
@@ -550,8 +545,8 @@ function SharedSettingsNotice({
           aria-label={`${agent.name}’s shared settings`}
         >
           <p className="m-0 text-body-sm text-subtle">
-            {sharedAgentSettings} Pictures and attention are specific to each
-            community. Changes apply in:
+            {agent.name}’s name, instructions, and settings are shared across
+            these communities:
           </p>
           <ul
             aria-label="Communities"

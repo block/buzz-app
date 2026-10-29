@@ -29,6 +29,18 @@ export const apply: PluginModule["apply"] = (ctx) => {
     () => agents.tools(),
     repositoriesContext,
     (key) => agents.handle(key),
+    async (agent, session, event, input) => {
+      return (
+        (await agents.dispatchHook(
+          typeKey,
+          event,
+          input,
+          { agent, session },
+          { accepts: (output) => output != null, milliseconds: 25000 },
+        )) ?? null
+      );
+    },
+    (key, listener) => agents.relay(key)?.subscribe(listener) ?? (() => {}),
   );
   const { ActivityTab, Create, CreateModel, SettingsTab } = createTabs({
     setup: runtime.setup,
@@ -50,6 +62,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
 
   agents.register<Config>({
     id: TYPE_ID,
+    hooks: { events: ["beforeTool", "afterTool"] },
     title: "Pi",
     icon: PiLogoIcon,
     description:
@@ -57,6 +70,18 @@ export const apply: PluginModule["apply"] = (ctx) => {
     defaults: () => ({ config: DEFAULT_CONFIG }),
     Create,
     CreateModel,
+    importShared: (source) =>
+      source.runtime === "pi"
+        ? {
+            ...DEFAULT_CONFIG,
+            model: source.model,
+            provider: source.provider ?? "",
+          }
+        : undefined,
+    exportShared: (saved) => {
+      const { provider, model } = config(saved);
+      return { runtime: "pi", ...(provider && { provider }), model };
+    },
     adopt: (carry, saved) => ({
       ...saved,
       instructions: carry.instructions ?? saved.instructions,

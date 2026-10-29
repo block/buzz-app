@@ -35,7 +35,6 @@ import type { RelaySession } from "../relay/session";
 import {
   addressedTo,
   CHAT_KINDS,
-  tagsAgent,
   watchMatches,
   type AttentionObject,
   type AttentionValue,
@@ -67,7 +66,7 @@ import type { EventWatch } from "./attention";
 import type { AgentEventTemplate, AgentsNative, Membership } from "./native";
 import type { AgentKey } from "./membership";
 import { setAttention, type AgentRecord, type TimerProgress } from "./store";
-import { Runs, type Start } from "./agent-start";
+import type { Start } from "./agent-start";
 import { type Pulses, pulseTyping } from "./typing";
 import {
   CATCH_UP_PAGES,
@@ -275,7 +274,7 @@ type Runner = {
   /** Watch jobs released from `waiting`, oldest first, going into the queue
    * as it has room. */
   readonly later: Job[];
-  /** Events seen, and events it wrote (so reactions to them reach no watch). */
+  /** Events seen. */
   readonly seen: Set<string>;
   /** Events seen in each channel, as many as a reconnect replays of it, so
    * other channels' traffic cannot push out one a replay sends again. Only the
@@ -287,7 +286,6 @@ type Runner = {
   /** A missed event catch-up is still giving out, with delivered and rejected
    * matches retained while its other watches wait. */
   fanning?: { id: string; done: ReadonlySet<string> };
-  readonly wrote: Set<string>;
   /** Turns still counted as working, which a change of type waits out. */
   working: number;
   /** Its typing pulses, one per conversation it is working in. */
@@ -477,8 +475,12 @@ export type RunnerHost = {
     signal: AbortSignal,
   ): Promise<boolean>;
   /** The agent wrote this memory through its handle. */
-  remembered(key: AgentKey, slug: string, body: string): void;
-  woke?(key: AgentKey, object: AttentionObject): void;
+  remembered(key: AgentKey, slug: string, body: string | null): void;
+  woke?(
+    key: AgentKey,
+    object: AttentionObject,
+    events?: readonly RelayEvent[],
+  ): void;
   /** A run of the agent ended, with everything it handed to `workingUntil`. */
   finished(key: AgentKey): void;
   /** A harness's title for the conversation a mention started; may name a Solo chat. */
@@ -514,8 +516,6 @@ export class AgentRunners {
   private readonly runners = new Map<string, Runner>();
   /** Each agent's last claim or release, which its next waits for. */
   private readonly custody = new Map<string, Promise<void>>();
-  /** The synced revisions each agent's current run started from. */
-  readonly started = new Runs();
   /** Agents whose community was live at the last resume. */
   private connected = new Set<string>();
   /** Catch-up progress of each kind 9 watch stream, as saved. */
@@ -539,9 +539,28 @@ export class AgentRunners {
   private readonly stopped: Interrupted;
   /** The agents whose `left` the owner chose to resume. */
   private resuming = new Set<string>();
+  private workingNow = false;
+  private readonly workingListeners = new Set<() => void>();
   constructor(private readonly host: RunnerHost) {
     this.checkpoints = host.checkpoints.read();
     this.turns = this.left = this.stopped = host.interrupted.read();
+  }
+
+  /** Whether any agent has a job in a lane or a turn still working. */
+  isWorking() {
+    return this.workingNow;
+  }
+  subscribeWorking(listener: () => void) {
+    this.workingListeners.add(listener);
+    return () => void this.workingListeners.delete(listener);
+  }
+  private noteWorking() {
+    const working = [...this.runners.values()].some(
+      (runner) => runner.busy.size > 0 || runner.working > 0,
+    );
+    if (working === this.workingNow) return;
+    this.workingNow = working;
+    for (const listener of this.workingListeners) listener();
   }
 
   /** Agents with turns the app left working last time, until the owner
@@ -787,7 +806,6 @@ export class AgentRunners {
       seen: new Set(),
       seenIn: new Map(),
       backlog: [],
-      wrote: new Set(),
       working: 0,
       typing: new Map(),
       transitioning: false,
@@ -851,7 +869,7 @@ export class AgentRunners {
           continue;
         }
         this.markSeen(runner, event.id, channel);
-        if (this.isOwn(runner, agent, event)) continue;
+        if (this.isOwn(agent, event)) continue;
         // A replay waits for room rather than take the drops a burst of
         // live traffic would.
         runner.backlog.push({
@@ -872,12 +890,9 @@ export class AgentRunners {
       (!!channel && !!runner.seenIn.get(channel)?.has(id))
     );
   }
-  /** An agent never hears itself; its own events keep reactions to them from
-   * its watches. */
-  private isOwn(runner: Runner, agent: Agent, event: RelayEvent) {
-    if (event.pubkey !== agent.pubkey) return false;
-    bounded(runner.wrote, event.id);
-    return true;
+  /** An agent never hears itself. */
+  private isOwn(agent: Agent, event: RelayEvent) {
+    return event.pubkey === agent.pubkey;
   }
   private markSeen(runner: Runner, id: string, channel: string | undefined) {
     bounded(runner.seen, id);
@@ -1004,7 +1019,7 @@ export class AgentRunners {
     const channel = event.tags.find((tag) => tag[0] === "h")?.[1];
     if (this.hasSeen(runner, event.id, channel)) return;
     this.markSeen(runner, event.id, channel);
-    if (this.isOwn(runner, agent, event)) return;
+    if (this.isOwn(agent, event)) return;
     this.deliver(runner, agent, event, channelId);
   }
   /** Saves `event` as heard by each of the agent's streams it is in and has
@@ -1409,7 +1424,6 @@ export class AgentRunners {
       const channel = channelOf(event);
       if (this.hasSeen(runner, event.id, channel)) continue;
       this.markSeen(runner, event.id, channel);
-      this.isOwn(runner, agent, event);
     }
     this.give(runner, agent, mentions, watches, slug, skipped);
     return taken;
@@ -1801,14 +1815,6 @@ export class AgentRunners {
   ): Heard {
     if (this.stopped[runner.key]?.[event.id] !== undefined)
       return { triggers: [] };
-    const wrote = (id: string) => runner.wrote.has(id);
-    // Another of the owner's agents wakes it only by naming it, wherever: were a
-    // watch enough, two agents replying to each other would never stop. The
-    // claimed owner only narrows this; the type verifies it before answering.
-    if (event.tags.some((tag) => tag[0] === "auth" && tag[1] === agent.owner))
-      return CHAT_KINDS.includes(event.kind) && tagsAgent(event, agent.pubkey)
-        ? { triggers: [{ type: "mention", event }] }
-        : { triggers: [] };
     // A one-to-one DM is always addressed to the other member, whoever else it
     // names, so no mention is needed. Only new messages: an edit is not a new
     // turn, and a reaction is not conversation. A group DM still needs the
@@ -1819,9 +1825,10 @@ export class AgentRunners {
       this.host.dm(agent, event)
     )
       return { triggers: [{ type: "mention", event }] };
-    // Addressed events never reach a watch. Only conversation starts a run: not
-    // an encrypted DM (kind 4) it cannot read yet, nor a reaction to its message.
-    if (addressedTo(event, agent.pubkey, wrote))
+    // Addressed events never reach a watch. Only conversation starts a run, not
+    // an encrypted DM (kind 4) it cannot read yet. A reaction to its message is
+    // not addressed, so a watch can still hear it.
+    if (addressedTo(event, agent.pubkey))
       return CHAT_KINDS.includes(event.kind)
         ? { triggers: [{ type: "mention", event }] }
         : { triggers: [] };
@@ -2168,6 +2175,7 @@ export class AgentRunners {
     job: Job,
   ) {
     runner.busy.add(lane);
+    this.noteWorking();
     if (job.trigger.type === "source") this.sourceJobs.set(job, agent.key);
     const lifetime = runner.controller.signal;
     const signal = AbortSignal.any([
@@ -2191,7 +2199,15 @@ export class AgentRunners {
     const woke = () => {
       attempted = true;
       if (!addressed(trigger) && job.matched)
-        this.host.woke?.(agent.key, job.matched.object);
+        this.host.woke?.(
+          agent.key,
+          job.matched.object,
+          trigger.type === "watch"
+            ? [trigger.event]
+            : trigger.type === "catch-up"
+              ? trigger.events.map(({ event }) => event)
+              : undefined,
+        );
     };
     const invoke: typeof run = (delivery) => {
       woke();
@@ -2203,13 +2219,13 @@ export class AgentRunners {
       if (!start.ok) throw new Error(start.reason);
       const team = this.host.team(agent.key);
       signal.throwIfAborted();
-      this.started.start(agent.key, start.revisions);
       const delivery = Object.freeze({
         trigger: job.trigger,
         ...(job.channelId ? { channelId: job.channelId } : {}),
         agent: handle,
         config: start.config,
         revisions: start.revisions,
+        ...(start.synced && { synced: start.synced }),
         ...pick,
         ...(team ? { team } : {}),
         signal,
@@ -2348,6 +2364,7 @@ export class AgentRunners {
           );
     void held.then(() => {
       runner.busy.delete(lane);
+      this.noteWorking();
       void this.drain(runner);
     });
   }
@@ -2387,7 +2404,7 @@ export class AgentRunners {
         lifetime.throwIfAborted();
         return this.require().gitAuth(agent, owner, repo);
       },
-      remember: async (slug: string, body: string, after: number) => {
+      remember: async (slug: string, body: string | null, after: number) => {
         lifetime.throwIfAborted();
         const event = await this.require().remember(agent, slug, body, after);
         this.host.remembered(agent.key, slug, body);
@@ -2496,12 +2513,14 @@ export class AgentRunners {
       stopped = resolve;
     });
     runner.working++;
+    this.noteWorking();
     const stop = () => {
       if (holds < 0) return;
       holds = -1;
       stopped();
       lifetime.removeEventListener("abort", abort);
       runner.working--;
+      this.noteWorking();
       typing?.();
       if (resumable) this.unmark(runner.key, [resumable]);
     };
@@ -2765,9 +2784,7 @@ export class AgentRunners {
       lifetime.throwIfAborted();
     }
     check?.();
-    const signed = await this.require().publish(runner.member, event);
-    bounded(runner.wrote, signed.id);
-    return signed;
+    return this.require().publish(runner.member, event);
   }
 }
 

@@ -117,7 +117,7 @@ function setup(value = "", props: { allowCustomModel?: boolean } = {}) {
 
 const control = () => screen.getByRole("combobox", { name: "Model" });
 
-it("omits unknown artwork slots from the ungrouped trigger and options", async () => {
+it("keeps mixed-vendor options aligned without an unknown trigger icon", async () => {
   const user = userEvent.setup();
   render(
     <ModelPicker
@@ -136,8 +136,8 @@ it("omits unknown artwork slots from the ungrouped trigger and options", async (
   expect(
     (
       await screen.findByRole("option", { name: "Unknown vendor" })
-    ).querySelector(".buzz-select-leading"),
-  ).toBeNull();
+    ).querySelector(".buzz-select-leading svg"),
+  ).toBeInTheDocument();
   expect(
     screen
       .getByRole("option", { name: "Claude" })

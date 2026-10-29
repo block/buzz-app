@@ -293,7 +293,7 @@ export function ModelPicker({
                       ? `${model.label} · Default`
                       : model.label,
                   description: model.description,
-                  leading: modelLogo(`${model.id} ${model.label}`),
+                  leading: <ModelIcon model={`${model.id} ${model.label}`} />,
                 })),
               },
             ]}

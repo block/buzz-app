@@ -2028,7 +2028,8 @@ function ChannelWorkspace({
                               drawerContext.channelId !== channel?.id ||
                               !channel ||
                               channel.cached ||
-                              channel.readOnly ||
+                              (channel.readOnly &&
+                                channel.viewerRole !== "guest") ||
                               !channel.members?.includes(
                                 queries.viewer ?? "",
                               ) ||

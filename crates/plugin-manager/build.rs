@@ -69,12 +69,12 @@ mod tests {
         let local = directory.path().join(".env.local");
         std::fs::write(
             &local,
-            "\u{feff}export BUZZ_BUILDERLAB_URL=\"https://APP.BUILDERLAB.XYZ:443/deployment/\" # comment\n",
+            "\u{feff}export BUZZ_BUILDERLAB_URL=\"https://OVERRIDE.EXAMPLE:443/deployment/\" # comment\n",
         )
         .unwrap();
         assert_eq!(
             builderlab_origin(&local, None).unwrap(),
-            "https://app.builderlab.xyz"
+            "https://override.example"
         );
         assert_eq!(
             builderlab_origin(&local, Some("https://login.example:8443/path/".into())).unwrap(),
@@ -120,13 +120,13 @@ mod tests {
             std::fs::write(
                 &local,
                 format!(
-                    "PRIVATE_VALUE={quote}multiline\nBUZZ_BUILDERLAB_URL=https://hidden.example\n{quote}\nINVALID=unquoted value\nexport BUZZ_BUILDERLAB_URL=https://app.builderlab.xyz/\nTRAILING='unfinished\n"
+                    "PRIVATE_VALUE={quote}multiline\nBUZZ_BUILDERLAB_URL=https://hidden.example\n{quote}\nINVALID=unquoted value\nexport BUZZ_BUILDERLAB_URL=https://after-multiline.example/\nTRAILING='unfinished\n"
                 ),
             )
             .unwrap();
             assert_eq!(
                 builderlab_origin(&local, None).unwrap(),
-                "https://app.builderlab.xyz"
+                "https://after-multiline.example"
             );
         }
         for quote in ["'", "\""] {

@@ -970,6 +970,22 @@ test("opening a message link reads the channel but not its already-open thread",
   ).toBeVisible();
   const before = await channel();
   expect(await unread()).toBeGreaterThan(0);
+  // The link is a timeline jump only once Alpha's history confirms the root.
+  // Before then it opens the root's thread, which takes focus and reads it.
+  await expect
+    .poll(() =>
+      page.evaluate((id) => {
+        const history = window.fixtureRelay
+          .snapshot()
+          .session.channels.window("alpha");
+        return (
+          history.status === "ready" &&
+          history.freshness === "verified" &&
+          history.rows.some((row) => row.id === id)
+        );
+      }, message.id),
+    )
+    .toBe(true);
   await releaseReadingFocus(page);
   await page.evaluate((target) => window.fixtureNavigation.open(target), {
     version: 1,

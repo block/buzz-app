@@ -210,6 +210,10 @@ export const test = base.extend({
       ["primary", new Map()],
       ["secondary", new Map()],
     ]);
+    const agentRecords = new Map([
+      ["primary", new Map()],
+      ["secondary", new Map()],
+    ]);
     const sign = (
       kind,
       tags,
@@ -1277,7 +1281,7 @@ export const test = base.extend({
           kinds: [30177],
           limit: 500,
         });
-        return [];
+        return [...agentRecords.get(community).values()];
       }
       if (filter.kinds?.includes(30175) || filter.kinds?.includes(30177)) {
         expect(filter).toEqual({
@@ -1824,6 +1828,21 @@ export const test = base.extend({
         const channel = event.tags.find(([name]) => name === "h")?.[1];
         histories.get(`${community}/${channel}`).push(event);
         relay.publish(community, event);
+        return;
+      }
+      if (event.kind === 30177) {
+        const coordinates = event.tags.filter(([name]) => name === "d");
+        expect(coordinates).toEqual([
+          ["d", expect.stringMatching(/^[0-9a-f]{64}$/)],
+        ]);
+        expect(event.tags).toContainEqual(["runtime", expect.any(String)]);
+        const content = JSON.parse(event.content);
+        expect(content.name.trim()).not.toBe("");
+        expect(content.parallelism).toEqual(expect.any(Number));
+        expect(content.respond_to).toEqual(expect.any(String));
+        agentRecords.get(community).set(coordinates[0][1], event);
+        report.agentPublications ??= [];
+        report.agentPublications.push({ community, event });
         return;
       }
       if ([7, 5, 40003].includes(event.kind)) {

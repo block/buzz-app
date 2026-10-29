@@ -107,13 +107,36 @@ tool's name, description or schema changes, so edit those deliberately.
 `addedKey` covers only plugins' tools, so a resumed Codex thread keeps the Buzz
 tools, and their `load`, that it started with.
 
-On desktop the GitHub plugin adds `github_watch_pr`, so an agent can wait on a pull
+The GitHub plugin keeps one store of pull request data (`pull-states.ts`), and
+it is the only place the plugin reads pull requests from GitHub. Links, the Solo
+sidebar, the side panel, watches and agents' lookups each ask it for a level:
+`state`, `feedback` (reviews and comments with their text) or `details` (what
+the side panel shows and acts on). It reads
+each pull request once for all of them, in one batched `gh` query, at every
+level asked of it. It drops a level's data at the first read without that
+level, and forgets a pull request nobody follows at the first read 15 minutes
+after its last poll; with no later read, the data stays in memory.
+Each reader also says how often it wants its pull request read again; the
+store reads each one as often as its most eager reader wants, and every poll
+reads all that are due together.
+
+On desktop the GitHub plugin adds `github_pr_state`, so an agent can read a pull
+request's state as its owner's links show it: open, draft, merged or closed,
+checks, failed check names and conflicts, with when it was read. With
+`details: true` it also gives what the side panel shows: title, branches, files
+changed, the review decision and reviewers, unresolved review threads, the
+merge state and auto-merge. The answer is at most a minute old unless the agent
+asks for a fresh read, or the last read failed: then the answer says so, and
+how old it is.
+
+The GitHub plugin also adds `github_watch_pr`, so an agent can wait on a pull
 request without a model checking it. An agent calls it with a pull request URL
 and the id of one of its own Interests, from a thread or a Solo chat. The tool is a
 convenience over `watch_add`: it adds an `attention/github-pr` source watch to that
 Interest through the same attention tool code, and refuses an Interest that does
-not exist. The plugin never writes an Interest. While the app is open the plugin reads the pull
-request through the signed-in `gh` CLI once a minute. It wakes the agent when CI
+not exist. The plugin never writes an Interest. While the app is open the watch asks the store to
+follow the pull request's feedback, which it reads through the signed-in `gh`
+CLI once a minute, also while the window is hidden. It wakes the agent when CI
 settles on the head commit, once per commit and result, or when new feedback has
 been quiet for 90 seconds, and once more when the pull request merges or closes,
 so the agent can finish and retire its Interest. Attention delivers the wake
@@ -123,8 +146,8 @@ comments, line by line, each clipped, with GitHub's links. Agents comment as the
 `gh` account, as their owner does, so GitHub cannot tell them apart: a comment of
 that account that starts with 🤖, as an agent's do, wakes nobody, and the owner's
 other comments wake the agent. A watch is saved in Attention on the device and respects its on/off switch. Device-local GitHub watches saved before Attention are dropped, not imported: they name no Interest. It ends when the
-pull request merges or closes, after 20 wakes, after 30 failed polls in a row,
-or when the agent calls it with `stop: true`.
+pull request merges or closes, after 20 wakes, after 30 minutes without a
+successful read, or when the agent calls it with `stop: true`.
 
 The Agents runner starts a mention run from a `p` tag, or from any new message
 by the other member of a one-to-one DM the agent is in; group DMs still need

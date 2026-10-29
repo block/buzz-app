@@ -1146,8 +1146,12 @@ it("tries gh again for a read someone waits for, while polls still wait for it",
   states.watch(pull, () => {});
   await vi.waitFor(() => expect(states.get(pull)).toEqual({ state: "open" }));
   expect(gh).toHaveBeenCalledOnce();
-  // Back online within the minute: a read someone waits for uses gh at once.
+  // Back online within the minute: a link shown now is read without gh, ...
   signedIn = true;
+  states.watch(second, () => {});
+  await vi.waitFor(() => expect(states.get(second)).toEqual({ state: "open" }));
+  expect(gh).toHaveBeenCalledOnce();
+  // ... but a read someone waits for uses gh at once.
   const { state } = await states.read(pull, { maxAge: 0 });
   expect(gh).toHaveBeenCalledTimes(2);
   expect(state).toMatchObject({ checks: "success" });

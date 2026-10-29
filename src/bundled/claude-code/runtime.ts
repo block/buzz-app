@@ -359,9 +359,13 @@ export class ClaudeRuntime {
       agent,
       sessionId: last.sessionId,
       ...place,
-      ...this.reads(agent)?.channelLabel(place.channelId),
       at: last.endedAt ?? last.startedAt,
     };
+  }
+  /** The community's current name and kind for a channel, if it lists it;
+   * `useOpenedSession` gives them to a session `find` returned. */
+  channelLabel(agent: AgentKey, channelId: string) {
+    return this.reads(agent)?.channelLabel(channelId);
   }
   subscribe(listener: () => void) {
     this.listeners.add(listener);

@@ -23,11 +23,14 @@ type Place = Readonly<{ channelId: string; root?: string }>;
 /** The session for `conversation`: its thread's, else its channel's, which is
  * the one session a channel-scoped agent or a DM keeps. This build's saved
  * session comes first; `find` looks in the type's own history for one another
- * build of the app started, since each build saves its own. */
+ * build of the app started, since each build saves its own. That one has no
+ * channel name or kind; `label` gives it the channel's current ones each
+ * render. */
 export function useOpenedSession<T extends Saved>(
   saved: readonly T[],
   conversation: AgentConversation | undefined,
   find: (place: Place, signal: AbortSignal) => Promise<T | undefined>,
+  label?: (channelId: string) => ChannelLabel | undefined,
 ): { session?: T; searching?: boolean; error?: string } {
   const places: Place[] = conversation
     ? [
@@ -81,9 +84,18 @@ export function useOpenedSession<T extends Saved>(
   if (exact) return { session: exact };
   if (found?.key !== key) return { searching: true };
   // The place found stays; its row is the one saved now, since a type gives
-  // each render its channel's current name and kind.
+  // each render its channel's current name and kind, else the one found,
+  // labelled now in the same way.
   const { key: _, session, ...result } = found;
-  return session ? { ...result, session: bound(session) ?? session } : result;
+  return session
+    ? {
+        ...result,
+        session: bound(session) ?? {
+          ...session,
+          ...label?.(session.channelId),
+        },
+      }
+    : result;
 }
 
 /** The transcript a type's tab shows over itself as a panel subview, titled

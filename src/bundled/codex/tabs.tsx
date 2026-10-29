@@ -831,8 +831,12 @@ export function createTabs(
       session: here,
       searching,
       error: lookupError,
-    } = useOpenedSession(conversations, conversation, (place, signal) =>
-      runtime.find({ key: agent.key, name: agent.name }, place, signal),
+    } = useOpenedSession(
+      conversations,
+      conversation,
+      (place, signal) =>
+        runtime.find({ key: agent.key, name: agent.name }, place, signal),
+      (channelId) => runtime.channelLabel(agent.key, channelId),
     );
     const recent = conversations
       .filter((item) => item.key !== here?.key)

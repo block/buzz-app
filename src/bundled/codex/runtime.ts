@@ -639,10 +639,14 @@ export class CodexRuntime {
       found && {
         key: JSON.stringify([place.channelId, place.root ?? "channel"]),
         ...place,
-        ...label,
         ...found,
       }
     );
+  }
+  /** The community's current name and kind for a channel, if it lists it;
+   * `useOpenedSession` gives them to a thread `find` returned. */
+  channelLabel(agent: AgentKey, channelId: string) {
+    return this.reads(agent)?.channelLabel(channelId);
   }
   private storageKey(scope: string, agent: AgentKey) {
     // Resume restores the persisted tool schema, so a binding from before a

@@ -10,7 +10,7 @@ fn main() {
             );
         }
         let result = match args.get(1).map(String::as_str) {
-            Some("install-git") => buzzodz_plugins::Manager::from_env()
+            Some("install-git") => buzzodz_plugins::Manager::from_env(None)
                 .and_then(|manager| buzzodz_plugins::cli::install_git(&manager, &args[2..])),
             _ => Err("Use plugin install-git REPO REF [PATH] [--enable].".into()),
         };

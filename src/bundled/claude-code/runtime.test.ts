@@ -3,12 +3,17 @@ import { schnorr } from "@noble/curves/secp256k1.js";
 import { bytesToHex } from "nostr-tools/utils";
 import { afterEach, expect, it, vi } from "vitest";
 import type { BuzzClient } from "../../buzz-mcp/client";
+import { appClient } from "../../buzz-mcp/app-client";
 import { callTool } from "../../buzz-mcp/tools";
 import { createAgentMemories } from "../../features/agents/memory";
 import { pubkeyOf } from "../../features/agents/membership";
 import { ownerReads } from "../../features/agents/reads";
 import { localStore } from "../../features/agents/state";
-import type { Agent, Delivery } from "../../features/agents/service";
+import type {
+  Agent,
+  AgentHandle,
+  Delivery,
+} from "../../features/agents/service";
 import type { Host } from "../../features/host/service";
 import type {
   EventData,
@@ -2164,6 +2169,42 @@ it("gives a tool the partial listing a slow native read answers", async () => {
     vi.restoreAllMocks();
     vi.useRealTimers();
   }
+});
+
+it("dates a recreated memory entry after the tombstone the native read reports", async () => {
+  // The in-app path end to end: the host's listing, the session's memory
+  // reads, the runtime's shared reads and the app client, into mem_set.
+  const agentMemories = createAgentMemories(
+    async () => ({
+      entries: [],
+      deleted: [{ slug: "mem/gone", createdAt: 4_000_000_001 }],
+      partial: false,
+    }),
+    alice,
+    () => true,
+  ).capability;
+  const relay = {
+    snapshot: () => ({ status: "ready", session: { agentMemories } }),
+  } as unknown as RelayData;
+  const runtime = new ClaudeRuntime(
+    {} as Host,
+    (key) => ownerReads(relay, pubkeyOf(key)),
+    async () => null,
+  ) as unknown as {
+    memories(pubkey: string, slug?: string): ReturnType<BuzzClient["memories"]>;
+  };
+  const remember = vi.fn<AgentHandle["remember"]>();
+  const client = appClient(
+    { pubkey: self, remember } as unknown as AgentHandle,
+    {
+      read: vi.fn(),
+      memories: (slug) => runtime.memories(self, slug),
+    },
+  );
+  await expect(
+    callTool(client, {}, "mem_set", { slug: "gone", text: "back" }),
+  ).resolves.toMatch(/^saved; version /);
+  expect(remember).toHaveBeenCalledWith("mem/gone", "back", 4_000_000_001);
 });
 
 it("method calls: a session launch makes no config call on the relay session; only the conversation name lookup (launch-boundary.test.ts runs the real service path)", async () => {

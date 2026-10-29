@@ -97,6 +97,19 @@ export function createSettingsTab(client: AgentClient, session: OAuthSession) {
           <>
             <SettingsGroup>
               <PreferenceRow
+                title="Runtime"
+                trailing={
+                  <a
+                    className={inlineStyles.link}
+                    href={import.meta.env.VITE_BUZZ_BUILDERLAB_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Builderlab
+                  </a>
+                }
+              />
+              <PreferenceRow
                 title="Workspace"
                 subtitle="Remote runtime shared with all agents by default."
               />
@@ -108,17 +121,6 @@ export function createSettingsTab(client: AgentClient, session: OAuthSession) {
             {settingsContent}
           </>
         )}
-        <p className="m-0 text-body-sm text-secondary">
-          Remote runtime managed via{" "}
-          <a
-            className={inlineStyles.link}
-            href={import.meta.env.VITE_BUZZ_BUILDERLAB_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Builderlab
-          </a>
-        </p>
       </div>
     );
   };

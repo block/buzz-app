@@ -213,10 +213,7 @@ it("keeps hosted instructions on cancellation and resets a confirmed discard", a
   expect(await screen.findByRole("button", { name: /^Model:/ })).toBeVisible();
   expect(screen.getByRole("combobox", { name: "Thinking" })).toBeVisible();
   expect(screen.queryByText("Workspace")).toBeNull();
-  expect(screen.getByRole("link", { name: "Builderlab" })).toHaveAttribute(
-    "href",
-    "https://builderlab.example",
-  );
+  expect(screen.queryByRole("link", { name: "Builderlab" })).toBeNull();
   await user.type(field, " Unsaved.");
   await user.click(screen.getByRole("tab", { name: "Settings" }));
   expect(await screen.findByRole("alertdialog")).toHaveTextContent(
@@ -255,6 +252,13 @@ it("keeps hosted instructions on cancellation and resets a confirmed discard", a
   expect(screen.getByText("Workspace")).toBeVisible();
   expect(screen.getByText("One session per thread")).toBeVisible();
   expect(screen.getByText("Agent settings")).toBeVisible();
+  const runtime = screen.getByRole("link", { name: "Builderlab" });
+  expect(runtime).toHaveAttribute("href", "https://builderlab.example");
+  expect(runtime.closest(".buzz-settings-group")).toHaveTextContent("Runtime");
+  expect(runtime.closest(".buzz-settings-group")).toHaveTextContent(
+    "Workspace",
+  );
+  expect(runtime.closest(".buzz-settings-group")).toHaveTextContent("Sessions");
   expect(screen.queryByRole("button", { name: /^Model:/ })).toBeNull();
   expect(screen.queryByRole("combobox", { name: "Thinking" })).toBeNull();
   await user.click(screen.getByRole("tab", { name: "Identity" }));

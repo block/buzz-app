@@ -134,20 +134,36 @@ it("explains the disabled harness selector on hover and keyboard focus without o
   const harness = screen.getByRole("button", { name: "Harness: Builderlab" });
   expect(harness).toHaveAttribute("aria-disabled", "true");
   await user.hover(harness);
-  expect(await screen.findByRole("tooltip")).toHaveTextContent(
-    "This agent can’t currently be moved out of its Builderlab instance.",
+  expect(
+    await screen.findByRole("dialog", { name: "Builderlab harness" }),
+  ).toHaveTextContent(
+    "Builderlab holds this agent’s signing key. Buzz can’t move that identity to a local harness yet. To run locally, create a new agent.",
   );
   await user.unhover(harness);
-  await waitFor(() => expect(screen.queryByRole("tooltip")).toBeNull());
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("dialog", { name: "Builderlab harness" }),
+    ).toBeNull(),
+  );
   await user.tab();
   expect(harness).toHaveFocus();
-  expect(await screen.findByRole("tooltip")).toHaveTextContent(
-    "Builderlab instance",
-  );
+  expect(
+    await screen.findByRole("dialog", { name: "Builderlab harness" }),
+  ).toHaveTextContent("Builderlab holds this agent’s signing key.");
   expect(harness).toHaveAccessibleDescription(
-    "This agent can’t currently be moved out of its Builderlab instance.",
+    "Builderlab holds this agent’s signing key. Buzz can’t move that identity to a local harness yet. To run locally, create a new agent.",
   );
+  await user.keyboard("{Escape}");
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("dialog", { name: "Builderlab harness" }),
+    ).toBeNull(),
+  );
+  expect(harness).toHaveFocus();
   await user.keyboard("{Enter}");
+  expect(
+    await screen.findByRole("dialog", { name: "Builderlab harness" }),
+  ).toBeVisible();
   await user.click(harness);
   expect(screen.queryByRole("menu")).toBeNull();
   expect(

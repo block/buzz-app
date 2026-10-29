@@ -140,7 +140,7 @@ export function createCreationFields(
               disabled={disabled || !model || !!wrongAccount}
               groups={[
                 {
-                  label: "Supported reasoning efforts",
+                  label: "",
                   options: (model?.supportedReasoningEfforts ?? []).map(
                     (value) => ({ value, label: value }),
                   ),

@@ -98,15 +98,19 @@ export function createSettingsTab(client: AgentClient, session: OAuthSession) {
             <SettingsGroup>
               <PreferenceRow
                 title="Runtime"
-                trailing={
-                  <a
-                    className={inlineStyles.link}
-                    href={import.meta.env.VITE_BUZZ_BUILDERLAB_URL}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    Builderlab
-                  </a>
+                subtitle={
+                  <>
+                    Hosted and managed by{" "}
+                    <a
+                      className={inlineStyles.link}
+                      href={import.meta.env.VITE_BUZZ_BUILDERLAB_URL}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      Builderlab
+                    </a>
+                    .
+                  </>
                 }
               />
               <PreferenceRow

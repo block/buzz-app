@@ -254,6 +254,9 @@ it("keeps hosted instructions on cancellation and resets a confirmed discard", a
   expect(screen.getByText("Agent settings")).toBeVisible();
   const runtime = screen.getByRole("link", { name: "Builderlab" });
   expect(runtime).toHaveAttribute("href", "https://builderlab.example");
+  expect(runtime.closest(".buzz-preference-row-description")).toHaveTextContent(
+    "Hosted and managed by Builderlab.",
+  );
   expect(runtime.closest(".buzz-settings-group")).toHaveTextContent("Runtime");
   expect(runtime.closest(".buzz-settings-group")).toHaveTextContent(
     "Workspace",

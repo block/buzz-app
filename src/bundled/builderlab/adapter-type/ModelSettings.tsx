@@ -261,7 +261,7 @@ export function ModelSettings({
               disabled={busy || !model}
               groups={[
                 {
-                  label: "Supported reasoning efforts",
+                  label: "",
                   options: (model?.supportedReasoningEfforts ?? []).map(
                     (value) => ({ value, label: effortLabel(value) }),
                   ),

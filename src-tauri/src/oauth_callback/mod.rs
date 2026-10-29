@@ -379,9 +379,10 @@ async fn reply(stream: &mut TcpStream, status: u16, message: &str) {
     let style_hash = base64::engine::general_purpose::STANDARD.encode(Sha256::digest(style));
     let script = include_str!("page.js");
     let script_hash = base64::engine::general_purpose::STANDARD.encode(Sha256::digest(script));
+    // Replace whole HTML comments so the template is valid without parsing placeholders as CSS/JS.
     let body = include_str!("page.html")
-        .replace("{{style}}", style)
-        .replace("{{script}}", script)
+        .replace("<!-- {{style}} -->", &format!("<style>{style}</style>"))
+        .replace("<!-- {{script}} -->", &format!("<script>{script}</script>"))
         .replace("{{complete}}", if status == 200 { "true" } else { "false" })
         .replace(
             "{{closeDelay}}",

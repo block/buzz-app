@@ -23,7 +23,7 @@ const { id, callbackUrl } = await invoke("oauth_callback_begin", {
 | `oauth_callback_begin({ authorizationUrl, callbackPath, useState? })` | Validates the request, generates an attempt ID, binds `127.0.0.1` on an ephemeral port, inserts the callback URL as `redirect_uri` and optional state, and launches the external browser through the existing opener. Returns `{ "id": "…", "callbackUrl": "http://127.0.0.1:{port}{path}" }`. Launch failure cleans up before rejecting. |
 | `oauth_callback_wait(id)` | Consumes the matching attempt's result once. Resolves with `{ "parameters": [["name", "value"], …] }`, retaining decoded order and duplicates. Valid provider errors resolve with their parameters; transport failure, timeout, or cancellation rejects with a generic message. |
 | `oauth_callback_cancel(id)` | Closes and removes the matching attempt. Safe to repeat; a stale ID does not cancel another attempt. |
-| `oauth_callback_complete(id)` | After the caller verifies the account, makes a best-effort native focus return for the matching valid callback. Waits for the callback's short reading delay, then consumes its return permission once. Unknown, canceled and replaced attempts do nothing. Invoke before final cancellation. |
+| `oauth_callback_complete(id)` | After the caller verifies the account, makes a best-effort native focus return for the matching valid callback. Waits for the callback's short reading delay, then consumes its return permission once. When macOS focus return is armed, sign-in completion waits until roughly three seconds after the callback; cancellation retires focus permission immediately, but the pending completion call waits out that delay. Unknown, canceled and replaced attempts do nothing. Invoke before final cancellation. |
 
 The authorization URL must use HTTPS, with no embedded credentials or fragment.
 The callback path must be a canonical absolute path without a query or fragment.
@@ -109,7 +109,7 @@ of whether browser policy permits closing the callback tab.
   browser-extension containers, cannot introduce rows that displace the panel.
   Its branded panel fades and scales in with a small bounce over the
   shared 220ms settle duration; reduced motion and error pages stay immediate.
-  The hint changes to **You can close this tab.** if closing is blocked or
+  The hint changes to **You can close this window.** if closing is blocked or
   JavaScript is disabled. The spinner respects reduced motion
   and disappears if closing is blocked, leaving manual-close guidance. The
   reading delay and native focus-return delay share one native constant. Error

@@ -804,12 +804,14 @@ function DefaultAgentInventory({
           pending={savingBestie}
           error={error}
           onClose={() => {
-            if (error)
+            if (error) {
               restoreDefaultAgent(
                 scope,
                 replacement.replacing.pubkey,
                 replacement.current.pubkey,
               );
+              setError("");
+            }
             setReplacement(undefined);
           }}
           onChoose={() => {

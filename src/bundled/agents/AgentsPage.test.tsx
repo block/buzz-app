@@ -3739,6 +3739,7 @@ it("keeps a failed Bestie replacement visible and retries the account save", asy
     within(confirmation).getByRole("button", { name: "Keep Ada" }),
   );
   expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   expect(readView(connection.scope, "solo:default-agent", null)).toBe(
     ada.pubkey,
   );
@@ -3755,6 +3756,7 @@ it("keeps a failed Bestie replacement visible and retries the account save", asy
   const retry = await screen.findByRole("alertdialog", {
     name: "Make Bea your bestie?",
   });
+  expect(within(retry).queryByRole("alert")).not.toBeInTheDocument();
   await user.click(
     within(retry).getByRole("button", { name: "Switch to Bea" }),
   );

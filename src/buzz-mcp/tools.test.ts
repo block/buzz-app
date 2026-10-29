@@ -1867,7 +1867,7 @@ it("refuses member changes that do not fit, before publishing", async () => {
 
 it("defaults to the current channel only when channel is left out", async () => {
   const { client, published } = relay();
-  const call = (name: string, args: Record<string, unknown>) =>
+  const call = (name: string, args: unknown) =>
     respond(
       client,
       { channel: room },
@@ -1881,6 +1881,10 @@ it("defaults to the current channel only when channel is left out", async () => 
   for (const [name, args, message] of [
     ["channel_delete", { channel: 123 }, "channel must be a channel ID."],
     ["channel_delete", { channel: "   " }, "channel must be a channel ID."],
+    ...[null, [], true, 42, ""].map(
+      (args) =>
+        ["channel_delete", args, "arguments must be an object."] as const,
+    ),
     [
       "members",
       { channel: null, remove: [alice] },

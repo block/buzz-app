@@ -2298,13 +2298,14 @@ it("lets the Solo owner add an agent without sending a message", async () => {
   expect(screen.getByRole("dialog")).not.toHaveAccessibleDescription();
   expect(
     screen.queryByRole("region", { name: "Not in this chat" }),
-  ).not.toBeInTheDocument();
+  ).toBeVisible();
+  expect(screen.getByRole("region", { name: "Your agents" })).toBeVisible();
   await t.user.type(input, "Fixture");
   await screen.findByRole("button", { name: /Add Fixture agent/ });
   await t.user.clear(input);
   expect(
     screen.queryByRole("region", { name: "Not in this chat" }),
-  ).not.toBeInTheDocument();
+  ).toBeVisible();
   const add = await t.search();
   t.hold();
   await t.user.click(add);
@@ -2337,6 +2338,182 @@ it("lets the Solo owner add an agent without sending a message", async () => {
   await screen.findByRole("heading", { name: "Agents · 1" });
   expect(t.publish).toHaveBeenCalledOnce();
 });
+
+it("gives Solo the channel invitation groups, ranking and independent four-row expansion", async () => {
+  const t = await setup("solo", false, true);
+  const client = Array.from({ length: 5 }, (_, index) => ({
+    ...t.agent,
+    pubkey: keypair().pubkey,
+    name: `Helper client ${index}`,
+  }));
+  const saved = Array.from({ length: 5 }, (_, index) => ({
+    pubkey: keypair().pubkey,
+    name: `Helper saved ${index}`,
+  }));
+  const chosen = saved[4];
+  const admitted = saved[0];
+  if (!chosen || !admitted) throw new Error("Missing saved agent fixture");
+  const outsider = profile(keypair(), {
+    name: "Helper outsider",
+    is_agent: true,
+  });
+  const person = profile(t.person, { name: "Helper person" });
+  t.readAgentLibrary.mockResolvedValue({ definitions: [], identities: saved });
+  recordChoice(
+    t.session.scope,
+    pickerText("channel-members", "helper"),
+    personKey(chosen.pubkey),
+  );
+  await act(async () => {
+    t.control.set({ agents: client });
+    await t.session.agentChoices.refresh();
+  });
+  const query = t.query.getMockImplementation();
+  if (!query) throw new Error("Missing query fixture");
+  t.query.mockImplementation(async (filters) =>
+    filters.some((filter) => filter.search)
+      ? [outsider, person]
+      : query(filters),
+  );
+  const rows = (name: string) =>
+    within(screen.getByRole("region", { name })).getAllByRole("button", {
+      name: /^Add /,
+    });
+  expect(rows("Your agents")).toHaveLength(4);
+  expect(
+    screen.queryByRole("region", { name: "Your other agents" }),
+  ).toBeNull();
+  expect(
+    t.query.mock.calls
+      .flatMap(([filters]) => filters)
+      .some((filter) => filter.search),
+  ).toBe(false);
+  const input = screen.getByRole("searchbox");
+  await t.user.type(input, "Helper");
+  await screen.findByRole("region", { name: "People not in this chat" });
+  const invitations = screen.getByRole("region", { name: "Not in this chat" });
+  expect(
+    within(invitations)
+      .getAllByRole("region")
+      .map((region) => region.getAttribute("aria-label")),
+  ).toEqual(["Your agents", "People not in this chat", "Your other agents"]);
+  expect(rows("Your agents")).toHaveLength(4);
+  expect(rows("Your other agents")).toHaveLength(4);
+  expect(rows("Your other agents")[0]).toHaveAccessibleName(
+    /^Add Helper saved 4/,
+  );
+  expect(
+    within(invitations).queryByRole("button", { name: /outsider/ }),
+  ).toBeNull();
+  await t.user.click(
+    within(screen.getByRole("region", { name: "Your agents" })).getByRole(
+      "button",
+      { name: "Show more" },
+    ),
+  );
+  expect(rows("Your agents")).toHaveLength(5);
+  expect(rows("Your other agents")).toHaveLength(4);
+  await t.user.click(
+    within(screen.getByRole("region", { name: "Your other agents" })).getByRole(
+      "button",
+      { name: "Show more" },
+    ),
+  );
+  expect(rows("Your other agents")).toHaveLength(5);
+  await t.user.clear(input);
+  expect(rows("Your agents")).toHaveLength(4);
+  expect(
+    screen.queryByRole("region", { name: "Your other agents" }),
+  ).toBeNull();
+  await t.user.type(input, "Helper saved");
+  await t.user.click(
+    await screen.findByRole("button", { name: /^Add Helper saved 0/ }),
+  );
+  await screen.findByText("Helper saved 0 added.");
+  expect(
+    readSearchUsage(t.session.scope).pick(
+      pickerText("channel-members", "helper saved"),
+      new Set(saved.map((agent) => personKey(agent.pubkey))),
+    ),
+  ).toBe(personKey(admitted.pubkey));
+  expect(input).toHaveValue("");
+  expect(screen.queryByRole("region", { name: "Not in this chat" })).toBeNull();
+  expect(t.publish.mock.calls.map(([event]) => event.kind)).toEqual([9000]);
+});
+
+it("reveals Solo directory continuations in their group and resets expansion on refresh", async () => {
+  const t = await setup("solo", false, true);
+  const people = Array.from({ length: 31 }, (_, index) =>
+    profile(keypair(), { name: `Helper person ${index}` }),
+  );
+  const query = t.query.getMockImplementation();
+  if (!query) throw new Error("Missing query fixture");
+  t.query.mockImplementation(async (filters) => {
+    const search = filters.find((filter) => filter.search);
+    return search
+      ? search.page === 2
+        ? people.slice(30)
+        : people.slice(0, 30)
+      : query(filters);
+  });
+  await t.user.type(screen.getByRole("searchbox"), "Helper");
+  const peopleGroup = await screen.findByRole("region", {
+    name: "People not in this chat",
+  });
+  const rows = () =>
+    within(peopleGroup).getAllByRole("button", { name: /^Add / });
+  expect(rows()).toHaveLength(4);
+  await t.user.click(
+    within(peopleGroup).getByRole("button", { name: "Show more" }),
+  );
+  expect(rows()).toHaveLength(8);
+  await t.user.click(screen.getByRole("button", { name: "Find more matches" }));
+  await vi.waitFor(() => expect(rows()).toHaveLength(31));
+  expect(
+    screen.queryByRole("button", { name: "Find more matches" }),
+  ).toBeNull();
+  const refresh = screen.getByRole("button", { name: "Refresh member data" });
+  await vi.waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false"));
+  await t.user.click(refresh);
+  await vi.waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false"));
+  expect(rows()).toHaveLength(4);
+  expect(t.publish).not.toHaveBeenCalled();
+});
+
+it.each([false, true])(
+  "hides Solo idle invitations with a second member (agent: %s), while search still offers them",
+  async (agent) => {
+    const t = await setup("solo", false, agent);
+    t.confirmRoster();
+    await act(async () => {
+      await t.session.channels.refreshRoster?.(
+        "11111111-1111-4111-8111-111111111111",
+      );
+    });
+    expect(
+      screen.queryByRole("region", { name: "Not in this chat" }),
+    ).toBeNull();
+    await act(async () =>
+      t.control.set({
+        agents: [
+          { ...t.agent, pubkey: keypair().pubkey, name: "Fixture helper" },
+        ],
+      }),
+    );
+    const input = screen.getByRole("searchbox");
+    await t.user.type(input, "Fixture");
+    await screen.findByRole("region", { name: "Your agents" });
+    await t.user.clear(input);
+    expect(
+      screen.queryByRole("region", { name: "Not in this chat" }),
+    ).toBeNull();
+    await t.user.type(input, " ");
+    expect(
+      screen.queryByRole("region", { name: "Not in this chat" }),
+    ).toBeNull();
+    expect(t.publish).not.toHaveBeenCalled();
+  },
+);
 
 it("routes a Solo owner's person and agent additions through their own paths", async () => {
   const t = await setup("solo", false, true);

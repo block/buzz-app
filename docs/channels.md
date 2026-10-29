@@ -845,7 +845,7 @@ It is titled **Channel access** in channels and **Chat access** in a Solo chat (
 agents there but cannot change roles.
 One search field, with an accessible name but no visible label, filters current
 members and lists people, agents and Teams to invite under **Not in this channel**.
-With an empty query, ordinary channels show invitations only when the viewer is
+With an empty query, channels and Solo chats show invitations only when the viewer is
 the sole member; otherwise they show just the roster. Searching offers invitations
 with the existing grouping, ranking and expansion behavior.
 Each result's **Add** button, or Enter on the highlighted result, adds immediately.
@@ -868,11 +868,14 @@ preserve the last verified groups on failure. Visible member names request foreg
 priority; avatars, presence and manager enrichment never gate the initial list.
 Search filters
 each group, omits empty elevated and agent groups, and preserves full group counts.
-Non-member search ranking is unchanged. Relay matches followed by matching known
-agents share a 30-row initial invitation page after member/archive exclusion and
-identity deduplication. **Show more results** reveals 30 more already-loaded matches
-before requesting another relay page. Query changes and explicit refresh reset the
-visible page; no matches are silently discarded. Only displayed invitation agents
+Channels and Solo chats share the **Your agents**, **People**, **Other agents** and
+**Your other agents** invitation groups, with empty groups omitted. The idle list
+offers this client's agents; search also includes saved agents. Each group uses
+shared name, relationship and usage ranking, starts with four rows, and has its
+own **Show more**. **Find more matches** requests another directory page and reveals
+its matches. Query changes and explicit refresh reset expansion. Solo retains its
+direct-agent and person-sharing rules, so ineligible agents never enter its groups.
+Only displayed invitation agents
 join ownership observation, so the first character cannot mount/enrich the entire
 known-agent inventory. Unchanged identity rows retain their rendered
 profile/avatar/menu trees across query and loading updates; changed names, permissions,
@@ -939,8 +942,8 @@ while the initial list spinner is showing so only one spinner is active. It expo
 and refresh during membership writes are blocked. Optional-name loading/failure does
 not disable Add once the roster is verified. Failed invitations keep their explicit
 Retry; data refresh never resubmits an invitation, role change or removal.
-Supporting buttons use outline emphasis; **Show more results** uses the small size
-and is horizontally centered beneath the search results.
+**Show more** uses subtle emphasis within its invitation group; **Find more
+matches** is horizontally centered beneath the search results.
 Role confirmations use prominent, and removal remains destructive.
 The search has a role dropdown on its right when at least two roster groups are
 present. It defaults to All and offers only populated People and Agents groups, with whole-roster counts (including the All total), using the shared

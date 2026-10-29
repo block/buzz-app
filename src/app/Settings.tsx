@@ -1308,6 +1308,18 @@ export function Settings({
             )}
             {catalog ? (
               <PluginImport
+                key={
+                  navigation?.target.kind === "settings" &&
+                  navigation.target.pluginImport
+                    ? navigation.entryId
+                    : "add"
+                }
+                initialGit={
+                  navigation?.target.kind === "settings"
+                    ? navigation.target.pluginImport
+                    : undefined
+                }
+                requestSignal={navigation?.signal}
                 actionTarget={pluginImportActions}
                 plugins={plugins}
                 catalog={catalog}

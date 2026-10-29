@@ -11,6 +11,10 @@ export type NavigationScope = Readonly<{
   viewer: string;
   communityOrigin: string;
 }>;
+export type GitPluginSource = Readonly<{
+  repository: string;
+  reference: string;
+}>;
 export type OpenTarget =
   | Readonly<{ version: 1; kind: "home" }>
   | Readonly<{
@@ -18,6 +22,7 @@ export type OpenTarget =
       kind: "settings";
       section?: string;
       scope?: NavigationScope | null;
+      pluginImport?: GitPluginSource;
     }>
   | Readonly<{
       version: 1;
@@ -68,6 +73,39 @@ function fields(value: Record<string, unknown>, allowed: readonly string[]) {
 function text(value: unknown, pattern = token): string {
   if (typeof value !== "string" || !pattern.test(value)) throw invalid();
   return value;
+}
+export function parseGitPluginSource(input: unknown): GitPluginSource {
+  const value = record(input);
+  fields(value, ["repository", "reference"]);
+  if (
+    typeof value.repository !== "string" ||
+    value.repository.length > 2048 ||
+    typeof value.reference !== "string" ||
+    value.reference.length > 256
+  )
+    throw invalid();
+  if (
+    /\s/.test(value.repository) ||
+    [...(value.repository + value.reference)].some(
+      (char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127,
+    )
+  )
+    throw invalid();
+  const repository = new URL(value.repository);
+  if (
+    !["https:", "ssh:"].includes(repository.protocol) ||
+    !repository.hostname ||
+    !repository.pathname.replaceAll("/", "") ||
+    repository.password ||
+    (repository.protocol === "https:" && repository.username) ||
+    repository.search ||
+    repository.hash
+  )
+    throw invalid();
+  return Object.freeze({
+    repository: repository.href,
+    reference: value.reference,
+  });
 }
 function boundScope(input: unknown): NavigationScope {
   const value = record(input);
@@ -125,7 +163,9 @@ export function parseOpenTarget(input: unknown): OpenTarget {
         target = { version: 1, kind: "home" };
         break;
       case "settings":
-        fields(value, ["version", "kind", "section", "scope"]);
+        fields(value, ["version", "kind", "section", "scope", "pluginImport"]);
+        if (value.pluginImport !== undefined && value.section !== "plugins")
+          throw invalid();
         target = {
           version: 1,
           kind: "settings",
@@ -134,6 +174,9 @@ export function parseOpenTarget(input: unknown): OpenTarget {
             : {}),
           ...(value.scope !== undefined
             ? { scope: value.scope === null ? null : boundScope(value.scope) }
+            : {}),
+          ...(value.pluginImport !== undefined
+            ? { pluginImport: parseGitPluginSource(value.pluginImport) }
             : {}),
         };
         break;

@@ -47,6 +47,15 @@ export function deepLinkStep(
   // of its own beyond the Buzz ones.
   if (!link) return { fail: "invalid-target" };
   try {
+    if (link.format === "plugin")
+      return {
+        open: parseOpenTarget({
+          version: 1,
+          kind: "settings",
+          section: "plugins",
+          pluginImport: link.source,
+        }),
+      };
     if (!client.viewer || !client.selected) return { fail: "unavailable" };
     if (link.format === "removed")
       return {

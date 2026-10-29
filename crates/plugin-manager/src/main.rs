@@ -14,8 +14,6 @@ Commands:
   build DIRECTORY          Run the project's pnpm build script
   sign DIST_DIRECTORY       Sign with your saved Buzz human identity
   install DIRECTORY        Install a built artifact (new plugins start disabled)
-  install-git REPO REF [PATH] [--enable]
-                           Install a Git plugin (PATH defaults to .)
   reload ID                Reload a folder plugin, preserving its enabled state
   list                     List installed pages and their enabled state
   enable ID | disable ID | remove ID | rollback ID
@@ -101,7 +99,6 @@ fn run() -> Result<()> {
                 installed.publisher.as_deref().unwrap_or("unsigned")
             );
         }
-        ("install-git", args) => buzzodz_plugins::cli::install_git(&manager, args)?,
         ("reload", [id]) => {
             let before = manager.catalog()?;
             let after = manager.reload_live(id)?;

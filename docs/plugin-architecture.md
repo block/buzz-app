@@ -100,23 +100,21 @@ create a second connection, cache or outbox inside a page. The conversation prev
 source imports are not a versioned external SDK. See
 [conversation component ownership](channels.md#reusing-conversation-ui).
 
-## The `buzzodz` CLI
+## Open a Git import from a link
 
-The installed desktop executable accepts `plugin install-git`. On macOS, install
-a published Git plugin without a compiler or a separate tool:
+Open `buzz://plugin-install?repository=<encoded-url>&ref=<encoded-ref>` to prefill
+**Settings > Plugins > Manage plugins > Add**. Use an explicit HTTPS or SSH URL.
+Omit `ref` to use the repository default. For example, on macOS:
 
 ```sh
-"/Applications/Buzz.app/Contents/MacOS/Buzz" plugin install-git git@github.com:OWNER/PLUGIN.git main --enable
+open 'buzz://plugin-install?repository=https%3A%2F%2Fgithub.com%2FOWNER%2FPLUGIN.git&ref=main'
 ```
 
-`install-git REPO REF [PATH] [--enable]` uses the same importer as Settings.
-`PATH` defaults to the repository root. It saves the Git source for later updates
-in Settings and retains the previous revision for rollback. Stop active plugin
-workers first. The command prints declared host access. `--enable` accepts that
-access and enables the selected plugin. Without it, new installs start disabled
-and existing enabled states stay the same. Install and enable commit together.
-The command does not start or
-restart the desktop UI, read an identity, or connect to a community relay.
+The link opens the existing form. Select **Find plugins**, review the plugin and
+computer access, then select **Install plugin**. Opening the link does not fetch
+or install code. See [OS deep links](deep-links.md).
+
+## The `buzzodz` CLI
 
 Run `pnpm buzzodz --help` from this repository, or install the standalone executable:
 
@@ -139,8 +137,8 @@ The CLI prints readable results and reports errors with a nonzero exit code.
 existing enabled state. `recover` backs up management settings and resets to
 bundled defaults, preserving artifacts for reinstallation.
 
-In the standalone CLI, `--home ABSOLUTE_PATH` and `--profile NAME` precede `plugin`.
-Both commands read `BUZZODZ_HOME` and `BUZZODZ_PROFILE` (default: `default`). Match these to
+`--home ABSOLUTE_PATH` and `--profile NAME` precede `plugin`. The desktop and CLI
+also read `BUZZODZ_HOME` and `BUZZODZ_PROFILE` (default: `default`). Match these to
 target the same instance. Otherwise, the desktop keeps profiles in its own
 application-data folder (`xyz.block.buzz.desktop/profiles` for the installed app,
 `xyz.block.buzz.desktop.dev/profiles` for development launches). A debug CLI
@@ -1185,11 +1183,10 @@ requires deleting the plugin and adding it again. Git checks remain explicit in 
 pane, using the remembered repository and branch/tag with fresh authorization;
 credentials/tokens are never saved with source metadata. SSH accepts explicit URLs
 and `user@host:owner/repository.git` shorthand, including organization-specific
-usernames. Buzz reads `IdentityAgent` through `ssh -G` and passes that socket to
-the transport. If the lookup fails or has no setting, it uses the inherited
-`SSH_AUTH_SOCK`.
-The transport uses existing known hosts and disables interactive prompts.
-Each check reads metadata from its own temporary clone; only Update retains an
+usernames. The importer uses the desktop process's inherited `SSH_AUTH_SOCK` and
+known hosts, with interactive prompts and SSH config disabled. If normal Git uses
+an `IdentityAgent` from SSH config, launch the app with that socket in
+`SSH_AUTH_SOCK`; otherwise terminal Git can authenticate while the app cannot. Each check reads metadata from its own temporary clone; only Update retains an
 immutable installation preview. The source
 follows the current revision through update and rollback. Rollback requires confirmation
 in Settings and consumes the previous revision: it cannot toggle forward again. The
@@ -1220,11 +1217,8 @@ Discovery never evaluates modules. Git is a required local
 tool: a shallow no-checkout clone reads committed blobs, without hooks, filters,
 submodules, LFS downloads or project scripts. Only HTTPS/SSH are allowed; inherited
 Git config, URL rewrites, credential helpers and interactive prompts are disabled.
-For SSH, Buzz runs `ssh -G` to read the configured `IdentityAgent` socket. OpenSSH
-evaluates the user's local SSH configuration for that lookup, including `Match exec`.
-Only the socket value reaches the Git transport. The transport disables SSH config
-and uses existing known hosts. Password entry, HTTPS private-repo sign-in, and
-custom SSH-config aliases are not supported in this slice.
+SSH uses the existing agent/known hosts, not user SSH config; password entry, HTTPS
+private-repo sign-in and custom SSH-config aliases are not supported in this slice.
 Repository URLs/refs are passed as arguments, not a shell command. Private/internal
 HTTPS hosts are not prohibited; this is not a public-network-only policy.
 

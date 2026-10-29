@@ -20,6 +20,7 @@ import { FolderOpenIcon } from "../shared/design-system/icons/index";
 import { PluginAccessReview } from "./PluginAccessReview";
 import type { PluginManager } from "../plugins/manager";
 import type { Catalog, ImportPreview, PluginInfo } from "../plugins/types";
+import type { GitPluginSource } from "../features/navigation/targets";
 
 function importLocation(
   preview: Pick<ImportPreview, "source" | "commit">,
@@ -34,6 +35,8 @@ function importLocation(
 }
 
 export function PluginImport({
+  initialGit,
+  requestSignal,
   initialUpdateAvailable = false,
   plugins,
   catalog,
@@ -49,6 +52,8 @@ export function PluginImport({
   onReviewHandled,
   returnFocus,
 }: {
+  initialGit?: GitPluginSource | undefined;
+  requestSignal?: AbortSignal | undefined;
   initialUpdateAvailable?: boolean;
   plugins: PluginManager;
   catalog: Catalog;
@@ -68,7 +73,7 @@ export function PluginImport({
   ) => Promise<{ repository: string; token: string } | null>;
 }) {
   const imports = plugins.imports;
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(!!initialGit);
   const [dragging, setDragging] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
   const checkAgain = useRef<HTMLButtonElement>(null);
@@ -77,11 +82,21 @@ export function PluginImport({
   );
   const savedSource = currentPlugin?.updateSource;
   const [repository, setRepository] = useState(
-    savedSource && "repository" in savedSource ? savedSource.repository : "",
+    initialGit?.repository ??
+      (savedSource && "repository" in savedSource
+        ? savedSource.repository
+        : ""),
   );
   const [reference, setReference] = useState(
-    savedSource && "reference" in savedSource ? savedSource.reference : "",
+    initialGit?.reference ??
+      (savedSource && "reference" in savedSource ? savedSource.reference : ""),
   );
+  useEffect(() => {
+    if (!initialGit || requestSignal?.aborted) return;
+    setRepository(initialGit.repository);
+    setReference(initialGit.reference);
+    setOpen(true);
+  }, [initialGit, requestSignal]);
   // Snapshot at review entry: our own install catalog refresh must not turn a
   // new install into an update while its enable operation is still pending.
   const [existing, setExisting] = useState<PluginInfo>();

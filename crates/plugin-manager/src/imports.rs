@@ -139,18 +139,6 @@ impl PreparedImport {
         Ok(self)
     }
     pub fn install(&self, manager: &Manager, token: &str, path: &str) -> Result<Catalog> {
-        self.install_with_activation(manager, token, path, false)
-    }
-    pub fn install_enabled(&self, manager: &Manager, token: &str, path: &str) -> Result<Catalog> {
-        self.install_with_activation(manager, token, path, true)
-    }
-    fn install_with_activation(
-        &self,
-        manager: &Manager,
-        token: &str,
-        path: &str,
-        enable: bool,
-    ) -> Result<Catalog> {
         if token != self.preview.token {
             return Err("This import preview expired. Choose the source again.".into());
         }
@@ -169,7 +157,7 @@ impl PreparedImport {
                     InstallSource::Git(source)
                 })
             });
-        manager.install_artifact(release, source, enable)
+        manager.install_artifact(release, source)
     }
 }
 
@@ -590,19 +578,6 @@ pub fn repository_url(input: &str) -> Result<String> {
             "Use an HTTPS or SSH repository URL without a password, query or fragment".into(),
         );
     }
-    if url.scheme() == "ssh"
-        && (!url
-            .host_str()
-            .unwrap_or_default()
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || b".-_:[]".contains(&byte))
-            || !url
-                .username()
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte)))
-    {
-        return Err("Use an SSH host and username without shell characters or URL escapes".into());
-    }
     if url.host_str() == Some("github.com") && url.path().trim_matches('/').split('/').count() != 2
     {
         return Err("Use the GitHub repository URL, not a tree/file URL. Enter the branch or tag separately, then select a plugin folder.".into());
@@ -615,7 +590,6 @@ struct Git {
     deadline: Instant,
     /// Repository URL and its NIP-98 token. Git sends the header only to that URL prefix.
     authorization: Option<(String, String)>,
-    ssh_agent: Option<std::ffi::OsString>,
 }
 impl Git {
     fn new() -> Result<Self> {
@@ -623,7 +597,6 @@ impl Git {
             scratch: tempfile::tempdir().map_err(err)?,
             deadline: Instant::now() + Duration::from_secs(60),
             authorization: None,
-            ssh_agent: None,
         })
     }
     fn command(&self) -> Command {
@@ -635,9 +608,6 @@ impl Git {
             if let Some(value) = std::env::var_os(key) {
                 command.env(key, value);
             }
-        }
-        if let Some(agent) = &self.ssh_agent {
-            command.env("SSH_AUTH_SOCK", agent);
         }
         let null = if cfg!(windows) { "NUL" } else { "/dev/null" };
         command
@@ -687,33 +657,7 @@ impl Git {
         command.args(args);
         self.run_command(command, limit)
     }
-    fn configure_ssh_agent(&mut self, repository: &str) -> Result<()> {
-        let url = url::Url::parse(repository).map_err(err)?;
-        if url.scheme() != "ssh" {
-            return Ok(());
-        }
-        let mut command = Command::new("ssh");
-        command.arg("-G");
-        if !url.username().is_empty() {
-            command.args(["-l", url.username()]);
-        }
-        command.args([
-            "-p",
-            &url.port().unwrap_or(22).to_string(),
-            "--",
-            url.host_str().ok_or("Missing SSH host")?,
-        ]);
-        // Git can use the inherited agent even when local SSH configuration is invalid.
-        let Ok(output) = self.run_command(command, 64 * 1024) else {
-            return Ok(());
-        };
-        let config = std::str::from_utf8(&output).map_err(err)?;
-        self.ssh_agent = configured_agent(config, |key| std::env::var_os(key))?;
-        Ok(())
-    }
     fn run_command(&self, mut command: Command, limit: u64) -> Result<Vec<u8>> {
-        #[cfg(unix)]
-        crate::cli::interrupt::check()?;
         let output = tempfile::tempfile().map_err(err)?;
         let errors = tempfile::tempfile().map_err(err)?;
         command
@@ -729,8 +673,6 @@ impl Git {
             .spawn()
             .map_err(|e| format!("Could not start Git: {e}. Install Git to load repositories."))?;
         let result = (|| loop {
-            #[cfg(unix)]
-            crate::cli::interrupt::check()?;
             if Instant::now() >= self.deadline {
                 return Err("Repository import exceeded 60 seconds".into());
             }
@@ -923,23 +865,6 @@ impl Git {
     }
 }
 
-fn configured_agent(
-    config: &str,
-    get_env: impl Fn(&str) -> Option<std::ffi::OsString>,
-) -> Result<Option<std::ffi::OsString>> {
-    match config
-        .lines()
-        .find_map(|line| line.strip_prefix("identityagent "))
-    {
-        None | Some("SSH_AUTH_SOCK") => Ok(None),
-        Some("none") => Ok(Some("".into())),
-        Some(variable) if variable.starts_with('$') => get_env(&variable[1..])
-            .map(Some)
-            .ok_or_else(|| "The SSH IdentityAgent environment variable is not set.".into()),
-        Some(path) => Ok(Some(path.into())),
-    }
-}
-
 /// `authorization` is a NIP-98 token that the caller signed for exactly this repository URL.
 pub fn prepare_git(
     repository: &str,
@@ -969,7 +894,6 @@ pub fn prepare_git(
         }
         git.authorization = Some((url.clone(), token.into()));
     }
-    git.configure_ssh_agent(&url)?;
     let mut args = vec![
         "clone",
         "--depth=1",
@@ -1032,108 +956,7 @@ fn directory_size(root: &Path) -> Result<u64> {
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn failed_ssh_lookup_preserves_the_inherited_agent() {
-        let mut git = Git::new().unwrap();
-        // OpenSSH rejects port zero before it reads configuration or connects.
-        git.configure_ssh_agent("ssh://git@example.invalid:0/repo")
-            .unwrap();
-        assert!(git.ssh_agent.is_none());
-        let command = git.command();
-        let socket = command
-            .get_envs()
-            .find(|(key, _)| *key == "SSH_AUTH_SOCK")
-            .and_then(|(_, value)| value);
-        assert_eq!(socket, std::env::var_os("SSH_AUTH_SOCK").as_deref());
-        assert!(git.run(&["--version"], LIMIT).is_ok());
-    }
-
-    #[test]
-    fn configured_agent_selects_only_the_agent_socket() {
-        use super::configured_agent;
-        use std::ffi::OsString;
-
-        let no_env = |_: &str| None;
-        assert_eq!(
-            configured_agent(
-                "hostname other\nidentityagent /tmp/agent.sock\nproxycommand ignored",
-                no_env
-            )
-            .unwrap(),
-            Some(OsString::from("/tmp/agent.sock"))
-        );
-        assert_eq!(
-            configured_agent("identityagent none", no_env).unwrap(),
-            Some(OsString::new())
-        );
-        assert_eq!(
-            configured_agent("identityagent SSH_AUTH_SOCK", no_env).unwrap(),
-            None
-        );
-        assert_eq!(
-            configured_agent("hostname github.com", no_env).unwrap(),
-            None
-        );
-        assert_eq!(
-            configured_agent("identityagent $BLOCK_AGENT", |key| (key == "BLOCK_AGENT")
-                .then(|| OsString::from("/tmp/block.sock")))
-            .unwrap(),
-            Some(OsString::from("/tmp/block.sock"))
-        );
-        assert!(configured_agent("identityagent $MISSING", no_env).is_err());
-        assert_eq!(
-            configured_agent("identityagent /tmp/agent%u.sock", no_env).unwrap(),
-            Some(OsString::from("/tmp/agent%u.sock"))
-        );
-    }
-
     use super::*;
-    #[test]
-    fn install_enabled_saves_the_selected_revision_and_activation_together() {
-        let home = tempfile::tempdir().unwrap();
-        let manager = Manager::open(Some(home.path().into()), "test", false).unwrap();
-        let manifest = r#"{"id":"example","name":"Example","apiVersion":1}"#;
-        let first = uploaded(&[
-            ("manifest.json", manifest),
-            ("plugin.js", "export default {old:true};"),
-        ]);
-        let first = prepare_upload(first).unwrap();
-        let before = first.install(&manager, &first.preview.token, ".").unwrap();
-        let previous = before
-            .plugins
-            .iter()
-            .find(|p| p.manifest.id == "example")
-            .unwrap()
-            .revision
-            .clone();
-        let selected = uploaded(&[
-            ("manifest.json", manifest),
-            ("plugin.js", "export default {selected:true};"),
-        ]);
-        let selected = prepare_upload(selected).unwrap();
-        let catalog = selected
-            .install_enabled(&manager, &selected.preview.token, ".")
-            .unwrap();
-        let plugin = catalog
-            .plugins
-            .iter()
-            .find(|p| p.manifest.id == "example")
-            .unwrap();
-        assert_eq!(plugin.revision, selected.preview.candidates[0].revision);
-        assert_eq!(plugin.previous.as_ref(), Some(&previous));
-        assert!(plugin.enabled);
-        assert!(
-            manager
-                .catalog()
-                .unwrap()
-                .plugins
-                .iter()
-                .find(|p| p.manifest.id == "example")
-                .unwrap()
-                .enabled
-        );
-    }
-
     fn uploaded(files: &[(&str, &str)]) -> FolderUpload {
         FolderUpload {
             source: "example".into(),
@@ -1757,19 +1580,6 @@ mod tests {
             "ssh://dev.user@git.example.org/team/repo.git"
         );
         assert!(repository_url("https://git.example.org/team/repo.git").is_ok());
-        for authority in [
-            "git@host;command",
-            "git@host`command`",
-            "git@host$(command)",
-            "git@host&command",
-            "git@host|command",
-            "git@host'command'",
-            "git@host%3bcommand",
-            "git%3bcommand@example.invalid",
-            "git;command@example.invalid",
-        ] {
-            assert!(repository_url(&format!("ssh://{authority}/owner/repo")).is_err());
-        }
         for input in [
             "/tmp/repo",
             "file:///tmp/repo",

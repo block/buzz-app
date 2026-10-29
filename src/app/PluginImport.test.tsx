@@ -1953,3 +1953,72 @@ it.each(["folder", "git"])(
     if (source === "git") expect(authorizeGit).toHaveBeenCalledTimes(3);
   },
 );
+
+it("prefills a linked Git source but waits for preview and install confirmation", async () => {
+  const source = {
+    repository: "https://github.com/example/plugin",
+    reference: "release/stable",
+  };
+  const preview: ImportPreview = {
+    token: "linked-preview",
+    source: source.repository,
+    commit: "a".repeat(40),
+    warnings: [],
+    candidates: [
+      {
+        path: ".",
+        manifest: {
+          id: "example.plugin",
+          name: "Example",
+          apiVersion: 1,
+          host: { files: true },
+        },
+        revision: "one",
+      },
+    ],
+  };
+  const git = vi.fn(async () => preview);
+  const installImport = vi.fn(async () => true);
+  const manager = {
+    imports: { git, discard: vi.fn(async () => {}) },
+    installImport,
+    change: vi.fn(async () => {}),
+  } as unknown as PluginManager;
+  const view = render(
+    <StrictMode>
+      <PluginImport
+        initialGit={source}
+        plugins={manager}
+        catalog={{ profile: "test", location: "test", plugins: [] }}
+        busy={false}
+      />
+    </StrictMode>,
+  );
+  const dialog = screen.getByRole("dialog", { name: "Add a plugin" });
+  expect(within(dialog).getByLabelText("Git or GitHub repository")).toHaveValue(
+    source.repository,
+  );
+  expect(within(dialog).getByLabelText("Branch or tag (optional)")).toHaveValue(
+    source.reference,
+  );
+  expect(git).not.toHaveBeenCalled();
+  expect(installImport).not.toHaveBeenCalled();
+  await userEvent.click(
+    within(dialog).getByRole("button", { name: "Find plugins" }),
+  );
+  const install = await screen.findByRole("button", { name: "Install plugin" });
+  expect(git).toHaveBeenCalledExactlyOnceWith(
+    source.repository,
+    source.reference,
+  );
+  expect(screen.getByRole("region", { name: "Computer access" })).toBeVisible();
+  expect(installImport).not.toHaveBeenCalled();
+  await userEvent.click(install);
+  await waitFor(() =>
+    expect(installImport).toHaveBeenCalledExactlyOnceWith(
+      "linked-preview",
+      ".",
+    ),
+  );
+  view.unmount();
+});

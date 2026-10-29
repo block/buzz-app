@@ -27,9 +27,14 @@ async function openPlugins(page, origin) {
   await selectSettingsSection(page, "Manage plugins");
 }
 // Native IPC is the boundary fixture; Settings -> manager -> platform adapter are production.
-async function nativeImports(page, samples = [], previewOptions = {}) {
-  const input = { samples, previewOptions };
-  await page.addInitScript(({ samples, previewOptions }) => {
+async function nativeImports(
+  page,
+  samples = [],
+  previewOptions = {},
+  links = [],
+) {
+  const input = { samples, previewOptions, links };
+  await page.addInitScript(({ samples, previewOptions, links }) => {
     window.isTauri = true;
     window.importCalls = [];
     window.importDelay = false;
@@ -94,7 +99,7 @@ async function nativeImports(page, samples = [], previewOptions = {}) {
       },
       invoke: async (command, args) => {
         window.importCalls.push({ command, args });
-        if (command === "deep_link_take") return [];
+        if (command === "deep_link_take") return links.splice(0);
         if (command === "deep_link_watch") {
           const wireChannel = args.onEvent.toJSON();
           if (
@@ -102,6 +107,14 @@ async function nativeImports(page, samples = [], previewOptions = {}) {
             !callbacks.has(args.onEvent.id)
           )
             throw new Error("Invalid deep-link channel");
+          let index = 0;
+          window.deliverPluginLink = (url) => {
+            links.push(url);
+            callbacks.get(args.onEvent.id)({
+              index: index++,
+              message: { pending: links.length },
+            });
+          };
           return;
         }
         if (command === "plugin_catalog") return ready();
@@ -1514,5 +1527,100 @@ for (const source of ["folder", "git"]) {
     await expect(
       review.getByRole("button", { name: "Update", exact: true }),
     ).toBeFocused();
+  });
+}
+
+for (const mode of ["Light", "Dark"]) {
+  test(`plugin deep link opens the consent flow in ${mode} mode`, async ({
+    page,
+    app,
+  }, info) => {
+    const repository = "ssh://git@github.com/example/plugin.git";
+    const reference = "release/stable";
+    const link = `buzz://plugin-install?repository=${encodeURIComponent(repository)}&ref=${encodeURIComponent(reference)}`;
+    await nativeImports(
+      page,
+      [
+        {
+          path: ".",
+          manifest: {
+            id: "example.linked",
+            name: "Linked plugin",
+            apiVersion: 1,
+            host: { files: true },
+          },
+          revision: "one",
+        },
+      ],
+      { warnings: [] },
+      [link],
+    );
+    await page.goto(app.origin);
+    const dialog = page.getByRole("dialog", {
+      name: "Add a plugin",
+      exact: true,
+    });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByLabel("Git or GitHub repository")).toHaveValue(
+      repository,
+    );
+    await expect(dialog.getByLabel("Branch or tag (optional)")).toHaveValue(
+      reference,
+    );
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            window.importCalls.filter((call) =>
+              call.command.startsWith("plugin_import_"),
+            ).length,
+        ),
+      )
+      .toBe(0);
+    await dialog.press("Escape");
+    await expect(dialog).toBeHidden();
+    await selectSettingsSection(page, "Appearance");
+    await chooseColorMode(page, mode);
+    await page.evaluate((link) => window.deliverPluginLink(link), link);
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByLabel("Git or GitHub repository")).toHaveValue(
+      repository,
+    );
+    await dialog.press("Escape");
+    await expect(dialog).toBeHidden();
+    await page.evaluate((link) => window.deliverPluginLink(link), link);
+    await expect(dialog).toBeVisible();
+    await dialog
+      .getByRole("button", { name: "Find plugins", exact: true })
+      .click();
+    const install = page.getByRole("button", {
+      name: "Install plugin",
+      exact: true,
+    });
+    await expect(install).toBeVisible();
+    await expect(
+      page.getByRole("region", { name: "Computer access" }),
+    ).toBeVisible();
+    expect(
+      await page.evaluate(() =>
+        window.importCalls.filter(
+          (call) => call.command === "plugin_import_install",
+        ),
+      ),
+    ).toHaveLength(0);
+    await page.screenshot({
+      path: info.outputPath(`plugin-link-${mode.toLowerCase()}.png`),
+    });
+    await install.click();
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            window.importCalls.filter(
+              (call) => call.command === "plugin_import_install",
+            ).length,
+        ),
+      )
+      .toBe(1);
   });
 }

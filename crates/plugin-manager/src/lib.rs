@@ -13,7 +13,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub mod cli;
 pub mod imports;
 mod migrate_agent_flag;
 
@@ -633,7 +632,7 @@ fn default_home() -> Result<PathBuf> {
     };
     let home = data.join(home);
     if !home.exists() && older.iter().any(|old| data.join(old).exists()) {
-        return Err(format!("{open}, then try again, or set BUZZODZ_HOME."));
+        return Err(format!("{open}, then try again, or pass --home."));
     }
     Ok(home)
 }
@@ -841,14 +840,12 @@ impl Manager {
         self.install_artifact(
             &prepare_artifact(directory)?,
             Some(InstallSource::Folder(source)),
-            false,
         )
     }
     fn install_artifact(
         &self,
         release: &Release,
         source: Option<InstallSource>,
-        enable: bool,
     ) -> Result<Catalog> {
         let bytes = &release.bytes;
         let artifact = release.artifact()?;
@@ -876,7 +873,7 @@ impl Manager {
                     (Some(p.current.clone()), p.current_source.clone())
                 }
             });
-            let enabled = enable || old.is_some_and(|p| p.enabled);
+            let enabled = old.is_some_and(|p| p.enabled);
             let previous_signature = old.and_then(|p| {
                 if p.current == revision {
                     p.previous_signature.clone()

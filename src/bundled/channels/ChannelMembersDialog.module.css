@@ -162,7 +162,7 @@
 
 .generalAccess {
   border-top: 1px solid var(--border-standard);
-  padding: var(--space-4) 0 0 var(--space-row-gap);
+  padding: var(--space-2) 0 0 var(--space-row-gap);
 }
 .generalAccess > :where(.accessRow) ~ * {
   margin-block-start: var(--space-3);

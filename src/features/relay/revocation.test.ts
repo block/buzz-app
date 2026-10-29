@@ -575,7 +575,19 @@ it("does not reread names whose only evidence was in the revoked channel", async
   h.emit(["a", "b"].map((id) => roster(relay, id, [viewer.pubkey], 10)));
   await openNamed(h, "b", bob);
   await openNamed(h, "a", alice);
-  h.emit([roster(relay, "a", [], 11)]);
+  // A thread on the revoked channel is Carol's only evidence.
+  const root = message(alice, "a", "root", 11);
+  h.emit([
+    root,
+    message(alice, "a", "reply", 12, [
+      ["e", root.id, "", "root"],
+      ["e", root.id, "", "reply"],
+      ["p", carol.pubkey],
+    ]),
+  ]);
+  const thread = h.session.thread("a", root.id);
+  expect(thread.snapshot().replies[0]?.mentions).toEqual([carol.pubkey]);
+  h.emit([roster(relay, "a", [], 13)]);
   expect(h.session.profiles.snapshot().size).toBe(0);
   await vi.waitFor(() => expect(h.pending).toHaveLength(1));
   const reread = h.next();
@@ -586,7 +598,7 @@ it("does not reread names whose only evidence was in the revoked channel", async
       "Bob again",
     ),
   );
-  // Background reads are serial: an Alice read queued behind Bob's surfaces only now.
+  // Background reads are serial: an Alice or Carol read queued behind Bob's surfaces only now.
   await flush();
   expect(h.pending).toEqual([]);
 });

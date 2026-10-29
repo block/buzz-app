@@ -190,9 +190,6 @@
 .accessAudience > * {
   max-width: 100%;
 }
-.accessAudience > p {
-  padding-inline: var(--space-4);
-}
 .accessRole {
   min-width: 0;
   align-self: center;

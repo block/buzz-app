@@ -301,6 +301,9 @@
     inline-size: var(--space-5);
     block-size: var(--space-5);
   }
+  .buzz-select[data-appearance="link"] .buzz-button {
+    padding-inline: 0;
+  }
   /* Artwork provides its own visual inset; keep its edge closer to the frame. */
   .buzz-select .buzz-button:has(.buzz-select-leading),
   .buzz-select .buzz-select-trigger:has(.buzz-select-leading) {

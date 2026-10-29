@@ -229,7 +229,8 @@ function ChannelGeneralAccessEditor({
         <div className={styles.accessAudience}>
           <Select
             variant="compact"
-            appearance="ghost"
+            appearance="link"
+            size="sm"
             label="Who can read"
             value={base?.visibility ?? ""}
             placeholder={loading ? "Loading access…" : "Access unavailable"}

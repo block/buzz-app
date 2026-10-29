@@ -888,6 +888,8 @@ horizontal padding and icon gap, and 12px icons. Pair it with `variant="ghost"`
 for an unframed label; shared hover, disabled, and keyboard focus still apply. Compact Selects also expose
 `appearance="ghost"` for an unframed, labelled row choice, such as channel access;
 the existing Button owns its hover, disabled, and focus states.
+Use `appearance="link"` for a text-and-caret choice without a capsule or horizontal
+button inset; it retains the Select's keyboard behavior and focus treatment.
 
 Button defaults to `md` (40px minimum height); IconButton defaults to `sm`
 (32px square with 16px artwork) and a 10px rounded rectangle

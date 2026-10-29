@@ -1,8 +1,20 @@
 // The agent card about to be exported, as drawn: it tilts toward the pointer
 // and a rainbow sheen follows it, as a foil card does in the hand.
 import type { CSSProperties, PointerEvent } from "react";
-import { FOIL_SHEEN } from "../../features/agents/share-card";
+import {
+  CARD_HEIGHT,
+  CARD_RADIUS,
+  CARD_WIDTH,
+  FOIL_SHEEN,
+} from "../../features/agents/share-card";
 import styles from "./AgentCardPreview.module.css";
+
+/** The drawn card's proportions and corner, which the preview clips to. */
+const geometry = {
+  "--card-aspect": `${CARD_WIDTH} / ${CARD_HEIGHT}`,
+  "--card-tall": CARD_HEIGHT / CARD_WIDTH,
+  "--card-radius": `${(CARD_RADIUS / CARD_WIDTH) * 100}% / ${(CARD_RADIUS / CARD_HEIGHT) * 100}%`,
+} as CSSProperties;
 
 const lean = (event: PointerEvent<HTMLDivElement>) => {
   const box = event.currentTarget.getBoundingClientRect();
@@ -25,7 +37,7 @@ export function AgentCardPreview({
   alt: string;
 }) {
   return (
-    <div className={styles.stage}>
+    <div className={styles.stage} style={geometry}>
       {src ? (
         <div className={styles.card} onPointerMove={lean} onPointerLeave={rest}>
           <img className={styles.image} src={src} alt={alt} draggable={false} />

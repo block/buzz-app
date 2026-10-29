@@ -4,7 +4,7 @@
 
 export const CARD_WIDTH = 820;
 export const CARD_HEIGHT = 1230;
-/** The card's corner and the panel's, which the preview's sheen follows. */
+/** The card's outer corner, which the preview clips to. */
 export const CARD_RADIUS = 56;
 const PANEL = { inset: 22, radius: 40 };
 const EDGE = 70;
@@ -85,20 +85,27 @@ function rounded(
   context.closePath();
 }
 
-/** `text` cut to `width` with an ellipsis. */
-function ellipsize(
-  context: CanvasRenderingContext2D,
+/** `text` cut to `width` with an ellipsis. An imported agent's model may be
+ * thousands of characters long, so the cut is found by halving, in a few
+ * measurements rather than one per character. */
+export function ellipsize(
+  context: Pick<CanvasRenderingContext2D, "measureText">,
   text: string,
   width: number,
 ) {
   if (context.measureText(text).width <= width) return text;
   const chars = Array.from(text);
-  while (
-    chars.length &&
-    context.measureText(`${chars.join("")}…`).width > width
-  )
-    chars.pop();
-  return `${chars.join("").trimEnd()}…`;
+  const cut = (length: number) =>
+    `${chars.slice(0, length).join("").trimEnd()}…`;
+  // The longest prefix that fits lies in [low, high).
+  let low = 0;
+  let high = chars.length;
+  while (high - low > 1) {
+    const middle = Math.floor((low + high) / 2);
+    if (context.measureText(cut(middle)).width <= width) low = middle;
+    else high = middle;
+  }
+  return cut(low);
 }
 
 function spaced(context: CanvasRenderingContext2D, spacing: string) {

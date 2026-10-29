@@ -691,6 +691,59 @@ it("says when the card can't be drawn, and draws it again", async () => {
   );
 });
 
+it("shows only the latest agent's card, and lets go of each card it replaces", async () => {
+  const user = userEvent.setup();
+  drawable();
+  // Each drawing waits until released, in the order they began.
+  const held: ((blob: Blob | null) => void)[] = [];
+  vi.mocked(HTMLCanvasElement.prototype.toBlob).mockImplementation((done) => {
+    held.push(done);
+  });
+  // Each card's link names its size, so the old drawing tells from the new.
+  const create = vi
+    .spyOn(URL, "createObjectURL")
+    .mockImplementation((blob) => `blob:${(blob as Blob).size}`);
+  const revoke = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+  const stale = new Blob(["old"], { type: "image/png" });
+  const card = (bytes: BlobPart) => new Blob([bytes], { type: "image/png" });
+  const { session } = community();
+  const view = share(session);
+  const edit = (instructions: string) =>
+    view.rerender(
+      <AgentShareDialog
+        agent={{ ...agent, config: { model: "echo-1", instructions } }}
+        type={echo}
+        session={session}
+        onClose={() => {}}
+      />,
+    );
+  await user.click(exportButton());
+  await vi.waitFor(() => expect(held).toHaveLength(1));
+  // The agent changes while its first card is still being drawn, and that
+  // drawing finishes after the second began.
+  edit("Review pull requests and docs.");
+  await vi.waitFor(() => expect(held).toHaveLength(2));
+  held[0]?.(stale);
+  held[1]?.(card(PIXEL));
+  expect(
+    await screen.findByRole("img", { name: "Ada’s agent card" }),
+  ).toHaveAttribute("src", `blob:${PIXEL.length}`);
+  expect(create).toHaveBeenCalledOnce();
+  // A later change replaces the shown card, letting go of the old one.
+  edit("Review everything.");
+  await vi.waitFor(() =>
+    expect(revoke).toHaveBeenCalledWith(`blob:${PIXEL.length}`),
+  );
+  await vi.waitFor(() => expect(held).toHaveLength(3));
+  held[2]?.(card(new Uint8Array([...PIXEL, 0])));
+  expect(
+    await screen.findByRole("img", { name: "Ada’s agent card" }),
+  ).toHaveAttribute("src", `blob:${PIXEL.length + 1}`);
+  // Closing lets go of the last.
+  view.unmount();
+  expect(revoke).toHaveBeenLastCalledWith(`blob:${PIXEL.length + 1}`);
+});
+
 it("stops saving, and says why, when the agent can't be shared while previewed", async () => {
   const user = userEvent.setup();
   drawable();

@@ -12,10 +12,10 @@
   --card-x: 0.5;
   --card-y: 0.5;
   position: relative;
-  height: min(100cqh, 150cqw);
-  aspect-ratio: 820 / 1230;
-  /* The drawn card's 56px corner, as a share of its width and height. */
-  border-radius: 6.83% / 4.55%;
+  /* The drawn card's proportions and corner, from its canvas. */
+  height: min(100cqh, 100cqw * var(--card-tall));
+  aspect-ratio: var(--card-aspect);
+  border-radius: var(--card-radius);
   box-shadow: var(--shadow-sm);
   transform: rotateX(calc((0.5 - var(--card-y)) * 12deg))
     rotateY(calc((var(--card-x) - 0.5) * 12deg));

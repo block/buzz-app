@@ -11,7 +11,7 @@ import { ModelSettings } from "./ModelSettings";
 const message = (reason: unknown) =>
   reason instanceof Error
     ? reason.message
-    : "Could not update Builderlab instructions.";
+    : "Could not load Builderlab settings.";
 
 /** Hosted settings belong to Builderlab, rather than Agents' local config. */
 export function createSettingsTab(client: AgentClient, session: OAuthSession) {
@@ -36,9 +36,7 @@ export function createSettingsTab(client: AgentClient, session: OAuthSession) {
         if (!remote)
           throw new Error("Agent not found in this Builderlab account.");
         if (remote.status !== "Active")
-          throw new Error(
-            "Only Active agents can have their instructions edited.",
-          );
+          throw new Error("Only Active agents can have their settings edited.");
         setLoaded({ agent: remote, subject: credential.account.subject });
       };
       void load()
@@ -63,7 +61,7 @@ export function createSettingsTab(client: AgentClient, session: OAuthSession) {
         {!loaded &&
           (busy ? (
             <p role="status" className="m-0 text-body-sm text-secondary">
-              Loading instructions…
+              Loading settings…
             </p>
           ) : (
             <div>

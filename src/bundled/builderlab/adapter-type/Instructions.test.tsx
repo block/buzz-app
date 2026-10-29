@@ -159,9 +159,7 @@ it("switching agents hides the old draft and ignores the switched-away read", as
         ),
       ).toHaveLength(2),
     );
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "Loading instructions",
-    );
+    expect(screen.getByRole("status")).toHaveTextContent("Loading settings");
     expect(
       screen.queryByRole("textbox", { name: "Instructions" }),
     ).not.toBeInTheDocument();

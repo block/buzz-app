@@ -102,7 +102,7 @@ source imports are not a versioned external SDK. See
 
 ## Open a Git import from a link
 
-Open `buzz://plugin-install?repository=<encoded-url>&ref=<encoded-ref>` to prefill
+Open `buzz://plugin-install?repository=<encoded-url>&ref=<encoded-ref>` to open a preview in
 **Settings > Plugins > Manage plugins > Add**. Use an explicit HTTPS or SSH URL.
 Omit `ref` to use the repository default. For example, on macOS:
 
@@ -110,9 +110,9 @@ Omit `ref` to use the repository default. For example, on macOS:
 open 'buzz://plugin-install?repository=https%3A%2F%2Fgithub.com%2FOWNER%2FPLUGIN.git&ref=main'
 ```
 
-The link opens the existing form. Select **Find plugins**, review the plugin and
-computer access, then select **Install plugin**. Opening the link does not fetch
-or install code. See [OS deep links](deep-links.md).
+The link fetches a preview through the existing importer. Review the plugin and
+computer access, then select **Install plugin**. Opening the link does not install,
+enable, or grant access. See [OS deep links](deep-links.md).
 
 ## The `buzzodz` CLI
 

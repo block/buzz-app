@@ -279,6 +279,22 @@ export function PluginImport({
     });
   }, [reviewRequested]);
 
+  const linkedRequest = useRef<AbortSignal | GitPluginSource>(undefined);
+  const startLinkedGit = useEffectEvent(() => {
+    if (!initialGit || requestSignal?.aborted || !imports || busy) return;
+    const request = requestSignal ?? initialGit;
+    if (linkedRequest.current === request) return;
+    linkedRequest.current = request;
+    void loadGit(initialGit.repository, initialGit.reference);
+  });
+  useEffect(() => {
+    if (!initialGit || requestSignal?.aborted || !imports || busy) return;
+    const current = lifetime.current;
+    queueMicrotask(() => {
+      if (current.active) startLinkedGit();
+    });
+  }, [initialGit, requestSignal, imports, busy]);
+
   const blocked = busy || loading || discarding;
   if (!imports) return null;
 
@@ -355,6 +371,15 @@ export function PluginImport({
         setLoading(false);
       }
     }
+  }
+  async function loadGit(repository: string, reference: string) {
+    if (!imports) return;
+    await load(async () => {
+      const signed = await authorizeGit?.(repository);
+      return signed
+        ? imports.git(signed.repository, reference, signed.token)
+        : imports.git(repository, reference);
+    });
   }
   async function dismiss() {
     if (blocked || pending.current || !preview) return;
@@ -837,17 +862,7 @@ export function PluginImport({
                   className={styles.git}
                   onSubmit={(event) => {
                     event.preventDefault();
-                    if (repository.trim())
-                      void load(async () => {
-                        const signed = await authorizeGit?.(repository);
-                        return signed
-                          ? imports.git(
-                              signed.repository,
-                              reference,
-                              signed.token,
-                            )
-                          : imports.git(repository, reference);
-                      });
+                    if (repository.trim()) void loadGit(repository, reference);
                   }}
                 >
                   <SettingsGroup layout="form">

@@ -1556,43 +1556,35 @@ for (const mode of ["Light", "Dark"]) {
       [link],
     );
     await page.goto(app.origin);
+    const review = page.getByRole("dialog", {
+      name: "Review plugin access",
+      exact: true,
+    });
+    await expect(review).toBeVisible();
+    await expect(
+      page.getByRole("region", { name: "Computer access" }),
+    ).toBeVisible();
+    await review.getByRole("button", { name: "Back", exact: true }).click();
     const dialog = page.getByRole("dialog", {
       name: "Add a plugin",
       exact: true,
     });
-    await expect(dialog).toBeVisible();
     await expect(dialog.getByLabel("Git or GitHub repository")).toHaveValue(
       repository,
     );
     await expect(dialog.getByLabel("Branch or tag (optional)")).toHaveValue(
       reference,
     );
-    await expect
-      .poll(() =>
-        page.evaluate(
-          () =>
-            window.importCalls.filter((call) =>
-              call.command.startsWith("plugin_import_"),
-            ).length,
-        ),
-      )
-      .toBe(0);
     await dialog.press("Escape");
     await expect(dialog).toBeHidden();
     await selectSettingsSection(page, "Appearance");
     await chooseColorMode(page, mode);
     await page.evaluate((link) => window.deliverPluginLink(link), link);
-    await expect(dialog).toBeVisible();
-    await expect(dialog.getByLabel("Git or GitHub repository")).toHaveValue(
-      repository,
-    );
-    await dialog.press("Escape");
-    await expect(dialog).toBeHidden();
+    await expect(review).toBeVisible();
+    await review.press("Escape");
+    await expect(review).toBeHidden();
     await page.evaluate((link) => window.deliverPluginLink(link), link);
-    await expect(dialog).toBeVisible();
-    await dialog
-      .getByRole("button", { name: "Find plugins", exact: true })
-      .click();
+    await expect(review).toBeVisible();
     const install = page.getByRole("button", {
       name: "Install plugin",
       exact: true,

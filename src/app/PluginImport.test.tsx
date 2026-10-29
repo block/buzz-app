@@ -1954,7 +1954,7 @@ it.each(["folder", "git"])(
   },
 );
 
-it("prefills a linked Git source but waits for preview and install confirmation", async () => {
+it("previews a linked Git source once and waits for install confirmation", async () => {
   const source = {
     repository: "https://github.com/example/plugin",
     reference: "release/stable",
@@ -2001,11 +2001,7 @@ it("prefills a linked Git source but waits for preview and install confirmation"
   expect(within(dialog).getByLabelText("Branch or tag (optional)")).toHaveValue(
     source.reference,
   );
-  expect(git).not.toHaveBeenCalled();
   expect(installImport).not.toHaveBeenCalled();
-  await userEvent.click(
-    within(dialog).getByRole("button", { name: "Find plugins" }),
-  );
   const install = await screen.findByRole("button", { name: "Install plugin" });
   expect(git).toHaveBeenCalledExactlyOnceWith(
     source.repository,

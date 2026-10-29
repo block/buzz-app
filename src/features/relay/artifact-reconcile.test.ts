@@ -41,11 +41,21 @@ function setup(checkpoint: string | null = old) {
     })),
     setRefreshError: vi.fn(async () => {}),
     get: vi.fn(async (id: string) => rows.get(id)),
-    knownIds: vi.fn(async ({ channelId }: { channelId?: string }) => ({
-      ids: [...rows]
-        .filter(([, row]) => !channelId || row.record.channelId === channelId)
-        .map(([key]) => key),
-    })),
+    knownIds: vi.fn<HostArtifactCollection["knownIds"]>(
+      async ({ channelId, after, limit }) => {
+        const ids = [...rows]
+          .filter(([, row]) => !channelId || row.record.channelId === channelId)
+          .map(([key]) => key)
+          .sort()
+          .filter((key) => after === undefined || key > after);
+        const page = ids.slice(0, limit);
+        const next = ids.length > page.length ? page.at(-1) : undefined;
+        return {
+          ids: page,
+          ...(next !== undefined ? { next } : {}),
+        };
+      },
+    ),
     applyBatch: vi.fn<HostArtifactCollection["applyBatch"]>(async (batch) => {
       for (const item of batch.records ?? [])
         rows.set(item.id, {
@@ -306,6 +316,75 @@ it("keeps a moved artifact when the old channel is removed later", async () => {
     channelId: channel,
     availability: { state: "available" },
   });
+});
+it.each([100, 101, 201])(
+  "removes %s saved channel records in batches of at most 100",
+  async (count) => {
+    const h = setup();
+    for (let index = 0; index < count; index++) {
+      const id = `saved-${String(index).padStart(3, "0")}`;
+      h.rows.set(id, {
+        record: {
+          id,
+          channelId: channel,
+          current: { id: `revision-${id}`, content: "saved" },
+          availability: { state: "available" },
+        },
+        preference: { pinned: true },
+      });
+    }
+    h.reader.delta.mockResolvedValue({
+      ...h.page,
+      changes: [{ type: "removeChannel", channelId: channel }],
+    });
+    await h.delta();
+    const batches = h.collection.applyBatch.mock.calls.map(([batch]) => batch);
+    expect(batches.map((batch) => batch.availability?.length)).toEqual(
+      count === 100 ? [100] : count === 101 ? [100, 1] : [100, 100, 1],
+    );
+    expect(batches.flatMap((batch) => batch.availability ?? [])).toEqual(
+      [...h.rows.keys()].map((id) => ({
+        id,
+        expectedRevision: `revision-${id}`,
+        value: { state: "unavailable" },
+      })),
+    );
+    for (const row of h.rows.values()) {
+      expect(row.record.availability.state).toBe("unavailable");
+      expect(row.record.current?.content).toBe("saved");
+      expect(row.preference).toEqual({ pinned: true });
+    }
+    expect(
+      h.collection.applyBatch.mock.invocationCallOrder.at(-1),
+    ).toBeLessThan(
+      h.collection.completeRefresh.mock.invocationCallOrder[0] as number,
+    );
+  },
+);
+it("keeps progress when a later channel removal batch fails", async () => {
+  const h = setup();
+  for (let index = 0; index < 101; index++) {
+    const id = `saved-${String(index).padStart(3, "0")}`;
+    h.rows.set(id, {
+      record: { id, channelId: channel, availability: { state: "available" } },
+    });
+  }
+  h.reader.delta.mockResolvedValue({
+    ...h.page,
+    changes: [{ type: "removeChannel", channelId: channel }],
+  });
+  const apply = h.collection.applyBatch;
+  h.collection.applyBatch = vi
+    .fn<HostArtifactCollection["applyBatch"]>()
+    .mockImplementationOnce(apply)
+    .mockRejectedValueOnce(new Error("Artifact revision changed"));
+  await expect(h.delta()).rejects.toThrow("Artifact revision changed");
+  expect(h.rows.get("saved-099")?.record.availability.state).toBe(
+    "unavailable",
+  );
+  expect(h.rows.get("saved-100")?.record.availability.state).toBe("available");
+  expect(h.collection.completeRefresh).not.toHaveBeenCalled();
+  expect(await h.collection.checkpoint()).toBe(old);
 });
 it("restores an upsert after removal of its old channel", async () => {
   const h = setup();

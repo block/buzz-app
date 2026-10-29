@@ -125,7 +125,7 @@ async function applyChanges(
         const page = await collection.knownIds({
           channelId: change.channelId,
           ...(after !== undefined ? { after } : {}),
-          limit: 1000,
+          limit: 100,
         });
         signal.throwIfAborted();
         for (const id of page.ids) await remove(id, change.channelId);

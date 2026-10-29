@@ -56,6 +56,7 @@ import type {
 } from "../../features/agents/service";
 import { useRelayConnection } from "../../features/relay/react";
 import { useAgentChoices } from "../../features/agents/use-choices";
+import type { AgentChoicesSnapshot } from "../../features/agents/choices";
 import type { RelaySession } from "../../features/relay/session";
 import {
   readSnapshot,
@@ -78,11 +79,11 @@ import {
   GearIcon,
   PlusIcon,
   RobotIcon,
-  StarFilledIcon,
   WarningCircleIcon,
   XIcon,
 } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
+import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { Checkbox } from "../../shared/design-system/ui/Checkbox";
 import { ChoiceRow } from "../../shared/design-system/ui/ChoiceRow";
@@ -96,7 +97,6 @@ import { Input } from "../../shared/design-system/ui/Input";
 import {
   ContextMenuRoot,
   ContextMenuTrigger,
-  MenuNote,
   MenuSeparator,
   MenuPopup,
   MenuItem,
@@ -727,52 +727,129 @@ type InventoryProps = {
   onSelect(pubkey?: string): void;
   onBuild(pubkey: string): void;
   newAgent: ReactNode;
-  /** The agent new Berd messages are tagged for, in this community. */
-  defaultAgent?: string | undefined;
-  /** False until the main agent is saved to the account, as while another
-   * agent stands in for a missing chosen one. */
-  defaultPinned?: boolean;
-  onMakeDefault?: ((pubkey: string) => void) | undefined;
+  /** The agent explicitly saved as this community's Bestie. */
+  bestie?: string | undefined;
+  onMakeBestie?: ((pubkey: string) => void) | undefined;
   defaultChoices?: ReadonlySet<string>;
   /** The community connection Share publishes through, while it is ready. */
   session?: RelaySession;
   onViewListing?: ((agent: SharedAgent) => void) | undefined;
 };
 
-/** The inventory with this community's default agent marked and settable. */
+type BestieAgent = AgentChoicesSnapshot["selectable"][number];
+
+/** Agents keeps Morgan's account-synced selection owner; this surface only
+ * names an explicitly saved selection Bestie and asks before replacing it. */
 function DefaultAgentInventory({
   session,
   scope,
   ...props
 }: InventoryProps & { session: RelaySession; scope: string }) {
-  const current = useDefaultAgent(session, scope);
-  // Pinned once saved to the account, so an automatic pick can be saved too.
+  // Keep Morgan's automatic fallback/adoption behavior active even though the
+  // Bestie pill names only the explicit account-saved choice.
+  useDefaultAgent(session, scope);
   const saved = useSavedAgent(session, scope);
   const choices = useAgentChoices(session, true, true);
   const [error, setError] = useState("");
+  const [savingBestie, setSavingBestie] = useState(false);
+  const [replacement, setReplacement] = useState<{
+    current: BestieAgent;
+    replacing: BestieAgent;
+  }>();
   // Only the latest choice reports its failure.
   const latest = useRef(0);
+  const eligible = (pubkey: string) =>
+    session.agentChoices
+      .snapshot()
+      .selectable.find((agent) => agent.pubkey === pubkey);
+  const save = (pubkey: string) => {
+    if (!eligible(pubkey)) return;
+    const choice = ++latest.current;
+    setError("");
+    setSavingBestie(true);
+    chooseDefaultAgent(session, scope, pubkey)
+      .then(() => {
+        if (choice === latest.current) setReplacement(undefined);
+      })
+      .catch((failure: Error) => {
+        if (choice === latest.current) setError(failure.message);
+      })
+      .finally(() => {
+        if (choice === latest.current) setSavingBestie(false);
+      });
+  };
   return (
     <>
       <Inventory
         {...props}
         session={session}
-        defaultAgent={current?.pubkey}
-        defaultPinned={!!current && current.pubkey === saved}
+        bestie={saved}
         defaultChoices={
           new Set(choices.selectable.map((agent) => agent.pubkey))
         }
-        onMakeDefault={(pubkey) => {
-          const choice = ++latest.current;
-          setError("");
-          chooseDefaultAgent(session, scope, pubkey).catch(
-            (failure: Error) =>
-              choice === latest.current && setError(failure.message),
+        onMakeBestie={(pubkey) => {
+          const replacing = eligible(pubkey);
+          if (!replacing || pubkey === saved) return;
+          const previous = choices.identities.find(
+            (agent) => agent.pubkey === saved,
           );
+          if (previous) setReplacement({ current: previous, replacing });
+          else save(pubkey);
         }}
       />
+      {replacement && (
+        <BestieReplacement
+          {...replacement}
+          pending={savingBestie}
+          onClose={() => setReplacement(undefined)}
+          onChoose={() => {
+            // A choice changed elsewhere while this dialog was open wins.
+            if (saved === replacement.current.pubkey)
+              save(replacement.replacing.pubkey);
+            else setReplacement(undefined);
+          }}
+        />
+      )}
       {error && <p role="alert">{error}</p>}
     </>
+  );
+}
+
+const bestieName = (agent: BestieAgent) =>
+  agent.managedName ?? agent.name ?? "Agent";
+
+function BestieReplacement({
+  current,
+  replacing,
+  pending,
+  onChoose,
+  onClose,
+}: {
+  current: BestieAgent;
+  replacing: BestieAgent;
+  pending: boolean;
+  onChoose(): void;
+  onClose(): void;
+}) {
+  const keep = useRef<HTMLButtonElement>(null);
+  return (
+    <AlertDialog
+      title={`Make ${bestieName(replacing)} your bestie?`}
+      description={`Your existing chats with ${bestieName(current)} will still be available in your DMs.`}
+      initialFocus={keep}
+      pending={pending}
+      onClose={onClose}
+      actions={
+        <>
+          <Button ref={keep} disabled={pending} onClick={onClose}>
+            Keep {bestieName(current)}
+          </Button>
+          <Button variant="prominent" loading={pending} onClick={onChoose}>
+            Switch to {bestieName(replacing)}
+          </Button>
+        </>
+      }
+    />
   );
 }
 
@@ -839,10 +916,9 @@ function Inventory({
   onSelect,
   onBuild,
   newAgent,
-  defaultAgent,
-  defaultPinned,
+  bestie,
   defaultChoices,
-  onMakeDefault,
+  onMakeBestie,
   session,
   onViewListing,
 }: InventoryProps) {
@@ -904,28 +980,19 @@ function Inventory({
           {agents.map((agent, position) => {
             const type = typeOf(agent);
             const active = agent.pubkey === selected;
-            const isMain = agent.pubkey === defaultAgent;
+            const isBestie = agent.pubkey === bestie;
             return (
               // biome-ignore lint/a11y/useSemanticElements: Layout grid rows group cards without table layout.
               // biome-ignore lint/a11y/useFocusableInteractive: Roving focus belongs to the gridcell, not its row wrapper.
               <div role="row" className="contents" key={agent.pubkey}>
                 <InventoryCard
-                  tag={
-                    isMain ? (
-                      <Tooltip content="Main agent">
-                        <span role="img" aria-label="Main agent">
-                          <StarFilledIcon size={16} aria-hidden="true" />
-                        </span>
-                      </Tooltip>
-                    ) : undefined
-                  }
-                  main={
-                    onMakeDefault
+                  tag={isBestie ? "Bestie" : undefined}
+                  bestie={
+                    onMakeBestie
                       ? {
-                          isMain,
-                          pinned: isMain && !!defaultPinned,
+                          selected: isBestie,
                           available: !!defaultChoices?.has(agent.pubkey),
-                          onMake: () => onMakeDefault(agent.pubkey),
+                          onMake: () => onMakeBestie(agent.pubkey),
                         }
                       : undefined
                   }
@@ -936,7 +1003,7 @@ function Inventory({
                   onBuild={() => onBuild(agent.pubkey)}
                   onRemoved={() => onSelect()}
                   role="gridcell"
-                  aria-label={isMain ? `${agent.name}, Main agent` : agent.name}
+                  aria-label={isBestie ? `${agent.name}, Bestie` : agent.name}
                   data-selected={active}
                   aria-selected={active}
                   tabIndex={active || (index < 0 && position === 0) ? 0 : -1}
@@ -980,7 +1047,7 @@ function InventoryCard({
   type,
   onBuild,
   onRemoved,
-  main,
+  bestie,
   onViewListing,
   ...props
 }: Omit<React.ComponentProps<typeof AgentCard>, "agent"> & {
@@ -991,9 +1058,9 @@ function InventoryCard({
   onBuild(): void;
   onRemoved(): void;
   onViewListing?: ((agent: SharedAgent) => void) | undefined;
-  /** Whether it is the community's main agent and can be made it. */
-  main?:
-    | { isMain: boolean; pinned: boolean; available: boolean; onMake(): void }
+  /** Whether it is the community's Bestie or can be made it. */
+  bestie?:
+    | { selected: boolean; available: boolean; onMake(): void }
     | undefined;
 }) {
   const agent = props.agent;
@@ -1019,16 +1086,14 @@ function InventoryCard({
   // The "..." button and right-click share one set of actions.
   const actions = (remove?: () => void, leave?: () => void) => (
     <>
-      {main &&
-        // An automatic pick or stand-in can be made main for good.
-        (main.pinned ? (
-          <MenuNote>Main agent</MenuNote>
-        ) : (
-          <MenuItem disabled={!main.available} onClick={main.onMake}>
-            Make main agent
+      {bestie && !bestie.selected && (
+        <>
+          <MenuItem disabled={!bestie.available} onClick={bestie.onMake}>
+            Make my bestie
           </MenuItem>
-        ))}
-      {main && <MenuSeparator />}
+          <MenuSeparator />
+        </>
+      )}
       {editable && <MenuItem onClick={onBuild}>Open settings</MenuItem>}
       {editable && session && type?.exportShared && (
         <MenuItem onClick={() => setSharing(true)}>Share</MenuItem>

@@ -61,7 +61,7 @@ export async function chooseDefaultAgent(
     await account.write(pubkey);
   } catch {
     throw new Error(
-      "The main agent couldn't be saved to your account. Try again.",
+      "Your bestie couldn't be saved to your account. Try again.",
     );
   }
   remember(account, pubkey);

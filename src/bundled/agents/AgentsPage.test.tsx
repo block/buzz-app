@@ -357,9 +357,10 @@ function setup(
       for (const listener of listeners) listener();
       return team;
     }),
-    // The selected community syncs teams and is every synced team's home.
+    // The selected community, where each hosted agent was picked, syncs teams
+    // and is every synced team's home.
     teamHere: vi.fn(
-      ({ id }: Pick<TeamChange, "id" | "draft">) =>
+      ({ id }: Pick<TeamChange, "id" | "draft">, _community?: string) =>
         !id || !!snapshot.teams.find((team) => team.id === id)?.revision,
     ),
     core: vi.fn(async () => undefined),
@@ -2562,6 +2563,11 @@ it("leaves a hosted agent picked in another community off a new team, keeping th
       ? [{ key: ada.key, origin: "https://relay.example", connected: true }]
       : [],
   );
+  // A new team syncs in the selected community.
+  let selected = ada.relay;
+  agents.teamHere.mockImplementation(
+    ({ id }, community = selected) => !!id || community === selected,
+  );
   await user.click(screen.getByRole("tab", { name: "Your teams" }));
   await user.click(screen.getByRole("button", { name: "New team" }));
   await user.click(
@@ -2571,7 +2577,14 @@ it("leaves a hosted agent picked in another community off a new team, keeping th
   await user.click(screen.getByRole("checkbox", { name: "Ada" }));
   await user.click(screen.getByRole("checkbox", { name: "Sky" }));
   // Another community that syncs teams, with its own hosted agent.
-  act(() => show([agent("Bo", 3), { ...agent("Kai", 5), place: "hosted" }]));
+  const other = "wss://other.example";
+  act(() => {
+    selected = other;
+    show([
+      { ...agent("Bo", 3), relay: other },
+      { ...agent("Kai", 5), place: "hosted", relay: other },
+    ]);
+  });
   expect(screen.getByRole("form", { name: "New team" })).toBeInTheDocument();
   expect(
     screen.queryByRole("checkbox", { name: "Sky" }),
@@ -2597,6 +2610,49 @@ it("leaves a hosted agent picked in another community off a new team, keeping th
   expect(agents.saveTeam).toHaveBeenLastCalledWith(
     expect.objectContaining({ id: "sky", members: [sky.pubkey] }),
   );
+});
+
+it("keeps a hosted agent picked for a new team while its community lists agents again", async () => {
+  const user = userEvent.setup();
+  const ada = agent("Ada", 1);
+  const sky: Agent = { ...agent("Sky", 2), place: "hosted" };
+  const { agents, show } = setup([ada, sky]);
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  await user.click(screen.getByRole("button", { name: "New team" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Create a new team" }),
+  );
+  await user.type(screen.getByRole("textbox", { name: "Name" }), "Crew");
+  await user.click(screen.getByRole("checkbox", { name: "Ada" }));
+  await user.click(screen.getByRole("checkbox", { name: "Sky" }));
+  // The community reconnects and still syncs teams, but its hosted agents
+  // are unlisted until their records are read again, so Save refuses Sky.
+  act(() => show([ada]));
+  expect(
+    screen.queryByRole("checkbox", { name: "Sky" }),
+  ).not.toBeInTheDocument();
+  const refusal = "Can't tell yet whether Sky is in relay.example";
+  agents.saveTeam.mockRejectedValueOnce(new Error(refusal));
+  await user.click(screen.getByRole("button", { name: "Create team" }));
+  const form = screen.getByRole("form", { name: "New team" });
+  expect(await within(form).findByRole("alert")).toHaveTextContent(refusal);
+  const draft = agents.saveTeam.mock.calls.at(-1)?.[0].draft;
+  expect(agents.saveTeam).toHaveBeenLastCalledWith({
+    draft: expect.any(String),
+    name: "Crew",
+    instructions: "",
+    members: [ada.pubkey, sky.pubkey],
+  });
+  // Once they are, Sky shows checked again, and Create keeps the draft.
+  act(() => show([ada, sky]));
+  expect(screen.getByRole("checkbox", { name: "Sky" })).toBeChecked();
+  await user.click(screen.getByRole("button", { name: "Create team" }));
+  expect(agents.saveTeam).toHaveBeenLastCalledWith({
+    draft,
+    name: "Crew",
+    instructions: "",
+    members: [ada.pubkey, sky.pubkey],
+  });
 });
 
 it("offers an open new team hosted agents once its community is known to sync teams", async () => {

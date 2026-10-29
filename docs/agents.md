@@ -698,8 +698,11 @@ in its home record and applies everywhere.
 - **Hosted agents** stay in one community, as their provider holds the key.
   Only a synced team homed there can have them as members, so the team editor
   offers them only for such a team, or for a new one that will sync there. One
-  picked before another community was selected is left off unless the team
-  already has it. They do not get its instructions, but rosters name them.
+  picked in a community Save doesn't put the team in, as when another is
+  selected before a new team's first Save, is left off unless the team already
+  has it. One picked where Save puts the team stays while that community's
+  agent list is read again, but Save refuses it until the list is read. They
+  do not get its instructions, but rosters name them.
   Until the community's agent list is read, which tells hosted agents from
   ones on other devices, the team's roster there names each member not on this
   device by npub alone.

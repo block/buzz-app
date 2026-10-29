@@ -2146,19 +2146,28 @@ function TeamEditor({
   // What a synced Save revises, and a new team's id for every retry.
   const [opened] = useState(team);
   const [draft] = useState(() => crypto.randomUUID());
+  const which = opened ? { id: opened.id } : { draft };
+  // The community each hosted member was picked in, the only one with it.
+  const [picked, setPicked] = useState<ReadonlyMap<string, string>>(
+    () => new Map(),
+  );
   // Only a team Save puts in this community can have its hosted agents.
-  const choices = agents.teamHere(opened ? { id: opened.id } : { draft })
+  const choices = agents.teamHere(which)
     ? saved
     : saved.filter((agent) => agent.place === "here");
   // What Save gets: members among these choices, ones the team already has,
-  // and agents here in other communities. Not a hosted agent picked while
-  // another community was selected, which this one can't have.
-  const kept = members.filter(
-    (pubkey) =>
+  // agents here in other communities, and hosted agents picked where Save
+  // puts the team, which may not be listed again yet. Not one picked in
+  // another community, as before selecting this one, which can't have it.
+  const kept = members.filter((pubkey) => {
+    const from = picked.get(pubkey);
+    return (
       choices.some((agent) => agent.pubkey === pubkey) ||
       opened?.members.includes(pubkey) ||
-      agents.memberships(pubkey).length > 0,
-  );
+      agents.memberships(pubkey).length > 0 ||
+      (from !== undefined && agents.teamHere(which, from))
+    );
+  });
   // Members not in this community, which it doesn't list but keeps.
   const away = members.filter(
     (pubkey) =>
@@ -2253,13 +2262,17 @@ function TeamEditor({
                 label={agent.name}
                 checked={members.includes(agent.pubkey)}
                 disabled={pending}
-                onCheckedChange={(checked) =>
+                onCheckedChange={(checked) => {
+                  if (agent.place === "hosted")
+                    setPicked((last) =>
+                      new Map(last).set(agent.pubkey, agent.relay),
+                    );
                   setMembers((last) =>
                     checked
                       ? [...last, agent.pubkey]
                       : last.filter((pubkey) => pubkey !== agent.pubkey),
-                  )
-                }
+                  );
+                }}
               />
             ))}
           </div>

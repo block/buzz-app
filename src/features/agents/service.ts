@@ -1150,10 +1150,11 @@ export type Agents = {
    * hosted agents whose setup finished. Each community has the members that
    * are in it. */
   saveTeam(team: TeamChange): Promise<Team>;
-  /** Whether Save puts the team with `id`, or the new team `draft`, in the
-   * selected community: a synced team homed there, or a new team where it
-   * syncs. Only such a team can have that community's hosted agents. */
-  teamHere(team: Pick<TeamChange, "id" | "draft">): boolean;
+  /** Whether Save puts the team with `id`, or the new team `draft`, in
+   * `community`, by default the selected one: a synced team homed there, or a
+   * new team where it syncs. Only such a team can have that community's
+   * hosted agents. */
+  teamHere(team: Pick<TeamChange, "id" | "draft">, community?: string): boolean;
   /** Deletes the team; its agents are untouched. */
   removeTeam(id: string): Promise<void>;
 };
@@ -3741,10 +3742,14 @@ export class AgentsService extends Service implements Agents {
     return team;
   }
 
-  teamHere({ id, draft }: Pick<TeamChange, "id" | "draft">) {
-    const selected = this.selectedOrigin();
+  teamHere(
+    { id, draft }: Pick<TeamChange, "id" | "draft">,
+    community?: string,
+  ) {
+    const origin =
+      community === undefined ? this.selectedOrigin() : originOf(community);
     try {
-      return !!selected && this.teamHome(id, draft) === selected;
+      return !!origin && this.teamHome(id, draft) === origin;
     } catch {
       // Save refuses a new team while it can't tell where that syncs.
       return false;
@@ -3883,7 +3888,13 @@ export class AgentsService extends Service implements Agents {
     const outside = team.members.find(
       (pubkey) => !opened.includes(pubkey) && !members.has(pubkey),
     );
-    if (outside) throw new Error(`Add ${name(outside)} to ${host} first`);
+    // Until its agent records are read, a hosted one there isn't known.
+    if (outside)
+      throw new Error(
+        this.listings.has(home)
+          ? `Add ${name(outside)} to ${host} first`
+          : `Can't tell yet whether ${name(outside)} is in ${host}; try again shortly`,
+      );
     const config = this.communityConfigs.get(home);
     if (!config) throw new Error(`Connect to ${host} to change this team`);
     const result = await config.saveTeam({ ...team, ...extra });

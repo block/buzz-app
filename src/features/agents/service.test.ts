@@ -11829,6 +11829,67 @@ describe("synced teams", () => {
     expect(await roster("failed")).toContain(unread);
   });
 
+  it("refuses a hosted member until the community's agent list is read again", async () => {
+    const sky = record(hostedKey, {
+      content: JSON.stringify({ name: "Sky" }),
+      tags: [
+        ["d", hostedKey],
+        ["runtime", "example/cloud"],
+      ],
+    });
+    const f = await ready([], undefined, [sky]);
+    f.plugin.agents.register(cloud().type);
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() =>
+      expect(f.service.find(hostedKey)?.place).toBe("hosted"),
+    );
+    // A reconnect reads its agent list again; the read is held, then fails.
+    const read = vi.mocked(f.session.read);
+    const answer = read.getMockImplementation() as NonNullable<
+      ReturnType<typeof read.getMockImplementation>
+    >;
+    let fail = () => {};
+    const listing = new Promise<never>((_, reject) => {
+      fail = () => reject(new Error("offline"));
+    });
+    let held = 0;
+    read.mockImplementation((filters, settings) => {
+      if (filters[0]?.kinds?.includes(30177)) {
+        held++;
+        return listing;
+      }
+      return answer(filters, settings);
+    });
+    f.connect(false);
+    f.connect(true);
+    await vi.waitFor(() => expect(held).toBe(1));
+    // Its config channels are up again first.
+    await vi.waitFor(() => expect(f.service.snapshot().syncsTeams).toBe(true));
+    const unread =
+      /^Can't tell yet whether npub…\w+ is in relay\.example\.test; try again shortly$/;
+    await expect(f.service.saveTeam(crew([bot, hostedKey]))).rejects.toThrow(
+      unread,
+    );
+    fail();
+    await settle();
+    await expect(f.service.saveTeam(crew([bot, hostedKey]))).rejects.toThrow(
+      unread,
+    );
+    expect(f.saveTeam).not.toHaveBeenCalled();
+    // Once a later read succeeds, the same draft takes it.
+    read.mockImplementation(answer);
+    f.connect(false);
+    f.connect(true);
+    await vi.waitFor(() => {
+      expect(f.service.find(hostedKey)?.place).toBe("hosted");
+      expect(f.service.snapshot().syncsTeams).toBe(true);
+    });
+    await f.service.saveTeam(crew([bot, hostedKey]));
+    expect(f.saveTeam).toHaveBeenCalledWith(
+      expect.objectContaining({ members: [bot, hostedKey] }),
+    );
+  });
+
   it("keeps a new team, hosted agents and all, off a relay without config channels", async () => {
     const make = vi.fn((_community: string) => null);
     coordinators.make = make;

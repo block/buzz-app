@@ -9094,6 +9094,35 @@ it("wakes a watch for an event heard during startup before Attention is shown", 
   ]);
 });
 
+it("hears an event held during startup after what it missed while closed", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  try {
+    const start = nowSeconds();
+    const storage = memoryStorage();
+    const first = await setup({ storage, identities: [echo] });
+    await first.service.save(bot, { attentionEnabled: true, attention: chat });
+    await settle();
+    first.connect(false);
+    // The app starts again, and a live message arrives before Attention is
+    // shown while another plugin is still starting.
+    vi.setSystemTime((start + 20) * 1000);
+    const second = await setup({
+      storage,
+      identities: [echo],
+      history: [...first.history, posted("missed", start + 10)],
+      attention: false,
+      starting: true,
+    });
+    second.emit({ events: [posted("live", start + 20)] });
+    await settle();
+    await showAttention(second.ctx, "two");
+    await vi.waitFor(() => expect(heard(second.run)).toHaveLength(2));
+    expect(heard(second.run)).toEqual(["missed", "live"]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("wakes nothing for an event heard during startup when it ends without Attention shown", async () => {
   vi.useFakeTimers({ now: 1_000_000 });
   const { service, run, emit, ctx, settleStartup } = await setup({

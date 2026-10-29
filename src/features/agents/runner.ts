@@ -1108,10 +1108,6 @@ export class AgentRunners {
     // Attention is like turning it off.
     const shown = this.host.attentionShown();
     const held = this.starting();
-    if (!held && this.heldForStartup) {
-      this.heldForStartup = false;
-      this.releaseHeld(() => true);
-    }
     for (const runner of this.runners.values()) {
       this.resumeTurns(runner);
       const agent = this.host.agent(runner.key);
@@ -1171,6 +1167,11 @@ export class AgentRunners {
       this.passes.set(runner.key, next);
       this.setCatching(runner, new Set(reading.map(({ slug }) => slug)));
       void this.readMissed(runner, next, reading, since);
+    }
+    // Once each catch-up is under way, so they are heard after what it reads.
+    if (!held && this.heldForStartup) {
+      this.heldForStartup = false;
+      this.releaseHeld(() => true);
     }
     if (changed) this.saveCheckpoints();
   }

@@ -162,7 +162,9 @@ with When no rule matches set to Wake the agent. Adding, say,
 limits feedback to those. Membership is asked of `gh` only for organizations the rules
 name, and kept for an hour; feedback whose author's membership cannot be read
 waits for a later poll, until ten polls in a row fail for that login alone and
-it counts as no member. A membership hidden from the `gh` account, or a
+it counts as no member. While GitHub answers no membership read, not even about
+the signed-in account, no failure counts, so an outage holds feedback rather
+than letting it past an `org:` deny rule. A membership hidden from the `gh` account, or a
 misspelled organization, counts as none, and bots and deleted accounts are in
 no organization. Each poll reads the rules again, so a change applies to
 running watches. CI and pull request state are not limited.

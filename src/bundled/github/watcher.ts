@@ -126,6 +126,9 @@ export function watchPulls(ctx: Context) {
       ),
     ];
     const now = Date.now();
+    /** Whether GitHub answered a membership read, so that one it cannot
+     * answer is that login's failure rather than an outage. */
+    let up = false;
     const ask = async (batch: string[]) => {
       const output = await ctx.host.runCommand(
         "pull",
@@ -137,6 +140,7 @@ export function watchPulls(ctx: Context) {
         members.set(memberKey(orgs, login), { orgs: of, at: now });
         misses.delete(memberKey(orgs, login));
       }
+      up ||= !!found;
       return !!found;
     };
     const size = (batch: string[]) =>
@@ -158,7 +162,10 @@ export function watchPulls(ctx: Context) {
           if (stopped()) return;
           await ask([login]);
         }
-      if (stopped()) return;
+      // While GitHub answers nobody, not even about the viewer, nobody's
+      // failure counts, so none is taken to be in no organization.
+      if (!up && !stopped()) await ask([viewer]);
+      if (stopped() || !up) return;
       for (const login of batch) {
         const key = memberKey(orgs, login);
         if (members.get(key)?.at === now) continue;

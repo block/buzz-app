@@ -1021,6 +1021,23 @@ describe("github_watch_pr", () => {
     app.dispose();
   });
 
+  it("does not take anyone to be in no organization while GitHub cannot be asked", async () => {
+    savePolicy("deny org:evil\nallow");
+    const app = setup();
+    await app.call({ url });
+    app.members(null);
+    app.gh(
+      answer({
+        comments: [{ id: "I1", login: "mallory", body: "body-mallory" }],
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(15 * POLL_MS);
+    app.members(["mallory@evil"]);
+    await vi.advanceTimersByTimeAsync(POLL_MS + QUIET_MS + POLL_MS);
+    expect(app.texts().join("\n")).not.toContain("body-mallory");
+    app.dispose();
+  });
+
   it("asks alone after a login fails its batch, and gives up on that login", async () => {
     savePolicy("allow org:block");
     const app = setup();

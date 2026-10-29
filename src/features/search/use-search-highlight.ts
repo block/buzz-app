@@ -14,7 +14,10 @@ import {
  * arrow key. The highlight follows a row's key, not its position, as late
  * results arrive: a row inserted above cannot redirect Enter. When the
  * highlighted row leaves, the highlight returns to the first row rather than
- * reviving the old one. The hook draws nothing; rows keep their own markup. */
+ * reviving the old one. Enter before any row arrives, while results are
+ * pending, chooses the first row that does, unless an edit, an arrow key,
+ * Escape or a pointer move comes first. The hook draws nothing; rows keep
+ * their own markup. */
 export function useSearchHighlight({
   query,
   keys,
@@ -23,6 +26,7 @@ export function useSearchHighlight({
   onOpen,
   highlightEmpty = false,
   wrap = false,
+  pending = false,
 }: {
   query: string;
   /** Row keys, in display order. */
@@ -40,6 +44,8 @@ export function useSearchHighlight({
   /** Up from the first row goes to the last, and Down from the last row
    * goes to the first. */
   wrap?: boolean;
+  /** Rows may still arrive for this text. */
+  pending?: boolean;
 }) {
   const id = useId();
   const [selection, setSelection] = useState({
@@ -70,6 +76,16 @@ export function useSearchHighlight({
       moves: 0,
     });
   const active = valid ? (selection.cleared ? "" : selection.key) : fallback;
+  /** The text whose Enter waits for its first row. */
+  const [awaiting, setAwaiting] = useState<string>();
+  if (awaiting !== undefined && awaiting !== query) setAwaiting(undefined);
+  const waiting = open && awaiting === query;
+  const first = keys[0];
+  useEffect(() => {
+    if (!waiting || (!first && pending)) return;
+    setAwaiting(undefined);
+    if (first) onChoose(first);
+  }, [waiting, first, pending, onChoose]);
   const rowId = (key: string) => `${id}-${key}`;
   const select = (key: string) =>
     setSelection((previous) => ({
@@ -146,7 +162,8 @@ export function useSearchHighlight({
     /** Spread on the element that contains the rows. */
     listProps: {
       onPointerMove(event: PointerEvent) {
-        pointer.current = { x: event.clientX, y: event.clientY };
+        if (pointerMoved(event) && awaiting !== undefined)
+          setAwaiting(undefined);
       },
       // A highlight the pointer made does not outlive it: leaving the list
       // returns to the row highlighted before, else to the list's own first
@@ -252,6 +269,12 @@ export function useSearchHighlight({
         onChoose(active);
         return true;
       }
+      if (event.key === "Enter" && !keys.length && pending) {
+        event.preventDefault();
+        setAwaiting(query);
+        return true;
+      }
+      if (arrow || event.key === "Escape") setAwaiting(undefined);
       if (arrow && keys.length) {
         event.preventDefault();
         select(step(down));

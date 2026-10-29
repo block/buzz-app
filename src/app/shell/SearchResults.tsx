@@ -515,6 +515,7 @@ export function SearchResults({
   );
   const choose = (key: string, run: () => void) => () => {
     if (usageScope) recordChoice(usageScope, needle, key);
+    cancelPersonOpen(key);
     run();
   };
   const messageableAgents = new Map(
@@ -799,8 +800,17 @@ export function SearchResults({
     name: string;
     error?: string;
   }>();
-  const personAttempt = useRef<AbortController | undefined>(undefined);
-  useEffect(() => () => personAttempt.current?.abort(), []);
+  const personAttempt = useRef<
+    { key: string; controller: AbortController } | undefined
+  >(undefined);
+  useEffect(() => () => personAttempt.current?.controller.abort(), []);
+  // The newest choice wins: another choice cancels a DM that is still opening.
+  const cancelPersonOpen = (key?: string) => {
+    if (!personAttempt.current || personAttempt.current.key === key) return;
+    personAttempt.current.controller.abort();
+    personAttempt.current = undefined;
+    setPersonOpen(undefined);
+  };
   const openPerson = async (pubkey: string, name: string, agent: boolean) => {
     if (personAttempt.current) return;
     const existing = session.channels
@@ -836,7 +846,7 @@ export function SearchResults({
       return;
     }
     const controller = new AbortController();
-    personAttempt.current = controller;
+    personAttempt.current = { key: personKey(pubkey), controller };
     setPersonOpen({ name });
     try {
       const channelId = await session.directMessages.open(
@@ -856,7 +866,7 @@ export function SearchResults({
               : "Could not open the conversation. Try again.",
         });
     } finally {
-      if (personAttempt.current === controller)
+      if (personAttempt.current?.controller === controller)
         personAttempt.current = undefined;
     }
   };
@@ -956,22 +966,41 @@ export function SearchResults({
       label: message.preview,
       detail: `${names.get(message.channelId) ?? session.channels.get?.(message.channelId)?.name ?? "Conversation"} · ${message.workflowOwnerId ? workflowLabel(name) : name} · ${new Date(message.createdAt * 1000).toLocaleDateString()}`,
       icon: ChatCircleIcon,
-      run: () => openConversation(message.channelId, message.id),
+      run: () => {
+        cancelPersonOpen();
+        openConversation(message.channelId, message.id);
+      },
     };
   });
+  const messageRows: SearchDestination[] = search.hasMore
+    ? [
+        ...messages,
+        {
+          key: "more-messages",
+          label: search.loadingMore
+            ? "Loading more messages…"
+            : "Show more messages",
+          icon: ChatCircleIcon,
+          run: search.loadMore,
+        },
+      ]
+    : messages;
   const operatorLookupPending =
     needsPublicLookup &&
     (list.status !== "ready" || operatorPublicChannels.loading);
   const operatorLookupError = needsPublicLookup
     ? operatorPublicChannels.error
     : undefined;
+  const directoryPending = publicChannels.loading || personDirectory.loading;
   const messageEmpty =
     operatorLookupPending || search.loading
       ? "Searching messages…"
       : operatorLookupError || search.error
         ? "Message search is unavailable."
         : query.trim()
-          ? "No matching messages in accessible conversations."
+          ? directoryPending
+            ? "Searching…"
+            : "No matching messages in accessible conversations."
           : scopedChannelId
             ? "Type to search messages in this conversation."
             : "Type to search messages in this community.";
@@ -1009,19 +1038,7 @@ export function SearchResults({
               {
                 label: messageOrder,
                 rank: Infinity,
-                destinations: search.hasMore
-                  ? [
-                      ...messages,
-                      {
-                        key: "more-messages",
-                        label: search.loadingMore
-                          ? "Loading more messages…"
-                          : "Show more messages",
-                        icon: ChatCircleIcon,
-                        run: search.loadMore,
-                      },
-                    ]
-                  : messages,
+                destinations: messageRows,
                 empty: messageEmpty,
               },
             ]
@@ -1125,7 +1142,7 @@ export function SearchResults({
                 {
                   label: messageOrder,
                   rank: Infinity,
-                  destinations: messages,
+                  destinations: messageRows,
                   empty:
                     directMessageResults.length ||
                     chatResults.length ||
@@ -1203,6 +1220,7 @@ export function SearchResults({
           : undefined
       }
       groups={groups}
+      pending={directoryPending}
     >
       <div
         className="space-y-2 px-3 text-body-sm text-subtle"

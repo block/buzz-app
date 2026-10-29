@@ -70,9 +70,12 @@ export function SearchChoices({
   scopeAction,
   children,
   inlineSettings,
+  pending = false,
 }: SearchInputProps & {
   groups: readonly SearchGroup[];
   children?: ReactNode;
+  /** Rows may still arrive, so Enter before the first one waits for it. */
+  pending?: boolean;
 }) {
   const resultsViewport = useRef<HTMLDivElement>(null);
   const resultsContent = useRef<HTMLDivElement>(null);
@@ -137,6 +140,7 @@ export function SearchChoices({
     query,
     keys: destinations.map(({ key }) => key),
     onChoose: (key) => destinations.find((row) => row.key === key)?.run(),
+    pending,
   });
   const selected = highlight.active;
   useEffect(() => {

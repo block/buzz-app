@@ -159,7 +159,21 @@ function setup(initial: Pull | null = answer()) {
     for (const listener of listeners) listener();
   };
   const attention = (key: string) => {
-    const show = async (slug: string) => {
+    // As the real store does, a watch of another Interest is out of scope.
+    const scope = (
+      slug: string,
+      value: AttentionValue | null,
+      interest?: string,
+    ) => {
+      const owned = records[key]?.[slug] ?? value;
+      if (interest && owned && owned.type !== "interest")
+        if (owned.interest_id !== interest)
+          throw new Error(
+            `wrong-scope: Watch ${slug} belongs to Interest ${owned.interest_id}`,
+          );
+    };
+    const show = async (slug: string, interest?: string) => {
+      scope(slug, null, interest);
       const object = records[key]?.[slug];
       return {
         result: object ? "found" : "not-found",
@@ -180,8 +194,9 @@ function setup(initial: Pull | null = answer()) {
       async write(
         slug: string,
         value: AttentionValue | null,
-        options: { expected: string },
+        options: { expected: string; interest?: string },
       ) {
+        scope(slug, value, options.interest);
         expect(options.expected).toBe(
           JSON.stringify(records[key]?.[slug]) ?? "absent",
         );
@@ -387,6 +402,30 @@ describe("github_watch_pr", () => {
     app.attentionEnabled(true);
     await vi.advanceTimersByTimeAsync(0);
     expect(app.texts()).toEqual([`CI passed on 111111111 for ${url}.`]);
+    app.dispose();
+  });
+
+  it("moves a PR's watch from another Interest to the one named", async () => {
+    const app = setup();
+    await app.call({ url });
+    const id = Object.keys(app.records[agent] ?? {}).find((slug) =>
+      slug.startsWith("watch/"),
+    );
+    if (!id) throw new Error("Missing watch");
+    const watch = app.records[agent]?.[id];
+    if (watch?.type !== "source") throw new Error("Missing source");
+    // As the shipped plugin saved it, under its own Interest.
+    await app.save(agent, {
+      attention: {
+        "interest/github-pulls": { type: "interest", instructions: "Follow" },
+        [id]: { ...watch, interest_id: "github-pulls" },
+      },
+    });
+    await app.call({ url }, true);
+    expect(app.records[agent]?.[id]).toEqual(
+      expect.objectContaining({ interest_id: "pr", channel: "c" }),
+    );
+    expect(app.records[agent]?.[id]).not.toHaveProperty("root");
     app.dispose();
   });
 

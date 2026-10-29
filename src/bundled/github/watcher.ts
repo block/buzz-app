@@ -266,14 +266,30 @@ export function watchPulls(ctx: Context) {
       if (first.ended && first.ended !== "limit")
         return `${pull.url} is ${first.ended}; nothing to watch.`;
       const fields = subscription({ ...first.watch, wakes: watch.wakes });
+      // A PR has one watch per agent. One of another Interest, such as the
+      // github-pulls Interest this plugin used to make, moves to this one.
+      const owner =
+        object && object.type !== "interest" ? object.interest_id : undefined;
+      let expected = priorObject.expected_state;
+      if (object && owner !== interest)
+        expected = (
+          JSON.parse(
+            await callAttentionTool(attention, "watch_remove", {
+              id,
+              interest: owner,
+              expected_state: expected,
+            }),
+          ) as { expected_state: string }
+        ).expected_state;
+      const update = object && owner === interest;
       await callAttentionTool(
         attention,
-        object ? "watch_update" : "watch_add",
+        update ? "watch_update" : "watch_add",
         {
           id,
           interest,
-          expected_state: priorObject.expected_state,
-          ...(object
+          expected_state: expected,
+          ...(update
             ? fields.root
               ? {}
               : { clear: ["root"] }

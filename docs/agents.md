@@ -135,7 +135,8 @@ of these conditions, all of which must hold:
   A bot's login ends in `[bot]`.
 - `author:/pattern/`, a JavaScript regular expression the login must match.
 - `org:name`, membership of a GitHub organization, named exactly.
-- `body:/pattern/`, a regular expression the comment's text must match.
+- `body:/pattern/`, a regular expression the comment's first 1,000 characters
+  must match. That is the most of a comment a wake quotes.
 - `prefix:text`, what the comment starts with, leading space aside. It runs to
   the end of the line, spaces included, so it comes last.
 

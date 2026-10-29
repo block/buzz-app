@@ -607,6 +607,55 @@ async function askToLeave(
 }
 const confirmLeave = (dialog: HTMLElement) =>
   within(dialog).getByRole("button", { name: "Leave community" });
+const removeOnDevice = (dialog: HTMLElement) =>
+  within(dialog).getByRole("button", { name: "Remove from this device" });
+const removed =
+  "Secondary — https://secondary.example was removed from this device. Your membership wasn’t changed. You can add it again later.";
+
+it("removes a community from this device without asking its relay", async () => {
+  const user = userEvent.setup();
+  const h = harness();
+  render(<CommunityPicker communities={h.communities} onSelect={h.onSelect} />);
+  const dialog = await askToLeave(user, "Secondary");
+  await user.click(removeOnDevice(dialog));
+  await screen.findByText(removed);
+  expect(h.leaveRequests()).toEqual([]);
+  expect(h.leave).toHaveBeenCalledWith(secondary, { purge: true });
+  expect(h.onSelect).not.toHaveBeenCalled();
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  expect(
+    screen.queryByRole("button", { name: "Switch to Secondary" }),
+  ).toBeNull();
+  await waitFor(() => expect(switcher()).toHaveFocus());
+});
+
+it("forgets a community whose relay never answers the leave, and ignores the late answer", async () => {
+  const user = userEvent.setup();
+  let answer!: (response: Response) => void;
+  const h = harness({
+    selected: secondary,
+    leaveResponse: () => new Promise<Response>((resolve) => (answer = resolve)),
+  });
+  render(<CommunityPicker communities={h.communities} onSelect={h.onSelect} />);
+  const dialog = await askToLeave(user, "Secondary");
+  await user.click(confirmLeave(dialog));
+  await waitFor(() => expect(h.leaveRequests()).toHaveLength(1));
+  // Waiting on the relay does not trap the viewer in the dialog.
+  expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeDisabled();
+  await user.click(removeOnDevice(dialog));
+  await screen.findByText(removed);
+  expect(h.leave).toHaveBeenCalledTimes(1);
+  expect(h.leave).toHaveBeenCalledWith(secondary, { purge: true });
+  expect(h.onSelect).toHaveBeenCalledTimes(1);
+  expect(h.onSelect).toHaveBeenCalledWith(null);
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  // The abandoned leave settling later neither reports nor navigates.
+  await act(async () =>
+    answer(Response.json({ error: "upstream" }, { status: 503 })),
+  );
+  expect(screen.queryByText(/Couldn’t leave/)).toBeNull();
+  expect(h.onSelect).toHaveBeenCalledTimes(1);
+});
 
 it("leaves an inactive community after confirming: the relay releases it before the device forgets it", async () => {
   const user = userEvent.setup();
@@ -757,9 +806,12 @@ it.each([
     render(<CommunityPicker communities={h.communities} />);
     const dialog = await askToLeave(user, "Secondary");
     await user.click(confirmLeave(dialog));
-    await screen.findByText(toast);
+    // The reason stays in the dialog, beside the device-only removal.
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(toast);
+    expect(removeOnDevice(dialog)).toBeEnabled();
     expect(h.leaveRequests()).toHaveLength(1);
     expect(h.leave).not.toHaveBeenCalled();
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
     await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
     expect(button("Secondary")).toBeInTheDocument();
     await waitFor(() => expect(switcher()).toHaveFocus());

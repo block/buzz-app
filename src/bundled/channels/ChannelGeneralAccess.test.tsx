@@ -289,6 +289,8 @@ it("confirms new people's View only/Participate access independently of public r
   const h = harness();
   const user = userEvent.setup();
   render(<ChannelGeneralAccess capability={h.capability} channelId="alpha" />);
+  const status = screen.getByRole("status");
+  expect(status).toBeEmptyDOMElement();
   await select(user, "New people can", "Participate");
   expect(screen.getByRole("alertdialog")).toHaveTextContent(
     "People already in the channel keep their access.",
@@ -307,6 +309,7 @@ it("confirms new people's View only/Participate access independently of public r
   expect(
     screen.getByText("Anyone in the community can find and participate."),
   ).toBeVisible();
+  expect(screen.getByText("Access updated")).toBe(status);
 });
 it("shows the absent Member default without saving, and a declined save reloads current access", async () => {
   const h = harness();
@@ -378,8 +381,9 @@ it("locks both choices while saving and recovers an uncertain save after remount
   try {
     await user.click(screen.getByRole("button", { name: "Change access" }));
     await waitFor(() => expect(h.save).toHaveBeenCalledOnce());
-    expect(screen.getByRole("status", { name: "Saving access" })).toBeVisible();
-    expect(screen.queryByText("Saving access…")).not.toBeInTheDocument();
+    const status = screen.getByText("Saving access…");
+    expect(status).toHaveAttribute("role", "status");
+    expect(status.closest("[aria-busy]")).toBeNull();
     for (const control of screen.getAllByRole("combobox"))
       expect(control).toBeDisabled();
     await waitFor(() =>
@@ -394,9 +398,7 @@ it("locks both choices while saving and recovers an uncertain save after remount
     });
   }
   await screen.findByRole("button", { name: "Check save status" });
-  expect(
-    screen.queryByRole("status", { name: "Saving access" }),
-  ).not.toBeInTheDocument();
+  expect(screen.queryByText("Saving access…")).not.toBeInTheDocument();
   view.unmount();
   render(<ChannelGeneralAccess capability={h.capability} channelId="alpha" />);
   const check = await screen.findByRole("button", {
@@ -413,6 +415,10 @@ it("locks both choices while saving and recovers an uncertain save after remount
   });
   try {
     await user.click(check);
+    expect(screen.getByText("Checking save status…")).toHaveAttribute(
+      "role",
+      "status",
+    );
     expect(
       screen.getByRole("region", { name: "General access" }),
     ).toHaveFocus();
@@ -429,6 +435,7 @@ it("locks both choices while saving and recovers an uncertain save after remount
     ),
   );
   expect(h.save).toHaveBeenCalledOnce();
+  expect(screen.getByText("Access updated")).toHaveAttribute("role", "status");
   expect(screen.getByRole("region", { name: "General access" })).toHaveFocus();
 });
 it("retires an open confirmation and late reads when the destination changes", async () => {

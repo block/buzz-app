@@ -70,7 +70,6 @@ export function applyApps(
         { className: "p-panel-inset" },
         createElement(Login, {
           session,
-          cancelOnUnmount: false,
           available: true,
           active: () => true,
         }),

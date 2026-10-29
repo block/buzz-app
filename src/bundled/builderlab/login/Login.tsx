@@ -1,4 +1,4 @@
-import { useEffect, useSyncExternalStore } from "react";
+import { useSyncExternalStore } from "react";
 import { Header } from "../../../shared/design-system/ui/Header";
 import { Button } from "../../../shared/design-system/ui/Button";
 import type { OAuthSession } from "../oauth/session";
@@ -8,28 +8,18 @@ export function Login({
   available,
   active,
   showHeading = true,
-  cancelOnUnmount = true,
   unavailableReason = "Open the Buzz desktop app to sign in with Builderlab.",
 }: {
   session: OAuthSession;
   available: boolean;
   active(): boolean;
   showHeading?: boolean;
-  /** Settings owns its pending login; shared app panels only observe it. */
-  cancelOnUnmount?: boolean;
   unavailableReason?: string;
 }) {
   const state = useSyncExternalStore(
     session.subscribe,
     session.snapshot,
     session.snapshot,
-  );
-  useEffect(
-    () => () => {
-      if (cancelOnUnmount && session.snapshot().status === "pending")
-        session.cancel();
-    },
-    [cancelOnUnmount, session],
   );
   return (
     <div data-buzz-ui="" className="flex flex-col items-start gap-4">
@@ -52,7 +42,7 @@ export function Login({
         <>
           <p role="status" className="text-body-sm text-secondary">
             {state.status === "pending"
-              ? "Finish sign-in in your browser, then return to Buzz."
+              ? "Finish sign-in in your browser. You can close this view while you wait; keep Buzz open."
               : state.account
                 ? state.account.email
                   ? `Signed in as ${state.account.email}.`

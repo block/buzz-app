@@ -193,7 +193,15 @@ export type PullStates = Readonly<{
    * request's, or it could not be read and nothing is held. */
   read(
     url: string,
-    options: { maxAge: number; level?: PullLevel; wantsText?: WantsText },
+    options: {
+      maxAge: number;
+      level?: PullLevel;
+      wantsText?: WantsText;
+      /** Someone in the app asked for it and waits: it is read apart from
+       * the links' public share, with its public checks, also while GitHub
+       * holds public reads for its limit. */
+      interactive?: boolean;
+    },
   ): Promise<PullRead>;
 }>;
 
@@ -360,7 +368,7 @@ type Asked = Readonly<{
   details: boolean;
   /** Someone wants what the public API can read: its state or details. */
   publicly: boolean;
-  /** The panel asked for it, so its public checks are read again. */
+  /** Someone in the app asked for it, so its public checks are read again. */
   checks: boolean;
   /** Whether a reader wants the text of feedback `id`. */
   wantsText: WantsText;
@@ -609,6 +617,8 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
       levels: Set<PullLevel>;
       /** Whose feedback text the feedback readers waiting want. */
       wantsText: WantsText[];
+      /** Whether someone in the app asked for it. */
+      interactive: boolean;
       waiting: {
         resolve: (read: PullRead) => void;
         reject: (error: unknown) => void;
@@ -745,10 +755,11 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
     ];
     const at = (url: string, level: PullLevel) =>
       !!asked.get(url)?.levels.has(level) || watchedAt(url, level);
-    // The open panel, not an agent's lookup of its details, reads
-    // GitHub's public API outside the links' budget.
-    const panelAsked = (url: string) =>
-      watchedAt(url, "details") && !!asked.get(url)?.levels.has("details");
+    const interactive = (url: string) => !!asked.get(url)?.interactive;
+    // Reads someone in the app asked for are their own, not the links'
+    // share, and so are an open panel's polls; an agent's lookup is not.
+    const own = (url: string) =>
+      asked.has(url) ? interactive(url) : watchedAt(url, "details");
     // What each is asked for is fixed when the read starts, so what is parsed
     // is what was queried; a level asked for meanwhile is read next.
     const plan = new Map<string, Asked>();
@@ -761,7 +772,7 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
         feedback: at(url, "feedback"),
         details: at(url, "details"),
         publicly: at(url, "state") || at(url, "details"),
-        checks: panelAsked(url),
+        checks: interactive(url),
         wantsText: (id) =>
           [
             ...[...(listeners.get(url) ?? [])]
@@ -775,12 +786,11 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
       plan.set(url, asking);
       return asking;
     };
-    // The panel's reads are its own, not the links' share.
-    const free = due.filter((url) => watchedAt(url, "details")).length;
-    // While GitHub holds public reads for its limit, only the panel's own
-    // reads, which its reader asked for, try it again.
+    const free = due.filter(own).length;
+    // While GitHub holds public reads for its limit, only reads someone in
+    // the app asked for try it again.
     const reading =
-      readsPublic() && now < publicHeldUntil ? due.filter(panelAsked) : due;
+      readsPublic() && now < publicHeldUntil ? due.filter(interactive) : due;
     /** Whether this read asked for every level its readers want; a level
      * asked for once it started is read next. */
     const plannedAll = (url: string) => {
@@ -798,11 +808,8 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
       }
       for (const url of reading) asks(url);
       const found = await readAll(
-        // The panel's first, so they are the free ones.
-        reading.sort(
-          (a, b) =>
-            Number(watchedAt(b, "details")) - Number(watchedAt(a, "details")),
-        ),
+        // Their own first, so they are the free ones.
+        reading.sort((a, b) => Number(own(b)) - Number(own(a))),
         asks,
         Math.min(free, reading.length),
         signal,
@@ -1000,7 +1007,10 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
         ? { readAt: at, error: errors.get(key) }
         : undefined;
     },
-    read(raw, { maxAge, level = "state", wantsText = allText }) {
+    read(
+      raw,
+      { maxAge, level = "state", wantsText = allText, interactive = false },
+    ) {
       const url = keyOf(raw);
       if (!url)
         return Promise.reject(new Error("Not a GitHub pull request URL"));
@@ -1016,10 +1026,16 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
       return new Promise((resolve, reject) => {
         let request = requests.get(url);
         if (!request) {
-          request = { levels: new Set(), wantsText: [], waiting: [] };
+          request = {
+            levels: new Set(),
+            wantsText: [],
+            interactive: false,
+            waiting: [],
+          };
           requests.set(url, request);
         }
         request.levels.add(level);
+        request.interactive ||= interactive;
         if (level === "feedback") request.wantsText.push(wantsText);
         request.waiting.push({ resolve, reject });
         schedule();

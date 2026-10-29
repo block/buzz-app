@@ -1046,7 +1046,11 @@ it("reads the panel without gh apart from the links' share, with the head's chec
   );
   // The panel opens.
   states.watch(pull, () => {}, "details");
-  const { state } = await states.read(pull, { maxAge: 0, level: "details" });
+  const { state } = await states.read(pull, {
+    maxAge: 0,
+    level: "details",
+    interactive: true,
+  });
   expect(state).toMatchObject({
     state: "open",
     details: {
@@ -1057,31 +1061,44 @@ it("reads the panel without gh apart from the links' share, with the head's chec
   });
 });
 
-it("charges an agent's lookup of the details without gh to the links' share, keeping checks for the head", async () => {
-  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
-  const fetch = vi.fn(async (url: string) =>
-    url.includes("/commits/")
-      ? new Response(JSON.stringify({ total_count: 0, check_runs: [] }))
-      : new Response(
-          JSON.stringify({ title: "A", state: "open", head: { sha: "abc" } }),
-        ),
-  );
-  vi.stubGlobal("fetch", fetch);
-  const states = createPullStates(undefined);
-  // An agent looks at the details every minute for an hour, with no panel open.
-  for (let minute = 0; minute < 60; minute++) {
-    await states.read(pull, { maxAge: 0, level: "details" }).catch(() => {});
-    await vi.advanceTimersByTimeAsync(PULL_REFRESH_MS);
-  }
-  const pulls = fetch.mock.calls.filter(([url]) => !url.includes("/commits/"));
-  const checks = fetch.mock.calls.length - pulls.length;
-  // Within the links' share, with the checks read once for the one head
-  // (check runs and statuses), rather than three requests a minute.
-  expect(pulls.length).toBeLessThanOrEqual(
-    PUBLIC_READS_PER_POLL + PUBLIC_READS_PER_HOUR,
-  );
-  expect(checks).toBe(2);
-});
+it.each([
+  ["with no panel open", false],
+  ["with the panel open on it", true],
+])(
+  "charges an agent's lookup of the details without gh to the links' share, %s",
+  async (_, open) => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    const fetch = vi.fn(async (url: string) =>
+      url.includes("/commits/")
+        ? new Response(JSON.stringify({ total_count: 0, check_runs: [] }))
+        : new Response(
+            JSON.stringify({ title: "A", state: "open", head: { sha: "abc" } }),
+          ),
+    );
+    vi.stubGlobal("fetch", fetch);
+    const states = createPullStates(undefined);
+    // The panel's own read, when it is open, is outside the share.
+    if (open) {
+      states.watch(pull, () => {}, "details");
+      await vi.waitFor(() => expect(states.get(pull)).toBeDefined());
+    }
+    // An agent looks at the details every minute for an hour.
+    for (let minute = 0; minute < 60; minute++) {
+      await states.read(pull, { maxAge: 0, level: "details" }).catch(() => {});
+      await vi.advanceTimersByTimeAsync(PULL_REFRESH_MS);
+    }
+    const pulls = fetch.mock.calls.filter(
+      ([url]) => !url.includes("/commits/"),
+    );
+    const checks = fetch.mock.calls.length - pulls.length;
+    // Within the links' share, with the checks read once for the one head
+    // (check runs and statuses), rather than three requests a minute.
+    expect(pulls.length).toBeLessThanOrEqual(
+      Number(open) + PUBLIC_READS_PER_POLL + PUBLIC_READS_PER_HOUR,
+    );
+    expect(checks).toBe(2);
+  },
+);
 
 it("lets the panel's own read try GitHub while its public limit holds the links", async () => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
@@ -1104,9 +1121,13 @@ it("lets the panel's own read try GitHub while its public limit holds the links"
   // The open panel asks GitHub each time: refused, then read.
   states.watch(pull, () => {}, "details");
   await expect(
-    states.read(pull, { maxAge: 0, level: "details" }),
+    states.read(pull, { maxAge: 0, level: "details", interactive: true }),
   ).rejects.toBeInstanceOf(GitHubRateLimited);
-  const { state } = await states.read(pull, { maxAge: 0, level: "details" });
+  const { state } = await states.read(pull, {
+    maxAge: 0,
+    level: "details",
+    interactive: true,
+  });
   expect(state).toMatchObject({ details: { details: { title: "Recovered" } } });
   expect(fetch).toHaveBeenCalledTimes(3);
 });

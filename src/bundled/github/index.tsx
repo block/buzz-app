@@ -237,7 +237,11 @@ function usePullPanel(states: PullStates, url: string, enabled: boolean) {
     // Opening the panel reads GitHub, as it always has.
     retryRead(
       async () => {
-        const read = await states.read(url, { maxAge: 0, level: "details" });
+        const read = await states.read(url, {
+          maxAge: 0,
+          level: "details",
+          interactive: true,
+        });
         if (typeof read.state !== "object" || !read.state.details)
           throw read.error ?? new Error("GitHub did not answer");
         return read;
@@ -255,7 +259,9 @@ function usePullPanel(states: PullStates, url: string, enabled: boolean) {
   }, [states, url, enabled]);
   const load = useCallback(async () => {
     // What changed is shown once read; a failed read keeps what is shown.
-    await states.read(url, { maxAge: 0, level: "details" }).catch(() => {});
+    await states
+      .read(url, { maxAge: 0, level: "details", interactive: true })
+      .catch(() => {});
   }, [states, url]);
   const loaded: GitHubObject | string | undefined = held ?? error;
   return { loaded, load };

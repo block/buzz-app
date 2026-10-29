@@ -62,6 +62,19 @@ export type SoloTaskMode = Readonly<{
     }>,
     signal: AbortSignal,
   ): Promise<void>;
+  /** Cache-only recognition of owner information backed by this bound source.
+   * Host still checks verified authorship and task membership, and refuses
+   * recipients, task tokens and first-event binding for recognized notices.
+   * Missing/false keeps ordinary task policy. This never grants authority. */
+  isInformational?(
+    channelId: string,
+    event: Readonly<{
+      id: string;
+      pubkey: string;
+      content: string;
+      tags: readonly (readonly string[])[];
+    }>,
+  ): boolean;
   participants: ParticipantPolicy;
   header?: ComponentType<
     (

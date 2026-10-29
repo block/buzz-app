@@ -6,7 +6,11 @@ import { soloNavigationFor } from "../channel-navigation/solo-navigation";
 import { regionLabels, TASK_MODE_LABEL } from "./region-labels";
 export { TASK_MODE_LABEL } from "./region-labels";
 import type { ChannelSummary } from "../relay/contracts";
-import type { EventData, RelayEvent } from "../relay/events";
+import {
+  hasEventProof,
+  type EventData,
+  type RelayEvent,
+} from "../relay/events";
 import type { OutboxRecovery } from "../relay/outbox";
 import type { RelaySession } from "../relay/session";
 import { readTaskTokens } from "../messages/task-tokens";
@@ -148,6 +152,7 @@ export function resolveTaskRecipients(
 export function validateTaskPublication(
   session: TaskSession,
   event: EventData,
+  allowInformational = true,
 ) {
   if (event.kind !== 9 && event.kind !== 9000) return;
   const channelId = event.tags.find(([key]) => key === "h")?.[1];
@@ -162,7 +167,22 @@ export function validateTaskPublication(
   const recipients = event.tags
     .filter(([key]) => key === "p")
     .map((tag) => tag[1] ?? "");
-  const context = validateTaskRecipients(session, channelId, recipients);
+  const context = validateTaskMembers(session, channelId);
+  const destinations = event.tags.filter(([name]) => name === "h");
+  if (
+    hasEventProof(event) &&
+    event.pubkey === session.viewer &&
+    destinations.length === 1 &&
+    destinations[0]?.length === 2 &&
+    context?.mode.isInformational?.(channelId, event) === true
+  ) {
+    if (!allowInformational || recipients.length || tokens.length)
+      throw new Error(
+        "Informational task notices cannot address agents, carry task tokens or start a task.",
+      );
+    return context;
+  }
+  validateTaskRecipients(session, channelId, recipients);
   if (tokens.length && !context)
     throw new Error("Task tokens require a task chat.");
   if (
@@ -223,9 +243,10 @@ export async function recordTaskFirstEvent(
   recovery: OutboxRecovery | undefined,
   signal: AbortSignal,
 ) {
-  const context = validateTaskPublication(session, event);
+  const allowInformational = !recovery?.key.startsWith("solo-task:");
+  const context = validateTaskPublication(session, event, allowInformational);
   const revalidate = () => {
-    validateTaskPublication(session, event);
+    validateTaskPublication(session, event, allowInformational);
   };
   if (!recovery?.key.startsWith("solo-task:")) return revalidate;
   const input = readTaskFirstEventRecovery(event, recovery);
@@ -250,7 +271,7 @@ export async function recordTaskFirstEvent(
     }
   }
   bound.throwIfAborted();
-  validateTaskPublication(session, event);
+  validateTaskPublication(session, event, allowInformational);
   await context.mode.recordFirstEvent(
     {
       draftId: input.draftId,
@@ -263,6 +284,6 @@ export async function recordTaskFirstEvent(
     bound,
   );
   bound.throwIfAborted();
-  validateTaskPublication(session, event);
+  validateTaskPublication(session, event, allowInformational);
   return revalidate;
 }

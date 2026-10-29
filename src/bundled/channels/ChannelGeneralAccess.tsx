@@ -8,6 +8,8 @@ import {
 } from "react";
 import type { ChannelDetailsCapability } from "../../features/relay/channel-details";
 import type { ChannelSummary } from "../../features/relay/contracts";
+import type { RelayRecovery } from "../../features/relay/recovery";
+import { useReauthorizedRetry } from "../../features/relay/RecoveryNotice";
 import type {
   ChannelDetails,
   ChannelDetailsDraft,
@@ -54,12 +56,14 @@ export function ChannelGeneralAccess({
   communityReader,
   communityScope,
   capability,
+  recovery,
   channelId,
   channel,
 }: {
   communityReader?: CommunityReader | undefined;
   communityScope?: string | undefined;
   capability: ChannelDetailsCapability;
+  recovery?: RelayRecovery | undefined;
   channelId: string;
   channel?: ChannelSummary;
 }) {
@@ -125,6 +129,7 @@ export function ChannelGeneralAccess({
   return (
     <ChannelGeneralAccessEditor
       capability={capability}
+      recovery={recovery}
       channelId={channelId}
       communityAvatar={communityAvatar}
     />
@@ -133,10 +138,12 @@ export function ChannelGeneralAccess({
 
 function ChannelGeneralAccessEditor({
   capability,
+  recovery,
   channelId,
   communityAvatar,
 }: {
   capability: ChannelDetailsCapability;
+  recovery: RelayRecovery | undefined;
   channelId: string;
   communityAvatar: (size: "compact" | "default") => ReactNode;
 }) {
@@ -153,8 +160,13 @@ function ChannelGeneralAccessEditor({
   const origin = useRef<HTMLElement | null>(null);
   const section = useRef<HTMLElement>(null);
   const cancel = useRef<HTMLButtonElement>(null);
+  const reauthorized = useReauthorizedRetry(recovery, () => {
+    const signal = lifetime.current?.signal;
+    if (signal && !signal.aborted) void load(signal);
+  });
   const load = useCallback(
     async (signal: AbortSignal) => {
+      const failed = reauthorized.begin();
       setLoading(true);
       setError("");
       try {
@@ -164,12 +176,13 @@ function ChannelGeneralAccessEditor({
         if (!signal.aborted) {
           setBase(undefined);
           setError(reason instanceof Error ? reason.message : String(reason));
+          failed(reason);
         }
       } finally {
         if (!signal.aborted) setLoading(false);
       }
     },
-    [capability, channelId],
+    [capability, channelId, reauthorized],
   );
   useEffect(() => {
     const controller = new AbortController();

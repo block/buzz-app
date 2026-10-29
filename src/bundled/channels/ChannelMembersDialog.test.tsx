@@ -2453,6 +2453,94 @@ it("does not offer Solo agent additions when the existing admission API is unava
   expect(t.publish).not.toHaveBeenCalled();
 });
 
+it.each([false, true])(
+  "reads roster and general access after sign-in without replaying writes (sign-in before access refusal: %s)",
+  async (signInBeforeRefusal) => {
+    const t = await setup("stream", true);
+    t.fail("Invitation denied");
+    await t.user.click(await t.search());
+    await screen.findByText(/Invitation denied/);
+    const publishes = t.publish.mock.calls.length;
+    const query = t.query.getMockImplementation();
+    if (!query) throw new Error("Missing query fixture");
+    t.query.mockImplementation(async (filters, ...rest) => {
+      if (filters.some((filter) => filter.kinds?.includes(39002)))
+        throw new Error("Federated sign-in is required");
+      return query(filters, ...rest);
+    });
+    const id = "11111111-1111-4111-8111-111111111111";
+    const details = {
+      channelId: id,
+      version: "v1",
+      name: "Design",
+      description: "",
+      visibility: "private" as const,
+      joinRole: "guest" as const,
+      canEdit: true,
+    };
+    let refuse!: (reason: Error) => void;
+    const initial = new Promise<typeof details>((_, reject) => {
+      refuse = reject;
+    });
+    const load = vi
+      .fn(async () => details)
+      .mockImplementationOnce(() => initial);
+    const save = vi.fn(async () => {});
+    const check = vi.fn(async () => {});
+    cleanup();
+    try {
+      render(
+        <ToastProvider>
+          <ChannelMembersButton
+            session={{
+              ...t.session,
+              channelDetails: {
+                available: true,
+                load,
+                save,
+                check,
+                snapshot: () => undefined,
+                subscribe: () => () => {},
+              },
+            }}
+            channelId={id}
+          />
+        </ToastProvider>,
+      );
+      await t.user.click(screen.getByRole("button", { name: "Access" }));
+      await screen.findByText(/The member list could not load/);
+      await vi.waitFor(() => expect(load).toHaveBeenCalledTimes(1));
+      const control = screen.getByRole("combobox", { name: "Who can read" });
+      expect(control).toBeDisabled();
+      t.query.mockImplementation(query);
+      if (signInBeforeRefusal) act(() => t.session.recovery?.retryAll());
+      act(() => refuse(new Error("Federated sign-in is required")));
+      if (!signInBeforeRefusal) {
+        await screen.findByText("Federated sign-in is required");
+        act(() => t.session.recovery?.retryAll());
+      }
+      await vi.waitFor(() => expect(control).toBeEnabled());
+      expect(control).toHaveTextContent("Private");
+      expect(load).toHaveBeenCalledTimes(2);
+      await vi.waitFor(() =>
+        expect(
+          screen.queryByText(/The member list could not load/),
+        ).not.toBeInTheDocument(),
+      );
+      expect(
+        within(
+          screen.getByRole("region", { name: "General access" }),
+        ).queryByRole("alert"),
+      ).not.toBeInTheDocument();
+      expect(t.publish.mock.calls.length).toBe(publishes);
+      expect(save).not.toHaveBeenCalled();
+      expect(check).not.toHaveBeenCalled();
+    } finally {
+      refuse(new Error("Fixture released"));
+    }
+  },
+);
+
 it.each(["public", "private"] as const)(
   "shows personal contribution roles and %s General access in the members dialog",
   async (visibility) => {

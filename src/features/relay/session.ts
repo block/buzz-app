@@ -113,6 +113,7 @@ import { createRelayProfiler } from "./profiling";
 import { liveRecoveryStatus } from "./live-recovery";
 import {
   createRecovery,
+  loadState,
   type RecoverySource,
   type RecoveryStatus,
 } from "./recovery";
@@ -1916,19 +1917,14 @@ export function createRelaySession(
     subscribe: (listener: () => void) => () => void,
     status: () => RecoveryStatus,
     retry: () => void,
-  ): RecoverySource => Object.freeze({ subscribe, status, retry });
-  // Only failures a retry can fix enter recovery. A denial or a deterministic
-  // failure stays visible on its own surface; see isTransientFailure.
-  const loadState = (
-    state: Readonly<{ status: string; transient?: true | undefined }>,
-  ): RecoveryStatus =>
-    state.status === "error"
-      ? state.transient
-        ? "failed"
-        : "settled"
-      : state.status === "loading"
-        ? "busy"
-        : "settled";
+    reauthorize?: () => void,
+  ): RecoverySource =>
+    Object.freeze({
+      subscribe,
+      status,
+      retry,
+      ...(reauthorize ? { reauthorize } : {}),
+    });
   // Background reads only. A failed read always retries; see recovery.ts.
   // The live source also owns the channel roster and suspended public
   // previews (live.retry retries both).
@@ -1944,6 +1940,8 @@ export function createRelaySession(
           channelKit.capability.subscribe,
           () => loadState(channelKit.capability.snapshot()),
           () => void channelKit.capability.refresh(),
+          // A ready catalog may be revalidating under the old credentials.
+          () => void channelKit.capability.refresh({ after: true }),
         ),
         recoverable(
           soloPreferences.queries.subscribe,

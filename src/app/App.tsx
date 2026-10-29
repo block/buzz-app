@@ -291,6 +291,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
     return (
       <CommunityLanding
         communities={services.communities}
+        federatedIdentity={services.federatedIdentity}
         invite={invite?.viewer === client.viewer ? invite : undefined}
         onInviteClose={services.invites.clear}
         settingsCards={services.settingsCards}
@@ -416,6 +417,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
                 </div>
               ) : (
                 <PrimarySidebar
+                  federatedIdentity={services.federatedIdentity}
                   relay={services.relay}
                   navigator={services.navigation}
                   agents={services.agents}
@@ -435,6 +437,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
             // A scoped Settings target selects its community on the way.
             onOpenTarget={(target) => void services.navigation.open(target)}
             communities={services.communities}
+            federatedIdentity={services.federatedIdentity}
             invite={invite?.viewer === client.viewer ? invite : undefined}
             onInviteClose={services.invites.clear}
             settingsCards={services.settingsCards}
@@ -553,6 +556,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
                     adminAccess={services.adminAccess}
                     communities={services.communities}
                     identity={services.identity}
+                    federatedIdentity={services.federatedIdentity}
                     appearance={services.appearance}
                     shortcuts={services.shortcuts}
                     shortcutBindings={services.shortcutBindings}

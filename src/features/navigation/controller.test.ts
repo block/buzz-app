@@ -455,3 +455,58 @@ it("continues Discard to the preceding eligible visit if its destination was dis
   expect(original.signal.aborted).toBe(true);
   expect(guard).toHaveBeenCalledTimes(1);
 });
+
+describe("reopening a visit refused for missing sign-in", () => {
+  function signIn() {
+    let reopen: (() => void) | undefined;
+    const cancel = vi.fn();
+    const reauthorize = vi.fn((next: () => void) => {
+      reopen = next;
+      return cancel;
+    });
+    return { reauthorize, cancel, signedIn: () => reopen?.() };
+  }
+  it("reopens the failed visit once after sign-in", async () => {
+    const { host, navigation: nav } = setup();
+    const opened = nav.open(page);
+    const failed = nav.snapshot().attempt;
+    const auth = signIn();
+    host.complete(failed, {
+      status: "failed",
+      reason: "unavailable",
+      reauthorize: auth.reauthorize,
+    });
+    await opened;
+    expect(auth.reauthorize).toHaveBeenCalledOnce();
+    const entry = nav.snapshot().entry;
+    auth.signedIn();
+    expect(nav.snapshot().entry).toBe(entry);
+    expect(nav.snapshot().attempt).not.toBe(failed);
+    expect(nav.snapshot().entry.target).toEqual(page);
+  });
+  it("does not reopen a failure that was not a sign-in refusal", async () => {
+    const { host, navigation: nav } = setup();
+    const opened = nav.open(page);
+    const failed = nav.snapshot().attempt;
+    host.complete(failed, { status: "failed", reason: "unavailable" });
+    await opened;
+    expect(nav.snapshot().attempt).toBe(failed);
+  });
+  it("cancels the reopen when the user navigates elsewhere before sign-in", async () => {
+    const { host, navigation: nav } = setup();
+    const opened = nav.open(page);
+    const auth = signIn();
+    host.complete(nav.snapshot().attempt, {
+      status: "failed",
+      reason: "unavailable",
+      reauthorize: auth.reauthorize,
+    });
+    await opened;
+    void nav.open(settings);
+    expect(auth.cancel).toHaveBeenCalledOnce();
+    const elsewhere = nav.snapshot().attempt;
+    auth.signedIn();
+    expect(nav.snapshot().attempt).toBe(elsewhere);
+    expect(nav.snapshot().entry.target).toEqual(settings);
+  });
+});

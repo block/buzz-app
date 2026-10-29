@@ -103,7 +103,10 @@ function serialize(
       ? code
       : fence(node.getAttribute("data-copy-language") ?? "", code);
   }
-  const inner = children(node, format, range);
+  // Element children that copy as something, so a list can tell which items
+  // it keeps without serializing them again.
+  const kept: Element[] = [];
+  const inner = children(node, format, range, kept);
   // A triple-click ends its range at the next block's start, often past an
   // empty reaction row, and a drag can start at a block's end. An empty layout
   // container, or a block holding none of the selection, copies as nothing,
@@ -179,15 +182,8 @@ function serialize(
     const start =
       tag === "OL"
         ? Number.parseInt(node.getAttribute("start") ?? "1", 10) +
-          (range
-            ? Math.max(
-                0,
-                // The first item the copy keeps, not one it only touches.
-                [...node.children].findIndex((item) =>
-                  serialize(item, format, range, true),
-                ),
-              )
-            : 0)
+          // The first item the copy keeps, not one it only touches.
+          (range && kept[0] ? [...node.children].indexOf(kept[0]) : 0)
         : 1;
     return `<${tag.toLowerCase()}${tag === "OL" && Number.isFinite(start) && start !== 1 ? ` start="${start}"` : ""}>${inner}</${tag.toLowerCase()}>`;
   }
@@ -400,7 +396,12 @@ function within(element: Element, range: Range): Range {
 
 // Preserve explicit breaks, blocks, and the tab/newline boundaries browsers use
 // for table cells and rows. HTML output wraps leaf blocks instead.
-function children(node: Node, format: CopyFormat, range?: Range): string {
+function children(
+  node: Node,
+  format: CopyFormat,
+  range?: Range,
+  kept?: Element[],
+): string {
   let text = "";
   let previous: Node | undefined;
   for (const child of node.childNodes) {
@@ -411,6 +412,7 @@ function children(node: Node, format: CopyFormat, range?: Range): string {
       range,
       /^(UL|OL)$/.test(node.nodeName),
     );
+    if (value && child instanceof Element) kept?.push(child);
     const separator =
       previous && format !== "html" ? siblingSeparator(previous, child) : "";
     if (separator === "\n\n" && text && value) {

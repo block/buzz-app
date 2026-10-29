@@ -663,6 +663,23 @@ describe("serializeNode", () => {
     expect(serializeNode(message, "markdown", range)).toBe("4. \n5. three");
   });
 
+  it("serializes each element of deeply nested ordered lists once", () => {
+    // The shape `"1. ".repeat(16) + "x"` renders: numbering an ordered list
+    // must not serialize its items again at every level.
+    const nested = `${"<ol><li>".repeat(16)}x${"</li></ol>".repeat(16)}`;
+    const message = query("[data-message-id]", mount(row(nested)));
+    const { range } = select(lastText(message), 0, lastText(message), 1);
+    const styles = vi.spyOn(window, "getComputedStyle");
+    try {
+      expect(serializeNode(message, "html", range)).toBe(nested);
+      expect(styles).toHaveBeenCalledTimes(
+        message.querySelectorAll("*").length + 1,
+      );
+    } finally {
+      styles.mockRestore();
+    }
+  });
+
   it("degrades unknown elements to text and escapes HTML", () => {
     const paragraph = query(
       "p",

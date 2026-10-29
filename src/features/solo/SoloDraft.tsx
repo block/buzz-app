@@ -41,6 +41,8 @@ import {
 } from "../messages/attachment-draft";
 import type { ConversationExtensions } from "../conversation/contracts";
 import styles from "./Solo.module.css";
+import { TaskSoloDraft } from "./TaskSoloDraft";
+import type { SoloDraft as DraftRoute } from "../channel-navigation/routes";
 
 /** Starting a new chat from a project starts it in that project, even when an
  * earlier draft there was switched to another one. */
@@ -84,7 +86,29 @@ function dropOtherAgentTag(scope: string, key: string, agent?: string) {
     writeView(scope, key, null);
 }
 
-export function SoloDraft({
+export function SoloDraft(props: SoloDraftProps) {
+  return props.task ? (
+    <TaskSoloDraft {...props} route={props.task} />
+  ) : (
+    <PersonalSoloDraft {...props} />
+  );
+}
+
+type SoloDraftProps = {
+  task?: DraftRoute["task"] | undefined;
+  linkedId?: string | undefined;
+  source?: LinkedChat | undefined;
+  agent?: string | undefined;
+  focusRequest?: number | AbortSignal;
+  extensions?: ConversationExtensions | undefined;
+  session: RelaySession;
+  scope: string;
+  onStarted: (id: string) => void;
+  onFailed?: ((id: string, message: string) => void) | undefined;
+  projectId?: string | undefined;
+};
+
+function PersonalSoloDraft({
   session,
   scope,
   onStarted,

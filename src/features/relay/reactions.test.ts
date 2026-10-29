@@ -154,6 +154,9 @@ it("removal validates every loaded author and conversation before queuing one de
   const messages = createMessages(
     {
       ready: async () => {},
+      whenPrepared: async () => {
+        throw new Error("No active preparation in this fixture");
+      },
       recover: async () => {},
       acknowledge: async () => {},
       supports: () => true,
@@ -198,6 +201,9 @@ it("requires matching viewer and agent identities to remove agent messages", () 
   const messages = createMessages(
     {
       ready: async () => {},
+      whenPrepared: async () => {
+        throw new Error("No active preparation in this fixture");
+      },
       recover: async () => {},
       acknowledge: async () => {},
       supports: () => true,
@@ -271,6 +277,9 @@ it("authorizes removal against the relay-attributed agent author, not the relay 
   const messages = createMessages(
     {
       ready: async () => {},
+      whenPrepared: async () => {
+        throw new Error("No active preparation in this fixture");
+      },
       recover: async () => {},
       acknowledge: async () => {},
       supports: () => true,

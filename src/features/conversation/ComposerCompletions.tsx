@@ -1,6 +1,7 @@
 import {
   readComposerSnapshot,
   composerMarkdownContext,
+  projectComposerDocument,
 } from "../messages/composer-document";
 import type { ComposerSnapshot } from "../messages/mention-draft";
 import { scanMarkdown } from "../relay/message-content";
@@ -105,11 +106,23 @@ export function ComposerCompletions({
     registry.snapshot,
   );
   const observation = editor.observation;
+  context = { ...context, composerSignal: editor.composerSignal };
+  const document = readComposerSnapshot(resolved.document);
+  if (context.draft && observation)
+    context = {
+      ...context,
+      draft: { ...context.draft, revision: observation.revision },
+    };
   // Stale chip ranges cannot classify this caret.
   const match =
     observation &&
     resolved.text === observation.text &&
-    matchCompletion(providers, observation, context, resolved.recipients);
+    matchCompletion(providers, observation, context, [
+      ...resolved.recipients,
+      ...(document
+        ? (projectComposerDocument(document).draft.tokens ?? [])
+        : []),
+    ]);
   if (!match || !observation) return null;
   if (
     match.provider.pluginId === "buzz.channels" &&
@@ -124,6 +137,7 @@ export function ComposerCompletions({
         match.query.start,
         match.query.end,
         match.query.query,
+        context.recipients,
       ])}
       fallback={
         <span role="status">

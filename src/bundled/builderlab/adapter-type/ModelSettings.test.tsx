@@ -78,7 +78,13 @@ async function fixture(selection: Partial<RemoteAgent> = {}) {
     return { status: 200, headers: {}, body: JSON.stringify(result) };
   });
   const client = createAgentClient(
-    { request, runCommand: vi.fn() },
+    {
+      request,
+      repositoriesFolder: async () => {
+        throw new Error("Repositories folder is unavailable in this fixture");
+      },
+      runCommand: vi.fn(),
+    },
     session,
     null,
   );

@@ -948,12 +948,16 @@ it("refuses chosen-name label overflow before signing and retains the existing l
 });
 
 it.each([false, true])(
-  "keeps region labels during label replacement, including rename=%s",
+  "keeps region and task-mode labels during label replacement, including rename=%s",
   async (rename) => {
     const h = harness("owner", true);
     const region = "buzz.region:example:work";
     h.set([
-      h.metadata("Original", "", "private", "stream", [SOLO_LABEL, region]),
+      h.metadata("Original", "", "private", "stream", [
+        SOLO_LABEL,
+        region,
+        "solo-task-mode:v1",
+      ]),
       ...h.events().slice(1),
     ]);
     const base = await h.owner.capability.load(id);
@@ -962,6 +966,7 @@ it.each([false, true])(
       SOLO_LABEL,
       "new-label",
       region,
+      "solo-task-mode:v1",
       ...(rename ? [SOLO_NAMED_LABEL] : []),
     ];
     h.publish.mockImplementationOnce(async () =>

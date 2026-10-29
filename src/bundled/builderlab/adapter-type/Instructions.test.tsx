@@ -82,7 +82,16 @@ function fixture() {
         }
       : response(),
   );
-  const client = createAgentClient({ request, runCommand: vi.fn() }, session);
+  const client = createAgentClient(
+    {
+      request,
+      repositoriesFolder: async () => {
+        throw new Error("Repositories folder is unavailable in this fixture");
+      },
+      runCommand: vi.fn(),
+    },
+    session,
+  );
   const type = {
     ...builderlabType(client, session, {
       snapshot: () => ({ status: "disconnected", generation: 0 }),

@@ -9,6 +9,8 @@ import { messageAuthor } from "./fold";
 import { threadReference } from "./thread-reference";
 import type { EventData } from "./events";
 import type { Outbox, OutboxRecovery } from "./outbox";
+import type { ComposerToken } from "../conversation/contracts";
+import { taskTokenTags } from "../messages/task-tokens";
 
 /** Owner authorization is supplied only after the agent's signed profile is verified. */
 export type AgentOwnerAuthorization = Readonly<{
@@ -258,6 +260,7 @@ export function createMessages(
       recovery?: OutboxRecovery,
       references: readonly string[] = [],
       picks: MentionPicks = {},
+      tokens: readonly ComposerToken[] = [],
     ) {
       if (!channelId) throw new Error("A channel is required");
       const message = attachmentMessage(content, attachments, relayOrigin);
@@ -272,6 +275,7 @@ export function createMessages(
             ...pickTags(channelId, mentions, picks),
             ...emojiTags(content),
             ...message.tags,
+            ...taskTokenTags(tokens),
           ],
         },
         ...(recovery ? [recovery] : []),
@@ -369,6 +373,7 @@ export function createMessages(
       parentId: string = rootId,
       references: readonly string[] = [],
       picks: MentionPicks = {},
+      tokens: readonly ComposerToken[] = [],
     ) {
       if (!channelId) throw new Error("A channel is required");
       if (!/^[0-9a-f]{64}$/.test(rootId))
@@ -386,6 +391,7 @@ export function createMessages(
           ...mentionTags(channelId, mentions),
           ...referenceTags(references),
           ...pickTags(channelId, mentions, picks),
+          ...taskTokenTags(tokens),
           ...emojiTags(content),
           ...message.tags,
         ],

@@ -17,6 +17,9 @@ type Entry = {
   publish(recovery?: OutboxRecovery): string;
   message?: FollowUpMessage;
   restored?: boolean;
+  resumeCancelled?: boolean;
+  sending?: boolean;
+  ready?(): boolean;
   beforeRelease?(): Promise<void>;
   beforePublish?(): void;
   onSend?(id: string): void;
@@ -42,11 +45,17 @@ function createQueue(session: RelaySession) {
       : undefined;
   let storageError: string | undefined;
   let sequence = Date.now();
+  const waits = new Map<string, Wait[]>();
   function restore() {
     if (!storage) return;
     try {
       const saved = storage.load();
       sequence = Math.max(sequence, ...saved.map((entry) => entry.createdAt));
+      const removedChannels = new Set(
+        entries
+          .filter((entry) => !saved.some((row) => row.id === entry.id))
+          .map((entry) => entry.channelId),
+      );
       entries = saved.map(
         (saved) =>
           entries.find((entry) => entry.id === saved.id) ?? {
@@ -56,13 +65,21 @@ function createQueue(session: RelaySession) {
             ...followUpMessage(session, saved),
           },
       );
+      for (const entry of entries) {
+        if (removedChannels.has(entry.channelId)) {
+          entry.restored = true;
+          entry.resumeCancelled = true;
+        }
+        if (!entry.error)
+          entry.sending =
+            saved.find((row) => row.id === entry.id)?.sending === true;
+      }
       storageError = undefined;
     } catch (error) {
       storageError = error instanceof Error ? error.message : String(error);
     }
   }
   restore();
-  const waits = new Map<string, Wait[]>();
   // A resumed request supersedes its old observer turn, which may never emit
   // completion after the old process died. Only fresh local work settles it.
   const resumedRequests = new Set<string>();
@@ -289,7 +306,7 @@ function createQueue(session: RelaySession) {
     try {
       if (storage && entry.message) {
         if (!storage.has(entry.id)) {
-          entries = entries.filter((item) => item !== entry);
+          restore();
           return;
         }
         if (!session.outbox)
@@ -319,9 +336,13 @@ function createQueue(session: RelaySession) {
       if (!entries.includes(entry)) return;
       if (!requested.has(entry.id) && blockers(entry.channelId)) return;
       if (storage && entry.message && !storage.has(entry.id)) return;
+      if (entry.ready?.() === false) return;
       entry.beforePublish?.();
       requested.get(entry.id)?.();
       if (storage && entry.message) storage.sending(entry.id, true);
+      entry.sending = true;
+      entries = [...entries];
+      emit();
       try {
         id = sent(
           entry,
@@ -343,6 +364,7 @@ function createQueue(session: RelaySession) {
         item === entry
           ? {
               ...item,
+              sending: false,
               error: error instanceof Error ? error.message : String(error),
             }
           : item,
@@ -371,7 +393,8 @@ function createQueue(session: RelaySession) {
         continue;
       if (blockers(channelId)) continue;
       const first = entries.find((entry) => entry.channelId === channelId);
-      if (first && !first.error && !first.restored) void release(first);
+      if (first && !first.error && !first.restored && first.ready?.() !== false)
+        void release(first);
     }
     if (
       !entries.length &&
@@ -388,9 +411,18 @@ function createQueue(session: RelaySession) {
       dispose?.();
     }
   }
-  function remove(id: string) {
+  function remove(id: string, locked = false) {
     const entry = entries.find((item) => item.id === id);
     try {
+      if (entry?.sending && publishing.has(id)) return;
+      if (entry?.message && storage?.isSending(id) && !locked) {
+        void storage.tryLock(id, () => {
+          remove(id, true);
+          reconcileDelivery();
+          pump();
+        });
+        return;
+      }
       if (entry?.message) storage?.remove(id);
       requested.delete(id);
       entries = entries.filter((item) => item.id !== id);
@@ -399,6 +431,7 @@ function createQueue(session: RelaySession) {
         item.id === id
           ? {
               ...item,
+              sending: false,
               error: error instanceof Error ? error.message : String(error),
             }
           : item,
@@ -408,6 +441,17 @@ function createQueue(session: RelaySession) {
   }
   const onStorage = () => {
     restore();
+    for (const entry of entries) {
+      if (entry.sending && storage)
+        void storage
+          .tryLock(entry.id, () => {
+            if (!entries.includes(entry) || publishing.has(entry.id)) return;
+            entry.sending = false;
+            entries = [...entries];
+            emit();
+          })
+          .catch(() => {});
+    }
     if (entries.length) watch();
     emit();
     pump();
@@ -508,7 +552,9 @@ function createQueue(session: RelaySession) {
         ]);
       }
       entries = entries.map((entry) =>
-        entry.restored && channels.has(entry.channelId)
+        entry.restored &&
+        !entry.resumeCancelled &&
+        channels.has(entry.channelId)
           ? {
               ...entry,
               restored: false,
@@ -520,6 +566,30 @@ function createQueue(session: RelaySession) {
       emit();
       // Other agents in the same Resume decision seed their barriers first.
       queueMicrotask(pump);
+    },
+    /** A request positively abandoned by the runner is not completion evidence. */
+    pauseAfter(agent: string, turns: Readonly<Record<string, string>>) {
+      const channels = new Set(Object.values(turns));
+      for (const [channelId, current] of waits) {
+        const remaining = current.filter(
+          (wait) =>
+            !(
+              wait.resumed &&
+              wait.agent === agent &&
+              wait.message &&
+              wait.message in turns
+            ),
+        );
+        if (remaining.length) waits.set(channelId, remaining);
+        else waits.delete(channelId);
+      }
+      entries = entries.map((entry) =>
+        channels.has(entry.channelId)
+          ? { ...entry, restored: true, resumeCancelled: true }
+          : entry,
+      );
+      emit();
+      pump();
     },
     sendNow(id: string, beforePublish?: () => void) {
       const entry = entries.find((item) => item.id === id);

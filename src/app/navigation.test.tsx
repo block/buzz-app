@@ -18,11 +18,16 @@ import { App } from "./App";
 import { createServices, type AppServices } from "./services";
 
 const activation = vi.hoisted(() => {
-  let release = () => {};
-  const held = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  return { held, release: () => release() };
+  const gate = {
+    held: Promise.resolve(),
+    release: () => {},
+    reset() {
+      gate.held = new Promise<void>((resolve) => {
+        gate.release = resolve;
+      });
+    },
+  };
+  return gate;
 });
 vi.mock("../bundled", async () => ({
   bundledPlugins: [
@@ -33,7 +38,7 @@ vi.mock("../bundled", async () => ({
     {
       manifest: { id: "test.gated", name: "Gated", apiVersion: 1 },
       module: {
-        inject: ["settingsCards"],
+        inject: ["settingsCards", "agents"],
         async apply(ctx: Context) {
           await activation.held;
           ctx.settingsCards.register({
@@ -41,6 +46,18 @@ vi.mock("../bundled", async () => ({
             title: "Gated card",
             group: "Communities",
             component: () => <p>Gated card body</p>,
+          });
+          const state = { readiness: "ready" as const };
+          ctx.agents.register({
+            id: "provider",
+            title: "Gated provider",
+            defaults: () => ({ config: {} }),
+            provider: {
+              snapshot: () => state,
+              subscribe: () => () => {},
+              check() {},
+              DialogBody: () => <p>Gated provider controls</p>,
+            },
           });
         },
       },
@@ -53,6 +70,7 @@ vi.mock("../bundled", async () => ({
 }));
 // jsdom has no media queries; responsive geometry is covered in browser tests.
 beforeEach(() => {
+  activation.reset();
   vi.stubGlobal("matchMedia", (media: string) => ({
     media,
     matches: false,
@@ -105,6 +123,92 @@ it("waits for a starting plugin before opening its addressed Settings card", asy
   }
   expect(await screen.findByText("Gated card body")).toBeVisible();
   expect(current.navigation.snapshot().status).toBe("opened");
+});
+
+it("waits for a cold Settings provider address until its plugin registers", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+  const target = {
+    version: 1,
+    kind: "settings",
+    section: "agents",
+    provider: "test.gated/provider",
+  };
+  window.history.replaceState(
+    null,
+    "",
+    `/#buzz=${encodeURIComponent(JSON.stringify(target))}`,
+  );
+  const current = createServices();
+  services = current;
+  render(<App services={current} />);
+  try {
+    await waitFor(() =>
+      expect(current.plugins.snapshot().activation["test.gated"]?.status).toBe(
+        "starting",
+      ),
+    );
+    expect(current.navigation.snapshot().status).toBe("opening");
+    expect(screen.queryByText("This destination couldn’t open")).toBeNull();
+  } finally {
+    await act(async () => activation.release());
+  }
+  expect(
+    await screen.findByRole("dialog", { name: "Gated provider" }),
+  ).toBeVisible();
+  await waitFor(() =>
+    expect(current.navigation.snapshot().status).toBe("opened"),
+  );
+  await act(async () => {
+    await current.plugins.change("disable", "test.gated");
+  });
+  expect(
+    await screen.findByText("This destination couldn’t open"),
+  ).toBeVisible();
+});
+
+it("reports a settled plugin's absent Settings provider as unavailable", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+  activation.release();
+  const target = {
+    version: 1,
+    kind: "settings",
+    section: "agents",
+    provider: "test.gated/missing",
+  };
+  window.history.replaceState(
+    null,
+    "",
+    `/#buzz=${encodeURIComponent(JSON.stringify(target))}`,
+  );
+  const current = createServices();
+  services = current;
+  render(<App services={current} />);
+  await waitFor(() =>
+    expect(current.plugins.snapshot().activation["test.gated"]?.status).toBe(
+      "active",
+    ),
+  );
+  expect(
+    await screen.findByText("This destination couldn’t open"),
+  ).toBeVisible();
+  expect(current.navigation.snapshot()).toMatchObject({
+    status: "failed",
+    reason: "unavailable",
+  });
 });
 
 it("opens Pair mobile in Personal space with no saved communities", async () => {
@@ -464,6 +568,9 @@ it("keeps the confirmed departure mounted through removal, then opens Personal P
   );
   expect(screen.queryByRole("alertdialog")).toBeNull();
   expect(screen.queryByText("This destination couldn’t open")).toBeNull();
+  await waitFor(() =>
+    expect(document.getElementById("settings-content")).toHaveFocus(),
+  );
   // The presentation lease never makes a removed community navigable again.
   await act(async () => {
     void current.navigation.open(target);

@@ -82,6 +82,9 @@ export type ThreadPanelProps = {
   navigation?: PageNavigation | undefined;
   /** Omit to embed the thread: no header or Escape dismissal; the owner supplies both. */
   close?: (() => void) | undefined;
+  /** The conversation this thread lives in, named as Inbox rows name it, when
+   * the host can show the thread there. */
+  parent?: { label: string; open(): void } | undefined;
   onOpenLink(url: string, origin?: MessageLinkOrigin): boolean;
   onOpenMediaReview?(
     messageId: string,
@@ -132,6 +135,14 @@ export function ThreadPanel(props: ThreadPanelProps) {
           close={close}
           actions={props.headerActions}
         />
+      )}
+      {props.parent && (
+        <p className={styles.threadParent}>
+          In{" "}
+          <Button variant="link" size="inline" onClick={props.parent.open}>
+            {props.parent.label}
+          </Button>
+        </p>
       )}
       {props.retainThread ? (
         <RetainedThreadPanel key={viewKey} {...props} />
@@ -584,6 +595,15 @@ function ThreadMessages({
       snapshot.root ? [snapshot.root, ...snapshot.replies] : snapshot.replies,
     [snapshot.root, snapshot.replies],
   );
+  // Remembered agents follow the viewer's latest message here, not the root.
+  // Undefined until the first page lands: the seeded root is not yet the thread.
+  const threadSeed = useMemo(
+    () =>
+      snapshot.status === "ready"
+        ? rows.filter((row) => row.authorId === session.viewer).at(-1)
+        : undefined,
+    [snapshot.status, rows, session.viewer],
+  );
   const authors = [...new Set(rows.flatMap(rowProfileIds))].sort().join(":");
   useEffect(() => {
     if (authors)
@@ -720,7 +740,12 @@ function ThreadMessages({
   const prepareTarget = useCallback(() => {
     follow.current = false;
   }, []);
-  const revealedAncestors = useRef(new Set<string>());
+  // Each request reveals its ancestors once; a branch the reader then
+  // collapses stays closed until the next request.
+  const revealedAncestors = useRef({
+    request: [] as unknown[],
+    ids: new Set<string>(),
+  });
   // A continuation may supply the parent of the visible reply. Commit its new
   // ancestors before restoring geometry; expanded branches stay open.
   useLayoutEffect(() => {
@@ -739,16 +764,23 @@ function ThreadMessages({
   // available ancestor as it arrives; missing parents remain visible at the top.
   useLayoutEffect(() => {
     if (navigation?.signal.aborted) return;
+    const request = [messageId, navigation?.signal, revealRequest];
+    if (
+      request.some(
+        (part, index) => part !== revealedAncestors.current.request[index],
+      )
+    )
+      revealedAncestors.current = { request, ids: new Set() };
     const ancestors = tree
       .ancestors(messageId)
-      .filter((id) => !revealedAncestors.current.has(id));
-    for (const id of ancestors) revealedAncestors.current.add(id);
+      .filter((id) => !revealedAncestors.current.ids.has(id));
+    for (const id of ancestors) revealedAncestors.current.ids.add(id);
     if (ancestors.length)
       setExpanded((current) => {
         if (ancestors.every((id) => current.has(id))) return current;
         return new Set([...current, ...ancestors]);
       });
-  }, [tree, messageId, navigation]);
+  }, [tree, messageId, navigation, revealRequest]);
   const rootTarget =
     navigation?.target.kind === "conversation" &&
     navigation.target.threadRootId === messageId;
@@ -1064,17 +1096,21 @@ function ThreadMessages({
     expanded,
   ]);
   // The effect above re-pins only when thread data changes. A growing composer
-  // shrinks this viewport and late media grows rows; keep a bottom reader there.
+  // shrinks this viewport, late media grows rows and a join error grows the end
+  // spacer's preview lane; keep a bottom reader there.
   useLayoutEffect(() => {
     const element = scroller.current;
     const content = element?.querySelector("[data-thread-rows]");
-    if (!element || !content || typeof ResizeObserver === "undefined") return;
+    const end = element?.querySelector("[data-thread-end]");
+    if (!element || !content || !end || typeof ResizeObserver === "undefined")
+      return;
     const observer = new ResizeObserver(() => {
       if (positioned.current && follow.current && !jumpingToLatest.current)
         element.scrollTop = element.scrollHeight;
     });
     observer.observe(element);
     observer.observe(content);
+    observer.observe(end);
     return () => observer.disconnect();
   }, []);
   // Main's retained presentation can be usable before the initial history walk
@@ -1116,7 +1152,8 @@ function ThreadMessages({
   useLayoutEffect(() => {
     const element = scroller.current;
     const content = element?.querySelector("[data-thread-rows]");
-    if (!active || !initialPositioned || !element || !content) return;
+    const end = element?.querySelector("[data-thread-end]");
+    if (!active || !initialPositioned || !element || !content || !end) return;
     const observer = new ResizeObserver(() => {
       const previous = resizePosition.current;
       if (!previous || !element.clientHeight || jumpingToLatest.current) return;
@@ -1145,6 +1182,7 @@ function ThreadMessages({
     });
     observer.observe(element);
     observer.observe(content);
+    observer.observe(end);
     return () => observer.disconnect();
   }, [active, initialPositioned, captureResizePosition, selectedOffset]);
   const jumpToLatest = () => {
@@ -1280,6 +1318,15 @@ function ThreadMessages({
               follow.current = false;
               targetAnchor.current = undefined;
               setExpanded((current) => new Set([...current, row.id]));
+            }}
+            collapseLabel={`Collapse ${descendants.length} ${descendants.length === 1 ? "reply" : "replies"}`}
+            onCollapse={() => {
+              follow.current = false;
+              targetAnchor.current = undefined;
+              setExpanded(
+                (current) =>
+                  new Set([...current].filter((id) => id !== row.id)),
+              );
             }}
           >
             {expanded.has(row.id) && (
@@ -1540,6 +1587,11 @@ function ThreadMessages({
             </Button>
           </div>
         )}
+        <div
+          className={styles.timelineEnd}
+          data-thread-end=""
+          aria-hidden="true"
+        />
       </section>
       {preview && (
         <ChannelJoinNotice
@@ -1567,6 +1619,7 @@ function ThreadMessages({
           channelName={channelName}
           placeholder={replyPlaceholder(composerRoot)}
           threadRootId={composerRoot.id}
+          threadSeed={threadSeed}
           replyParentId={replyParent}
           disabled={
             disabled ||

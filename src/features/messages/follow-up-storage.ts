@@ -88,6 +88,16 @@ export function followUpStorage(scope: string) {
     remove(id: string) {
       clearView(scope, key(id));
     },
+    async tryLock(id: string, run: () => void) {
+      if (!navigator.locks) return;
+      await navigator.locks.request(
+        `buzz-follow-up:${scope}:${id}`,
+        { ifAvailable: true },
+        (lock) => {
+          if (lock) run();
+        },
+      );
+    },
     async lock<T>(id: string, run: () => Promise<T>) {
       if (!navigator.locks)
         throw new Error(

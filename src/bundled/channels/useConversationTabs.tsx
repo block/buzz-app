@@ -11,7 +11,7 @@ import {
 } from "react";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
-import type { ChannelSummary } from "../../features/relay/contracts";
+import type { ChannelSummary, Profile } from "../../features/relay/contracts";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
 import {
   panelOpening,
@@ -27,6 +27,8 @@ import {
   InfoIcon,
 } from "../../shared/design-system/icons";
 import { parseBuzzLink } from "../../features/navigation/buzz-links";
+import { useIdentityNames } from "../../features/identity-names/react";
+import { dmLabel } from "../inbox/dm-label";
 import { ConversationTab } from "./ConversationTab";
 import { TabSlot, useTabNodes } from "./TabHosts";
 import { createPortal, flushSync } from "react-dom";
@@ -46,6 +48,12 @@ import {
 import styles from "./Channels.module.css";
 import tabStyles from "./ChannelTabs.module.css";
 
+/** The content-tab families whose visits follow explicit dismissal. */
+export const historyPanel = (entry: PanelOpening) =>
+  !entry.channelContext &&
+  (entry.panel.key === "buzz.profiles/profile" ||
+    entry.panel.key === "buzz.github/object");
+
 /** Shared secondary workspace. Pages retain their main reader and route semantics. */
 export function useConversationTabs({
   state: tabState,
@@ -55,6 +63,7 @@ export function useConversationTabs({
   current,
   scope,
   channels,
+  profiles,
   conversationIcon,
   extensions,
   leadingIds,
@@ -76,6 +85,9 @@ export function useConversationTabs({
   onCloseThread,
   onRetryNavigation,
   conversationToolbar,
+  onVisitPanel,
+  onClosePanel,
+  onCloseTabs,
 }: {
   state: ReturnType<typeof useChannelTabState>;
   relay: RelayData;
@@ -84,6 +96,8 @@ export function useConversationTabs({
   current: ChannelSummary | undefined;
   scope: string;
   channels: readonly ChannelSummary[];
+  /** The channels' labelled participants, for DM captions. */
+  profiles: ReadonlyMap<string, Profile>;
   conversationIcon(channel: ChannelSummary): ReactNode;
   /** Header actions for a conversation tab, owned by the page; `open` shows
    * the conversation in its channel. */
@@ -121,10 +135,20 @@ export function useConversationTabs({
     last: boolean,
   ): void;
   onRetryNavigation?(): void;
+  onVisitPanel?(entry: PanelOpening): void;
+  onClosePanel?(entry: PanelOpening, remaining: PanelOpening[]): void;
+  /** One history transaction after the batch's local selection is committed. */
+  onCloseTabs?(
+    tabs: readonly Tab[],
+    entries: readonly PanelOpening[],
+    keep?: string,
+  ): void;
 }) {
   const currentId = current?.id;
   const viewer = queries.viewer;
   const { entries, setEntries } = tabState;
+  const panelHistory = useRef({ onVisitPanel, onClosePanel });
+  panelHistory.current = { onVisitPanel, onClosePanel };
   const available = useSyncExternalStore(
     panels.subscribe,
     panels.snapshot,
@@ -248,6 +272,8 @@ export function useConversationTabs({
           ? [...retained, selected]
           : retained;
       entryList.current = updated;
+      if (selected && historyPanel(selected))
+        panelHistory.current.onVisitPanel?.(selected);
       setEntries(updated);
       selectOpening(selected);
     },
@@ -260,7 +286,8 @@ export function useConversationTabs({
       (!entry.channelContext ||
         (current &&
           !current.readOnly &&
-          !current.archived &&
+          (!current.archived ||
+            entry.panel.channelMenu?.eligible(current, queries)) &&
           current.id === entry.channelId)),
   );
   const sidePanelTabs = panelTabs.filter((entry) => !inMain(entry));
@@ -300,6 +327,8 @@ export function useConversationTabs({
         (item) => item.panel === next && item.target === target,
       );
       const replacement = existing ?? { ...entry, panel: next, target };
+      if (historyPanel(replacement))
+        panelHistory.current.onVisitPanel?.(replacement);
       entryList.current = entryList.current
         .map((item) => (item === entry ? replacement : item))
         .filter((item, index, all) => all.indexOf(item) === index);
@@ -327,6 +356,7 @@ export function useConversationTabs({
     setEntries(remaining);
     if (!main) {
       afterClose(tabId(entry), panelTrigger.current);
+      panelHistory.current.onClosePanel?.(entry, remaining);
       return;
     }
     // The conversation remains; the neighbouring main tab takes over.
@@ -335,6 +365,7 @@ export function useConversationTabs({
     const rest = order.filter((id) => id !== tabId(entry));
     if (tabState.mainSelected === tabId(entry))
       tabState.selectMain(rest[Math.min(index, rest.length - 1)]);
+    panelHistory.current.onClosePanel?.(entry, remaining);
   };
   const drawerContext = useMemo(
     () =>
@@ -456,15 +487,20 @@ export function useConversationTabs({
     setSidePanel(sidePanel);
     return () => setSidePanel(false);
   }, [setSidePanel, sidePanel]);
-  const selectPanelTab = (id: string) => {
+  const selectPanelTab = (id: string, visit = true) => {
     opening.current = panelTabs.find((entry) => tabId(entry) === id);
+    if (visit && opening.current && historyPanel(opening.current))
+      panelHistory.current.onVisitPanel?.(opening.current);
     tabState.select(id);
   };
   const afterClose = (id: string, trigger?: HTMLElement | null) => {
     if (id !== selectedTab) return;
     const index = rootTabIds.indexOf(id);
     const remaining = rootTabIds.filter((tab) => tab !== id);
-    selectPanelTab(remaining[Math.min(index, remaining.length - 1)] ?? "");
+    selectPanelTab(
+      remaining[Math.min(index, remaining.length - 1)] ?? "",
+      false,
+    );
     if (!remaining.length) {
       const target = trigger?.isConnected ? trigger : fallbackFocus?.current;
       if (target) target.focus({ preventScroll: true });
@@ -716,27 +752,44 @@ export function useConversationTabs({
       .slice(0, 80);
     return text || (name ? `Thread · ${name}` : "Thread");
   }
+  // The current conversation's own threads are already in its channel.
+  function openInChannel(tab: Tab, target: ChannelSummary | undefined) {
+    return target && navigation && viewer && tab.channelId !== currentId
+      ? () =>
+          void navigation.open({
+            version: 1,
+            kind: "conversation",
+            scope: {
+              viewer,
+              communityOrigin: scope.slice(0, -(viewer.length + 1)),
+            },
+            channelId: tab.channelId,
+            ...(tab.messageId && { messageId: tab.messageId }),
+            ...(tab.kind === "thread" && {
+              threadRootId: rootOfTab(tab),
+            }),
+          })
+      : undefined;
+  }
+  // A thread names its conversation as Inbox rows do, bounding a group DM's
+  // names where its tab lists them all; the name opens it there.
+  const resolveName = useIdentityNames(queries.names);
+  function parentOf(tab: Tab, target: ChannelSummary) {
+    const open = openInChannel(tab, target);
+    return (
+      open && {
+        label:
+          target.channelType === "dm"
+            ? `DM · ${dmLabel(target.participants, profiles, resolveName, target.name)}`
+            : `#${target.name}`,
+        open,
+      }
+    );
+  }
   function tabItem(tab: Tab) {
     const target = tabChannel(tab);
     const usable = !!target;
-    // The current conversation's own threads are already in its channel.
-    const openInChannel =
-      target && navigation && viewer && tab.channelId !== currentId
-        ? () =>
-            void navigation.open({
-              version: 1,
-              kind: "conversation",
-              scope: {
-                viewer,
-                communityOrigin: scope.slice(0, -(viewer.length + 1)),
-              },
-              channelId: tab.channelId,
-              ...(tab.messageId && { messageId: tab.messageId }),
-              ...(tab.kind === "thread" && {
-                threadRootId: rootOfTab(tab),
-              }),
-            })
-        : undefined;
+    const openChannel = openInChannel(tab, target);
     return {
       id: tab.id,
       label:
@@ -753,14 +806,14 @@ export function useConversationTabs({
         ),
       close: () => closeConversationTab(tab.id),
       ...(tab.kind === "conversation" &&
-        target && { toolbar: conversationToolbar?.(target, openInChannel) }),
+        target && { toolbar: conversationToolbar?.(target, openChannel) }),
       ...(tab.kind === "thread" && {
         attentionRequest: tab.attentionRequest,
         move: (delta: -1 | 1) => moveBy(tab, delta),
         rename: (name: string) => tabState.renameTab(tab.id, name),
       }),
-      ...(openInChannel && {
-        actions: [{ label: "Open in channel", run: openInChannel }],
+      ...(openChannel && {
+        actions: [{ label: "Open in channel", run: openChannel }],
       }),
       content:
         !usable || !target ? (
@@ -787,6 +840,7 @@ export function useConversationTabs({
               openConversationThread(target.id, id, root, intent)
             }
             close={() => closeConversationTab(tab.id)}
+            parent={parentOf(tab, target)}
           />
         ),
     };
@@ -826,6 +880,9 @@ export function useConversationTabs({
   // change: nothing to close and the kept tab already selected.
   const closeTabsExcept = (keep?: string) => {
     const closing = tabState.tabs.filter((tab) => tab.id !== keep);
+    const closingEntries = tabState.entries.filter(
+      (entry) => panelTabId(entry) !== keep,
+    );
     const kept = tabState.tabs.find((tab) => tab.id === keep);
     const keptEntry = tabState.entries.find(
       (entry) => panelTabId(entry) === keep,
@@ -860,7 +917,9 @@ export function useConversationTabs({
     );
     opening.current = entryList.current[0];
     tabState.closeTabs(keep);
-    if (addressed?.kind === "thread") onCloseThread?.(addressed, false, true);
+    if (onCloseTabs) onCloseTabs(closing, closingEntries, keep);
+    else if (addressed?.kind === "thread")
+      onCloseThread?.(addressed, false, true);
     return true;
   };
 
@@ -957,6 +1016,7 @@ export function useConversationTabs({
                 openConversationThread(target.id, id, root, intent)
               }
               close={() => closeConversationTab(tab.id)}
+              parent={parentOf(tab, target)}
             />
           </div>,
           node,

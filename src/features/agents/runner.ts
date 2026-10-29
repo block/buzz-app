@@ -52,7 +52,6 @@ import {
   show,
   watchSummaries,
   type ClassifierAvailability,
-  type ClassifierKey,
   type WatchFilter,
   type WriteOptions,
 } from "./attention-objects";
@@ -68,7 +67,7 @@ import type { EventWatch } from "./attention";
 import type { AgentEventTemplate, AgentsNative, Membership } from "./native";
 import type { AgentKey } from "./membership";
 import { setAttention, type AgentRecord, type TimerProgress } from "./store";
-import { Runs, type Start } from "./agent-start";
+import type { Start } from "./agent-start";
 import { type Pulses, pulseTyping } from "./typing";
 import {
   CATCH_UP_PAGES,
@@ -391,6 +390,10 @@ export type RunnerHost = {
   community(agent: Agent): LiveCommunity | undefined;
   /** Arms saved composer follow-ups behind these exact interrupted requests. */
   resumeFollowUps?(agent: Agent, turns: Readonly<Record<string, string>>): void;
+  abandonFollowUps?(
+    agent: Agent,
+    turns: Readonly<Record<string, string>>,
+  ): void;
   /** Every saved record, whose watches' catch-up progress is kept. */
   records(): readonly AgentRecord[];
   /** Catch-up progress, as saved. */
@@ -451,17 +454,6 @@ export type RunnerHost = {
   classifier(): ClassifierAvailability;
   /** The decisions service that runs classifiers, where there is one. */
   decisions(): Decisions | undefined;
-  /** Settles once the saved TypeSafe key's status is known; until then an
-   * event classified on the `typesafe` backend waits rather than pass
-   * unchecked. */
-  keyStatus(): Promise<void> | undefined;
-  /** What is known about the saved TypeSafe key. */
-  classifierKey(): ClassifierKey;
-  /** Changes each time the owner saves or removes the key. */
-  classifierKeyGeneration(): number;
-  /** What a classifier call that started under `generation` found out about
-   * the saved key; ignored once the key has changed since. */
-  setClassifierKey(key: ClassifierKey, generation: number): void;
   /** The event's surroundings for the classifier. */
   context(agent: Agent, event: RelayEvent): Promise<ClassifierContext>;
   /** A person's name as the agent's community shows it. */
@@ -492,7 +484,11 @@ export type RunnerHost = {
   ): Promise<boolean>;
   /** The agent wrote this memory through its handle. */
   remembered(key: AgentKey, slug: string, body: string): void;
-  woke?(key: AgentKey, object: AttentionObject): void;
+  woke?(
+    key: AgentKey,
+    object: AttentionObject,
+    events?: readonly RelayEvent[],
+  ): void;
   /** A run of the agent ended, with everything it handed to `workingUntil`. */
   finished(key: AgentKey): void;
   /** A harness's title for the conversation a mention started; may name a Solo chat. */
@@ -528,8 +524,6 @@ export class AgentRunners {
   private readonly runners = new Map<string, Runner>();
   /** Each agent's last claim or release, which its next waits for. */
   private readonly custody = new Map<string, Promise<void>>();
-  /** The synced revisions each agent's current run started from. */
-  readonly started = new Runs();
   /** Agents whose community was live at the last resume. */
   private connected = new Set<string>();
   /** Catch-up progress of each kind 9 watch stream, as saved. */
@@ -553,9 +547,28 @@ export class AgentRunners {
   private readonly stopped: Interrupted;
   /** The agents whose `left` the owner chose to resume. */
   private resuming = new Set<string>();
+  private workingNow = false;
+  private readonly workingListeners = new Set<() => void>();
   constructor(private readonly host: RunnerHost) {
     this.checkpoints = host.checkpoints.read();
     this.turns = this.left = this.stopped = host.interrupted.read();
+  }
+
+  /** Whether any agent has a job in a lane or a turn still working. */
+  isWorking() {
+    return this.workingNow;
+  }
+  subscribeWorking(listener: () => void) {
+    this.workingListeners.add(listener);
+    return () => void this.workingListeners.delete(listener);
+  }
+  private noteWorking() {
+    const working = [...this.runners.values()].some(
+      (runner) => runner.busy.size > 0 || runner.working > 0,
+    );
+    if (working === this.workingNow) return;
+    this.workingNow = working;
+    for (const listener of this.workingListeners) listener();
   }
 
   /** Agents with turns the app left working last time, until the owner
@@ -572,7 +585,8 @@ export class AgentRunners {
       this.resuming.add(key);
       const agent = this.host.agent(key);
       const turns = this.left[key];
-      if (agent && turns) this.host.resumeFollowUps?.(agent, turns);
+      if (agent && turns && this.runners.get(key)?.type?.resumes)
+        this.host.resumeFollowUps?.(agent, turns);
     }
     for (const runner of this.runners.values()) this.resumeTurns(runner);
   }
@@ -1159,7 +1173,10 @@ export class AgentRunners {
     const { [runner.key]: _, ...rest } = this.left;
     this.left = rest;
     const ids = Object.keys(left);
-    if (!runner.type.resumes) return this.unmark(runner.key, ids);
+    if (!runner.type.resumes) {
+      this.host.abandonFollowUps?.(agent, left);
+      return this.unmark(runner.key, ids);
+    }
     this.host.resumeFollowUps?.(agent, left);
     // Not read(): it returns the owner's own mentions as unproven outbox copies.
     void community.session
@@ -1188,10 +1205,11 @@ export class AgentRunners {
             });
             if (queued) kept.add(event.id);
           }
-          this.unmark(
-            runner.key,
-            ids.filter((id) => !kept.has(id)),
+          const forgotten = Object.fromEntries(
+            Object.entries(left).filter(([id]) => !kept.has(id)),
           );
+          this.host.abandonFollowUps?.(agent, forgotten);
+          this.unmark(runner.key, Object.keys(forgotten));
         },
         (error) => {
           this.left = { ...this.left, [runner.key]: left };
@@ -1787,13 +1805,12 @@ export class AgentRunners {
   ): Promise<ClassifierOutcome | undefined> {
     const decisions = this.host.decisions();
     if (!decisions) return notRun();
-    // Only the `typesafe` backend needs the saved key, and it is not known to
-    // be missing until its status is read. While the key cannot be read,
-    // native is still asked: it may find one.
-    if (decisions.backend() === "typesafe") {
-      await this.host.keyStatus();
-      if (this.host.classifierKey() === "missing") return notRun();
-    }
+    // A provider still checking its setup, such as reading a saved key, is
+    // waited for rather than let the event pass unchecked. One that cannot
+    // confirm its setup is still asked: it may be able to answer.
+    await statusKnown(decisions);
+    const status = decisions.status();
+    if (status === "needs-setup" || status === "unavailable") return notRun();
     // Only the copy of the app that holds the agent sends its events out.
     if (!(await this.claim(runner)) || !live()) return undefined;
     const facts: ClassifierInput =
@@ -1809,18 +1826,7 @@ export class AgentRunners {
           }
         : { classifier, ...input };
     if (!live()) return undefined;
-    const generation = this.host.classifierKeyGeneration();
-    const { pass, result, backend } = await classify(decisions, facts);
-    // On the `typesafe` backend: the key was removed outside the app since it
-    // was read, the service refused it, or native found one the failed status
-    // read could not. Other backends say nothing about the key.
-    if (backend !== "typesafe") return pass ? result : undefined;
-    if (result.outcome === "not-run")
-      this.host.setClassifierKey("missing", generation);
-    else if (result.outcome === "passed")
-      this.host.setClassifierKey("saved", generation);
-    else if (result.reason === "unauthorized")
-      this.host.setClassifierKey("refused", generation);
+    const { pass, result } = await classify(decisions, facts);
     return pass ? result : undefined;
   }
   /** What `event` wakes now, and whether other matching watches still wait
@@ -2200,6 +2206,7 @@ export class AgentRunners {
     job: Job,
   ) {
     runner.busy.add(lane);
+    this.noteWorking();
     if (job.trigger.type === "source") this.sourceJobs.set(job, agent.key);
     const lifetime = runner.controller.signal;
     const signal = AbortSignal.any([
@@ -2223,7 +2230,15 @@ export class AgentRunners {
     const woke = () => {
       attempted = true;
       if (!addressed(trigger) && job.matched)
-        this.host.woke?.(agent.key, job.matched.object);
+        this.host.woke?.(
+          agent.key,
+          job.matched.object,
+          trigger.type === "watch"
+            ? [trigger.event]
+            : trigger.type === "catch-up"
+              ? trigger.events.map(({ event }) => event)
+              : undefined,
+        );
     };
     const invoke: typeof run = (delivery) => {
       woke();
@@ -2235,13 +2250,13 @@ export class AgentRunners {
       if (!start.ok) throw new Error(start.reason);
       const team = this.host.team(agent.key);
       signal.throwIfAborted();
-      this.started.start(agent.key, start.revisions);
       const delivery = Object.freeze({
         trigger: job.trigger,
         ...(job.channelId ? { channelId: job.channelId } : {}),
         agent: handle,
         config: start.config,
         revisions: start.revisions,
+        ...(start.synced && { synced: start.synced }),
         ...pick,
         ...(team ? { team } : {}),
         signal,
@@ -2380,6 +2395,7 @@ export class AgentRunners {
           );
     void held.then(() => {
       runner.busy.delete(lane);
+      this.noteWorking();
       void this.drain(runner);
     });
   }
@@ -2528,12 +2544,14 @@ export class AgentRunners {
       stopped = resolve;
     });
     runner.working++;
+    this.noteWorking();
     const stop = () => {
       if (holds < 0) return;
       holds = -1;
       stopped();
       lifetime.removeEventListener("abort", abort);
       runner.working--;
+      this.noteWorking();
       typing?.();
       if (resumable) this.unmark(runner.key, [resumable]);
     };
@@ -2852,4 +2870,16 @@ async function standalone<T>(
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** Resolves once the selected provider's status is not `checking`. */
+function statusKnown(decisions: Decisions): Promise<void> {
+  if (decisions.status() !== "checking") return Promise.resolve();
+  return new Promise((resolve) => {
+    const stop = decisions.subscribe(() => {
+      if (decisions.status() === "checking") return;
+      stop();
+      resolve();
+    });
+  });
 }

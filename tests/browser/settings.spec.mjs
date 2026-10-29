@@ -1215,3 +1215,43 @@ test("Local settings saves a device name without changing the community identity
     button(page, "Community switcher: Published community"),
   ).toBeVisible();
 });
+
+// Native popstate cannot be covered by the controller's memory-driver test.
+test("native Back warns before discarding Profile edits and Keep editing retains the draft", async ({
+  page,
+  app,
+}) => {
+  await page.goto(app.origin);
+  await button(page, "Alpha").click();
+  await expect(
+    page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
+  ).toBeVisible();
+  await openSettings(page);
+  await selectSettingsSection(page, "Profile");
+  const name = page
+    .getByRole("region", { name: "Profile", exact: true })
+    .getByRole("textbox", { name: "Display name", exact: true });
+  await expect(name).toHaveValue("Fixture Reader");
+  await name.fill("Keep this draft");
+  // Skip the section-only stops to leave Settings, as a native multi-step Back does.
+  await page.evaluate(() => history.go(-2));
+  const warning = page.getByRole("alertdialog", {
+    name: "Discard changes?",
+    exact: true,
+  });
+  await expect(warning).toBeVisible();
+  await warning
+    .getByRole("button", { name: "Keep editing", exact: true })
+    .click();
+  await expect(name).toHaveValue("Keep this draft");
+  await page.evaluate(() => history.go(-2));
+  await expect(warning).toBeVisible();
+  await warning
+    .getByRole("button", { name: "Discard changes", exact: true })
+    .click();
+  await expect(settingsDialog(page)).toHaveCount(0);
+  await page.goForward();
+  await expect(settingsDialog(page)).toBeVisible();
+  await selectSettingsSection(page, "Profile");
+  await expect(name).toHaveValue("Fixture Reader");
+});

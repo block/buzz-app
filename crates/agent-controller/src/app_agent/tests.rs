@@ -454,6 +454,33 @@ fn signs_only_bounded_kinds_with_the_saved_attestation() {
 }
 
 #[test]
+fn signs_artifact_revisions_without_a_timeline_ms_tag() {
+    let dir = tempfile::tempdir().unwrap();
+    let credentials = Memory::default();
+    let (_, agent) = created(dir.path(), &credentials);
+    let key = agent.read_key(&credentials).unwrap();
+    let saved: Vec<String> = serde_json::from_str(&agent.auth).unwrap();
+    let tag = |name: &str, value: &str| vec![name.to_owned(), value.to_owned()];
+    // A deletion allows only its envelope and the verified auth tag, so an
+    // added `ms` would make the relay refuse it.
+    let envelope = vec![
+        tag("ar", "1"),
+        tag("d", "7c4f2b1e-3a9d-5e8f-9b6a-2d1c0e4f8a73"),
+        tag("h", "a07a0c8a-cfef-43c3-91f7-69bf8d5e32d7"),
+        tag("type", "example.record"),
+        tag("op", "delete"),
+        tag("prev", &"a".repeat(64)),
+    ];
+    let mut supplied = envelope.clone();
+    supplied.push(tag("ms", "999"));
+    let event = agent.sign(&key, 45010, String::new(), supplied).unwrap();
+    let tags: Vec<Vec<String>> = serde_json::from_value(event["tags"].clone()).unwrap();
+    let mut expected = envelope;
+    expected.push(saved);
+    assert_eq!(tags, expected);
+}
+
+#[test]
 fn signs_git_auth_for_one_repository_in_its_own_community() {
     let dir = tempfile::tempdir().unwrap();
     let credentials = Memory::default();

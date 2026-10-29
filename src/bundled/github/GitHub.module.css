@@ -34,6 +34,10 @@
 .identity > div {
   min-width: 0;
 }
+.identityAction {
+  flex-shrink: 0;
+  margin-inline-start: auto;
+}
 .repository {
   font-size: var(--text-label);
   font-weight: var(--text-label--font-weight);
@@ -351,13 +355,33 @@
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
 }
-.pullActions > :last-child:is([aria-haspopup]) {
+.pullActions > [aria-haspopup="menu"] {
   margin-left: auto;
 }
 .pullActionError {
   margin: var(--space-2) 0 0;
   color: var(--text-danger);
   overflow-wrap: anywhere;
+}
+.review {
+  display: grid;
+  gap: var(--space-4);
+}
+.review p {
+  margin: 0;
+}
+.reviewNotice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.reviewActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
 }
 .description {
   margin-top: var(--space-4);

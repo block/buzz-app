@@ -77,7 +77,10 @@ export function QueuedFollowUps({
                   focused.current = { id: entry.id, action: "preview" };
                 }}
               />
-              {entry.restored && !entry.error && (
+              {entry.sending && !entry.error && (
+                <p className="text-caption">Sending…</p>
+              )}
+              {entry.restored && !entry.sending && !entry.error && (
                 <p className="text-caption">
                   Saved before restart. Send when ready.
                 </p>
@@ -94,6 +97,7 @@ export function QueuedFollowUps({
                 onFocus={() => {
                   focused.current = { id: entry.id, action: "remove" };
                 }}
+                disabled={entry.sending && !entry.error}
                 data-remove-action
                 style={{ width: "var(--space-6)", height: "var(--space-6)" }}
                 variant="destructive-quiet"

@@ -4,11 +4,13 @@ import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
 stubAvatarBrowserApis();
 import userEvent from "@testing-library/user-event";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { useEffect, useState } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "../../features/relay/session";
 import type { RelayData } from "../../features/relay/service";
 import { bindNames } from "../../features/identity-names/service";
 import {
+  openProfileTranscript,
   profileTarget,
   profileActivityViewTarget,
 } from "../../features/profiles/target";
@@ -17,6 +19,7 @@ import type {
   Agent,
   Agents,
   RegisteredAgentType,
+  TranscriptRequest,
 } from "../../features/agents/service";
 
 import { agentDirectory } from "../../features/identity-names/testing";
@@ -349,6 +352,7 @@ it("exposes thinking through the named profile avatar across tabs", async () => 
 function renderAgentActivity(
   tabs: { title: string; role?: string }[],
   rootId?: string,
+  transcript: "opened" | "shown again" | false = false,
 ) {
   const owner = createRelaySession(null);
   const snapshot = {
@@ -370,21 +374,33 @@ function renderAgentActivity(
       id: title.toLowerCase(),
       title,
       role,
-      component: ({
+      component: function Echo({
         conversation,
+        initialTranscript,
       }: {
         conversation?: { channelId: string; rootId?: string };
-      }) => (
-        <>
-          <p>Echo {title.toLowerCase()}</p>
-          {conversation && (
-            <p>
-              Opened from {conversation.channelId}/
-              {conversation.rootId ?? "channel"}
-            </p>
-          )}
-        </>
-      ),
+        initialTranscript?: TranscriptRequest;
+      }) {
+        // Like a type's Activity tab: it acts on the request as it shows.
+        const [first] = useState(!!initialTranscript);
+        // biome-ignore lint/correctness/useExhaustiveDependencies: once per opening.
+        useEffect(
+          () => initialTranscript?.done(),
+          [initialTranscript?.opening],
+        );
+        return (
+          <>
+            <p>Echo {title.toLowerCase()}</p>
+            {first && <p>Transcript first</p>}
+            {conversation && (
+              <p>
+                Opened from {conversation.channelId}/
+                {conversation.rootId ?? "channel"}
+              </p>
+            )}
+          </>
+        );
+      },
     })),
   } as unknown as RegisteredAgentType;
   const agent = {
@@ -404,12 +420,18 @@ function renderAgentActivity(
     types: () => types,
     find: (pubkey: string) => (pubkey === key ? agent : undefined),
     memberships: () => [],
+    configHistory: () => undefined,
   } as unknown as Agents;
-  render(
+  const target =
+    profileActivityViewTarget(key, { transcript: !!transcript }) ?? "";
+  // Like Working now: the opener asks as it opens the target.
+  if (transcript === "opened") openProfileTranscript(target, () => true);
+  const panel = (mount: number) => (
     <ProfilePanel
+      key={mount}
       relay={relay}
       agents={agents}
-      target={profileActivityViewTarget(key) ?? ""}
+      target={target}
       context={{
         channelId: "originating-channel",
         ...(rootId && { rootId }),
@@ -417,12 +439,21 @@ function renderAgentActivity(
         open: vi.fn(() => true),
       }}
       close={() => {}}
-    />,
+    />
   );
-  return () => {
-    cleanup();
-    owner.dispose();
-  };
+  let mounts = 0;
+  const view = render(panel(mounts));
+  return Object.assign(
+    () => {
+      cleanup();
+      owner.dispose();
+    },
+    {
+      target,
+      /** Remounts the retained profile, as on returning to its channel. */
+      remount: () => view.rerender(panel(++mounts)),
+    },
+  );
 }
 
 it("opens an agent's activity on its type's Activity tab, the profile's only one", async () => {
@@ -448,6 +479,85 @@ it("opens an agent's activity on its type's Activity tab, the profile's only one
     expect(screen.getByText("Echo settings")).toBeVisible();
     await user.click(screen.getByRole("tab", { name: "Activity" }));
     expect(screen.getByText("Echo activity")).toBeVisible();
+  } finally {
+    dispose();
+  }
+});
+
+it("asks the Activity tab for its transcript only when the opener knows the conversation", () => {
+  const tabs = [{ title: "Activity", role: "activity" }];
+  // Work in several threads opens the plain destination, never a transcript.
+  let dispose = renderAgentActivity(tabs);
+  try {
+    expect(screen.getByText("Echo activity")).toBeVisible();
+    expect(screen.queryByText("Transcript first")).toBeNull();
+  } finally {
+    dispose();
+  }
+  dispose = renderAgentActivity(tabs, "thread-root", "opened");
+  try {
+    expect(screen.getByText("Transcript first")).toBeVisible();
+  } finally {
+    dispose();
+  }
+  // Its retained tab remounting, as on returning to the channel, asks nothing.
+  dispose = renderAgentActivity(tabs, "thread-root", "shown again");
+  try {
+    expect(screen.getByText("Echo activity")).toBeVisible();
+    expect(screen.queryByText("Transcript first")).toBeNull();
+  } finally {
+    dispose();
+  }
+});
+
+it("asks for the transcript once, not again on returning from another section", async () => {
+  const dispose = renderAgentActivity(
+    [
+      { title: "Settings", role: "settings" },
+      { title: "Activity", role: "activity" },
+    ],
+    "thread-root",
+    "opened",
+  );
+  try {
+    expect(screen.getByText("Transcript first")).toBeVisible();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("tab", { name: "Identity" }));
+    await user.click(screen.getByRole("tab", { name: "Activity" }));
+    expect(screen.getByText("Echo activity")).toBeVisible();
+    expect(screen.queryByText("Transcript first")).toBeNull();
+  } finally {
+    dispose();
+  }
+});
+
+it("keeps a new opening for a profile on another section to itself, so a remount does not reopen it", async () => {
+  const sections = [
+    { title: "Settings", role: "settings" },
+    { title: "Activity", role: "activity" },
+  ];
+  const user = userEvent.setup();
+  let dispose = renderAgentActivity(sections, "thread-root", "shown again");
+  try {
+    await user.click(screen.getByRole("tab", { name: "Identity" }));
+    // Working now opens the retained profile again while it shows Identity.
+    act(() => void openProfileTranscript(dispose.target, () => true));
+    dispose.remount();
+    expect(screen.getByText("Echo activity")).toBeVisible();
+    expect(screen.queryByText("Transcript first")).toBeNull();
+  } finally {
+    dispose();
+  }
+  dispose = renderAgentActivity(sections, "thread-root", "shown again");
+  try {
+    await user.click(screen.getByRole("tab", { name: "Identity" }));
+    act(() => void openProfileTranscript(dispose.target, () => true));
+    // Not remounted, the profile still has the opening for its Activity tab.
+    await user.click(screen.getByRole("tab", { name: "Activity" }));
+    expect(screen.getByText("Transcript first")).toBeVisible();
+    await user.click(screen.getByRole("tab", { name: "Identity" }));
+    await user.click(screen.getByRole("tab", { name: "Activity" }));
+    expect(screen.queryByText("Transcript first")).toBeNull();
   } finally {
     dispose();
   }

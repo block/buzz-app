@@ -1,4 +1,7 @@
 // @vitest-environment jsdom
+import { cleanup as cleanupUI, render, screen } from "@testing-library/react";
+import { QueuedFollowUps } from "./QueuedFollowUps";
+import { createElement } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { finalizeEvent, getPublicKey } from "nostr-tools";
 import type { LocalWork } from "../agents/local-activity";
@@ -31,18 +34,28 @@ beforeEach(() => {
   const locks = new Map<string, Promise<unknown>>();
   vi.stubGlobal("navigator", {
     locks: {
-      request(name: string, callback: () => unknown) {
-        const next = (locks.get(name) ?? Promise.resolve()).then(callback);
-        locks.set(
-          name,
-          next.catch(() => {}),
-        );
+      request(
+        name: string,
+        options: unknown,
+        callback?: (lock: unknown) => unknown,
+      ) {
+        if (callback) {
+          return Promise.resolve(callback(locks.has(name) ? null : {}));
+        }
+        const run = options as () => unknown;
+        const next = (locks.get(name) ?? Promise.resolve()).then(run);
+        const held = next.catch(() => {});
+        locks.set(name, held);
+        void held.then(() => {
+          if (locks.get(name) === held) locks.delete(name);
+        });
         return next;
       },
     },
   });
 });
 afterEach(() => {
+  cleanupUI();
   vi.restoreAllMocks();
   for (const close of cleanup.splice(0)) close();
   vi.unstubAllGlobals();
@@ -65,6 +78,8 @@ function fixture(partition = scope, records: readonly OutgoingEvent[] = []) {
   );
   const listeners = new Set<() => void>();
   let working = true;
+  let complete = true;
+  let selectable = [{ pubkey: agent }];
   let local: LocalWork[] = [];
   let observedRequest: string | undefined;
   let channel = {
@@ -91,10 +106,14 @@ function fixture(partition = scope, records: readonly OutgoingEvent[] = []) {
     channels: { list: () => ({ status: "ready", channels: [channel] }) },
     channelWrites: { refreshMembership: refresh },
     agentChoices: {
-      subscribe: () => () => {},
+      subscribe: (listener: () => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
       snapshot: () => ({
         identities: [{ pubkey: agent }],
-        selectable: [{ pubkey: agent }],
+        selectable,
+        complete,
       }),
     },
     agentActivity: {
@@ -158,6 +177,11 @@ function fixture(partition = scope, records: readonly OutgoingEvent[] = []) {
     },
     observe(messageId: string) {
       observedRequest = messageId;
+      for (const listener of listeners) listener();
+    },
+    choices(ready: boolean, keys: string[]) {
+      complete = ready;
+      selectable = keys.map((pubkey) => ({ pubkey }));
       for (const listener of listeners) listener();
     },
     deny() {
@@ -433,7 +457,7 @@ it("retains an interrupted handoff with no receipt for explicit inspection, neve
   expect(restarted.send).not.toHaveBeenCalled();
   expect(restarted.queue.snapshot()[0]?.text).toBe(message.text);
   restarted.queue.remove(id);
-  expect(followUpStorage(scope).load()).toEqual([]);
+  await vi.waitFor(() => expect(followUpStorage(scope).load()).toEqual([]));
 });
 
 it("Resume waits for the restarted request, then drains restored rows one turn at a time", async () => {
@@ -526,4 +550,164 @@ it("waits for every resumed agent in a chat before releasing its first saved mes
   restarted.work("secondRequest", "done", otherAgent);
   await vi.waitFor(() => expect(restarted.queue.snapshot()).toEqual([]));
   expect(restarted.send).toHaveBeenCalledOnce();
+});
+
+it("refuses Remove in either window while the Outbox handoff is pending", async () => {
+  const first = fixture();
+  const id = first.enqueue();
+  const second = fixture();
+  cleanup.push(second.queue.subscribe(() => {}));
+  await first.owner.ready;
+  let finish!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  first.save.mockImplementationOnce(() => pending);
+  try {
+    first.queue.sendNow(id);
+    await vi.waitFor(() => expect(first.send).toHaveBeenCalledOnce());
+    window.dispatchEvent(new StorageEvent("storage"));
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
+    render(
+      createElement(QueuedFollowUps, {
+        session: second.session,
+        channelId: "chat",
+        disabled: false,
+        focusComposer() {},
+      }),
+    );
+    expect(
+      (
+        screen.getByRole("button", {
+          name: "Remove queued message",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
+    expect(screen.getByText("Sending…")).toBeTruthy();
+    expect(first.queue.snapshot()[0]?.sending).toBe(true);
+    expect(second.queue.snapshot()[0]?.sending).toBe(true);
+    first.queue.remove(id);
+    second.queue.remove(id);
+    await Promise.resolve();
+    expect(followUpStorage(scope).has(id)).toBe(true);
+    expect(first.queue.snapshot()).toHaveLength(1);
+    expect(second.queue.snapshot()).toHaveLength(1);
+  } finally {
+    finish();
+  }
+  await vi.waitFor(() => expect(first.queue.snapshot()).toEqual([]));
+  expect(first.send).toHaveBeenCalledOnce();
+});
+
+it("pauses a later row when another window removes its handed-off predecessor", async () => {
+  const first = fixture();
+  const id = first.enqueue();
+  const second = fixture();
+  cleanup.push(second.queue.subscribe(() => {}));
+  second.enqueue({ ...message, text: "Second" });
+  second.finish();
+  first.queue.sendNow(id);
+  await vi.waitFor(() => expect(first.queue.snapshot()).toEqual([]));
+  // The second window has no Outbox receipt or activity for the predecessor.
+  window.dispatchEvent(new StorageEvent("storage"));
+  expect(second.queue.snapshot()).toMatchObject([
+    { text: "Second", restored: true },
+  ]);
+  expect(second.send).not.toHaveBeenCalled();
+  second.queue.resumeAfter(agent, { original: "chat" });
+  second.work("original", "done");
+  expect(second.queue.snapshot()[0]?.restored).toBe(true);
+  expect(second.send).not.toHaveBeenCalled();
+  second.queue.sendNow(second.queue.snapshot()[0]?.id ?? "missing");
+  await vi.waitFor(() => expect(second.send).toHaveBeenCalledOnce());
+});
+
+it("defers missing recipients in partial inventory, then drains when choices arrive", async () => {
+  fixture().enqueue();
+  const restarted = fixture();
+  restarted.choices(false, []);
+  restarted.finish();
+  restarted.queue.resumeAfter(agent, { original: "chat" });
+  restarted.work("original", "done");
+  // Drain the current microtask work (including membership validation and release).
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(restarted.queue.snapshot()[0]?.error).toBeUndefined();
+  expect(restarted.send).not.toHaveBeenCalled();
+  restarted.choices(true, [agent]);
+  await vi.waitFor(() => expect(restarted.queue.snapshot()).toEqual([]));
+  expect(restarted.send).toHaveBeenCalledOnce();
+});
+
+it("retains an availability error once inventory confirms a missing recipient", async () => {
+  fixture().enqueue();
+  const restarted = fixture();
+  restarted.choices(false, []);
+  restarted.finish();
+  restarted.queue.resumeAfter(agent, { original: "chat" });
+  restarted.work("original", "done");
+  restarted.choices(true, []);
+  await vi.waitFor(() =>
+    expect(restarted.queue.snapshot()[0]?.error).toContain(
+      "no longer available",
+    ),
+  );
+  expect(restarted.send).not.toHaveBeenCalled();
+});
+
+it("pauses forgotten resumes without discarding another agent's barrier", async () => {
+  fixture().enqueue();
+  const restarted = fixture();
+  restarted.finish();
+  const other = "d".repeat(64);
+  restarted.queue.resumeAfter(agent, { missing: "chat" });
+  restarted.queue.resumeAfter(other, { retained: "chat" });
+  restarted.queue.pauseAfter(agent, { missing: "chat" });
+  expect(restarted.queue.snapshot()[0]?.restored).toBe(true);
+  expect(restarted.send).not.toHaveBeenCalled();
+  // Another runner arming this same chat must not undo an abandonment pause.
+  restarted.queue.resumeAfter(agent, { newer: "chat" });
+  restarted.work("newer", "done");
+  await Promise.resolve();
+  expect(restarted.send).not.toHaveBeenCalled();
+  expect(restarted.queue.snapshot()[0]?.restored).toBe(true);
+  restarted.queue.remove(restarted.queue.snapshot()[0]?.id ?? "missing");
+  restarted.enqueue({ ...message, text: "New follow-up" });
+  expect(restarted.send).not.toHaveBeenCalled();
+  restarted.work("retained", "done", other);
+  await vi.waitFor(() => expect(restarted.queue.snapshot()).toEqual([]));
+});
+
+it("lets the user remove an abandoned sending marker without trying Send first", async () => {
+  const first = fixture();
+  const id = first.enqueue();
+  followUpStorage(scope).sending(id, true);
+  const restarted = fixture();
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  render(
+    createElement(QueuedFollowUps, {
+      session: restarted.session,
+      channelId: "chat",
+      disabled: false,
+      focusComposer() {},
+    }),
+  );
+  const remove = screen.getByRole("button", {
+    name: "Remove queued message",
+  }) as HTMLButtonElement;
+  await vi.waitFor(() => expect(remove.disabled).toBe(false));
+  remove.click();
+  await vi.waitFor(() => expect(followUpStorage(scope).has(id)).toBe(false));
+  expect(restarted.send).not.toHaveBeenCalled();
 });

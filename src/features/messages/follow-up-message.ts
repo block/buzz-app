@@ -10,6 +10,15 @@ export function followUpMessage(
   message: FollowUpMessage,
 ) {
   return {
+    ready() {
+      const choices = session.agentChoices.snapshot();
+      return (
+        choices.complete !== false ||
+        message.recipients.every((key) =>
+          choices.selectable.some((agent) => agent.pubkey === key),
+        )
+      );
+    },
     async beforeRelease() {
       const channel = await session.channelWrites.refreshMembership(
         message.channelId,

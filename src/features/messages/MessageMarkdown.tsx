@@ -400,7 +400,38 @@ const markdownComponents: Components = {
   img: (props) => useMessageComponents().img(props),
   span: (props) => useMessageComponents().span(props),
   pre: (props) => useMessageComponents().pre(props),
+  table: ({ node: _node, ...props }) => (
+    <table ref={observeTableOverflow} {...props} />
+  ),
 };
+
+/** WebKit adds an `overflow-x: auto` scrollbar after flex and grid ancestors
+ * have taken their heights, then lays out only the table again. A scrollbar
+ * that takes space then overlaps the next row, or leaves a gap when removed.
+ * CSS chooses the scrollbar from measured overflow so it is laid out with
+ * the ancestors. Observe content too: edits can change scrollWidth without
+ * resizing a table at its width cap. Measure on mount because the resize
+ * observer's first report arrives after the row's. */
+function observeTableOverflow(table: HTMLTableElement | null) {
+  if (!table || typeof ResizeObserver === "undefined") return;
+  const update = () => {
+    const overflow = String(table.scrollWidth > table.clientWidth);
+    if (table.dataset.overflow !== overflow) table.dataset.overflow = overflow;
+  };
+  update();
+  const observer = new ResizeObserver(update);
+  observer.observe(table);
+  const contentObserver = new MutationObserver(update);
+  contentObserver.observe(table, {
+    childList: true,
+    characterData: true,
+    subtree: true,
+  });
+  return () => {
+    observer.disconnect();
+    contentObserver.disconnect();
+  };
+}
 
 export function MessageMarkdown({
   row,
@@ -414,7 +445,6 @@ export function MessageMarkdown({
   participantProfiles,
   largeEmoji = false,
   interactive = true,
-  staticMentions = false,
 }: {
   row: ChannelMessage;
   directory?: typeof emptyReferenceDirectory;
@@ -427,8 +457,6 @@ export function MessageMarkdown({
   participantProfiles?: ReadonlyMap<string, Profile> | undefined;
   largeEmoji?: boolean | undefined;
   interactive?: boolean;
-  /** Preserve signed mention presentation when this surface cannot open profiles. */
-  staticMentions?: boolean | undefined;
 }) {
   const resolveName = useChannelIdentityNames(session, row.channelId);
   const prepared = useMemo(() => prepareMarkdown(row.content), [row.content]);
@@ -449,7 +477,6 @@ export function MessageMarkdown({
       resolveName={resolveName}
       largeEmoji={largeEmoji}
       interactive={interactive}
-      staticMentions={staticMentions}
     />
   );
 }
@@ -468,7 +495,6 @@ function PreparedMessageMarkdown({
   resolveName,
   largeEmoji = false,
   interactive = true,
-  staticMentions = false,
 }: Parameters<typeof MessageMarkdown>[0] & {
   prepared: Extract<ReturnType<typeof prepareMarkdown>, { kind: "markdown" }>;
   resolveName: (pubkey: string, fallback: string) => string;
@@ -578,11 +604,7 @@ function PreparedMessageMarkdown({
         (participantProfiles ?? directory.profiles).get(key)?.isAgent);
     const clickable =
       interactive && typeof target === "string" && !!canOpenLink?.(target);
-    if (
-      typeof text === "string" &&
-      typeof target === "string" &&
-      (!interactive || clickable || agent || staticMentions)
-    ) {
+    if (typeof text === "string" && typeof target === "string") {
       const label = key ? resolveName(key, text.slice(1)) : text.slice(1);
       const Icon = agent ? RobotIcon : AtIcon;
       const Mention = clickable ? "button" : "span";

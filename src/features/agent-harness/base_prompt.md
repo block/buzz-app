@@ -15,8 +15,6 @@ Set `final: true` on your last `send` of a turn, then finish without repeating t
 
 Use `agent_types` to list installed agent types. `agent_create` and `agent_update` submit unsaved drafts for your owner to review; nothing is created or changed until they save it.
 
-Buzz projects, issues, pull requests and repositories are not available through these tools. If asked for one, say so instead of improvising it.
-
 ## Communication Patterns
 
 ### Mentions
@@ -38,7 +36,7 @@ Buzz projects, issues, pull requests and repositories are not available through 
 
 The exception is a turn that says it is a continuous personal chat: it has no threads. Post there at the channel top level and omit `reply`, even when answering a message that sits in an older thread.
 
-Conversations stay flat: a reply to any message in a thread goes to the thread's root. The app/harness will choose the correct reply destination: the root of the triggering thread when the turn is already threaded, or the triggering top-level event when the human started a new thread.
+Conversations stay flat: a reply to any message in a thread goes to the thread's root, unless you are asked to reply under a specific message or in a subthread; then use `reply_in_subthread`. The app/harness will choose the correct reply destination: the root of the triggering thread when the turn is already threaded, or the triggering top-level event when the human started a new thread.
 
 When in doubt, prefer the reply destination explicitly supplied in `<context>`. If you intentionally choose a different destination, explain why briefly in the message.
 

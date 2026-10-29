@@ -61,6 +61,8 @@ export async function selectPage(page, name, { connected = true } = {}) {
   // selection follows the choice itself, not its position.
   const id = await choice.getAttribute("id");
   const limit = await dialog.locator("[role=option], [role=row]").count();
+  // Establish keyboard modality without stepping past a preselected target.
+  await input.press("ArrowUp");
   for (
     let step = 0;
     (await input.getAttribute("aria-activedescendant")) !== id;
@@ -73,6 +75,16 @@ export async function selectPage(page, name, { connected = true } = {}) {
   }
   await input.press("Enter");
   await expect(dialog).not.toBeVisible();
+}
+
+// Activate a control by keyboard when the test is about the action, not
+// pointer hit testing: a click released after the control moved (a timeline's
+// re-pin after opening a thread, Virtua's pointer hold, a list's layout
+// motion) reaches whatever is under the pointer instead.
+export async function activate(control) {
+  await control.focus();
+  await expect(control).toBeFocused();
+  await control.press("Enter");
 }
 
 // The shell toggle's label follows a matchMedia change listener in AppShell,

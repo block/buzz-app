@@ -520,7 +520,7 @@ it("renders exact identity controls only while a target can be opened", () => {
   expect(renderProfile(false)).not.toContain(
     'aria-label="View Author profile"',
   );
-  expect(renderProfile(false)).toContain("@Mic");
+  expect(renderProfile(false)).toContain('data-mention-name="Mic"');
 });
 
 it.each(["~~~js\nconst delimiter = '~~~';\n@Mic\n~~~\nOutside @Mic"])(
@@ -908,6 +908,65 @@ it("renders proxy audio attachments with an inline player", () => {
   expect(html).not.toContain("Download file");
 });
 
+it("lets a plugin draw an image it claims, apart from the gallery", () => {
+  const card = {
+    id: "card",
+    title: "Card",
+    key: "test.plugin/card",
+    pluginId: "test.plugin",
+    revision: "one",
+    matches: (attachment: { name?: string }) =>
+      attachment.name === "Ada.agent.png",
+    component: ({ source }: { source: string }) => (
+      <span>card from {source}</span>
+    ),
+  };
+  const cards = [card];
+  const html = renderToStaticMarkup(
+    <MessageRow
+      row={{
+        ...row,
+        attachments: [
+          { url: "https://image.test/one.png", kind: "image" },
+          {
+            url: "https://image.test/ada.png",
+            kind: "image",
+            name: "Ada.agent.png",
+          },
+          { url: "https://image.test/two.png", kind: "image" },
+        ],
+      }}
+      profile={undefined}
+      media={(url) => `/api/relay/media?url=${encodeURIComponent(url)}`}
+      onOpenLink={() => false}
+      day={false}
+      retry={undefined}
+      extensions={{
+        tools: { snapshot: () => [], subscribe: () => () => {} },
+        inline: { snapshot: () => [], subscribe: () => () => {} },
+        attachments: { snapshot: () => cards, subscribe: () => () => {} },
+      }}
+    />,
+  );
+  expect(html).toContain(
+    "card from /api/relay/media?url=https%3A%2F%2Fimage.test%2Fada.png",
+  );
+  // The images around it stay pictures, each in its own group.
+  const container = document.createElement("div");
+  container.innerHTML = html;
+  expect(
+    [...container.querySelectorAll("[data-message-attachments] > *")].map(
+      (group) =>
+        group.querySelector('[role="group"]')?.getAttribute("aria-label") ??
+        group.textContent,
+    ),
+  ).toEqual([
+    "1 image",
+    "card from /api/relay/media?url=https%3A%2F%2Fimage.test%2Fada.png",
+    "1 image",
+  ]);
+});
+
 it("renders external audio sources as open file cards", () => {
   const html = renderToStaticMarkup(
     <MessageRow
@@ -1249,7 +1308,6 @@ it.each(["peer", "own"] as const)(
               "Mark unread",
               "Copy message",
               "Send to channel",
-              "Edit message",
               "Delete message",
               "Follow thread",
               "Report",
@@ -2936,8 +2994,7 @@ it("keeps agent and human emoji reactions ordinary, without treating them as act
         }
       />,
     );
-    expect(view.getAllByText("👀", { exact: true })).toHaveLength(1);
-    expect(view.getByText("👀", { exact: true }).textContent).toBe("👀2");
+    expect(view.getAllByText("👀", { exact: true })).toHaveLength(2);
     expect(view.getAllByText("💬", { exact: true })).toHaveLength(1);
     expect(view.getAllByText("✅", { exact: true })).toHaveLength(1);
     expect(

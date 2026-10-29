@@ -29,7 +29,11 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
 import type { PanelProps } from "../../features/panels/service";
 import {
+  claimProfileTranscript,
+  profileActivityTranscript,
   profileActivityViewKey,
+  profileTranscriptRequest,
+  subscribeProfileTranscripts,
   profileAgentHint,
   profilePanelKey,
   profileTarget,
@@ -47,7 +51,8 @@ import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { AgentDelete } from "../../features/agents/AgentManage";
 import { useAgent, useChannelChoices } from "../../features/agents/react";
-import type { Agents } from "../../features/agents/service";
+import type { Agents, TranscriptRequest } from "../../features/agents/service";
+import type { CommunityReader } from "../../features/communities/service";
 import { agentSections } from "../../features/agents/tabs";
 import { useAgentSettingsHost } from "../agents/AgentSettingsHost";
 import { avatarMedia } from "../../shared/avatar-source";
@@ -61,15 +66,46 @@ export function ProfilePanel({
   context,
   navigation,
   agents,
+  communities,
   close,
 }: PanelProps & {
   relay: RelayData;
   navigation?: Navigation;
   /** Agents show their type's tabs. */
   agents?: Agents;
+  communities?: CommunityReader | undefined;
 }) {
   const connection = useRelayConnection(relay);
   const activityKey = profileActivityViewKey(target);
+  const transcript = profileActivityTranscript(target);
+  const opening = transcript ? "transcript" : activityKey ? "activity" : "info";
+  // Asked once per opening. This profile takes the opening as soon as it is
+  // shown, even on another section, so remounting with the channel finds
+  // nothing to reopen; changing sections back after it was offered does not
+  // ask again either.
+  const asked = useSyncExternalStore(subscribeProfileTranscripts, () =>
+    transcript ? profileTranscriptRequest(target) : undefined,
+  );
+  const [held, setHeld] = useState<number>();
+  const [offered, setOffered] = useState(0);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: each new opening is claimed.
+  useEffect(() => {
+    const claimed = claimProfileTranscript(target);
+    if (claimed !== undefined) setHeld(claimed);
+  }, [asked, target]);
+  const pending = asked ?? held;
+  const request =
+    pending !== undefined && pending > offered ? pending : undefined;
+  const initialTranscript = useMemo(
+    () =>
+      request === undefined
+        ? undefined
+        : {
+            opening: request,
+            done: () => setOffered((last) => Math.max(last, request)),
+          },
+    [request],
+  );
   const pubkey = profilePanelKey(target) ?? activityKey;
   const owned = useAgent(agents, pubkey ?? "");
   if (!pubkey) return <p>Unsupported profile.</p>;
@@ -84,9 +120,11 @@ export function ProfilePanel({
   )
     return (
       <OwnedAgentProfile
-        key={`${connection.scope}:${connection.generation}:${pubkey}:${activityKey ? "activity" : "info"}`}
+        key={`${connection.scope}:${connection.generation}:${pubkey}:${opening}`}
         agents={agents}
+        communities={communities}
         initialActivity={!!activityKey}
+        initialTranscript={initialTranscript}
         pubkey={pubkey}
         relay={relay}
         session={connection.session}
@@ -97,14 +135,16 @@ export function ProfilePanel({
     );
   return (
     <ProfileDetails
-      key={`${connection.scope}:${connection.generation}:${pubkey}:${activityKey ? "activity" : "info"}`}
+      key={`${connection.scope}:${connection.generation}:${pubkey}:${opening}`}
       initialTab={activityKey ? "activity" : "info"}
+      initialTranscript={initialTranscript}
       session={connection.session}
       pubkey={pubkey}
       agentHint={profileAgentHint(target) || !!activityKey}
       context={context}
       navigation={navigation}
       agents={agents}
+      communities={communities}
       scope={connection.scope}
       viewer={connection.viewer}
       close={close}
@@ -113,7 +153,9 @@ export function ProfilePanel({
 }
 function OwnedAgentProfile({
   agents,
+  communities,
   initialActivity,
+  initialTranscript,
   pubkey,
   relay,
   session,
@@ -122,7 +164,9 @@ function OwnedAgentProfile({
   close,
 }: {
   agents: Agents;
+  communities: CommunityReader | undefined;
   initialActivity: boolean;
+  initialTranscript: TranscriptRequest | undefined;
   pubkey: string;
   relay: RelayData;
   session: RelaySession;
@@ -137,6 +181,7 @@ function OwnedAgentProfile({
   return (
     <AgentDetails
       agents={agents}
+      communities={communities}
       agent={owned.agent}
       type={owned.type}
       types={types}
@@ -144,6 +189,8 @@ function OwnedAgentProfile({
       memories={session.agentMemories}
       onRemoved={close}
       initialActivity={initialActivity}
+      initialTranscript={initialTranscript}
+      close={close}
       conversation={
         context && {
           channelId: context.channelId,
@@ -165,18 +212,22 @@ function OwnedAgentProfile({
 
 function ProfileDetails({
   initialTab,
+  initialTranscript,
   agentHint,
   session,
   pubkey,
   context,
   navigation,
   agents,
+  communities,
   scope,
   viewer,
   close,
 }: {
   agents: Agents | undefined;
+  communities: CommunityReader | undefined;
   initialTab: "info" | "activity";
+  initialTranscript: TranscriptRequest | undefined;
   agentHint: boolean;
   session: RelaySession;
   pubkey: string;
@@ -217,21 +268,20 @@ function ProfileDetails({
     type: plugin?.type,
     types: agentTypes,
   });
-  const channelChoices = useChannelChoices(
-    plugin ? session.channels : undefined,
-  );
   const sections =
     settings.agent && agents
       ? agentSections({
           agents,
           agent: settings.agent,
           type: settings.type,
-          channels: channelChoices,
           memories: session.agentMemories,
+          communities,
           conversation: context && {
             channelId: context.channelId,
             ...(context.rootId && { rootId: context.rootId }),
           },
+          initialTranscript,
+          close,
           ...(settings.settingsHost
             ? { settingsHost: settings.settingsHost }
             : {}),

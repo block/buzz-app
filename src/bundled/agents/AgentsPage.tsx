@@ -801,6 +801,7 @@ function DefaultAgentInventory({
         <BestieReplacement
           {...replacement}
           pending={savingBestie}
+          error={error}
           onClose={() => setReplacement(undefined)}
           onChoose={() => {
             // A choice changed elsewhere while this dialog was open wins.
@@ -810,7 +811,7 @@ function DefaultAgentInventory({
           }}
         />
       )}
-      {error && <p role="alert">{error}</p>}
+      {error && !replacement && <p role="alert">{error}</p>}
     </>
   );
 }
@@ -822,12 +823,14 @@ function BestieReplacement({
   current,
   replacing,
   pending,
+  error,
   onChoose,
   onClose,
 }: {
   current: BestieAgent;
   replacing: BestieAgent;
   pending: boolean;
+  error: string;
   onChoose(): void;
   onClose(): void;
 }) {
@@ -839,6 +842,7 @@ function BestieReplacement({
       initialFocus={keep}
       pending={pending}
       onClose={onClose}
+      {...(error && { children: <p role="alert">{error}</p> })}
       actions={
         <>
           <Button ref={keep} disabled={pending} onClick={onClose}>

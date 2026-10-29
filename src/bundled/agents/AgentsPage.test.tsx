@@ -3664,6 +3664,84 @@ it("offers Make my bestie from the card's actions button", async () => {
   expect(screen.getByRole("gridcell", { name: "Bea" })).toBeVisible();
 });
 
+it("keeps a failed Bestie replacement visible and retries the account save", async () => {
+  const user = userEvent.setup();
+  const ada = agent("Ada", 1);
+  const bea = agent("Bea", 2);
+  const view = setup([ada, bea]);
+  const choices = {
+    status: "ready",
+    complete: true,
+    pending: false,
+    identities: [
+      { pubkey: ada.pubkey, name: ada.name, managed: true },
+      { pubkey: bea.pubkey, name: bea.name, managed: true },
+    ],
+    selectable: [
+      { pubkey: ada.pubkey, name: ada.name, managed: true },
+      { pubkey: bea.pubkey, name: bea.name, managed: true },
+    ],
+    archives: { status: "unavailable", archived: [] },
+  };
+  const writes: Array<(failure?: Error) => void> = [];
+  const mainAgent = {
+    read: async () => ada.pubkey,
+    write: () =>
+      new Promise<void>((resolve, reject) =>
+        writes.push((failure) => (failure ? reject(failure) : resolve())),
+      ),
+  };
+  const connection = {
+    status: "ready",
+    scope: "bestie-retry",
+    session: {
+      mainAgent,
+      agentChoices: {
+        snapshot: () => choices,
+        subscribe: () => () => {},
+        retain: () => () => {},
+      },
+    },
+  };
+  const relay = {
+    snapshot: () => connection,
+    subscribe: () => () => {},
+  } as unknown as RelayData;
+  view.rerender(<AgentsPage agents={view.agents} relay={relay} />);
+  const adaCard = await screen.findByRole("gridcell", {
+    name: "Ada, Bestie",
+  });
+  expect(adaCard).toBeVisible();
+
+  const beaCard = screen.getByRole("gridcell", { name: "Bea" });
+  await user.click(
+    within(beaCard).getByRole("button", { name: "Actions for Bea" }),
+  );
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Make my bestie" }),
+  );
+  const confirmation = await screen.findByRole("alertdialog", {
+    name: "Make Bea your bestie?",
+  });
+  await user.click(
+    within(confirmation).getByRole("button", { name: "Switch to Bea" }),
+  );
+  await act(async () => writes[0]?.(new Error("offline")));
+  expect(within(confirmation).getByRole("alert")).toHaveTextContent(
+    "Your bestie couldn't be saved to your account. Try again.",
+  );
+  expect(confirmation).toBeVisible();
+
+  await user.click(
+    within(confirmation).getByRole("button", { name: "Switch to Bea" }),
+  );
+  await act(async () => writes[1]?.());
+  expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  expect(
+    await screen.findByRole("gridcell", { name: "Bea, Bestie" }),
+  ).toBeVisible();
+});
+
 it("opens deletion from the card's right-click menu", async () => {
   const user = userEvent.setup();
   const { agents } = setup([agent("Ada", 1)]);

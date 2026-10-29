@@ -165,6 +165,7 @@ function setup(
       navigator?: Navigation;
       communities?: CommunityReader;
     },
+    teams = [] as AgentsSnapshot["teams"],
   } = {},
 ) {
   let snapshot: AgentsSnapshot = {
@@ -173,7 +174,7 @@ function setup(
     agents: saved,
     running: saved,
     interrupted: [],
-    teams: [],
+    teams,
   };
   const listeners = new Set<() => void>();
   const echoProvider = provider("ready", ({ onClose }) => (
@@ -356,6 +357,12 @@ function setup(
       for (const listener of listeners) listener();
       return team;
     }),
+    // The selected community, where each hosted agent was picked, syncs teams
+    // and is every synced team's home.
+    teamHere: vi.fn(
+      ({ id }: Pick<TeamChange, "id" | "draft">, _community?: string) =>
+        !id || !!snapshot.teams.find((team) => team.id === id)?.revision,
+    ),
     core: vi.fn(async () => undefined),
     removeTeam: vi.fn(async (id: string) => {
       snapshot = {
@@ -399,7 +406,11 @@ function setup(
     snapshot = { ...snapshot, agents: next };
     for (const listener of listeners) listener();
   };
-  return { agents, echoProvider, types, show, relay, ...view };
+  const change = (patch: Partial<AgentsSnapshot>) => {
+    snapshot = { ...snapshot, ...patch };
+    for (const listener of listeners) listener();
+  };
+  return { agents, echoProvider, types, show, change, relay, ...view };
 }
 
 it("opens settings for a selected agent beside the grid and follows the arrow keys", async () => {
@@ -2462,6 +2473,255 @@ it("makes a team of chosen agents and lists it with its members", async () => {
   expect(screen.queryByRole("list", { name: "Teams" })).not.toBeInTheDocument();
 });
 
+it("offers hosted agents as members, warning that they may not get the instructions", async () => {
+  const user = userEvent.setup();
+  setup([
+    agent("Ada", 1),
+    { ...agent("Sky", 2), place: "hosted" },
+    { ...agent("Kai", 5), place: "hosted" },
+    { ...agent("Bo", 3), place: "hosted", unfinished: true },
+    { ...agent("Cy", 4), place: "elsewhere" },
+  ]);
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  await user.click(screen.getByRole("button", { name: "New team" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Create a new team" }),
+  );
+  const members = ["Ada", "Sky", "Bo", "Cy"].map((name) =>
+    screen.queryByRole("checkbox", { name }),
+  );
+  expect(members.map(Boolean)).toEqual([true, true, false, false]);
+  const instructions = screen.getByRole("textbox", { name: "Instructions" });
+  const local = "Every member follows these after its own instructions.";
+  await user.click(screen.getByRole("checkbox", { name: "Ada" }));
+  expect(instructions).toHaveAccessibleDescription(local);
+  await user.click(screen.getByRole("checkbox", { name: "Sky" }));
+  expect(instructions).toHaveAccessibleDescription(
+    "Agents on your devices follow these after their own instructions. Agents run by their provider (Sky) will not get these team instructions.",
+  );
+  await user.click(screen.getByRole("checkbox", { name: "Kai" }));
+  expect(instructions).toHaveAccessibleDescription(
+    /\(Sky and Kai\) will not get these team instructions\.$/,
+  );
+  await user.click(screen.getByRole("checkbox", { name: "Sky" }));
+  await user.click(screen.getByRole("checkbox", { name: "Kai" }));
+  expect(instructions).toHaveAccessibleDescription(local);
+});
+
+it("offers hosted agents only to a team Save puts in this community", async () => {
+  const user = userEvent.setup();
+  const ada = agent("Ada", 1);
+  const synced = (id: string, name: string) => ({
+    id,
+    name,
+    instructions: "",
+    members: [ada.pubkey],
+    revision: "1",
+  });
+  const { agents } = setup([ada, { ...agent("Sky", 2), place: "hosted" }], {
+    teams: [
+      { id: "crew", name: "Crew", instructions: "", members: [ada.pubkey] },
+      synced("synced", "Synced"),
+      synced("away", "Away"),
+    ],
+  });
+  // Away's home is another community, and a new team made here is local.
+  agents.teamHere.mockImplementation(({ id }) => id === "synced");
+  const sky = () => screen.queryByRole("checkbox", { name: "Sky" });
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  for (const name of ["Crew", "Away", "Synced"]) {
+    await user.click(screen.getByRole("button", { name }));
+    expect(screen.getByRole("checkbox", { name: "Ada" })).toBeChecked();
+    expect(!!sky()).toBe(name === "Synced");
+    await user.keyboard("{Escape}");
+  }
+  await user.click(screen.getByRole("button", { name: "New team" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Create a new team" }),
+  );
+  expect(agents.teamHere).toHaveBeenCalledWith({ draft: expect.any(String) });
+  expect(screen.getByRole("checkbox", { name: "Ada" })).toBeInTheDocument();
+  expect(sky()).not.toBeInTheDocument();
+});
+
+it("leaves a hosted agent picked in another community off a new team, keeping the rest", async () => {
+  const user = userEvent.setup();
+  const ada = agent("Ada", 1);
+  const sky: Agent = { ...agent("Sky", 2), place: "hosted" };
+  const { agents, show } = setup([ada, sky], {
+    teams: [
+      {
+        id: "sky",
+        name: "Sky crew",
+        instructions: "",
+        members: [sky.pubkey],
+        revision: "1",
+      },
+    ],
+  });
+  // Ada runs on this device, in the first community only.
+  agents.memberships.mockImplementation((pubkey) =>
+    pubkey === ada.pubkey
+      ? [{ key: ada.key, origin: "https://relay.example", connected: true }]
+      : [],
+  );
+  // A new team syncs in the selected community.
+  let selected = ada.relay;
+  agents.teamHere.mockImplementation(
+    ({ id }, community = selected) => !!id || community === selected,
+  );
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  await user.click(screen.getByRole("button", { name: "New team" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Create a new team" }),
+  );
+  await user.type(screen.getByRole("textbox", { name: "Name" }), "Crew");
+  await user.click(screen.getByRole("checkbox", { name: "Ada" }));
+  await user.click(screen.getByRole("checkbox", { name: "Sky" }));
+  // Another community that syncs teams, with its own hosted agent.
+  const other = "wss://other.example";
+  act(() => {
+    selected = other;
+    show([
+      { ...agent("Bo", 3), relay: other },
+      { ...agent("Kai", 5), place: "hosted", relay: other },
+    ]);
+  });
+  expect(screen.getByRole("form", { name: "New team" })).toBeInTheDocument();
+  expect(
+    screen.queryByRole("checkbox", { name: "Sky" }),
+  ).not.toBeInTheDocument();
+  expect(screen.getByRole("checkbox", { name: "Kai" })).not.toBeChecked();
+  expect(
+    screen.getByText("+1 in your other communities, who stay on the team."),
+  ).toBeInTheDocument();
+  const instructions = screen.getByRole("textbox", { name: "Instructions" });
+  expect(instructions).toHaveAccessibleDescription(
+    "Every member follows these after its own instructions.",
+  );
+  await user.click(screen.getByRole("button", { name: "Create team" }));
+  expect(agents.saveTeam).toHaveBeenLastCalledWith({
+    draft: expect.any(String),
+    name: "Crew",
+    instructions: "",
+    members: [ada.pubkey],
+  });
+  // A hosted member the team already has stays, though not listed here.
+  await user.click(screen.getByRole("button", { name: "Sky crew" }));
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  expect(agents.saveTeam).toHaveBeenLastCalledWith(
+    expect.objectContaining({ id: "sky", members: [sky.pubkey] }),
+  );
+});
+
+it("keeps a hosted agent picked for a new team while its community lists agents again", async () => {
+  const user = userEvent.setup();
+  const ada = agent("Ada", 1);
+  const sky: Agent = { ...agent("Sky", 2), place: "hosted" };
+  const { agents, show } = setup([ada, sky]);
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  await user.click(screen.getByRole("button", { name: "New team" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Create a new team" }),
+  );
+  await user.type(screen.getByRole("textbox", { name: "Name" }), "Crew");
+  await user.click(screen.getByRole("checkbox", { name: "Ada" }));
+  await user.click(screen.getByRole("checkbox", { name: "Sky" }));
+  // The community reconnects and still syncs teams, but its hosted agents
+  // are unlisted until their records are read again, so Save refuses Sky,
+  // which still shows checked.
+  act(() => show([ada]));
+  expect(screen.getByRole("checkbox", { name: "Sky" })).toBeChecked();
+  const refusal = "Can't tell yet whether Sky is in relay.example";
+  agents.saveTeam.mockRejectedValueOnce(new Error(refusal));
+  await user.click(screen.getByRole("button", { name: "Create team" }));
+  const form = screen.getByRole("form", { name: "New team" });
+  expect(await within(form).findByRole("alert")).toHaveTextContent(refusal);
+  const draft = agents.saveTeam.mock.calls.at(-1)?.[0].draft;
+  expect(agents.saveTeam).toHaveBeenLastCalledWith({
+    draft: expect.any(String),
+    name: "Crew",
+    instructions: "",
+    members: [ada.pubkey, sky.pubkey],
+  });
+  // Once they are, Sky is listed again, and Create keeps the draft.
+  act(() => show([ada, sky]));
+  expect(screen.getAllByRole("checkbox", { name: "Sky" })).toHaveLength(1);
+  expect(screen.getByRole("checkbox", { name: "Sky" })).toBeChecked();
+  await user.click(screen.getByRole("button", { name: "Create team" }));
+  expect(agents.saveTeam).toHaveBeenLastCalledWith({
+    draft,
+    name: "Crew",
+    instructions: "",
+    members: [ada.pubkey, sky.pubkey],
+  });
+});
+
+it("lets a hosted agent picked for a new team be unchecked once it is no longer listed", async () => {
+  const user = userEvent.setup();
+  const ada = agent("Ada", 1);
+  const sky: Agent = { ...agent("Sky", 2), place: "hosted" };
+  const { agents, show } = setup([ada, sky]);
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  await user.click(screen.getByRole("button", { name: "New team" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Create a new team" }),
+  );
+  await user.type(screen.getByRole("textbox", { name: "Name" }), "Crew");
+  await user.click(screen.getByRole("checkbox", { name: "Ada" }));
+  await user.click(screen.getByRole("checkbox", { name: "Sky" }));
+  // Sky is deleted from another device, and the community's agent list is
+  // read without it, so Save refuses it. It still shows, named in the warning.
+  act(() => show([ada]));
+  expect(
+    screen.getByRole("textbox", { name: "Instructions" }),
+  ).toHaveAccessibleDescription(
+    /\(Sky\) will not get these team instructions\.$/,
+  );
+  const refusal = "Add Sky to relay.example first";
+  agents.saveTeam.mockRejectedValueOnce(new Error(refusal));
+  await user.click(screen.getByRole("button", { name: "Create team" }));
+  const form = screen.getByRole("form", { name: "New team" });
+  expect(await within(form).findByRole("alert")).toHaveTextContent(refusal);
+  const draft = agents.saveTeam.mock.calls.at(-1)?.[0].draft;
+  // Unchecking it keeps the draft, and Create leaves it off.
+  await user.click(screen.getByRole("checkbox", { name: "Sky" }));
+  expect(screen.getByRole("checkbox", { name: "Sky" })).not.toBeChecked();
+  await user.click(screen.getByRole("button", { name: "Create team" }));
+  expect(agents.saveTeam).toHaveBeenLastCalledWith({
+    draft,
+    name: "Crew",
+    instructions: "",
+    members: [ada.pubkey],
+  });
+});
+
+it("offers an open new team hosted agents once its community is known to sync teams", async () => {
+  const user = userEvent.setup();
+  const { agents, change } = setup([
+    agent("Ada", 1),
+    { ...agent("Sky", 2), place: "hosted" },
+  ]);
+  // A new team syncs here once the community's config channels are up.
+  agents.teamHere.mockImplementation(
+    ({ id }) => !id && !!agents.snapshot().syncsTeams,
+  );
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  await user.click(screen.getByRole("button", { name: "New team" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Create a new team" }),
+  );
+  await user.type(screen.getByRole("textbox", { name: "Name" }), "Crew");
+  await user.click(screen.getByRole("checkbox", { name: "Ada" }));
+  expect(
+    screen.queryByRole("checkbox", { name: "Sky" }),
+  ).not.toBeInTheDocument();
+  act(() => change({ syncsTeams: true }));
+  expect(screen.getByRole("checkbox", { name: "Sky" })).not.toBeChecked();
+  expect(screen.getByRole("checkbox", { name: "Ada" })).toBeChecked();
+  expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue("Crew");
+});
+
 it("closes the team editor when leaving Your teams", async () => {
   const user = userEvent.setup();
   const { agents } = setup([agent("Ada", 1)]);
@@ -2525,6 +2785,72 @@ it("explains an unavailable harness without claiming the key is on another devic
   expect(
     screen.queryByRole("button", { name: "Delete agent" }),
   ).not.toBeInTheDocument();
+});
+
+it("shows a synced team only where its members are, after switching communities", async () => {
+  const user = userEvent.setup();
+  const sky: Agent = { ...agent("Sky", 2), place: "hosted" };
+  const { agents, show } = setup([agent("Ada", 1), sky], {
+    teams: [
+      {
+        id: "sky",
+        name: "Sky crew",
+        instructions: "",
+        members: [sky.pubkey],
+        revision: "1",
+      },
+      {
+        id: "empty",
+        name: "Empty",
+        instructions: "",
+        members: [],
+        revision: "1",
+      },
+      {
+        id: "stale",
+        name: "Stale",
+        instructions: "",
+        members: ["9".repeat(64)],
+      },
+    ],
+  });
+  const listed = () =>
+    within(screen.getByRole("list", { name: "Teams" }))
+      .getAllByRole("button")
+      .map((card) => card.getAttribute("aria-label"));
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  expect(listed()).toEqual(["Sky crew", "Empty", "Stale"]);
+  await user.click(screen.getByRole("button", { name: "Sky crew" }));
+  expect(
+    screen.getByRole("form", { name: "Edit Sky crew" }),
+  ).toBeInTheDocument();
+  // Bo's community is no synced team's home.
+  agents.teamHere.mockReturnValue(false);
+  act(() => show([agent("Bo", 3)]));
+  expect(
+    screen.queryByRole("form", { name: "Edit Sky crew" }),
+  ).not.toBeInTheDocument();
+  expect(listed()).toEqual(["Empty", "Stale"]);
+});
+
+it("keeps a synced team in its home while none of its members is listed", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([agent("Ada", 1)], {
+    teams: [
+      {
+        id: "gone",
+        name: "Gone",
+        instructions: "",
+        members: ["9".repeat(64)],
+        revision: "1",
+      },
+    ],
+  });
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  expect(agents.teamHere).toHaveBeenCalledWith({ id: "gone" });
+  await user.click(screen.getByRole("button", { name: "Gone" }));
+  await user.click(screen.getByRole("button", { name: "Delete team" }));
+  expect(agents.removeTeam).toHaveBeenCalledWith("gone");
 });
 
 it("shows an agent on another device read-only, and offers only Finish setup and Delete for an unfinished hosted one", async () => {

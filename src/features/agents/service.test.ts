@@ -11663,9 +11663,10 @@ describe("synced teams", () => {
   async function ready(
     identities: AgentIdentity[],
     storage?: ReturnType<typeof memoryStorage>,
+    listed: RelayEvent[] = [],
   ) {
     const channels = teamChannels();
-    const f = await setup({ identities, storage });
+    const f = await setup({ identities, storage, listed });
     await vi.waitFor(() => expect(channels.made.has(home)).toBe(true));
     return { ...f, ...channels };
   }
@@ -11749,6 +11750,217 @@ describe("synced teams", () => {
     expect(error).not.toContain(away);
   });
 
+  it("puts set-up hosted agents on a team and names them in its roster", async () => {
+    const unfinished = "d".repeat(64);
+    const team = stored(viewer, [bot, hostedKey, unfinished]);
+    const f = await ready([], team.storage);
+    const { type, remote } = cloud();
+    f.plugin.agents.register(type);
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    await f.service.create({ type: "example/cloud", name: "Sky" });
+    remote.provision.mockResolvedValueOnce({ pubkey: unfinished });
+    remote.activate.mockRejectedValueOnce(new Error("provider down"));
+    await expect(
+      f.service.create({ type: "example/cloud", name: "Bo" }),
+    ).rejects.toThrow("provider down");
+    expect(f.service.teamHere({ draft })).toBe(true);
+    await f.service.saveTeam(crew([bot, hostedKey]));
+    expect(f.saveTeam).toHaveBeenCalledWith(
+      expect.objectContaining({ members: [bot, hostedKey] }),
+    );
+    await expect(f.service.saveTeam(crew([unfinished]))).rejects.toThrow(
+      /^Add .+ to relay\.example\.test first$/,
+    );
+    team.confirm(f.stores.get(home));
+    await vi.waitFor(() =>
+      expect(f.service.snapshot().teams.map((t) => t.name)).toEqual(["Crew"]),
+    );
+    await handleOf(f.run, f.emit);
+    const roster = f.run.mock.calls.at(-1)?.[0].team;
+    expect(roster).toContain(`- Sky (${npubEncode(hostedKey)})\n`);
+    expect(roster).not.toContain(npubEncode(unfinished));
+  });
+
+  it("refuses a new member on another device, and leaves it out of rosters", async () => {
+    const team = stored(viewer, [bot, hostedKey, sibling]);
+    const f = await ready([], team.storage, [record(sibling)]);
+    f.plugin.agents.register(cloud().type);
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    await f.service.create({ type: "example/cloud", name: "Sky" });
+    await vi.waitFor(() =>
+      expect(f.service.find(sibling)?.place).toBe("elsewhere"),
+    );
+    await expect(f.service.saveTeam(crew([bot, sibling]))).rejects.toThrow(
+      /^Add npub…\w+ to relay\.example\.test first$/,
+    );
+    expect(f.saveTeam).not.toHaveBeenCalled();
+    team.confirm(f.stores.get(home));
+    await vi.waitFor(() =>
+      expect(f.service.snapshot().teams.map((t) => t.name)).toEqual(["Crew"]),
+    );
+    await handleOf(f.run, f.emit);
+    const roster = f.run.mock.calls.at(-1)?.[0].team;
+    expect(roster).toContain(`- Sky (${npubEncode(hostedKey)})\n`);
+    expect(roster).not.toContain(npubEncode(sibling));
+  });
+
+  it("names a hosted teammate by npub while the community's agent list is unread", async () => {
+    const team = stored(viewer, [bot, hostedKey]);
+    const sky = record(hostedKey, {
+      content: JSON.stringify({ name: "Sky" }),
+      tags: [
+        ["d", hostedKey],
+        ["runtime", "example/cloud"],
+      ],
+    });
+    const f = await ready([], team.storage, [sky]);
+    f.plugin.agents.register(cloud().type);
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    team.confirm(f.stores.get(home));
+    await vi.waitFor(() =>
+      expect(f.service.find(hostedKey)?.place).toBe("hosted"),
+    );
+    const roster = async (id: string) => {
+      const runs = f.run.mock.calls.length;
+      f.emit({
+        events: [
+          event(id, {
+            tags: [
+              ["h", channel],
+              ["p", bot],
+            ],
+          }),
+        ],
+      });
+      await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(runs + 1));
+      return f.run.mock.calls.at(-1)?.[0].team;
+    };
+    const echo = `- Echo (${npubEncode(bot)}), you\n`;
+    expect(await roster("listed")).toContain(
+      `${echo}- Sky (${npubEncode(hostedKey)})\n`,
+    );
+    // As after a restart, its agent list is read again, and the read is held.
+    const read = vi.mocked(f.session.read);
+    const answer = read.getMockImplementation() as NonNullable<
+      ReturnType<typeof read.getMockImplementation>
+    >;
+    let fail = () => {};
+    const listing = new Promise<never>((_, reject) => {
+      fail = () => reject(new Error("offline"));
+    });
+    let held = 0;
+    read.mockImplementation((filters, settings) => {
+      if (filters[0]?.kinds?.includes(30177)) {
+        held++;
+        return listing;
+      }
+      return answer(filters, settings);
+    });
+    f.connect(false);
+    f.connect(true);
+    await vi.waitFor(() => expect(held).toBe(1));
+    expect(f.service.find(hostedKey)).toBeUndefined();
+    const unread = `${echo}- ${npubEncode(hostedKey)}\n`;
+    expect(await roster("held")).toContain(unread);
+    fail();
+    await settle();
+    expect(await roster("failed")).toContain(unread);
+  });
+
+  it("refuses a hosted member until the community's agent list is read again", async () => {
+    const sky = record(hostedKey, {
+      content: JSON.stringify({ name: "Sky" }),
+      tags: [
+        ["d", hostedKey],
+        ["runtime", "example/cloud"],
+      ],
+    });
+    const f = await ready([], undefined, [sky]);
+    f.plugin.agents.register(cloud().type);
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() =>
+      expect(f.service.find(hostedKey)?.place).toBe("hosted"),
+    );
+    // A reconnect reads its agent list again; the read is held, then fails.
+    const read = vi.mocked(f.session.read);
+    const answer = read.getMockImplementation() as NonNullable<
+      ReturnType<typeof read.getMockImplementation>
+    >;
+    let fail = () => {};
+    const listing = new Promise<never>((_, reject) => {
+      fail = () => reject(new Error("offline"));
+    });
+    let held = 0;
+    read.mockImplementation((filters, settings) => {
+      if (filters[0]?.kinds?.includes(30177)) {
+        held++;
+        return listing;
+      }
+      return answer(filters, settings);
+    });
+    f.connect(false);
+    f.connect(true);
+    await vi.waitFor(() => expect(held).toBe(1));
+    // Its config channels are up again first.
+    await vi.waitFor(() => expect(f.service.snapshot().syncsTeams).toBe(true));
+    const unread =
+      /^Can't tell yet whether npub…\w+ is in relay\.example\.test; try again shortly$/;
+    await expect(f.service.saveTeam(crew([bot, hostedKey]))).rejects.toThrow(
+      unread,
+    );
+    fail();
+    await settle();
+    await expect(f.service.saveTeam(crew([bot, hostedKey]))).rejects.toThrow(
+      unread,
+    );
+    expect(f.saveTeam).not.toHaveBeenCalled();
+    // Once a later read succeeds, the same draft takes it.
+    read.mockImplementation(answer);
+    f.connect(false);
+    f.connect(true);
+    await vi.waitFor(() => {
+      expect(f.service.find(hostedKey)?.place).toBe("hosted");
+      expect(f.service.snapshot().syncsTeams).toBe(true);
+    });
+    await f.service.saveTeam(crew([bot, hostedKey]));
+    expect(f.saveTeam).toHaveBeenCalledWith(
+      expect.objectContaining({ members: [bot, hostedKey] }),
+    );
+  });
+
+  it("keeps a new team, hosted agents and all, off a relay without config channels", async () => {
+    const make = vi.fn((_community: string) => null);
+    coordinators.make = make;
+    const f = await setup();
+    f.plugin.agents.register(cloud().type);
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    await f.service.create({ type: "example/cloud", name: "Sky" });
+    await vi.waitFor(() =>
+      expect(make).toHaveBeenCalledWith(home, expect.anything()),
+    );
+    await settle();
+    expect(f.service.teamHere({ draft })).toBe(false);
+    await expect(f.service.saveTeam(crew([bot, hostedKey]))).rejects.toThrow(
+      "A member is not an agent on this device",
+    );
+  });
+
+  it("puts a synced team in the selected community only while it is home", async () => {
+    const team = stored(viewer, [alder]);
+    const local = { id: "local", name: "Local", instructions: "", members: [] };
+    writeTeams(team.storage, [local]);
+    const f = await ready([here(alder)], team.storage);
+    team.confirm(f.stores.get(home));
+    expect(f.service.snapshot().teams.map((t) => t.id)).toEqual([
+      "local",
+      draft,
+    ]);
+    expect(f.service.teamHere({ id: draft })).toBe(true);
+    expect(f.service.teamHere({ id: "local" })).toBe(false);
+    f.select(f.second.origin);
+    expect(f.service.teamHere({ id: draft })).toBe(false);
+  });
+
   it("shows only the signed-in account's synced teams", async () => {
     const team = stored(other, []);
     const f = await ready([here(alder)], team.storage);
@@ -11774,6 +11986,31 @@ describe("synced teams", () => {
     await vi.waitFor(() => expect(channels.made.has(home)).toBe(true));
     await f.service.saveTeam(crew([alder]));
     expect(channels.saveTeam).toHaveBeenCalledOnce();
+  });
+
+  it("tells subscribers when a new team made here starts to sync", async () => {
+    const channels = teamChannels();
+    const make = coordinators.make;
+    let discover = () => {};
+    coordinators.make = (community, store) =>
+      new Promise((resolve) => {
+        discover = () => resolve(make?.(community, store));
+      });
+    const f = await setup();
+    f.plugin.agents.register(cloud().type);
+    // Its hosted agent is listed while the support check is still running.
+    await f.service.create({ type: "example/cloud", name: "Sky" });
+    expect(f.service.find(hostedKey)?.place).toBe("hosted");
+    await settle();
+    expect(f.service.snapshot().syncsTeams).toBeFalsy();
+    expect(f.service.teamHere({ draft })).toBe(false);
+    const changed = vi.fn();
+    f.service.subscribe(changed);
+    discover();
+    await vi.waitFor(() => expect(channels.made.has(home)).toBe(true));
+    await vi.waitFor(() => expect(changed).toHaveBeenCalled());
+    expect(f.service.snapshot().syncsTeams).toBe(true);
+    expect(f.service.teamHere({ draft })).toBe(true);
   });
 
   it("refuses Import until a failed support check succeeds again", async () => {

@@ -1,6 +1,7 @@
 //! Browser sign-in startup and loopback OAuth authorization-code responses.
 //! RFC 8252 §§7.3, 8.3, 8.4, 8.9; RFC 6749 §§4.1.2, 4.1.2.1; RFC 9700 §2.1.
 //! See this folder's README.md for the command contract, ownership, and limits.
+mod focus;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use sha2::{Digest, Sha256};
 use std::{
@@ -44,7 +45,7 @@ impl Drop for Attempt {
     }
 }
 #[derive(Clone, Default)]
-pub(crate) struct OAuthCallbackHost(Arc<Mutex<Option<Attempt>>>);
+pub(crate) struct OAuthCallbackHost(Arc<Mutex<Option<Attempt>>>, focus::FocusReturn);
 
 impl OAuthCallbackHost {
     pub(crate) fn document_load(
@@ -55,6 +56,7 @@ impl OAuthCallbackHost {
         if label == "main" && event == tauri::webview::PageLoadEvent::Started {
             // The new document cannot recover the previous plugin's attempt ID.
             self.0.lock().map_err(|_| "Sign-in unavailable")?.take();
+            self.1.cancel(None);
         }
         Ok(())
     }
@@ -63,6 +65,15 @@ impl OAuthCallbackHost {
         &self,
         request: OAuthRequest,
         open: impl FnOnce(&str) -> Result<(), String>,
+    ) -> Result<OAuthAttempt, String> {
+        self.begin_with_focus(request, open, None)
+    }
+
+    fn begin_with_focus(
+        &self,
+        request: OAuthRequest,
+        open: impl FnOnce(&str) -> Result<(), String>,
+        browser: Option<String>,
     ) -> Result<OAuthAttempt, String> {
         let mut authorization =
             url::Url::parse(&request.authorization_url).map_err(|_| "Invalid authorization URL")?;
@@ -141,6 +152,7 @@ impl OAuthCallbackHost {
             result: Some(receive),
             task,
         });
+        self.1.arm(&id, browser);
         drop(current);
         if open(authorization.as_str()).is_err() {
             self.cancel(&id)?;
@@ -164,7 +176,17 @@ impl OAuthCallbackHost {
         let result = receiver
             .await
             .unwrap_or_else(|_| Err("Sign-in canceled.".into()));
-        self.cancel(id)?;
+        let mut current = self.0.lock().map_err(|_| "Sign-in unavailable")?;
+        if current.as_ref().is_some_and(|attempt| attempt.id == id) {
+            current.take();
+        }
+        self.1.received(
+            id,
+            result.as_ref().is_ok_and(|callback| {
+                callback.parameters.iter().any(|(name, _)| name == "code")
+                    && !callback.parameters.iter().any(|(name, _)| name == "error")
+            }),
+        );
         result
     }
 
@@ -173,6 +195,7 @@ impl OAuthCallbackHost {
         if current.as_ref().is_some_and(|attempt| attempt.id == id) {
             *current = None;
         }
+        self.1.cancel(Some(id));
         Ok(())
     }
 }
@@ -185,10 +208,11 @@ pub(crate) fn oauth_callback_begin<R: tauri::Runtime>(
     callback_path: String,
     use_state: Option<bool>,
 ) -> Result<OAuthAttempt, String> {
+    let browser = focus::capture(&app, &authorization_url);
     // Register and launch inline so reload cleanup cannot overtake a queued begin.
     // Enter the runtime for the Tokio listener; startup does not await anything.
     tauri::async_runtime::block_on(async {
-        state.begin(
+        state.begin_with_focus(
             OAuthRequest {
                 authorization_url,
                 callback_path,
@@ -199,6 +223,7 @@ pub(crate) fn oauth_callback_begin<R: tauri::Runtime>(
                     .open_url(url, None::<&str>)
                     .map_err(|_| "Could not open the sign-in browser".into())
             },
+            browser,
         )
     })
 }
@@ -208,6 +233,16 @@ pub(crate) async fn oauth_callback_wait(
     id: String,
 ) -> CallbackResult {
     state.wait(&id).await
+}
+/// Called by the trusted main webview only after code exchange and account verification.
+#[tauri::command]
+pub(crate) async fn oauth_callback_complete<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: tauri::State<'_, OAuthCallbackHost>,
+    id: String,
+) -> Result<(), String> {
+    state.1.complete(app, id).await;
+    Ok(())
 }
 #[tauri::command]
 pub(crate) fn oauth_callback_cancel(
@@ -352,6 +387,10 @@ async fn reply(stream: &mut TcpStream, status: u16, message: &str) {
         .replace("{{style}}", style)
         .replace("{{script}}", script)
         .replace("{{complete}}", if status == 200 { "true" } else { "false" })
+        .replace(
+            "{{closeDelay}}",
+            &focus::READABLE_DELAY.as_secs().to_string(),
+        )
         .replace("{{brand}}", include_str!("../../../public/buzz-mark.svg"))
         .replace("{{heading}}", heading)
         .replace("{{message}}", message);

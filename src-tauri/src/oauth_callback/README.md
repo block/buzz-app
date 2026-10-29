@@ -23,6 +23,7 @@ const { id, callbackUrl } = await invoke("oauth_callback_begin", {
 | `oauth_callback_begin({ authorizationUrl, callbackPath, useState? })` | Validates the request, generates an attempt ID, binds `127.0.0.1` on an ephemeral port, inserts the callback URL as `redirect_uri` and optional state, and launches the external browser through the existing opener. Returns `{ "id": "…", "callbackUrl": "http://127.0.0.1:{port}{path}" }`. Launch failure cleans up before rejecting. |
 | `oauth_callback_wait(id)` | Consumes the matching attempt's result once. Resolves with `{ "parameters": [["name", "value"], …] }`, retaining decoded order and duplicates. Valid provider errors resolve with their parameters; transport failure, timeout, or cancellation rejects with a generic message. |
 | `oauth_callback_cancel(id)` | Closes and removes the matching attempt. Safe to repeat; a stale ID does not cancel another attempt. |
+| `oauth_callback_complete(id)` | After the caller verifies the account, makes a best-effort native focus return for the matching valid callback. Waits for the callback's short reading delay, then consumes its return permission once. Unknown, canceled and replaced attempts do nothing. Invoke before final cancellation. |
 
 The authorization URL must use HTTPS, with no embedded credentials or fragment.
 The callback path must be a canonical absolute path without a query or fragment.
@@ -68,6 +69,23 @@ browser-launch failure, or the start of a main-document load. Loads in other
 webviews leave the attempt intact. Listener cleanup does not close the external
 browser or cancel separate host HTTP requests.
 
+### Return focus after verification
+
+Builderlab calls `complete` only after code exchange and `/v1/auth/me` validation.
+Focus failure never fails authentication. The attempt's focus permission is
+separate from its already-closed listener and is retired by final cancellation,
+reload, a provider error, or a newer attempt.
+
+On macOS, native startup records the default browser only if Buzz is focused.
+Completion runs on the main thread and activates Buzz only while that browser
+application is foreground, Buzz remains visible and not minimized, and completion
+is within ten seconds after the reading delay. Slow verification never causes a
+late focus jump. This checks
+applications, not browser tabs. Other platforms skip automatic focus return until
+they have a reliable foreground-browser check; no desktop-control permission is
+requested. The callback's **Keep open** control only cancels closing its tab;
+native focus return follows the verified-login policy independently.
+
 ## Callback handling and limits
 
 - Accepts GET requests using HTTP/1.0 or HTTP/1.1, with exactly one matching
@@ -83,8 +101,10 @@ browser or cancel separate host HTTP requests.
   shell/panel, spacing and type roles, browser light/dark mode, `no-store`,
   and `no-referrer`. Its Content Security Policy permits only the exact embedded
   stylesheet and close-window script by hash, with no external assets or network
-  requests. A valid callback tries to close its page automatically; error pages
-  remain open. A **Close this window** button is shown when JavaScript is enabled,
+  requests. A valid callback shows a two-second countdown before trying to close
+  its page; **Close now** skips the countdown and **Keep open** cancels it. The
+  reading delay and native focus-return delay share one native constant. Error
+  pages remain open. Close controls are shown when JavaScript is enabled,
   with manual-close guidance if browser policy refuses `window.close()`. Restoring
   an unclosed tab later can still fail because the loopback listener is temporary.
   Receipt of a callback does not establish successful account verification;

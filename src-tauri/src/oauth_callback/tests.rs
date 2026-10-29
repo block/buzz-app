@@ -162,6 +162,7 @@ async fn real_listener_preserves_callback_parameters_and_closes_after_completion
     let state = OAuthCallbackHost::default();
     let attempt = begin(&state, "/oauth2redirect/provider".into()).unwrap();
     let id = attempt.id.as_str();
+    state.1.arm(id, Some("synthetic-browser".into()));
     let url = url::Url::parse(&attempt.callback_url).unwrap();
     assert_eq!(url.host_str(), Some("127.0.0.1"));
     assert!(uuid::Uuid::parse_str(id).is_ok());
@@ -201,6 +202,7 @@ async fn real_listener_preserves_callback_parameters_and_closes_after_completion
         assert!(response.contains("Return to the app"));
         assert!(response.contains("finish verification"));
         assert!(response.contains("data-complete=\"true\""));
+        assert!(response.contains("data-close-delay=\"2\""));
         assert!(response.contains("Close this window</button>"));
         assert!(!response.contains("{{"));
         let (headers, body) = response.split_once("\r\n\r\n").unwrap();
@@ -246,6 +248,9 @@ async fn real_listener_preserves_callback_parameters_and_closes_after_completion
     );
     assert_eq!(result, Ok(expected));
     assert!(state.0.lock().unwrap().is_none());
+    assert!(state.1.deadline(id).is_some());
+    state.cancel(id).unwrap();
+    assert!(state.1.deadline(id).is_none());
     let mut byte = [0];
     let closed = tokio::time::timeout(Duration::from_secs(5), queued.read(&mut byte))
         .await

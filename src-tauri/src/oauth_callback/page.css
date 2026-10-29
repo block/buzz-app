@@ -108,6 +108,12 @@ h1 {
   color: var(--text-subtle);
 }
 
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
 button {
   max-inline-size: 100%;
   min-block-size: 2.5rem;
@@ -132,6 +138,16 @@ button {
 
 button:active {
   background: var(--affordance-prominent-pressed);
+}
+
+button.secondary {
+  background: transparent;
+  color: var(--text-subtle);
+}
+
+button.secondary:is(:hover, :active) {
+  color: var(--text-standard);
+  text-decoration: underline;
 }
 
 button:focus-visible {

@@ -48,11 +48,13 @@ export type BrowserBridge = {
   }): Promise<{ id: string; callbackUrl: string }>;
   wait(id: string): Promise<OAuthCallback>;
   cancel(id: string): Promise<void>;
+  complete(id: string): Promise<void>;
 };
 const nativeBridge: BrowserBridge = {
   begin: (options) => invoke("oauth_callback_begin", options),
   wait: (id) => invoke("oauth_callback_wait", { id }),
   cancel: (id) => invoke("oauth_callback_cancel", { id }),
+  complete: (id) => invoke("oauth_callback_complete", { id }),
 };
 
 function base64url(bytes: Uint8Array) {
@@ -154,6 +156,9 @@ export async function browserCredential(
     const account = await request("/v1/auth/me", session_credential);
     if (typeof account?.subject !== "string" || !account.subject.trim())
       throw new Error("Builderlab did not return a valid account.");
+    // Presentation is best effort; a failed focus request must not fail verified login.
+    await bridge.complete(id).catch(() => {});
+    signal.throwIfAborted();
     return Object.freeze({
       value: session_credential,
       account: Object.freeze({

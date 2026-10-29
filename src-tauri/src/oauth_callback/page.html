@@ -6,12 +6,15 @@
     <title>Buzz sign-in</title>
     <style>{{style}}</style>
   </head>
-  <body data-complete="{{complete}}">
+  <body data-complete="{{complete}}" data-close-delay="{{closeDelay}}">
     <main aria-labelledby="heading">
       <div class="brand">{{brand}}<span>Buzz</span></div>
       <h1 id="heading">{{heading}}</h1>
       <p>{{message}}</p>
-      <button id="close-window" type="button" hidden>Close this window</button>
+      <div class="actions">
+        <button id="close-window" type="button" hidden>Close this window</button>
+        <button id="keep-open" class="secondary" type="button" hidden>Keep open</button>
+      </div>
       <p id="close-hint" class="hint" role="status">You can close this window.</p>
     </main>
     <script>{{script}}</script>

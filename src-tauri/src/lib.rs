@@ -7,7 +7,8 @@ mod browser;
 mod close_menu;
 mod oauth_callback;
 use oauth_callback::{
-    oauth_callback_begin, oauth_callback_cancel, oauth_callback_wait, OAuthCallbackHost,
+    oauth_callback_begin, oauth_callback_cancel, oauth_callback_complete, oauth_callback_wait,
+    OAuthCallbackHost,
 };
 #[cfg(test)]
 mod browser_permissions_tests;
@@ -582,6 +583,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         oauth_callback_begin,
         oauth_callback_wait,
         oauth_callback_cancel,
+        oauth_callback_complete,
         nsec_backup_available,
         nsec_backup_session,
         nsec_backup_retry,

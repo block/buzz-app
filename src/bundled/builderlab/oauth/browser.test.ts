@@ -26,6 +26,7 @@ function fixture() {
     })),
     wait: vi.fn(async () => ({ parameters: [["code", "one-time"]] as const })),
     cancel: vi.fn(async () => {}),
+    complete: vi.fn(async () => {}),
   };
   const host: Host = {
     runCommand: vi.fn(),
@@ -88,6 +89,39 @@ it("acquires a verified credential with the RFC 7636 S256 proof", async () => {
     }),
   );
   expect(bridge.wait).toHaveBeenCalledWith(attemptId);
+  expect(bridge.complete).toHaveBeenCalledWith(attemptId);
+  expect(bridge.cancel).toHaveBeenCalledWith(attemptId);
+});
+
+it("keeps verified login usable when native focus return fails", async () => {
+  const { host, bridge, controller } = fixture();
+  vi.mocked(bridge.complete).mockRejectedValue(new Error("Focus unavailable"));
+  expect(
+    await browserCredential(host, controller.signal, bridge),
+  ).toMatchObject({
+    value: "private-token",
+  });
+  expect(bridge.complete).toHaveBeenCalledWith(attemptId);
+  expect(bridge.cancel).toHaveBeenCalledWith(attemptId);
+});
+
+it("does not request focus for an unverified account", async () => {
+  const { host, bridge, controller } = fixture();
+  vi.mocked(host.request)
+    .mockResolvedValueOnce({
+      status: 200,
+      headers: {},
+      body: '{"session_credential":"private-token"}',
+    })
+    .mockResolvedValueOnce({
+      status: 200,
+      headers: {},
+      body: '{"subject":""}',
+    });
+  await expect(
+    browserCredential(host, controller.signal, bridge),
+  ).rejects.toThrow("valid account");
+  expect(bridge.complete).not.toHaveBeenCalled();
   expect(bridge.cancel).toHaveBeenCalledWith(attemptId);
 });
 
@@ -258,7 +292,7 @@ it("cancellation during challenge hashing does not start a browser attempt", asy
   expect(host.request).not.toHaveBeenCalled();
 });
 
-it.each(["begin", "wait", "exchange", "account"] as const)(
+it.each(["begin", "wait", "exchange", "account", "complete"] as const)(
   "cancellation during a held %s ignores its late result and closes the listener",
   async (boundary) => {
     const { host, bridge, controller } = fixture();
@@ -305,7 +339,11 @@ it.each(["begin", "wait", "exchange", "account"] as const)(
     expect(bridge.cancel).toHaveBeenCalledWith(attemptId);
     expect(bridge.wait).toHaveBeenCalledTimes(boundary === "begin" ? 0 : 1);
     expect(host.request).toHaveBeenCalledTimes(
-      boundary === "account" ? 2 : boundary === "exchange" ? 1 : 0,
+      boundary === "account" || boundary === "complete"
+        ? 2
+        : boundary === "exchange"
+          ? 1
+          : 0,
     );
   },
 );

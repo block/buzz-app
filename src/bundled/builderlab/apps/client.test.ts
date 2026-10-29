@@ -331,7 +331,7 @@ it("switches visibility without sending viewers", async () => {
     body: JSON.stringify({ visibility: "restricted" }),
   });
   await expect(client.visibility("demo", "workspace")).rejects.toThrow(
-    /reported demo as restricted, not demo as organization/,
+    "Apps Platform reported demo as restricted, not demo as organization. Ask your owner to check who can open it in Share & manage before retrying",
   );
   const other = await setup([
     json(200, { ok: true, app_id: "other", visibility: "organization" }),

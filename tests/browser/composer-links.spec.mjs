@@ -714,11 +714,15 @@ test("Up and Down move one line at a time through links that wrap", async ({
             requestAnimationFrame(() => requestAnimationFrame(resolve)),
           ),
       );
+    // An empty line holds nothing but its break, so a press onto or off one
+    // can cross the break alone.
+    const empty = (value, pos) =>
+      [value[pos - 1], value[pos]].every((char) => (char ?? "\n") === "\n");
     // Presses `key` until the head reaches `stop`, returning where each press
     // lands. A press that leaves the head in place fails the poll, and so does
-    // one that crosses nothing but a line break: the caret jumps to the far
-    // end of a line, and a Shift selection grows by the break alone, which
-    // looks like no move at all.
+    // one that crosses nothing but a line break, unless onto or off an empty
+    // line: the caret jumps to the far end of a line, and a Shift selection
+    // grows by the break alone, which looks like no move at all.
     const walk = async (key, start, stop) => {
       const value = await input.evaluate((el) => el.value);
       await input.evaluate((el, at) => el.setSelectionRange(at, at), start);
@@ -732,9 +736,10 @@ test("Up and Down move one line at a time through links that wrap", async ({
           .poll(async () => (head = (await caret()).head))
           .not.toBe(previous);
         expect(Math.sign(head - previous)).toBe(key.endsWith("Up") ? -1 : 1);
-        expect(
-          value.slice(Math.min(previous, head), Math.max(previous, head)),
-        ).toMatch(/[^\n]/);
+        if (!empty(value, previous) && !empty(value, head))
+          expect(
+            value.slice(Math.min(previous, head), Math.max(previous, head)),
+          ).toMatch(/[^\n]/);
         expect((await caret()).anchor).toBe(
           key.startsWith("Shift+") ? start : head,
         );
@@ -875,12 +880,13 @@ test("Up and Down move one line at a time through links that wrap", async ({
       expect(heads.slice(0, shifted.length)).toEqual(shifted);
     }
 
-    // So does a link pasted on its own line between two lines of text.
+    // So does a link on its own line between two lines of text.
     const own = ["Please review", link(title, 5), "Thanks"];
     const ownDraft = own.join("\n");
     await input.fill("");
     await input.fill(ownDraft);
     await expect(links).toHaveCount(1);
+    expect((await rects())[0]).toBeGreaterThanOrEqual(2);
     const ownFrom = own[0].length + 1;
     const ownTo = ownFrom + own[1].length;
     expect(await walk("Shift+ArrowUp", ownTo + 1, 0)).toEqual([ownFrom, 0]);
@@ -890,6 +896,109 @@ test("Up and Down move one line at a time through links that wrap", async ({
       ownDraft.length,
     );
     expect(ownDown).toBe(ownTo);
+    // Undoing such a press goes back to just past the break, rather than
+    // leave the break alone selected.
+    const undo = async (from, to) => {
+      for (const [key, back, start, edge] of [
+        ["Shift+ArrowUp", "Shift+ArrowDown", to + 1, from],
+        ["Shift+ArrowDown", "Shift+ArrowUp", from - 1, to],
+      ]) {
+        await input.evaluate((el, at) => el.setSelectionRange(at, at), start);
+        await rendered();
+        await page.keyboard.press(key);
+        await expect.poll(caret).toEqual({ head: edge, anchor: start });
+        await rendered();
+        await page.keyboard.press(back);
+        await expect.poll(caret).toEqual({ head: start, anchor: start });
+      }
+    };
+    await undo(ownFrom, ownTo);
+
+    // fill() makes a paragraph of each line, but a text/plain paste, like
+    // Shift+Enter, puts newline characters in one paragraph. A newline is
+    // drawn at the end of its line, apart from a caret just past it. From
+    // either end of each line of such a draft, a plain press moves exactly
+    // one visual line.
+    const pasted = link(title, 6);
+    const paste = async (lines) => {
+      const value = lines.join("\n");
+      await input.fill("");
+      await input.evaluate((el, value) => {
+        const clipboardData = new DataTransfer();
+        clipboardData.setData("text/plain", value);
+        el.dispatchEvent(
+          new ClipboardEvent("paste", {
+            bubbles: true,
+            cancelable: true,
+            clipboardData,
+          }),
+        );
+      }, value);
+      await expect(input).toHaveJSProperty("value", value);
+      await expect(input.locator(":scope > p")).toHaveCount(1);
+      const [count] = await rects();
+      expect(count).toBeGreaterThanOrEqual(2);
+      const from = value.indexOf(pasted);
+      const to = from + pasted.length;
+      // The link's start is on its first visual line and its end on its last.
+      const visual = (head) =>
+        value.slice(0, head).split("\n").length -
+        1 +
+        (head > from ? count - 1 : 0);
+      const ends = new Set([0, value.length]);
+      for (const { index } of value.matchAll(/\n/g))
+        ends.add(index).add(index + 1);
+      for (const at of ends)
+        for (const [key, step] of [
+          ["ArrowUp", -1],
+          ["ArrowDown", 1],
+        ]) {
+          const target = visual(at) + step;
+          if (target < 0 || target > visual(value.length)) continue;
+          await input.evaluate((el, at) => el.setSelectionRange(at, at), at);
+          await rendered();
+          await page.keyboard.press(key);
+          await expect
+            .poll(async () => visual((await caret()).head), {
+              message: `${key} from ${at}`,
+            })
+            .toBe(target);
+        }
+      return { value, from, to };
+    };
+    {
+      const lines = ["Please review", pasted, "X line", "Thanks"];
+      const { value, from, to } = await paste(lines);
+      const thanks = value.length - lines.at(-1).length;
+      expect(await walk("Shift+ArrowUp", thanks, 0)).toEqual([to + 1, from, 0]);
+      const down = await walk("Shift+ArrowDown", 0, value.length);
+      expect(down.slice(0, 2)).toEqual([from, to]);
+      await undo(from, to);
+    }
+    {
+      // An empty line beside the link is a line of its own.
+      const { value, from, to } = await paste([
+        "Please review",
+        "",
+        pasted,
+        "",
+        "Thanks",
+      ]);
+      expect(await walk("Shift+ArrowDown", 0, value.length)).toEqual([
+        from - 1,
+        to,
+        to + 1,
+        to + 2,
+        value.length,
+      ]);
+      expect(await walk("Shift+ArrowUp", value.length, 0)).toEqual([
+        to + 1,
+        from,
+        from - 1,
+        0,
+      ]);
+      await undo(from, to);
+    }
 
     // The nearest position on the neighbouring line is a character boundary,
     // never inside an emoji or a cluster, where a caret is drawn at the glyph

@@ -199,22 +199,28 @@ function crossTokenLine(
   )
     return false;
   const origin = extend ? selection.head : up ? selection.from : selection.to;
-  const caret = editor.coordsAtPos(origin, up ? -1 : 1);
+  // A line break, a hard break or a typed newline, directly before `pos`.
+  const broken = (pos: number) =>
+    doc.textBetween(Math.max(pos - 1, 0), pos) === "\n";
+  // Where a caret at `pos` is drawn. Side -1 measures the character before,
+  // which keeps a token's end on the token's line, but past a line break that
+  // is the break itself, drawn at the end of the line above.
+  const at = (pos: number, side: -1 | 1) =>
+    editor.coordsAtPos(pos, broken(pos) ? 1 : side);
+  const caret = at(origin, up ? -1 : 1);
   const level = (line: { top: number; bottom: number }) =>
     (line.top + line.bottom) / 2;
   const holds = (line?: { top: number; bottom: number }, point = caret) =>
     !!line && line.top <= level(point) && level(point) <= line.bottom;
   // The position beside a token that is drawn on the neighbouring line when
-  // the token starts or ends its own: past a line break (a hard break or a
-  // typed newline), into the adjacent textblock, or else the token edge.
+  // the token starts or ends its own: past a line break, into the adjacent
+  // textblock, or else the token edge.
   const outside = (pos: number, dir: -1 | 1) => {
     const $pos = doc.resolve(pos);
     if (!(dir < 0 ? $pos.nodeBefore : $pos.nodeAfter))
       return Selection.findFrom(doc.resolve(pos + dir), dir, true)?.head;
     const next = pos + dir;
-    return doc.textBetween(Math.min(pos, next), Math.max(pos, next)) === "\n"
-      ? next
-      : pos;
+    return broken(dir < 0 ? pos : next) ? next : pos;
   };
   // Stepping off a token keeps the caret's column, as a browser does between
   // lines: from `edge`, the near end of the neighbouring `line`, the position
@@ -259,10 +265,8 @@ function crossTokenLine(
     const last = lines.length - 1;
     const before = outside(from, -1);
     const after = outside(to, 1);
-    const above =
-      before === undefined ? undefined : editor.coordsAtPos(before, -1);
-    const below =
-      after === undefined ? undefined : editor.coordsAtPos(after, 1);
+    const above = before === undefined ? undefined : at(before, -1);
+    const below = after === undefined ? undefined : at(after, 1);
     for (const [index, line] of lines.entries()) {
       const alone =
         (index > 0 || !above || level(above) < line.top) &&
@@ -300,6 +304,15 @@ function crossTokenLine(
           : index < last
             ? to
             : column(after, below);
+      // Undoing a Shift press that took the whole token from just past the
+      // line break beside it goes back there: the token's far edge would leave
+      // the break alone selected.
+      if (
+        extend &&
+        head === (up ? from : to) &&
+        selection.anchor === (up ? before : after)
+      )
+        head = selection.anchor;
       if (head === undefined || (up ? head >= origin : head <= origin))
         continue;
       moveHead(editor, head, extend);

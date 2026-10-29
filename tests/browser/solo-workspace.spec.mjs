@@ -371,8 +371,11 @@ test("Solo sidebar shares working activity, keyboard preview and local panel nav
   await expect(alpha).toHaveAttribute("aria-current", "page");
   await closeProfile(page).click();
   await expect(alpha).toBeFocused();
-  // Read the running page clock instead of assuming the host clock matches it.
-  await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 100);
+  // Freeze wall time before pausing timers so protocol latency cannot overtake it.
+  const pausedAt = await page.evaluate(() => Date.now());
+  await page.clock.setFixedTime(pausedAt);
+  await page.clock.pauseAt(pausedAt);
+  await page.clock.setSystemTime(pausedAt);
   // Cross the closed trigger, then reopen by keyboard before hover dismissal.
   await alpha.hover();
   await page.mouse.move(0, 0);

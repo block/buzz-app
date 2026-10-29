@@ -124,6 +124,33 @@ it("runs host contributions while optional storage is pending and in recovery", 
   expect(pages.snapshot()).toEqual([]);
 });
 
+it("keeps startup unsettled until the catalog is read and its plugins start", async () => {
+  const pending = deferred();
+  const { root, pages } = harness({ getCatalog: () => pending.promise });
+  await vi.advanceTimersByTimeAsync(0);
+  expect(root.pluginStatus.settled?.()).toBe(false);
+  pending.resolve(ready());
+  await vi.advanceTimersByTimeAsync(0);
+  expect(pages.snapshot()).toHaveLength(1);
+  expect(root.pluginStatus.settled?.()).toBe(true);
+});
+it("keeps startup unsettled while a failed catalog read retries, but not in recovery the user must act on", async () => {
+  const { root, pages } = harness({
+    getCatalog: vi
+      .fn<PluginStorage["getCatalog"]>()
+      .mockRejectedValueOnce(new Error("Storage offline"))
+      .mockResolvedValue({
+        status: "recovery",
+        reason: "Unreadable settings",
+        canReset: true,
+      }),
+  });
+  await vi.advanceTimersByTimeAsync(0);
+  expect(root.pluginStatus.settled?.()).toBe(false);
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(pages.snapshot()).toHaveLength(0);
+  expect(root.pluginStatus.settled?.()).toBe(true);
+});
 it("activates and observes CLI changes without any React subscribers", async () => {
   const { plugins, pages, installation } = harness();
   expect(plugins.startup()).toBe("loading");

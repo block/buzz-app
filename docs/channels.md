@@ -208,7 +208,7 @@ manually marked unread messages or unread thread activity. Active in the last op
 content-sized dialog with visible 1-, 7-, 30-, and 90-day text-only radio tiles in two columns.
 Apply saves the selected rolling window and activates the filter;
 Cancel leaves the saved choice unchanged. The dialog retains its draft after a
-failed save, and the menu shows the selected window. Activity uses verified timestamps. Channels with unknown activity remain visible until a successful activity read; a failed read keeps them available alongside the activity Retry warning. These filters are encrypted account preferences on the current relay, using a
+failed save, and the menu shows the selected window. Activity uses verified timestamps, including your own messages once the relay accepts them. Channels with unknown activity remain visible until a successful activity read; a failed read keeps them available alongside the activity Retry warning. These filters are encrypted account preferences on the current relay, using a
 separate kind-30078 `channel-filter` record. They leave saved sorting and section
 membership unchanged; earlier device-only filter choices are ignored, not automatically published.
 Filtered sections with no visible channels show only their header, retaining their expanded/collapsed state and menu access to hidden channels.
@@ -699,9 +699,15 @@ Starred** and saves Starred placement with the creation intent. In the sidebar,
 the filled Tabler star retains the section emoji artwork size and is centered in
 the channel icon column. The creation heading reuses the decorative emoji slot
 and inherits the heading's typography.
-Starred placement uses the existing preference writer after channel admission;
-unavailable placement blocks a new create, while a later placement failure reports
-partial setup without creating a second channel. An identical retry rechecks its
+Group and Starred placement use the existing preference writer and normally
+apply before the new channel opens, so its first sidebar row is already in its
+destination; placement that must first re-read preferences can list the row
+before moving it.
+Placement starts once the Create is delivered, so it also stands when the form
+cannot yet confirm the channel; the channel lists in its destination once it is
+confirmed. Unavailable placement blocks a new create. Once the channel opens, a
+placement failure reports partial setup without creating a second channel; an
+unconfirmed create reports only its own failure. An identical retry rechecks its
 Create without continuing the template's setup writes; agents or Canvas that
 changed underneath an untouched form do not count as new details.
 Group placement remains managed through the left-nav Move action.
@@ -1214,10 +1220,20 @@ render-driven request loop. Key fragments remain the fallback for unavailable na
 `useChannelLabels.test.tsx` binds the mounted hook to real session roster omission,
 including hidden/archived deletion, stale in-flight replies and unsuccessful name
 reads. `tests/browser/dm-labels.spec.mjs` guards the production page wiring and DOM
-labels through the real Refresh channels control and broker. These are foundational
-recovery constraints, not a new shared-session API or a guarantee of general
-profile retry after every cache clear/network failure. See [browser coverage and
-limits](browser-testing.md#dm-label-recovery).
+labels through the real Refresh channels control and broker.
+
+Open channel timelines and mounted thread/media-comment views also recover: after
+an access-loss purge, each retained window and each mounted thread of a channel the
+viewer can still read requests its rows' names once, at background priority. Names
+whose only evidence was in the lost channel are not requested. A channel opened
+afterwards from a head read shortly before the purge is not covered: its next head
+read or an older page restores its names, while new traffic and the viewer's own
+sends restore only its latest rows. `revocation.test.ts` covers roster omission,
+denied reads and a mention that appears only in a thread reply.
+
+These are foundational recovery constraints, not a new shared-session API or a
+guarantee of general profile retry after every cache clear/network failure. See
+[browser coverage and limits](browser-testing.md#dm-label-recovery).
 
 ## Membership activity
 
@@ -1330,7 +1346,21 @@ implemented. In the composer, typing the third character of a line holding only 
 Shift+Enter on an empty last line leaves the block. Only a fence that opens a block converts: a
 fence typed inside an existing code block stays literal, and so does pasted or restored fenced
 text, including its closing fence line, so Enter after a pasted or edited fenced block sends or
-saves as usual and the text still renders as code once sent.
+saves as usual and the text still renders as code once sent. Content copied from a rendered
+message or from a composer pastes with its lists, quotes, code blocks and inline formatting as
+the composer's own blocks and formatting; text copied from anywhere else pastes as plain text,
+keeping only its web links. A copied spoiler stays a spoiler whether or not it was revealed, and
+keeps its `||` delimiters elsewhere. Headings, task checkboxes and horizontal rules, which the
+composer has no block for, paste as their Markdown source (`# `, `[ ]`/`[x]`, `***`) so they still
+render once sent. Copied with other blocks, each keeps a line of its own; a heading or rule copied
+alone, including by triple-click, pastes into the current line like copied prose, so after other
+text on that line it stays text. Plain text keeps a task's state and a rule (`---`) but not
+heading markers. Blocks pasted at
+the start of a list item, or over a selection that starts there, cannot precede its text: a pasted
+list of the same kind (bulleted or numbered) has its items join the list before that item, or take
+the place of an item whose only content was selected, and other blocks, including a list of the
+other kind, which keeps its own numbering, follow the item's text. Pasted into an
+empty item, such blocks leave the list first, as Enter does there, and take the empty line's place.
 Typing the space after a list or quote marker that starts a line (`- `, `* `, `+ ` or `• `, a number
 with a dot or parenthesis such as `1. ` or `3) `, or `> `) turns that line into a bullet, a
 numbered item starting at that number, or a quoted paragraph at once, the same block the
@@ -1415,7 +1445,9 @@ follow the operating system.
 
 The session owns the catalog and its live updates. Reopening reuses the ready
 catalog, without hiding custom results behind a fresh read. Catalog failures expose
-Retry while leaving Unicode available and retaining drafts. Only one picker owns
+Retry while leaving Unicode available and retaining drafts. A catalog that has loaded
+stays usable for sending and in the picker while it refreshes, such as after a
+reconnect, and when that refresh fails. Only one picker owns
 Emoji Mart's global dictionary at a time; scoped custom IDs and disposal prevent
 old community entries leaking into search or Frequent. Historical messages and
 existing reactions keep their signed emoji URLs after catalog changes.

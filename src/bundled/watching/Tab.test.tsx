@@ -1,6 +1,5 @@
 // @vitest-environment jsdom
 import * as React from "react";
-import userEvent from "@testing-library/user-event";
 import {
   act,
   cleanup,
@@ -11,8 +10,9 @@ import {
   within,
 } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import type { Context } from "../../../plugins/author";
-import { createPage, describe } from "./Page";
+import { AgentSaveState } from "../../features/agents/AgentSaveButton";
+import type { Context } from "../../plugins/author";
+import { createTab, describe } from "./Tab";
 
 afterEach(cleanup);
 const viewer = "f".repeat(64);
@@ -53,7 +53,7 @@ it("keeps listening channels distinct from destinations and respects rearmed tim
     ).spent,
   ).toBe(true);
 });
-it("hides agents without subscriptions, reacts to changes and surfaces save errors", async () => {
+it("shows one agent's watches, reacts to changes and surfaces save errors", async () => {
   let changed = () => {};
   const enabled = true;
   const record = () => ({
@@ -121,10 +121,10 @@ it("hides agents without subscriptions, reacts to changes and surfaces save erro
     },
     relay: { snapshot: () => disconnected, subscribe: () => () => {} },
   } as unknown as Context;
-  const Page = createPage(ctx);
-  render(React.createElement(Page));
-  expect(screen.queryByRole("region", { name: "Bo" })).toBeNull();
-  const ada = screen.getByRole("region", { name: "Ada" });
+  render(
+    React.createElement(createTab(ctx), { agent: { key: "membership-a" } }),
+  );
+  const ada = screen.getByRole("region", { name: "Watching" });
   expect(within(ada).getByRole("heading", { name: "task" })).toBeTruthy();
   expect(within(ada).getByText("1 interest · 1 watch")).toBeTruthy();
   fireEvent.click(
@@ -156,7 +156,7 @@ it("hides agents without subscriptions, reacts to changes and surfaces save erro
   expect(within(ada).getByText("Paused")).toBeTruthy();
   expect(
     within(ada).getByRole("switch", {
-      name: "Attention for Ada on this device",
+      name: "Run Ada’s watches on this device",
     }),
   ).toBeTruthy();
   fireEvent.click(within(ada).getByRole("switch", { name: "Watch task" }));
@@ -178,10 +178,10 @@ it("hides agents without subscriptions, reacts to changes and surfaces save erro
     };
     changed();
   });
-  expect(within(ada).getByText("Attention paused on this device")).toBeTruthy();
   const toggle = within(ada).getByRole("switch", {
-    name: "Attention for Ada on this device",
+    name: "Run Ada’s watches on this device",
   });
+  expect(toggle.getAttribute("aria-checked")).toBe("false");
   fireEvent.click(toggle);
   await waitFor(() =>
     expect(save).toHaveBeenCalledWith("membership-a", {
@@ -280,7 +280,9 @@ it.each(["source", "event", "timer"] as const)(
       },
       relay: { snapshot: () => disconnected, subscribe: () => () => {} },
     } as unknown as Context;
-    render(React.createElement(createPage(ctx)));
+    render(
+      React.createElement(createTab(ctx), { agent: { key: "membership-a" } }),
+    );
     expect(
       screen
         .getByRole("button", { name: "Delete Interest release" })
@@ -349,7 +351,9 @@ it.each(["source", "event", "timer"] as const)(
     rejectInterest = false;
     fireEvent.click(removeInterest);
     await waitFor(() =>
-      expect(screen.queryByRole("region", { name: "Ada" })).toBeNull(),
+      expect(
+        screen.getByText("Nothing is being watched yet. Try asking Ada:"),
+      ).toBeTruthy(),
     );
     expect(save).toHaveBeenLastCalledWith("membership-a", {
       attention: { "interest/release": null },
@@ -357,7 +361,7 @@ it.each(["source", "event", "timer"] as const)(
   },
 );
 
-it("keeps subscription controls disabled while saving and preserves the row on failure", async () => {
+it("keeps subscription controls disabled and the tab open while saving, and preserves the row on failure", async () => {
   const record = {
     key: "membership-a",
     pubkey: "a",
@@ -398,7 +402,14 @@ it("keeps subscription controls disabled while saving and preserves the row on f
     agents: { snapshot: () => snapshot, subscribe: () => () => {}, save },
     relay: { snapshot: () => disconnected, subscribe: () => () => {} },
   } as unknown as Context;
-  render(React.createElement(createPage(ctx)));
+  const report = vi.fn();
+  render(
+    React.createElement(
+      AgentSaveState,
+      { value: report },
+      React.createElement(createTab(ctx), { agent: { key: "membership-a" } }),
+    ),
+  );
   const toggle = screen.getByRole("switch", {
     name: "Watch Build",
   }) as HTMLButtonElement;
@@ -410,11 +421,19 @@ it("keeps subscription controls disabled while saving and preserves the row on f
     expect(toggle.getAttribute("aria-disabled")).toBe("true"),
   );
   expect(remove.getAttribute("aria-disabled")).toBe("true");
+  expect(report).toHaveBeenLastCalledWith(
+    { dirty: false, saving: true },
+    expect.any(String),
+  );
   fireEvent.click(remove);
   expect(save).toHaveBeenCalledTimes(1);
   await act(async () => reject(new Error("Could not save")));
   await waitFor(() =>
     expect(screen.getByRole("alert").textContent).toBe("Could not save"),
+  );
+  expect(report).toHaveBeenLastCalledWith(
+    { dirty: false, saving: false },
+    expect.any(String),
   );
   expect(toggle.getAttribute("aria-disabled")).not.toBe("true");
   expect(remove.getAttribute("aria-disabled")).not.toBe("true");
@@ -422,71 +441,7 @@ it("keeps subscription controls disabled while saving and preserves the row on f
   expect(save).toHaveBeenCalledTimes(1);
 });
 
-it("resolves agent avatars through relay media, updates pictures and falls back on failure", async () => {
-  let changed = () => {};
-  let agent = {
-    key: "membership-a",
-    pubkey: "a",
-    owner: viewer,
-    relay: "wss://example.com",
-    name: "Ada",
-    picture: "https://example.com/avatar.png",
-    attentionEnabled: true,
-    timers: {},
-    attention: {
-      "watch/check": {
-        slug: "watch/check",
-        modifiedAt: 1,
-        value: {
-          type: "source",
-          interest_id: "task",
-          enabled: true,
-          provider: "attention/command",
-          config: { command: ["check"] },
-        },
-      },
-    },
-  };
-  let snapshot = { status: "ready", running: [agent] };
-  const media = vi.fn(
-    (picture: string) => `https://media.example/${encodeURIComponent(picture)}`,
-  );
-  const connection = { status: "ready", ...community, session: { media } };
-  const ctx = {
-    react: React,
-    agents: {
-      snapshot: () => snapshot,
-      subscribe: (listener: () => void) => {
-        changed = listener;
-        return () => {};
-      },
-    },
-    relay: { snapshot: () => connection, subscribe: () => () => {} },
-  } as unknown as Context;
-  const { container } = render(React.createElement(createPage(ctx)));
-  expect(media).toHaveBeenCalledWith("https://example.com/avatar.png", "small");
-  const image = container.querySelector("img") as HTMLImageElement;
-  expect(image.src).toBe(
-    "https://media.example/https%3A%2F%2Fexample.com%2Favatar.png",
-  );
-  fireEvent.load(image);
-  expect(image.getAttribute("data-loaded")).toBe("true");
-  expect(container.querySelector(".buzz-avatar")?.textContent).toBe("");
-  const picture = "data:image/png;base64,AA==";
-  await act(async () => {
-    agent = { ...agent, picture };
-    snapshot = { ...snapshot, running: [agent] };
-    changed();
-  });
-  const replacement = container.querySelector("img") as HTMLImageElement;
-  expect(replacement.src).toBe(picture);
-  expect(replacement.getAttribute("data-loaded")).toBeNull();
-  fireEvent.error(replacement);
-  expect(container.querySelector("img")).toBeNull();
-  expect(container.querySelector(".buzz-avatar")?.textContent).toBe("A");
-});
-
-it("enables a chosen empty agent without creating subscriptions and reports failures", async () => {
+it("explains Watching to a new agent and switches it on this device", async () => {
   const snapshot = {
     status: "ready",
     running: [
@@ -512,36 +467,86 @@ it("enables a chosen empty agent without creating subscriptions and reports fail
     agents: { snapshot: () => snapshot, subscribe: () => () => {}, save },
     relay: { snapshot: () => disconnected, subscribe: () => () => {} },
   } as unknown as Context;
-  render(React.createElement(createPage(ctx)));
-  expect(screen.queryByRole("region", { name: "Bo" })).toBeNull();
-  fireEvent.click(
-    screen.getByRole("button", { name: "Enable Attention on this device" }),
+  render(
+    React.createElement(createTab(ctx), { agent: { key: "membership-b" } }),
   );
   expect(
-    (
-      screen.getByRole("button", {
-        name: "Enable Attention",
-      }) as HTMLButtonElement
-    ).disabled,
-  ).toBe(true);
-  const user = userEvent.setup();
-  await user.click(screen.getByRole("combobox", { name: "Agent" }));
-  await user.click(await screen.findByRole("option", { name: "Bo" }));
-  fireEvent.click(screen.getByRole("button", { name: "Enable Attention" }));
+    screen.getByText(/Agents can watch for events and automatically wake/),
+  ).toBeTruthy();
+  expect(
+    screen.getByText("Watches only run while Buzz is open on this device."),
+  ).toBeTruthy();
+  expect(
+    screen.getByText("Nothing is being watched yet. Try asking Bo:"),
+  ).toBeTruthy();
+  expect(
+    screen.getAllByRole("listitem").map((item) => item.textContent),
+  ).toEqual([
+    "\u201cWatch this thread for new messages\u201d",
+    "\u201cWatch my PR and tell me when CI finishes or someone reviews it\u201d",
+    "\u201cCheck this channel every morning at 9\u201d",
+  ]);
+  expect(screen.queryByRole("button")).toBeNull();
+  const toggle = screen.getByRole("switch", {
+    name: "Run Bo’s watches on this device",
+  });
+  expect(toggle.getAttribute("aria-checked")).toBe("false");
+  fireEvent.click(toggle);
   await waitFor(() =>
     expect(screen.getByRole("alert").textContent).toBe("Enable failed"),
   );
-  fireEvent.click(screen.getByRole("button", { name: "Enable Attention" }));
-  await waitFor(() =>
-    expect(screen.getByRole("status").textContent).toContain(
-      "Attention enabled for Bo",
-    ),
-  );
+  fireEvent.click(toggle);
+  await waitFor(() => expect(save).toHaveBeenCalledTimes(2));
   expect(save).toHaveBeenLastCalledWith("membership-b", {
     attentionEnabled: true,
   });
-  expect(screen.queryByRole("form")).toBeNull();
-  expect(screen.queryByRole("region", { name: "Bo" })).toBeNull();
+});
+
+it("says why an agent's watches are not shown", async () => {
+  let snapshot = {
+    status: "loading",
+    running: [] as Record<string, unknown>[],
+  };
+  let connection: Record<string, unknown> = {
+    status: "disconnected",
+    ...community,
+  };
+  let changed = () => {};
+  const ctx = {
+    agents: {
+      snapshot: () => snapshot,
+      subscribe: () => () => {},
+      save: vi.fn(),
+    },
+    relay: {
+      snapshot: () => connection,
+      subscribe: (listener: () => void) => {
+        changed = listener;
+        return () => {};
+      },
+    },
+  } as unknown as Context;
+  render(
+    React.createElement(createTab(ctx), { agent: { key: "membership-a" } }),
+  );
+  expect(screen.getByRole("status").textContent).toBe("Loading watches…");
+  snapshot = { status: "ready", running: [] };
+  await act(async () => {
+    connection = { ...connection };
+    changed();
+  });
+  expect(
+    await screen.findByText("This agent isn't running on this device."),
+  ).toBeTruthy();
+  await act(async () => {
+    connection = { status: "disconnected", origin, viewer, scope: "" };
+    changed();
+  });
+  expect(
+    await screen.findByText(
+      "Choose a community to manage this agent's watches.",
+    ),
+  ).toBeTruthy();
 });
 
 it.each([undefined, "missing"])(
@@ -583,8 +588,10 @@ it.each([undefined, "missing"])(
       agents: { snapshot: () => snapshot, subscribe: () => () => {}, save },
       relay: { snapshot: () => disconnected, subscribe: () => () => {} },
     } as unknown as Context;
-    render(React.createElement(createPage(ctx)));
-    const repair = screen.getByRole("region", { name: "Without an interest" });
+    render(
+      React.createElement(createTab(ctx), { agent: { key: "membership-a" } }),
+    );
+    const repair = screen.getByRole("region", { name: "Stray watches" });
     expect(within(repair).getByText("watch/check")).toBeTruthy();
     expect(
       screen.queryByRole("switch", { name: "Watch Release check" }),
@@ -629,7 +636,9 @@ it("keeps unreadable legacy watches visible and removes only the selected object
     agents: { snapshot: () => snapshot, subscribe: () => () => {}, save },
     relay: { snapshot: () => disconnected, subscribe: () => () => {} },
   } as unknown as Context;
-  render(React.createElement(createPage(ctx)));
+  render(
+    React.createElement(createTab(ctx), { agent: { key: "membership-a" } }),
+  );
   expect(screen.getByText("Legacy filter needs repair")).toBeTruthy();
   fireEvent.click(
     screen.getByRole("button", { name: "Remove unreadable watch/old" }),
@@ -736,7 +745,9 @@ it.each([false, true])(
       },
       relay: { snapshot: () => connection, subscribe: () => () => {} },
     } as unknown as Context;
-    render(React.createElement(createPage(ctx)));
+    render(
+      React.createElement(createTab(ctx), { agent: { key: "membership-a" } }),
+    );
     const icon = (name: string) =>
       screen
         .getByRole("button", { name: `Open destination ${name}` })
@@ -745,7 +756,7 @@ it.each([false, true])(
     expect(
       screen.getByRole("button", { name: "Open destination Berd-call" })
         .textContent,
-    ).toBe("→Berd-call");
+    ).toBe("Replies inBerd-call");
     expect(icon("Berd-call")).toBeTruthy();
     expect(icon("buzz-github-prs")).toBeTruthy();
     expect(icon("Berd-call")).not.toBe(icon("buzz-github-prs"));
@@ -777,12 +788,12 @@ it.each([false, true])(
       "https://github.com/block/buzz-app/pull/1578",
     );
     expect(screen.queryByText("Show raw")).toBeNull();
-    expect(screen.getByText(/Message classifiers cannot run/)).toBeTruthy();
+    expect(screen.getByText(/can't run message filters/)).toBeTruthy();
     act(() => {
       snapshot = { ...snapshot, classifier: "available" };
       changed();
     });
-    expect(screen.queryByText(/Message classifiers cannot run/)).toBeNull();
+    expect(screen.queryByText(/can't run message filters/)).toBeNull();
   },
 );
 
@@ -860,10 +871,10 @@ it("keeps overview and destination navigation in the selected community", async 
     },
     navigation: { open },
   } as unknown as Context;
-  render(React.createElement(createPage(ctx)));
-  expect(screen.getByRole("region", { name: "Ada" })).toBeTruthy();
-  expect(screen.queryByRole("region", { name: "Bo" })).toBeNull();
-  expect(screen.queryByRole("region", { name: "Cy" })).toBeNull();
+  render(
+    React.createElement(createTab(ctx), { agent: { key: "membership-a" } }),
+  );
+  expect(screen.getByRole("region", { name: "Watching" })).toBeTruthy();
   fireEvent.click(
     screen.getByRole("button", { name: "Open destination Release planning" }),
   );
@@ -881,10 +892,16 @@ it("keeps overview and destination navigation in the selected community", async 
     };
     changed();
   });
-  expect(screen.queryByRole("region", { name: "Ada" })).toBeNull();
-  expect(screen.getByRole("region", { name: "Bo" })).toBeTruthy();
+  expect(
+    screen.getByText(
+      "This agent belongs to another community. Switch to it to manage its watches.",
+    ),
+  ).toBeTruthy();
+  expect(
+    screen.queryByRole("button", { name: "Open destination Release planning" }),
+  ).toBeNull();
   expect(save).not.toHaveBeenCalled();
-  expect(screen.queryByRole("switch", { name: "Attention for Bo" })).toBeNull();
+  expect(screen.queryByRole("switch")).toBeNull();
 });
 
 it("keeps technical data out of message summaries and avoids repeating the destination", () => {
@@ -939,7 +956,9 @@ it("keeps technical data out of message summaries and avoids repeating the desti
     agents: { snapshot: () => snapshot, subscribe: () => () => {} },
     relay: { snapshot: () => connection, subscribe: () => () => {} },
   } as unknown as Context;
-  render(React.createElement(createPage(ctx)));
+  render(
+    React.createElement(createTab(ctx), { agent: { key: "membership-a" } }),
+  );
   expect(screen.getByRole("heading", { name: "release" })).toBeTruthy();
   expect(
     screen.getByRole("button", { name: "Open destination Releases" }),

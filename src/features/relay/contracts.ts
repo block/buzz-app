@@ -27,7 +27,8 @@ export type ChannelSummary = Readonly<{
   /** Viewer role from the relay-signed roster, independent of admission defaults. */
   viewerRole?: "owner" | "admin" | "member" | "guest" | "bot" | undefined;
   preview?: string | undefined;
-  /** Newest verified user-visible activity for sidebar ordering, in Unix seconds. */
+  /** Newest verified user-visible activity for sidebar ordering, in Unix
+   * seconds. An own send counts once the relay accepts it. */
   lastActivityAt?: number | undefined;
   /** Activity has been observed or read successfully, including an empty result. */
   activityKnown?: true;

@@ -421,6 +421,9 @@ function renderAgentActivity(
     find: (pubkey: string) => (pubkey === key ? agent : undefined),
     memberships: () => [],
     configHistory: () => undefined,
+    addedTabs: () => [],
+    registerTab: () => {},
+    controlAttention: () => {},
   } as unknown as Agents;
   const target =
     profileActivityViewTarget(key, { transcript: !!transcript }) ?? "";

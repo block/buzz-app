@@ -563,15 +563,15 @@ fn signs_uploads_and_memory_for_its_own_community_and_owner() {
         assert!(agent.media_url(&input).is_err(), "{input}");
     }
     let future = u64::MAX / 2;
-    let memory = agent.memory(&key, "mem/notes", "hi", future).unwrap();
+    let memory = agent.memory(&key, "mem/notes", Some("hi"), future).unwrap();
     assert_eq!(memory["kind"], 30174);
     assert_eq!(memory["created_at"], future + 1);
     assert_eq!(memory["tags"][1], serde_json::json!(["p", agent.owner]));
-    assert!(agent.memory(&key, "../notes", "hi", 0).is_err());
+    assert!(agent.memory(&key, "../notes", Some("hi"), 0).is_err());
     let other = Secret::generate().unwrap();
     assert!(agent.upload_auth(&other, &sha).is_err());
     assert!(agent.media_auth(&other).is_err());
-    assert!(agent.memory(&other, "core", "hi", 0).is_err());
+    assert!(agent.memory(&other, "core", Some("hi"), 0).is_err());
 }
 
 #[test]

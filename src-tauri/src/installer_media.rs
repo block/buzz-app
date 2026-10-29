@@ -163,6 +163,56 @@ fn clear_staging(staging: &Path) -> std::io::Result<()> {
     }
 }
 
+/// Rename the staged copy to `target`, then run `finish`. A copy already at
+/// `target` is passed to `trash` first, which moves it to the Trash and returns
+/// where it went. If the rename or `finish` fails, the new copy is taken back
+/// out and the trashed copy renamed back to `target`, so a failed move leaves
+/// `target` as it found it. If the trashed copy can't be put back, the error
+/// says where in the Trash it is. `trash` is a parameter so tests can stand in
+/// for the real Trash.
+fn replace_installed_copy(
+    staging: &Path,
+    target: &Path,
+    trash: impl FnOnce(&Path) -> std::io::Result<PathBuf>,
+    finish: impl FnOnce() -> std::io::Result<()>,
+) -> std::io::Result<()> {
+    let trashed = if target.exists() {
+        match trash(target) {
+            Ok(trashed) => Some(trashed),
+            Err(error) => {
+                let _ = std::fs::remove_dir_all(staging);
+                return Err(error);
+            }
+        }
+    } else {
+        None
+    };
+    let result = std::fs::rename(staging, target).and_then(|()| {
+        finish().inspect_err(|_| {
+            let _ = std::fs::rename(target, staging);
+        })
+    });
+    let Err(error) = result else {
+        return Ok(());
+    };
+    let _ = std::fs::remove_dir_all(staging);
+    let Some(trashed) = trashed else {
+        return Err(error);
+    };
+    match std::fs::rename(&trashed, target) {
+        Ok(()) => Err(error),
+        Err(restore_error) => Err(std::io::Error::new(
+            error.kind(),
+            format!(
+                "{error}; the previous copy couldn't be put back at {} ({restore_error}) \
+                 and is in the Trash at {}",
+                target.display(),
+                trashed.display()
+            ),
+        )),
+    }
+}
+
 /// Version identity read from a bundle's `Contents/Info.plist`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BundleVersion {
@@ -593,47 +643,57 @@ mod macos {
         // steps are fast and the rename is atomic. An installed copy, if one
         // exists, goes to the Trash (recoverable and Finder-undoable) rather
         // than being overwritten in place. If trashing fails (e.g. a
-        // read-only /Applications) we bail before the rename and discard the
-        // staged copy, leaving the existing install untouched. Any running
-        // instance of the installed bundle is asked to quit first, without
-        // waiting for it: trashing a running bundle still succeeds, so a copy
-        // that is still quitting, or won't quit, never blocks the move.
-        if target.exists() {
-            terminate_running_copies(&target);
-            if let Err(error) = move_to_trash(&target) {
-                let _ = std::fs::remove_dir_all(&staging);
-                return Err(error);
-            }
-        }
-        if let Err(error) = std::fs::rename(&staging, &target) {
-            let _ = std::fs::remove_dir_all(&staging);
-            return Err(error);
-        }
-
-        // Clear quarantine so Gatekeeper doesn't re-prompt or translocate the
-        // freshly installed copy.
-        let _ = Command::new("/usr/bin/xattr")
-            .args(["-r", "-d", "com.apple.quarantine"])
-            .arg(&target)
-            .status();
-
+        // read-only /Applications) we stop before the rename and discard the
+        // staged copy, leaving the existing install untouched; if a later
+        // step fails, the trashed copy is put back. Any running instance of
+        // the installed bundle is asked to quit first, without waiting for
+        // it: trashing a running bundle still succeeds, so a copy that is
+        // still quitting, or won't quit, never blocks the move.
         let detach_mount =
             matches!(location, RunLocation::DiskImage).then(|| volume.mount_point.clone());
-        relaunch_after_exit(&target, detach_mount)
+        replace_installed_copy(
+            &staging,
+            &target,
+            |installed| {
+                terminate_running_copies(installed);
+                move_to_trash(installed)
+            },
+            || {
+                // Clear quarantine so Gatekeeper doesn't re-prompt or
+                // translocate the freshly installed copy.
+                let _ = Command::new("/usr/bin/xattr")
+                    .args(["-r", "-d", "com.apple.quarantine"])
+                    .arg(&target)
+                    .status();
+                relaunch_after_exit(&target, detach_mount)
+            },
+        )
     }
 
-    /// Move `path` to the user's Trash via `NSFileManager`. Preferred over
-    /// `rm -rf` because it's recoverable and Finder-undoable if the user changes
-    /// their mind about replacing the installed copy.
-    fn move_to_trash(path: &Path) -> std::io::Result<()> {
+    /// Move `path` to the user's Trash via `NSFileManager` and return where it
+    /// went, which can differ from its name when the Trash already holds one.
+    /// Preferred over `rm -rf` because it's recoverable and Finder-undoable if
+    /// the user changes their mind about replacing the installed copy.
+    fn move_to_trash(path: &Path) -> std::io::Result<PathBuf> {
         use objc2_foundation::{NSFileManager, NSString, NSURL};
 
         let url = NSURL::fileURLWithPath(&NSString::from_str(&path.to_string_lossy()));
+        let mut trashed = None;
         NSFileManager::defaultManager()
-            .trashItemAtURL_resultingItemURL_error(&url, None)
+            .trashItemAtURL_resultingItemURL_error(&url, Some(&mut trashed))
             .map_err(|error| {
                 std::io::Error::other(format!(
                     "failed to move {} to Trash: {error:?}",
+                    path.display()
+                ))
+            })?;
+        // macOS reports the new location whenever the move succeeds.
+        trashed
+            .and_then(|url| url.path())
+            .map(|trashed| PathBuf::from(trashed.to_string()))
+            .ok_or_else(|| {
+                std::io::Error::other(format!(
+                    "moved {} to the Trash, but macOS didn't say where",
                     path.display()
                 ))
             })
@@ -945,6 +1005,132 @@ mod tests {
             "{error}"
         );
         assert!(contents.join("x").exists());
+    }
+
+    /// An installed `Applications/Buzz.app` holding `old`, its staged
+    /// replacement holding `new`, and an empty stand-in Trash.
+    fn installed_and_staged() -> (tempfile::TempDir, PathBuf, PathBuf, PathBuf) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let target = dir.path().join("Applications/Buzz.app");
+        let staging = staging_path(&target);
+        let trash = dir.path().join("Trash");
+        std::fs::create_dir_all(&target).expect("create installed copy");
+        std::fs::write(target.join("old"), b"").expect("write installed copy");
+        std::fs::create_dir_all(&staging).expect("create staged copy");
+        std::fs::write(staging.join("new"), b"").expect("write staged copy");
+        std::fs::create_dir(&trash).expect("create trash");
+        (dir, target, staging, trash)
+    }
+
+    /// Stand-in for the Trash: moves the installed copy into `trash`, like
+    /// `NSFileManager` does, and returns where it went.
+    fn move_into(trash: &Path, installed: &Path) -> std::io::Result<PathBuf> {
+        let trashed = trash.join(installed.file_name().expect("file name"));
+        std::fs::rename(installed, &trashed)?;
+        Ok(trashed)
+    }
+
+    #[test]
+    fn replace_installed_copy_trashes_the_old_copy_and_installs_the_new_one() {
+        let (_dir, target, staging, trash) = installed_and_staged();
+        let mut finished = false;
+
+        replace_installed_copy(
+            &staging,
+            &target,
+            |installed| move_into(&trash, installed),
+            || {
+                finished = true;
+                Ok(())
+            },
+        )
+        .expect("replace");
+
+        assert!(finished);
+        assert!(target.join("new").exists());
+        assert!(!target.join("old").exists());
+        assert!(trash.join("Buzz.app/old").exists());
+        assert!(!staging.exists());
+    }
+
+    #[test]
+    fn replace_installed_copy_puts_the_old_copy_back_when_the_rename_fails() {
+        let (_dir, target, staging, trash) = installed_and_staged();
+
+        let error = replace_installed_copy(
+            &staging,
+            &target,
+            |installed| {
+                let trashed = move_into(&trash, installed)?;
+                // The staged copy is gone by the time it's renamed.
+                std::fs::remove_dir_all(&staging)?;
+                Ok(trashed)
+            },
+            || panic!("finish runs only after the rename"),
+        )
+        .expect_err("the rename fails");
+
+        assert_eq!(error.kind(), std::io::ErrorKind::NotFound, "{error}");
+        assert!(target.join("old").exists());
+        assert!(!trash.join("Buzz.app").exists());
+    }
+
+    #[test]
+    fn replace_installed_copy_puts_the_old_copy_back_when_finishing_fails() {
+        let (_dir, target, staging, trash) = installed_and_staged();
+
+        let error = replace_installed_copy(
+            &staging,
+            &target,
+            |installed| move_into(&trash, installed),
+            || Err(std::io::Error::other("relaunch failed")),
+        )
+        .expect_err("finishing fails");
+
+        assert_eq!(error.to_string(), "relaunch failed");
+        assert!(target.join("old").exists());
+        assert!(!target.join("new").exists());
+        assert!(!trash.join("Buzz.app").exists());
+        assert!(!staging.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn replace_installed_copy_names_the_trashed_copy_when_it_cannot_be_put_back() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let (_dir, target, staging, trash) = installed_and_staged();
+        let applications = target.parent().expect("parent").to_path_buf();
+
+        let result = replace_installed_copy(
+            &staging,
+            &target,
+            |installed| {
+                let trashed = move_into(&trash, installed)?;
+                // Nothing more can be renamed into or out of the folder.
+                std::fs::set_permissions(&applications, std::fs::Permissions::from_mode(0o555))?;
+                Ok(trashed)
+            },
+            || panic!("finish runs only after the rename"),
+        );
+        std::fs::set_permissions(&applications, std::fs::Permissions::from_mode(0o755))
+            .expect("unlock folder");
+
+        let error = result.expect_err("the rename and the restore both fail");
+        let trashed = trash.join("Buzz.app");
+        assert_eq!(
+            error.kind(),
+            std::io::ErrorKind::PermissionDenied,
+            "{error}"
+        );
+        assert!(
+            error
+                .to_string()
+                .contains(&format!("is in the Trash at {}", trashed.display())),
+            "{error}"
+        );
+        assert!(trashed.join("old").exists());
+        assert!(!target.exists());
     }
 
     fn version(short: &str, build: &str) -> BundleVersion {

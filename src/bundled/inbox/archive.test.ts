@@ -565,19 +565,24 @@ const stored = (scope: string) => readArchives(viewRevision(scope, archiveKey));
 
 it("forgets the oldest choice, never the one just made, instead of refusing one past the bound", () => {
   const h = fixture();
-  // Future-dated messages give every earlier choice a later watermark than
-  // the one just made, and the first choice the latest.
-  const items = Array.from({ length: 1001 }, (_, index) => {
-    const item = thread(h, [hex(index + 1)]);
-    if (index === 1000) return item;
-    const createdAt = 6000 - index;
-    return {
-      ...item,
-      messages: item.messages.map((entry) => ({ ...entry, createdAt })),
-    };
-  });
-  for (const [index, item] of items.entries())
-    updateArchive(h.scope, item, true, 100 + index);
+  const items = Array.from({ length: 1001 }, (_, index) =>
+    thread(h, [hex(index + 1)]),
+  );
+  // Every earlier choice has a future-dated watermark, later than the one
+  // just made, and the first choice the latest.
+  writeView(
+    h.scope,
+    archiveKey,
+    items.slice(0, -1).map((item, index) => ({
+      id: item.id,
+      channelId: item.channelId,
+      through: 6000 - index,
+      messageIds: item.messageIds,
+    })),
+  );
+  const last = items.at(-1);
+  if (!last) throw new Error("Missing last row");
+  updateArchive(h.scope, last, true);
   expect(stored(h.scope)).toHaveLength(1000);
   const index = archiveIndex(stored(h.scope));
   expect(items.map((item) => isArchived(index, item))).toEqual(

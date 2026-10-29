@@ -346,8 +346,12 @@ async fn reply(stream: &mut TcpStream, status: u16, message: &str) {
     };
     let style = include_str!("page.css");
     let style_hash = base64::engine::general_purpose::STANDARD.encode(Sha256::digest(style));
+    let script = include_str!("page.js");
+    let script_hash = base64::engine::general_purpose::STANDARD.encode(Sha256::digest(script));
     let body = include_str!("page.html")
         .replace("{{style}}", style)
+        .replace("{{script}}", script)
+        .replace("{{complete}}", if status == 200 { "true" } else { "false" })
         .replace("{{brand}}", include_str!("../../../public/buzz-mark.svg"))
         .replace("{{heading}}", heading)
         .replace("{{message}}", message);
@@ -356,7 +360,7 @@ async fn reply(stream: &mut TcpStream, status: u16, message: &str) {
         404 => "Not Found",
         _ => "Bad Request",
     };
-    let response = format!("HTTP/1.1 {status} {reason}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\nCache-Control: no-store\r\nContent-Security-Policy: default-src 'none'; style-src 'sha256-{style_hash}'; base-uri 'none'; frame-ancestors 'none'\r\nReferrer-Policy: no-referrer\r\n\r\n{body}", body.len());
+    let response = format!("HTTP/1.1 {status} {reason}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\nCache-Control: no-store\r\nContent-Security-Policy: default-src 'none'; style-src 'sha256-{style_hash}'; script-src 'sha256-{script_hash}'; base-uri 'none'; frame-ancestors 'none'\r\nReferrer-Policy: no-referrer\r\n\r\n{body}", body.len());
     let _ = stream.write_all(response.as_bytes()).await;
     let _ = stream.shutdown().await;
 }

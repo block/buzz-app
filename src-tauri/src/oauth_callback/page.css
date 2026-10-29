@@ -6,6 +6,11 @@
   --surface-panel: #fff;
   --text-standard: #0f0f0f;
   --text-subtle: #525252;
+  --affordance-prominent: #000;
+  --affordance-prominent-hover: #191919;
+  --affordance-prominent-pressed: #525252;
+  --text-on-prominent: #fff;
+  --border-focus: #000;
   --texture-dots-color: color-mix(in srgb, var(--bg-app) 94%, black);
   --space-panel-inset: 1.5rem;
   --radius-container: 1.5rem;
@@ -34,6 +39,11 @@
     --surface-panel: #1a1a1a;
     --text-standard: #fff;
     --text-subtle: #a4a4a4;
+    --affordance-prominent: #fff;
+    --affordance-prominent-hover: #c7c7c7;
+    --affordance-prominent-pressed: #b8b8b8;
+    --text-on-prominent: #000;
+    --border-focus: #fff;
     --texture-dots-color: color-mix(in srgb, var(--bg-app) 92%, white);
   }
 }
@@ -98,13 +108,45 @@ h1 {
   color: var(--text-subtle);
 }
 
+button {
+  max-inline-size: 100%;
+  min-block-size: 2.5rem;
+  margin-block-start: var(--space-panel-inset);
+  padding: 0.5rem 1.5rem;
+  border: 1px solid transparent;
+  border-radius: 2.125rem;
+  background: var(--affordance-prominent);
+  color: var(--text-on-prominent);
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 500;
+  letter-spacing: 0.0025em;
+  cursor: pointer;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  button:hover {
+    background: var(--affordance-prominent-hover);
+  }
+}
+
+button:active {
+  background: var(--affordance-prominent-pressed);
+}
+
+button:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
 @media (forced-colors: active) {
   :root {
     background: Canvas;
     color: CanvasText;
   }
 
-  main {
+  main,
+  button {
     border-color: CanvasText;
   }
 }

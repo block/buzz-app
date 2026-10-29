@@ -82,9 +82,13 @@ browser or cancel separate host HTTP requests.
 - Returns a static, responsive page with Buzz's existing mark and design-system
   shell/panel, spacing and type roles, browser light/dark mode, `no-store`,
   and `no-referrer`. Its Content Security Policy permits only the exact embedded
-  stylesheet by hash, with no scripts or external assets. Receipt of a callback
-  does not establish successful account verification; users return to Buzz for
-  that result.
+  stylesheet and close-window script by hash, with no external assets or network
+  requests. A valid callback tries to close its page automatically; error pages
+  remain open. A **Close this window** button is shown when JavaScript is enabled,
+  with manual-close guidance if browser policy refuses `window.close()`. Restoring
+  an unclosed tab later can still fail because the loopback listener is temporary.
+  Receipt of a callback does not establish successful account verification;
+  users return to Buzz for that result.
   The standalone stylesheet mirrors the shared roles without loading the app;
   Inter uses the system fallback when unavailable locally. It does not inherit
   the app's Appearance preference.

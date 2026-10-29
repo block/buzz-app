@@ -285,17 +285,16 @@ export function createReminders(options: {
             // A disposed session's late reply, even an empty one, proves nothing.
             if (signal.aborted) return;
             // Relay query order is time descending, then ID ascending (also at
-            // ties). One event past the page tells a full page from the end of
-            // the list; it is left for the next page, and the rest land in the
-            // order the relay sent them.
+            // ties), compared as the relay and `merge` do. One event past the
+            // page tells a full page from the end of the list; it lands now and
+            // heads the next page, where it merges as a no-op.
             const ordered = [...events].sort(
-              (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
+              (a, b) =>
+                b.created_at - a.created_at ||
+                (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
             );
             const more = ordered.length > PAGE;
-            const past = more ? ordered[PAGE] : undefined;
-            const changed = await accept(
-              past ? events.filter((event) => event !== past) : events,
-            );
+            const changed = await accept(events);
             if (signal.aborted || current !== generation) return;
             // Earlier pages show while later ones load; only the last can end it.
             if (!more && !offline) publishState({ status: "ready" }, true);

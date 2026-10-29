@@ -253,7 +253,9 @@ describe("reminder history paging", () => {
         `${prefix}${i}`,
       ),
     );
-  function paged(...replies: (RelayEvent[] | Promise<RelayEvent[]>)[]) {
+  function walker(
+    serve: (filter: ReadFilter) => RelayEvent[] | Promise<RelayEvent[]>,
+  ) {
     const filters: ReadFilter[] = [];
     const statuses: string[] = [];
     const model = createReminders({
@@ -268,8 +270,9 @@ describe("reminder history paging", () => {
         sign: async () => wire("e", 1, "pending", "d"),
       },
       query: async ([filter]) => {
-        if (filter) filters.push(filter);
-        return (await replies.shift()) ?? [];
+        if (!filter) return [];
+        filters.push(filter);
+        return serve(filter);
       },
       publish: async () => {},
     });
@@ -278,6 +281,21 @@ describe("reminder history paging", () => {
     );
     return { model, filters, statuses, snapshot: model.capability.snapshot };
   }
+  // Scripted replies in order, whatever the filter asks.
+  const paged = (...replies: (RelayEvent[] | Promise<RelayEvent[]>)[]) =>
+    walker(() => replies.shift() ?? []);
+  // A relay holding `all` in its query order: serves pages by cursor and limit.
+  const served = (all: RelayEvent[]) =>
+    walker((filter) =>
+      all
+        .filter(
+          (e) =>
+            filter.until === undefined ||
+            e.created_at < filter.until ||
+            (e.created_at === filter.until && e.id > (filter.before_id ?? "")),
+        )
+        .slice(0, filter.limit),
+    );
   function deferred() {
     let resolve: (events: RelayEvent[]) => void = () => {};
     let reject: (error: Error) => void = () => {};
@@ -300,7 +318,7 @@ describe("reminder history paging", () => {
 
   it("pages from the last head until a short page, staying loading until then", async () => {
     // The page's oldest time is tied, so the cursor is its highest ID; the
-    // one event past the page only proves there is more, and page two reads it.
+    // event past the page shows at once and heads page two, where it merges.
     const past = wire("s", 801, "done", "s");
     const first = [
       ...heads("a", 198, 1_000),
@@ -314,8 +332,8 @@ describe("reminder history paging", () => {
     await vi.waitFor(() => expect(h.filters).toHaveLength(2));
     expect(h.statuses).toEqual(["loading"]);
     expect(h.snapshot()).toMatchObject({ status: "loading", hydrated: true });
-    expect(h.snapshot().reminders).toHaveLength(200);
-    expect(h.snapshot().reminders.some((r) => r.id === "s")).toBe(false);
+    expect(h.snapshot().reminders).toHaveLength(201);
+    expect(h.snapshot().reminders.some((r) => r.id === "s")).toBe(true);
     expect(h.filters[1]).toEqual({
       kinds: [30300],
       authors: [viewer],
@@ -345,7 +363,7 @@ describe("reminder history paging", () => {
       hydrated: true,
       error: "rejected",
     });
-    expect(h.snapshot().reminders).toHaveLength(200);
+    expect(h.snapshot().reminders).toHaveLength(201);
     await h.model.capability.refresh();
     expect(h.filters[2]).not.toHaveProperty("until");
     expect(h.snapshot()).toMatchObject({ status: "ready", hydrated: true });
@@ -390,7 +408,7 @@ describe("reminder history paging", () => {
     await dropped;
     expect(h.statuses).not.toContain("ready");
     expect(h.snapshot()).toMatchObject({ status: "loading", hydrated: true });
-    expect(h.snapshot().reminders).toHaveLength(201);
+    expect(h.snapshot().reminders).toHaveLength(202);
     await h.model.recover();
     expect(h.filters).toHaveLength(3);
     expect(h.filters[2]).not.toHaveProperty("until");
@@ -410,23 +428,17 @@ describe("reminder history paging", () => {
       hydrated: true,
       error: "socket closed",
     });
-    expect(h.snapshot().reminders).toHaveLength(200);
+    expect(h.snapshot().reminders).toHaveLength(201);
     await h.model.recover();
     expect(h.filters).toHaveLength(3);
     expect(h.filters[2]).not.toHaveProperty("until");
     expect(h.snapshot()).toMatchObject({ status: "ready", hydrated: true });
     expect(h.snapshot().error).toBeUndefined();
-    expect(h.snapshot().reminders).toHaveLength(201);
+    expect(h.snapshot().reminders).toHaveLength(202);
   });
 
-  // Fifty pages that each prove there is more, then the page past the bound.
-  const bound = (lastPage: number) =>
-    Array.from({ length: 50 }, (_, page) =>
-      heads(`p${page}-`, page === 49 ? lastPage : 201, 20_000 - page * 200),
-    );
-
   it("completes a list of exactly the page bound", async () => {
-    const h = paged(...bound(200));
+    const h = served(heads("h", 10_000, 20_000));
     await h.model.recover();
     expect(h.filters).toHaveLength(50);
     expect(h.snapshot()).toMatchObject({ status: "ready", hydrated: true });
@@ -435,7 +447,7 @@ describe("reminder history paging", () => {
   });
 
   it("stops at the page bound and reports a longer list as partial", async () => {
-    const h = paged(...bound(201), heads("p50-", 201, 10_000));
+    const h = served(heads("h", 10_001, 20_000));
     await h.model.recover();
     expect(h.filters).toHaveLength(50);
     expect(h.snapshot()).toMatchObject({
@@ -443,7 +455,8 @@ describe("reminder history paging", () => {
       hydrated: true,
       error: "Too many reminders to load",
     });
-    expect(h.snapshot().reminders).toHaveLength(10_000);
+    // Everything read shows, including the event past the last page.
+    expect(h.snapshot().reminders).toHaveLength(10_001);
   });
 
   it("fails a page that does not advance the cursor", async () => {

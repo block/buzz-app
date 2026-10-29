@@ -192,6 +192,77 @@ test.describe("mentioned reply priority", () => {
     }
   });
 
+  test("opening a main-pane thread from Activity reads it, not the side-pane thread", async ({
+    page,
+    app,
+  }) => {
+    await page.clock.install();
+    await holdReadingFocus(page);
+    await open(page, app);
+    const rows = app.histories.get("primary/alpha");
+    const [x, t] = ["Thread root 1", "Thread root 0"].map((content) =>
+      rows.find((row) => row.content === content),
+    );
+    for (const root of [x, t]) {
+      await page
+        .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
+        .getByRole("button", { name: /^View thread:/ })
+        .click();
+      await expect(
+        page.getByRole("complementary", { name: "Thread", exact: true }),
+      ).toBeVisible();
+    }
+    const side = page.locator("[data-panel-workspace]");
+    const main = page.locator("[data-main-workspace]");
+    const tabs = (host) =>
+      host.locator('[role="tab"][data-tab-value^="thread:"]');
+    const unread = (rootId) =>
+      page.evaluate(
+        (rootId) =>
+          window.fixtureRelay.snapshot().session.unread.snapshot({
+            kind: "thread",
+            channelId: "alpha",
+            rootId,
+          }).observedCount,
+        rootId,
+      );
+    // Move X's tab (the first opened) to the main pane, leaving T in the side.
+    const [id] = await tabs(side).evaluateAll((all) =>
+      all.map((tab) => tab.dataset.tabValue),
+    );
+    const from = await page
+      .locator(`[role="tab"][data-tab-value="${id}"]`)
+      .boundingBox();
+    const header = await main.locator("header").first().boundingBox();
+    await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(
+      header.x + header.width / 2,
+      header.y + header.height / 2,
+      { steps: 8 },
+    );
+    await page.mouse.up();
+    await expect(tabs(main)).toHaveCount(1);
+    await expect(tabs(side)).toHaveCount(1);
+    await page.clock.runFor(1000);
+    expect(await unread(x.id)).toBeGreaterThan(0);
+    expect(await unread(t.id)).toBeGreaterThan(0);
+
+    // Activity reopens X, already selected in the main pane.
+    await page.locator('button[data-channel-id="alpha"]').hover();
+    const item = page
+      .getByRole("dialog", { name: "Activity in Alpha" })
+      .getByRole("button", { name: /Open unread thread from/ })
+      .filter({ hasText: "Unread reply 1" });
+    await expect(item).toBeVisible();
+    await releaseReadingFocus(page);
+    await item.click();
+    await expect(item).toBeHidden();
+    await page.clock.runFor(1000);
+    await expect.poll(() => unread(x.id)).toBe(0);
+    expect(await unread(t.id)).toBeGreaterThan(0);
+  });
+
   test("an Activity reopening leaves focus the person moved meanwhile", async ({
     page,
     app,

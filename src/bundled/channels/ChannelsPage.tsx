@@ -1323,27 +1323,32 @@ function ChannelWorkspace({
     );
   const split = usePanelSplit();
   // A routed thread can mount behind a collapsed pane, where it cannot take
-  // focus. Once the pane shows it, hand over focus nothing else took.
-  const showingRoutedThread =
-    showingChannelPanel && !companion && !membersOpen && !!routedThread;
+  // focus, or already be selected, so its pane does not move focus. Once its
+  // tab shows, hand it focus nothing else took.
+  const routedTab =
+    routedThread && !membersOpen
+      ? tabState.tabs.find(
+          (tab) =>
+            tab.kind === "thread" &&
+            tab.channelId === routedThread.channelId &&
+            tab.messageId === routedThread.messageId &&
+            (tabPane(tab) === "main"
+              ? tabState.mainSelected === tab.id
+              : showingChannelPanel && !companion && selectedTab === tab.id),
+        )?.id
+      : undefined;
   const routedVisit = useRef<AbortSignal | string | undefined>(undefined);
   useLayoutEffect(() => {
     const visit = navigation?.signal ?? currentId;
-    if (!showingRoutedThread || routedVisit.current === visit) return;
+    if (!routedTab || routedVisit.current === visit) return;
     routedVisit.current = visit;
     if (document.activeElement !== document.body) return;
     split.ref.current
       ?.querySelector<HTMLElement>(
-        `[role="tab"][data-tab-value="${CSS.escape(selectedTab)}"]`,
+        `[role="tab"][data-tab-value="${CSS.escape(routedTab)}"]`,
       )
       ?.focus({ preventScroll: true });
-  }, [
-    showingRoutedThread,
-    navigation?.signal,
-    currentId,
-    selectedTab,
-    split.ref,
-  ]);
+  }, [routedTab, navigation?.signal, currentId, split.ref]);
   useEffect(() => {
     // Only an explicit settings click moves focus; restoring a visit does not.
     if (settingsFocus)

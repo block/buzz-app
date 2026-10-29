@@ -83,7 +83,11 @@ import {
   UsersIcon,
   XIcon,
 } from "../../shared/design-system/icons";
-import { MemberRow, useMemberAdministration } from "./MemberAdministration";
+import {
+  MemberRow,
+  useMemberAdministration,
+  memberAccessLabel,
+} from "./MemberAdministration";
 import { useMemberSearch } from "./useMemberSearch";
 import { useMemberOwners } from "./useMemberOwners";
 import { useSoloShare } from "./useSoloShare";
@@ -105,8 +109,8 @@ const INVITATION_GROUP_SIZE = 4;
 const additionRoles = [
   {
     role: "member",
-    label: "Participant",
-    action: "Add as participant",
+    label: "Participate",
+    action: "Add to participate",
     description: "Send messages, reply, and react.",
   },
   {
@@ -1526,7 +1530,7 @@ export function ChannelMembersDialog({
             ? `Remove ${removalTarget} from ${place}`
             : selection.expectedRole === "absent"
               ? "Add member?"
-              : "Change member role?"
+              : `Change access to ${memberAccessLabel(selection.role)}?`
           : (title ??
             (solo
               ? "Share access"
@@ -1604,7 +1608,9 @@ export function ChannelMembersDialog({
                 ? `Remove ${removalTarget}`
                 : selectedAddition
                   ? selectedAddition.action
-                  : `Make ${selection.role}`}
+                  : selection.role === "admin"
+                    ? "Set as admin"
+                    : `Set to ${memberAccessLabel(selection.role).toLowerCase()}`}
             </Button>
           </>
         ) : solo ? (
@@ -1666,7 +1672,7 @@ export function ChannelMembersDialog({
         selection.role !== "remove" && (
           <p className="text-body-sm">
             {selectedAddition?.description ??
-              `Change this member’s role from ${selection.expectedRole} to ${selection.role}. ${selection.role === "admin" ? `Admins can manage this ${place} and its members.` : `This changes their authority in this ${place}.`}`}
+              `Change access from ${memberAccessLabel(selection.expectedRole)} to ${memberAccessLabel(selection.role)}. ${selection.role === "admin" ? `Admins can manage this ${place} and its members.` : `This changes what they can do in this ${place}.`}`}
           </p>
         )
       ) : (

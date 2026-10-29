@@ -72,3 +72,31 @@ it("fails closed when a public metadata change exceeds the retained byte budget"
   ).toBe(false);
   expect(state.canAccess("a")).toBe(false);
 });
+
+it("keeps stale public resolution behind rejected private metadata and permits fresh public recovery", () => {
+  const viewer = keypair(),
+    relay = keypair();
+  const first = metadata(relay, "a", "A", 1, [["public"]]);
+  const state = new DiscoveryState(
+    viewer.pubkey,
+    relay.pubkey,
+    byteSize(first),
+  );
+  state.accept(first);
+  expect(
+    state.accept(
+      metadata(relay, "a", "A longer private name", 2, [["private"]]),
+    ),
+  ).toBe(false);
+  expect(state.resume("a", first)).toBe(false);
+  expect(state.accept(first)).toBe(false);
+  expect(state.canAccess("a")).toBe(false);
+  expect(state.get("a")).toBeUndefined();
+  const current = metadata(relay, "a", "A", 3, [["public"]]);
+  expect(state.resume("a", current)).toBe(true);
+  expect(state.accept(current)).toBe(true);
+  expect(state.get("a")).toMatchObject({ readOnly: true });
+  state.deny("a");
+  expect(state.resume("a", current)).toBe(true);
+  expect(state.get("a")).toMatchObject({ readOnly: true });
+});

@@ -93,6 +93,14 @@ export class DiscoveryState {
     this.retainedBytes = bytes;
     return true;
   }
+  private olderThanRejected(event: RelayEvent, id: string): boolean {
+    const rejected = this.rejectedVersions.get(`${event.kind}:${id}`);
+    return (
+      !!rejected &&
+      (event.created_at < rejected.created_at ||
+        (event.created_at === rejected.created_at && event.id > rejected.id))
+    );
+  }
   /** Returns whether visible state changed. Events from other authors are ignored, not trusted. */
   accept(event: RelayEvent, cached = false): boolean {
     if (event.kind === 9007) {
@@ -112,13 +120,7 @@ export class DiscoveryState {
     const map = event.kind === 39002 ? this.rosters : this.metadata;
     const previous = map.get(id);
     const coordinate = `${event.kind}:${id}`;
-    const rejected = this.rejectedVersions.get(coordinate);
-    if (
-      rejected &&
-      (event.created_at < rejected.created_at ||
-        (event.created_at === rejected.created_at && event.id > rejected.id))
-    )
-      return false;
+    if (this.olderThanRejected(event, id)) return false;
     const next = newer(previous, event);
     const accessible = this.canAccess(id);
     if (next !== previous && !this.store(map, id, next)) {
@@ -211,6 +213,7 @@ export class DiscoveryState {
       metadata?.kind === 39000 &&
       metadata.pubkey === this.relayAuthor &&
       tag(metadata, "d") === id &&
+      !this.olderThanRejected(metadata, id) &&
       openMetadata(metadata) &&
       newer(this.metadata.get(id), metadata)?.id === metadata.id
     ) {

@@ -302,7 +302,10 @@
     block-size: var(--space-5);
   }
   .buzz-select[data-appearance="link"] .buzz-button {
-    padding-inline: 0;
+    @apply text-body-sm;
+    align-items: flex-start;
+    min-height: var(--space-6);
+    padding: 0;
   }
   /* Artwork provides its own visual inset; keep its edge closer to the frame. */
   .buzz-select .buzz-button:has(.buzz-select-leading),

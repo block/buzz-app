@@ -173,6 +173,7 @@
     auto;
   align-items: start;
   gap: var(--space-row-gap);
+  padding-block: var(--space-half);
 }
 .accessIcon {
   display: flex;

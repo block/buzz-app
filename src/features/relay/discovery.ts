@@ -174,7 +174,7 @@ export class DiscoveryState {
       metadata.pubkey === this.relayAuthor &&
       tag(metadata, "d") === id &&
       openMetadata(metadata) &&
-      newer(this.metadata.get(id), metadata) === metadata
+      newer(this.metadata.get(id), metadata)?.id === metadata.id
     ) {
       const changed = !this.confirmedPreviews.has(id);
       this.confirmedPreviews.add(id);

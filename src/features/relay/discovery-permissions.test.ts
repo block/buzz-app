@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 import { DiscoveryState } from "./discovery";
+import { eventDto } from "./events";
 import { keypair, metadata, signed } from "./testing";
 
 const relay = keypair(),
@@ -94,7 +95,10 @@ it.each(["guest", "member"])(
     state.accept(membership);
     state.deny(id);
     expect(state.canAccess(id)).toBe(false);
-    state.resume(id, publicMetadata);
+    const fresh = eventDto(publicMetadata);
+    expect(fresh).not.toBe(publicMetadata);
+    expect(fresh.id).toBe(publicMetadata.id);
+    state.resume(id, fresh);
     expect(state.canAccess(id)).toBe(true);
     expect(state.canParticipate(id)).toBe(false);
     expect(state.canWrite(id)).toBe(false);

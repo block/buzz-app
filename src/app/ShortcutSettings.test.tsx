@@ -412,6 +412,10 @@ it("captures a chord, refuses conflicts and bare keys, applies overrides to the 
         `Ctrl+${key.toUpperCase()} is reserved for copy, cut, paste and select all. Try another.`,
       );
     }
+    fireEvent.keyDown(input, { key: "V", ctrlKey: true, shiftKey: true });
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Ctrl+Shift+V is reserved for copy, cut, paste and select all. Try another.",
+    );
     // Conflicts are reported by title and owner; nothing is saved or fired.
     fireEvent.keyDown(input, { key: "k", ctrlKey: true });
     expect(screen.getByRole("alert")).toHaveTextContent(

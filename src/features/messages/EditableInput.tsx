@@ -465,7 +465,8 @@ export function EditableInput({
     let editor: EditorView;
     let separateHistory = false;
     // Mod+Shift+V (and Apple's ⌥⇧⌘V) pastes plain text verbatim. The native
-    // command fires the paste event; the held chord is what marks it as raw.
+    // command fires the paste event; the held chord, or the desktop menu's
+    // `buzz:paste-plain` sent just before its command, marks it as raw.
     let plainPaste = false;
     const editable = () => !current.current.disabled && !locked.current;
     // A projection depends only on the immutable document, but selection events
@@ -1764,6 +1765,10 @@ export function EditableInput({
           mousedown() {
             plainPaste = false;
             return false;
+          },
+          "buzz:paste-plain"() {
+            plainPaste = true;
+            return true;
           },
           click(_view, event) {
             // Composer links are editable text, never navigation targets.

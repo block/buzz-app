@@ -19,6 +19,9 @@ const CLOSE_ALL: &str = "buzz-close-all";
 const NEXT: &str = "buzz-next-tab";
 const PREVIOUS: &str = "buzz-previous-tab";
 const PASTE_PLAIN: &str = "buzz-paste-plain";
+// The focused composer marks the paste that follows as raw, whether or not a
+// key fired. A focused guest browser takes the paste itself.
+const PASTE_PLAIN_REQUEST: &str = "if (browserSessionId === null) document.activeElement?.dispatchEvent(new Event(\"buzz:paste-plain\"));";
 const REQUEST: &str = include_str!("close-request.js");
 const SWITCH: &str = include_str!("switch-tab-request.js");
 
@@ -97,7 +100,12 @@ pub(crate) fn handle<R: Runtime>(app: &AppHandle<R>, event: tauri::menu::MenuEve
         // A block keeps the binding out of the page's global scope.
         NEXT => format!("{{ const tabEvent = \"buzz:next-tab\";\n{SWITCH}}}"),
         PREVIOUS => format!("{{ const tabEvent = \"buzz:previous-tab\";\n{SWITCH}}}"),
-        PASTE_PLAIN => return paste_plain(),
+        PASTE_PLAIN => {
+            // On the UI thread the script is sent to the page at once, so it
+            // runs before the paste command that follows it.
+            send_request(app, PASTE_PLAIN_REQUEST);
+            return paste_plain();
+        }
         _ => return,
     };
     send_request(app, &script);

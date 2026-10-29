@@ -67,6 +67,7 @@ const EDITOR_CHORDS: readonly KeyBinding[] = [
 const CLIPBOARD_CHORDS: readonly KeyBinding[] = [
   { key: "c", mod: true },
   { key: "v", mod: true },
+  { key: "v", mod: true, shift: true },
   { key: "x", mod: true },
   { key: "a", mod: true },
 ];

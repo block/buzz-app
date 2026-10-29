@@ -1246,6 +1246,21 @@ describe("Mod+Shift+V pastes plain text verbatim", () => {
     }
   });
 
+  it("pastes verbatim after the desktop menu's request without a key", () => {
+    const h = mount("Check the release notes");
+    act(() => h.input.setSelectionRange(10, 23));
+    act(() => {
+      h.input.focus();
+      h.input.dispatchEvent(new Event("buzz:paste-plain"));
+    });
+    paste(h.input, url);
+    expect(h.markdown()).toBe(`Check the ${url}`);
+    // The request covers one paste.
+    act(() => h.input.setSelectionRange(0, 5));
+    paste(h.input, url);
+    expect(h.markdown()).toBe(`[Check](${url}) the ${url}`);
+  });
+
   it.each([
     [
       "the chord is released",

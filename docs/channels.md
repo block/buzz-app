@@ -953,11 +953,13 @@ Profile navigation stays available during an invitation; a missing profile panel
 leaves the identity static without disabling the separate Add button.
 The dialog retains its shared surface. A quiet `border-standard` outline frames
 one scrolling viewport, with People, Agents and Not in this channel
-separated inside it without extra boxes or fills. Every group heading sticks to the
-top of this viewport while scrolling within its own section, with an opaque matching
-surface so rows do not show through. There is no outer top padding to scroll away:
-when a group starts the list, its heading is pinned from the first scroll pixel;
-the heading itself owns the text's top inset. A compact ghost refresh button sits in the
+separated inside it without extra boxes or fills. In roomy result viewports, group
+headings stick to the top while scrolling within their sections, with an opaque
+matching surface so rows do not show through. When the results have 8rem or less
+of content height, headings scroll with their sections so wrapped labels cannot
+cover keyboard-highlighted actions. Headings own the text's top inset, without
+outer top padding to scroll away; sticky headings start pinned from the first
+scroll pixel when their group starts the list. A compact ghost refresh button sits in the
 fixed dialog header immediately left of Close, matching its button and 16px icon size;
 its tooltip and accessible name are **Refresh member data**. It refreshes this
 dialog's member-related data, not the whole application. It is the single retry

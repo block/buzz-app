@@ -20,10 +20,11 @@
   flex-shrink: 0;
 }
 .memberList {
+  container: member-list / size;
   display: flex;
   flex-direction: column;
   flex: 1;
-  /* A sticky heading plus one reachable row. */
+  /* Keep a usable results area before the whole layout scrolls. */
   min-height: calc(var(--size-row) * 2);
   overflow: auto;
   /* Reveal rows below sticky group headings, including their compact actions. */
@@ -59,6 +60,12 @@
   padding-block-start: var(--space-2);
   padding-inline: var(--space-control-inset);
   background: var(--surface-popover);
+}
+/* Short lists cannot spare room for a wrapped label and a complete action. */
+@container member-list (max-height: 8rem) {
+  .groupHeading {
+    position: static;
+  }
 }
 .listNote {
   padding-inline: var(--space-control-inset);

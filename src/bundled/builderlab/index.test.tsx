@@ -943,9 +943,9 @@ it.each([
       name: "Instructions",
     });
     expect(instructions).toHaveValue("Be concise.");
-    const save = screen.getByRole("button", { name: "Save instructions" });
     await user.clear(instructions);
     await user.type(instructions, "New direction.");
+    const save = screen.getByRole("button", { name: "Save" });
     instructionsSave = deferred();
     const updatesBeforeEdit = requestsTo("update-agent").length;
     try {

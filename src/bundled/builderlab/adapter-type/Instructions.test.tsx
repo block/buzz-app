@@ -3,7 +3,8 @@ import "@testing-library/jest-dom/vitest";
 import type { RelayData } from "../../../features/relay/service";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { StrictMode } from "react";
+import { StrictMode, useState } from "react";
+import { AgentSaveFooter } from "../../../features/agents/AgentSaveButton";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { AgentTabs } from "../../agents/AgentTabs";
 import type { Agents, Agent } from "../../../features/agents/service";
@@ -65,8 +66,23 @@ function fixture() {
     value: "credential",
     account: { subject, email: "a@example.com", canUseRemoteAgents: true },
   }));
-  const request = vi.fn<Host["request"]>(async ({ url }) =>
-    url.endsWith("/get-model-catalog")
+  let stored = response();
+  const request = vi.fn<Host["request"]>(async ({ url, body }) => {
+    if (url.endsWith("/update-agent")) {
+      const update = JSON.parse(body ?? "{}");
+      const data = JSON.parse(stored.body);
+      data.agents = data.agents.map((row: { agent_pubkey: string }) =>
+        row.agent_pubkey === update.agent_pubkey
+          ? {
+              ...row,
+              ...update,
+              ...(update.model_id ? { model_selection_status: 1 } : {}),
+            }
+          : row,
+      );
+      stored = { ...stored, body: JSON.stringify(data) };
+    }
+    return url.endsWith("/get-model-catalog")
       ? {
           status: 200,
           headers: {},
@@ -80,8 +96,8 @@ function fixture() {
             ],
           }),
         }
-      : response(),
-  );
+      : stored;
+  });
   const client = createAgentClient({ request, runCommand: vi.fn() }, session);
   const type = {
     ...builderlabType(client, session, {
@@ -116,9 +132,9 @@ it("retries a failed load and refuses to save a draft through another account", 
   await user.type(field, "Changed.");
   await act(async () => h.changeAccount());
   const before = h.request.mock.calls.length;
-  await user.click(screen.getByRole("button", { name: "Save instructions" }));
+  await user.click(screen.getByRole("button", { name: "Save" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "account that loaded these instructions",
+    "account that loaded these settings",
   );
   expect(h.request).toHaveBeenCalledTimes(before);
   expect(field).toHaveValue("First instructions.Changed.");
@@ -164,18 +180,24 @@ it("switching agents hides the old draft and ignores the switched-away read", as
 });
 
 function renderTabs(h: ReturnType<typeof fixture>) {
-  render(
-    <AgentTabs
-      agents={{ save: vi.fn() } as unknown as Agents}
-      agent={agent()}
-      type={h.type}
-      channels={[]}
-      memories={undefined}
-      settingsHost={{ typeControl: () => <p>Hosted provider</p> }}
-      settingsContent={<p>Agent settings</p>}
-    />,
-    { wrapper: StrictMode },
-  );
+  function Pane() {
+    const [target, setTarget] = useState<HTMLDivElement | null>(null);
+    return (
+      <AgentSaveFooter value={{ target }}>
+        <AgentTabs
+          agents={{ save: vi.fn() } as unknown as Agents}
+          agent={agent()}
+          type={h.type}
+          channels={[]}
+          memories={undefined}
+          settingsHost={{ typeControl: () => <p>Hosted provider</p> }}
+          settingsContent={<p>Agent settings</p>}
+        />
+        <div ref={setTarget} data-testid="save-footer" />
+      </AgentSaveFooter>
+    );
+  }
+  render(<Pane />, { wrapper: StrictMode });
 }
 
 it("keeps hosted instructions on cancellation and resets a confirmed discard", async () => {
@@ -202,7 +224,7 @@ it("keeps hosted instructions on cancellation and resets a confirmed discard", a
   );
   await user.click(screen.getByRole("button", { name: "Keep editing" }));
   expect(field).toHaveValue("First instructions. Unsaved.");
-  const save = screen.getByRole("button", { name: "Save instructions" });
+  const save = screen.getByRole("button", { name: "Save" });
   const pending = deferred<HostResponse>();
   h.request.mockReturnValueOnce(pending.promise);
   try {
@@ -257,7 +279,9 @@ it("guards hosted model drafts and a pending model save", async () => {
   await user.click(
     await screen.findByRole("menuitemradio", { name: "Friendly Model" }),
   );
-  expect(screen.getByRole("button", { name: "Save model" })).toBeDisabled();
+  expect(
+    screen.queryByRole("button", { name: "Save" }),
+  ).not.toBeInTheDocument();
   await user.click(screen.getByRole("tab", { name: "Settings" }));
   expect(await screen.findByRole("alertdialog")).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Keep editing" }));
@@ -269,7 +293,7 @@ it("guards hosted model drafts and a pending model save", async () => {
   const pending = deferred<HostResponse>();
   h.request.mockReturnValueOnce(pending.promise);
   try {
-    await user.click(screen.getByRole("button", { name: "Save model" }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
     expect(screen.getByRole("tab", { name: "Settings" })).toHaveAttribute(
       "aria-disabled",
       "true",
@@ -299,11 +323,12 @@ it("guards hosted model drafts and a pending model save", async () => {
   expect(screen.queryByRole("alert")).toBeNull();
 });
 
-it("keeps the model draft guarded after independently saving instructions", async () => {
+it("saves model and instructions together through one footer action", async () => {
   const h = fixture();
   const user = userEvent.setup();
   renderTabs(h);
   const field = await screen.findByRole("textbox", { name: "Instructions" });
+  expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
   const modelTrigger = await screen.findByRole("button", { name: /^Model:/ });
   await waitFor(() => expect(modelTrigger).toBeEnabled());
   await user.click(modelTrigger);
@@ -313,17 +338,32 @@ it("keeps the model draft guarded after independently saving instructions", asyn
     await screen.findByRole("menuitemradio", { name: "Friendly Model" }),
   );
   await user.type(field, " Updated.");
-  const save = screen.getByRole("button", { name: "Save instructions" });
+  // A partial model draft cannot be silently skipped by Save.
+  expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+  await user.click(screen.getByRole("combobox", { name: "Thinking" }));
+  await user.click(await screen.findByRole("option", { name: "High" }));
+  const save = screen.getByRole("button", { name: "Save" });
+  expect(screen.getByTestId("save-footer")).toContainElement(save);
+  expect(save).toHaveAttribute("form", field.closest("form")?.id);
   await user.click(save);
-  await waitFor(() => expect(save).toHaveAttribute("aria-disabled", "true"));
-  expect(field).toHaveValue("First instructions. Updated.");
-  expect(screen.getByRole("button", { name: /^Model:/ })).toHaveTextContent(
-    "Friendly Model",
+  await waitFor(() =>
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull(),
   );
-  await user.click(screen.getByRole("tab", { name: "Settings" }));
-  expect(await screen.findByRole("alertdialog")).toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "Keep editing" }));
+  const updates = h.request.mock.calls.filter(([request]) =>
+    request.url.endsWith("/update-agent"),
+  );
+  expect(updates).toHaveLength(1);
+  expect(JSON.parse(updates[0]?.[0].body ?? "{}")).toEqual({
+    agent_pubkey: first,
+    agent_instructions: "First instructions. Updated.",
+    model_id: "one",
+    reasoning_effort: "high",
+  });
   expect(field).toHaveValue("First instructions. Updated.");
+  expect(modelTrigger).toHaveTextContent("Friendly Model");
+  await user.click(screen.getByRole("tab", { name: "Settings" }));
+  expect(screen.getByText("Agent settings")).toBeVisible();
+  expect(screen.queryByRole("alertdialog")).toBeNull();
 });
 
 it("keeps runtime settings available without loading Builderlab configuration", () => {

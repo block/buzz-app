@@ -100,7 +100,7 @@ async function fixture(
       </StrictMode>
     ),
   });
-  await screen.findByRole("button", { name: /^Model:/ });
+  await waitFor(() => expect(screen.queryByText("Loading models…")).toBeNull());
   return {
     request,
     session,
@@ -129,23 +129,27 @@ async function choose(label: string, value: string) {
   }
 }
 it("requires an explicit supported pair, clears effort when the model changes, and reads back server validity", async () => {
-  const h = await fixture();
+  const h = await fixture({ instructions: "Saved instructions." });
   expect(screen.getByRole("button", { name: /^Model:/ })).toHaveTextContent(
     "Choose a model",
   );
-  expect(screen.getByRole("button", { name: "Save model" })).toBeDisabled();
+  expect(
+    screen.queryByRole("button", { name: "Save" }),
+  ).not.toBeInTheDocument();
   await choose("Model", "Friendly One");
-  expect(screen.getByRole("button", { name: "Save model" })).toBeDisabled();
+  expect(
+    screen.queryByRole("button", { name: "Save" }),
+  ).not.toBeInTheDocument();
   await choose("Thinking", "High");
   await choose("Model", "Friendly Two");
   expect(screen.getByRole("combobox", { name: "Thinking" })).toHaveTextContent(
     "Choose thinking",
   );
-  expect(screen.getByRole("button", { name: "Save model" })).toBeDisabled();
+  expect(
+    screen.queryByRole("button", { name: "Save" }),
+  ).not.toBeInTheDocument();
   await choose("Thinking", "None");
-  await userEvent
-    .setup()
-    .click(screen.getByRole("button", { name: "Save model" }));
+  await userEvent.setup().click(screen.getByRole("button", { name: "Save" }));
   expect(
     await screen.findByRole("dialog", { name: "Model preferences saved" }),
   ).toBeVisible();
@@ -159,8 +163,91 @@ it("requires an explicit supported pair, clears effort when the model changes, a
     model_id: "model-two",
     reasoning_effort: "none",
   });
-  expect(screen.getByRole("button", { name: "Save model" })).toBeDisabled();
+  expect(screen.getByRole("textbox", { name: "Instructions" })).toHaveValue(
+    "Saved instructions.",
+  );
+  expect(
+    screen.queryByRole("button", { name: "Save" }),
+  ).not.toBeInTheDocument();
 });
+it("can clear instructions without changing a model when the catalog is empty", async () => {
+  const h = await fixture({ instructions: "Saved instructions." }, []);
+  const user = userEvent.setup();
+  await user.clear(screen.getByRole("textbox", { name: "Instructions" }));
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() =>
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull(),
+  );
+  const updates = h.request.mock.calls.filter(([request]) =>
+    request.url.endsWith("/update-agent"),
+  );
+  expect(updates).toHaveLength(1);
+  expect(JSON.parse(updates[0]?.[0].body ?? "{}")).toEqual({
+    agent_pubkey: "ab".repeat(32),
+    agent_instructions: "",
+  });
+  expect(screen.getByRole("textbox", { name: "Instructions" })).toHaveValue("");
+});
+
+it("preserves the combined draft when model readback fails and retries one combined update", async () => {
+  const h = await fixture({ instructions: "Saved instructions." });
+  const user = userEvent.setup();
+  await choose("Model", "Friendly One");
+  await choose("Thinking", "High");
+  const field = screen.getByRole("textbox", { name: "Instructions" });
+  await user.type(field, " Updated.");
+  const implementation = h.request.getMockImplementation();
+  if (!implementation) throw new Error("Missing request fixture");
+  h.request
+    .mockImplementationOnce(implementation)
+    .mockResolvedValueOnce({ status: 400, headers: {}, body: "{}" });
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("HTTP 400");
+  expect(field).toHaveValue("Saved instructions. Updated.");
+  expect(screen.getByRole("button", { name: /^Model:/ })).toHaveTextContent(
+    "Friendly One",
+  );
+  expect(screen.getByRole("combobox", { name: "Thinking" })).toHaveTextContent(
+    "High",
+  );
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() =>
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull(),
+  );
+  expect(screen.queryByRole("alert")).toBeNull();
+  const updates = h.request.mock.calls.filter(([request]) =>
+    request.url.endsWith("/update-agent"),
+  );
+  expect(updates).toHaveLength(2);
+  for (const [request] of updates)
+    expect(JSON.parse(request.body ?? "{}")).toEqual({
+      agent_pubkey: "ab".repeat(32),
+      agent_instructions: "Saved instructions. Updated.",
+      model_id: "model-one",
+      reasoning_effort: "high",
+    });
+});
+
+it("refuses a combined update for an agent that is no longer Active", async () => {
+  const h = await fixture({ status: "Revoked" });
+  const user = userEvent.setup();
+  await choose("Model", "Friendly One");
+  await choose("Thinking", "High");
+  await user.type(
+    screen.getByRole("textbox", { name: "Instructions" }),
+    "Changed.",
+  );
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Only Active agents",
+  );
+  expect(
+    h.request.mock.calls.filter(([request]) =>
+      request.url.endsWith("/update-agent"),
+    ),
+  ).toHaveLength(0);
+});
+
 it("uses Builderlab families in the shared menu and keeps unknown catalog choices selectable", async () => {
   await fixture(
     {
@@ -201,7 +288,9 @@ it("uses Builderlab families in the shared menu and keeps unknown catalog choice
   expect(screen.getByRole("combobox", { name: "Thinking" })).toHaveTextContent(
     "Choose thinking",
   );
-  expect(screen.getByRole("button", { name: "Save model" })).toBeDisabled();
+  expect(
+    screen.queryByRole("button", { name: "Save" }),
+  ).not.toBeInTheDocument();
 });
 
 it("shows no warning or success message when opening valid saved preferences", async () => {
@@ -245,7 +334,9 @@ it.each([
     expect(
       screen.getByRole("combobox", { name: "Thinking" }),
     ).toHaveTextContent("Choose thinking");
-    expect(screen.getByRole("button", { name: "Save model" })).toBeDisabled();
+    expect(
+      screen.queryByRole("button", { name: "Save" }),
+    ).not.toBeInTheDocument();
   },
 );
 it("preserves a failed draft and refuses to save it through a different account", async () => {
@@ -254,7 +345,7 @@ it("preserves a failed draft and refuses to save it through a different account"
   await choose("Thinking", "Low");
   h.offline(true);
   const user = userEvent.setup();
-  await user.click(screen.getByRole("button", { name: "Save model" }));
+  await user.click(screen.getByRole("button", { name: "Save" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("HTTP 400");
   expect(
     screen.queryByRole("dialog", { name: "Model preferences saved" }),
@@ -265,9 +356,9 @@ it("preserves a failed draft and refuses to save it through a different account"
   h.offline(false);
   await act(async () => h.changeAccount());
   const before = h.request.mock.calls.length;
-  await user.click(screen.getByRole("button", { name: "Save model" }));
+  await user.click(screen.getByRole("button", { name: "Save" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "account that loaded these model settings",
+    "account that loaded these settings",
   );
   expect(h.request).toHaveBeenCalledTimes(before);
 });
@@ -278,7 +369,7 @@ it("retries a failed catalog refresh without retrying a failed save", async () =
   await choose("Thinking", "Low");
   const user = userEvent.setup();
   h.offline(true);
-  await user.click(screen.getByRole("button", { name: "Save model" }));
+  await user.click(screen.getByRole("button", { name: "Save" }));
   await user.click(
     await screen.findByRole("button", { name: "Refresh models" }),
   );
@@ -296,7 +387,7 @@ it("retries a failed catalog refresh without retrying a failed save", async () =
       request.url.endsWith("/update-agent"),
     ),
   ).toHaveLength(1);
-  await user.click(screen.getByRole("button", { name: "Save model" }));
+  await user.click(screen.getByRole("button", { name: "Save" }));
   expect(
     await screen.findByRole("dialog", { name: "Model preferences saved" }),
   ).toBeVisible();

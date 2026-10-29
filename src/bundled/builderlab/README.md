@@ -72,7 +72,11 @@ The Identity tab also loads a separate model catalog from Builderlab. Choose a
 model and one of that model's reasoning efforts, then save the pair for new tasks.
 There is no default or fallback selection. Missing or unavailable saved choices
 show the server's setup status and require a supported pair. Changing the model
-clears the effort choice. Instructions and model settings save independently.
+clears the effort choice. One shared Save action sits in the agent pane's bottom
+footer and saves the Identity draft. When model settings and instructions both
+change, they are sent in one update. Instructions alone remain editable when the
+model catalog is unavailable; a changed model requires a supported effort before
+the draft can be saved.
 The model control uses the same family submenus as Goose. Builderlab's catalog
 aliases are mapped to families in `adapter-type/models.ts`; update that mapping
 with Builderlab's catalog information until its API supplies family metadata.

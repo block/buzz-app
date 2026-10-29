@@ -1,18 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import type { AgentViewProps } from "../../../features/agents/service";
-import { useAgentSaveState } from "../../../features/agents/AgentSaveButton";
 import { Button } from "../../../shared/design-system/ui/Button";
-import { Field } from "../../../shared/design-system/ui/Field";
 import { PreferenceRow } from "../../../shared/design-system/ui/PreferenceRow";
 import { SettingsGroup } from "../../../shared/design-system/ui/SettingsGroup";
-import { Textarea } from "../../../shared/design-system/ui/Textarea";
 import inlineStyles from "../../../shared/InlineReference.module.css";
-import {
-  MAX_INSTRUCTIONS_LENGTH,
-  validInstructions,
-  type AgentClient,
-  type RemoteAgent,
-} from "../agents/client";
+import type { AgentClient, RemoteAgent } from "../agents/client";
 import type { OAuthSession } from "../oauth/session";
 import { ModelSettings } from "./ModelSettings";
 
@@ -28,17 +20,10 @@ export function createSettingsTab(client: AgentClient, session: OAuthSession) {
       agent: RemoteAgent;
       subject: string;
     }>();
-    const [draft, setDraft] = useState("");
     const [busy, setBusy] = useState(true);
     const [error, setError] = useState("");
-    useAgentSaveState(
-      !!loaded && draft !== (loaded.agent.instructions ?? ""),
-      !!loaded && busy,
-    );
-    const controller = useRef<AbortController | null>(null);
     useEffect(() => {
       const current = new AbortController();
-      controller.current = current;
       const load = async () => {
         await session.ensureSignedIn(current.signal);
         const credential = session.credential();
@@ -55,7 +40,6 @@ export function createSettingsTab(client: AgentClient, session: OAuthSession) {
             "Only Active agents can have their instructions edited.",
           );
         setLoaded({ agent: remote, subject: credential.account.subject });
-        setDraft(remote.instructions ?? "");
       };
       void load()
         .catch((reason: unknown) => {
@@ -66,29 +50,6 @@ export function createSettingsTab(client: AgentClient, session: OAuthSession) {
         });
       return () => current.abort();
     }, [pubkey]);
-    const submit = async () => {
-      const signal = controller.current?.signal;
-      if (!loaded || !signal || busy || !validInstructions(draft)) return;
-      setBusy(true);
-      setError("");
-      try {
-        await session.ensureSignedIn(signal);
-        if (session.credential().account.subject !== loaded.subject)
-          throw new Error(
-            "Sign in to the Builderlab account that loaded these instructions.",
-          );
-        await client.updateInstructions(loaded.agent, draft, signal);
-        signal.throwIfAborted();
-        setLoaded({
-          ...loaded,
-          agent: { ...loaded.agent, instructions: draft },
-        });
-      } catch (reason) {
-        if (!signal.aborted) setError(message(reason));
-      } finally {
-        if (!signal.aborted) setBusy(false);
-      }
-    };
     return (
       <div className="grid gap-4">
         {loaded && (
@@ -99,49 +60,8 @@ export function createSettingsTab(client: AgentClient, session: OAuthSession) {
             subject={loaded.subject}
           />
         )}
-        <form
-          className="flex flex-col gap-4"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void submit();
-          }}
-        >
-          {loaded ? (
-            <>
-              <Field
-                label="Instructions"
-                description="Saved in Builderlab. Leave empty to clear instructions."
-                error={
-                  !validInstructions(draft)
-                    ? "Use text or leave this empty."
-                    : undefined
-                }
-              >
-                <Textarea
-                  appearance="outlined"
-                  value={draft}
-                  onChange={(event) => setDraft(event.target.value)}
-                  disabled={busy}
-                  rows={8}
-                  maxLength={MAX_INSTRUCTIONS_LENGTH}
-                />
-              </Field>
-              <div>
-                <Button
-                  type="submit"
-                  variant="prominent"
-                  loading={busy}
-                  disabled={
-                    !validInstructions(draft) ||
-                    draft === (loaded.agent.instructions ?? "")
-                  }
-                  focusableWhenDisabled
-                >
-                  Save instructions
-                </Button>
-              </div>
-            </>
-          ) : busy ? (
+        {!loaded &&
+          (busy ? (
             <p role="status" className="m-0 text-body-sm text-secondary">
               Loading instructions…
             </p>
@@ -149,13 +69,12 @@ export function createSettingsTab(client: AgentClient, session: OAuthSession) {
             <div>
               <Button onClick={retry}>Retry</Button>
             </div>
-          )}
-          {error && (
-            <p role="alert" className="m-0 text-body-sm text-danger">
-              {error}
-            </p>
-          )}
-        </form>
+          ))}
+        {error && (
+          <p role="alert" className="m-0 text-body-sm text-danger">
+            {error}
+          </p>
+        )}
       </div>
     );
   }

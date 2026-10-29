@@ -192,6 +192,16 @@ test("old root and reply beyond the first thread page open exactly; reclick and 
   await expect(
     page.locator(`[data-message-id="${app.exact.target.id}"]`),
   ).toHaveCount(0);
+  // Local tab removal precedes the dismissal's native return. Let that land
+  // before Back, so neither pending traversal can supersede the fresh open.
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => window.fixtureNavigation.snapshot().entry.target.messageId,
+      ),
+    )
+    .toBeUndefined();
+  await expect.poll(() => status(page)).toBe("opened");
   const closedVisit = await page.evaluate(
     () => window.fixtureNavigation.snapshot().entry.id,
   );

@@ -1662,6 +1662,35 @@ it("offers emoji catalog refresh after an attachment publication fails preparati
   expect(h.publish).not.toHaveBeenCalled();
 });
 
+it("sends once the catalog retry started by a refused emoji send loads", async () => {
+  let available = false;
+  const h = await mountUploadComposer({
+    emojiRead: async () => {
+      if (!available) throw Error("catalog offline");
+      return [];
+    },
+  });
+  await waitFor(() =>
+    expect(h.owner.session.emoji.snapshot().status).toBe("error"),
+  );
+  available = true;
+  await userEvent.type(h.input(), ":party:");
+  fireEvent.click(h.send());
+  expect(within(h.form()).getByRole("alert")).toHaveTextContent(
+    "Community emoji unavailable; retrying. Your draft is kept; try sending again shortly.",
+  );
+  await waitFor(() =>
+    expect(h.owner.session.emoji.snapshot().status).toBe("ready"),
+  );
+  expect(
+    screen.queryByRole("button", { name: "Retry message preparation" }),
+  ).toBeNull();
+  expect(h.input()).toHaveValue(":party:");
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.publish).toHaveBeenCalledTimes(1));
+  expect(within(h.form()).queryByRole("alert")).toBeNull();
+});
+
 it("does not overwrite a later local edit when a background upload fails", async () => {
   const h = await mountUploadComposer();
   attachByPaste(h.input(), attachmentFile("original.txt"));

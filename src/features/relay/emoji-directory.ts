@@ -140,7 +140,8 @@ export function createEmojiDirectory(
         if (closed || owned.signal.aborted) return;
         accept(events);
         if (closed || owned.signal.aborted || limited) return;
-        // A capped read still resolves the shortcodes it holds.
+        // NIP-01 relays return the newest events first under a limit, so a
+        // capped read holds the latest sets and still resolves their shortcodes.
         publish({
           status: "ready",
           error:
@@ -166,7 +167,8 @@ export function createEmojiDirectory(
   }
   function ensure() {
     // A cold failure retries on the next demand; refresh() shares a pending read.
-    if (snapshot.status === "idle" || snapshot.status === "error")
+    // Overflow would repeat on every read, so it waits for an explicit retry.
+    if (snapshot.status === "idle" || (snapshot.status === "error" && !limited))
       return refresh();
     return pending ?? Promise.resolve();
   }
@@ -332,14 +334,16 @@ export function createEmojiDirectory(
       if (!codes.length) return [];
       if (closed) throw new Error("Community session is closed");
       if (snapshot.status !== "ready") {
-        // Name the refusal before ensure() starts a retry.
-        const refusal = new Error(
+        const failed = snapshot.status === "error";
+        // ensure() retries a failed read; only a failure it leaves needs Retry.
+        void ensure();
+        throw new Error(
           snapshot.status === "error"
             ? `Community emoji unavailable. Retry message preparation or open the emoji picker. ${snapshot.error ?? ""}`
-            : "Community emoji is loading. Your draft is kept; try sending again shortly.",
+            : failed
+              ? "Community emoji unavailable; retrying. Your draft is kept; try sending again shortly."
+              : "Community emoji is loading. Your draft is kept; try sending again shortly.",
         );
-        void ensure();
-        throw refusal;
       }
       const used = new Map<string, string>();
       for (const part of messageParts(content)) {

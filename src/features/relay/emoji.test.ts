@@ -306,7 +306,7 @@ it("plain sends are immediate and do not acquire a palette; a cold load failure 
   expect(h.session.emoji.snapshot().status).toBe("error");
   expect(() =>
     h.session.messages.reply("c", "a".repeat(64), ":party:"),
-  ).toThrow(/unavailable/);
+  ).toThrow(/unavailable; retrying/);
   // The refused send started one retry; later demands share it.
   expect(h.session.emoji.snapshot().status).toBe("loading");
   const retry = h.session.emoji.ensure();
@@ -446,6 +446,10 @@ it("exposes read-cap and retained-byte limits rather than evicting replacement e
     entries: [],
     error: expect.stringContaining("budget"),
   });
+  // Overflow would repeat on every read, so demand leaves it to Retry.
+  await directory.queries.ensure();
+  expect(() => directory.tags(":party:")).toThrow(/Retry message preparation/);
+  expect(reader.read).toHaveBeenCalledTimes(1);
   directory.accept([set(member, 1)]);
   expect(directory.queries.snapshot().entries).toEqual([]);
   reader.read.mockResolvedValueOnce([set(member, 3, [])]);

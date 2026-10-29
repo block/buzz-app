@@ -58,7 +58,7 @@ export function liveResumeSince(original: number, cursor: LiveCursor): number {
 }
 /** Delay before the next connection attempt. A restarting relay (1001/1012)
  * gets full jitter over the spread window, widening once repeated bounces have
- * grown the backoff past it. Anything else backs off with symmetric +-25% jitter.
+ * grown the backoff past it. Anything else waits half to all of the backoff.
  * `random` is in [0, 1). */
 export function liveReconnectDelay(
   closeCode: number | undefined,
@@ -294,17 +294,12 @@ export function subscribeRelayTraffic(
   // When the current socket last proved it reaches the relay (ms). A silent
   // stall ends at the detecting tick, so this, not the close, bounds liveness.
   let heardAt = 0;
-  // The recovery tick runs every interval while authenticated. One overdue by
-  // a further interval means the app was not running (a sleep): a frame handled
-  // then may have waited through it, so frames prove nothing until a tick runs
-  // on time again.
-  let armedAt = 0;
-  let doubted = false;
-  const overdue = () => Date.now() - armedAt > 2 * LIVE_RECOVERY_INTERVAL;
-  function arm() {
-    armedAt = Date.now();
-    recoveryTimer = setTimeout(recover, LIVE_RECOVERY_INTERVAL);
-  }
+  // A frame handled after a sleep may have waited through it, so the time it is
+  // handled proves nothing. A recovery tick proves the app was running, and a
+  // frame that arrived before one is handled by the next, so a frame proves the
+  // relay reached the socket only up to the tick before the latest (or the AUTH).
+  let tickedAt = 0;
+  let provenAt = 0;
   let probe: string | undefined;
   let unresponsive: ((reason: string) => void) | undefined;
   let connection: LiveSnapshot["status"] = "connecting";
@@ -431,7 +426,8 @@ export function subscribeRelayTraffic(
   }
   function recover() {
     if (closed || !authenticated) return;
-    doubted = overdue();
+    provenAt = tickedAt;
+    tickedAt = Date.now();
     // An open socket can stop delivering without an error or close, and its
     // routes then only time out. A minute of silence asks for an empty answer;
     // no answer at all means the socket is dead, so replace it. A probe is a
@@ -481,7 +477,8 @@ export function subscribeRelayTraffic(
       // The chain must outlive a failing hook: log it and keep recovering.
       log.error(`${peer} live recovery hook failed`, error);
     }
-    if (!closed && authenticated && generation === current) arm();
+    if (!closed && authenticated && generation === current)
+      recoveryTimer = setTimeout(recover, LIVE_RECOVERY_INTERVAL);
   }
   function sync() {
     if (denying || closed) return;
@@ -875,10 +872,10 @@ export function subscribeRelayTraffic(
     ws.onmessage = async (event) => {
       if (!valid()) return;
       if (authenticated) {
-        // Any frame proves the socket still reaches the relay.
+        // Any frame proves the socket still reaches the relay, as of the tick
+        // before the latest.
         heard = true;
-        if (overdue()) doubted = true;
-        if (!doubted) heardAt = Date.now();
+        heardAt = provenAt;
         clearTimeout(deadline);
       }
       if (typeof event.data !== "string" || event.data.length > 1024 * 1024) {
@@ -945,11 +942,10 @@ export function subscribeRelayTraffic(
         }
         clearTimeout(deadline);
         authenticated = true;
-        heardAt = Date.now();
-        doubted = false;
+        heardAt = provenAt = tickedAt = Date.now();
         authFailures = 0;
         connection = "connected";
-        arm();
+        recoveryTimer = setTimeout(recover, LIVE_RECOVERY_INTERVAL);
         pump();
         notify();
         return;

@@ -1503,9 +1503,9 @@ it("resumes a joined batch whose renewal failed but kept its source", async () =
   vi.useFakeTimers({ now: 1_700_000_000_000 });
   const h = setup([], undefined, () => 0.5);
   try {
-    const { renewal } = await renewing(h);
+    const { heard, renewal } = await renewing(h);
+    // After one tick, a frame proves the relay only as far as the AUTH.
     await h.first.receive(["CLOSED", renewal[1], "error: busy"]);
-    const heard = Math.floor(Date.now() / 1000);
     h.first.close();
     expect(batchSince(await rebuilt(h), "a")).toEqual([
       heard - 960,
@@ -1632,36 +1632,51 @@ it("does not move the cursor to the wake time for a frame that waited through a 
   }
 });
 
-it("trusts frames again once a recovery tick runs on time after a sleep", async () => {
-  vi.useFakeTimers({ now: 1_700_000_000_000 });
-  const h = setup(["a"], undefined, () => 0.5);
-  try {
-    age();
-    await h.first.auth();
-    await vi.advanceTimersByTimeAsync(750);
-    for (const [, id] of h.first.requests())
-      await h.first.receive(["EOSE", id]);
-    vi.setSystemTime(Date.now() + 3_600_000);
-    await h.first.receive(["NOTICE", "queued before the sleep"]);
-    // The overdue tick fires on wake and proves nothing; the next one is on time.
-    await vi.advanceTimersByTimeAsync(60_000);
-    await h.first.receive(["NOTICE", "after the wake"]);
-    await vi.advanceTimersByTimeAsync(60_000);
-    await h.first.receive(["NOTICE", "fresh"]);
-    const heard = Math.floor(Date.now() / 1000);
-    h.first.close(1012);
-    await vi.advanceTimersByTimeAsync(10_000);
-    const next = h.sockets[1];
-    assert.exists(next);
-    await next.auth();
-    await vi.advanceTimersByTimeAsync(750);
-    expect(sinceOf(next, (r) => scopeOf(r).includes("a"))).toEqual([
-      heard - 960,
-    ]);
-  } finally {
-    h.owner.dispose();
-  }
-});
+it.each([
+  ["the frame", false],
+  ["the late tick", true],
+])(
+  "a frame handled after a short sleep proves the relay only up to the tick before the latest, whether %s is handled first",
+  async (_, tickFirst) => {
+    vi.useFakeTimers({ now: 1_700_000_000_000 });
+    const h = setup(["a"], undefined, () => 0.5);
+    try {
+      age();
+      await h.first.auth();
+      await vi.advanceTimersByTimeAsync(750);
+      for (const [, id] of h.first.requests())
+        await h.first.receive(["EOSE", id]);
+      const ticks: number[] = [];
+      for (const _ of [1, 2]) {
+        await vi.advanceTimersByTimeAsync(60_000);
+        ticks.push(Math.floor(Date.now() / 1000));
+        await h.first.receive(["NOTICE", "live"]);
+      }
+      const [before, last] = ticks;
+      assert.exists(before);
+      assert.exists(last);
+      // Asleep from just after the last tick until 100s after it: a frame
+      // queued before the sleep is handled on wake, then the relay's restart
+      // close behind it. An event stored then may be backdated past last - 900.
+      if (tickFirst) {
+        vi.setSystemTime(Date.now() + 40_000);
+        await vi.advanceTimersByTimeAsync(60_000);
+      } else vi.setSystemTime(Date.now() + 100_000);
+      await h.first.receive(["NOTICE", "queued before the sleep"]);
+      h.first.close(1012);
+      await vi.advanceTimersByTimeAsync(10_000);
+      const next = h.sockets[1];
+      assert.exists(next);
+      await next.auth();
+      await vi.advanceTimersByTimeAsync(750);
+      const [since] = sinceOf(next, (r) => scopeOf(r).includes("a"));
+      expect(since).toBe((tickFirst ? last : before) - 960);
+      expect(since).toBeLessThanOrEqual(last - 900);
+    } finally {
+      h.owner.dispose();
+    }
+  },
+);
 
 it("keeps a route's cursor through a connection that never established it", async () => {
   vi.useFakeTimers({ now: 1_700_000_000_000 });
@@ -1709,9 +1724,10 @@ it("forgets the cursor of a channel that left the interests before a rebuild", a
     const second = h.sockets[1];
     assert.exists(second);
     await second.auth();
+    // Before its first tick, a connection's frames prove the relay as of the AUTH.
+    const heard = Math.floor(Date.now() / 1000);
     await vi.advanceTimersByTimeAsync(750);
     for (const [, id] of second.requests()) await second.receive(["EOSE", id]);
-    const heard = Math.floor(Date.now() / 1000);
     h.owner.update(["a", "b"]);
     second.close();
     // The doubled backoff at three quarters: the rebuild happens now.

@@ -26,6 +26,12 @@
       max(19.75rem, var(--secondary-panel-width, calc(100% / 2.1)))
     );
 }
+/* Only the board and its dock read the split width. Reset it below them so a
+   resize frame restyles those readers, not the timeline and panels inside. */
+.board > :not([data-panel-dock]),
+.panelStack > * {
+  --secondary-panel-width: initial;
+}
 .sidebar,
 .conversation {
   height: 100%;

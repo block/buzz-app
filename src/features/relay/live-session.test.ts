@@ -1111,3 +1111,54 @@ it("an older page read while the stream is down waits below a settled fill until
     h.owner.dispose();
   }
 });
+
+it("an older page still in flight when a catch-up fill settles is discarded, and paging continues from the settled fill", async () => {
+  // It continues from the cursor the settle replaced: merged, its rows would
+  // sit directly below the hole and move the floor past it as verified.
+  const h = reconnectHarness();
+  try {
+    const seen = message(h.alice, "c", "seen", 10),
+      old = message(h.alice, "c", "old", 5);
+    const missed = [6, 5, 4, 3, 2, 1].map((n) =>
+      message(h.alice, "c", `missed ${n}`, 10 + n * 10),
+    );
+    await h.reconnect(seen);
+    h.read().respond(h.page("head", [seen], seen));
+    await flush();
+    await h.drop();
+    h.owner.session.channels.loadOlder("c");
+    const older = h.read();
+    expect(older.filters[0]).toMatchObject({
+      until: seen.created_at,
+      before_id: seen.id,
+    });
+    await h.connectAndReplay([]);
+    let previous: (typeof missed)[number] | undefined;
+    for (const row of missed) {
+      h.read().respond(
+        h.page(previous ? h.cursor(previous) : "head", [row], row),
+      );
+      await flush();
+      previous = row;
+    }
+    assert(previous);
+    older.respond(h.page(h.cursor(seen), [old], old));
+    await flush();
+    expect(h.reads()).toHaveLength(0);
+    expect(h.rows()).toEqual(missed.map((row) => row.id).reverse());
+    expect(h.window()).toMatchObject({
+      status: "ready",
+      freshness: "verified",
+      hasMore: true,
+      loadingOlder: false,
+    });
+    h.owner.session.channels.loadOlder("c");
+    const next = h.read();
+    expect(next.filters[0]).toMatchObject({
+      until: previous.created_at,
+      before_id: previous.id,
+    });
+  } finally {
+    h.owner.dispose();
+  }
+});

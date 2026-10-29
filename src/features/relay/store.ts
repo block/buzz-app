@@ -718,7 +718,8 @@ export function createChannelStore(
       const { page } = await readPage(state.channelId, cursor, {
         signal: controller.signal,
       });
-      if (!live(state, generation)) return;
+      // A settled catch-up aborts an older read that has already resolved.
+      if (!live(state, generation) || controller.signal.aborted) return;
       const combined = new Map(
         (cursor ? state.events : []).map((event) => [event.id, event]),
       );
@@ -3054,6 +3055,9 @@ export function createChannelStore(
        * by exclusion so rows the stream delivered meanwhile stay, and the
        * window continues from the last page. */
       const settle = (last: Page) => {
+        // An older read in flight continues from the cursor this replaces;
+        // its rows would merge below the hole and move the floor past it.
+        if (retained.snapshot.loadingOlder) retained.controller?.abort();
         retained.events = retained.events.filter(
           (event) => !kept.has(event.id),
         );
@@ -3062,7 +3066,11 @@ export function createChannelStore(
         retained.floor = undefined;
         retained.atHead = true;
         moveCursor(retained, last.cursor);
-        setWindow(retained, { hasMore: last.hasMore, historyLimited: false });
+        setWindow(retained, {
+          hasMore: last.hasMore,
+          historyLimited: false,
+          loadingOlder: false,
+        });
       };
       const controller = new AbortController();
       controllers.add(controller);

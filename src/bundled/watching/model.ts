@@ -1,4 +1,4 @@
-import type { Context } from "../../../plugins/author";
+import type { Context } from "../../plugins/author";
 export type AttentionValue = NonNullable<
   Parameters<Context["agents"]["save"]>[1]["attention"]
 >[string];

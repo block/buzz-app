@@ -594,10 +594,11 @@ it("directory pages rebuild the name index only for people they add", async () =
   const members = h.people.slice(1, 4);
   const outsider = { pubkey: "e".repeat(64), name: "Teal Outsider" };
   let page = members;
-  // Every settled search returns a new array.
+  // Every settled search returns a new array. Pages are truncated so each
+  // keystroke reads rather than deriving from the complete `p` page.
   vi.mocked(h.session.directMessages.people).mockImplementation(async () => ({
     people: [...page],
-    hasMore: false,
+    hasMore: true,
   }));
   const starts = vi.spyOn(personMatch, "nameStarts");
   function Chooser({ query }: { query: string }) {

@@ -227,11 +227,16 @@ test("queue focus survives preview release and pointer removal", async ({
   await editor.press("End");
   await editor.pressSequentially("Keep this row");
   await editor.press("Enter");
+  // Admission is asynchronous: settle the first submission before typing into
+  // the draft it clears, then establish both rows before testing removal.
   await expect(queue).toContainText("Keep this row");
+  await expect(editor).not.toContainText("Keep this row");
+  await expect(editor).toHaveAttribute("contenteditable", "true");
   await editor.press("End");
   await editor.pressSequentially("Remove last row");
   await editor.press("Enter");
   await expect(queue).toContainText("Remove last row");
+  await expect(queue.getByRole("listitem")).toHaveCount(2);
   const remove = queue.getByRole("button", { name: "Remove queued message" });
   await expect(remove).toHaveCount(2);
   await queue.getByRole("listitem").last().hover();

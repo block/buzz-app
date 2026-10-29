@@ -2524,6 +2524,7 @@ it.each(["v2", "v3", "v5", "v6", "v7"])(
     expect(thread.dynamicTools[0]?.tools.map((tool) => tool.name)).toEqual(
       expect.arrayContaining([
         "media_get",
+        "mem_rm",
         "notes_get",
         "notes_set",
         "notes_rm",
@@ -3309,6 +3310,7 @@ it("lists saved conversations newest first from storage, and moves a started one
       key: thread,
       channelId: "channel",
       name: "test",
+      channelType: "stream",
       root,
       threadId: "older",
       at: 1,
@@ -3317,6 +3319,7 @@ it("lists saved conversations newest first from storage, and moves a started one
       key: channel,
       channelId: "channel",
       name: "test",
+      channelType: "stream",
       threadId: "before-timestamps",
     },
   ]);
@@ -3393,7 +3396,7 @@ it("always offers the attention tools, on search, keeps the thread when attentio
   );
   const next = f.starts()[1]?.params as { input: { text: string }[] };
   expect(next.input[0]?.text).toMatch(
-    /<attention>\nYour owner has attention off/,
+    /<attention>\nAttention is off on this device/,
   );
   expect(next.input[0]?.text).not.toContain("Handle the work");
   const off = await f.tool("interest_show", { id: "ops" }, 1);
@@ -3666,7 +3669,7 @@ it("ends a queued mention with the attention note current when it starts", async
   const text = (
     f.starts()[1]?.params as { input: { text: string }[] } | undefined
   )?.input[0]?.text;
-  expect(text).toMatch(/<attention>\nYour owner has attention off/);
+  expect(text).toMatch(/<attention>\nAttention is off on this device/);
   await f.complete(1, "SECOND");
 });
 

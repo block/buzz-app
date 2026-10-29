@@ -60,6 +60,7 @@ export const test = base.extend({
   sortingSidebar: [false, { option: true }],
   initialSidebarSort: [{}, { option: true }],
   channelLifecycle: [false, { option: true }],
+  guestPermalinks: [false, { option: true }],
   lifecycleRole: ["owner", { option: true }],
   lifecycleOwnerAgent: [false, { option: true }],
   lifecycleVisibility: [{ archived: [], hidden: [] }, { option: true }],
@@ -128,6 +129,7 @@ export const test = base.extend({
       sortingSidebar,
       initialSidebarSort,
       channelLifecycle,
+      guestPermalinks,
       lifecycleRole,
       lifecycleOwnerAgent,
       lifecycleVisibility,
@@ -325,6 +327,7 @@ export const test = base.extend({
           },
         ]
       : [];
+    const guestChannelId = guestPermalinks ? lifecycleRows[0].id : undefined;
     const archivedIds = new Set(lifecycleVisibility.archived);
     const hiddenDmIds = new Set(lifecycleVisibility.hidden);
     let lifecycleTime = 1700000001;
@@ -333,7 +336,11 @@ export const test = base.extend({
         ...channels,
         ...dmIds,
         ...sortingIds,
-        ...lifecycleRows.map((row) => row.id),
+        ...lifecycleRows
+          .filter(
+            (row) => row.id !== guestChannelId || lifecycleRole !== "nonmember",
+          )
+          .map((row) => row.id),
       ]),
     ];
     if (savedSidebar) {
@@ -527,6 +534,20 @@ export const test = base.extend({
           ),
         ]);
     const targetEvents = [];
+    // Enough newer roots to put the permalink outside the initial history page.
+    if (guestChannelId)
+      histories.set(
+        `primary/${guestChannelId}`,
+        Array.from({ length: 103 }, (_, i) =>
+          sign(
+            9,
+            [["h", guestChannelId]],
+            `Guest room history ${i}`,
+            peerKey,
+            1700000000 + i,
+          ),
+        ),
+      );
     let searchTarget;
     if (openSearch) {
       const root = sign(
@@ -551,12 +572,13 @@ export const test = base.extend({
     }
     let exact;
     if (exactMessages) {
-      const root = histories.get("primary/alpha")[2];
-      const replies = Array.from({ length: 80 }, (_, i) =>
+      const exactChannelId = guestChannelId ?? "alpha";
+      const root = histories.get(`primary/${exactChannelId}`)[2];
+      const replies = Array.from({ length: guestChannelId ? 3 : 80 }, (_, i) =>
         sign(
           9,
           [
-            ["h", "alpha"],
+            ["h", exactChannelId],
             ["e", root.id, "", "reply"],
             ["p", getPublicKey(peerKey)],
           ],
@@ -570,7 +592,7 @@ export const test = base.extend({
         replies[replies.length - 1] = sign(
           9,
           [
-            ["h", "alpha"],
+            ["h", exactChannelId],
             ["e", root.id, "", "root"],
             ["e", replies.at(-2).id, "", "reply"],
             ["p", getPublicKey(peerKey)],
@@ -1092,7 +1114,9 @@ export const test = base.extend({
                 viewer,
                 "",
                 lifecycleRows.some((row) => row.id === id)
-                  ? lifecycleRole
+                  ? lifecycleRole === "nonmember"
+                    ? "member"
+                    : lifecycleRole
                   : "member",
               ],
               ...(ownSoloChannels.includes(id)
@@ -1135,7 +1159,11 @@ export const test = base.extend({
           );
       if (filter.kinds?.includes(39000))
         return [
-          ...new Set([...rosterIds, ...(openSearch ? [OPEN_CHANNEL] : [])]),
+          ...new Set([
+            ...rosterIds,
+            ...(openSearch ? [OPEN_CHANNEL] : []),
+            ...(guestChannelId ? [guestChannelId] : []),
+          ]),
         ]
           .filter((id) => !filter["#d"] || filter["#d"].includes(id))
           .map(
@@ -1163,6 +1191,7 @@ export const test = base.extend({
                     lifecycleRows.find((row) => row.id === id)?.type ??
                       (dmIds.includes(id) ? "dm" : "stream"),
                   ],
+                  ...(id === guestChannelId ? [["join_role", "guest"]] : []),
                   ...(archivedIds.has(id) ? [["archived", "true"]] : []),
                   // Ordinary channels are explicitly public; do not add a public
                   // flag to private Solo chats or change the separate DM fixtures.

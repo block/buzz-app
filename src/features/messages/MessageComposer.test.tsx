@@ -30,16 +30,22 @@ import {
   waitFor,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { useLayoutEffect } from "react";
+import { useEffect, useLayoutEffect } from "react";
 import type { Contribution } from "../../plugins/contributions";
 import type {
   ComposerCompletion,
   ComposerCompletionProps,
   ComposerTool,
   ComposerToolProps,
+  CompletionPending,
+  CompletionResolution,
   CompletionResult,
   InlineRenderer,
 } from "../conversation/contracts";
+import { MENTION_RESOLVE_TIMEOUT_MS } from "../conversation/completion";
+import { mentionQuery } from "../../bundled/mentions/mention-query";
+import { MentionCompletion } from "../../bundled/mentions/MentionCompletion";
+import type { MentionRecipient } from "./mention-draft";
 import type { AgentLibrarySnapshot } from "../agents/library";
 import { createAgentChoices } from "../agents/choices";
 import type { LocalAgents } from "../agents/local";
@@ -925,6 +931,202 @@ it.each(["click", "Enter", "Tab", " "])(
   },
 );
 
+it("selects the exact match on Space from a publication React has not rendered yet", () => {
+  const h = mount();
+  const input = h.input();
+  input.focus();
+  h.fill("!search");
+  const publish = h.completionRequests.at(-1);
+  if (!publish) throw new Error("No observed completion request");
+  const chosen = { id: "chosen", label: "Chosen", edit: { text: "chosen" } };
+  act(() => {
+    publish({ items: [chosen] });
+  });
+  expect(screen.getByRole("option", { name: "Chosen" })).toBeVisible();
+  act(() => {
+    // The provider decides Space on the keystroke that completed the name,
+    // and a fast Space arrives before React commits that publication.
+    publish({ items: [chosen], spaceId: chosen.id });
+    expect(fireEvent.keyDown(input, { key: " " })).toBe(false);
+  });
+  expect(input).toHaveValue("chosen ");
+  expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  expect(h.messages.send).not.toHaveBeenCalled();
+});
+
+/** The real `@` syntax with a provider that answers each query from its mount
+ * effect, as the bundled providers do: one row named by the query, the exact
+ * name decided on Space, and a settled empty result once a Space is typed.
+ * `mounted` runs in that effect before the publication, after the host has
+ * committed what it shows for the query on its own. */
+function mountTypeahead(mounted?: (query: string) => void) {
+  function Completion({ query, publish }: ComposerCompletionProps) {
+    useEffect(() => {
+      mounted?.(query.query);
+      const withdraw = publish(
+        query.query.includes(" ")
+          ? { items: [] }
+          : {
+              items: [
+                {
+                  id: first.pubkey,
+                  label: `Honey ${query.query}`,
+                  edit: { mention: first },
+                },
+              ],
+              ...(query.query === "honey" ? { spaceId: first.pubkey } : {}),
+            },
+      );
+      return () => {
+        if (withdraw) withdraw();
+      };
+    }, [query.query, publish]);
+    return null;
+  }
+  const completions: readonly Contribution<ComposerCompletion>[] = [
+    {
+      id: "mentions",
+      key: "buzz.mentions/mentions",
+      pluginId: "buzz.mentions",
+      revision: "1",
+      title: "Mention",
+      match: ({ text, start }) => mentionQuery(text, start),
+      component: Completion,
+    },
+  ];
+  const empty: [] = [];
+  const none = { snapshot: () => empty, subscribe: () => () => {} };
+  const h = mount({
+    extensions: {
+      tools: none,
+      inline: none,
+      completions: { snapshot: () => completions, subscribe: () => () => {} },
+    },
+  });
+  return {
+    ...h,
+    /** The popup's row labels, or null while the popup is not in the document. */
+    rows() {
+      const popup = document.querySelector(
+        'section[aria-label="Mention suggestions"]',
+      );
+      return popup
+        ? [...popup.querySelectorAll('[role="option"]')].map(
+            (row) => row.textContent,
+          )
+        : null;
+    },
+  };
+}
+
+it("keeps the popup up through each keystroke that continues an open @ query", async () => {
+  const h = mountTypeahead();
+  const input = h.input();
+  input.focus();
+  h.fill("@h");
+  expect(h.rows()).toEqual(["Honey h"]);
+  const env = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean | undefined };
+  const previous = env.IS_REACT_ACT_ENVIRONMENT;
+  // Each delivery of DOM changes is a point at which the browser may paint.
+  // The per-query owner remounts on every keystroke, so its popup section is
+  // a new node each time; a delivery whose records removed a section without
+  // adding its replacement left the popup absent at a paint opportunity.
+  const popup = 'section[aria-label$=" suggestions"]';
+  const holds = (nodes: NodeList) =>
+    [...nodes].some(
+      (node) =>
+        node instanceof Element &&
+        (node.matches(popup) || !!node.querySelector(popup)),
+    );
+  const deliveries: { removed: boolean; added: boolean }[] = [];
+  const observer = new MutationObserver((records) =>
+    deliveries.push({
+      removed: records.some((record) => holds(record.removedNodes)),
+      added: records.some((record) => holds(record.addedNodes)),
+    }),
+  );
+  observer.observe(document.body, { childList: true, subtree: true });
+  try {
+    env.IS_REACT_ACT_ENVIRONMENT = false;
+    for (const text of ["@ho", "@hon", "@hone", "@honey"]) {
+      // The draft changes during a discrete event, as under a keystroke, so
+      // React commits the new observation in a microtask rather than under
+      // act; the provider's rows for it must be in the document by the end
+      // of that task, with no delivery in between showing no popup.
+      input.addEventListener(
+        "select",
+        () => {
+          input.value = text;
+          input.setSelectionRange(text.length, text.length);
+        },
+        { once: true },
+      );
+      input.dispatchEvent(new Event("select"));
+      await Promise.resolve();
+      expect(h.rows()).toEqual([`Honey ${text.slice(1)}`]);
+      // The observer's own microtask was queued during React's.
+      await Promise.resolve();
+    }
+  } finally {
+    env.IS_REACT_ACT_ENVIRONMENT = previous;
+    observer.disconnect();
+    await act(async () => {});
+  }
+  expect(deliveries.filter(({ removed, added }) => removed && !added)).toEqual(
+    [],
+  );
+  expect(deliveries.filter(({ removed }) => removed)).toHaveLength(4);
+  expect(h.rows()).toEqual(["Honey honey"]);
+  expect(h.messages.send).not.toHaveBeenCalled();
+});
+
+it("reopens a query at the same offset after Escape with no carried rows", () => {
+  // What the host showed for each query before its provider published, once
+  // per query: StrictMode runs the provider's mount effect twice.
+  const shown: [string, string[] | null][] = [];
+  const h = mountTypeahead((query) => {
+    if (shown.at(-1)?.[0] !== query) shown.push([query, h.rows()]);
+  });
+  const input = h.input();
+  input.focus();
+  h.fill("@hon");
+  h.fill("@hone");
+  expect(h.rows()).toEqual(["Honey hone"]);
+  fireEvent.keyDown(input, { key: "Escape" });
+  expect(h.rows()).toBeNull();
+  h.fill("@honey");
+  expect(h.rows()).toEqual(["Honey honey"]);
+  expect(shown).toEqual([
+    ["hon", null],
+    // A continuing keystroke carries the previous query's rows.
+    ["hone", ["Honey hon"]],
+    // A query reopened after the popup closed starts empty, as a first one.
+    ["honey", null],
+  ]);
+  expect(h.messages.send).not.toHaveBeenCalled();
+});
+
+it("still closes the popup when the query closes, on Escape, and on a Space that selects", () => {
+  const h = mountTypeahead();
+  const input = h.input();
+  input.focus();
+  h.fill("@hon");
+  expect(h.rows()).toEqual(["Honey hon"]);
+  // A settled empty result for the continued query: `@hon ` is prose.
+  h.fill("@hon ");
+  expect(h.rows()).toBeNull();
+  h.fill("@hone");
+  expect(h.rows()).toEqual(["Honey hone"]);
+  fireEvent.keyDown(input, { key: "Escape" });
+  expect(h.rows()).toBeNull();
+  h.fill("@honey");
+  expect(h.rows()).toEqual(["Honey honey"]);
+  expect(fireEvent.keyDown(input, { key: " " })).toBe(false);
+  expect(input).toHaveValue("@Honey ");
+  expect(h.rows()).toBeNull();
+  expect(h.messages.send).not.toHaveBeenCalled();
+});
+
 it.each(["click", "Enter", "Tab"])(
   "rejects withdrawn or ineligible refreshed completions via %s without sending",
   (key) => {
@@ -1644,11 +1846,17 @@ it("offers emoji catalog refresh after an attachment publication fails preparati
   );
   await waitFor(() => expect(h.input()).toHaveValue("caption :party:"));
   expect(within(h.form()).getByRole("alert")).toHaveTextContent(
-    "Community emoji unavailable",
+    "Community emoji isn't ready",
   );
+  // The refused send retried the catalog; recovery is offered once that fails.
   expect(
-    screen.getByRole("button", { name: "Retry message preparation" }),
+    await screen.findByRole("button", { name: "Retry message preparation" }),
   ).toBeVisible();
+  // The retained refusal stays accurate once that retry has failed.
+  expect(h.owner.session.emoji.snapshot().status).toBe("error");
+  expect(within(h.form()).getByRole("alert")).toHaveTextContent(
+    "Community emoji isn't ready. Your draft is kept; try sending again shortly.",
+  );
   available = true;
   fireEvent.click(
     screen.getByRole("button", { name: "Retry message preparation" }),
@@ -1659,6 +1867,35 @@ it("offers emoji catalog refresh after an attachment publication fails preparati
   expect(h.input()).toHaveValue("caption :party:");
   expect(within(h.form()).getByText("emoji.txt")).toBeVisible();
   expect(h.publish).not.toHaveBeenCalled();
+});
+
+it("sends once the catalog retry started by a refused emoji send loads", async () => {
+  let available = false;
+  const h = await mountUploadComposer({
+    emojiRead: async () => {
+      if (!available) throw Error("catalog offline");
+      return [];
+    },
+  });
+  await waitFor(() =>
+    expect(h.owner.session.emoji.snapshot().status).toBe("error"),
+  );
+  available = true;
+  await userEvent.type(h.input(), ":party:");
+  fireEvent.click(h.send());
+  expect(within(h.form()).getByRole("alert")).toHaveTextContent(
+    "Community emoji isn't ready. Your draft is kept; try sending again shortly.",
+  );
+  await waitFor(() =>
+    expect(h.owner.session.emoji.snapshot().status).toBe("ready"),
+  );
+  expect(
+    screen.queryByRole("button", { name: "Retry message preparation" }),
+  ).toBeNull();
+  expect(h.input()).toHaveValue(":party:");
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.publish).toHaveBeenCalledTimes(1));
+  expect(within(h.form()).queryByRole("alert")).toBeNull();
 });
 
 it("does not overwrite a later local edit when a background upload fails", async () => {
@@ -1931,6 +2168,9 @@ it("retains preparation retry when recovery is deferred by an edit then unmounte
     h.uploadCalls[0]?.result.resolve(uploadDescriptor("edit-remount.txt")),
   );
   expect(h.input()).toHaveAccessibleName("Edit message");
+  await waitFor(() =>
+    expect(h.owner.session.emoji.snapshot().status).toBe("error"),
+  );
   expect(
     within(h.form()).queryByRole("button", {
       name: "Retry message preparation",
@@ -1953,10 +2193,11 @@ it("retains preparation retry when recovery is deferred by an edit then unmounte
     expect(composer.getByText("edit-remount.txt")).toBeVisible(),
   );
   expect(composer.getByRole("alert")).toHaveTextContent(
-    "Community emoji unavailable",
+    "Community emoji isn't ready",
   );
+  // The refused send retried the catalog; recovery is offered once that fails.
   expect(
-    composer.getByRole("button", { name: "Retry message preparation" }),
+    await composer.findByRole("button", { name: "Retry message preparation" }),
   ).toBeVisible();
 });
 
@@ -1996,12 +2237,14 @@ it("offers message preparation retry after a failed attachment send remounts", a
     expect(composer.getByText("emoji-remount.txt")).toBeVisible(),
   );
   expect(composer.getByRole("alert")).toHaveTextContent(
-    "Community emoji unavailable",
+    "Community emoji isn't ready",
   );
+  // The refused send retried the catalog; recovery is offered once that fails.
+  const retry = await composer.findByRole("button", {
+    name: "Retry message preparation",
+  });
   available = true;
-  fireEvent.click(
-    composer.getByRole("button", { name: "Retry message preparation" }),
-  );
+  fireEvent.click(retry);
   await waitFor(() =>
     expect(h.owner.session.emoji.snapshot().status).toBe("ready"),
   );
@@ -10044,4 +10287,1234 @@ it("guards automatic recipient changes using the current draft prose", () => {
   expect(h.input().value).toContain("Written draft");
   h.fill(" \n ");
   act(() => expect(replace?.([second])).toBe(true));
+});
+
+/** A mention provider the test publishes for, over the real `@` syntax. */
+function mountPendingMention(options: Partial<MessageComposerProps> = {}) {
+  const publishes: ComposerCompletionProps["publish"][] = [];
+  function Completion({ publish }: ComposerCompletionProps) {
+    useLayoutEffect(() => {
+      publishes.push(publish);
+    }, [publish]);
+    return null;
+  }
+  const completions: readonly Contribution<ComposerCompletion>[] = [
+    {
+      id: "mentions",
+      key: "buzz.mentions/mentions",
+      pluginId: "buzz.mentions",
+      revision: "1",
+      title: "Mention",
+      match: ({ text, start }) => mentionQuery(text, start),
+      component: Completion,
+    },
+  ];
+  const empty: [] = [];
+  const none = { snapshot: () => empty, subscribe: () => () => {} };
+  const h = mount({
+    ...options,
+    extensions: {
+      tools: none,
+      inline: none,
+      completions: { snapshot: () => completions, subscribe: () => () => {} },
+    },
+  });
+  const resolve = vi.fn<CompletionPending["resolve"]>();
+  const publish = () => {
+    const publish = publishes.at(-1);
+    if (!publish) throw new Error("No mention query observed");
+    return publish;
+  };
+  return {
+    ...h,
+    resolve,
+    /** How many `@` queries the provider has been mounted for. */
+    queries: () => publishes.length,
+    publish,
+    /** Type `@name`, publish an undecided result for it, then type Space.
+     * Returns the keydown's default-prevented state inverted: false when held. */
+    hold(name: string, outcome: Promise<CompletionResolution>) {
+      resolve.mockImplementation(() => outcome);
+      h.fill(`@${name}`);
+      act(() => {
+        publish()({ items: [], spacePending: { name, resolve } });
+      });
+      return fireEvent.keyDown(h.input(), { key: " " });
+    },
+    chip: (name: string) =>
+      within(h.input()).queryByRole("img", {
+        name: `Resolving mention ${name}`,
+      }),
+  };
+}
+
+it("holds an undecided name on Space, then settles it into the recipient without reopening the chooser", async () => {
+  const h = mountPendingMention();
+  h.setProfiles(new Map([[first.pubkey, { name: "Honey" }]]));
+  const outcome = deferred<MentionRecipient | null>();
+  try {
+    expect(h.hold("honey", outcome.promise)).toBe(false);
+    expect(h.input()).toHaveValue("@honey ");
+    expect(h.chip("honey")).toHaveAttribute("aria-busy", "true");
+    expect(
+      screen.queryByRole("region", { name: "Explicit mentions" }),
+    ).toBeNull();
+    expect(h.resolve).toHaveBeenCalledOnce();
+    // The chip's `@` is not an open query: no provider mounts for "honey ".
+    const queries = h.queries();
+    await act(async () => outcome.resolve(first));
+    expect(h.input()).toHaveValue("@Honey ");
+    expect(h.chip("honey")).toBeNull();
+    expect(
+      within(
+        screen.getByRole("region", { name: "Explicit mentions" }),
+      ).getAllByRole("button"),
+    ).toHaveLength(1);
+    expect(h.queries()).toBe(queries);
+    h.submit();
+    expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+      "channel",
+      "@Honey ",
+      [first.pubkey],
+      [],
+    );
+  } finally {
+    outcome.resolve(null);
+  }
+});
+
+it("leaves Space literal beside a loaded longer member name and selects that name on the next Space", async () => {
+  // The real chooser over the real `@` syntax, with the directory read held:
+  // `Mira Example` continues `mira` whatever the read finds, so the first
+  // Space is prose, not a pending chip, and the query stays open for the word
+  // that completes the name.
+  const completions: readonly Contribution<ComposerCompletion>[] = [
+    {
+      id: "mentions",
+      key: "buzz.mentions/mentions",
+      pluginId: "buzz.mentions",
+      revision: "1",
+      title: "Mention",
+      match: ({ text, start }) => mentionQuery(text, start),
+      component: MentionCompletion,
+    },
+  ];
+  const empty: [] = [];
+  const none = { snapshot: () => empty, subscribe: () => () => {} };
+  const h = mount({
+    extensions: {
+      tools: none,
+      inline: none,
+      completions: { snapshot: () => completions, subscribe: () => () => {} },
+    },
+  });
+  const people = vi.fn(() => new Promise<never>(() => {}));
+  h.retarget({
+    session: {
+      ...h.session,
+      channels: { ...h.session.channels, ensureList: () => {} },
+      directMessages: { people },
+    } as unknown as RelaySession,
+  });
+  h.setProfiles(
+    new Map([
+      [first.pubkey, { name: "Mira Example" }],
+      [second.pubkey, { name: "Other Member" }],
+    ]),
+  );
+  const chip = () =>
+    within(h.input()).queryByRole("img", { name: /^Resolving mention / });
+  await h.user.type(h.input(), "@mira");
+  // The chooser has published for `mira` once its row shows.
+  await screen.findByRole("option", { name: /Mira Example/ });
+  await h.user.keyboard(" ");
+  expect(h.input()).toHaveValue("@mira ");
+  expect(chip()).toBeNull();
+  await h.user.keyboard("Example hi");
+  expect(h.input()).toHaveValue("@Mira Example hi");
+  expect(chip()).toBeNull();
+  expect(
+    within(
+      screen.getByRole("region", { name: "Explicit mentions" }),
+    ).getAllByRole("button"),
+  ).toHaveLength(1);
+  h.submit();
+  expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+    "channel",
+    "@Mira Example hi",
+    [first.pubkey],
+    [],
+  );
+});
+
+/** The real chooser over the real `@` syntax with `Mira Example` only in the
+ * directory and every member named, so the first Space is undecided. Each
+ * `people` read is held until the test releases it. */
+function mountDirectoryMention(
+  options: { agents?: Agents; channel?: object; session?: object } = {},
+) {
+  const completions: readonly Contribution<ComposerCompletion>[] = [
+    {
+      id: "mentions",
+      key: "buzz.mentions/mentions",
+      pluginId: "buzz.mentions",
+      revision: "1",
+      title: "Mention",
+      match: ({ text, start }) => mentionQuery(text, start),
+      component: MentionCompletion,
+    },
+  ];
+  const empty: [] = [];
+  const none = { snapshot: () => empty, subscribe: () => () => {} };
+  const h = mount(
+    {
+      extensions: {
+        tools: none,
+        inline: none,
+        completions: {
+          snapshot: () => completions,
+          subscribe: () => () => {},
+        },
+      },
+    },
+    undefined,
+    undefined,
+    options.agents,
+  );
+  const list = {
+    status: "ready",
+    channels: h.session.channels
+      .list()
+      .channels.map((channel) => ({ ...channel, ...options.channel })),
+  };
+  type Page = { people: readonly MentionRecipient[]; hasMore: boolean };
+  const reads: ((page: Page) => void)[] = [];
+  const people = vi.fn(
+    (query: string) =>
+      new Promise<Page>((resolve) => {
+        reads.push(resolve);
+        void query;
+      }),
+  );
+  h.retarget({
+    session: {
+      ...h.session,
+      channels: {
+        ...h.session.channels,
+        list: () => list,
+        ensureList: () => {},
+      },
+      directMessages: { people },
+      memberAdditions: { add: vi.fn() },
+      ...options.session,
+    } as unknown as RelaySession,
+  });
+  h.setProfiles(
+    new Map([
+      [first.pubkey, { name: "Other Member" }],
+      [second.pubkey, { name: "Another Member" }],
+    ]),
+  );
+  return {
+    ...h,
+    people,
+    /** Answer every read made so far with `page`. */
+    release: (page: Page) =>
+      act(async () => {
+        for (const read of reads.splice(0)) read(page);
+      }),
+    chip: (name: string) =>
+      within(h.input()).queryByRole("img", {
+        name: `Resolving mention ${name}`,
+      }),
+    recipients: () =>
+      within(
+        screen.getByRole("region", { name: "Explicit mentions" }),
+      ).getAllByRole("button"),
+    /** Type `@mira`, wait for the chooser to publish, then type Space. */
+    async holdMira() {
+      await h.user.type(h.input(), "@mira");
+      await screen.findByText("Searching community…");
+      await h.user.keyboard(" ");
+      expect(h.input()).toHaveValue("@mira ");
+      expect(this.chip("mira")).toHaveAttribute("aria-busy", "true");
+    },
+  };
+}
+const mira = { pubkey: "c".repeat(64), name: "Mira Example" };
+
+/** The owner's agent in another community, as `Agents.joinable()` offers it. */
+function elsewhereAgent(agent: MentionRecipient) {
+  const snapshot = { agents: [] };
+  const types: never[] = [];
+  const joinable = [
+    { key: agent.pubkey, ...agent, relay: "wss://oss.example.com" },
+  ];
+  return {
+    snapshot: () => snapshot,
+    subscribe: () => () => {},
+    find: () => undefined,
+    types: () => types,
+    joinable: () => joinable,
+    join: vi.fn(),
+  } as unknown as Agents;
+}
+
+it("returns a pending mention to prose when a member shares its name with the owner's agent from another community", async () => {
+  // The chooser counts the other community's agent as a local namesake, so
+  // Space holds a chip; the resolver must decide over the same set.
+  const h = mountDirectoryMention({
+    agents: elsewhereAgent({ pubkey: "e".repeat(64), name: "Mira" }),
+    channel: { channelType: "stream" },
+  });
+  h.setProfiles(
+    new Map([
+      [first.pubkey, { name: "Mira" }],
+      [second.pubkey, { name: "Another Member" }],
+    ]),
+  );
+  await h.user.type(h.input(), "@mira");
+  await screen.findByRole("option", { name: /In oss\.example\.com/ });
+  await h.user.keyboard(" ");
+  await waitFor(() => expect(h.people).toHaveBeenCalled());
+  await h.release({ people: [], hasMore: false });
+  await waitFor(() => expect(h.chip("mira")).toBeNull());
+  expect(h.input()).toHaveValue("@mira ");
+  expect(
+    screen.queryByRole("region", { name: "Explicit mentions" }),
+  ).toBeNull();
+  h.submit();
+  await act(async () => {});
+  expect(h.messages.send).toHaveBeenCalledOnce();
+  expect(h.messages.send.mock.calls[0]?.at(-1)).toEqual([]);
+});
+
+it("settles a pending mention into the owner's agent from another community that is archived here, as Tab would", async () => {
+  const rocket = { pubkey: "e".repeat(64), name: "Rocket" };
+  const archives = { status: "ready" as const, archived: [rocket.pubkey] };
+  const h = mountDirectoryMention({
+    agents: elsewhereAgent(rocket),
+    channel: { channelType: "stream" },
+    session: {
+      archives: {
+        snapshot: () => archives,
+        subscribe: () => () => {},
+        state: (key: string) =>
+          key === rocket.pubkey ? "archived" : "not-archived",
+        ensure: async () => {},
+      },
+    },
+  });
+  // A member's name still unknown keeps the chooser from deciding Space.
+  h.setProfiles(new Map([[first.pubkey, { name: "Other Member" }]]));
+  await h.user.type(h.input(), "@rocket");
+  await screen.findByRole("option", { name: /Rocket/ });
+  await h.user.keyboard(" ");
+  await waitFor(() => expect(h.people).toHaveBeenCalled());
+  await h.release({ people: [], hasMore: false });
+  await waitFor(() => expect(h.input()).toHaveValue("@Rocket "));
+  expect(h.chip("rocket")).toBeNull();
+  expect(h.recipients()).toHaveLength(1);
+  h.submit();
+  expect(await screen.findByRole("dialog")).toHaveTextContent(
+    /Bring Rocket into/,
+  );
+  expect(h.messages.send).not.toHaveBeenCalled();
+});
+
+it("extends a pending chip over the typed words that complete the one longer directory name continuing it", async () => {
+  const h = mountDirectoryMention();
+  await h.holdMira();
+  await h.user.keyboard("Example hi");
+  expect(h.input()).toHaveValue("@mira Example hi");
+  // The resolver reads the page at once; the chooser unmounted with the chip.
+  await waitFor(() => expect(h.people).toHaveBeenCalled());
+  await h.release({ people: [mira], hasMore: false });
+  await waitFor(() => expect(h.input()).toHaveValue("@Mira Example hi"));
+  expect(h.chip("mira")).toBeNull();
+  expect(h.chip("mira Example")).toBeNull();
+  expect(h.recipients()).toHaveLength(1);
+  // The extended chip's `@` opened no query.
+  expect(screen.queryByRole("listbox")).toBeNull();
+  h.submit();
+  expect(screen.getByRole("dialog")).toHaveTextContent(
+    "Mira Example is not in this channel.",
+  );
+  fireEvent.click(
+    screen.getByRole("button", { name: /^(Do nothing|Send anyway)$/ }),
+  );
+  await act(async () => {});
+  expect(h.messages.send).toHaveBeenCalledOnce();
+  expect(h.messages.send.mock.calls[0]?.slice(0, 3)).toEqual([
+    "channel",
+    "@Mira Example hi",
+    [],
+  ]);
+  expect(h.messages.send.mock.calls[0]?.at(-1)).toEqual([mira.pubkey]);
+});
+
+it("keeps the separator typed after the words a pending chip extends over, so later text does not join the name", async () => {
+  // The page lands while the draft ends at `Example `: the remainder that
+  // spells the name is `Example`, not `Example ` (`normalizeName` trims, so
+  // both spell it), and the Space stays outside the chip.
+  const h = mountDirectoryMention();
+  await h.holdMira();
+  await h.user.keyboard("Example ");
+  expect(h.input()).toHaveValue("@mira Example ");
+  await waitFor(() => expect(h.people).toHaveBeenCalled());
+  await h.release({ people: [mira], hasMore: false });
+  await waitFor(() => expect(h.input()).toHaveValue("@Mira Example "));
+  expect(h.chip("mira")).toBeNull();
+  expect(h.recipients()).toHaveLength(1);
+  await h.user.keyboard("hi");
+  expect(h.input()).toHaveValue("@Mira Example hi");
+  expect(h.recipients()).toHaveLength(1);
+  h.submit();
+  fireEvent.click(
+    screen.getByRole("button", { name: /^(Do nothing|Send anyway)$/ }),
+  );
+  await act(async () => {});
+  expect(h.messages.send).toHaveBeenCalledOnce();
+  expect(h.messages.send.mock.calls[0]?.slice(0, 3)).toEqual([
+    "channel",
+    "@Mira Example hi",
+    [],
+  ]);
+  expect(h.messages.send.mock.calls[0]?.at(-1)).toEqual([mira.pubkey]);
+});
+
+it("selects a longer directory name on the Space that completes it when its page arrived before the first Space", async () => {
+  // The slow typist: a known longer name declines the first Space outright
+  // (`continuedMention`), the query stays open, and the second Space selects.
+  const h = mountDirectoryMention();
+  await h.user.type(h.input(), "@mira");
+  await waitFor(() => expect(h.people).toHaveBeenCalledTimes(1));
+  await h.release({ people: [mira], hasMore: false });
+  await screen.findByRole("option", { name: /Mira Example/ });
+  await h.user.keyboard(" ");
+  expect(h.input()).toHaveValue("@mira ");
+  expect(h.chip("mira")).toBeNull();
+  // The complete page for `mira` already answers every query extending it,
+  // so the name shows on each keystroke with no further read.
+  await h.user.keyboard("Example hi");
+  expect(h.input()).toHaveValue("@Mira Example hi");
+  expect(h.recipients()).toHaveLength(1);
+  expect(h.people).toHaveBeenCalledOnce();
+});
+
+it("extends a pending chip to the one longer name the typed words complete when several continue it", async () => {
+  const h = mountDirectoryMention();
+  const examples = { pubkey: "d".repeat(64), name: "Mira Examples" };
+  await h.holdMira();
+  await h.user.keyboard("Examples hi");
+  await waitFor(() => expect(h.people).toHaveBeenCalled());
+  await h.release({ people: [mira, examples], hasMore: false });
+  await waitFor(() => expect(h.input()).toHaveValue("@Mira Examples hi"));
+  expect(h.recipients()).toHaveLength(1);
+  h.submit();
+  expect(screen.getByRole("dialog")).toHaveTextContent(
+    "Mira Examples is not in this channel.",
+  );
+  fireEvent.click(
+    screen.getByRole("button", { name: /^(Do nothing|Send anyway)$/ }),
+  );
+  await act(async () => {});
+  expect(h.messages.send).toHaveBeenCalledOnce();
+  expect(h.messages.send.mock.calls[0]?.at(-1)).toEqual([examples.pubkey]);
+});
+
+it("returns the whole span to prose when the name a chip extended into is itself continued by a name the words do not complete", async () => {
+  // `Mira Example Jr` continues `Mira Example` as that continued `mira`: the
+  // chip extends once, the second resolution answers `continued` again over
+  // the same page, and ` hi` completes nothing, so what was typed comes back.
+  const h = mountDirectoryMention();
+  const junior = { pubkey: "d".repeat(64), name: "Mira Example Jr" };
+  await h.holdMira();
+  await h.user.keyboard("Example hi");
+  await waitFor(() => expect(h.people).toHaveBeenCalled());
+  await h.release({ people: [mira, junior], hasMore: false });
+  await waitFor(() => expect(h.chip("mira")).toBeNull());
+  expect(h.chip("mira Example")).toBeNull();
+  expect(h.input()).toHaveValue("@mira Example hi");
+  expect(h.input().querySelector("[data-source]")).toBeNull();
+  expect(
+    screen.queryByRole("region", { name: "Explicit mentions" }),
+  ).toBeNull();
+  h.submit();
+  expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+    "channel",
+    "@mira Example hi",
+    [],
+    [],
+  );
+});
+
+it.each([
+  { case: "stop mid-name", typed: "Exam", text: "@mira Exam" },
+  {
+    case: "complete no longer name",
+    typed: "Other hi",
+    text: "@mira Other hi",
+  },
+])(
+  "returns a pending chip to prose when the words typed after it $case",
+  async ({ typed, text }) => {
+    const h = mountDirectoryMention();
+    await h.holdMira();
+    await h.user.keyboard(typed);
+    await waitFor(() => expect(h.people).toHaveBeenCalled());
+    await h.release({ people: [mira], hasMore: false });
+    await waitFor(() => expect(h.chip("mira")).toBeNull());
+    expect(h.input()).toHaveValue(text);
+    expect(h.input().querySelector("[data-source]")).toBeNull();
+    expect(
+      screen.queryByRole("region", { name: "Explicit mentions" }),
+    ).toBeNull();
+  },
+);
+
+it("selects a longer directory name on the Space that completes it after its page returned a pending chip to prose mid-word", async () => {
+  // The page lands while the longer name is still being typed: the chip
+  // returns to text, the chooser reopens over `mira Exam`, and the complete
+  // page for `mira` already answers that query, so the name shows at once
+  // and the Space after `ple` selects it without another read.
+  const h = mountDirectoryMention();
+  await h.holdMira();
+  await h.user.keyboard("Exam");
+  await waitFor(() => expect(h.people).toHaveBeenCalledOnce());
+  await h.release({ people: [mira], hasMore: false });
+  await waitFor(() => expect(h.input()).toHaveValue("@mira Exam"));
+  expect(
+    within(h.input()).queryByRole("img", { name: /^Resolving mention / }),
+  ).toBeNull();
+  await screen.findByRole("option", { name: /Mira Example/ });
+  expect(screen.queryByText("Searching community…")).toBeNull();
+  await h.user.keyboard("ple ");
+  expect(h.input()).toHaveValue("@Mira Example ");
+  expect(h.recipients()).toHaveLength(1);
+  expect(h.people).toHaveBeenCalledOnce();
+  await h.user.keyboard("hi");
+  h.submit();
+  expect(screen.getByRole("dialog")).toHaveTextContent(
+    "Mira Example is not in this channel.",
+  );
+  fireEvent.click(
+    screen.getByRole("button", { name: /^(Do nothing|Send anyway)$/ }),
+  );
+  await act(async () => {});
+  expect(h.messages.send).toHaveBeenCalledOnce();
+  expect(h.messages.send.mock.calls[0]?.slice(0, 3)).toEqual([
+    "channel",
+    "@Mira Example hi",
+    [],
+  ]);
+  expect(h.messages.send.mock.calls[0]?.at(-1)).toEqual([mira.pubkey]);
+});
+
+it("selects a longer directory name on the Space that completes it after its page returned a pending chip to prose before the next word", async () => {
+  const h = mountDirectoryMention();
+  await h.holdMira();
+  await waitFor(() => expect(h.people).toHaveBeenCalledOnce());
+  await h.release({ people: [mira], hasMore: false });
+  await waitFor(() => expect(h.chip("mira")).toBeNull());
+  expect(h.input()).toHaveValue("@mira ");
+  // `mira ` is admitted again: the page for `mira` names what continues it.
+  await screen.findByRole("option", { name: /Mira Example/ });
+  expect(screen.queryByText("Searching community…")).toBeNull();
+  await h.user.keyboard("Example ");
+  expect(h.input()).toHaveValue("@Mira Example ");
+  expect(h.recipients()).toHaveLength(1);
+  expect(h.people).toHaveBeenCalledOnce();
+});
+
+it("returns a pending chip to prose when the typed words changed under a composition before it could extend", async () => {
+  const h = mountDirectoryMention();
+  await h.holdMira();
+  await h.user.keyboard("Example hi");
+  await waitFor(() => expect(h.people).toHaveBeenCalled());
+  act(() => fireEvent.compositionStart(h.input()));
+  await h.release({ people: [mira], hasMore: false });
+  // The extension is held until the composition ends.
+  expect(h.chip("mira")).toHaveAttribute("aria-busy", "true");
+  const after = h.input().querySelector("[data-source]")?.nextSibling;
+  if (!(after instanceof Text)) throw new Error("No text after the chip");
+  await act(async () => {
+    // The IME commits a different word and ends the composition in one task.
+    after.nodeValue = " Exemplar hi";
+    fireEvent.compositionEnd(h.input());
+  });
+  await waitFor(() => expect(h.chip("mira")).toBeNull());
+  expect(h.input()).toHaveValue("@mira Exemplar hi");
+  expect(h.input().querySelector("[data-source]")).toBeNull();
+  expect(
+    screen.queryByRole("region", { name: "Explicit mentions" }),
+  ).toBeNull();
+});
+
+it("a send while a chip is pending waits through its extension, then asks about the outside recipient", async () => {
+  const h = mountDirectoryMention();
+  await h.holdMira();
+  await h.user.keyboard("Example hi");
+  await waitFor(() => expect(h.people).toHaveBeenCalled());
+  h.submit();
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled(),
+  );
+  expect(h.messages.send).not.toHaveBeenCalled();
+  await h.release({ people: [mira], hasMore: false });
+  await waitFor(() =>
+    expect(screen.getByRole("dialog")).toHaveTextContent(
+      "Mira Example is not in this channel.",
+    ),
+  );
+  fireEvent.click(
+    screen.getByRole("button", { name: /^(Do nothing|Send anyway)$/ }),
+  );
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  expect(h.messages.send.mock.calls[0]?.slice(0, 3)).toEqual([
+    "channel",
+    "@Mira Example hi",
+    [],
+  ]);
+  expect(h.messages.send.mock.calls[0]?.at(-1)).toEqual([mira.pubkey]);
+});
+
+it("a send while a chip is pending says its name could not be confirmed when the search finds namesakes", async () => {
+  const h = mountDirectoryMention();
+  await h.holdMira();
+  await h.user.keyboard("hi");
+  await waitFor(() => expect(h.people).toHaveBeenCalled());
+  h.submit();
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled(),
+  );
+  await h.release({
+    people: [
+      { pubkey: "c".repeat(64), name: "Mira" },
+      { pubkey: "d".repeat(64), name: "Mira" },
+    ],
+    hasMore: false,
+  });
+  // Two people answer to the name, so neither is tagged, and the notice does
+  // not claim the name matched no one.
+  await waitFor(() =>
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "@mira could not be confirmed as one person or agent. Send again to send it as text.",
+    ),
+  );
+  expect(h.chip("mira")).toBeNull();
+  expect(h.input()).toHaveValue("@mira hi");
+  expect(h.messages.send).not.toHaveBeenCalled();
+});
+
+it("returns a chip to prose at the resolver's bound when the longer name it extended into never settles, and keeps the draft for a second send", async () => {
+  // A scripted provider whose chained resolve does I/O that never answers:
+  // the host holds it to the bound the first resolution gets.
+  const h = mountPendingMention();
+  const outcome = deferred<CompletionResolution>();
+  const chained = vi.fn<CompletionPending["resolve"]>(
+    () => new Promise<never>(() => {}),
+  );
+  expect(h.hold("mira", outcome.promise)).toBe(false);
+  await h.user.keyboard("Example hi");
+  expect(h.input()).toHaveValue("@mira Example hi");
+  h.submit();
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled(),
+  );
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    await act(async () =>
+      outcome.resolve({
+        continued: [{ name: "Mira Example", resolve: chained }],
+      }),
+    );
+    expect(h.chip("mira Example")).toHaveAttribute("aria-busy", "true");
+    expect(chained).toHaveBeenCalledOnce();
+    expect(h.messages.send).not.toHaveBeenCalled();
+    await act(async () =>
+      vi.advanceTimersByTime(MENTION_RESOLVE_TIMEOUT_MS - 1),
+    );
+    expect(h.chip("mira Example")).toHaveAttribute("aria-busy", "true");
+    expect(h.messages.send).not.toHaveBeenCalled();
+    await act(async () => vi.advanceTimersByTime(1));
+    // The chip returned to prose; the waiting send keeps the draft and says
+    // which name it is, under the name the chip had when it settled.
+    expect(h.chip("mira Example")).toBeNull();
+    expect(h.messages.send).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "@mira Example could not be confirmed as one person or agent. Send again to send it as text.",
+    );
+    expect(h.input()).toHaveValue("@mira Example hi");
+    expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
+  } finally {
+    vi.useRealTimers();
+  }
+  h.submit();
+  await waitFor(() =>
+    expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+      "channel",
+      "@mira Example hi",
+      [],
+      [],
+    ),
+  );
+  expect(h.input()).toHaveValue("");
+});
+
+it("returns a chip to prose at the bound when a provider's first resolution never settles, and keeps the draft for a second send", async () => {
+  // The contract does not ask a provider to time its resolution; the host
+  // holds the first link to the same bound as each longer name.
+  const h = mountPendingMention();
+  // The bound starts with the resolution, so the clock is faked before Space.
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    expect(h.hold("mira", new Promise<never>(() => {}))).toBe(false);
+    expect(h.resolve).toHaveBeenCalledOnce();
+    const signal = h.resolve.mock.calls[0]?.[0];
+    // Whether the chip was still pending when the provider was told to stop:
+    // the bound aborts it, not the chip leaving the draft afterwards.
+    let pendingAtAbort: boolean | undefined;
+    signal?.addEventListener("abort", () => {
+      pendingAtAbort = h.chip("mira") !== null;
+    });
+    expect(h.chip("mira")).toHaveAttribute("aria-busy", "true");
+    await act(async () => h.submit());
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+    await act(async () =>
+      vi.advanceTimersByTime(MENTION_RESOLVE_TIMEOUT_MS - 1),
+    );
+    expect(h.chip("mira")).toHaveAttribute("aria-busy", "true");
+    expect(signal?.aborted).toBe(false);
+    expect(h.messages.send).not.toHaveBeenCalled();
+    await act(async () => vi.advanceTimersByTime(1));
+    // The bound told the provider's in-flight work to stop, the chip returned
+    // to prose, and the waiting send kept the draft with a notice.
+    expect(pendingAtAbort).toBe(true);
+    expect(h.chip("mira")).toBeNull();
+    expect(h.messages.send).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "@mira could not be confirmed as one person or agent. Send again to send it as text.",
+    );
+    expect(h.input()).toHaveValue("@mira ");
+  } finally {
+    vi.useRealTimers();
+  }
+  h.submit();
+  await waitFor(() =>
+    expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+      "channel",
+      "@mira ",
+      [],
+      [],
+    ),
+  );
+  expect(h.input()).toHaveValue("");
+});
+
+it("removing a pending chip before the bound aborts the provider's signal and leaves no bound timer behind", async () => {
+  // A provider that ignores abort must not keep the host's 8 s timer alive
+  // after the chip left: the bound is cleared with the chip's signal.
+  const h = mountPendingMention();
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    const timers = vi.getTimerCount();
+    expect(h.hold("honey", new Promise<never>(() => {}))).toBe(false);
+    const signal = h.resolve.mock.calls[0]?.[0];
+    expect(signal?.aborted).toBe(false);
+    // Typing leaves the editor a short timer of its own; past it, the bound
+    // is the one timer the chip added.
+    act(() => vi.advanceTimersByTime(100));
+    expect(vi.getTimerCount()).toBe(timers + 1);
+    act(() => h.input().undo(false));
+    expect(h.input()).toHaveValue("@honey");
+    expect(h.chip("honey")).toBeNull();
+    expect(signal?.aborted).toBe(true);
+    // The undo leaves the editor's short timer again; past it, nothing: the
+    // bound went with the chip's signal rather than running on to 8 s.
+    act(() => vi.advanceTimersByTime(100));
+    expect(vi.getTimerCount()).toBe(timers);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("undo after an extended chip settled first removes the words typed after it, then leaves the typed `@mira`", async () => {
+  const h = mountDirectoryMention();
+  await h.holdMira();
+  await h.user.keyboard("Example hi");
+  await waitFor(() => expect(h.people).toHaveBeenCalled());
+  await h.release({ people: [mira], hasMore: false });
+  await waitFor(() => expect(h.input()).toHaveValue("@Mira Example hi"));
+  act(() => h.input().undo(false));
+  expect(h.input()).toHaveValue("@Mira Example");
+  expect(h.recipients()).toHaveLength(1);
+  act(() => h.input().undo(false));
+  expect(h.input()).toHaveValue("@mira");
+  expect(h.chip("mira")).toBeNull();
+  expect(
+    screen.queryByRole("region", { name: "Explicit mentions" }),
+  ).toBeNull();
+});
+
+it("returns a pending mention to prose when its recipient is not admitted at settle", async () => {
+  const h = mountPendingMention();
+  const outcome = deferred<MentionRecipient | null>();
+  try {
+    h.hold("eve", outcome.promise);
+    // The destination became a Solo chat meanwhile: outsiders are not admitted.
+    Object.assign(h.session, {
+      channels: { list: () => soloList, subscribeList: () => () => {} },
+    });
+    await act(async () =>
+      outcome.resolve({ pubkey: "e".repeat(64), name: "Eve" }),
+    );
+    expect(h.input()).toHaveValue("@eve ");
+    expect(h.chip("eve")).toBeNull();
+    expect(h.input().querySelector("[data-source]")).toBeNull();
+    expect(
+      screen.queryByRole("region", { name: "Explicit mentions" }),
+    ).toBeNull();
+  } finally {
+    outcome.resolve(null);
+  }
+});
+
+it("returns a pending mention to prose when its resolution is not a well-formed recipient", async () => {
+  // The resolution is a provider's answer: the same shape check a picked
+  // mention gets, so a name-less object never becomes an `@undefined` chip.
+  const h = mountPendingMention();
+  h.setProfiles(new Map([[first.pubkey, { name: "Honey" }]]));
+  const outcome = deferred<MentionRecipient | null>();
+  try {
+    h.hold("honey", outcome.promise);
+    await act(async () =>
+      outcome.resolve({
+        pubkey: first.pubkey,
+        name: undefined,
+      } as unknown as MentionRecipient),
+    );
+    expect(h.input()).toHaveValue("@honey ");
+    expect(h.chip("honey")).toBeNull();
+    expect(h.input().querySelector("[data-source]")).toBeNull();
+    expect(
+      screen.queryByRole("region", { name: "Explicit mentions" }),
+    ).toBeNull();
+  } finally {
+    outcome.resolve(null);
+  }
+});
+
+/** `@honey ` held, Send pressed while it is pending. */
+async function sendWhilePending(
+  options: Partial<MessageComposerProps> = {},
+  prepare?: (h: ReturnType<typeof mountPendingMention>) => void,
+) {
+  const h = mountPendingMention(options);
+  h.setProfiles(new Map([[first.pubkey, { name: "Honey" }]]));
+  const outcome = deferred<MentionRecipient | null>();
+  h.hold("honey", outcome.promise);
+  prepare?.(h);
+  h.submit();
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled(),
+  );
+  expect(h.messages.send).not.toHaveBeenCalled();
+  return { ...h, outcome };
+}
+
+it("sending while a mention is pending waits for it, then sends the recipient", async () => {
+  const h = await sendWhilePending();
+  await act(async () => h.outcome.resolve(first));
+  await waitFor(() =>
+    expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+      "channel",
+      "@Honey ",
+      [first.pubkey],
+      [],
+    ),
+  );
+});
+
+it("sending while a mention is pending keeps the draft when it returns to prose, and the next send sends the text", async () => {
+  const h = await sendWhilePending();
+  await act(async () => h.outcome.resolve(null));
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "@honey could not be confirmed as one person or agent. Send again to send it as text.",
+  );
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(h.input()).toHaveValue("@honey ");
+  expect(h.chip("honey")).toBeNull();
+  expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
+  h.submit();
+  await waitFor(() =>
+    expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+      "channel",
+      "@honey ",
+      [],
+      [],
+    ),
+  );
+  expect(h.input()).toHaveValue("");
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
+// The resolver found a recipient, but the host would not tag it: the alert
+// says why, not that the name matched no one.
+it.each([
+  {
+    refusal: "32 recipients are already tagged",
+    resolution: first,
+    prepare: (h: ReturnType<typeof mountPendingMention>) =>
+      act(() => {
+        h.input().insertText(
+          "",
+          Array.from({ length: 32 }, () => second),
+        );
+      }),
+    alert:
+      "@honey could not be tagged: a message can tag at most 32 recipients. Send again to send it as text.",
+  },
+  {
+    refusal: "the recipient is not admitted here",
+    resolution: { pubkey: "e".repeat(64), name: "Eve" },
+    // The destination became a Solo chat meanwhile: outsiders are not admitted.
+    prepare: (h: ReturnType<typeof mountPendingMention>) =>
+      Object.assign(h.session, {
+        channels: { list: () => soloList, subscribeList: () => () => {} },
+      }),
+    alert: "@honey could not be tagged here. Send again to send it as text.",
+  },
+  {
+    refusal: "its current name would overrun the length limit",
+    resolution: { pubkey: first.pubkey, name: "H".repeat(16000) },
+    prepare: undefined,
+    alert:
+      "@honey could not be tagged: the message would be too long. Send again to send it as text.",
+  },
+])(
+  "sending while a mention is pending says why when it resolves but $refusal",
+  async ({ resolution, prepare, alert }) => {
+    const h = await sendWhilePending({}, prepare);
+    await act(async () => h.outcome.resolve(resolution));
+    expect(screen.getByRole("alert")).toHaveTextContent(alert);
+    expect(h.messages.send).not.toHaveBeenCalled();
+    expect(h.input().value).toMatch(/^@honey /);
+    expect(h.chip("honey")).toBeNull();
+    expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
+  },
+);
+
+it("sending while two mentions are pending says why each was not tagged", async () => {
+  const h = mountPendingMention();
+  const unmatched = deferred<MentionRecipient | null>();
+  const long = deferred<MentionRecipient | null>();
+  h.hold("honey", unmatched.promise);
+  act(() => {
+    h.input().insertText("@eve");
+  });
+  h.resolve.mockImplementation(() => long.promise);
+  act(() => {
+    h.publish()({
+      items: [],
+      spacePending: { name: "eve", resolve: h.resolve },
+    });
+  });
+  fireEvent.keyDown(h.input(), { key: " " });
+  expect(h.chip("eve")).not.toBeNull();
+  h.submit();
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled(),
+  );
+  await act(async () => {
+    unmatched.resolve(null);
+    long.resolve({ pubkey: first.pubkey, name: "H".repeat(16000) });
+  });
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "@honey could not be confirmed as one person or agent. @eve could not be tagged: the message would be too long. Send again to send them as text.",
+  );
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(h.input()).toHaveValue("@honey @eve ");
+});
+
+it("sending while a mention is pending asks for a recipient when it returns to prose and one is required", async () => {
+  const h = await sendWhilePending({ requireMention: true });
+  await act(async () => h.outcome.resolve(null));
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "@honey could not be confirmed as one person or agent. Tag a person or agent to send.",
+  );
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(h.input()).toHaveValue("@honey ");
+  // Untagged: Send stays focusable so its tooltip can say why.
+  expect(screen.getByRole("button", { name: "Send message" })).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
+});
+
+it("asks about a settled outside agent before sending, like a chosen one", async () => {
+  const h = mountPendingMention();
+  h.setProfiles(new Map([[first.pubkey, { name: "Honey", isAgent: true }]]));
+  const list = {
+    status: "ready",
+    channels: [
+      { id: "channel", channelType: "stream", members: ["d".repeat(64)] },
+    ],
+  };
+  Object.assign(h.session, {
+    viewer: "d".repeat(64),
+    channels: { list: () => list, subscribeList: () => () => {} },
+    memberAdditions: { add: vi.fn() },
+  });
+  const outcome = deferred<MentionRecipient | null>();
+  try {
+    h.hold("honey", outcome.promise);
+    await act(async () => outcome.resolve(first));
+    expect(h.input()).toHaveValue("@Honey ");
+    h.submit();
+    expect(screen.getByRole("dialog")).toHaveTextContent(
+      "Honey is not in this channel. Invite them to the channel, or send without inviting them.",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Do nothing" }));
+    await act(async () => {});
+    expect(h.messages.send).toHaveBeenCalledOnce();
+    expect(h.messages.send.mock.calls[0]?.slice(0, 3)).toEqual([
+      "channel",
+      "@Honey ",
+      [],
+    ]);
+    expect(h.messages.send.mock.calls[0]?.at(-1)).toEqual([first.pubkey]);
+  } finally {
+    outcome.resolve(null);
+  }
+});
+
+it("keeps the resolver of a chip removed as its resolution landed, so redo settles it", async () => {
+  const h = mountPendingMention();
+  h.setProfiles(new Map([[first.pubkey, { name: "Honey" }]]));
+  const landed = deferred<MentionRecipient | null>();
+  const restarted = deferred<MentionRecipient | null>();
+  try {
+    h.hold("honey", landed.promise);
+    // The resolution lands in the same tick as the undo removing its chip,
+    // before the commit whose effect would have aborted it: nothing to settle.
+    await act(async () => {
+      landed.resolve(first);
+      h.input().undo(false);
+    });
+    expect(h.input()).toHaveValue("@honey");
+    expect(h.resolve).toHaveBeenCalledOnce();
+    h.resolve.mockImplementation(() => restarted.promise);
+    act(() => h.input().undo(true));
+    expect(h.input()).toHaveValue("@honey ");
+    expect(h.chip("honey")).toBeInTheDocument();
+    expect(h.resolve).toHaveBeenCalledTimes(2);
+    await act(async () => restarted.resolve(first));
+    expect(h.input()).toHaveValue("@Honey ");
+    expect(h.chip("honey")).toBeNull();
+  } finally {
+    landed.resolve(null);
+    restarted.resolve(null);
+  }
+});
+
+it("holds Space as pending when the publication withdrew the displayed exact match as undecided", async () => {
+  const h = mountPendingMention();
+  const outcome = deferred<MentionRecipient | null>();
+  h.resolve.mockImplementation(() => outcome.promise);
+  try {
+    h.fill("@honey");
+    const publish = h.publish();
+    act(() => {
+      publish({
+        items: [{ id: first.pubkey, label: "Honey", edit: { mention: first } }],
+        spaceId: first.pubkey,
+      });
+    });
+    expect(screen.getByRole("option", { name: "Honey" })).toBeVisible();
+    act(() => {
+      // The display is not overruled by another recipient; the decision is
+      // deferred to the resolver under the full rule.
+      publish({
+        items: [],
+        spacePending: { name: "honey", resolve: h.resolve },
+      });
+      expect(fireEvent.keyDown(h.input(), { key: " " })).toBe(false);
+    });
+    expect(h.input()).toHaveValue("@honey ");
+    expect(h.chip("honey")).toHaveAttribute("aria-busy", "true");
+    expect(h.resolve).toHaveBeenCalledOnce();
+    expect(
+      screen.queryByRole("region", { name: "Explicit mentions" }),
+    ).toBeNull();
+    await act(async () => outcome.resolve(first));
+    expect(h.input()).toHaveValue("@Honey ");
+  } finally {
+    outcome.resolve(null);
+  }
+});
+
+it("waits for a settle held through a composition before sending, then sends and remembers the recipient", async () => {
+  const h = mountPendingMention();
+  h.setProfiles(new Map([[first.pubkey, { name: "Honey" }]]));
+  const outcome = deferred<MentionRecipient | null>();
+  try {
+    h.hold("honey", outcome.promise);
+    act(() => fireEvent.compositionStart(h.input()));
+    await act(async () => outcome.resolve(first));
+    expect(h.chip("honey")).toHaveAttribute("aria-busy", "true");
+    // Send clicked under the composition: Mac WebKit leaves focus in the
+    // editor, so the IME has not committed and the chip is still pending.
+    h.submit();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Send message" }),
+      ).toBeDisabled(),
+    );
+    expect(h.messages.send).not.toHaveBeenCalled();
+    await act(async () => fireEvent.compositionEnd(h.input()));
+    await waitFor(() =>
+      expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+        "channel",
+        "@Honey ",
+        [first.pubkey],
+        [],
+      ),
+    );
+    expect([...(mentionHistory(h.session, "channel")?.keys() ?? [])]).toContain(
+      first.pubkey,
+    );
+  } finally {
+    outcome.resolve(null);
+  }
+});
+
+it("settles a resolution landing after the composition ended under a send, and sends the recipient", async () => {
+  const h = mountPendingMention();
+  h.setProfiles(new Map([[first.pubkey, { name: "Honey" }]]));
+  const outcome = deferred<MentionRecipient | null>();
+  try {
+    h.hold("honey", outcome.promise);
+    act(() => fireEvent.compositionStart(h.input()));
+    h.submit();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Send message" }),
+      ).toBeDisabled(),
+    );
+    // The IME commits while the send has the editor read-only: ProseMirror
+    // skips its own compositionend there and keeps its `composing` flag, so
+    // only the React flag says the composition is over. The resolution lands
+    // after that, and nothing else will come to replay a held settle.
+    await act(async () => fireEvent.compositionEnd(h.input()));
+    expect(h.chip("honey")).toHaveAttribute("aria-busy", "true");
+    expect(h.messages.send).not.toHaveBeenCalled();
+    await act(async () => outcome.resolve(first));
+    await waitFor(() =>
+      expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+        "channel",
+        "@Honey ",
+        [first.pubkey],
+        [],
+      ),
+    );
+    expect(h.chip("honey")).toBeNull();
+  } finally {
+    outcome.resolve(null);
+  }
+});
+
+it("keeps the resolver of a chip gone when its held settle replays, and settles nothing", async () => {
+  const h = mountPendingMention();
+  h.setProfiles(new Map([[first.pubkey, { name: "Honey" }]]));
+  const held = deferred<MentionRecipient | null>();
+  const restarted = deferred<MentionRecipient | null>();
+  try {
+    h.hold("honey", held.promise);
+    act(() => fireEvent.compositionStart(h.input()));
+    await act(async () => held.resolve(first));
+    expect(h.chip("honey")).toHaveAttribute("aria-busy", "true");
+    await act(async () => {
+      h.input().querySelector("[data-source]")?.remove();
+    });
+    expect(h.chip("honey")).toBeNull();
+    h.resolve.mockImplementation(() => restarted.promise);
+    await act(async () => fireEvent.compositionEnd(h.input()));
+    expect(h.input().querySelector("[data-source]")).toBeNull();
+    expect(
+      screen.queryByRole("region", { name: "Explicit mentions" }),
+    ).toBeNull();
+    expect(h.resolve).toHaveBeenCalledOnce();
+    // Undo restores the chip under the same id, and its kept resolver starts again.
+    act(() => h.input().undo(false));
+    expect(h.chip("honey")).toBeInTheDocument();
+    expect(h.resolve).toHaveBeenCalledTimes(2);
+    await act(async () => restarted.resolve(first));
+    expect(h.input()).toHaveValue("@Honey ");
+    expect(h.chip("honey")).toBeNull();
+  } finally {
+    held.resolve(null);
+    restarted.resolve(null);
+  }
+});
+
+it("returns a pending chip to its typed query when a name character follows it, so its resolution tags no one", async () => {
+  const h = mountPendingMention();
+  h.setProfiles(new Map([[first.pubkey, { name: "Honey" }]]));
+  const outcome = deferred<MentionRecipient | null>();
+  try {
+    h.hold("honey", outcome.promise);
+    const signal = h.resolve.mock.calls[0]?.[0];
+    const queries = h.queries();
+    await h.user.keyboard("{Backspace}suckle");
+    expect(h.input()).toHaveValue("@honeysuckle");
+    expect(h.chip("honey")).toBeNull();
+    expect(h.input().querySelector("[data-source]")).toBeNull();
+    expect(signal?.aborted).toBe(true);
+    // The chooser reopens over the whole word.
+    expect(h.queries()).toBeGreaterThan(queries);
+    await act(async () => outcome.resolve(first));
+    expect(h.input()).toHaveValue("@honeysuckle");
+    expect(
+      screen.queryByRole("region", { name: "Explicit mentions" }),
+    ).toBeNull();
+    h.submit();
+    expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+      "channel",
+      "@honeysuckle",
+      [],
+      [],
+    );
+  } finally {
+    outcome.resolve(null);
+  }
+});
+it("removing a pending chip abandons its resolution, and redo starts it again", async () => {
+  const h = mountPendingMention();
+  h.setProfiles(new Map([[first.pubkey, { name: "Honey" }]]));
+  const abandoned = deferred<MentionRecipient | null>();
+  const restarted = deferred<MentionRecipient | null>();
+  try {
+    h.hold("honey", abandoned.promise);
+    const signal = h.resolve.mock.calls[0]?.[0];
+    act(() => h.input().undo(false));
+    expect(h.input()).toHaveValue("@honey");
+    expect(signal?.aborted).toBe(true);
+    h.resolve.mockImplementation(() => restarted.promise);
+    act(() => h.input().undo(true));
+    expect(h.input()).toHaveValue("@honey ");
+    expect(h.chip("honey")).toBeInTheDocument();
+    expect(h.resolve).toHaveBeenCalledTimes(2);
+    expect(h.resolve.mock.calls[1]?.[0]?.aborted).toBe(false);
+    // The abandoned resolution settling late changes nothing.
+    await act(async () => abandoned.resolve(second));
+    expect(h.input()).toHaveValue("@honey ");
+    expect(h.chip("honey")).toBeInTheDocument();
+    await act(async () => restarted.resolve(first));
+    expect(h.input()).toHaveValue("@Honey ");
+    expect(h.chip("honey")).toBeNull();
+  } finally {
+    abandoned.resolve(null);
+    restarted.resolve(null);
+  }
 });

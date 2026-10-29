@@ -16,14 +16,19 @@ import { readView, writeView } from "../../shared/view-state";
 
 // Real React lifecycle; only the virtualizer's imperative layout boundary is
 // modeled here. Browser journeys retain the actual same-message/4px contract.
-const scroll = vi.hoisted(() => ({ toIndex: vi.fn(), toOffset: vi.fn() }));
+const scroll = vi.hoisted(() => ({
+  toIndex: vi.fn(),
+  toOffset: vi.fn(),
+  resized: () => {},
+}));
 vi.mock("virtua", async () => {
   const { forwardRef, useImperativeHandle } = await import("react");
   return {
     Virtualizer: forwardRef(function Virtualizer(
-      { children }: { children: ReactNode },
+      { children, onResize }: { children: ReactNode; onResize?: () => void },
       ref,
     ) {
+      scroll.resized = onResize ?? (() => {});
       useImperativeHandle(ref, () => ({
         cache: undefined,
         findItemIndex: () => 0,
@@ -171,6 +176,9 @@ function mount(bottom = false, revealOnMount = false) {
         tree({ ...window, freshness: "verified", rows: [...window.rows] }),
       );
     },
+    append() {
+      result.rerender(tree(sentWindow));
+    },
     async measured() {
       await act(async () => {
         screen.getByRole("list").style.height = "2120px";
@@ -179,6 +187,55 @@ function mount(bottom = false, revealOnMount = false) {
     },
   };
 }
+it.each([
+  { offset: 0, gap: 1400 },
+  { offset: 400, gap: 1000 },
+  { offset: 400, gap: 40 },
+])(
+  "refreshes measured geometry without changing reading intent at offset $offset / gap $gap",
+  async ({ offset, gap }) => {
+    const h = mount(true);
+    await frame();
+    const region = screen.getByRole("region", {
+      name: "Channel message history",
+    });
+    let rowY = 120;
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+      function (this: HTMLElement) {
+        return new DOMRect(0, this.closest("ol") ? rowY : 0, 800, 100);
+      },
+    );
+    region.scrollTop = 1400;
+    fireEvent.scroll(region);
+    fireEvent.keyDown(region, { key: "Home", ctrlKey: true });
+    region.scrollTop = offset;
+    fireEvent.scroll(region);
+    fireEvent(region, new Event("scrollend"));
+
+    // Virtua's measured offsets commit without another scroll event.
+    rowY += 238;
+    vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(
+      offset + region.clientHeight + gap,
+    );
+    act(() => scroll.resized());
+    h.append();
+    await h.measured();
+    expect(region.scrollTop).toBe(offset);
+
+    // Measurements during an active hold must still preserve its original Y.
+    rowY += 90;
+    act(() => scroll.resized());
+    await act(async () => {
+      screen.getByRole("list").style.height = "2210px";
+    });
+    expect(region.scrollTop).toBe(offset + 90);
+    h.unmount();
+    expect(readView("scope", "scroll:c", null)).toMatchObject({
+      bottom: false,
+      anchor: { y: 358 },
+    });
+  },
+);
 it("retains the saved anchor correction when cached rows are promoted before its frame", async () => {
   const h = mount();
   await frame();

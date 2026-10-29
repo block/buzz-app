@@ -3,7 +3,8 @@ import "@testing-library/jest-dom/vitest";
 import type { RelayData } from "../../../features/relay/service";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { StrictMode } from "react";
+import { StrictMode, useState } from "react";
+import { AgentSaveFooter } from "../../../features/agents/AgentSaveButton";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { AgentTabs } from "../../agents/AgentTabs";
 import type { Agents, Agent } from "../../../features/agents/service";
@@ -12,6 +13,7 @@ import { createAgentClient } from "../agents/client";
 import { createOAuthSession } from "../oauth/session";
 import { deferred } from "../test-helpers";
 import { builderlabType } from "./index";
+import { PanelCard } from "../../../features/panels/PanelCard";
 
 const first = "ab".repeat(32);
 const second = "cd".repeat(32);
@@ -65,8 +67,23 @@ function fixture() {
     value: "credential",
     account: { subject, email: "a@example.com", canUseRemoteAgents: true },
   }));
-  const request = vi.fn<Host["request"]>(async ({ url }) =>
-    url.endsWith("/get-model-catalog")
+  let stored = response();
+  const request = vi.fn<Host["request"]>(async ({ url, body }) => {
+    if (url.endsWith("/update-agent")) {
+      const update = JSON.parse(body ?? "{}");
+      const data = JSON.parse(stored.body);
+      data.agents = data.agents.map((row: { agent_pubkey: string }) =>
+        row.agent_pubkey === update.agent_pubkey
+          ? {
+              ...row,
+              ...update,
+              ...(update.model_id ? { model_selection_status: 1 } : {}),
+            }
+          : row,
+      );
+      stored = { ...stored, body: JSON.stringify(data) };
+    }
+    return url.endsWith("/get-model-catalog")
       ? {
           status: 200,
           headers: {},
@@ -80,8 +97,8 @@ function fixture() {
             ],
           }),
         }
-      : response(),
-  );
+      : stored;
+  });
   const client = createAgentClient({ request, runCommand: vi.fn() }, session);
   const type = {
     ...builderlabType(client, session, {
@@ -116,9 +133,9 @@ it("retries a failed load and refuses to save a draft through another account", 
   await user.type(field, "Changed.");
   await act(async () => h.changeAccount());
   const before = h.request.mock.calls.length;
-  await user.click(screen.getByRole("button", { name: "Save instructions" }));
+  await user.click(screen.getByRole("button", { name: "Save" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "account that loaded these instructions",
+    "account that loaded these settings",
   );
   expect(h.request).toHaveBeenCalledTimes(before);
   expect(field).toHaveValue("First instructions.Changed.");
@@ -142,9 +159,7 @@ it("switching agents hides the old draft and ignores the switched-away read", as
         ),
       ).toHaveLength(2),
     );
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "Loading instructions",
-    );
+    expect(screen.getByRole("status")).toHaveTextContent("Loading settings");
     expect(
       screen.queryByRole("textbox", { name: "Instructions" }),
     ).not.toBeInTheDocument();
@@ -163,31 +178,85 @@ it("switching agents hides the old draft and ignores the switched-away read", as
   );
 });
 
-function renderTabs(h: ReturnType<typeof fixture>) {
+function renderTabs(h: ReturnType<typeof fixture>, close?: () => void) {
+  function Pane() {
+    const [target, setTarget] = useState<HTMLDivElement | null>(null);
+    return (
+      <AgentSaveFooter value={{ target }}>
+        <AgentTabs
+          agents={{ save: vi.fn() } as unknown as Agents}
+          agent={agent()}
+          type={h.type}
+          channels={[]}
+          memories={undefined}
+          settingsHost={{ typeControl: () => <p>Hosted provider</p> }}
+          settingsContent={<p>Agent settings</p>}
+        />
+        <div ref={setTarget} data-testid="save-footer" />
+      </AgentSaveFooter>
+    );
+  }
   render(
-    <AgentTabs
-      agents={{ save: vi.fn() } as unknown as Agents}
-      agent={agent()}
-      type={h.type}
-      channels={[]}
-      memories={undefined}
-      settingsHost={{ typeControl: () => <p>Hosted provider</p> }}
-      settingsContent={<p>Agent settings</p>}
-    />,
+    close ? (
+      <PanelCard
+        target="agent:test"
+        close={close}
+        panel={{
+          id: "agent",
+          key: "test/agent",
+          pluginId: "test",
+          revision: "test",
+          title: "Agent",
+          matches: () => true,
+          component: Pane,
+        }}
+      />
+    ) : (
+      <Pane />
+    ),
     { wrapper: StrictMode },
   );
 }
+
+it("dismisses Harness help before allowing Escape to close the agent pane", async () => {
+  const h = fixture();
+  const user = userEvent.setup();
+  const close = vi.fn();
+  renderTabs(h, close);
+  const harness = await screen.findByRole("button", {
+    name: "Harness: Builderlab",
+  });
+  act(() => harness.focus());
+  expect(
+    await screen.findByRole("dialog", { name: "Builderlab harness" }),
+  ).toBeVisible();
+  await user.keyboard("{Escape}");
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("dialog", { name: "Builderlab harness" }),
+    ).toBeNull(),
+  );
+  expect(screen.getByRole("complementary", { name: "Agent" })).toBeVisible();
+  expect(harness).toHaveFocus();
+  expect(close).not.toHaveBeenCalled();
+  await user.keyboard("{Escape}");
+  expect(close).toHaveBeenCalledOnce();
+});
 
 it("keeps hosted instructions on cancellation and resets a confirmed discard", async () => {
   const h = fixture();
   const user = userEvent.setup();
   renderTabs(h);
   expect(screen.queryByRole("tab", { name: "Instructions" })).toBeNull();
-  const field = await screen.findByRole("textbox", { name: "Instructions" });
-  expect(screen.getByRole("link", { name: "Builderlab" })).toHaveAttribute(
-    "href",
-    "https://builderlab.example",
+  expect(screen.getByRole("tab", { name: "Identity" })).toHaveAttribute(
+    "aria-selected",
+    "true",
   );
+  const field = await screen.findByRole("textbox", { name: "Instructions" });
+  expect(await screen.findByRole("button", { name: /^Model:/ })).toBeVisible();
+  expect(screen.getByRole("combobox", { name: "Thinking" })).toBeVisible();
+  expect(screen.queryByText("Workspace")).toBeNull();
+  expect(screen.queryByRole("link", { name: "Builderlab" })).toBeNull();
   await user.type(field, " Unsaved.");
   await user.click(screen.getByRole("tab", { name: "Settings" }));
   expect(await screen.findByRole("alertdialog")).toHaveTextContent(
@@ -195,7 +264,7 @@ it("keeps hosted instructions on cancellation and resets a confirmed discard", a
   );
   await user.click(screen.getByRole("button", { name: "Keep editing" }));
   expect(field).toHaveValue("First instructions. Unsaved.");
-  const save = screen.getByRole("button", { name: "Save instructions" });
+  const save = screen.getByRole("button", { name: "Save" });
   const pending = deferred<HostResponse>();
   h.request.mockReturnValueOnce(pending.promise);
   try {
@@ -226,14 +295,25 @@ it("keeps hosted instructions on cancellation and resets a confirmed discard", a
   expect(screen.getByText("Workspace")).toBeVisible();
   expect(screen.getByText("One session per thread")).toBeVisible();
   expect(screen.getByText("Agent settings")).toBeVisible();
-  expect(await screen.findByRole("combobox", { name: "Model" })).toBeVisible();
+  const runtime = screen.getByRole("link", { name: "Builderlab" });
+  expect(runtime).toHaveAttribute("href", "https://builderlab.example");
+  expect(runtime.closest(".buzz-preference-row-description")).toHaveTextContent(
+    "Hosted and managed by Builderlab.",
+  );
+  expect(runtime.closest(".buzz-settings-group")).toHaveTextContent("Runtime");
+  expect(runtime.closest(".buzz-settings-group")).toHaveTextContent(
+    "Workspace",
+  );
+  expect(runtime.closest(".buzz-settings-group")).toHaveTextContent("Sessions");
+  expect(screen.queryByRole("button", { name: /^Model:/ })).toBeNull();
+  expect(screen.queryByRole("combobox", { name: "Thinking" })).toBeNull();
   await user.click(screen.getByRole("tab", { name: "Identity" }));
   const fresh = await screen.findByRole("textbox", { name: "Instructions" });
   expect(fresh).not.toBe(field);
   expect(fresh).toHaveValue("First instructions.");
   expect(screen.queryByRole("alert")).toBeNull();
   expect(screen.queryByText("Workspace")).toBeNull();
-  expect(screen.queryByRole("combobox", { name: "Model" })).toBeNull();
+  expect(await screen.findByRole("button", { name: /^Model:/ })).toBeVisible();
 });
 
 it("guards hosted model drafts and a pending model save", async () => {
@@ -241,47 +321,116 @@ it("guards hosted model drafts and a pending model save", async () => {
   const user = userEvent.setup();
   renderTabs(h);
   await screen.findByRole("textbox", { name: "Instructions" });
-  await user.click(screen.getByRole("tab", { name: "Settings" }));
-  await user.click(await screen.findByRole("combobox", { name: "Model" }));
+  const modelTrigger = await screen.findByRole("button", { name: /^Model:/ });
+  await waitFor(() => expect(modelTrigger).toBeEnabled());
+  await user.click(modelTrigger);
+  (await screen.findByRole("menuitem", { name: "Other" })).focus();
+  await user.keyboard("{ArrowRight}");
   await user.click(
-    await screen.findByRole("option", { name: "Friendly Model" }),
+    await screen.findByRole("menuitemradio", { name: "Friendly Model" }),
   );
-  expect(screen.getByRole("button", { name: "Save model" })).toBeDisabled();
-  await user.click(screen.getByRole("tab", { name: "Identity" }));
+  expect(
+    screen.queryByRole("button", { name: "Save" }),
+  ).not.toBeInTheDocument();
+  await user.click(screen.getByRole("tab", { name: "Settings" }));
   expect(await screen.findByRole("alertdialog")).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Keep editing" }));
-  expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(
+  expect(screen.getByRole("button", { name: /^Model:/ })).toHaveTextContent(
     "Friendly Model",
   );
-  await user.click(screen.getByRole("combobox", { name: "Reasoning effort" }));
-  await user.click(await screen.findByRole("option", { name: "high" }));
+  await user.click(screen.getByRole("combobox", { name: "Thinking" }));
+  await user.click(await screen.findByRole("option", { name: "High" }));
   const pending = deferred<HostResponse>();
   h.request.mockReturnValueOnce(pending.promise);
   try {
-    await user.click(screen.getByRole("button", { name: "Save model" }));
-    expect(screen.getByRole("tab", { name: "Identity" })).toHaveAttribute(
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(screen.getByRole("tab", { name: "Settings" })).toHaveAttribute(
       "aria-disabled",
       "true",
     );
-    await user.click(screen.getByRole("tab", { name: "Identity" }));
-    expect(screen.getByRole("combobox", { name: "Model" })).toBeVisible();
+    await user.click(screen.getByRole("tab", { name: "Settings" }));
+    expect(screen.getByRole("button", { name: /^Model:/ })).toBeVisible();
   } finally {
     await act(async () => pending.reject(new Error("offline")));
   }
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Could not reach Builderlab",
   );
-  await user.click(screen.getByRole("tab", { name: "Identity" }));
+  await user.click(screen.getByRole("tab", { name: "Settings" }));
   await user.click(screen.getByRole("button", { name: "Discard changes" }));
+  expect(screen.getByText("Agent settings")).toBeVisible();
+  expect(screen.queryByRole("button", { name: /^Model:/ })).toBeNull();
+  await user.click(screen.getByRole("tab", { name: "Identity" }));
   expect(
     await screen.findByRole("textbox", { name: "Instructions" }),
   ).toHaveValue("First instructions.");
-  await user.click(screen.getByRole("tab", { name: "Settings" }));
   expect(
-    await screen.findByRole("combobox", { name: "Model" }),
+    await screen.findByRole("button", { name: /^Model:/ }),
   ).toHaveTextContent("Choose a model");
-  expect(
-    screen.getByRole("combobox", { name: "Reasoning effort" }),
-  ).toHaveTextContent("Choose reasoning effort");
+  expect(screen.getByRole("combobox", { name: "Thinking" })).toHaveTextContent(
+    "Choose thinking",
+  );
   expect(screen.queryByRole("alert")).toBeNull();
+});
+
+it("saves model and instructions together through one footer action", async () => {
+  const h = fixture();
+  const user = userEvent.setup();
+  renderTabs(h);
+  const field = await screen.findByRole("textbox", { name: "Instructions" });
+  expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+  const modelTrigger = await screen.findByRole("button", { name: /^Model:/ });
+  await waitFor(() => expect(modelTrigger).toBeEnabled());
+  await user.click(modelTrigger);
+  (await screen.findByRole("menuitem", { name: "Other" })).focus();
+  await user.keyboard("{ArrowRight}");
+  await user.click(
+    await screen.findByRole("menuitemradio", { name: "Friendly Model" }),
+  );
+  await user.type(field, " Updated.");
+  // A partial model draft cannot be silently skipped by Save.
+  expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+  await user.click(screen.getByRole("combobox", { name: "Thinking" }));
+  await user.click(await screen.findByRole("option", { name: "High" }));
+  const save = screen.getByRole("button", { name: "Save" });
+  expect(screen.getByTestId("save-footer")).toContainElement(save);
+  expect(save).toHaveAttribute("form", field.closest("form")?.id);
+  await user.click(save);
+  await waitFor(() =>
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull(),
+  );
+  const updates = h.request.mock.calls.filter(([request]) =>
+    request.url.endsWith("/update-agent"),
+  );
+  expect(updates).toHaveLength(1);
+  expect(JSON.parse(updates[0]?.[0].body ?? "{}")).toEqual({
+    agent_pubkey: first,
+    agent_instructions: "First instructions. Updated.",
+    model_id: "one",
+    reasoning_effort: "high",
+  });
+  expect(field).toHaveValue("First instructions. Updated.");
+  expect(modelTrigger).toHaveTextContent("Friendly Model");
+  await user.click(screen.getByRole("tab", { name: "Settings" }));
+  expect(screen.getByText("Agent settings")).toBeVisible();
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+});
+
+it("keeps runtime settings available without loading Builderlab configuration", () => {
+  const h = fixture();
+  render(
+    <h.Tab
+      agent={agent()}
+      save={vi.fn()}
+      settingsSection="runtime"
+      settingsContent={<p>Agent settings</p>}
+    />,
+    { wrapper: StrictMode },
+  );
+  expect(screen.getByText("Workspace")).toBeVisible();
+  expect(screen.getByText("One session per thread")).toBeVisible();
+  expect(screen.getByText("Agent settings")).toBeVisible();
+  expect(screen.queryByRole("textbox", { name: "Instructions" })).toBeNull();
+  expect(screen.queryByRole("button", { name: /^Model:/ })).toBeNull();
+  expect(h.request).not.toHaveBeenCalled();
 });

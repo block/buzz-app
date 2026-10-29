@@ -155,29 +155,79 @@ it("counts a send once when its summary lands before the publish receipt", () =>
   const send = (delivery: OutgoingEvent["delivery"]): OutgoingEvent[] => [
     { event: reply, delivery },
   ];
-  const p = projection();
   const events = [root, total(2, 20), reply];
-  expect(thread(p.reconcile(events, send("sending")))).toEqual([
-    3,
-    [bob.pubkey, alice.pubkey],
-  ]);
-  // The relay spawns the summary before it answers the publish, so the
-  // counting summary can beat the receipt; the send stays on top meanwhile,
-  // its author leading though the relay already lists them.
   const counting = total(3, 21, [alice.pubkey, bob.pubkey]);
-  expect(thread(p.reconcile([...events, counting], send("sending")))).toEqual([
+  const vouched = () => {
+    const p = projection();
+    expect(thread(p.reconcile(events, send("sending")))).toEqual([
+      3,
+      [bob.pubkey, alice.pubkey],
+    ]);
+    // The relay spawns the summary before it answers the publish, so the
+    // counting summary can beat the receipt; the send stays on top meanwhile,
+    // its author leading though the relay already lists them.
+    expect(thread(p.reconcile([...events, counting], send("sending")))).toEqual(
+      [4, [bob.pubkey, alice.pubkey]],
+    );
+    return p;
+  };
+  // Settling the send reconciles it with no further summary, even unanswered.
+  for (const delivery of ["accepted", "seen", "unknown"] as const)
+    expect(
+      thread(vouched().reconcile([...events, counting], send(delivery))),
+    ).toEqual([3, [alice.pubkey, bob.pubkey]]);
+});
+
+it("lets a counting summary speak for a send whose publish receipt was lost", () => {
+  const reply = message(bob, channel, "re", 11, [["e", root.id, "", "reply"]]);
+  const send = (delivery: OutgoingEvent["delivery"]): OutgoingEvent[] => [
+    { event: reply, delivery },
+  ];
+  const first = total(2, 20);
+  const counting = total(3, 21, [alice.pubkey, bob.pubkey]);
+  const events = [root, first, reply, counting];
+  const sent = () => {
+    const p = projection();
+    p.reconcile([root, first], []);
+    expect(thread(p.reconcile([root, first, reply], send("sending")))).toEqual([
+      3,
+      [bob.pubkey, alice.pubkey],
+    ]);
+    return p;
+  };
+  // A reconnect's top-level page brings the counting summary but never the
+  // reply's echo. The receipt is lost after that summary lands...
+  const after = sent();
+  expect(thread(after.reconcile(events, send("sending")))).toEqual([
     4,
     [bob.pubkey, alice.pubkey],
   ]);
-  // Settling the send reconciles it with no further summary.
-  expect(thread(p.reconcile([...events, counting], send("accepted")))).toEqual([
-    3,
-    [alice.pubkey, bob.pubkey],
-  ]);
-  expect(thread(p.reconcile([...events, counting], send("seen")))).toEqual([
-    3,
-    [alice.pubkey, bob.pubkey],
-  ]);
+  // ...or before it.
+  const before = sent();
+  expect(
+    thread(before.reconcile([root, first, reply], send("unknown"))),
+  ).toEqual([3, [bob.pubkey, alice.pubkey]]);
+  // Either way the relay's number stands, through a retry too. A retry the
+  // relay turns away lands back on unknown, never failed, so nothing re-counts
+  // what the relay does not hold...
+  for (const p of [after, before])
+    for (const delivery of [
+      "unknown",
+      "sending",
+      "unknown",
+      "sending",
+      "accepted",
+    ] as const)
+      expect(thread(p.reconcile(events, send(delivery)))).toEqual([
+        3,
+        [alice.pubkey, bob.pubkey],
+      ]);
+  // ...and a retry that commits is counted once, by the relay's follow-up.
+  const counted = total(4, 22, [alice.pubkey, bob.pubkey]);
+  for (const p of [after, before])
+    expect(thread(p.reconcile([...events, counted], send("accepted")))).toEqual(
+      [4, [alice.pubkey, bob.pubkey]],
+    );
 });
 
 it("forgets a summary observed before a failed attempt so the retry still counts", () => {

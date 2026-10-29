@@ -421,7 +421,9 @@ describe("github_watch_pr", () => {
         [id]: { ...watch, interest_id: "github-pulls" },
       },
     });
-    await app.call({ url }, true);
+    expect(await app.call({ url }, true)).toContain(
+      "The watch moved to Interest pr from Interest github-pulls, which gets no more wakes for this pull request.",
+    );
     expect(app.records[agent]?.[id]).toEqual(
       expect.objectContaining({ interest_id: "pr", channel: "c" }),
     );

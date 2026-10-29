@@ -13,6 +13,7 @@ import { createAgentClient } from "../agents/client";
 import { createOAuthSession } from "../oauth/session";
 import { deferred } from "../test-helpers";
 import { builderlabType } from "./index";
+import { PanelCard } from "../../../features/panels/PanelCard";
 
 const first = "ab".repeat(32);
 const second = "cd".repeat(32);
@@ -179,7 +180,7 @@ it("switching agents hides the old draft and ignores the switched-away read", as
   );
 });
 
-function renderTabs(h: ReturnType<typeof fixture>) {
+function renderTabs(h: ReturnType<typeof fixture>, close?: () => void) {
   function Pane() {
     const [target, setTarget] = useState<HTMLDivElement | null>(null);
     return (
@@ -197,8 +198,52 @@ function renderTabs(h: ReturnType<typeof fixture>) {
       </AgentSaveFooter>
     );
   }
-  render(<Pane />, { wrapper: StrictMode });
+  render(
+    close ? (
+      <PanelCard
+        target="agent:test"
+        close={close}
+        panel={{
+          id: "agent",
+          key: "test/agent",
+          pluginId: "test",
+          revision: "test",
+          title: "Agent",
+          matches: () => true,
+          component: Pane,
+        }}
+      />
+    ) : (
+      <Pane />
+    ),
+    { wrapper: StrictMode },
+  );
 }
+
+it("dismisses Harness help before allowing Escape to close the agent pane", async () => {
+  const h = fixture();
+  const user = userEvent.setup();
+  const close = vi.fn();
+  renderTabs(h, close);
+  const harness = await screen.findByRole("button", {
+    name: "Harness: Builderlab",
+  });
+  act(() => harness.focus());
+  expect(
+    await screen.findByRole("dialog", { name: "Builderlab harness" }),
+  ).toBeVisible();
+  await user.keyboard("{Escape}");
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("dialog", { name: "Builderlab harness" }),
+    ).toBeNull(),
+  );
+  expect(screen.getByRole("complementary", { name: "Agent" })).toBeVisible();
+  expect(harness).toHaveFocus();
+  expect(close).not.toHaveBeenCalled();
+  await user.keyboard("{Escape}");
+  expect(close).toHaveBeenCalledOnce();
+});
 
 it("keeps hosted instructions on cancellation and resets a confirmed discard", async () => {
   const h = fixture();

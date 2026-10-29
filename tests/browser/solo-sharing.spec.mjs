@@ -128,11 +128,15 @@ test("a Solo chat link card opens the same authorized conversation in the channe
 
 // Real modal/footer reachability, portal hit-testing and focus in both engines.
 async function reachable(locator, { scroll = true } = {}) {
-  // Native reveal honors the list's scroll padding below sticky group headings.
-  if (scroll)
+  if (scroll) {
+    // Match keyboard highlighting's reveal below sticky group headings.
     await locator.evaluate((element) =>
-      element.scrollIntoView({ block: "center", inline: "nearest" }),
+      element.scrollIntoView({ block: "nearest", inline: "nearest" }),
     );
+    // WebKit can still reveal the focused field after a viewport/text reflow.
+    // Check normal pointer actionability before sampling the final geometry.
+    await locator.click({ trial: true });
+  }
   await expect(locator).toBeInViewport();
   await expect
     .poll(() =>
@@ -433,6 +437,18 @@ test("People search holds loading, lists inline results and restores keyboard fo
         scale,
       );
       await reachable(adds.first());
+    }
+    // At enlarged text, production keyboard reveals must keep Add reachable
+    // while focus stays in the search field, including the return upward.
+    for (const key of ["ArrowDown", "ArrowUp"]) {
+      await search.press(key);
+      await expect(search).toBeFocused();
+      await reachable(
+        results
+          .locator("[data-highlighted]")
+          .getByRole("button", { name: /^Add Morgan person/ }),
+        { scroll: false },
+      );
     }
     await page.evaluate(() =>
       document.documentElement.style.setProperty("--buzz-text-scale", "1"),

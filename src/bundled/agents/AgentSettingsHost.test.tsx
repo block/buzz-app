@@ -13,17 +13,22 @@ import { useAgentSettingsHost } from "./AgentSettingsHost";
 
 afterEach(cleanup);
 
-function fixture({ hosted = true, anotherLocal = true, place = "here" } = {}) {
+function fixture({
+  hosted = true,
+  anotherLocal = true,
+  place = "here",
+  remoteSource = false,
+} = {}) {
   const agent = {
     key: "a".repeat(64),
     pubkey: "a".repeat(64),
     name: "Ada",
     place,
-    type: "local/echo",
+    type: remoteSource ? "hosted/builderlab" : "local/echo",
     config: {},
   } as Agent;
   const local = {
-    key: agent.type,
+    key: "local/echo",
     pluginId: "local",
     revision: "1",
     id: "echo",
@@ -59,7 +64,12 @@ function fixture({ hosted = true, anotherLocal = true, place = "here" } = {}) {
   const retype = vi.fn();
   const agents = { previewRetype, retype } as unknown as Agents;
   function Host() {
-    const host = useAgentSettingsHost({ agents, agent, type: local, types });
+    const host = useAgentSettingsHost({
+      agents,
+      agent,
+      type: remoteSource ? remote : local,
+      types,
+    });
     return (
       <>
         {host.settingsHost.typeControl?.(false)}
@@ -169,10 +179,55 @@ it("keeps the existing local migration flow available", async () => {
   expect(retype).not.toHaveBeenCalled();
 });
 
-it.each(["hosted", "elsewhere"])(
-  "does not offer local migration for an agent %s",
-  (place) => {
-    fixture({ place });
-    expect(screen.queryByRole("button", { name: /Change harness/ })).toBeNull();
-  },
-);
+it("does not offer local migration for an agent on another device", () => {
+  fixture({ place: "elsewhere" });
+  expect(screen.queryByRole("button", { name: /Change harness/ })).toBeNull();
+});
+
+it("shows local harnesses as unavailable for a hosted agent and keeps help keyboard accessible", async () => {
+  const user = userEvent.setup();
+  const { previewRetype, retype } = fixture({
+    place: "hosted",
+    remoteSource: true,
+  });
+  const trigger = screen.getByRole("button", {
+    name: "Change harness from Builderlab",
+  });
+  await user.tab();
+  expect(trigger).toHaveFocus();
+  await user.keyboard("{Enter}");
+  await screen.findByRole("menu");
+  await user.keyboard("{Home}{Enter}");
+  const local = await screen.findByRole("menuitemradio", { name: "Echo" });
+  expect(local).toHaveFocus();
+  expect(local).toHaveAttribute("aria-disabled", "true");
+  expect(screen.getByRole("menuitemradio", { name: "Next" })).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
+  expect(
+    screen.getByRole("menuitemradio", { name: "Builderlab" }),
+  ).toBeChecked();
+  const copy =
+    "Builderlab holds this agent’s signing key. Buzz can’t move that identity to a local harness yet. To run locally, create a new agent.";
+  expect(
+    await screen.findByRole("dialog", { name: "Echo hosting" }),
+  ).toHaveTextContent(copy);
+  expect(local).toHaveAccessibleDescription(copy);
+  await user.keyboard("{Enter}{Space}");
+  expect(screen.getByRole("menu")).toBeVisible();
+  expect(screen.getByLabelText("Pending change")).toHaveTextContent("false");
+  await user.keyboard("{Escape}");
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: "Echo hosting" })).toBeNull(),
+  );
+  expect(screen.getByRole("menu")).toBeVisible();
+  await user.hover(local);
+  expect(
+    await screen.findByRole("dialog", { name: "Echo hosting" }),
+  ).toBeVisible();
+  await user.click(local);
+  expect(screen.getByRole("menu")).toBeVisible();
+  expect(previewRetype).not.toHaveBeenCalled();
+  expect(retype).not.toHaveBeenCalled();
+});

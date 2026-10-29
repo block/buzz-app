@@ -89,7 +89,8 @@ export function useAgentSettingsHost({
       }
     : undefined;
   const showTypeControl =
-    agent?.place === "here" && types.some((item) => item.key !== agent.type);
+    (agent?.place === "here" || agent?.place === "hosted") &&
+    types.some((item) => item.key !== agent.type);
   return {
     agent: settingsAgent,
     type: settingsType,
@@ -141,7 +142,7 @@ function TypeField({
   selected: string;
   onSelect(type: { key: string; config: unknown } | undefined): void;
 }) {
-  const available = agent.place === "here" ? types : [];
+  const available = types;
   const others = available.filter((item) => item.key !== agent.type);
   const selectedType = available.find((item) => item.key === selected) ?? type;
   const TypeIcon = selectedType?.icon;
@@ -154,6 +155,7 @@ function TypeField({
     preview: ReturnType<Agents["previewRetype"]>;
   }>();
   const choose = (next: string) => {
+    if (agent.place !== "here") return;
     if (next === selected) return;
     if (next === agent.type) {
       onSelect(undefined);
@@ -228,9 +230,16 @@ function TypeField({
                     onValueChange={(next) => choose(String(next))}
                   >
                     {available.map((item) => {
-                      if (item.remote)
+                      if (
+                        item.key !== agent.type &&
+                        (type?.remote || item.remote)
+                      )
                         return (
-                          <HostedHarnessChoice key={item.key} type={item} />
+                          <UnavailableHarnessChoice
+                            key={item.key}
+                            type={item}
+                            source={type}
+                          />
                         );
                       const Icon = item.icon;
                       return (
@@ -316,7 +325,13 @@ function TypeField({
   );
 }
 
-function HostedHarnessChoice({ type }: { type: RegisteredAgentType }) {
+function UnavailableHarnessChoice({
+  type,
+  source,
+}: {
+  type: RegisteredAgentType;
+  source: RegisteredAgentType | undefined;
+}) {
   const triggerId = useId();
   const trigger = useRef<HTMLElement>(null);
   const description = useId();
@@ -382,9 +397,19 @@ function HostedHarnessChoice({ type }: { type: RegisteredAgentType }) {
         finalFocus={false}
       >
         <PopoverDescription id={description}>
-          This agent’s signing key is stored on this device. Buzz can’t move
-          that identity to {type.title} yet. To run hosted, create a new{" "}
-          {type.title} agent.
+          {source?.remote ? (
+            <>
+              {source.title} holds this agent’s signing key. Buzz can’t move
+              that identity to a local harness yet. To run locally, create a new
+              agent.
+            </>
+          ) : (
+            <>
+              This agent’s signing key is stored on this device. Buzz can’t move
+              that identity to {type.title} yet. To run hosted, create a new{" "}
+              {type.title} agent.
+            </>
+          )}
         </PopoverDescription>
       </PopoverPopup>
     </PopoverRoot>

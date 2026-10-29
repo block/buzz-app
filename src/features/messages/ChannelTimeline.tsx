@@ -1149,6 +1149,19 @@ function Timeline({
           bufferSize={1600}
           // Reflow must not evict the focused control or a row's open report.
           keepMounted={keptIndices}
+          onResize={() => {
+            const element = scroller.current;
+            // Top rows can measure after native scrollend without moving the
+            // scroll offset. Do not carry their estimated Y into the next hold.
+            if (
+              element?.scrollTop === 0 &&
+              settled.current &&
+              !follow.current &&
+              !restoredAnchor.current &&
+              heldReader.current?.intent !== intent.current
+            )
+              recordPosition(element, true);
+          }}
           as="ol"
           item="li"
           startMargin={size.edgeHeight}

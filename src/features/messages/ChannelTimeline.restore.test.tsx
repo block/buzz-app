@@ -16,14 +16,19 @@ import { readView, writeView } from "../../shared/view-state";
 
 // Real React lifecycle; only the virtualizer's imperative layout boundary is
 // modeled here. Browser journeys retain the actual same-message/4px contract.
-const scroll = vi.hoisted(() => ({ toIndex: vi.fn(), toOffset: vi.fn() }));
+const scroll = vi.hoisted(() => ({
+  toIndex: vi.fn(),
+  toOffset: vi.fn(),
+  resized: () => {},
+}));
 vi.mock("virtua", async () => {
   const { forwardRef, useImperativeHandle } = await import("react");
   return {
     Virtualizer: forwardRef(function Virtualizer(
-      { children }: { children: ReactNode },
+      { children, onResize }: { children: ReactNode; onResize?: () => void },
       ref,
     ) {
+      scroll.resized = onResize ?? (() => {});
       useImperativeHandle(ref, () => ({
         cache: undefined,
         findItemIndex: () => 0,
@@ -171,6 +176,9 @@ function mount(bottom = false, revealOnMount = false) {
         tree({ ...window, freshness: "verified", rows: [...window.rows] }),
       );
     },
+    append() {
+      result.rerender(tree(sentWindow));
+    },
     async measured() {
       await act(async () => {
         screen.getByRole("list").style.height = "2120px";
@@ -179,6 +187,45 @@ function mount(bottom = false, revealOnMount = false) {
     },
   };
 }
+it("refreshes top-edge reading geometry measured after native scrollend before holding an append", async () => {
+  const h = mount(true);
+  await frame();
+  const region = screen.getByRole("region", {
+    name: "Channel message history",
+  });
+  let rowY = 120;
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+    function (this: HTMLElement) {
+      return new DOMRect(0, this.closest("ol") ? rowY : 0, 800, 100);
+    },
+  );
+  region.scrollTop = 1400;
+  fireEvent.scroll(region);
+  fireEvent.keyDown(region, { key: "Home", ctrlKey: true });
+  region.scrollTop = 0;
+  fireEvent.scroll(region);
+  fireEvent(region, new Event("scrollend"));
+
+  // Virtua's measured offsets commit without another scroll at the top edge.
+  rowY += 238;
+  act(() => scroll.resized());
+  h.append();
+  await h.measured();
+  expect(region.scrollTop).toBe(0);
+
+  // Measurements during an active hold must still preserve its original Y.
+  rowY += 90;
+  act(() => scroll.resized());
+  await act(async () => {
+    screen.getByRole("list").style.height = "2210px";
+  });
+  expect(region.scrollTop).toBe(90);
+  h.unmount();
+  expect(readView("scope", "scroll:c", null)).toMatchObject({
+    bottom: false,
+    anchor: { y: 358 },
+  });
+});
 it("retains the saved anchor correction when cached rows are promoted before its frame", async () => {
   const h = mount();
   await frame();

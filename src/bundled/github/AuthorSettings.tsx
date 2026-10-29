@@ -15,7 +15,7 @@ export function AuthorSettings({ active }: { active(): boolean }) {
   /** Why the rules could not be saved, apart from why they are not rules. */
   const [error, setError] = useState("");
   // After a Save, each edit checks the rules again.
-  const [checked, setChecked] = useState(false);
+  const [checked, setChecked] = useState(saved.error !== undefined);
   const parsed = parse(draft);
   const dirty =
     typeof parsed === "string" ||
@@ -46,6 +46,12 @@ export function AuthorSettings({ active }: { active(): boolean }) {
         }}
       >
         <SettingsGroup layout="form">
+          {saved.error !== undefined && (
+            <p role="status" className="m-0 text-body-sm text-subtle">
+              Your saved rules no longer parse, so no comment or review wakes
+              your agents until you fix them.
+            </p>
+          )}
           {open(saved) && (
             <p role="status" className="m-0 text-body-sm text-subtle">
               Comments from anyone no rule denies can wake your agents. To limit

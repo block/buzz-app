@@ -4,7 +4,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it } from "vitest";
 import { AuthorSettings } from "./AuthorSettings";
-import { DEFAULT_RULES, loadPolicy } from "./authors";
+import { DEFAULT_RULES, loadPolicy, POLICY_KEY } from "./authors";
 
 afterEach(() => {
   cleanup();
@@ -56,4 +56,30 @@ it("shows the default rules, and saves only rules that parse", async () => {
   await user.click(save);
   expect(loadPolicy().fallback).toBe("allow");
   expect(screen.getByRole("status")).toBeInTheDocument();
+});
+
+it("shows saved rules that no longer parse, with why, until they are fixed", async () => {
+  const user = userEvent.setup();
+  const text = "allow author:/^(?!eve$)[a-z]+$/";
+  localStorage.setItem(
+    POLICY_KEY,
+    JSON.stringify({ version: 2, text, fallback: "deny" }),
+  );
+  render(<AuthorSettings active={() => true} />);
+  const rules = screen.getByRole("textbox", { name: /Rules/ });
+  expect(rules).toHaveValue(text);
+  expect(rules).toBeInvalid();
+  expect(rules).toHaveAccessibleDescription(
+    expect.stringContaining("Line 1: a pattern's groups can only be"),
+  );
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "no comment or review wakes your agents",
+  );
+  expect(screen.getByRole("radio", { name: "Don’t wake it" })).toBeChecked();
+  await user.clear(rules);
+  await user.type(rules, "deny author:eve{Enter}allow author:/^[[a-z]+$/");
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  expect(loadPolicy().error).toBeUndefined();
+  expect(rules).toBeValid();
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
 });

@@ -1021,6 +1021,28 @@ describe("github_watch_pr", () => {
     app.dispose();
   });
 
+  it("holds feedback while saved rules no longer parse, and tells it once they are fixed", async () => {
+    localStorage.setItem(
+      "buzz.github.author-policy.v2",
+      JSON.stringify({
+        version: 2,
+        text: "allow author:/^(?!eve$)[a-z]+$/",
+        fallback: "deny",
+      }),
+    );
+    const app = setup();
+    await app.call({ url });
+    app.gh(
+      answer({ comments: [{ id: "I1", login: "eve", body: "body-eve" }] }),
+    );
+    await vi.advanceTimersByTimeAsync(POLL_MS + QUIET_MS + 3 * POLL_MS);
+    expect(app.texts().join("\n")).not.toContain("body-eve");
+    savePolicy("allow");
+    await vi.advanceTimersByTimeAsync(POLL_MS + QUIET_MS + POLL_MS);
+    expect(app.texts().join("\n")).toContain("body-eve");
+    app.dispose();
+  });
+
   it("does not take anyone to be in no organization while GitHub cannot be asked", async () => {
     savePolicy("deny org:evil\nallow");
     const app = setup();

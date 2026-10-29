@@ -26,6 +26,9 @@ export type AuthorPolicy = Readonly<{
   rules: readonly Rule[];
   /** What feedback no rule matches gets. */
   fallback: Rule["effect"];
+  /** Why the saved rules no longer parse. Until they are fixed, they hold
+   * all feedback, rather than the defaults admitting what they denied. */
+  error?: string;
 }>;
 
 /** The signed-in GitHub account, which agents use too. */
@@ -139,11 +142,12 @@ export function loadPolicy(): AuthorPolicy {
       text?: unknown;
       fallback?: unknown;
     } | null;
-    const policy =
-      saved?.version === 2 && typeof saved.text === "string"
-        ? parse(saved.text, saved.fallback === "allow" ? "allow" : "deny")
-        : DEFAULT;
-    return typeof policy === "string" ? DEFAULT : policy;
+    if (saved?.version !== 2 || typeof saved.text !== "string") return DEFAULT;
+    const fallback = saved.fallback === "allow" ? "allow" : "deny";
+    const policy = parse(saved.text, fallback);
+    return typeof policy === "string"
+      ? { text: saved.text, rules: [], fallback, error: policy }
+      : policy;
   } catch {
     return DEFAULT;
   }
@@ -166,15 +170,16 @@ export function savePolicy(text: string, fallback?: Rule["effect"]) {
 
 /** Whether anyone no rule denies may wake agents. */
 export const open = (policy: AuthorPolicy) =>
-  policy.fallback === "allow" ||
-  policy.rules.some(
-    (rule) =>
-      rule.effect === "allow" &&
-      rule.author === undefined &&
-      rule.org === undefined &&
-      rule.prefix === undefined &&
-      rule.body === undefined,
-  );
+  policy.error === undefined &&
+  (policy.fallback === "allow" ||
+    policy.rules.some(
+      (rule) =>
+        rule.effect === "allow" &&
+        rule.author === undefined &&
+        rule.org === undefined &&
+        rule.prefix === undefined &&
+        rule.body === undefined,
+    ));
 
 /** The organizations rules name, whose membership GitHub is asked for. */
 export function organizations(policy: AuthorPolicy) {
@@ -188,14 +193,16 @@ export function organizations(policy: AuthorPolicy) {
 }
 
 /** Whether `item` may wake an agent, or undefined until whether its author is
- * in an organization a rule needs is known. `member` says, or is undefined
- * while it does not know. Bots and deleted accounts are in no organization. */
+ * in an organization a rule needs is known, or the saved rules are fixed.
+ * `member` says, or is undefined while it does not know. Bots and deleted
+ * accounts are in no organization. */
 export function admit(
   item: Feedback,
   policy: AuthorPolicy,
   viewer: string,
   member: (login: string, org: string) => boolean | undefined,
 ) {
+  if (policy.error !== undefined) return undefined;
   const login = `${item.author}${item.bot ? "[bot]" : ""}`;
   for (const rule of policy.rules) {
     const { author } = rule;

@@ -117,6 +117,7 @@ export function watchPulls(ctx: Context) {
     stopped: () => boolean,
   ) => {
     const orgs = organizations(policy);
+    if (!orgs.length) return;
     const fresh = membership(orgs, MEMBERSHIP_MS);
     const logins = [
       ...new Set(

@@ -143,6 +143,22 @@ allow org:Block body:/bug/s`);
     expect(performance.now() - started).toBeLessThan(250);
   });
 
+  it("hold all feedback while saved rules no longer parse, keeping them", () => {
+    // An earlier build ran patterns natively, so it saved lookaround.
+    const text = "allow author:/^(?!eve$)[a-z]+$/";
+    localStorage.setItem(
+      POLICY_KEY,
+      JSON.stringify({ version: 2, text, fallback: "deny" }),
+    );
+    const policy = loadPolicy();
+    expect(policy.text).toBe(text);
+    expect(policy.error).toContain("Line 1: a pattern's groups can only be");
+    expect(open(policy)).toBe(false);
+    expect(organizations(policy)).toEqual([]);
+    expect(admit(by("eve"), policy, "j", nobody)).toBeUndefined();
+    expect(admit(by("wes"), policy, "j", nobody)).toBeUndefined();
+  });
+
   it("match a legacy octal escape as the one character it is", () => {
     const policy = rules("deny body:/\\012/\nallow");
     expect(admit(by("eve", "first\nsecond"), policy, "j", nobody)).toBe(false);
@@ -194,8 +210,6 @@ allow org:Block body:/bug/s`);
     expect(admit(by("dependabot", "", true), loadPolicy(), "j", nobody)).toBe(
       true,
     );
-    localStorage.setItem(POLICY_KEY, '{"version":2,"text":"maybe"}');
-    expect(loadPolicy().text).toBe(DEFAULT_RULES);
     localStorage.setItem(POLICY_KEY, "{");
     expect(loadPolicy().text).toBe(DEFAULT_RULES);
   });

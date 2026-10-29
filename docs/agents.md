@@ -150,7 +150,9 @@ as an automaton, in time the text's length bounds, so a pattern like
 When no rule matches decides the rest: Wake the agent or Don't wake it.
 Saving compiles every pattern and rejects the rules, naming the line, when one
 is not a rule, or when they name more organizations than one membership read
-can ask about. The defaults keep the behavior from before rules: agents'
+can ask about. Saved rules that no longer parse, such as a pattern with
+lookaround an earlier build accepted, stay in Settings with their error, and
+hold all feedback until they are fixed rather than falling back to the defaults. The defaults keep the behavior from before rules: agents'
 comments wake nobody, and everyone else's wake the agent.
 
 ```text

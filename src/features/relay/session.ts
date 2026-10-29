@@ -103,6 +103,7 @@ import {
 } from "./outbox";
 import { relayPartition, transportPartition } from "./partition";
 import { browserThreadFollows } from "./thread-follows";
+import { browserUnreadStorage } from "./unread-storage";
 import { createMessages } from "./messages";
 import { retryRead } from "./read-retry";
 import { createThreadView } from "./threads";
@@ -1004,6 +1005,7 @@ export function createRelaySession(
       : {}),
     notify,
     follows: browserThreadFollows(readScope),
+    storage: browserUnreadStorage(readScope),
   });
   const inboxFeed = createInboxFeed({
     // A withheld auxiliary event is not proof of an exhausted history page.
@@ -3226,7 +3228,7 @@ export function createRelaySession(
         for (const clear of views.values()) clear(true);
         for (const view of artifactSyncs) view.restart();
         recent.clear();
-        unread.clear();
+        const unreadWiped = unread.clear();
         inboxFeed.clear();
         requests.invalidate();
         retireBackoffs();
@@ -3237,7 +3239,10 @@ export function createRelaySession(
         agentLibrary.clear();
         archives.clear();
         workflows.clear();
-        const results = await Promise.allSettled([channels.clearCache()]);
+        const results = await Promise.allSettled([
+          channels.clearCache(),
+          unreadWiped,
+        ]);
         updateInterests();
         const failed = results.find((result) => result.status === "rejected");
         if (failed?.status === "rejected") throw failed.reason;

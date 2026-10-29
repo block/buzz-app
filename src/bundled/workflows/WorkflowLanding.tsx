@@ -19,6 +19,10 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import type { ChannelSummary } from "../../features/relay/contracts";
+import type { RelaySession } from "../../features/relay/session";
+import { selectProfiles } from "../../features/relay/profile-selection";
+import { useChannelIdentityNames } from "../../features/identity-names/react";
+import { formatPublicKey } from "../../shared/identity/public-key";
 import type {
   WorkflowCapability,
   WorkflowDefinition,
@@ -433,7 +437,41 @@ function WorkflowIcon({ kind }: { kind: WorkflowCardIcon }) {
   return <Icon size={20} strokeWidth={2.5} aria-hidden="true" />;
 }
 
+function WorkflowOwner({
+  session,
+  owner,
+  channelId,
+}: {
+  session: RelaySession;
+  owner: string;
+  channelId: string;
+}) {
+  const selection = useMemo(
+    () => selectProfiles(session.profiles, [owner]),
+    [session, owner],
+  );
+  const profiles = useSyncExternalStore(
+    selection.subscribe,
+    selection.snapshot,
+    selection.snapshot,
+  );
+  useEffect(() => {
+    void session.profiles.ensure([owner], "background").catch(() => {});
+  }, [session, owner]);
+  const name = useChannelIdentityNames(session, channelId);
+  return (
+    <>
+      Owner:{" "}
+      {name(
+        owner,
+        profiles.get(owner)?.name ?? formatPublicKey(owner) ?? "Unknown owner",
+      )}
+    </>
+  );
+}
+
 function WorkflowCard({
+  session,
   capability,
   channel,
   definition,
@@ -449,6 +487,7 @@ function WorkflowCard({
   onSelect,
   onRun,
 }: {
+  session: RelaySession | undefined;
   capability: WorkflowCapability;
   channel: ChannelSummary;
   definition: WorkflowDefinition;
@@ -531,6 +570,15 @@ function WorkflowCard({
   const statusId = useId();
   const warning = getWorkflowActivationWarning(definition.yaml);
   const name = fields.name || "Unnamed or malformed workflow";
+  const owner = session ? (
+    <WorkflowOwner
+      session={session}
+      owner={definition.owner}
+      channelId={definition.channelId}
+    />
+  ) : (
+    <>Owner: {formatPublicKey(definition.owner) ?? "Unknown owner"}</>
+  );
   const runDisabled =
     readonly ||
     locked ||
@@ -689,6 +737,7 @@ function WorkflowCard({
         <p className="text-caption text-subtle">
           #{channel.name} · {updated}
         </p>
+        <p className="text-caption text-subtle">{owner}</p>
         <div className="workflow-detail-actions">
           <Button variant="primary" disabled={runDisabled} onClick={runNow}>
             <PlayIcon size="1rem" aria-hidden="true" />
@@ -771,6 +820,7 @@ function WorkflowCard({
       <article className="workflow-card" data-selected={selected || undefined}>
         <div className="workflow-card-row">
           <NavigationItem
+            multiline
             ref={openRef}
             aria-label={`Open ${name}: ${presentation.description}`}
             aria-describedby={`${descriptionId} ${statusId}`}
@@ -819,6 +869,9 @@ function WorkflowCard({
                     </>
                   )}
                   {updated}
+                </span>
+                <span className="workflow-card-owner text-caption text-subtle">
+                  {owner}
                 </span>
               </span>
             }
@@ -898,6 +951,7 @@ function WorkflowListTransition({
 }
 
 function WorkflowCards({
+  session,
   capability,
   channel,
   detailTarget,
@@ -912,6 +966,7 @@ function WorkflowCards({
   onRun,
   onError,
 }: {
+  session: RelaySession | undefined;
   capability: WorkflowCapability;
   channel: ChannelSummary | undefined;
   detailTarget: HTMLElement | null;
@@ -960,6 +1015,7 @@ function WorkflowCards({
           const key = workflowKey(definition);
           return (
             <WorkflowCard
+              session={session}
               capability={capability}
               channel={itemChannel}
               showChannel={!channel}
@@ -995,7 +1051,7 @@ const workflowKey = (definition: WorkflowDefinition) =>
   `${definition.channelId}:${definition.owner}:${definition.id}`;
 
 const OWNER_OPTIONS = [
-  { value: "all", label: "Anyone" },
+  { value: "all", label: "All channel workflows" },
   { value: "mine", label: "My workflows" },
 ] as const;
 const STATUS_OPTIONS = [
@@ -1193,6 +1249,7 @@ function WorkflowMultiFilterMenu<Value extends string>({
 }
 
 export function WorkflowLanding({
+  session,
   capability,
   channels,
   filter,
@@ -1207,6 +1264,8 @@ export function WorkflowLanding({
   selected,
   onSelect,
 }: {
+  /** Live identity names; offline diagnostic fixtures use public-key labels. */
+  session?: RelaySession | undefined;
   capability: WorkflowCapability;
   channels: readonly ChannelSummary[];
   /** Element that receives the selected workflow's detail. */
@@ -1230,7 +1289,7 @@ export function WorkflowLanding({
     capability.operations.snapshot,
   );
   const [sort, setSort] = useState<"channel" | "recent">("channel");
-  const [mineOnly, setMineOnly] = useState(false);
+  const [mineOnly, setMineOnly] = useState(true);
   const [status, setStatus] =
     useState<(typeof STATUS_OPTIONS)[number]["value"]>("all");
   const [triggers, setTriggers] = useState<
@@ -1329,6 +1388,7 @@ export function WorkflowLanding({
   const populated = ordered.filter(
     (channel) => snapshots[channel.id]?.data.items.length,
   );
+  const emptyFromFilters = filtered && populated.length > 0;
   const shown = populated.filter((channel) => filter.includes(channel.id));
   useEffect(() => {
     if (filter.length !== shown.length)
@@ -1552,14 +1612,14 @@ export function WorkflowLanding({
       {settledEmpty ? (
         <EmptyState
           icon={<LightningIcon size="1.5rem" aria-hidden="true" />}
-          title={filtered ? "No matching workflows" : "Workflows"}
+          title={emptyFromFilters ? "No matching workflows" : "Workflows"}
           description={
-            filtered
+            emptyFromFilters
               ? "Try changing or clearing your filters."
               : "Automations that keep your community moving."
           }
           action={
-            filtered ? (
+            emptyFromFilters ? (
               <Button onClick={resetFilters}>Clear filters</Button>
             ) : (
               capability.availability.save && (
@@ -1599,6 +1659,7 @@ export function WorkflowLanding({
             {displayedGroups.map((group) => (
               <WorkflowListTransition key={group.key}>
                 <WorkflowCards
+                  session={session}
                   capability={capability}
                   channel={group.channel}
                   entries={group.entries}

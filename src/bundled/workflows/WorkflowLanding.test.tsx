@@ -64,7 +64,7 @@ function mount(
     reject(error: Error): void;
   }[] = [];
   const owner = createWorkflows({
-    viewer: fixtureViewer,
+    viewer: author.pubkey,
     outbox: undefined,
     local: undefined,
     host: undefined,
@@ -99,7 +99,7 @@ function mount(
         channels={channels}
         refreshRequest={refresh}
         saveReadback={saveReadback}
-        viewer={fixtureViewer}
+        viewer={author.pubkey}
         detailTarget={null}
         selected={undefined}
         onSelect={() => {}}
@@ -1000,6 +1000,9 @@ for (const filter of ["Owner", "Status"] as const) {
   it(`closes a ${filter.toLowerCase()}-filtered selection while a read is still pending`, async () => {
     const { fixture, target, selections } = landing();
     try {
+      fireEvent.click(
+        screen.getByRole("button", { name: "Clear owner filter" }),
+      );
       act(() =>
         fixture.definitions.update({
           status: "ready",
@@ -1476,6 +1479,30 @@ function filterLanding(save = true) {
     onCreate,
   };
 }
+
+it("starts with My workflows and offers All channel workflows explicitly", async () => {
+  const { fixture, choose, user, onCreate } = filterLanding();
+  expect(
+    screen.getByRole("button", { name: "Owner: My workflows" }),
+  ).toBeVisible();
+  await screen.findByRole("button", { name: /^Open Mine disabled:/ });
+  expect(
+    screen.queryByRole("button", { name: /^Open Other enabled:/ }),
+  ).toBeNull();
+  await choose("Owner", "All channel workflows");
+  expect(
+    await screen.findByRole("button", { name: /^Open Other enabled:/ }),
+  ).toBeVisible();
+  await choose("Owner", "My workflows");
+  act(() =>
+    fixture.definitions.update({
+      status: "ready",
+      data: { partial: false, items: [] },
+    }),
+  );
+  await user.click(await screen.findByRole("button", { name: "New workflow" }));
+  expect(onCreate).toHaveBeenCalledOnce();
+});
 
 it.each([true, false])(
   "clears a filtered empty state with focus handoff when save is %s",

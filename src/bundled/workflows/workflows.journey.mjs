@@ -950,6 +950,8 @@ test("restricted cards and read-only editors keep keyboard controls without disc
       },
     });
   });
+  await page.getByRole("button", { name: "Owner: My workflows" }).click();
+  await page.getByRole("radio", { name: "All channel workflows" }).click();
   await editorControls(page).open("Message helper");
   const dialog = page.getByRole("dialog", { name: "Message helper" });
   await expect(dialog.getByText("Read-only", { exact: true })).toHaveCount(0);

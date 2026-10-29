@@ -21,7 +21,12 @@ See the [capability contract](../src/features/workflows/types.ts).
   selected. Each active trigger has a separate clear icon.
   Owner and Status use inline radios;
   Trigger and Channels use inline checkboxes. Popups have no Clear action.
-  My workflows matches the current viewer's saved workflow ownership.
+  My workflows is the default and matches the current viewer's saved workflow
+  ownership. All channel workflows includes other owners in participating channels.
+  Rows and their details show the owner's current identity name, with an abbreviated
+  public-key fallback while a profile is unavailable. Ownership and management
+  permissions remain tied to the signing identity, including agent-owned workflows.
+  Clearing the owner filter or Clear all shows all channel workflows.
   Enabled and Disabled match saved configuration (omitted means enabled), not
   confirmed runtime activity; unreadable configurations are excluded from both.
   Trigger filters use the same saved-type interpretation as the workflow rows:

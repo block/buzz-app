@@ -12,8 +12,10 @@ import {
 import { afterEach, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { formStateToYaml, yamlToFormState } from "./workflowFormTypes";
-import type { ChannelList } from "../../features/relay/contracts";
+import type { ChannelList, Profile } from "../../features/relay/contracts";
 import type { RelaySession } from "../../features/relay/session";
+import { formatPublicKey } from "../../shared/identity/public-key";
+import { createProfileDirectory } from "../../features/relay/profile-directory";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { WorkflowCommunity } from "./WorkflowsPage";
 import {
@@ -22,6 +24,7 @@ import {
   fixtureDefinition,
   fixtureViewer,
   fixtureYaml,
+  fixtureView,
 } from "./fixtures";
 vi.stubGlobal(
   "ResizeObserver",
@@ -46,7 +49,13 @@ function mount(initialYaml = fixtureYaml, owner = fixtureViewer, save = true) {
     channels: [{ id: fixtureChannel, name: "Fixture channel" }],
   };
   const listeners = new Set<() => void>();
+  const profiles = fixtureView<ReadonlyMap<string, Profile>>(new Map());
   const session = {
+    profiles: {
+      snapshot: () => profiles.view.snapshot().data,
+      subscribe: profiles.view.subscribe,
+      ensure: async () => {},
+    },
     workflows: save
       ? fixture.capability
       : {
@@ -69,6 +78,7 @@ function mount(initialYaml = fixtureYaml, owner = fixtureViewer, save = true) {
   );
   return {
     ...fixture,
+    profiles,
     setChannels(next: ChannelList) {
       list = next;
       for (const fn of listeners) fn();
@@ -79,6 +89,31 @@ function mount(initialYaml = fixtureYaml, owner = fixtureViewer, save = true) {
 function detailPane() {
   return within(screen.getByRole("region", { name: "Workflow details" }));
 }
+
+it("shows the owner's identity in the row and detail and follows profile updates", async () => {
+  const fixture = mount();
+  const fallback = `Owner: ${formatPublicKey(fixtureViewer)}`;
+  expect(await screen.findByText(fallback)).toBeVisible();
+  act(() =>
+    fixture.profiles.update({
+      status: "ready",
+      data: new Map([[fixtureViewer, { name: "Salman" }]]),
+    }),
+  );
+  expect(screen.getByText("Owner: Salman")).toBeVisible();
+  fireEvent.click(
+    screen.getByRole("button", { name: /^Open Message helper:/ }),
+  );
+  expect(detailPane().getByText("Owner: Salman")).toBeVisible();
+  act(() =>
+    fixture.profiles.update({
+      status: "ready",
+      data: new Map([[fixtureViewer, { name: "Updated name" }]]),
+    }),
+  );
+  expect(detailPane().getByText("Owner: Updated name")).toBeVisible();
+  expect(screen.queryByText("Owner: Salman")).toBeNull();
+});
 
 it("delivers a late webhook secret on the landing page after confirmed navigation", async () => {
   const fixture = mount();
@@ -144,6 +179,10 @@ it("labels landing controls as configuration and retains the runtime caveat in d
 it("explains another author's disabled controls from the landing through the read-only dialog", async () => {
   const user = userEvent.setup();
   const fixture = mount(fixtureYaml, "22".repeat(32));
+  await user.click(screen.getByRole("button", { name: "Owner: My workflows" }));
+  await user.click(
+    screen.getByRole("radio", { name: "All channel workflows" }),
+  );
   const toggle = await screen.findByRole("switch", {
     name: "Enabled in configuration: Message helper",
   });
@@ -811,6 +850,7 @@ it("does not add a channel-loading banner above retained workflow cards", async 
     channels: [{ id: fixtureChannel, name: "Fixture channel" }],
   };
   const session = {
+    profiles: createProfileDirectory({ read: async () => [] }).queries,
     workflows: fixture.capability,
     channels: {
       list: () => list,
@@ -1006,7 +1046,10 @@ it("combines channel selections and resets them while closing filtered details",
       screen.getByRole("button", { name: /^Open Message helper:/ }),
     ).toBeVisible(),
   );
-  expect(screen.queryByRole("button", { name: "Clear all" })).toBeNull();
+  expect(
+    screen.getByRole("button", { name: "Owner: My workflows" }),
+  ).toBeVisible();
+  expect(screen.getByRole("button", { name: "Clear all" })).toBeVisible();
   await openChannels();
   await user.click(screen.getByRole("checkbox", { name: "Fixture channel" }));
   await user.click(screen.getByRole("checkbox", { name: "Other channel" }));
@@ -1106,6 +1149,7 @@ it("closes the side pane when the final channel leaves", async () => {
   };
   const listeners = new Set<() => void>();
   const session = {
+    profiles: createProfileDirectory({ read: async () => [] }).queries,
     workflows: fixture.capability,
     channels: {
       list: () => list,
@@ -1173,6 +1217,7 @@ function renderSinglePage() {
       <WorkflowCommunity
         session={
           {
+            profiles: createProfileDirectory({ read: async () => [] }).queries,
             workflows: fixture.capability,
             channels: {
               list: () => list,

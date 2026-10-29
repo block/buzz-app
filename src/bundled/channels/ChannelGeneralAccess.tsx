@@ -73,7 +73,7 @@ export function ChannelGeneralAccess({
     return (
       <section aria-label="General access" className={styles.generalAccess}>
         <h3 className="text-label-sm">General access</h3>
-        <div className="flex items-center gap-3">
+        <div className={styles.accessRow}>
           <span className={styles.accessIcon} aria-hidden="true">
             {channel.visibility === "public" ? (
               communityAvatar("default")

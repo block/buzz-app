@@ -66,6 +66,7 @@ export const test = base.extend({
   sidebarIcons: [false, { option: true }],
   channelNames: [{}, { option: true }],
   expectedPageFailure: [false, { option: true }],
+  expectedSidebarIconFailure: [false, { option: true }],
   largeSidebar: [false, { option: true }],
   iconCongestion: [false, { option: true }],
   dmLabels: [false, { option: true }],
@@ -79,6 +80,9 @@ export const test = base.extend({
   // Opt-in perf workload: chat-like Markdown (code, links, lists, mentions)
   // in most corpus rows instead of inert prose.
   markdownMessages: [false, { option: true }],
+  // Opt-in perf workload: newer activity in another joined channel fills the
+  // startup unread read, so corpus history reaches the app first-seen.
+  firstSeenHistory: [false, { option: true }],
   // Opt-in perf workload: let modeled HTTP pages arrive during wheel input.
   olderPageDelayMs: [null, { option: true }],
   membershipActivity: [false, { option: true }],
@@ -130,6 +134,7 @@ export const test = base.extend({
       sidebarIcons,
       channelNames,
       expectedPageFailure,
+      expectedSidebarIconFailure,
       largeSidebar,
       iconCongestion,
       dmLabels,
@@ -141,12 +146,13 @@ export const test = base.extend({
       inboxSoloAgent,
       tallMessages,
       markdownMessages,
+      firstSeenHistory,
       olderPageDelayMs,
       membershipActivity,
       launchAnimation,
       historyCounts,
       historyRowsPerSecond,
-      channelIds: channels,
+      channelIds,
       pluginFixtures,
       developmentReact,
       compiledApp,
@@ -154,6 +160,7 @@ export const test = base.extend({
     use,
     testInfo,
   ) => {
+    const channels = firstSeenHistory ? [...channelIds, "busy"] : channelIds;
     const key = (seed) =>
       actionProfile
         ? Uint8Array.from({ length: 32 }, (_, i) => (i === 31 ? seed : 0))
@@ -473,6 +480,20 @@ export const test = base.extend({
             );
           }),
         );
+    // The app's unread read takes the newest 500 events across joined channels.
+    if (firstSeenHistory)
+      histories.set(
+        "primary/busy",
+        Array.from({ length: 500 }, (_, i) =>
+          sign(
+            9,
+            [["h", "busy"]],
+            `Newer activity ${i}`,
+            userKey,
+            1700100000 + i,
+          ),
+        ),
+      );
     const ownerAgentMessage = agentMessageDeletion
       ? sign(
           9,
@@ -859,6 +880,7 @@ export const test = base.extend({
         agentPeers,
         tallMessages,
         markdownMessages,
+        firstSeenHistory,
         olderPageDelayMs,
         browserVersion: browser.version(),
         node: process.version,
@@ -882,6 +904,8 @@ export const test = base.extend({
       measurements: [],
     };
     const pending = [];
+    // IDs of events in modeled HTTP responses; perf proves first-seen reads.
+    const served = new Set();
     const olderPageTimers = new Set();
     const retiredStreams = new Set();
     const observerFailures = [];
@@ -2112,6 +2136,7 @@ export const test = base.extend({
               .map((event) => [event.id, event]),
           ).values(),
         ];
+        for (const { id } of result) served.add(id);
         if (
           filter.search === undefined &&
           filter.until !== undefined &&
@@ -2339,6 +2364,7 @@ export const test = base.extend({
             }
           : undefined,
         pending,
+        served,
         histories,
         // Signed device-cache input for the startup scale journey; same modeled
         // wire responses as a real roster/head read, without visiting every row.
@@ -2706,6 +2732,10 @@ export const test = base.extend({
             !retiredConsole(message, index) &&
             !injectedSidebarFailure(message, index) &&
             !injectedGitHubFailure(message, index) &&
+            !(
+              expectedSidebarIconFailure &&
+              message.includes("Fixture sidebar icon failure")
+            ) &&
             !(
               expectedPageFailure &&
               message.includes("Fixture page render failure")

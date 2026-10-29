@@ -69,7 +69,7 @@ async function fixture(
   originalAttachment = false,
   originalMention = false,
   agentOwner: "viewer" | "other" | undefined = undefined,
-  sessionCard = false,
+  chatCard = false,
   shareRead?: Promise<RelayEvent[]>,
 ) {
   vi.stubGlobal(
@@ -93,7 +93,7 @@ async function fixture(
   const original = message(
     own ? viewer : (agent ?? peer),
     "room",
-    sessionCard
+    chatCard
       ? "[Session: Saved work](buzz://channel/source)"
       : originalAttachment
         ? "Original message\n\n[original.pdf](https://fixture.test/media/original.pdf)"
@@ -242,7 +242,13 @@ async function fixture(
       ),
     );
   }
-  function Surface({ presented = true }: { presented?: boolean }) {
+  function Surface({
+    presented = true,
+    composer = true,
+  }: {
+    presented?: boolean;
+    composer?: boolean;
+  }) {
     const snapshot = useSyncExternalStore(
       (listener) => owner.session.channels.subscribeWindow("room", listener),
       () => owner.session.channels.window("room"),
@@ -263,12 +269,14 @@ async function fixture(
               </MenuRoot>
             </div>
           ))}
-          <MessageComposer
-            session={owner.session}
-            scope="management-test"
-            channelId="room"
-            channelName="Room"
-          />
+          {composer && (
+            <MessageComposer
+              session={owner.session}
+              scope="management-test"
+              channelId="room"
+              channelName="Room"
+            />
+          )}
         </MessageManagement>
       </ConversationPresentation>
     );
@@ -279,6 +287,7 @@ async function fixture(
     owner,
     original,
     publications,
+    preview: () => view.rerender(<Surface composer={false} />),
     present: (presented: boolean) =>
       view.rerender(<Surface presented={presented} />),
     publication(index: number) {
@@ -1033,39 +1042,21 @@ it("keeps a withheld empty-edit deletion recoverable and restores the draft only
   expect(screen.queryByRole("alertdialog")).toBeNull();
 });
 
-it("keeps the delete description stable while announcing the resolved share note", async () => {
-  const gate = deferred<RelayEvent[]>();
-  const h = await fixture(
-    true,
-    false,
-    false,
-    false,
-    false,
-    undefined,
-    true,
-    gate.promise,
-  );
-  fireEvent.click(
-    await screen.findByRole("menuitem", { name: "Delete message" }),
-  );
-  const dialog = await screen.findByRole("alertdialog", {
-    name: "Delete message?",
+it("does not offer Edit message in a preview without a composer", async () => {
+  const t = await fixture();
+  expect(
+    await screen.findByRole("menuitem", { name: "Edit message" }),
+  ).toBeVisible();
+  fireEvent.keyDown(screen.getByRole("menuitem", { name: "Edit message" }), {
+    key: "Escape",
   });
-  const description = dialog.getAttribute("aria-describedby");
-  const text = document.getElementById(description ?? "")?.textContent;
-  try {
-    expect(text).toContain("People may still have copies.");
-    expect(screen.getByRole("button", { name: "Delete" })).toBeEnabled();
-    expect(dialog).not.toHaveTextContent("This share will leave");
-  } finally {
-    await act(async () => gate.resolve([h.original]));
-  }
-  await waitFor(() =>
-    expect(dialog).toHaveTextContent("This share will leave Shared sessions"),
-  );
-  expect(document.getElementById(description ?? "")?.textContent).toBe(text);
-  expect(screen.getByText(/This share will leave/)).toHaveAttribute(
-    "role",
-    "status",
-  );
+  t.preview();
+  fireEvent.click(screen.getByRole("button", { name: "Message actions" }));
+  expect(
+    await screen.findByRole("menuitem", { name: "Delete message" }),
+  ).toBeVisible();
+  expect(
+    screen.queryByRole("menuitem", { name: "Edit message" }),
+  ).not.toBeInTheDocument();
+  expect(t.publications).toHaveLength(0);
 });

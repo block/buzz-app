@@ -11,6 +11,7 @@ import { matchesEvent } from "../relay/projection";
 import { SOLO_LABEL } from "../solo/labels";
 import { createMemberAdministration } from "./administration";
 import {
+  authorizeMemberChange,
   memberAuthority,
   validateMemberAdministrationTemplate,
   type MemberChange,
@@ -213,6 +214,70 @@ it.each(["admin", "guest"] as const)(
     expect(h.owner.capability.snapshot(id).operation?.status).toBe("uncertain");
   },
 );
+it("publishes no member change once the caller's guard turns false during signing", async () => {
+  const h = harness();
+  let eligible = true;
+  const active = vi.fn(() => eligible);
+  const sign = required(h.sign.getMockImplementation());
+  h.sign.mockImplementationOnce(async (template) => {
+    eligible = false;
+    return sign(template);
+  });
+  await h.owner.capability.run(id, change, undefined, active);
+  expect(active).toHaveBeenCalled();
+  expect(h.publish).not.toHaveBeenCalled();
+  expect(h.owner.capability.snapshot(id)).toMatchObject({
+    operation: { status: "failed" },
+    error: "Member change cancelled",
+  });
+  // Nothing reached the relay, so a later eligible change is not fenced as uncertain.
+  await h.owner.capability.run(id, change);
+  expect(h.owner.capability.snapshot(id).operation?.status).toBe("confirmed");
+});
+it("checks the guard only after the final re-authorization read settles", async () => {
+  const h = harness();
+  let eligible = true;
+  const active = vi.fn(() => eligible);
+  const started = deferred(),
+    gate = deferred();
+  const sign = required(h.sign.getMockImplementation());
+  h.sign.mockImplementationOnce(async (template) => {
+    h.read.mockImplementationOnce(async () => {
+      started.resolve();
+      await gate.promise;
+      return h.events();
+    });
+    return sign(template);
+  });
+  const running = h.owner.capability.run(id, change, undefined, active);
+  try {
+    await started.promise;
+    expect(active).not.toHaveBeenCalled();
+    eligible = false;
+  } finally {
+    gate.resolve();
+  }
+  await running;
+  expect(active).toHaveBeenCalledOnce();
+  expect(h.publish).not.toHaveBeenCalled();
+  expect(h.owner.capability.snapshot(id).operation?.status).toBe("failed");
+  eligible = true;
+  await h.owner.capability.run(id, change, undefined, active);
+  expect(h.publish).toHaveBeenCalledOnce();
+  expect(h.owner.capability.snapshot(id).operation?.status).toBe("confirmed");
+});
+it("publishes nothing when the caller's signal aborts during signing", async () => {
+  const h = harness();
+  const controller = new AbortController();
+  const sign = required(h.sign.getMockImplementation());
+  h.sign.mockImplementationOnce(async (template) => {
+    controller.abort();
+    return sign(template);
+  });
+  await h.owner.capability.run(id, change, controller.signal);
+  expect(h.publish).not.toHaveBeenCalled();
+  expect(h.owner.capability.snapshot(id).operation?.status).toBe("failed");
+});
 it.each(["owner", "bot", "unknown"])(
   "never coerces %s target roles",
   async (role) => {
@@ -264,17 +329,44 @@ it("protects all owners and self even when co-owners exist", async () => {
   }
   expect(h.sign).not.toHaveBeenCalled();
 });
-it.each(["dm", "archived", "solo"])("excludes %s channels", async (kind) => {
+it.each(["dm", "archived"])("excludes %s channels", async (kind) => {
   const h = harness();
   h.setEvents([
     h.record(39000, [
       ["d", id],
       ["t", kind === "dm" ? "dm" : "stream"],
       ...(kind === "archived" ? [["archived", "true"]] : []),
-      ...(kind === "solo" ? [["t", SOLO_LABEL]] : []),
     ]),
     ...h.events().slice(1),
   ]);
+  await h.owner.capability.run(id, change);
+  expect(h.sign).not.toHaveBeenCalled();
+});
+function soloHarness() {
+  const h = harness();
+  h.setEvents([
+    h.record(39000, [
+      ["d", id],
+      ["t", "stream"],
+      ["t", SOLO_LABEL],
+    ]),
+    ...h.events().slice(1),
+  ]);
+  return h;
+}
+it("lets a Solo chat owner remove a participant", async () => {
+  const h = soloHarness();
+  await h.owner.capability.run(id, { ...change, role: "remove" });
+  expect(h.publish.mock.calls[0]?.[0]).toMatchObject({
+    kind: 9001,
+    tags: [
+      ["h", id],
+      ["p", target],
+    ],
+  });
+});
+it("never lets a Solo chat owner change roles", async () => {
+  const h = soloHarness();
   await h.owner.capability.run(id, change);
   expect(h.sign).not.toHaveBeenCalled();
 });
@@ -381,7 +473,13 @@ it.each(["ack", "lost", "read"])(
     });
     h.owner.clear();
     expect(h.owner.capability.snapshot(id)).toMatchObject({
-      authority: { roles: {}, canManage: false, canRemoveOwnedAgent: false },
+      authority: {
+        roles: {},
+        canManage: false,
+        canRemove: false,
+        canRemoveOwnedAgent: false,
+        system: false,
+      },
       operation: { change, status: "uncertain" },
     });
     await expect(h.owner.capability.run(id, change)).rejects.toThrow(
@@ -416,7 +514,13 @@ it.each(["access", "invalid ID"])(
     await h.owner.capability.refresh(channelId);
     expect(h.owner.capability.snapshot(channelId)).toMatchObject({
       status: "error",
-      authority: { roles: {}, canManage: false, canRemoveOwnedAgent: false },
+      authority: {
+        roles: {},
+        canManage: false,
+        canRemove: false,
+        canRemoveOwnedAgent: false,
+        system: false,
+      },
       error:
         failure === "access"
           ? "Channel access unavailable; refresh membership."
@@ -437,7 +541,13 @@ it.each(["clear", "dispose"] as const)(
     await pending;
     expect(h.owner.capability.snapshot(id)).toMatchObject({
       status: "idle",
-      authority: { roles: {}, canManage: false, canRemoveOwnedAgent: false },
+      authority: {
+        roles: {},
+        canManage: false,
+        canRemove: false,
+        canRemoveOwnedAgent: false,
+        system: false,
+      },
     });
   },
 );
@@ -619,7 +729,13 @@ it.each(["cache", "access"] as const)(
       await clear();
       expect(admin.snapshot(id)).toMatchObject({
         status: "idle",
-        authority: { roles: {}, canManage: false, canRemoveOwnedAgent: false },
+        authority: {
+          roles: {},
+          canManage: false,
+          canRemove: false,
+          canRemoveOwnedAgent: false,
+          system: false,
+        },
         operation: { change, status: "uncertain" },
       });
       await recoverAccess();
@@ -631,7 +747,9 @@ it.each(["cache", "access"] as const)(
       expect(admin.snapshot(id).authority).toEqual({
         roles: {},
         canManage: false,
+        canRemove: false,
         canRemoveOwnedAgent: false,
+        system: false,
       });
       await recoverAccess();
       await expect(admin.run(id, change)).rejects.toThrow(/not be sent again/);
@@ -952,4 +1070,29 @@ it("shares exact native/broker command admission fixtures", () => {
     ).not.toThrow();
   for (const { event } of contract.rejected)
     expect(() => validateMemberAdministrationTemplate(event, viewer)).toThrow();
+});
+
+it("authorizes a system-channel add only for a non-member other than the viewer with an editable role", () => {
+  const state = {
+    roles: { [viewer]: "owner" as const, [author]: "member" as const },
+    canManage: true,
+    canRemove: true,
+    canRemoveOwnedAgent: false,
+    system: true,
+  };
+  const add = (change: Partial<MemberChange>) => () =>
+    authorizeMemberChange(state, viewer, {
+      pubkey: target,
+      expectedRole: "none",
+      role: "member",
+      ...change,
+    } as MemberChange);
+
+  expect(add({})).not.toThrow();
+  expect(add({ pubkey: author })).toThrow(/Membership or permissions changed/);
+  expect(add({ pubkey: viewer })).toThrow(/Membership or permissions changed/);
+  expect(add({ role: "remove" })).toThrow(/Membership or permissions changed/);
+  expect(add({ role: "owner" as never })).toThrow(
+    /Membership or permissions changed/,
+  );
 });

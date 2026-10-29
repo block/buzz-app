@@ -140,6 +140,11 @@ describe("validateObject", () => {
 });
 
 describe("matching", () => {
+  it("rejects the removed keywords selector", () => {
+    expect(
+      validateObject("watch/w", { ...watch, keywords: ["build failed"] }),
+    ).toBe("Unknown field: keywords");
+  });
   it("matches enabled watches by since, channel, kind and tags", () => {
     expect(watchMatches(watch, event())).toBe(true);
     expect(watchMatches({ ...watch, enabled: false }, event())).toBe(false);
@@ -247,4 +252,56 @@ describe("matching", () => {
     expect(timerSpent(timer, { ...state, used: 1 }, 0)).toBe(true);
     expect(timerSpent({ ...timer, expires_at: 50 }, state, 50)).toBe(true);
   });
+});
+
+it("validates delivery addresses independently of subscription selectors", () => {
+  const subscriptions = [
+    watch,
+    {
+      type: "timer",
+      interest_id: "default",
+      enabled: true,
+      prompt: "tick",
+      armed_at: 0,
+      interval_secs: 60,
+      max_occurrences: 1,
+      expires_at: null,
+    },
+    {
+      type: "source",
+      interest_id: "default",
+      enabled: true,
+      provider: "example/check",
+      config: {},
+    },
+  ];
+  for (const subscription of subscriptions) {
+    expect(validateObject("watch/delivery", subscription)).toBeUndefined();
+    expect(
+      validateObject("watch/delivery", { ...subscription, channel }),
+    ).toBeUndefined();
+    expect(
+      validateObject("watch/delivery", {
+        ...subscription,
+        channel,
+        root: "e".repeat(64),
+      }),
+    ).toBeUndefined();
+    expect(
+      validateObject("watch/delivery", {
+        ...subscription,
+        root: "e".repeat(64),
+      }),
+    ).toMatch(/requires a channel/);
+    expect(
+      validateObject("watch/delivery", { ...subscription, channel: "invalid" }),
+    ).toMatch(/channel/);
+    expect(
+      validateObject("watch/delivery", {
+        ...subscription,
+        channel,
+        root: "invalid",
+      }),
+    ).toMatch(/root/);
+  }
 });

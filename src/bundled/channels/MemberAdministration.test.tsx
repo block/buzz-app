@@ -92,6 +92,8 @@ async function setup(
         ],
       })
     : profile(target, profileBody);
+  const viewerProfile = profile(viewer, { name: "Carl" });
+  const ownerProfile = profile(owner, { name: "Owner" });
   let role: string | undefined = targetRole;
   let tick = 1700000000;
   let lag = false;
@@ -127,9 +129,9 @@ async function setup(
         ...members().map(([key, r]) => ["p", key ?? "", "", r ?? ""]),
       ],
     }),
-    profile(viewer, { name: "Carl" }),
+    viewerProfile,
     targetProfile,
-    profile(owner, { name: "Owner" }),
+    ownerProfile,
   ];
   const publish = vi.fn(async (event: RelayEvent) => {
     if (!lag)
@@ -176,7 +178,9 @@ async function setup(
   stops.push(sessionOwner.dispose);
   const session = sessionOwner.session;
   session.channels.ensureList();
-  await vi.waitFor(() => expect(session.channels.list().status).toBe("ready"));
+  await vi.waitFor(() => expect(session.channels.list().status).toBe("ready"), {
+    interval: vi.isFakeTimers() ? 50 : 1,
+  });
   const onOpenLink = vi.fn(() => true);
   const onOpenConversation = vi.fn(() => true);
   const openMessage = vi.fn(
@@ -204,7 +208,7 @@ async function setup(
   );
   const user = userEvent.setup();
   dialogReads = true;
-  await user.click(screen.getByRole("button", { name: "Channel members" }));
+  await user.click(screen.getByRole("button", { name: "Access" }));
   if (roleRead || initialReads)
     await screen.findByRole("status", { name: "Loading members" });
   else await screen.findByText("Morgan");
@@ -521,18 +525,14 @@ it("keeps resolved rows and focus while refreshing, and reopens warm without a s
     await vi.waitFor(() =>
       expect(refresh).toHaveAttribute("aria-busy", "false"),
     );
-    await t.user.click(
-      screen.getByRole("button", { name: "Close channel members" }),
-    );
+    await t.user.click(screen.getByRole("button", { name: "Close" }));
     const reopen = deferred();
     t.query.mockImplementation(async (filters) => {
       await reopen.promise;
       return query(filters);
     });
     try {
-      await t.user.click(
-        screen.getByRole("button", { name: "Channel members" }),
-      );
+      await t.user.click(screen.getByRole("button", { name: "Access" }));
       expect(
         screen.queryByRole("status", { name: "Loading members" }),
       ).toBeNull();
@@ -589,7 +589,7 @@ it.each(["cancel", "close", "escape", "outside"])(
   "returns from confirmation with %s without losing the search or sending a write",
   async (dismiss) => {
     const t = await setup();
-    const original = screen.getByRole("dialog", { name: "Channel members" });
+    const original = screen.getByRole("dialog", { name: "Manage members" });
     await t.user.type(screen.getByRole("searchbox"), "Morgan");
     const dialog = await t.choose("Remove from channel");
     expect(dialog).toBe(original);
@@ -607,13 +607,13 @@ it.each(["cancel", "close", "escape", "outside"])(
     else
       await t.user.click(
         within(dialog).getByRole("button", {
-          name: dismiss === "cancel" ? "Cancel" : "Back to channel members",
+          name: dismiss === "cancel" ? "Cancel" : "Back to members",
         }),
       );
     const search = await screen.findByRole("searchbox");
     expect(search).toHaveValue("Morgan");
     await vi.waitFor(() => expect(search).toHaveFocus());
-    expect(screen.getByRole("dialog", { name: "Channel members" })).toBe(
+    expect(screen.getByRole("dialog", { name: "Manage members" })).toBe(
       original,
     );
     expect(t.publish).not.toHaveBeenCalled();
@@ -635,7 +635,7 @@ it("keeps confirmation read-only when the verified target role changes", async (
 
 it("confirms removal and removes only the confirmed roster entry", async () => {
   const t = await setup();
-  const membersDialog = screen.getByRole("dialog", { name: "Channel members" });
+  const membersDialog = screen.getByRole("dialog", { name: "Manage members" });
   const dialog = await t.choose("Remove from channel");
   expect(dialog).toBe(membersDialog);
   expect(screen.getAllByRole("dialog")).toHaveLength(1);
@@ -864,13 +864,11 @@ it("keeps unconfirmed roles and session recovery across close/reopen without rep
       .closest("section"),
   ).toHaveAttribute("aria-label", "People");
   await expectProfileOnly(t.user, "Morgan");
-  await t.user.click(
-    screen.getByRole("button", { name: "Close channel members" }),
-  );
+  await t.user.click(screen.getByRole("button", { name: "Close" }));
   await vi.waitFor(() =>
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
   );
-  await t.user.click(screen.getByRole("button", { name: "Channel members" }));
+  await t.user.click(screen.getByRole("button", { name: "Access" }));
   await screen.findByText(/This request may have taken effect/);
   await vi.waitFor(() =>
     expect(
@@ -909,13 +907,11 @@ it("pending operations survive closing while suppressing duplicate actions", asy
     );
     await vi.waitFor(() => expect(t.publish).toHaveBeenCalledOnce());
     await expectProfileOnly(t.user, "Morgan");
-    await t.user.click(
-      screen.getByRole("button", { name: "Close channel members" }),
-    );
+    await t.user.click(screen.getByRole("button", { name: "Close" }));
     await vi.waitFor(() =>
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
     );
-    await t.user.click(screen.getByRole("button", { name: "Channel members" }));
+    await t.user.click(screen.getByRole("button", { name: "Access" }));
     expect(
       screen.queryByText(/Checking permissions and waiting/),
     ).not.toBeInTheDocument();
@@ -1020,13 +1016,13 @@ it.each([true, false])(
   async (supported) => {
     const t = await setup("owner", "member", supported);
     const section = screen.getByRole("region", { name: "People" });
-    const dialog = screen.getByRole("dialog", { name: "Channel members" });
+    const dialog = screen.getByRole("dialog", { name: "Manage members" });
     const header = required(dialog.querySelector("header"));
     const refresh = within(header).getByRole("button", {
       name: "Refresh member data",
     });
     const close = within(header).getByRole("button", {
-      name: "Close channel members",
+      name: "Close",
     });
     expect(refresh).toHaveAttribute("data-variant", "ghost");
     expect(refresh).toHaveAttribute("data-icon-size", "compact");
@@ -1053,13 +1049,12 @@ it.each([true, false])(
     await vi.waitFor(() =>
       expect(refresh).not.toHaveAttribute("aria-disabled", "true"),
     );
+    // An empty role group is hidden; search results say why it is empty.
     expect(section).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("region", { name: "People" }),
+      screen.queryByText("No members match your search."),
     ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: /Open profile for Morgan/ }),
-    ).not.toBeInTheDocument();
+    expect(screen.getByText(/^No other matching people/)).toBeVisible();
     expect(screen.getByRole("searchbox")).toHaveValue("Morgan");
     expect(t.publish).not.toHaveBeenCalled();
   },
@@ -1335,12 +1330,12 @@ it("keeps Members and restores the menu trigger when profile navigation is decli
   await vi.waitFor(() =>
     expect(screen.queryByRole("menu")).not.toBeInTheDocument(),
   );
-  expect(screen.getByRole("dialog", { name: "Channel members" })).toBeVisible();
+  expect(screen.getByRole("dialog", { name: "Manage members" })).toBeVisible();
   await vi.waitFor(() => expect(actions).toHaveFocus());
   expect(t.onOpenLink).toHaveBeenCalledOnce();
   expect(t.onOpenLink).toHaveBeenCalledWith(
     expect.any(String),
-    screen.getByRole("button", { name: "Channel members", hidden: true }),
+    screen.getByRole("button", { name: "Access", hidden: true }),
   );
   expect(t.publish).not.toHaveBeenCalled();
 });
@@ -1393,9 +1388,7 @@ it.each([false, true])(
     }
     await t.user.type(screen.getByRole("searchbox"), "Carl");
     expect(listeners.has(t.target.pubkey)).toBe(false);
-    await t.user.click(
-      screen.getByRole("button", { name: "Close channel members" }),
-    );
+    await t.user.click(screen.getByRole("button", { name: "Close" }));
     await vi.waitFor(() => expect(listeners.size).toBe(0));
     expect(t.publish).not.toHaveBeenCalled();
   },
@@ -1528,7 +1521,7 @@ it.each(["read", "navigation"])(
       ),
     ).toBeVisible();
     expect(
-      screen.getByRole("dialog", { name: "Channel members" }),
+      screen.getByRole("dialog", { name: "Manage members" }),
     ).toBeVisible();
     await t.user.click(actions);
     await t.user.click(
@@ -1567,9 +1560,7 @@ it("closing Members aborts the DM waiter and prevents late navigation", async ()
   );
   const signal = required(t.openMessage.mock.calls[0]?.[1]);
   expect(signal.aborted).toBe(false);
-  await t.user.click(
-    screen.getByRole("button", { name: "Close channel members" }),
-  );
+  await t.user.click(screen.getByRole("button", { name: "Close" }));
   expect(signal.aborted).toBe(true);
   await act(async () => release("dm-1"));
   expect(t.onOpenConversation).not.toHaveBeenCalled();
@@ -1656,10 +1647,8 @@ it("preserves the identity filter through role changes and resets on reopen", as
   expect(
     screen.getByRole("button", { name: /Open profile for Morgan/ }),
   ).toHaveAccessibleName(/, admin$/);
-  await t.user.click(
-    screen.getByRole("button", { name: "Close channel members" }),
-  );
-  await t.user.click(screen.getByRole("button", { name: "Channel members" }));
+  await t.user.click(screen.getByRole("button", { name: "Close" }));
+  await t.user.click(screen.getByRole("button", { name: "Access" }));
   await screen.findByText("Morgan");
   expect(filter()).toHaveTextContent("All");
 });

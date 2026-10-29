@@ -13,6 +13,10 @@ import {
 import type { EventTemplate, VerifiedEvent } from "nostr-tools";
 import { eventDto } from "./events.ts";
 import { EMOJI_SET } from "./emoji.ts";
+import type {
+  ArtifactSyncFilter,
+  ArtifactSyncSink,
+} from "./artifact-sync-filter.ts";
 
 export const LIVE_CHANNEL_CAPACITY = 1022;
 export const LIVE_BATCH_SIZE = 10; // Relay's per-REQ filter cap; replay stays per channel.
@@ -25,6 +29,12 @@ export const SETUP_TIMEOUT_MS = 10_000;
 const MAX_QUOTA_RETRIES = 3;
 const BASE_RECONNECT_DELAY = 500;
 const MAX_RECONNECT_DELAY = 30_000;
+/** Wait before retrying a refusal that needs someone to act (a rejected AUTH, a
+ * route CLOSED as blocked). It can still clear: access changes, a relay restarts,
+ * a locked signer unlocks. One recovery tick first, doubling to 10 minutes, so
+ * a relay that keeps refusing sees at most 6 attempts an hour per route. */
+export const liveSlowRetryDelay = (failures: number) =>
+  Math.min(LIVE_RECOVERY_INTERVAL * 2 ** (failures - 1), 600_000);
 /** Host-owned server cooldown survives socket/POST replacement.
  * Healthy traffic has no inter-request delay; outstanding work is bounded below. */
 export function createLiveAdmission() {
@@ -144,6 +154,12 @@ export type LiveSubscription = {
     signal: AbortSignal,
   ): Promise<boolean | null | { retryAfterMs: number }>;
   watchPresence?(authors: readonly string[]): void;
+  /** One NIP-AR sync REQ on this socket. Sent once authenticated; a lost
+   * socket ends it with `disconnected:`. The caller owns restart. */
+  syncArtifacts?(
+    filter: ArtifactSyncFilter,
+    sink: ArtifactSyncSink,
+  ): () => void;
   retry(): void;
   dispose(): void;
 };
@@ -197,6 +213,9 @@ type Route = {
   previous?: Route;
   retryRenewal?: boolean;
   quotaRetries: number;
+  /** Consecutive refusals that need action, and when the recover tick may retry. */
+  refusals?: number;
+  retryAt?: number;
   deadline?: ReturnType<typeof setTimeout>;
 };
 export const CHANNEL_KINDS = [
@@ -224,9 +243,15 @@ export function subscribeRelayTraffic(
   let dispatchTimer: ReturnType<typeof setTimeout> | undefined;
   let recoveryTimer: ReturnType<typeof setTimeout> | undefined;
   let reconnectDelay = BASE_RECONNECT_DELAY;
+  let authFailures = 0;
   let generation = 0,
     serial = 0;
   let authenticated = false;
+  // Whether the relay sent anything since the last recovery tick, the probe
+  // that asks it to when it did not, and the current socket's reconnect.
+  let heard = false;
+  let probe: string | undefined;
+  let unresponsive: ((reason: string) => void) | undefined;
   let connection: LiveSnapshot["status"] = "connecting";
   let connectionError: string | undefined;
   let interests: string[] = [];
@@ -242,6 +267,18 @@ export function subscribeRelayTraffic(
     | undefined;
   const routes = new Map<string, Route>();
   const wires = new Map<string, Route>();
+  type SyncWire = {
+    filter: ArtifactSyncFilter;
+    sink: ArtifactSyncSink;
+    wire?: string;
+  };
+  const syncs = new Set<SyncWire>();
+  const syncWires = new Map<string, SyncWire>();
+  function endSync(sync: SyncWire, reason: string) {
+    if (!syncs.delete(sync)) return;
+    if (sync.wire) syncWires.delete(sync.wire);
+    sync.sink.closed(reason);
+  }
   const notify = () => {
     admission.setup(
       routes,
@@ -319,6 +356,21 @@ export function subscribeRelayTraffic(
   }
   function recover() {
     if (closed || !authenticated) return;
+    // An open socket can stop delivering without an error or close, and its
+    // routes then only time out. A minute of silence asks for an empty answer;
+    // no answer at all means the socket is dead, so replace it. A probe is a
+    // request too: during a relay cooldown it waits for a later silent minute.
+    if (!heard && !admission.delay()) {
+      if (probe) send(["CLOSE", probe]);
+      probe = `probe-${++serial}`;
+      send(["REQ", probe, { kinds: [44100], "#p": [viewer], limit: 0 }]);
+      clearTimeout(deadline);
+      deadline = setTimeout(
+        () => unresponsive?.("Live connection stopped answering"),
+        setupTimeoutMs,
+      );
+    }
+    heard = false;
     // A minute authenticated restores prompt recovery for the next rollout;
     // opening/authenticating alone must not reset backoff on a flapping relay.
     reconnectDelay = BASE_RECONNECT_DELAY;
@@ -335,12 +387,24 @@ export function subscribeRelayTraffic(
       ) {
         route.status = "pending";
         delete route.retryRenewal;
+      } else if (
+        route.status === "error" &&
+        route.retryAt !== undefined &&
+        route.retryAt <= Date.now()
+      ) {
+        route.status = "pending";
+        delete route.retryAt;
       }
     }
     pump();
     notify();
     if (closed || generation !== current) return;
-    callbacks.recover?.();
+    try {
+      callbacks.recover?.();
+    } catch (error) {
+      // The chain must outlive a failing hook: log it and keep recovering.
+      log.error(`${peer} live recovery hook failed`, error);
+    }
     if (!closed && authenticated && generation === current)
       recoveryTimer = setTimeout(recover, LIVE_RECOVERY_INTERVAL);
   }
@@ -430,10 +494,17 @@ export function subscribeRelayTraffic(
     pump();
     notify();
   }
+  /** A stop waits for manual Retry, so an earlier refusal's deadline must not revive it. */
+  function stop(route: Route, reason: string) {
+    route.status = "error";
+    route.error = reason;
+    delete route.retryAt;
+  }
   function fail(route: Route, reason: string, transient = false) {
+    const denial = reason === "restricted: not a channel member";
     const previous = route.previous;
     // Only an established, unchanged scope may outlive a failed renewal. Never
-    // restore a retired channel lifetime or bypass denial/invalid-traffic cleanup.
+    // restore a retired channel lifetime or bypass denial cleanup.
     const retain =
       transient &&
       previous?.status === "live" &&
@@ -443,6 +514,7 @@ export function subscribeRelayTraffic(
     if (retain) delete route.previous;
     closeWire(route);
     delete route.retryRenewal;
+    delete route.retryAt;
     if (retain) {
       route.previous = previous;
       // Quota owns its existing bounded retries; the minute timer cannot reset it.
@@ -450,6 +522,12 @@ export function subscribeRelayTraffic(
     }
     route.status = "error";
     route.error = reason;
+    // A denial belongs to the session's membership flow. Any other refusal can
+    // still clear, so the recover tick retries it with backoff.
+    if (!transient && !denial) {
+      route.refusals = (route.refusals ?? 0) + 1;
+      route.retryAt = Date.now() + liveSlowRetryDelay(route.refusals);
+    }
     if (reason.startsWith("rate-limited:")) {
       const hint = /^rate-limited: quota exceeded; retry in (\d+)s$/.exec(
         reason,
@@ -457,10 +535,8 @@ export function subscribeRelayTraffic(
       const seconds = hint ? Number(hint[1]) : 5;
       if (!Number.isSafeInteger(seconds) || seconds > 60) {
         for (const queued of routes.values())
-          if (queued.status === "pending" && !queued.wire) {
-            queued.status = "error";
-            queued.error = "Unsupported live cooldown; automatic setup stopped";
-          }
+          if (queued.status === "pending" && !queued.wire)
+            stop(queued, "Unsupported live cooldown; automatic setup stopped");
         // Conservative shared pause survives replacement; never overflow a timer.
         admission.pause(
           Number.isSafeInteger(seconds) && seconds <= 86400 ? seconds : 86400,
@@ -471,15 +547,15 @@ export function subscribeRelayTraffic(
         else {
           // Stop the unsent queue too: rejection must never drain it into an exhausted budget.
           for (const queued of routes.values())
-            if (queued.status === "pending" && !queued.wire) {
-              queued.status = "error";
-              queued.error =
-                "Live request cooldown retries exhausted; retry available";
-            }
+            if (queued.status === "pending" && !queued.wire)
+              stop(
+                queued,
+                "Live request cooldown retries exhausted; retry available",
+              );
         }
       }
     }
-    if (reason === "restricted: not a channel member") {
+    if (denial) {
       const current = generation;
       const denied = new Set(scope(route));
       denying = denied;
@@ -506,6 +582,17 @@ export function subscribeRelayTraffic(
         return;
       }
       requests.dispatch(request, send);
+    }
+    for (const sync of syncs) {
+      if (sync.wire) continue;
+      const delay = admission.delay();
+      if (delay > 0) {
+        dispatchTimer = setTimeout(pump, delay);
+        return;
+      }
+      sync.wire = `sync-${++serial}`;
+      syncWires.set(sync.wire, sync);
+      send(["REQ", sync.wire, sync.filter]);
     }
     let active = [...routes.values()].filter(
       (route) => route.wire && route.status === "pending",
@@ -620,6 +707,11 @@ export function subscribeRelayTraffic(
     for (const route of routes.values()) clearTimeout(route.deadline);
     wires.clear();
     requests.clear();
+    // A sync has no resume: every sent one ends; unsent ones wait for the next socket.
+    const lost = [...syncs].filter((sync) => sync.wire);
+    syncWires.clear();
+    for (const sync of lost)
+      endSync(sync, "disconnected: live connection lost");
     if (socket) log.info(`${peer} disconnect`);
     socket?.close();
     socket = undefined;
@@ -633,6 +725,8 @@ export function subscribeRelayTraffic(
     sync();
     const current = generation;
     const valid = () => !closed && current === generation;
+    heard = false;
+    probe = undefined;
     const reconnect = (reason: string) => {
       if (!valid()) return;
       log.warn(`${peer} ${reason}`);
@@ -648,13 +742,18 @@ export function subscribeRelayTraffic(
       reconnectDelay = Math.min(MAX_RECONNECT_DELAY, reconnectDelay * 2);
       retryTimer = setTimeout(connect, delay);
     };
-    const terminal = (reason: string) => {
+    unresponsive = reconnect;
+    // The error stays in state. Recovery treats it as settled, so only this
+    // slow timer retries it; a signer/viewer mismatch cannot clear and never does.
+    const terminal = (reason: string, retryable = true) => {
       if (!valid()) return;
       log.error(`${peer} ${reason}`);
       clearSocket();
       connection = "error";
       connectionError = reason;
       notify();
+      if (retryable)
+        retryTimer = setTimeout(connect, liveSlowRetryDelay(++authFailures));
     };
     let ws: WebSocket;
     try {
@@ -676,6 +775,11 @@ export function subscribeRelayTraffic(
     };
     ws.onmessage = async (event) => {
       if (!valid()) return;
+      if (authenticated) {
+        // Any frame proves the socket still reaches the relay.
+        heard = true;
+        clearTimeout(deadline);
+      }
       if (typeof event.data !== "string" || event.data.length > 1024 * 1024) {
         logSocketFrame(peer, "←", event.data);
         return;
@@ -689,6 +793,22 @@ export function subscribeRelayTraffic(
       }
       logSocketFrame(peer, "←", event.data, data);
       if (!Array.isArray(data)) return;
+      if (
+        probe &&
+        data[1] === probe &&
+        (data[0] === "EOSE" || data[0] === "CLOSED")
+      ) {
+        if (data[0] === "EOSE") send(["CLOSE", probe]);
+        else if (
+          typeof data[2] === "string" &&
+          data[2].startsWith("rate-limited:")
+        ) {
+          const hint = /retry in (\d+)s$/.exec(data[2]);
+          admission.pause(hint ? Math.min(Number(hint[1]), 86400) : 5);
+        }
+        probe = undefined;
+        return;
+      }
       if (
         data[0] === "AUTH" &&
         typeof data[1] === "string" &&
@@ -707,7 +827,7 @@ export function subscribeRelayTraffic(
           });
           if (!valid()) return;
           if (auth.pubkey !== viewer) {
-            terminal("Live signer does not match viewer");
+            terminal("Live signer does not match viewer", false);
             return;
           }
           authId = auth.id;
@@ -724,6 +844,7 @@ export function subscribeRelayTraffic(
         }
         clearTimeout(deadline);
         authenticated = true;
+        authFailures = 0;
         connection = "connected";
         recoveryTimer = setTimeout(recover, LIVE_RECOVERY_INTERVAL);
         pump();
@@ -760,6 +881,36 @@ export function subscribeRelayTraffic(
         }
         return;
       }
+      const sync =
+        typeof data[1] === "string" ? syncWires.get(data[1]) : undefined;
+      if (sync) {
+        if (!authenticated) return;
+        if (data[0] === "EVENT") {
+          let incoming: VerifiedEvent;
+          try {
+            incoming = eventDto(data[2]);
+          } catch {
+            send(["CLOSE", data[1]]);
+            endSync(sync, "error: relay supplied an invalid event");
+            return;
+          }
+          sync.sink.event(incoming);
+        } else if (data[0] === "EOSE") sync.sink.eose();
+        else if (data[0] === "CLOSED") {
+          const reason =
+            typeof data[2] === "string"
+              ? data[2].slice(0, 512)
+              : "error: relay closed the sync";
+          // The quota is shared: the view's restart and every other queued
+          // dispatch wait for the server cooldown.
+          if (reason.startsWith("rate-limited:")) {
+            const hint = /retry in (\d+)s$/.exec(reason);
+            admission.pause(hint ? Math.min(Number(hint[1]), 86400) : 5);
+          }
+          endSync(sync, reason);
+        }
+        return;
+      }
       const route =
         typeof data[1] === "string" ? wires.get(data[1]) : undefined;
       if (!authenticated || !route) return;
@@ -778,7 +929,8 @@ export function subscribeRelayTraffic(
         try {
           incoming = eventDto(data[2]);
         } catch {
-          fail(currentRoute ?? route, "Relay supplied invalid live traffic");
+          // One undecodable event must not take the route (or its batch) down.
+          log.warn(`${peer} dropped an undecodable live event`);
           return;
         }
         const ids = scope(route);
@@ -847,6 +999,7 @@ export function subscribeRelayTraffic(
         delete route.previous;
         route.status = "live";
         delete route.error;
+        delete route.refusals;
         route.replay = route.count >= LIVE_REPLAY_LIMIT ? "limited" : "unknown";
         notify();
         if (!valid() || wires.get(route.wire ?? "") !== route) return;
@@ -870,6 +1023,24 @@ export function subscribeRelayTraffic(
   }
   connect();
   return {
+    syncArtifacts(filter, sink) {
+      const sync: SyncWire = { filter, sink };
+      if (closed) {
+        queueMicrotask(() =>
+          sink.closed("unsupported: relay session disposed"),
+        );
+        return () => {};
+      }
+      syncs.add(sync);
+      queueMicrotask(pump);
+      return () => {
+        if (!syncs.delete(sync)) return;
+        if (sync.wire) {
+          syncWires.delete(sync.wire);
+          send(["CLOSE", sync.wire]);
+        }
+      };
+    },
     watchPresence(authors) {
       const next = livePresenceAuthors(authors);
       if (closed || JSON.stringify(next) === JSON.stringify(presenceAuthors))
@@ -1011,8 +1182,12 @@ export function subscribeRelayTraffic(
       if (closed) return;
       closed = true;
       clearTimeout(retryTimer);
+      const ending = [...syncs];
+      syncs.clear();
       clearSocket();
       routes.clear();
+      for (const sync of ending)
+        sync.sink.closed("unsupported: relay session disposed");
     },
   };
 }

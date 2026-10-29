@@ -2,11 +2,13 @@ import { PreviewCard as BasePreviewCard } from "@base-ui/react/preview-card";
 import {
   useCallback,
   useRef,
+  useState,
   type ReactElement,
   type ReactNode,
   type RefObject,
 } from "react";
 import { behindActiveOverlay, observeOverlays } from "../overlayLayer";
+import { hoverOpenTiming } from "./hoverIntent";
 
 export type PreviewCardProps = {
   /** The one interactive element that anchors and reveals this preview. */
@@ -20,7 +22,8 @@ export type PreviewCardProps = {
   align?: BasePreviewCard.Positioner.Props["align"];
   /** Optional content anchor when the trigger owns a wider hit area. */
   anchor?: BasePreviewCard.Positioner.Props["anchor"];
-  delay?: number;
+  /** A preview in the same group is already open: move to this one at once. */
+  warm?: boolean;
   className?: string;
   id?: string;
   "aria-label"?: string;
@@ -62,7 +65,7 @@ export function PreviewCard({
   side = "bottom",
   align = "start",
   anchor,
-  delay,
+  warm = false,
   className,
   id,
   link,
@@ -70,6 +73,13 @@ export function PreviewCard({
   "aria-label": label,
 }: PreviewCardProps) {
   const triggerRef = useRef<HTMLAnchorElement>(null);
+  const [boundary, setBoundary] = useState<HTMLElement>();
+  const rememberTrigger = useCallback((element: HTMLAnchorElement | null) => {
+    triggerRef.current = element;
+    setBoundary(
+      element?.closest<HTMLElement>("[data-overlay-boundary]") ?? undefined,
+    );
+  }, []);
   const actions = useRef<BasePreviewCard.Root.Actions>(null);
   const popupRef = useRef<HTMLDivElement>(null);
   // Where the trigger was when opening began, or at the last scroll since.
@@ -229,9 +239,9 @@ export function PreviewCard({
     >
       <BasePreviewCard.Trigger
         render={trigger}
-        delay={delay ?? (actionRef ? 0 : 250)}
-        closeDelay={150}
-        ref={triggerRef}
+        {...hoverOpenTiming.preview}
+        {...(warm && { delay: 0 })}
+        ref={rememberTrigger}
         onMouseEnter={() => {
           heldLeave.current = false;
         }}
@@ -258,6 +268,7 @@ export function PreviewCard({
       />
       <BasePreviewCard.Portal>
         <BasePreviewCard.Positioner
+          collisionBoundary={boundary}
           side={side}
           // Keep supplemental controls reachable when no side has enough room.
           sticky={!!actionRef}

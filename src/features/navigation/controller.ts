@@ -29,6 +29,11 @@ export type OpenResult = Readonly<
 export type NavigationFocus = "content" | "preserve";
 export type NavigationOpenOptions = {
   replace?: boolean;
+  /** Close a modal visit: return to the visit behind it when that visit is
+   * this target, otherwise replace this visit. Never adds a visit to Back.
+   * When the host traverses asynchronously, the return lands after open()
+   * resolves, so the resolved result describes the visit being left. */
+  dismiss?: boolean;
   focus?: NavigationFocus;
 };
 export type OpenAttempt = Readonly<{
@@ -73,11 +78,15 @@ export function createNavigationController(
     promise: Promise<OpenResult>;
     resolve: (result: OpenResult) => void;
     pending: boolean;
-    timer?: ReturnType<typeof setTimeout>;
+    timer?: ReturnType<typeof setTimeout> | undefined;
   };
   let disposed = false;
   let active: Operation;
   let snapshot: NavigationSnapshot;
+  // The deadline measures a presenter. None may exist yet (the identity and
+  // key-setup gate, IdentitySetup, hides the app for minutes), so it runs only
+  // while one is attached.
+  let presenters = 0;
   let ingressRetry: (() => Promise<OpenResult>) | undefined;
   const listeners = new Set<() => void>();
   // Commit state and capture each caller's result before invoking external code.
@@ -117,6 +126,16 @@ export function createNavigationController(
     operation.pending = false;
     clearTimeout(operation.timer);
     operation.resolve(result);
+  }
+  function arm(operation: Operation) {
+    if (!presenters || !operation.pending || operation.timer) return;
+    operation.timer = setTimeout(
+      () =>
+        transaction(() => {
+          finish(operation, { status: "failed", reason: "timeout" });
+        }),
+      timeoutMs,
+    );
   }
   function finish(operation: Operation, result: OpenResult) {
     if (operation !== active || !operation.pending) return;
@@ -169,19 +188,15 @@ export function createNavigationController(
       finish(operation, { status: "failed", reason: "invalid-target" });
       return promise;
     }
-    operation.timer = setTimeout(
-      () =>
-        transaction(() => {
-          finish(operation, { status: "failed", reason: "timeout" });
-        }),
-      timeoutMs,
-    );
+    arm(operation);
     emit();
     return promise;
   }
   let resolving: Operation | undefined;
   // Both host drivers publish pushes synchronously; consume this opening only.
   let openingFocus: NavigationFocus | undefined;
+  // A dismissal's traversal may publish after open() returns; it keeps its focus.
+  let returningFocus: NavigationFocus | undefined;
   const unsubscribe = history.attach(() => {
     transaction(() => {
       if (resolving && active === resolving) {
@@ -201,8 +216,8 @@ export function createNavigationController(
         });
         emit();
       } else {
-        const focus = openingFocus;
-        openingFocus = undefined;
+        const focus = openingFocus ?? returningFocus;
+        openingFocus = returningFocus = undefined;
         start(focus);
       }
     });
@@ -237,7 +252,18 @@ export function createNavigationController(
           )
             return start(options?.focus);
           openingFocus = options?.focus;
-          if (options?.replace) history.replace(target);
+          returningFocus = undefined;
+          const previous = history.snapshot().previous;
+          if (
+            options?.dismiss &&
+            previous &&
+            targetKey(previous.target) === targetKey(target) &&
+            history.returnTo(previous.id)
+          ) {
+            if (openingFocus) returningFocus = openingFocus;
+            return active.promise;
+          }
+          if (options?.replace || options?.dismiss) history.replace(target);
           else history.push(target);
           return active.promise;
         } catch {
@@ -277,6 +303,24 @@ export function createNavigationController(
   });
   return {
     navigation,
+    /**
+     * Host-only: a presenter now exists. The pending visit's deadline starts (or
+     * restarts) here and stops when the last presenter detaches, so an attempt
+     * nobody could present never times out, while one a presenter stalls on does.
+     */
+    attach() {
+      presenters++;
+      arm(active);
+      let attached = true;
+      return () => {
+        if (!attached) return;
+        attached = false;
+        presenters--;
+        if (presenters) return;
+        clearTimeout(active.timer);
+        active.timer = undefined;
+      };
+    },
     /** Normalize a pending presentation, not a new intent; never reset its deadline. */
     resolve(attempt: OpenAttempt, input: OpenTarget) {
       return transaction(() => {

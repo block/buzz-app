@@ -5,7 +5,7 @@ import { isChannelRoute } from "../../features/channel-navigation/routes";
 import type { PluginModule } from "../../plugins/api";
 import { ChannelsPage } from "./ChannelsPage";
 import { PageTabs } from "./PageTabs";
-import { registerSharedSessions } from "./shared-sessions-panel";
+import { registerCanvas } from "./canvas-panel";
 import { ChannelTemplateSettings } from "./ChannelTemplateSettings";
 import { ChatCircleIcon, CopyIcon } from "../../shared/design-system/icons";
 import { isApplePlatform } from "../../features/shortcuts/format";
@@ -19,10 +19,11 @@ export const inject = [
   "navigation",
   "settingsCards",
   "agents",
+  "communityReader",
   "shortcuts",
 ];
 export const apply: PluginModule["apply"] = (ctx) => {
-  registerSharedSessions(ctx);
+  registerCanvas(ctx);
   ctx.conversation.registerCompletion({
     id: "channel-typeahead",
     title: "Channel",
@@ -111,6 +112,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         archive={archive}
         companion={companion}
         agents={agents}
+        communities={ctx.communityReader}
       />
     ),
   });

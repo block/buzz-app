@@ -1,5 +1,7 @@
+import { regionLabels } from "../solo/region-labels";
 import { getEventHash, verifyEvent } from "nostr-tools";
 import type { RelayReader } from "./reader";
+import { retryRead } from "./read-retry";
 import type { RelayWriter } from "./transport";
 import type { RelayEvent } from "./events";
 import { PublishRejected } from "./outbox";
@@ -26,6 +28,8 @@ export interface ChannelDetailsCapability {
     base: ChannelDetails,
     draft: ChannelDetailsDraft,
     signal?: AbortSignal,
+    /** Checked synchronously right before publishing; false publishes nothing. */
+    active?: () => boolean,
   ): Promise<void>;
   check(id: string, signal?: AbortSignal): Promise<void>;
   snapshot(id: string): DetailsAttempt | undefined;
@@ -140,7 +144,10 @@ export function createChannelDetails({
       return owned(
         id,
         async (signal) => {
-          const { details, metadata } = await read(id, signal);
+          const { details, metadata } = await retryRead(
+            () => read(id, signal),
+            signal,
+          );
           acceptDiscovery([metadata]);
           signal.throwIfAborted();
           return details;
@@ -164,6 +171,7 @@ export function createChannelDetails({
       base: ChannelDetails,
       input: ChannelDetailsDraft,
       caller?: AbortSignal,
+      active?: () => boolean,
     ) {
       const id = lifecycleChannelId(base.channelId);
       if (!writer || !reader)
@@ -179,11 +187,19 @@ export function createChannelDetails({
       if (chosenName && !labels) throw channelIdentityUnsupported();
       const draft = Object.freeze({
         ...input,
+        ...(input.labels !== undefined
+          ? {
+              labels: [
+                ...new Set([...input.labels, ...regionLabels(base.labels)]),
+              ],
+            }
+          : {}),
         ...(chosenName && labels
           ? {
               labels: [
                 ...new Set([
                   ...(input.labels ?? base.labels ?? []),
+                  ...regionLabels(base.labels),
                   SOLO_NAMED_LABEL,
                 ]),
               ],
@@ -231,6 +247,8 @@ export function createChannelDetails({
               throw new Error("Signer changed the channel details command.");
             await authorize();
             signal.throwIfAborted();
+            if (active?.() === false)
+              throw new DOMException("Channel edit cancelled", "AbortError");
             publicationStarted = true;
             await writer.publish(signed, signal);
             await confirm(id, draft, signal);

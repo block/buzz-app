@@ -78,7 +78,8 @@ export function MentionPicker({
   const parentAdmission = !!channel && channel.channelType !== "solo";
   const members =
     draftRoster?.map((person) => person.pubkey) ?? channel?.members;
-  const memberKey = members?.join(":") ?? "";
+  // Only an open chooser demands names; typing must not join every member.
+  const memberKey = open && !draftRoster ? (members?.join(":") ?? "") : "";
   useEffect(() => {
     if (draftRoster || !open || !memberKey) return;
     let current = true;
@@ -168,6 +169,7 @@ export function MentionPicker({
           disabled={disabled}
           render={
             <IconButton
+              hint="familiar"
               disabled={disabled}
               size="toolbar"
               ref={trigger}
@@ -288,7 +290,7 @@ export function MentionPicker({
               {...highlight.listProps}
             >
               {candidates.map(
-                ({ recipient, label, agent, disabled: reason }) => (
+                ({ recipient, label, agent, elsewhere, disabled: reason }) => (
                   <NavigationItem
                     variant="option"
                     data-mention-choice=""
@@ -317,7 +319,7 @@ export function MentionPicker({
                               ? parentAdmission
                                 ? "Adds to channel when you send"
                                 : "Adds to chat when you send"
-                              : outsideMentionDetail(channel)}
+                              : outsideMentionDetail(channel, elsewhere)}
                           </small>
                         )}
                       </span>

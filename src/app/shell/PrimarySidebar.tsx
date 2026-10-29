@@ -28,7 +28,8 @@ import { targetKey } from "../../features/navigation/targets";
 import { readView, writeView } from "../../shared/view-state";
 import type { ChannelList } from "../../features/relay/contracts";
 import type { ContributionReader } from "../../features/conversation/contracts";
-import type { ChatIcon } from "../../features/conversation/service";
+import type { ChatIcon, ChatMenu } from "../../features/conversation/service";
+import type { SidebarSections } from "../../features/channel-navigation/sidebar-sections-service";
 
 const noSubscription = () => () => {};
 
@@ -44,6 +45,8 @@ type Props = {
   navigator: Navigation;
   agents?: Agents | undefined;
   chatIcons?: ContributionReader<ChatIcon> | undefined;
+  chatMenus?: ContributionReader<ChatMenu> | undefined;
+  sidebarSections?: SidebarSections | undefined;
   target: OpenTarget;
   children: ReactNode;
 };
@@ -180,6 +183,7 @@ function ScopedSidebar({
           queries={connection.session}
           scope={scope}
           viewer={connection.viewer}
+          sidebarSections={props.sidebarSections}
           cached={!!connection.cached}
           layoutReady={filter === "team" || soloReady}
           connectionError={connection.error}
@@ -218,6 +222,7 @@ function ScopedSidebar({
                       navigator={props.navigator}
                       target={props.target}
                       chatIcons={props.chatIcons}
+                      chatMenus={props.chatMenus}
                     />
                   </section>
                   <div

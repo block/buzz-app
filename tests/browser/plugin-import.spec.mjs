@@ -1,5 +1,6 @@
 import { pluginAction } from "./plugin-settings.mjs";
 import {
+  activate,
   chooseColorMode,
   closeSettings,
   openPage,
@@ -8,6 +9,7 @@ import {
   pageChoices,
   selectSettingsSection,
   settingsDialog,
+  settleDialogMotion,
 } from "./navigation.mjs";
 import { readFile } from "node:fs/promises";
 import { test, expect } from "./fixture.mjs";
@@ -499,6 +501,9 @@ test("Settings controls scale together and keep enlarged labels reachable", asyn
       await button(page, "Add").click();
       const dialog = page.getByRole("dialog", { name: "Add a plugin" });
       await expect(dialog).toBeVisible();
+      // Focus reveals below scroll the nested popup and body scrollers; let
+      // the entrance settle before measuring or revealing anything.
+      await settleDialogMotion(dialog);
       await checkButtons(dialog, scale);
       const folder = button(page, "Browse plugin folder");
       const repository = dialog.getByRole("textbox", {
@@ -702,7 +707,10 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
 
   await button(page, "View Example two details").click();
   await expect(button(page, "Reload")).toHaveCount(0);
-  await enabled.click();
+  // Opening details narrows the catalog column, and the list's layout motion
+  // can still move the row after a pointer has pressed its button. The enabled
+  // state, not hit testing, is under test here.
+  await activate(enabled);
   await expect(enabled).toHaveAccessibleName("Disable Example two");
   await expect(button(page, "Reload")).toHaveCount(0);
   await page.evaluate(() => {

@@ -1,4 +1,3 @@
-import { audienceAuthorityCommunity } from "../sessions/audience-authority";
 import { Channel, convertFileSrc, invoke } from "@tauri-apps/api/core";
 import type { EventTemplate } from "nostr-tools";
 import { communityDestination, relayOrigin } from "../communities/destination";
@@ -312,13 +311,25 @@ export function nativeRelaySigner(community: string): Signer {
   };
 }
 
+export const NOT_A_COMMUNITY_ERROR =
+  "That URL didn't look like a Buzz community. Enter a community URL like wss://communities.buzz.xyz.";
+
 export async function nativeRelayInfo(community: string, signal?: AbortSignal) {
   const response = await nativeRelayRequest(community, "/", undefined, signal);
   if (!response.ok) throw new Error("Community discovery failed");
-  const info: unknown = await response.json();
+  // A website's HTML would otherwise surface WebKit's opaque JSON parse error.
+  const info: unknown = await response.json().catch(() => undefined);
   if (!info || typeof info !== "object" || Array.isArray(info))
-    throw new Error("Invalid community information");
+    throw new Error(NOT_A_COMMUNITY_ERROR);
   return info as Record<string, unknown>;
+}
+
+/** The relay's own key as NIP-11 `self` publishes it: 64 lowercase hex, else absent. */
+export function relaySelf(info: Record<string, unknown>): string | undefined {
+  const self = info.self;
+  return typeof self === "string" && /^[a-f0-9]{64}$/.test(self)
+    ? self
+    : undefined;
 }
 
 export async function connectNativeTransport(
@@ -327,9 +338,8 @@ export async function connectNativeTransport(
 ): Promise<ReadTransport> {
   const origin = communityDestination(community).url;
   const info = await nativeRelayInfo(origin, signal);
-  const author = info.self;
-  if (typeof author !== "string" || !/^[a-f0-9]{64}$/.test(author))
-    throw new Error("Relay did not advertise its identity");
+  const author = relaySelf(info);
+  if (!author) throw new Error("Relay did not advertise its identity");
   const creation =
     Array.isArray(info.supported_nips) && info.supported_nips.includes(29);
   // NIP-CL: the relay keeps channel labels and answers label lookups.
@@ -339,6 +349,10 @@ export async function connectNativeTransport(
   const searchSort =
     Array.isArray(info.supported_extensions) &&
     info.supported_extensions.includes("buzz-search-sort");
+  const artifacts = info.artifacts as
+    | { sync?: { version?: unknown } }
+    | undefined;
+  const artifactSync = artifacts?.sync?.version === 1;
   const transport = await connectSignedTransport(
     nativeRelaySigner(origin),
     origin,
@@ -395,9 +409,6 @@ export async function connectNativeTransport(
   // Capabilities describe implemented host operations, not everything this key can sign.
   return {
     ...transport,
-    audienceAuthorityCommunity: audienceAuthorityCommunity(
-      info.audience_authority,
-    ),
     workflows: workflowHost(async (route, body, signal) => {
       if (route !== "workflow-runs") throw new Error("Invalid workflow read");
       workflowRunsPath(body);
@@ -778,6 +789,7 @@ export async function connectNativeTransport(
       nativeAttachmentUpload(origin, file, signal, progress),
     ...(channelIdentity ? { channelIdentity: true as const } : {}),
     ...(searchSort ? { searchSort: true as const } : {}),
+    ...(artifactSync ? { artifactSync: true as const } : {}),
     writer: {
       ...writer,
       kinds: creation ? [...nativeWriteKinds, 9007] : nativeWriteKinds,

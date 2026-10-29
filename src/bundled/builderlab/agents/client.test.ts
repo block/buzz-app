@@ -140,7 +140,15 @@ it.each([401, 403, 500])(
     vi.mocked(h.host.request).mockResolvedValue(
       response({ error: "private-secret" }, status),
     );
-    const error = await h.client.list(h.signal).catch((error: Error) => error);
+    vi.useFakeTimers();
+    let error: unknown;
+    try {
+      const pending = h.client.list(h.signal).catch((error: Error) => error);
+      await vi.advanceTimersByTimeAsync(7000);
+      error = await pending;
+    } finally {
+      vi.useRealTimers();
+    }
     expect(error).toBeInstanceOf(Error);
     expect(String(error)).not.toContain("private-secret");
     expect(h.session.snapshot().status).toBe(
@@ -192,6 +200,82 @@ const remoteAgent = {
   pubkey: row.agent_pubkey,
   status: "Active",
 } as const;
+it("loads the standalone catalog with model-specific effort identifiers", async () => {
+  const h = await fixture();
+  vi.mocked(h.host.request).mockResolvedValueOnce(
+    response({
+      models: [
+        {
+          id: "model-one",
+          display_name: "Friendly Model",
+          supported_reasoning_efforts: ["none", "max"],
+        },
+      ],
+    }),
+  );
+  expect(await h.client.modelCatalog(h.signal)).toEqual([
+    {
+      id: "model-one",
+      displayName: "Friendly Model",
+      supportedReasoningEfforts: ["none", "max"],
+    },
+  ]);
+  expect(vi.mocked(h.host.request).mock.calls[0]?.[0].url).toBe(
+    "https://builderlab.example/api/goose/v3/beekeeper/get-model-catalog",
+  );
+});
+it.each([
+  null,
+  [null],
+  [{ id: "model" }],
+  [{ id: "model", display_name: "Model", supported_reasoning_efforts: [""] }],
+])("rejects malformed catalog choices: %j", async (models) => {
+  const h = await fixture();
+  vi.mocked(h.host.request).mockResolvedValueOnce(response({ models }));
+  if (models === null)
+    expect(await h.client.modelCatalog(h.signal)).toEqual([]);
+  else
+    await expect(h.client.modelCatalog(h.signal)).rejects.toThrow(
+      "invalid model catalog",
+    );
+});
+it.each([
+  [1, "valid"],
+  ["MODEL_SELECTION_STATUS_SETUP_REQUIRED", "setup-required"],
+  [3, "model-unavailable"],
+  ["MODEL_SELECTION_STATUS_EFFORT_UNSUPPORTED", "effort-unsupported"],
+  [99, "unknown"],
+])("reads the saved pair and server validity %s", async (status, expected) => {
+  const h = await fixture();
+  vi.mocked(h.host.request).mockResolvedValueOnce(
+    response({
+      status: 1,
+      agents: [
+        {
+          ...row,
+          model_id: "one",
+          reasoning_effort: "max",
+          model_selection_status: status,
+        },
+      ],
+    }),
+  );
+  expect((await h.client.list(h.signal))[0]).toMatchObject({
+    modelId: "one",
+    reasoningEffort: "max",
+    modelSelectionStatus: expected,
+  });
+});
+it("does not treat empty model fields as reset requests", async () => {
+  const h = await fixture();
+  await expect(
+    h.client.updateModel(remoteAgent, "", "high", h.signal),
+  ).rejects.toThrow("Choose a model");
+  await expect(
+    h.client.updateModel(remoteAgent, "one", "", h.signal),
+  ).rejects.toThrow("Choose a model");
+  expect(h.host.request).not.toHaveBeenCalled();
+});
 it("replaces instructions verbatim through the authenticated host", async () => {
   const h = await fixture();
   const instructions = "  Review carefully.\nPreserve formatting.\n";
@@ -363,6 +447,75 @@ it("registers with a saved UUID and submits the supplied owner proof", async () 
       }),
     }),
   );
+});
+it("registers with a picture and replays it unchanged", async () => {
+  const h = await fixture();
+  const registered = response({
+    status: 1,
+    agent_id: row.agent_id,
+    agent_pubkey: row.agent_pubkey,
+  });
+  vi.mocked(h.host.request)
+    .mockRejectedValueOnce(new Error("offline"))
+    .mockResolvedValueOnce(registered);
+  await expect(
+    h.client.register("Helper", h.signal, h.retain, "https://a.example/1.png"),
+  ).rejects.toThrow("Retry the same name");
+  const agent = await h.client.register(
+    "Helper",
+    h.signal,
+    h.retain,
+    "https://a.example/2.png",
+  );
+  // The caller lists the picture Beekeeper actually registered.
+  expect(agent.picture).toBe("https://a.example/1.png");
+  const bodies = vi
+    .mocked(h.host.request)
+    .mock.calls.map(([input]) => JSON.parse(input.body ?? "{}"));
+  expect(bodies[0]).toEqual({
+    agent_name: "Helper",
+    agent_picture_url: "https://a.example/1.png",
+    idempotency_key: expect.any(String),
+  });
+  // Beekeeper refuses a replay whose picture differs from the first request.
+  expect(bodies[1]).toEqual(bodies[0]);
+});
+it.each([
+  ["https://a.example/1.png", "https://a.example/1.png"],
+  [undefined, ""],
+])("updates the profile with picture %s", async (picture, sent) => {
+  const h = await fixture();
+  vi.mocked(h.host.request).mockResolvedValueOnce(response({}));
+  await h.client.updateProfile(
+    {
+      pubkey: row.agent_pubkey,
+      community: "wss://agent.example",
+      name: " Helper ",
+      ...(picture ? { picture } : {}),
+    },
+    h.signal,
+  );
+  expect(h.host.request).toHaveBeenCalledExactlyOnceWith(
+    expect.objectContaining({
+      url: "https://builderlab.example/api/goose/v3/beekeeper/update-agent-profile",
+      body: JSON.stringify({
+        agent_pubkey: row.agent_pubkey,
+        community_url: "wss://agent.example",
+        agent_name: "Helper",
+        agent_picture_url: sent,
+      }),
+    }),
+  );
+});
+it("does not update the profile to an invalid name", async () => {
+  const h = await fixture();
+  await expect(
+    h.client.updateProfile(
+      { pubkey: row.agent_pubkey, community: "wss://a", name: "bad/name" },
+      h.signal,
+    ),
+  ).rejects.toThrow("agent name");
+  expect(h.host.request).not.toHaveBeenCalled();
 });
 it.each(["network", "server", "malformed", "cancel"])(
   "retains the registration UUID after an uncertain %s result",
@@ -626,4 +779,70 @@ it("shares one binding attempt between overlapping links", async () => {
       .mocked(h.host.request)
       .mock.calls.map(([input]) => input.url.split("/").at(-1)),
   ).toEqual(["current", "attest-agent"]);
+});
+
+it.each(["network", "429"])(
+  "quietly recovers read-only Builderlab discovery after %s",
+  async (failure) => {
+    const h = await fixture();
+    vi.useFakeTimers();
+    try {
+      const request = vi.mocked(h.host.request);
+      if (failure === "network")
+        request.mockRejectedValueOnce(new Error("offline"));
+      else request.mockResolvedValueOnce(response({}, Number(failure)));
+      const pending = h.client.list(h.signal);
+      await vi.advanceTimersByTimeAsync(499);
+      expect(request).toHaveBeenCalledOnce();
+      await vi.advanceTimersByTimeAsync(501);
+      expect(await pending).toHaveLength(1);
+      expect(request).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  },
+);
+
+it("does not replay a Builderlab mutation after a transport failure", async () => {
+  const h = await fixture();
+  vi.useFakeTimers();
+  try {
+    const request = vi
+      .mocked(h.host.request)
+      .mockRejectedValue(new Error("offline"));
+    await expect(h.client.delete({ id: "agent-1" }, h.signal)).rejects.toThrow(
+      "Could not reach Builderlab",
+    );
+    await vi.advanceTimersByTimeAsync(7000);
+    expect(request).toHaveBeenCalledOnce();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("exhausts Builderlab reads once and cancels the same backoff on account change", async () => {
+  const h = await fixture();
+  vi.useFakeTimers();
+  try {
+    const request = vi
+      .mocked(h.host.request)
+      .mockResolvedValue(response({}, 503));
+    const rejected = expect(h.client.list(h.signal)).rejects.toThrow(
+      "HTTP 503",
+    );
+    await vi.advanceTimersByTimeAsync(7000);
+    await rejected;
+    expect(request).toHaveBeenCalledTimes(4);
+    const pending = h.client.list(h.signal);
+    const cancelled = expect(pending).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    h.session.signOut();
+    await vi.advanceTimersByTimeAsync(1000);
+    await cancelled;
+    expect(request).toHaveBeenCalledTimes(5);
+  } finally {
+    vi.useRealTimers();
+  }
 });

@@ -338,7 +338,7 @@ it("interrupts a running turn with a control request, and does nothing when idle
   expect(interrupts(fake)).toHaveLength(1);
 });
 
-it("settles a stopped turn that Claude ends as aborted tools as done, not failed", async () => {
+it("settles a stopped turn that Claude ends as aborted tools as stopped, not failed", async () => {
   const { spawn, processes } = fakeSpawn();
   const claude = await ClaudeProcess.start(spawn, {
     ...launch,
@@ -351,7 +351,7 @@ it("settles a stopped turn that Claude ends as aborted tools as done, not failed
   await flush();
   await claude.interrupt();
   abortTools(fake);
-  await expect(sent).resolves.toEqual({ ok: true });
+  await expect(sent).resolves.toEqual({ ok: true, stopped: true });
   expect(claude.busy).toBe(false);
 });
 
@@ -386,7 +386,7 @@ it("forgets a stop once its turn ends, so a later failure is reported", async ()
   await flush();
   await claude.interrupt();
   abortTools(fake);
-  await expect(stopped).resolves.toEqual({ ok: true });
+  await expect(stopped).resolves.toEqual({ ok: true, stopped: true });
   const next = claude.send("second");
   await flush();
   fake.finish({ error: "Credit balance is too low" });
@@ -394,6 +394,21 @@ it("forgets a stop once its turn ends, so a later failure is reported", async ()
     ok: false,
     error: "Credit balance is too low",
   });
+});
+
+it("does not carry a stopped turn of its own into the next message", async () => {
+  const { spawn, processes } = fakeSpawn();
+  const claude = await ClaudeProcess.start(spawn, {
+    ...launch,
+    sessionId: "s1",
+  });
+  const fake = processes[0];
+  if (!fake) throw new Error("no process");
+  sessionState(fake, "running");
+  await claude.interrupt();
+  abortTools(fake);
+  expect(claude.active).toBe(false);
+  await expect(claude.send("next")).resolves.toEqual({ ok: true });
 });
 
 it("throws when Claude refuses to stop, and reports a later real error", async () => {
@@ -477,7 +492,7 @@ it("allows tool use and acknowledges hooks it is asked about", async () => {
   ]);
 });
 
-it("serves the Buzz tools over the pipe and ends a turn on a final send", async () => {
+it("serves the Buzz tools over the pipe and ends a turn on a final send or subthread reply", async () => {
   const { spawn, processes } = fakeSpawn();
   const tools = vi.fn(async (_conversation: unknown, message: unknown) => ({
     jsonrpc: "2.0",
@@ -503,7 +518,11 @@ it("serves the Buzz tools over the pipe and ends a turn on a final send", async 
       sdkMcpServers: ["buzz"],
       hooks: {
         PostToolUse: [
-          { matcher: "mcp__buzz__send", hookCallbackIds: ["final"] },
+          { hookCallbackIds: ["buzz:PostToolUse"] },
+          {
+            matcher: "mcp__buzz__(send|reply_in_subthread)",
+            hookCallbackIds: ["final"],
+          },
         ],
       },
     },
@@ -516,14 +535,14 @@ it("serves the Buzz tools over the pipe and ends a turn on a final send", async 
     request_id: "r1",
     request: { subtype: "mcp_message", server_name: "buzz", message: call },
   });
-  const hook = (final: boolean) => ({
+  const hook = (final: boolean, tool = "send") => ({
     type: "control_request",
-    request_id: `final-${final}`,
+    request_id: `final-${tool}-${final}`,
     request: {
       subtype: "hook_callback",
       callback_id: "final",
       input: {
-        tool_name: "mcp__buzz__send",
+        tool_name: `mcp__buzz__${tool}`,
         tool_input: { text: "done", final },
         tool_response: [{ type: "text", text: "sent" }],
       },
@@ -531,16 +550,22 @@ it("serves the Buzz tools over the pipe and ends a turn on a final send", async 
   });
   fake.emit(hook(false));
   fake.emit(hook(true));
+  fake.emit(hook(true, "reply_in_subthread"));
   await flush();
   expect(tools).toHaveBeenCalledWith("chan/root", call);
   const responses = fake.received
     .filter((message) => message.type === "control_response")
     .map((message) => message.response);
   expect(responses).toEqual([
-    { subtype: "success", request_id: "final-false", response: {} },
+    { subtype: "success", request_id: "final-send-false", response: {} },
     {
       subtype: "success",
-      request_id: "final-true",
+      request_id: "final-send-true",
+      response: { continue: false },
+    },
+    {
+      subtype: "success",
+      request_id: "final-reply_in_subthread-true",
       response: { continue: false },
     },
     {
@@ -619,4 +644,50 @@ describe("stepLabel", () => {
     expect(stepLabel(msg("text"))).toBeUndefined();
     expect(stepLabel({ type: "assistant" })).toBeUndefined();
   });
+});
+
+it("dispatches SDK callbacks using the process session, independent of payload claims", async () => {
+  const { spawn, processes } = fakeSpawn();
+  const hook = vi.fn(async () => ({
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: "deny",
+    },
+  }));
+  const process = await ClaudeProcess.start(spawn, {
+    ...launch,
+    sessionId: "owned",
+    tools: async () => ({}),
+    hook,
+  });
+  const fake = processes[0];
+  if (!fake) throw new Error("no process");
+  fake.emit({
+    type: "control_request",
+    request_id: "hook1",
+    request: {
+      subtype: "hook_callback",
+      callback_id: "buzz:PreToolUse",
+      input: { session_id: "forged", tool_name: "Bash" },
+    },
+  });
+  await flush();
+  expect(hook).toHaveBeenCalledWith("owned", "PreToolUse", {
+    session_id: "forged",
+    tool_name: "Bash",
+  });
+  expect(fake.received).toContainEqual({
+    type: "control_response",
+    response: {
+      subtype: "success",
+      request_id: "hook1",
+      response: {
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          permissionDecision: "deny",
+        },
+      },
+    },
+  });
+  await process.kill();
 });

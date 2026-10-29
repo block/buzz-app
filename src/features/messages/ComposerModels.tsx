@@ -1,7 +1,10 @@
 import { Popover } from "@base-ui/react/popover";
 import { EffortSlider } from "./composer-models/EffortSlider";
 import { avatarMedia } from "../../shared/avatar-source";
-import { Avatar } from "../../shared/design-system/ui/Avatar";
+import {
+  PanelHeader,
+  PanelHeaderLabel,
+} from "../../shared/design-system/ui/PanelHeader";
 import { selectProfiles } from "../relay/profile-selection";
 import type { ProfileQueries } from "../relay/profile-directory";
 import {
@@ -24,9 +27,12 @@ import type { SessionPlace, SessionControlAction } from "../agents/service";
 import type { MentionPicks, RunPick } from "../relay/messages";
 import {
   CaretDownIcon,
-  ArrowsInIcon,
+  FoldIcon,
+  CheckIcon,
   ArrowCounterClockwiseIcon,
   StopIcon,
+  CircleNotchIcon,
+  CircleDottedIcon,
   GaugeIcon,
 } from "../../shared/design-system/icons/index";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
@@ -38,7 +44,14 @@ import {
   MenuRadioGroup,
   MenuRadioItem,
 } from "../../shared/design-system/ui/Menu";
+import { Tooltip } from "../../shared/design-system/ui/Tooltip";
+import { ShimmerText } from "../../shared/design-system/ui/ShimmerText";
 import styles from "./ComposerModels.module.css";
+
+/** The draft's picks, each with the agent type it was made under. */
+export type DraftPicks = Readonly<
+  Record<string, RunPick & Readonly<{ type?: string }>>
+>;
 
 /** Model and effort for the next run of each mentioned agent of the viewer's
  * that offers a choice. Session controls act immediately on this conversation. */
@@ -56,9 +69,9 @@ export function ComposerModels({
   pubkeys: readonly string[];
   profiles: ProfileQueries;
   media: Parameters<typeof avatarMedia>[1];
-  value: MentionPicks;
+  value: DraftPicks;
   disabled: boolean;
-  onChange(value: MentionPicks): void;
+  onChange(value: DraftPicks): void;
   onResolved(value: MentionPicks): void;
   /** The message starts a thread of its own, as a channel's top-level one
    * does, so a thread-scoped agent has no session to act on. */
@@ -97,6 +110,19 @@ export function ComposerModels({
     selection.snapshot,
     selection.snapshot,
   );
+  const agents = useContext(AgentsContext);
+  // A pick keeps the type it was made under: a retype drops it, even while
+  // the new type's choices load or once they fail to, as none showed it.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `mentioned` follows the agents' snapshot, so a retype reruns this.
+  useLayoutEffect(() => {
+    const kept = Object.fromEntries(
+      Object.entries(value).filter(([pubkey, { type }]) => {
+        const now = agents?.find(pubkey)?.type;
+        return !type || !now || now === type;
+      }),
+    );
+    if (Object.keys(kept).length !== Object.keys(value).length) onChange(kept);
+  }, [agents, mentioned, value, onChange]);
   const thumb = useRef<HTMLInputElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   // Publish the displayed defaults separately from the user's draft picks.
@@ -140,7 +166,12 @@ export function ComposerModels({
   });
   const pick = (pubkey: string, next: RunPick) => {
     const { [pubkey]: _, ...rest } = value;
-    onChange(next.model || next.effort ? { ...rest, [pubkey]: next } : rest);
+    const type = agents?.find(pubkey)?.type;
+    onChange(
+      next.model || next.effort
+        ? { ...rest, [pubkey]: { ...next, ...(type ? { type } : {}) } }
+        : rest,
+    );
   };
   const label = choices.some((choice) => choice.session)
     ? "Model, effort, and session controls"
@@ -188,7 +219,6 @@ export function ComposerModels({
                   media,
                 )}
                 place={place}
-                named={choices.length > 1}
                 value={value[choice.pubkey] ?? {}}
                 disabled={disabled}
                 pick={(next) => pick(choice.pubkey, next)}
@@ -212,7 +242,6 @@ function AgentChoice({
   choice,
   avatarSrc,
   place,
-  named,
   value,
   disabled,
   pick,
@@ -221,7 +250,6 @@ function AgentChoice({
   choice: MentionModelChoice;
   avatarSrc: string | undefined;
   place: SessionPlace;
-  named: boolean;
   value: RunPick;
   disabled: boolean;
   pick(next: RunPick): void;
@@ -235,8 +263,24 @@ function AgentChoice({
         role="status"
         aria-busy="true"
       >
-        {named && <span>{choice.name}</span>}
-        <span>Loading model and effort…</span>
+        <PanelHeader
+          variant="card"
+          title={<PanelHeaderLabel title={choice.name} />}
+        />
+        <div className={styles.controls}>
+          <div className={styles.status}>
+            <span className={styles.statusIcon}>
+              <CircleNotchIcon
+                size={20}
+                className="motion-safe:animate-spin"
+                aria-hidden="true"
+              />
+            </span>
+            <div className={styles.statusCopy}>
+              <ShimmerText>Loading model and effort…</ShimmerText>
+            </div>
+          </div>
+        </div>
       </div>
     );
   const runs = runModel(choice, value.model);
@@ -290,6 +334,21 @@ function AgentChoice({
       className={`${styles.agent} floating-surface`}
       data-agent-model-card=""
     >
+      <PanelHeader
+        variant="card"
+        title={<PanelHeaderLabel title={choice.name} />}
+        actions={
+          choice.session && (
+            <SessionActions
+              key={`${choice.pubkey}:${place.channelId}:${place.root ?? ""}`}
+              pubkey={choice.pubkey}
+              name={choice.name}
+              place={place}
+              onFeedback={setFeedback}
+            />
+          )
+        }
+      />
       <div className={styles.controls}>
         {runs.efforts.length > 0 ? (
           <EffortSlider
@@ -309,29 +368,26 @@ function AgentChoice({
             {...(thumb ? { thumb } : {})}
           />
         ) : (
-          // Without a slider the model sits on its own tab, not on the thread.
-          <div className={styles.solo}>
-            <Avatar
-              src={avatarSrc}
-              alt={choice.name}
-              fallback={choice.name}
-              size="small"
-            />
-            <span className={styles.about}>{choice.name}</span>
-            {model()}
+          <div className={styles.status}>
+            <span className={styles.statusIcon}>
+              <CircleDottedIcon size={20} aria-hidden="true" />
+            </span>
+            <div className={styles.statusCopy}>
+              {runs.id && several ? (
+                model()
+              ) : (
+                <span>
+                  {runs.id
+                    ? `${runs.label} · No thinking options`
+                    : "Model unavailable"}
+                </span>
+              )}
+            </div>
           </div>
-        )}
-        {choice.session && (
-          <SessionRail
-            pubkey={choice.pubkey}
-            name={choice.name}
-            place={place}
-            onFeedback={setFeedback}
-          />
         )}
       </div>
       {feedback && (
-        <span className={styles.about} role="status">
+        <span className={`${styles.about} ${styles.controls}`} role="status">
           {feedback}
         </span>
       )}
@@ -339,7 +395,7 @@ function AgentChoice({
   );
 }
 
-function SessionRail({
+function SessionActions({
   pubkey,
   name,
   place,
@@ -352,17 +408,29 @@ function SessionRail({
 }) {
   const agents = useContext(AgentsContext);
   const state = useSessionState(agents, [pubkey], place);
+  const [started, setStarted] = useState<object>();
+  const [hintDismissed, setHintDismissed] = useState(false);
+  useEffect(() => {
+    if (!started) return;
+    const timer = setTimeout(() => setStarted(undefined), 3000);
+    return () => clearTimeout(timer);
+  }, [started]);
   const act = async (action: SessionControlAction) => {
+    // Clearing first empties the live region, so a repeated success is
+    // announced again.
     onFeedback("");
+    setStarted(undefined);
     try {
-      await agents?.session(pubkey, place, action);
-      onFeedback(
-        action === "compact"
-          ? "Session compacted"
-          : action === "new"
-            ? "New session started"
-            : "Interrupt requested",
-      );
+      // Its membership in the selected community; a pubkey alone is refused.
+      await agents?.session(agents.find(pubkey)?.key ?? pubkey, place, action);
+      if (action === "new") {
+        setHintDismissed(false);
+        setStarted({});
+      } else {
+        onFeedback(
+          action === "compact" ? "Session compacted" : "Interrupt requested",
+        );
+      }
     } catch (error) {
       onFeedback(
         error instanceof Error ? error.message : "Session action failed",
@@ -370,10 +438,13 @@ function SessionRail({
     }
   };
   return (
-    <fieldset className={styles.rail} aria-label={`${name}'s session`}>
+    <fieldset className={styles.actions} aria-label={`${name}'s session`}>
+      <span className="sr-only" role="status">
+        {started ? "New session started" : ""}
+      </span>
       {(
         [
-          ["compact", "Compact session", ArrowsInIcon],
+          ["compact", "Compact session", FoldIcon],
           ["new", "Start a new session", ArrowCounterClockwiseIcon],
           ["interrupt", "Interrupt", StopIcon],
         ] as const
@@ -394,19 +465,33 @@ function SessionRail({
                 : action === "interrupt"
                   ? "Nothing to interrupt. The session is idle."
                   : `Wait for the active turn to finish before ${action === "compact" ? "compacting" : "starting a new session"}.`;
+        const succeeded = action === "new" && !!started;
         return (
-          <IconButton
+          <Tooltip
             key={action}
-            size="sm"
-            type="button"
-            icon={<Icon aria-hidden="true" />}
-            aria-label={label}
-            title={title}
-            disabled={!enabled}
-            loading={action === "compact" && state === "compacting"}
-            focusableWhenDisabled
-            onClick={() => void act(action)}
-          />
+            content={succeeded ? "New session started" : title}
+            {...(succeeded && !hintDismissed ? { open: true } : {})}
+            onOpenChange={(open) => {
+              if (!open && succeeded) setHintDismissed(true);
+            }}
+          >
+            <IconButton
+              size="sm"
+              type="button"
+              icon={
+                succeeded ? (
+                  <CheckIcon aria-hidden="true" />
+                ) : (
+                  <Icon aria-hidden="true" />
+                )
+              }
+              aria-label={label}
+              disabled={!enabled}
+              loading={action === "compact" && state === "compacting"}
+              focusableWhenDisabled
+              onClick={() => void act(action)}
+            />
+          </Tooltip>
         );
       })}
     </fieldset>

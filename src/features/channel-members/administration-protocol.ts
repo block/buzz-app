@@ -14,13 +14,18 @@ export type EditableMemberRole = (typeof editableMemberRoles)[number];
 export type MemberRole = EditableMemberRole | "owner" | "bot" | "unknown";
 export type MemberChange = Readonly<{
   pubkey: string;
-  expectedRole: MemberRole;
+  /** `none`: the key holds no role, so the change adds it (system channels
+   * only). A missing role never stands in for this. */
+  expectedRole: MemberRole | "none";
   role: EditableMemberRole | "remove";
 }>;
 export type MemberAuthority = Readonly<{
   roles: Readonly<Record<string, MemberRole>>;
   canManage: boolean;
+  canRemove: boolean;
   canRemoveOwnedAgent: boolean;
+  /** A NIP-CL system channel, where administration may also add members. */
+  system: boolean;
 }>;
 const PUBKEY = /^[0-9a-f]{64}$/;
 
@@ -89,15 +94,16 @@ export function memberAuthority(
     throw new Error(
       "Member roles are inconsistent. Refresh members and roles.",
     );
-  const activeChannel =
-    type !== "dm" &&
-    archived !== "true" &&
-    !soloLabels(channelIdentity(metadata).labels);
+  const activeChannel = type !== "dm" && archived !== "true";
+  // In Solo chats only owners and admins remove people; nobody changes roles.
+  const solo = !!soloLabels(channelIdentity(metadata).labels);
   return Object.freeze({
     roles: Object.freeze(roles),
-    canManage: activeChannel && elevated.has(viewer),
+    canManage: activeChannel && !solo && elevated.has(viewer),
+    canRemove: activeChannel && elevated.has(viewer),
     canRemoveOwnedAgent:
-      activeChannel && !!roles[viewer] && roles[viewer] !== "unknown",
+      activeChannel && !solo && !!roles[viewer] && roles[viewer] !== "unknown",
+    system: type === "system",
   });
 }
 
@@ -123,14 +129,13 @@ export function canRemoveMember(
   key: string,
   owner?: string,
 ) {
+  const role = state.roles[key];
   return (
-    canManageMember(state, viewer, key) ||
-    (state.canRemoveOwnedAgent &&
-      owner === viewer &&
-      key !== viewer &&
-      !!state.roles[key] &&
-      state.roles[key] !== "owner" &&
-      state.roles[key] !== "unknown")
+    (state.canRemove || (state.canRemoveOwnedAgent && owner === viewer)) &&
+    key !== viewer &&
+    !!role &&
+    role !== "owner" &&
+    role !== "unknown"
   );
 }
 
@@ -140,6 +145,21 @@ export function authorizeMemberChange(
   change: MemberChange,
   owner?: string,
 ) {
+  if (change.expectedRole === "none") {
+    // Ordinary channels add members only through `addChannelMember`.
+    if (
+      !state.system ||
+      !state.canManage ||
+      change.pubkey === viewer ||
+      change.pubkey in state.roles ||
+      change.role === "remove" ||
+      !editableMemberRoles.includes(change.role)
+    )
+      throw new Error(
+        "Membership or permissions changed. Refresh members and roles before trying again.",
+      );
+    return;
+  }
   if (
     !(change.role === "remove"
       ? canRemoveMember(state, viewer, change.pubkey, owner)

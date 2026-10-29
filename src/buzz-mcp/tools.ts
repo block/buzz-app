@@ -15,20 +15,36 @@ import {
   PROFILE_SEARCH_QUERY_MAX,
 } from "../features/relay/profile-search";
 import {
-  listSharedSessions,
-  readSharedSession,
-} from "../features/sessions/shared-sessions";
-import {
   attachmentMarkdown,
   attachmentName,
 } from "../features/relay/attachments";
 import { threadReference } from "../features/relay/thread-reference";
+import { soloChannelMetadata } from "../features/relay/discovery";
+import type { RelayEvent } from "../features/relay/events";
 import { attestedOwner } from "../features/agents/owner-attestation";
-import type { BuzzClient, BuzzEvent, Context, Filter, Upload } from "./client";
+import type {
+  BuzzClient,
+  BuzzEvent,
+  Context,
+  Filter,
+  Memory,
+  Upload,
+} from "./client";
 
 const ROLES = ["owner", "admin", "member", "guest", "bot"];
 const str = { type: "string" } as const;
 const strs = { type: "array", items: str } as const;
+// Shared by send and reply_in_subthread.
+const audience = {
+  type: "string",
+  enum: ["everyone", "agents"],
+  description:
+    "agents: only other agents need this (delegating, asking or answering an agent)",
+} as const;
+const final = {
+  type: "boolean",
+  description: "Your last message this turn; ends the turn.",
+} as const;
 /** The channel types a channel list can ask for, as NIP-CL names them. */
 const CHANNEL_TYPES = ["stream", "forum", "dm", "workflow", "system"];
 const tool = (
@@ -50,6 +66,23 @@ const tool = (
 export type Tool = ReturnType<typeof tool>;
 export const TOOLS: readonly Tool[] = [
   tool(
+    "agent_types",
+    "List installed local agent types available for agent_create.",
+    {},
+  ),
+  tool(
+    "agent_create",
+    "Submit an unsaved agent-creation draft for your owner to review. Nothing is created until they save it. Use a type key from agent_types.",
+    { type: str, name: str },
+    ["type", "name"],
+  ),
+  tool(
+    "agent_update",
+    "Submit an unsaved draft of changes to one of your owner's agents for them to review. agent is its pubkey or exact name; type is a key from agent_types. Nothing changes until they save it.",
+    { agent: str, name: str, type: str, instructions: str },
+    ["agent"],
+  ),
+  tool(
     "send",
     "Post a message. Without channel, replies in the current thread. A reply goes in its message's thread.",
     {
@@ -59,18 +92,30 @@ export const TOOLS: readonly Tool[] = [
       reply: str,
       files: strs,
       mentions: strs,
-      audience: {
-        type: "string",
-        enum: ["everyone", "agents"],
-        description:
-          "agents: only other agents need this (delegating, asking or answering an agent)",
-      },
-      final: {
-        type: "boolean",
-        description: "Your last message this turn; ends the turn.",
-      },
+      audience,
+      final,
     },
     ["audience"],
+  ),
+  tool(
+    "reply_in_subthread",
+    "Reply under a specific message, nested in a subthread below it rather than in the main thread. Use when asked to reply in a subthread, or to keep a side discussion under the message it is about. Takes send's text, path, files, mentions, audience and final; the channel is the parent's.",
+    {
+      parent: { ...str, description: "Id of the message to reply under" },
+      text: str,
+      path: str,
+      files: strs,
+      mentions: strs,
+      audience,
+      final,
+    },
+    ["parent", "audience"],
+  ),
+  tool(
+    "self_handoff",
+    "Hand off to yourself in another of your conversations, waking that session with text. thread: any of its messages, outside a Solo chat.",
+    { channel: str, thread: str, text: str },
+    ["channel", "text"],
   ),
   tool("edit", "Edit your message.", { id: str, text: str }, ["id", "text"]),
   tool(
@@ -102,31 +147,6 @@ export const TOOLS: readonly Tool[] = [
       limit: {
         type: "integer",
         description: "Search 20 (max 100), thread 100 (500), channel 30 (200).",
-      },
-    },
-  ),
-  tool(
-    "shared_sessions",
-    "List shared sessions in the current channel, or read a source for an answer here. Checks current audience access. Titles are clues, not exhaustive content search.",
-    {
-      action: { type: "string", enum: ["list", "read"] },
-      source: str,
-      share_ids: {
-        type: "array",
-        items: { type: "string", pattern: "^[0-9a-f]{64}$" },
-        minItems: 1,
-        maxItems: 32,
-        uniqueItems: true,
-        description:
-          "Read only: contributing shares[].id receipts from list; never permission grants.",
-      },
-      query: str,
-      limit: { type: "integer", minimum: 1, maximum: 100 },
-      cursor: {
-        type: "object",
-        properties: { until: { type: "integer", minimum: 0 }, before_id: str },
-        required: ["until", "before_id"],
-        additionalProperties: false,
       },
     },
   ),
@@ -191,10 +211,17 @@ export const TOOLS: readonly Tool[] = [
   ),
   tool("users", "Profiles by pubkey or name.", { ids: strs, q: str }),
   tool("dm", "Open a DM; returns its channel.", { to: strs }, ["to"]),
-  tool("mem_get", "Read memory; without slug, list slugs.", { slug: str }),
-  tool("mem_set", "Write memory.", { slug: str, text: str, path: str }, [
-    "slug",
-  ]),
+  tool(
+    "mem_get",
+    "Read memory: slug gives its version and text; q finds entries with every word; neither lists slugs.",
+    { slug: str, q: str },
+  ),
+  tool(
+    "mem_set",
+    "Write memory. To replace an entry, pass the version from your latest mem_get or mem_set of it as expected; without expected it only creates.",
+    { slug: str, text: str, path: str, expected: str },
+    ["slug"],
+  ),
   tool(
     "notes_get",
     "Read a shared note, such as a team runbook, by name; without name, list notes. author: me (default for lists), all, an npub, a hex pubkey or a display name.",
@@ -213,9 +240,10 @@ export const TOOLS: readonly Tool[] = [
     ["name"],
   ),
   tool("notes_rm", "Delete your note.", { name: str }, ["name"]),
-  tool("canvas", "Read a channel's canvas, or replace it.", {
+  tool("canvas_get", "Read a channel's canvas.", { channel: str }),
+  tool("canvas_set", "Replace a channel's canvas.", {
     channel: str,
-    text: str,
+    content: str,
     path: str,
   }),
   tool(
@@ -298,95 +326,77 @@ export function callTool(
 }
 
 const HANDLERS: Readonly<Record<string, Handler>> = {
-  async shared_sessions({ client, context }, args) {
-    if (!context.channel) throw new Error("A current channel is required.");
-    const allowed = new Set([
-      "action",
-      "source",
-      "share_ids",
-      "query",
-      "limit",
-      "cursor",
+  async agent_types({ client }) {
+    if (!client.agentTypes)
+      throw new Error("Agent creation is unavailable on this host");
+    return JSON.stringify(await client.agentTypes());
+  },
+  async agent_create({ client }, args) {
+    if (!client.createAgent)
+      throw new Error("Agent creation is unavailable on this host");
+    const type = text(args.type)?.trim();
+    const name = text(args.name)?.trim();
+    if (!type || !name) throw new Error("type and name are required");
+    return JSON.stringify(await client.createAgent({ type, name }));
+  },
+  async self_handoff(tools, args) {
+    const { client, context } = tools;
+    if (!client.handoff) throw new Error("Self-handoff is unavailable here");
+    const channel = required(args, "channel");
+    const body = text(args.text);
+    if (!body) throw new Error("text is required.");
+    const thread = text(args.thread);
+    const [metadata, event] = await Promise.all([
+      tools.metadata(channel),
+      thread ? tools.event(thread) : undefined,
     ]);
-    if (Object.keys(args).some((key) => !allowed.has(key)))
-      throw new Error(
-        "Unknown shared_sessions argument; the audience is the current channel.",
-      );
-    const action = args.action ?? "list";
-    if (action !== "list" && action !== "read")
-      throw new Error("action must be list or read.");
-    const limit = args.limit;
+    if (!metadata) throw unseen(channel);
     if (
-      limit !== undefined &&
-      (typeof limit !== "number" ||
-        !Number.isInteger(limit) ||
-        limit < 1 ||
-        limit > 100)
+      event &&
+      !event.tags.some(([name, value]) => name === "h" && value === channel)
     )
-      throw new Error("limit must be an integer from 1 to 100.");
-    let cursor: { until: number; before_id: string } | undefined;
-    if (args.cursor !== undefined) {
-      const value = args.cursor as Record<string, unknown> | null;
-      if (
-        !value ||
-        typeof value !== "object" ||
-        Array.isArray(value) ||
-        Object.keys(value).some(
-          (key) => key !== "until" && key !== "before_id",
-        ) ||
-        typeof value.until !== "number" ||
-        !Number.isSafeInteger(value.until) ||
-        value.until < 0 ||
-        typeof value.before_id !== "string" ||
-        !/^[0-9a-f]{64}$/.test(value.before_id)
-      )
-        throw new Error(
-          "cursor must contain until and a 64-character event before_id.",
-        );
-      cursor = { until: value.until, before_id: value.before_id };
-    }
-    if (action === "read") {
-      if (typeof args.source !== "string" || !args.source.trim())
-        throw new Error("source is required for read.");
-      if (args.query !== undefined)
-        throw new Error("query is only supported by list.");
-      const shareIds = args.share_ids;
-      if (
-        shareIds !== undefined &&
-        (!Array.isArray(shareIds) ||
-          shareIds.length < 1 ||
-          shareIds.length > 32 ||
-          shareIds.some(
-            (id) => typeof id !== "string" || !/^[0-9a-f]{64}$/.test(id),
-          ) ||
-          new Set(shareIds).size !== shareIds.length)
-      )
-        throw new Error(
-          "share_ids must contain 1 to 32 unique lowercase 64-character event IDs.",
-        );
-      return JSON.stringify(
-        await readSharedSession(client, context.channel, args.source, {
-          ...(shareIds !== undefined ? { shareIds } : {}),
-          ...(cursor ? { cursor } : {}),
-          ...(limit !== undefined ? { limit } : {}),
-        }),
-      );
-    }
-    if (args.source !== undefined || args.share_ids !== undefined)
-      throw new Error("source and share_ids are only supported by read.");
-    if (args.query !== undefined && typeof args.query !== "string")
-      throw new Error("query must be text.");
+      throw new Error(`${thread} is not in ${channel}.`);
+    // A harness takes a wake with no thread only in a Solo chat.
+    if (!event && !soloChannelMetadata(metadata as RelayEvent))
+      throw new Error("thread is required outside a Solo chat.");
+    const root = event && rootOf(event);
+    if (
+      channel === context.channel &&
+      (!context.root || context.wholeChannel || root === context.root)
+    )
+      throw new Error("That is this conversation.");
+    const { channel: from, root: fromRoot } = context;
+    client.handoff({
+      channel,
+      ...(root && { root }),
+      text: body,
+      from: {
+        ...(from && { channel: from }),
+        ...(fromRoot && { root: fromRoot }),
+      },
+    });
+    return root ? `Handed off to thread ${root}.` : `Handed off to ${channel}.`;
+  },
+  async agent_update({ client }, args) {
+    if (!client.updateAgent)
+      throw new Error("Agent changes are unavailable on this host");
+    const agent = text(args.agent);
+    if (!agent) throw new Error("agent is required");
+    const name = text(args.name);
+    const type = text(args.type);
+    // Empty instructions propose clearing them.
+    const { instructions } = args;
     return JSON.stringify(
-      await listSharedSessions(client, context.channel, {
-        ...(cursor ? { cursor } : {}),
-        ...(limit !== undefined ? { limit } : {}),
-        ...(args.query !== undefined ? { query: args.query } : {}),
-        audience: context.channel,
+      await client.updateAgent({
+        agent,
+        ...(name && { name }),
+        ...(type && { type }),
+        ...(typeof instructions === "string" && { instructions }),
       }),
     );
   },
   async send(tools, args) {
-    const { client, context } = tools;
+    const { context } = tools;
     const reply =
       text(args.reply) ??
       (args.channel === undefined ? context.root : undefined);
@@ -402,28 +412,38 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       throw new Error(
         "This chat stays at the top level: send again without reply.",
       );
-    if (args.audience !== "everyone" && args.audience !== "agents")
-      throw new Error("audience must be everyone or agents.");
-    const files = await tools.attach(list(args.files));
-    const content = `${(await tools.body(args, !files.links)) ?? ""}${files.links}`;
+    const audienceTags = audienceOf(args);
     const thread = reply ? await tools.threadTags(reply) : [];
-    const mentions = await tools.mentions(
+    return post(tools, channel, args, thread, audienceTags);
+  },
+
+  async reply_in_subthread(tools, args) {
+    const { context } = tools;
+    const parent = text(args.parent)?.toLowerCase();
+    if (!parent) throw new Error("parent is required.");
+    const target =
+      parent === context.root ? undefined : await tools.event(parent);
+    const channel = (target && tag(target, "h")) ?? context.channel;
+    if (!channel) throw new Error("No channel for that message.");
+    if (context.topLevel && channel === context.channel)
+      throw new Error("This chat stays at the top level: use send instead.");
+    const audienceTags = audienceOf(args);
+    // As relay ingest reads it: the last valid marker, in either case.
+    const root = target
+      ? (threadReference(target)?.rootId ?? target.id)
+      : parent;
+    return post(
+      tools,
       channel,
-      content,
-      list(args.mentions),
+      args,
+      root === parent
+        ? [["e", root, "", "reply"]]
+        : [
+            ["e", root, "", "root"],
+            ["e", parent, "", "reply"],
+          ],
+      audienceTags,
     );
-    const event = await client.publish({
-      kind: 9,
-      content,
-      tags: [
-        ["h", channel],
-        ...thread,
-        ...mentions.map((pubkey) => ["p", pubkey]),
-        ...files.tags,
-        ...(args.audience === "agents" ? [["audience", "agents"]] : []),
-      ],
-    });
-    return `sent ${event.id}`;
   },
 
   async edit(tools, args) {
@@ -841,19 +861,32 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
 
   async mem_get(tools, args) {
     const slug = text(args.slug);
+    const q = typeof args.q === "string" ? args.q : undefined;
+    if (slug && q !== undefined)
+      throw new Error("q searches all memory; leave out slug.");
+    if (q !== undefined && !q.trim())
+      throw new Error("q needs a word to search for.");
     if (!slug) {
       const { entries, partial } = await tools.client.memories();
-      const lines = entries
-        .map((entry) => `${entry.slug} ${time(entry.createdAt)}`)
-        .join("\n");
-      if (!partial) return lines || "No memory.";
+      const found = q === undefined ? undefined : searchMemory(entries, q);
+      const lines =
+        found ??
+        entries
+          .map((entry) => `${entry.slug} ${time(entry.createdAt)}`)
+          .join("\n");
+      if (!partial)
+        return (
+          lines ||
+          (found === undefined ? "No memory." : `No memory matches ${q}.`)
+        );
       if (!lines) throw new Error("Memory could not be read; try again.");
-      return `${lines}\nThis list is incomplete: some memory could not be read.`;
+      return `${lines}\nThis ${found === undefined ? "list" : "search"} is incomplete: some memory could not be read.`;
     }
     const key = memorySlug(slug);
     const { entries, partial } = await tools.client.memories(key);
     const body = entries.find((entry) => entry.slug === key)?.body;
-    if (body !== undefined) return body;
+    if (body !== undefined)
+      return `version: ${await memoryVersion(body)}\n\n${body}`;
     if (partial) throw new Error(`Memory ${key} could not be read; try again.`);
     return `No memory ${key}.`;
   },
@@ -861,14 +894,42 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
   async mem_set(tools, args) {
     const key = memorySlug(required(args, "slug"));
     const body = (await tools.body(args, true)) as string;
+    const expected = text(args.expected);
+    // A copied mem_get reply would save its header into the entry.
+    if (/^version: [0-9a-f]{16}\n/.test(body))
+      throw new Error(
+        "Leave out the version line from mem_get; pass the version as expected.",
+      );
     // A write must be dated after the entry it replaces, so it waits for a
     // read that finds the entry or confirms there is none.
     const { entries, partial } = await tools.client.memories(key);
     const current = entries.find((entry) => entry.slug === key);
     if (!current && partial)
       throw new Error(`Memory ${key} could not be read; try again.`);
+    // Another session of this agent may have written it since this one read
+    // it (a session's `core` is a copy from when it started): replacing
+    // needs the version it was shown, so nothing it never saw is lost.
+    if (!current && expected)
+      throw new Error(
+        `No memory ${key} to replace; leave out expected to create it.`,
+      );
+    if (current && !expected)
+      throw new Error(
+        `${key} exists. Read it with mem_get, keep what still holds, and pass its version as expected.`,
+      );
+    if (current && expected !== (await memoryVersion(current.body)))
+      throw new Error(
+        `${key} changed since version ${expected}. Read it again with mem_get, merge your change into it, and pass the new version as expected.`,
+      );
     await tools.client.remember(key, body, current?.createdAt ?? 0);
-    return "saved";
+    const saved = `saved; version ${await memoryVersion(body)}`;
+    if (key !== "core") return saved;
+    const size = new TextEncoder().encode(body).length;
+    const amount =
+      size < 1000 ? `${size} bytes` : `${(size / 1000).toFixed(1)} KB`;
+    return size > CORE_TARGET_BYTES
+      ? `${saved}; core is ${amount}, over the ~10 KB target. Move detail you do not need every turn to a mem/ slug.`
+      : `${saved}; core is ${amount}.`;
   },
 
   async notes_get(tools, args) {
@@ -1038,16 +1099,19 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     return `deleted ${coordinate}`;
   },
 
-  async canvas(tools, args) {
+  async canvas_get(tools, args) {
+    const channel = text(args.channel) ?? tools.context.channel;
+    if (!channel) throw new Error("channel is required here.");
+    const head = await canvas(tools, channel);
+    return head?.content || "No canvas.";
+  },
+
+  async canvas_set(tools, args) {
     const { client, context } = tools;
     const channel = text(args.channel) ?? context.channel;
     if (!channel) throw new Error("channel is required here.");
-    const content = await tools.body(args, false);
-    const [head] = await client.query([
-      { kinds: [40100], "#h": [channel], limit: 1 },
-    ]);
-    if (!head && !(await tools.metadata(channel))) throw unseen(channel);
-    if (content === undefined) return head?.content || "No canvas.";
+    const content = (await tools.body(args, true, "content")) as string;
+    const head = await canvas(tools, channel);
     // The newest canvas wins, so a write must be dated after the current one.
     const after = head ? (head.created_at + 1) * 1000 : 0;
     if (after - Date.now() > 5000)
@@ -1167,6 +1231,39 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
   },
 };
 
+/** The tags for a message's required audience. */
+function audienceOf(args: Args): string[][] {
+  if (args.audience !== "everyone" && args.audience !== "agents")
+    throw new Error("audience must be everyone or agents.");
+  return args.audience === "agents" ? [["audience", "agents"]] : [];
+}
+
+/** Publishes `args`' text, files and mentions as a message in `channel`,
+ * with `thread`'s e-tags and any `extra` tags. */
+async function post(
+  tools: Tools,
+  channel: string,
+  args: Args,
+  thread: readonly string[][],
+  extra: readonly string[][] = [],
+) {
+  const files = await tools.attach(list(args.files));
+  const content = `${(await tools.body(args, !files.links)) ?? ""}${files.links}`;
+  const mentions = await tools.mentions(channel, content, list(args.mentions));
+  const event = await tools.client.publish({
+    kind: 9,
+    content,
+    tags: [
+      ["h", channel],
+      ...thread,
+      ...mentions.map((pubkey) => ["p", pubkey]),
+      ...files.tags,
+      ...extra,
+    ],
+  });
+  return `sent ${event.id}`;
+}
+
 /** One call's helpers, so lookups it repeats are made once. */
 class Tools {
   private readonly cache = new Map<string, Promise<unknown>>();
@@ -1184,16 +1281,17 @@ class Tools {
     return value;
   }
 
-  /** `text`, or the file at `path`. Undefined when neither is given and
-   * `needed` is false. */
-  async body(args: Args, needed: boolean) {
+  /** `field` (default `text`), or the file at `path`. Undefined when neither
+   * is given and `needed` is false. */
+  async body(args: Args, needed: boolean, field = "text") {
     const path = text(args.path);
     const value = path
       ? new TextDecoder().decode(await this.client.read(path))
-      : typeof args.text === "string"
-        ? args.text
+      : typeof args[field] === "string"
+        ? args[field]
         : undefined;
-    if (value === undefined && needed) throw new Error("Give text or path.");
+    if (value === undefined && needed)
+      throw new Error(`Give ${field} or path.`);
     return value;
   }
 
@@ -1206,8 +1304,8 @@ class Tools {
     return event;
   }
 
-  /** The e-tag of a reply to `parent`. Agents never nest: a reply to any
-   * message in a thread is a reply to the thread's root. */
+  /** The e-tag of a `send` reply to `parent`: a reply to any message in a
+   * thread is a reply to the thread's root. */
   async threadTags(parent: string) {
     const root =
       parent === this.context.root ? parent : rootOf(await this.event(parent));
@@ -1695,6 +1793,63 @@ function memorySlug(slug: string) {
   return key;
 }
 
+/** The size the base prompt asks agents to keep `core` under. */
+const CORE_TARGET_BYTES = 10_000;
+/** What a memory search shows: entries, lines of each, and characters of a line. */
+const SEARCH_ENTRIES = 20;
+const SEARCH_LINES = 3;
+const SEARCH_LINE_CHARS = 160;
+
+/** A memory's version: the start of the SHA-256 of its text. */
+export async function memoryVersion(body: string) {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(body),
+  );
+  return [...new Uint8Array(digest).slice(0, 8)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+/** The entries whose slug or text has every word of `q`, newest first, each
+ * with a few of its matching lines cut around the first match. Empty when
+ * none match. */
+function searchMemory(entries: readonly Memory[], q: string) {
+  const words = [...new Set(q.toLowerCase().split(/\s+/).filter(Boolean))];
+  const found = entries
+    .filter((entry) => {
+      const all = `${entry.slug}\n${entry.body}`.toLowerCase();
+      return words.every((word) => all.includes(word));
+    })
+    .sort((a, b) => b.createdAt - a.createdAt);
+  const shown = found.slice(0, SEARCH_ENTRIES).map((entry) => {
+    const lines = entry.body
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => words.some((word) => line.toLowerCase().includes(word)))
+      .slice(0, SEARCH_LINES)
+      .map((line) => `  ${snippet(line, words)}`);
+    return [`${entry.slug} ${time(entry.createdAt)}`, ...lines].join("\n");
+  });
+  const more = found.length - shown.length;
+  return [
+    ...shown,
+    ...(more > 0 ? [`${more} more; add words to q to narrow it.`] : []),
+  ].join("\n");
+}
+
+/** `line`, cut to SEARCH_LINE_CHARS around its first match. */
+function snippet(line: string, words: readonly string[]) {
+  if (line.length <= SEARCH_LINE_CHARS) return line;
+  const lower = line.toLowerCase();
+  const at = Math.min(
+    ...words.map((word) => lower.indexOf(word)).filter((index) => index >= 0),
+  );
+  const start = Math.max(0, Math.min(at - 40, line.length - SEARCH_LINE_CHARS));
+  const end = start + SEARCH_LINE_CHARS;
+  return `${start ? "…" : ""}${line.slice(start, end)}${end < line.length ? "…" : ""}`;
+}
+
 /** A note's name, as the CLI allows it. */
 function noteSlug(value: unknown) {
   if (typeof value !== "string" || !/^[a-z0-9._-]{1,80}$/.test(value))
@@ -1889,6 +2044,15 @@ async function leads(
 /** A failed read after a write, as the reason the write is not confirmed. */
 const unread = (error: unknown) =>
   new Error(`its state could not be read back: ${reason(error)}`);
+
+/** The channel's newest canvas, once the channel is known to be visible. */
+async function canvas(tools: Tools, channel: string) {
+  const [head] = await tools.client.query([
+    { kinds: [40100], "#h": [channel], limit: 1 },
+  ]);
+  if (!head && !(await tools.metadata(channel))) throw unseen(channel);
+  return head;
+}
 
 /** The `channel` argument, or the current channel only when it is left out. */
 function target(tools: Tools, args: Args) {

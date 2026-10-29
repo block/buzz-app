@@ -131,9 +131,9 @@ pending/error presentation survive page switches. Session replacement discards
 that presentation. Cache clear/disposal abort
 pending work but cannot retract an accepted relay publication.
 
-Mark as Read delegates to the [durable unread owner](unread.md), without selecting
+Mark as read delegates to the [durable unread owner](unread.md), without selecting
 the row, and closes after the local transaction commits. Observed unread or a
-manual mark offers **Mark as Read**; otherwise the menu offers **Mark as Unread**
+manual mark offers **Mark as read**; otherwise the menu offers **Mark as unread**
 with its device-only tooltip. An open menu subscribes to the shared projection,
 without fetching history or inventing exact counts. Read errors remain in-menu
 for explicit retry. Focus resolves the current row by identity even if saved
@@ -151,6 +151,28 @@ belong to this persistent sidebar. Rows in saved groups, **Starred** and **Chann
 can also be dragged with a pointer onto another saved group, **Starred** or
 **Channels**; the drop is the same Move intent, with the same gate, optimistic
 placement, rollback notice and Retry.
+The **Channels** ellipsis menu also offers **Create section**, which creates an
+empty section without moving a channel. Its dialog retains the name and section
+ID after an attempted write fails and waits for confirmation before closing.
+The submitted name stays read-only and focused; a rejected gate that attempted
+no write leaves the draft editable. Failed confirmation uses plain copy and
+offers Retry preferences whenever preferences are unavailable, with Create
+disabled until recovery. After a failed creation,
+the session refreshes preferences from the writer before allowing dismissal so
+an accepted save stays visible even after Cancel. If that read fails too, new
+creation is gated across menu, drop and create-and-move paths, and Retry retains
+writer routing until reconciliation succeeds. Recovery waits for all queued
+preference writes and repeats a writer read invalidated by a concurrent write.
+Ordinary startup remains replica-eligible. Dragging a channel into
+the gap above the first custom section expands an **Add to new section** drop
+target inside the sidebar. With no custom sections, the target is above
+**Channels**; **Starred** keeps its pinned position. The created section appears
+at that same first position. The target stays revealed for the rest of that drag, with
+reduced motion opening it immediately; other section destinations remain available.
+Dropping there opens the existing create-and-move dialog; cancelling leaves the
+channel in place, and no preference is written until submission. These entry
+points supplement the per-channel **Move channel → Create new…** route and use
+the existing gated preference queue and encrypted section record.
 Only a channel's select surface starts a drag, the surface its row menu wraps.
 **Starred** accepts drops only when it is already visible; starting a drag does
 not reveal an empty section. Use the row menu to star the first channel.
@@ -162,7 +184,10 @@ group; an accent line shows where it lands, and Escape cancels. Its section menu
 **Move up** and **Move down** are the keyboard and single-pointer path. Each move
 rewrites every live section's `order` register with one stamp, so channels, sort
 and collapsed state stay with the group's id; the order shows optimistically and
-a failure rolls back with the same move notice and Retry. The
+a failure rolls back with the same move notice and Retry. **Rename section**
+in the same menu rewrites only that group's `name` register (a dialog keeps the
+entry and shows the error if the save fails), so its channels, order and sort stay
+put. The
 session serializes placement, sort and mute writes through one queue, retaining
 one confirmed preferences snapshot beneath
 pending Move and Sort projections. Each confirmation updates only its owned fields
@@ -265,8 +290,9 @@ A register is `[version, device, value]`, with a nonnegative safe-integer millis
 version and 16 lowercase hex device ID. Meta-less relay heads import at event
 seconds × 1,000 with the zero device ID. Edits exceed every observed register
 version and use a random in-memory device ID. Sections sort by canonical `(order,id)`
-and project dense display orders; new sections append after the canonical live
-maximum. Orphan assignments are omitted from the legacy projection, not deleted
+and project dense display orders; menu-created sections append after the canonical
+live maximum, while drop-created sections precede the live minimum. Orphan
+assignments are omitted from the legacy projection, not deleted
 from metadata. Read projection accepts Desktop string values on retained section
 name/icon registers; only projected live text receives UI length limits. Already
 satisfied intents return without rewriting the head, including assignment removal
@@ -386,19 +412,23 @@ and modeled upstream I/O; it does not send messages to a live community.
 The conversation header’s **Channel actions** ellipsis opens the shared, default-size
 (non-compact) menu. **View channel details** is first and opens or focuses the existing
 Channel Settings tab; selecting it again never closes the pane. Editing is available
-from that pane, not directly from the menu. **View canvas**, **Move channel**, **Mute/Unmute**, and **Mark as Read/Unread**
+from that pane, not directly from the menu. **View canvas** is Channels’
+[channel menu panel](plugin-architecture.md#optional-channel-menu-panels) and opens a
+Canvas tab in the side pane. **Move channel**, **Mute/Unmute**, and **Mark as read/unread**
 reuse the sidebar’s action composition and persistent mutation/recovery owners.
 Permission-gated lifecycle
 actions follow in **Leave → Archive → Delete** order, with Delete in the shared
 danger tone. DMs retain Hide conversation and the separate Remove from Messages
 action; their permissions are not inferred from stream channels. Members retains its adjacent button and Diagnostics remains inside Settings.
-Session headings are unchanged. Header moves and dialog cancellation return focus
+Session headings are unchanged, but their Channel actions menu lists the same
+channel menu panels. Header moves and dialog cancellation return focus
 to the ellipsis, while session creation hands focus to its composer. Read-only, cached, archived and DM eligibility stays
 with the existing capabilities. Opening the menu reads permissions, never publishes
-a lifecycle command. Menu Escape/outside dismissal returns to the header; Canvas
-and lifecycle confirmation cancellation also return there. Dialog owners outlive menu dismissal,
-while channel/session navigation retires header-origin dialogs. Canvas is bound to
-its opening channel and visit, so navigation never mounts another channel’s editor.
+a lifecycle command. Menu Escape/outside dismissal returns to the header;
+lifecycle confirmation cancellation also returns there. Dialog owners outlive menu dismissal,
+while channel/session navigation retires header-origin dialogs. Canvas is a retained
+side-pane tab; changing channel or losing eligibility closes it without discarding
+its channel-scoped draft.
 The sidebar’s own dialogs and session-owned writes/recovery keep their existing
 lifetime; retiring a header does not undo a command already sent. The redundant Canvas card and saved-content
 preview are omitted from Channel Settings; opening details does not read Canvas.
@@ -553,15 +583,15 @@ navigation to a hidden DM remains supported.
 ## Channel-management modal dismissal
 
 Channel-management modals explicitly opt into the shared Dialog's backdrop-click
-cancellation. Canvas, Members, lifecycle confirmations, new sections and personal
+cancellation. Members, lifecycle confirmations, new sections and personal
 groups use the same Close/Cancel path for outside clicks.
 Create and Edit details use their Close path: untouched forms close immediately;
 changed drafts require discard confirmation, while explicit Cancel discards immediately.
 Clicks inside or in portaled controls do not dismiss them.
 The non-modal Settings panel is unchanged; the shared Dialog default stays opt-in.
 
-Canvas reload uses a nested shared Dialog rather than a host-owned confirmation
-prompt. Cancel, Close, Escape or a backdrop click dismisses only that confirmation, keeps the parent draft,
+Canvas reload uses a shared confirmation Dialog above the Canvas tab.
+Cancel, Close, Escape or a backdrop click dismisses only that confirmation, keeps the tab’s draft,
 and never executes the action. Confirmations initially focus Cancel and return
 focus to their initiating control; lifecycle confirmations choose their initial
 focus as described above, and their final focus remains sidebar-owned.
@@ -779,13 +809,18 @@ native acceptance.
 
 ## Member administration
 
-**Channel members** has a scoped conversation history visit (`panel: "members"`)
+**Members** has a scoped conversation history visit (`panel: "members"`)
 through the host navigation owner. Opening creates a visit; browser Back dismisses
 and Forward restores the list. Reload restores the same channel and Members,
 including the underlying message/thread address when present. Close, Escape and
-outside dismissal open the underlying conversation as a new visit, so Back can
-recover the list. Profile/DM handoffs dismiss Members without replacing the new
-destination, and history traversal never repeats a DM open or membership mutation.
+outside dismissal return to the visit Members was opened from, so closing never
+adds a visit and Back does not reopen the list. When that visit is unknown, such
+as after a reload, dismissal replaces the Members visit with the underlying
+conversation instead; Back then steps to the earlier visit of that same
+conversation. A profile handoff replaces the Members visit rather than
+traversing back, so the profile and its address stay current. Opening a DM
+adds the DM as a new visit after Members, so Back from the DM returns to the
+list. History traversal never repeats a DM open or membership mutation.
 Search, role filters, menus and confirmations are transient, not address data.
 Scoped history still requires the original viewer, joined community and current
 channel access. Tabs remain session-owned: navigation preserves them, but this
@@ -795,10 +830,19 @@ and restore their targets without focusing through the modal. Session conversati
 have no Members surface; a restored/handwritten Members route to a session resolves
 to its underlying conversation/message without that panel.
 
-The existing **Channel members** dialog keeps ordinary invitations and adds
+The header **Access** button opens the one access dialog every conversation uses.
+It is titled **Channel access** in channels and **Chat access** in a Solo chat (see
+[Sharing a Solo chat](solo/sharing.md)). A Solo chat owner can remove people and
+agents there but cannot change roles.
+One search field, with an accessible name but no visible label, filters current
+members and lists people, agents and Teams to invite under **Not in this channel**.
+Each result's **Add** button, or Enter on the highlighted result, adds immediately.
+The footer keeps **Copy link** at its leading edge and **Done** at its trailing edge.
+When adding is unavailable, the field reads **Search members** and a short reason names
+why (DM, archived, connection, or not joined). The dialog keeps ordinary invitations and adds
 verified roles plus per-member administration. Current members appear in separate
-**Owners**, **Admins**, **Members** and **Agents** groups with sticky headings and counts.
-Verified authority alone places someone in Owners or Admins, including agents.
+**People** and **Agents** groups with sticky headings and counts. Verified authority
+alone adds an Owner or Admin tag beside a name.
 Everyone else is grouped by the same agent identity evidence used for avatar shapes:
 agent identities in Agents, other identities in Members, without asserting a default
 protocol role or treating the Bot role as agent identity. Each group is alphabetical
@@ -822,14 +866,9 @@ known-agent inventory. Unchanged identity rows retain their rendered
 profile/avatar/menu trees across query and loading updates; changed names, permissions,
 manager evidence, presence and invitation state still update through their existing owners.
 Current-member avatars and rows open a profile panel when a plugin contributes one
-(none is bundled now); the Members dialog closes and closing the profile returns focus to the
-Channel members button. Names and smaller, muted inline **managed by** hints sit
-centered at rest with no pills. Hover reveals a longer abbreviated npub underneath
-using the existing 140ms height/opacity transition, just like invitation rows;
-keyboard focus and reduced motion reveal it immediately. The abbreviation shows
-`npub1` plus six leading payload characters and six trailing characters. It stays
-abbreviated: no dwell timer, inline expansion, copy icon, or identity card. Shared
-identity previews on other surfaces remain unchanged. Available presence status
+(none is bundled now); the access dialog closes and closing the profile returns focus to the
+**Access** button. Names sit centered with a smaller, muted **Managed by** line for
+agents with verified ownership; there is no hover public-key reveal. Available presence status
 stays on the profile control. The manager link opens
 the profile panel with the same focus handoff; row-profile and owner-profile controls are
 siblings, never nested. Every current member has a separate
@@ -844,21 +883,18 @@ waiter blocks duplicate opens, shows pending/error status and allows explicit re
 Closing Members cancels that waiter and suppresses late navigation; a successful
 handoff leaves destination focus alone. Owner/self protection, missing
 writer support and pending/uncertain writes suppress mutations, not the profile
-menu. If no profile panel is available, View profile is disabled. Pointer hover, keyboard
-focus and an open menu reveal the reserved action slot without moving row content;
-non-hover/touch input keeps the trigger visible. Right-click, Context Menu and
+menu. If no profile panel is available, View profile is disabled. The action
+trigger is always visible. Right-click, Context Menu and
 Shift+F10 open the same action list through the shared context menu. The ellipsis
 uses a separate shared Menu root/trigger so each input retains its platform
 interaction owner; only one menu is open per row. The trigger owns toggling and
 outside-press dismissal. Scrolling the member list dismisses either menu without
 resetting the scroll position; scrolling inside a menu does not dismiss it.
-Focus in a portaled menu is not row focus: once hover and physical row focus leave,
-the npub and its reserved space collapse together, recentering the name.
 Escape returns focus to the originating row
 control; profile navigation hands focus to the panel and returns to the external
-Channel members button when closed. Invitation rows reuse the same avatar, name,
-managed-by hint and public-key hover/focus presentation, without a channel-role
-badge. Their avatars and identity rows open the profile panel just like current members;
+**Access** button when closed. Invitation rows reuse the same avatar, name and
+**Managed by** line, without a channel-role badge or public key. Their avatars and
+identity rows open the profile panel just like current members;
 only the separate, extra-small prominent **Add / Adding…** button invites someone.
 Invitation results expose the same identity menu through right-click, long-press,
 Context Menu or Shift+F10 only, with no ellipsis button. Add stays separate and
@@ -869,7 +905,7 @@ clipping it; profile targets fill the row height, with identity and actions cent
 Profile navigation stays available during an invitation; a missing profile panel
 leaves the identity static without disabling the separate Add button.
 The dialog retains its shared surface. A quiet `border-standard` outline frames
-one scrolling viewport, with Owners, Admins, Members, Agents and Not in this channel
+one scrolling viewport, with People, Agents and Not in this channel
 separated inside it without extra boxes or fills. Every group heading sticks to the
 top of this viewport while scrolling within its own section, with an opaque matching
 surface so rows do not show through. There is no outer top padding to scroll away:
@@ -895,8 +931,7 @@ Supporting buttons use outline emphasis; **Show more results** uses the small si
 and is horizontally centered beneath the search results.
 Role confirmations use prominent, and removal remains destructive.
 The search has a role dropdown on its right when at least two roster groups are
-present. It defaults to All and offers only populated Owners, Admins, Members and
-Agents groups, with whole-roster counts (including the All total), using the shared
+present. It defaults to All and offers only populated People and Agents groups, with whole-roster counts (including the All total), using the shared
 compact Select with its popup aligned to the trigger’s right edge. The popup has
 an 11.25rem minimum and reserves checkmark space to avoid width jumps on selection.
 Counts form a partition: each identity appears once, with Owners/Admins taking precedence
@@ -919,7 +954,7 @@ The search composition reduces the shared header-to-body gap by `--space-2`
 (16px normally, 8px at the compact breakpoint) without affecting other dialogs.
 The member-list area flexes into the remaining dialog height and owns the only
 scrollbar, including search results and recovery messages. The role groups and
-Not in this channel flow naturally one after the other; only the bordered viewport fills spare
+Not in this channel flow naturally one after the other; empty groups are hidden. Only the bordered viewport fills spare
 height, never a group inside it. The shared Dialog's opt-in flex body
 keeps the outer body non-scrolling; other dialogs are unchanged.
 Agent runtime/access management is not added to the member menu.
@@ -985,6 +1020,7 @@ edit their roles or remove someone else's agent. The service verifies signed
 ownership once per removal attempt, independently of display hints.
 
 DMs, archived channels and session channels have no administration actions.
+In a Solo chat only owners and admins can remove members, including other people's agents.
 No ownership transfer, community-admin override or new invitation restriction is
 introduced. Personal Leave remains a separate lifecycle operation; removing a
 member neither deletes their identity nor stops their agents.
@@ -1194,13 +1230,17 @@ Replies show a day divider only when their day differs from the previous row.
 
 Ordinary replies remain flat beneath the root. Replies to those replies form nested
 lists, with ascending timestamp/event-ID order among siblings. Nested branches start
-closed and expand one level at a time; once opened, they stay open for the lifetime
-of the thread view, including through child disappearance and rearrival. Expanding
-moves focus to the first revealed reply; deleting a focused reply returns focus to
+closed and expand one level deep; once opened, they stay open for the lifetime
+of the thread view, including through child disappearance and rearrival, until the
+reader collapses them from their thread line. Expanding moves focus to the first
+revealed reply and collapsing returns it to the branch's summary; deleting a focused reply returns focus to
 its available parent or thread history. Labeled expansion controls remain available
 when visual indentation is capped in narrow panels. Exact links reveal available
 ancestors; a reply whose parent is outside loaded history remains visible with a
 notice.
+Agents reply beneath the root with `send`. Their core `reply_in_subthread` tool
+replies under a named message instead, recording that message as the parent exactly
+as a person's Reply does.
 Retry appears only after a failed read; there is no routine Refresh control. Names
 are optional shared background enrichment. The panel describes **replies loaded**,
 not visible rows or complete history.
@@ -1232,19 +1272,20 @@ saves as usual and the text still renders as code once sent.
 Typing the space after a list or quote marker that starts a line (`- `, `* `, `+ ` or `• `, a number
 with a dot or parenthesis such as `1. ` or `3) `, or `> `) turns that line into a bullet, a
 numbered item starting at that number, or a quoted paragraph at once, the same block the
-formatting toolbar creates, and one undo restores the typed marker and its space. The typed
+formatting toolbar creates. Mentions, emoji, links and formatting later on the line move into
+the new block, and one undo restores the typed marker and its space. The typed
 `• ` alias sends as Markdown `- `. The channel placeholder appears only in an empty plain
 paragraph, not beside a list marker. Enter
 continues a list and exits an empty item; use the Send button to send while the caret is
 in a list (or Save changes when editing). Enter in ordinary prose still sends or saves. Inside a
 quote the markers nest: `- ` opens a list and `> ` a second quote. Inside a list item only a
 marker of the item's own list kind, typed as the only text of an item after the first,
-converts, nesting that item as Tab does. A marker typed after prose on the same line, inside
-a code block or inside pasted fenced text stays literal and renders as prose or code once
-sent. A marker on a line holding a mention, emoji or link, a quote marker or a marker of the
-other list kind typed inside a list item, and any marker typed in a list's first item or
-beside an item's prose also stay literal text in the composer but still render once sent: the
-timeline shows the list or quote, nested inside the item, where the composer shows the marker.
+converts, nesting that item as Tab does. A marker typed after prose on the same line, as
+inline code or link text, inside a code block or inside pasted fenced text stays literal and
+renders as prose or code once sent. A quote marker or a marker of the other list kind typed
+inside a list item, and any marker typed in a list's first item or beside an item's prose also
+stay literal text in the composer but still render once sent: the timeline shows the list or
+quote, nested inside the item, where the composer shows the marker.
 Two lists of one kind typed one after the other, or separated only by empty lines, send with
 alternating markers (`-` then `*`, `1.` then `1)`) so they stay separate lists once sent.
 Typing an inline span (`**bold**` or `__bold__`, `_italic_` or `*italic*`, `~~strike~~`,

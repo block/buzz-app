@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useLayoutEffect, useRef, type ReactNode } from "react";
 import { CaretUpIcon } from "../../shared/design-system/icons";
 import { AgentResponsePreview } from "./AgentResponsePreview";
 import { useActivityIndicator } from "./use-activity-indicator";
@@ -31,6 +31,40 @@ export function ActivityGroupPreview({
   layout?: "timeline" | "thread";
   renderHistory?: (row: ChannelMessage) => ReactNode;
 }) {
+  const container = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const node = container.current;
+    return () => {
+      const scope = node?.closest<HTMLElement>("[data-message-scroller]");
+      const focused = node?.ownerDocument.activeElement;
+      if (!node || !scope || !focused || !node.contains(focused)) return;
+      const top = node.getBoundingClientRect().top;
+      queueMicrotask(() => {
+        if (
+          !scope.isConnected ||
+          scope.ownerDocument.activeElement !== scope.ownerDocument.body
+        )
+          return;
+        const buttons = [
+          ...scope.querySelectorAll<HTMLButtonElement>(
+            "[data-message-id] button:not([disabled])",
+          ),
+        ];
+        const target = buttons
+          .filter(
+            (button) =>
+              button.getClientRects().length &&
+              !button.closest("[inert], [aria-hidden='true']"),
+          )
+          .sort(
+            (a, b) =>
+              Math.abs(a.getBoundingClientRect().top - top) -
+              Math.abs(b.getBoundingClientRect().top - top),
+          )[0];
+        (target ?? scope).focus({ preventScroll: true });
+      });
+    };
+  }, []);
   const { latest: row, history, participants, done, working } = group;
   const live = useActivityIndicator(
     session,
@@ -39,7 +73,7 @@ export function ActivityGroupPreview({
     participants,
     group.requestId,
   );
-  if (done) return null;
+  if (done && !group.retained) return null;
   const primary = history[0]?.authorId ?? row.authorId;
   const profile = profiles.get(primary);
   const name = profile?.name ?? primary.slice(0, 10);
@@ -104,7 +138,11 @@ export function ActivityGroupPreview({
       picture={avatarMedia(profile?.picture, media)}
       layout={layout}
     >
-      <div className={styles.standaloneActivity} data-contained-history="">
+      <div
+        ref={container}
+        className={styles.standaloneActivity}
+        data-contained-history=""
+      >
         {content}
         {expanded && renderHistory && (
           <div className={styles.containedActivityHistory}>

@@ -1686,6 +1686,18 @@ function ThreadMessages({
             )}
             {renderReplies(undefined)}
           </ol>
+          {!positioning && rootId && (
+            <TypingIndicator
+              audience="agents"
+              inFlow
+              session={session}
+              channelId={channelId}
+              threadRootId={rootId}
+              previousAuthor={joinsLive ? lastMessage?.authorId : undefined}
+              openActivity={onOpenLink}
+              canOpenActivity={canOpenLink}
+            />
+          )}
         </div>
         {requireReadyRoot &&
           snapshot.root &&
@@ -1695,18 +1707,6 @@ function ThreadMessages({
               to check the destination.
             </p>
           )}
-        {!positioning && rootId && (
-          <TypingIndicator
-            audience="agents"
-            inFlow
-            session={session}
-            channelId={channelId}
-            threadRootId={rootId}
-            previousAuthor={joinsLive ? lastMessage?.authorId : undefined}
-            openActivity={onOpenLink}
-            canOpenActivity={canOpenLink}
-          />
-        )}
         {positioning || (snapshot.status === "loading" && !rows.length) ? (
           <ThreadLoading />
         ) : null}

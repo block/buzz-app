@@ -1,3 +1,4 @@
+import { TypingIndicator } from "./TypingIndicator";
 import { workflowLabel } from "../relay/workflow-attribution";
 import { MessageEditScope } from "./MessageEditScope";
 import { useReviewSidebarMotion } from "./use-review-sidebar-motion";
@@ -456,6 +457,8 @@ function ReviewShell({
             {rootId && source ? (
               <MessageEditScope>
                 <ReviewComments
+                  channelId={channelId}
+                  threadRootId={rootId}
                   selectedComment={selectedComment}
                   replies={replies}
                   limited={limited}
@@ -579,6 +582,8 @@ function ReviewShell({
 }
 
 function ReviewComments({
+  channelId,
+  threadRootId,
   replies,
   selectedComment,
   limited,
@@ -588,6 +593,8 @@ function ReviewComments({
   seek,
   selectAttachment,
 }: {
+  channelId: string;
+  threadRootId: string;
   replies: ReturnType<ThreadView["snapshot"]>["replies"];
   selectedComment?: string | undefined;
   limited: boolean;
@@ -668,6 +675,14 @@ function ReviewComments({
             </div>
           );
         })}
+        <TypingIndicator
+          session={session}
+          channelId={channelId}
+          threadRootId={threadRootId}
+          audience="agents"
+          inFlow
+          previousAuthor={replies.at(-1)?.authorId}
+        />
         {!replies.length && (
           <p className={styles.threadNote}>
             No comments yet. Add the first below.

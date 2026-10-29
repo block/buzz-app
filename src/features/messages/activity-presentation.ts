@@ -1,4 +1,4 @@
-import { useMemo, useSyncExternalStore } from "react";
+import { useMemo, useRef, useSyncExternalStore } from "react";
 import type { ChannelMessage } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
 import { requestWork } from "../agents/request-work";
@@ -17,6 +17,7 @@ type ActivityRun = {
 };
 export type ActivityPresentation = ActivityRun & {
   done: boolean;
+  retained?: boolean;
   working: boolean;
   standalone: boolean;
 };
@@ -174,12 +175,36 @@ export function useActivityPresentation(
   activity: Activity | undefined,
   agents: ReadonlySet<string> | undefined,
   rootId?: string,
+  pinnedIds?: ReadonlyMap<string, number>,
 ) {
   const snapshot = useActivitySnapshot(activity);
-  return useMemo(
+  const projection = useMemo(
     () => activityPresentation(rows, snapshot, agents, rootId),
     [rows, snapshot, agents, rootId],
   );
+  const prior = useRef(new Map<string, ActivityPresentation>());
+  const groups = useMemo(() => {
+    const groups = projection.groups.map((group) => {
+      const key = group.ids[0] ?? "";
+      const previous = prior.current.get(key);
+      // Retain the same contained tree, not merely its individual message IDs:
+      // report dialogs and their pending submissions belong to that tree.
+      return previous &&
+        group.done &&
+        group.ids.some((id) => pinnedIds?.has(id))
+        ? {
+            ...previous,
+            done: true,
+            working: false,
+            retained: true,
+            followingMessage: group.followingMessage,
+          }
+        : group;
+    });
+    prior.current = new Map(groups.map((group) => [group.ids[0] ?? "", group]));
+    return groups;
+  }, [projection, pinnedIds]);
+  return { ...projection, groups };
 }
 
 /** Finished work stays in Activity rather than the conversation flow. */
@@ -189,7 +214,9 @@ export function activityDisplayRows<T extends ChannelMessage>(
   revealedId?: string,
 ): readonly T[] {
   const completed = new Set(
-    groups.filter((group) => group.done).flatMap((group) => group.ids),
+    groups
+      .filter((group) => group.done && !group.retained)
+      .flatMap((group) => group.ids),
   );
   return completed.size
     ? rows.filter((row) => row.id === revealedId || !completed.has(row.id))

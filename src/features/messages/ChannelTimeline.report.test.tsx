@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import "../../../tests/sonner-dom";
+import "@testing-library/jest-dom/vitest";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
   act,
@@ -94,7 +95,11 @@ afterEach(() => {
   localStorage.clear();
 });
 
-function mount(publish: (event: RelayEvent) => Promise<void>) {
+function mount(
+  publish: (event: RelayEvent) => Promise<void>,
+  targetEvent = target,
+  initial = [targetEvent, neighbor],
+) {
   let live: LiveCallbacks | undefined;
   const owner = createRelaySession(
     {
@@ -109,7 +114,7 @@ function mount(publish: (event: RelayEvent) => Promise<void>) {
   );
   owners.push(owner);
   owner.session.channels.ensure("c");
-  live?.receive([roster(relay, "c", [viewer.pubkey], 1), target, neighbor]);
+  live?.receive([roster(relay, "c", [viewer.pubkey], 1), ...initial]);
   const tree = () => (
     <StrictMode>
       <ToastProvider>
@@ -125,10 +130,18 @@ function mount(publish: (event: RelayEvent) => Promise<void>) {
   );
   const result = render(tree());
   const row = () =>
-    document.querySelector<HTMLElement>(`[data-message-id="${target.id}"]`);
+    document.querySelector<HTMLElement>(
+      `[data-message-id="${targetEvent.id}"]`,
+    );
   const neighborRow = () =>
     document.querySelector(`[data-message-id="${neighbor.id}"]`);
   return {
+    receive(event: RelayEvent) {
+      act(() => {
+        live?.receive([event]);
+        result.rerender(tree());
+      });
+    },
     row,
     neighborRow,
     // Scroll the target out of the virtualizer buffer.
@@ -149,10 +162,13 @@ function mount(publish: (event: RelayEvent) => Promise<void>) {
 
 async function openReport(row: HTMLElement) {
   const user = userEvent.setup();
-  const trigger = within(row).getByRole("button", {
+  const more = within(row).queryByRole("button", {
     name: "More message actions",
   });
-  await user.click(trigger);
+  const trigger =
+    more ?? within(row).getByRole("button", { name: /Working on the report/ });
+  if (more) await user.click(trigger);
+  else fireEvent.contextMenu(trigger);
   await user.click(await screen.findByRole("menuitem", { name: "Report" }));
   await screen.findByRole("dialog", { name: "Report message" });
   return { user, trigger };
@@ -322,3 +338,49 @@ it("closing the image viewer before the report notice ends keeps the row pinned 
   await waitFor(() => expect(h.row()).toBeNull());
   expect(h.neighborRow()).not.toBeNull();
 });
+
+it.each(["draft", "pending"] as const)(
+  "retains the contained report owner through completion with a %s report",
+  async (phase) => {
+    let release!: () => void;
+    const publish = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+    );
+    const step = message(other, "c", "Working on the report", 2, [
+      ["audience", "agents"],
+    ]);
+    const h = mount(publish, step, [step]);
+    await userEvent.click(
+      screen.getByRole("button", { name: /Show activity history/ }),
+    );
+    const original = h.row();
+    if (!original) throw new Error("Missing contained activity");
+    const { user } = await openReport(original);
+    await user.click(screen.getByRole("radio", { name: "Spam" }));
+    const context = screen.getByRole("textbox", {
+      name: "Additional context (optional)",
+    });
+    await user.type(context, "Keep this draft");
+    try {
+      if (phase === "pending") {
+        await user.click(screen.getByRole("button", { name: "Submit report" }));
+        await waitFor(() => expect(publish).toHaveBeenCalledOnce());
+      }
+      h.receive(message(other, "c", "Finished the work", 3));
+      expect(h.row()).toBe(original);
+      expect(
+        screen.getByRole("dialog", { name: "Report message" }),
+      ).toBeTruthy();
+      expect(context).toHaveValue("Keep this draft");
+    } finally {
+      if (phase === "pending") await act(async () => release());
+    }
+    if (phase === "pending")
+      expect(
+        await screen.findByText("Report submitted to community moderators"),
+      ).toBeTruthy();
+  },
+);

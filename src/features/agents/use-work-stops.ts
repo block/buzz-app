@@ -68,8 +68,9 @@ export function useWorkStops(controls: readonly WorkStop[]) {
         );
       }
     } catch (error) {
-      if (attempts.current.get(key) !== attempt) return;
-      forget(key);
+      const current = attempts.current.get(key);
+      if (current && current !== attempt) return;
+      if (current) forget(key);
       notify(
         `Couldn’t stop ${name}. ${error instanceof Error ? error.message : String(error)}`,
         "error",

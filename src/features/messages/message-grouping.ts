@@ -23,7 +23,7 @@ export function continuesMessageGroup(
   );
 }
 
-/** Activity belongs inside its surrounding public sender group. */
+/** Only same-author activity can bridge two public messages. */
 export function publicMessageNeighbor(
   rows: readonly ChannelMessage[],
   index: number,
@@ -35,7 +35,9 @@ export function publicMessageNeighbor(
     next += direction
   ) {
     const row = rows[next];
-    if (row && row.audience !== "agents") return row;
+    if (!row) continue;
+    if (row.audience !== "agents") return row;
+    if (rows[index] && row.authorId !== rows[index]?.authorId) return undefined;
   }
   return undefined;
 }

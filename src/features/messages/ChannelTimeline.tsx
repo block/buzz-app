@@ -246,10 +246,28 @@ function Timeline({
   const [expandedActivity, setExpandedActivity] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
+  // Holders are counted per row: a report notice and an image viewer can hold
+  // the same row, and releasing one must not drop the other's pin.
+  const [pinnedIds, setPinnedIds] = useState<ReadonlyMap<string, number>>(
+    () => new Map(),
+  );
+  const keepRowMounted = useCallback((id: string) => {
+    setPinnedIds((ids) => new Map(ids).set(id, (ids.get(id) ?? 0) + 1));
+    return () =>
+      setPinnedIds((ids) => {
+        const next = new Map(ids);
+        const count = (ids.get(id) ?? 0) - 1;
+        if (count > 0) next.set(id, count);
+        else next.delete(id);
+        return next;
+      });
+  }, []);
   const presentation = useActivityPresentation(
     chronologicalRows,
     queries.agentActivity,
     agentPubkeys,
+    undefined,
+    pinnedIds,
   );
   const activity = presentation.groups;
   const { agents: liveAgents } = useConversationAgents(
@@ -287,7 +305,7 @@ function Timeline({
   }
   const disclosures = new Map(
     activity
-      .filter((group) => !group.done)
+      .filter((group) => !group.done || group.retained)
       .map((group) => [
         group.ids[0],
         {
@@ -301,7 +319,8 @@ function Timeline({
     activity
       .filter(
         (group) =>
-          !group.done && group.ids.some((id) => expandedActivity.has(id)),
+          (!group.done || group.retained) &&
+          group.ids.some((id) => expandedActivity.has(id)),
       )
       .flatMap((group) => group.ids.map((id) => [id, group.ids[0]] as const)),
   );
@@ -324,22 +343,6 @@ function Timeline({
   const [geometry] = useState(() => geometryFor(queries.channels));
   const [focusedMessageId, setFocusedMessageId] = useState<string>();
   const [focusedActivityId, setFocusedActivityId] = useState<string>();
-  // Holders are counted per row: a report notice and an image viewer can hold
-  // the same row, and releasing one must not drop the other's pin.
-  const [pinnedIds, setPinnedIds] = useState<ReadonlyMap<string, number>>(
-    () => new Map(),
-  );
-  const keepRowMounted = useCallback((id: string) => {
-    setPinnedIds((ids) => new Map(ids).set(id, (ids.get(id) ?? 0) + 1));
-    return () =>
-      setPinnedIds((ids) => {
-        const next = new Map(ids);
-        const count = (ids.get(id) ?? 0) - 1;
-        if (count > 0) next.set(id, count);
-        else next.delete(id);
-        return next;
-      });
-  }, []);
   // Folding, stacking, and cached measurements share the same visibility.
   const foldedActivity = new Set(
     [...hiddenActivity].filter(
@@ -381,6 +384,20 @@ function Timeline({
   );
   const scroller = useRef<HTMLElement>(null);
   const edge = useRef<HTMLDivElement>(null);
+  const activityTail = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const tail = activityTail.current;
+    const element = scroller.current;
+    if (!tail || !element || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      if (settled.current && follow.current) {
+        layoutCorrection.current = true;
+        element.scrollTop = element.scrollHeight;
+      }
+    });
+    observer.observe(tail);
+    return () => observer.disconnect();
+  }, []);
   // Keep pagination space through EOF so removing its control cannot change
   // Virtua's start margin in the same measurement cycle as a prepend.
   const [reserveHistorySpace, setReserveHistorySpace] = useState(false);
@@ -535,8 +552,11 @@ function Timeline({
     setShowJumpToLatest(false);
     setNewMessageCount(0);
     layoutCorrection.current = true;
+    const tailHeight =
+      activityTail.current?.getBoundingClientRect().height ?? 0;
     handle.current.scrollToIndex(rows.length - 1, {
       align: "end",
+      ...(tailHeight ? { offset: tailHeight } : {}),
     });
   }, [rows.length]);
   const inlineSignal = inlineTarget?.signal;
@@ -946,10 +966,16 @@ function Timeline({
         follow.current = false;
       } else if (follow.current) {
         layoutCorrection.current = true;
-        handle.current.scrollToIndex(
-          revealIndex >= 0 ? revealIndex : rows.length - 1,
-          { align: "end" },
-        );
+        if (revealIndex >= 0)
+          handle.current.scrollToIndex(revealIndex, { align: "end" });
+        else {
+          const tailHeight =
+            activityTail.current?.getBoundingClientRect().height ?? 0;
+          handle.current.scrollToIndex(rows.length - 1, {
+            align: "end",
+            ...(tailHeight ? { offset: tailHeight } : {}),
+          });
+        }
         if (revealIndex >= 0) {
           revealed.current = revealMessageId;
           pendingReveal.current = undefined;
@@ -1383,39 +1409,27 @@ function Timeline({
                     renderMessage(row)
                   )}
                 </ActivityExpansion>
-                {index === rows.length - 1 && (
-                  <>
-                    <TypingIndicator
-                      audience="agents"
-                      inFlow
-                      session={queries}
-                      channelId={channelId}
-                      previousAuthor={
-                        lastPublicMessage && !lastPublicMessage.membership
-                          ? lastPublicMessage.authorId
-                          : undefined
-                      }
-                      openActivity={onOpenLink}
-                      canOpenActivity={canOpenLink}
-                    />
-                    <div className={styles.timelineEnd} aria-hidden="true" />
-                  </>
-                )}
               </Fragment>
             );
           })}
         </Virtualizer>
       )}
-      {!rows.length && (
+      <div ref={activityTail}>
         <TypingIndicator
           audience="agents"
           inFlow
           session={queries}
           channelId={channelId}
+          previousAuthor={
+            lastPublicMessage && !lastPublicMessage.membership
+              ? lastPublicMessage.authorId
+              : undefined
+          }
           openActivity={onOpenLink}
           canOpenActivity={canOpenLink}
         />
-      )}
+        <div className={styles.timelineEnd} aria-hidden="true" />
+      </div>
       {!rows.length &&
         !window.hasMore &&
         window.status === "ready" &&

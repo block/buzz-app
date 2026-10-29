@@ -195,6 +195,31 @@ it("signs the shared session out when Builderlab rejects it", async () => {
   expect(session.snapshot().status).toBe("signed-out");
 });
 
+it("ends only the current session when a community route returns 401", async () => {
+  let answer: (reply: Reply) => void = () => {};
+  const { backend, session, signIn, requests } = setup({
+    "/v1/buzz/communities/list": () =>
+      new Promise<Reply>((resolve) => {
+        answer = resolve;
+      }),
+  });
+  await signIn();
+  const stale = backend.send("list");
+  await vi.waitFor(() => expect(requests).toHaveLength(1));
+  session.signOut();
+  await signIn("replacement");
+  answer({ status: 401, body: {} });
+  await expect(stale).rejects.toThrow("Builderlab session changed");
+  expect(session.snapshot().status).toBe("signed-in");
+  const current = backend.send("list");
+  await vi.waitFor(() => expect(requests).toHaveLength(2));
+  answer({ status: 401, body: { error: { code: "unauthorized" } } });
+  await expect(current).rejects.toThrow(
+    "Your Builderlab session expired. Sign in again.",
+  );
+  expect(session.snapshot().status).toBe("signed-out");
+});
+
 it("reads the account only after sign-in's identity link settles", async () => {
   const { backend, signIn, holdLink, requests } = setup(signedIn);
   let finish: () => void = () => {};

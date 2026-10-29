@@ -92,6 +92,10 @@ export function createNativeBackend(
       body: JSON.stringify(body),
     });
     ensureCurrent(credential);
+    if (response.status === 401) {
+      session.signOut();
+      throw new Error("Your Builderlab session expired. Sign in again.");
+    }
     const value = parse(response.body);
     const ok = response.status >= 200 && response.status < 300;
     // Structured `{ error: { code, ... } }` bodies pass through for friendly UI messages.

@@ -298,7 +298,7 @@ it("uploads the artifact to the app's deploy endpoint", async () => {
 it("points the agent at Settings when signed out or refused", async () => {
   const signedOut = await setup([], false);
   await expect(signedOut.client.list()).rejects.toThrow(
-    /not signed in.*Settings → Plugins → Builderlab agents/,
+    /not signed in.*Settings → Plugins → Builderlab, then/,
   );
   expect(signedOut.requests).toEqual([]);
   const refused = await setup([json(401, {})]);

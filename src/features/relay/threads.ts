@@ -754,6 +754,7 @@ export function createThreadView({
       [...remote, ...staged, ...selectionStaged].find(
         (event) => event.id === id,
       ),
+    events: () => [...remote, ...staged, ...selectionStaged],
     receive,
     purge,
     localChanged() {

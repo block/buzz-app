@@ -28,6 +28,8 @@ export interface ChannelDetailsCapability {
     base: ChannelDetails,
     draft: ChannelDetailsDraft,
     signal?: AbortSignal,
+    /** Checked synchronously right before publishing; false publishes nothing. */
+    active?: () => boolean,
   ): Promise<void>;
   check(id: string, signal?: AbortSignal): Promise<void>;
   snapshot(id: string): DetailsAttempt | undefined;
@@ -169,6 +171,7 @@ export function createChannelDetails({
       base: ChannelDetails,
       input: ChannelDetailsDraft,
       caller?: AbortSignal,
+      active?: () => boolean,
     ) {
       const id = lifecycleChannelId(base.channelId);
       if (!writer || !reader)
@@ -244,6 +247,8 @@ export function createChannelDetails({
               throw new Error("Signer changed the channel details command.");
             await authorize();
             signal.throwIfAborted();
+            if (active?.() === false)
+              throw new DOMException("Channel edit cancelled", "AbortError");
             publicationStarted = true;
             await writer.publish(signed, signal);
             await confirm(id, draft, signal);

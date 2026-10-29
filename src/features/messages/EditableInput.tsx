@@ -167,14 +167,14 @@ function moveHead(editor: EditorView, head: number, extend: boolean) {
  * caret position besides the token's edge, so native Up and Down stall there
  * in WebKit and jump to a document edge in Chromium, entering such a line and
  * leaving it alike. Such a line is entered at the token edge it holds, or
- * crossed to the far edge when it holds neither, and left for the nearest
- * position on the neighbouring line. The token's client rects give its
- * lines, so a line scrolled out of the composer still counts. A caret at a
- * soft wrap is measured on the line it leaves: a move may go one line too
- * far but never stalls. Every other line move stays native, from a DOM
- * caret the browser can move. The Mac's emacs-style Ctrl+N and Ctrl+P line
- * moves stay native too, and can still stall on such a line: they are rare
- * in a composer and would need a platform key binding here. */
+ * crossed to the far edge when it holds neither, and left for the position
+ * on the neighbouring line nearest the caret's column. The token's client
+ * rects give its lines, so a line scrolled out of the composer still counts.
+ * A caret at a soft wrap is measured on the line it leaves: a move may go one
+ * line too far but never stalls. Every other line move stays native, from a
+ * DOM caret the browser can move. The Mac's emacs-style Ctrl+N and Ctrl+P
+ * line moves stay native too, and can still stall on such a line: they are
+ * rare in a composer and would need a platform key binding here. */
 function crossTokenLine(
   editor: EditorView,
   tokens: ReadonlyMap<HTMLElement, { position(): number | undefined }>,
@@ -213,6 +213,33 @@ function crossTokenLine(
     return doc.textBetween(Math.min(pos, next), Math.max(pos, next)) === "\n"
       ? next
       : pos;
+  };
+  // Stepping off a token keeps the caret's column, as a browser does between
+  // lines: from `edge`, the near end of the neighbouring `line`, the position
+  // on that line drawn nearest the caret. Landing at the near end instead adds
+  // only the line break to a Shift selection, which looks like no move at all.
+  // Positions are measured rather than hit-tested, so a line scrolled out of
+  // the composer still counts. Each is measured where a caret there is drawn,
+  // so a soft wrap belongs to the line after it.
+  const column = (
+    edge: number | undefined,
+    line?: { top: number; bottom: number },
+  ) => {
+    if (edge === undefined) return edge;
+    const $edge = doc.resolve(edge);
+    let head = edge;
+    let gap = Number.POSITIVE_INFINITY;
+    for (
+      let pos = edge;
+      pos >= $edge.start() && pos <= $edge.end();
+      pos += up ? -1 : 1
+    ) {
+      const point = editor.coordsAtPos(pos, 1);
+      if (!holds(line, point)) break;
+      const distance = Math.abs(point.left - caret.left);
+      if (distance < gap) [head, gap] = [pos, distance];
+    }
+    return head;
   };
   for (const [element, host] of tokens) {
     const from = host.position();
@@ -253,7 +280,13 @@ function crossTokenLine(
         holds(line) &&
         ((index === 0 && origin === from) || (index === last && origin === to))
       )
-        head = up ? (index > 0 ? from : before) : index < last ? to : after;
+        head = up
+          ? index > 0
+            ? from
+            : column(before, above)
+          : index < last
+            ? to
+            : column(after, below);
       if (head === undefined || (up ? head >= origin : head <= origin))
         continue;
       moveHead(editor, head, extend);

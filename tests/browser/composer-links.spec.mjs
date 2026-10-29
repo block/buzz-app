@@ -712,8 +712,12 @@ test("Up and Down move one line at a time through links that wrap", async ({
           ),
       );
     // Presses `key` until the head reaches `stop`, returning where each press
-    // lands. A press that leaves the head in place fails the poll.
+    // lands. A press that leaves the head in place fails the poll, and so does
+    // one that crosses nothing but a line break: the caret jumps to the far
+    // end of a line, and a Shift selection grows by the break alone, which
+    // looks like no move at all.
     const walk = async (key, start, stop) => {
+      const value = await input.evaluate((el) => el.value);
       await input.evaluate((el, at) => el.setSelectionRange(at, at), start);
       await rendered();
       const heads = [];
@@ -725,6 +729,9 @@ test("Up and Down move one line at a time through links that wrap", async ({
           .poll(async () => (head = (await caret()).head))
           .not.toBe(previous);
         expect(Math.sign(head - previous)).toBe(key.endsWith("Up") ? -1 : 1);
+        expect(
+          value.slice(Math.min(previous, head), Math.max(previous, head)),
+        ).toMatch(/[^\n]/);
         expect((await caret()).anchor).toBe(
           key.startsWith("Shift+") ? start : head,
         );
@@ -743,17 +750,18 @@ test("Up and Down move one line at a time through links that wrap", async ({
       // Across the second link's middle line.
       expect(down.slice(3)).toEqual([secondTo]);
 
-      const up = await walk(`${shift}ArrowUp`, text.length, firstFrom - 1);
+      const up = await walk(`${shift}ArrowUp`, text.length, 0);
       const [afterSecond, beforeSecond, afterFirst, ...rest] = up.slice(-5);
       // The line holding the end of the second link and the words after it.
       expect(afterSecond).toBeGreaterThanOrEqual(secondTo);
       expect(afterSecond).toBeLessThanOrEqual(secondTo + secondTail.length);
       // Across the second link's middle line, then up to the first link's end
-      // line, onto its own first line, and off it to the line above.
+      // line, onto its own first line, and off it to the line above at the
+      // caret's column, its start.
       expect(beforeSecond).toBe(secondFrom);
       expect(afterFirst).toBeGreaterThanOrEqual(firstTo);
       expect(afterFirst).toBeLessThanOrEqual(firstTo + firstTail.length);
-      expect(rest).toEqual([firstFrom, firstFrom - 1]);
+      expect(rest).toEqual([firstFrom, 0]);
     }
 
     // A typed line break after the first link leaves its end line to it too.
@@ -786,6 +794,57 @@ test("Up and Down move one line at a time through links that wrap", async ({
       ),
     );
     expect((await caret()).head).toBe(firstTo);
+
+    // Stepping off a link that starts or ends its paragraph keeps the caret's
+    // column on the neighbouring line, even where that line starts with the
+    // tail of another link.
+    const edges = [
+      "Plain words above.",
+      `${link(title, 3)} ends here.`,
+      link(title, 4),
+      "Plain words below, longer than the link's last line.",
+    ];
+    const draft = edges.join("\n");
+    await input.fill("");
+    await input.fill(draft);
+    await expect(links).toHaveCount(2);
+    const thirdFrom = draft.indexOf(link(title, 3));
+    const thirdTo = thirdFrom + link(title, 3).length;
+    const fourthFrom = draft.indexOf(link(title, 4));
+    const fourthTo = fourthFrom + link(title, 4).length;
+    for (const shift of ["", "Shift+"]) {
+      const down = await walk(`${shift}ArrowDown`, 0, draft.length);
+      expect(down.slice(0, 4)).toEqual([
+        thirdFrom,
+        thirdTo,
+        fourthFrom,
+        fourthTo,
+      ]);
+      // Off the fourth link's last line to the line below, under its end.
+      const [column, ...end] = down.slice(4);
+      expect(column).toBeGreaterThan(fourthTo + 1);
+      expect(end).toEqual([draft.length]);
+      const { x, edge, em } = await input.evaluate((el, at) => {
+        el.setSelectionRange(at, at);
+        const fourth = [...el.querySelectorAll("[data-source]")].at(-1);
+        return {
+          x: getSelection().getRangeAt(0).getClientRects()[0].left,
+          edge: [...fourth.getClientRects()].at(-1).right,
+          em: Number.parseFloat(getComputedStyle(el).fontSize),
+        };
+      }, column);
+      // The nearest position is within half a glyph, so half an em.
+      expect(Math.abs(x - edge)).toBeLessThanOrEqual(em / 2);
+      // Off the fourth link's first line to the third link's end, which is
+      // where the line above starts.
+      expect(await walk(`${shift}ArrowUp`, draft.length, 0)).toEqual([
+        fourthTo,
+        fourthFrom,
+        thirdTo,
+        thirdFrom,
+        0,
+      ]);
+    }
 
     // WebKit splits this link into two rects on one line, reordering its
     // Hebrew with the text after it. That is still one line, and native Down

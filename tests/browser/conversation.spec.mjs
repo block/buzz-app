@@ -378,11 +378,13 @@ test("independent packed author consumer and native-installed contribution survi
     await draft.fill("reject :party:");
     await draft.press("Enter");
     // Delivery feedback intentionally waits 10 seconds; leave time for the UI timer.
-    await expect(page.getByRole("button", { name: /Retry/ })).toBeVisible({
-      timeout: 15_000,
+    const retryDelivery = page.getByRole("button", {
+      name: "Retry",
+      exact: true,
     });
+    await expect(retryDelivery).toBeVisible({ timeout: 15_000 });
     await page.evaluate(() => window.conversationFixture.replace());
-    await page.getByRole("button", { name: /Retry/ }).click();
+    await retryDelivery.click();
     await expect
       .poll(() =>
         page.evaluate(() => window.conversationFixture.report.published.length),

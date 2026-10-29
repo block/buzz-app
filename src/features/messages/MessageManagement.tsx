@@ -549,9 +549,6 @@ export function MessageManagementStatus() {
   const [error, setError] = useState<string>();
   if (!management) return null;
   const { session, channelId, operations } = management;
-  const channel = session.channels
-    .list()
-    .channels.find((item) => item.id === channelId);
   const pending = operations.filter(
     (item) =>
       (item.event.kind === 40003 ||
@@ -582,18 +579,7 @@ export function MessageManagementStatus() {
               same operation; dismissing does not undo it.
             </p>
           )}
-          <Button
-            disabled={
-              !channel ||
-              channel.archived ||
-              channel.cached ||
-              (channel.readOnly &&
-                !(channel.viewerRole === "guest" && item.event.kind === 5))
-            }
-            onClick={() => session.outbox?.retry(item.event.id)}
-          >
-            Retry message update
-          </Button>
+          <RetryMessageUpdate session={session} event={item.event} />
           <Button
             onClick={async () => {
               try {
@@ -616,5 +602,33 @@ export function MessageManagementStatus() {
       ))}
       {error && <p role="alert">{error}</p>}
     </>
+  );
+}
+
+function RetryMessageUpdate({
+  session,
+  event,
+}: {
+  session: RelaySession;
+  event: OutgoingEvent["event"];
+}) {
+  const eligible = useSyncExternalStore(
+    (listener) => {
+      const offChannels = session.channels.subscribeList(listener);
+      const offProfiles = session.profiles.subscribe(listener);
+      return () => {
+        offChannels();
+        offProfiles();
+      };
+    },
+    () => session.messages.canRetry(event),
+  );
+  return (
+    <Button
+      disabled={!eligible}
+      onClick={() => session.outbox?.retry(event.id)}
+    >
+      Retry message update
+    </Button>
   );
 }

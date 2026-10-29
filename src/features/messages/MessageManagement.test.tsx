@@ -73,6 +73,8 @@ async function fixture(
   shareRead?: Promise<RelayEvent[]>,
   viewerRole: "member" | "guest" = "member",
 ) {
+  let role = viewerRole,
+    rosterTime = 1700000000;
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -115,7 +117,7 @@ async function fixture(
       ...(originalMention ? [["p", peer.pubkey]] : []),
     ],
   );
-  const agentProfile =
+  let agentProfile =
     agent && agentOwnerKey
       ? eventDto(
           signed(agent, {
@@ -185,9 +187,10 @@ async function fixture(
             metadata(relay, "room", "Room"),
             signed(relay, {
               ...roster(relay, "room", [viewer.pubkey, peer.pubkey]),
+              created_at: rosterTime,
               tags: [
                 ["d", "room"],
-                ["p", viewer.pubkey, "", viewerRole],
+                ["p", viewer.pubkey, "", role],
                 ["p", peer.pubkey, "", "member"],
               ],
             }),
@@ -297,6 +300,25 @@ async function fixture(
     owner,
     original,
     publications,
+    async setRole(next: "member" | "guest") {
+      role = next;
+      rosterTime++;
+      await owner.session.read([{ kinds: [39002], "#d": ["room"], limit: 1 }]);
+    },
+    async revokeOwner() {
+      assert.exists(agent);
+      agentProfile = eventDto(
+        signed(agent, {
+          kind: 0,
+          created_at: 1700000001,
+          tags: [],
+          content: JSON.stringify({ name: "Test agent" }),
+        }),
+      );
+      await owner.session.read([
+        { kinds: [0], authors: [agent.pubkey], limit: 1 },
+      ]);
+    },
     preview: () => view.rerender(<Surface composer={false} />),
     present: (presented: boolean) =>
       view.rerender(<Surface presented={presented} />),
@@ -879,6 +901,79 @@ it("recovers an uncertain deletion after the row and dialog disappear", async ()
   await waitFor(() => expect(h.publications).toHaveLength(2));
   expect(h.publication(1).event.id).toBe(h.publication(0).event.id);
   await act(async () => h.publication(1).result.resolve());
+});
+
+it.each(["failed", "unknown"] as const)(
+  "disables %s own-message deletion retry after demotion to Guest",
+  async (delivery) => {
+    const h = await fixture();
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "Delete message" }),
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(h.publications).toHaveLength(1));
+    await act(async () =>
+      h
+        .publication(0)
+        .result.reject(
+          delivery === "failed"
+            ? new PublishRejected("Deletion refused")
+            : new Error("Connection lost"),
+        ),
+    );
+    fireEvent.click(await screen.findByText("Close", { exact: true }));
+    const retry = await screen.findByRole("button", {
+      name: "Retry message update",
+    });
+    expect(retry).toBeEnabled();
+    await act(async () => h.setRole("guest"));
+    expect(h.owner.session.channels.get?.("room")?.viewerRole).toBe("guest");
+    await waitFor(() => expect(retry).toBeDisabled());
+    fireEvent.click(retry);
+    expect(h.publications).toHaveLength(1);
+  },
+);
+
+it("retries an owned-agent deletion without its row and disables retry when ownership is revoked", async () => {
+  const h = await fixture(
+    false,
+    false,
+    false,
+    false,
+    false,
+    "viewer",
+    false,
+    undefined,
+    "guest",
+  );
+  fireEvent.click(
+    await screen.findByRole("menuitem", { name: "Delete message" }),
+  );
+  fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
+  await waitFor(() => expect(h.publications).toHaveLength(1));
+  await act(async () =>
+    h.publication(0).result.reject(new Error("Connection lost")),
+  );
+  fireEvent.click(await screen.findByText("Close", { exact: true }));
+  expect(h.owner.session.channels.window("room").rows).toHaveLength(0);
+  const retry = await screen.findByRole("button", {
+    name: "Retry message update",
+  });
+  expect(retry).toBeEnabled();
+  fireEvent.click(retry);
+  await waitFor(() => expect(h.publications).toHaveLength(2));
+  expect(h.publication(1).event.id).toBe(h.publication(0).event.id);
+  await act(async () =>
+    h.publication(1).result.reject(new PublishRejected("Deletion refused")),
+  );
+  const revokedRetry = await screen.findByRole("button", {
+    name: "Retry message update",
+  });
+  expect(revokedRetry).toBeEnabled();
+  await act(async () => h.revokeOwner());
+  await waitFor(() => expect(revokedRetry).toBeDisabled());
+  fireEvent.click(revokedRetry);
+  expect(h.publications).toHaveLength(2);
 });
 
 it("waits for confirmed membership before entering a restored channel visit", async () => {

@@ -2212,73 +2212,96 @@ export function createRelaySession(
             },
           })
         : undefined,
-    messages: createMessages(
-      writes?.outbox,
-      transport?.viewer,
-      (id) =>
-        local().find((item) => item.event.id === id)?.event ??
-        recent.peek(id)?.event ??
-        retainedEvent(id),
-      emoji.tags,
-      validateMentions,
-      (id, owner) =>
-        !closed &&
-        (channels.canWrite(id) ||
-          // editOwnedAgent and messages.remove supply owner evidence;
-          // validateChannelWrite rechecks it before signing and publication.
-          (!!owner && channels.canParticipate(id))),
-      transport?.scope,
-      writer && (!writer.kinds || writer.kinds.includes(1984))
-        ? async (template) => {
-            if (closed) throw new Error("Relay session closed");
-            const signal = AbortSignal.any([
-              lifetime.signal,
-              AbortSignal.timeout(10_000),
-            ]);
-            // Race each step so the deadline holds even if the writer ignores `signal`.
-            const aborted = new Promise<never>((_, reject) => {
-              const fail = () => reject(signal.reason);
-              if (signal.aborted) fail();
-              else signal.addEventListener("abort", fail, { once: true });
-            });
-            const signed = await Promise.race([
-              writer.sign(template, signal),
-              aborted,
-            ]);
-            signal.throwIfAborted();
-            await Promise.race([writer.publish(signed, signal), aborted]);
-          }
-        : undefined,
-      transport?.archiveAuthority,
-      profiles.queries,
-      (channelId) => {
+    messages: Object.freeze({
+      ...createMessages(
+        writes?.outbox,
+        transport?.viewer,
+        (id) =>
+          local().find((item) => item.event.id === id)?.event ??
+          recent.peek(id)?.event ??
+          retainedEvent(id),
+        emoji.tags,
+        validateMentions,
+        (id, owner) =>
+          !closed &&
+          (channels.canWrite(id) ||
+            // editOwnedAgent and messages.remove supply owner evidence;
+            // validateChannelWrite rechecks it before signing and publication.
+            (!!owner && channels.canParticipate(id))),
+        transport?.scope,
+        writer && (!writer.kinds || writer.kinds.includes(1984))
+          ? async (template) => {
+              if (closed) throw new Error("Relay session closed");
+              const signal = AbortSignal.any([
+                lifetime.signal,
+                AbortSignal.timeout(10_000),
+              ]);
+              // Race each step so the deadline holds even if the writer ignores `signal`.
+              const aborted = new Promise<never>((_, reject) => {
+                const fail = () => reject(signal.reason);
+                if (signal.aborted) fail();
+                else signal.addEventListener("abort", fail, { once: true });
+              });
+              const signed = await Promise.race([
+                writer.sign(template, signal),
+                aborted,
+              ]);
+              signal.throwIfAborted();
+              await Promise.race([writer.publish(signed, signal), aborted]);
+            }
+          : undefined,
+        transport?.archiveAuthority,
+        profiles.queries,
+        (channelId) => {
+          const channel = channels.queries
+            .list()
+            .channels.find((item) => item.id === channelId);
+          return channel?.channelType === "dm" &&
+            channel.members?.length === 2 &&
+            transport?.viewer &&
+            channel.members.includes(transport.viewer)
+            ? channel.members.filter((key) => key !== transport.viewer)
+            : [];
+        },
+        (id) => [
+          ...new Map(
+            [
+              ...local().map((item) => item.event),
+              ...recent.entries().map(([, item]) => item.event),
+              ...retainedThreadEvents(),
+              ...retainedChannelEvents(),
+            ]
+              .filter((event) =>
+                event.tags.some(
+                  ([name, value]) => name === "buzz:copy-of" && value === id,
+                ),
+              )
+              .map((event) => [event.id, event]),
+          ).values(),
+        ],
+      ),
+      /** UI eligibility only; signing/publication recheck the same role proof. */
+      canRetry(event: Pick<EventData, "kind" | "tags">) {
+        const id = event.tags.find(([key]) => key === "h")?.[1];
         const channel = channels.queries
           .list()
-          .channels.find((item) => item.id === channelId);
-        return channel?.channelType === "dm" &&
-          channel.members?.length === 2 &&
-          transport?.viewer &&
-          channel.members.includes(transport.viewer)
-          ? channel.members.filter((key) => key !== transport.viewer)
-          : [];
+          .channels.find((item) => item.id === id);
+        if (
+          closed ||
+          !channel ||
+          channel.archived ||
+          channel.cached ||
+          !channels.canParticipate(channel.id)
+        )
+          return false;
+        try {
+          validateChannelWrite(event);
+          return true;
+        } catch {
+          return false;
+        }
       },
-      (id) => [
-        ...new Map(
-          [
-            ...local().map((item) => item.event),
-            ...recent.entries().map(([, item]) => item.event),
-            ...retainedThreadEvents(),
-            ...retainedChannelEvents(),
-          ]
-            .filter((event) =>
-              event.tags.some(
-                ([name, value]) => name === "buzz:copy-of" && value === id,
-              ),
-            )
-            .map((event) => [event.id, event]),
-        ).values(),
-      ],
-    ),
+    }),
     /** An owned bounded thread reader. Dispose on close; the session retains access/lifetime authority. */
     thread(
       channelId: string,

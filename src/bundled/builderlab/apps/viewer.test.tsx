@@ -84,6 +84,27 @@ it("app links and apps_open use the Settings account and replace its guest lifet
   session.dispose();
 });
 
+it("restores only app destinations in the configured tenant", async () => {
+  const { session, viewed, panel } = setup();
+  await session.signIn();
+  render(createElement(panel.component, { target: APP } as PanelProps));
+  const canResume = viewed.mock.lastCall?.[0].canResumeUrl;
+  expect(
+    canResume?.("https://second--workspace.apps.example/report?q=1#part"),
+  ).toBe(true);
+  for (const destination of [
+    "https://login.apps.example/api/goose/v1/auth/hosted-site/handoff?code=one-use",
+    "https://login.example/hosted-apps/consent?ticket=one-use",
+    "https://second.apps.other.example/report",
+    "https://nested.second.apps.example/report",
+    "https://second.apps.example:8443/report",
+    "http://second.apps.example/report",
+    "https://user@second.apps.example/report",
+  ])
+    expect(canResume?.(destination)).toBe(false);
+  session.dispose();
+});
+
 it("closing an observing app panel does not cancel Settings' pending login", async () => {
   const { session, acquire, viewed, panel } = setup();
   const held = deferred<Credential>();
@@ -139,6 +160,7 @@ it("an unconfigured native exchange keeps the account-isolated browser-login pat
   render(createElement(panel.component, { target } as PanelProps));
   expect(screen.getByLabelText("App website")).toBeInTheDocument();
   const lifetime = viewed.mock.lastCall?.[0].builderlab;
+  expect(viewed.mock.lastCall?.[0].canResumeUrl).toBeUndefined();
   expect(lifetime?.storage).toBeTruthy();
   act(() => session.signOut());
   expect(lifetime?.signal.aborted).toBe(true);

@@ -91,6 +91,7 @@ export function BrowserHostView({
   url,
   storage: requestedStorage,
   builderlab,
+  canResumeUrl,
   label,
   platform,
   sessions,
@@ -216,10 +217,12 @@ export function BrowserHostView({
       try {
         const next = await platform.status(sessionId);
         if (!disposed && session.current === sessionId) {
-          // A lost auth/consent page must bootstrap again from the app, never replay its one-use ticket.
+          // Restore app destinations, not temporary auth/consent pages or their one-use tickets.
           if (
             next.url &&
-            (!builderlab || new URL(next.url).origin === new URL(url).origin)
+            (canResumeUrl
+              ? canResumeUrl(next.url)
+              : !builderlab || new URL(next.url).origin === new URL(url).origin)
           )
             resumeUrl.current = next.url;
           sessions.rememberTitle(titleKey, next.title);
@@ -351,7 +354,16 @@ export function BrowserHostView({
       // say from another channel, so work in progress there survives.
       if (sessionId) void sessions.detach(sessionId, park);
     };
-  }, [builderlab, platform, pollInterval, sessions, storage, titleKey, url]);
+  }, [
+    builderlab,
+    canResumeUrl,
+    platform,
+    pollInterval,
+    sessions,
+    storage,
+    titleKey,
+    url,
+  ]);
 
   async function run(operation: (sessionId: string) => Promise<void>) {
     const sessionId = session.current;

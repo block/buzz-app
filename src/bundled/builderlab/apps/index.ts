@@ -78,6 +78,7 @@ export function applyApps(
     return createElement(View, {
       url: target,
       builderlab: session.viewerSession(),
+      canResumeUrl: viewerAppDomain() ? isViewerTarget : undefined,
       label: appName(target),
     });
   };

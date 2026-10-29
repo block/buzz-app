@@ -3047,8 +3047,8 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   --mention-fill: var(--affordance-mention-own);
   --mention-hover: var(--affordance-mention-own-hover);
   --mention-text: var(--text-mention-own);
-  /* Only reactions inside your bubble take its ink and overlay. Reactions
-     that sit outside it, under an emoji-only message, stay on the panel's. */
+  /* Only reactions on your bubble take its ink and overlay. Reactions outside
+     it, under an emoji-only message, or under a table-only one, keep the panel's. */
   --reaction-surface: var(--affordance-reaction-own);
   --reaction-ink: var(--text-message-own);
   /* State icons inside the bubble take their -own pair: the link ink at Buzzin’. */
@@ -3506,6 +3506,10 @@ html[data-keyboard-navigation]
   background: transparent;
   color: var(--text-standard);
   --message-link: var(--text-link);
+  /* A table's reactions stay in the bubble, which is now see-through, so they
+     sit on the panel and drop your bubble's pairing. */
+  --reaction-surface: initial;
+  --reaction-ink: initial;
 }
 .messageBubble[data-diff-only]::after,
 .messageBubble:has(> .text > table:only-child)::after {

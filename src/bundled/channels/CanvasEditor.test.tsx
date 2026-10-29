@@ -395,8 +395,7 @@ it.each([
   },
 );
 
-it("reloads another open editor after it saves and removes the shared draft", async () => {
-  const user = userEvent.setup();
+async function twoEditors() {
   const saved = { ...head, content: "Edited", id: "b".repeat(64) };
   const editor = () => ({
     available: true,
@@ -429,6 +428,11 @@ it("reloads another open editor after it saves and removes the shared draft", as
     expect(editing).toBeEnabled();
     expect(other).toBeEnabled();
   });
+  return { saved, first, second, editing, other };
+}
+it("reloads another open editor after it saves and removes the shared draft", async () => {
+  const user = userEvent.setup();
+  const { saved, first, second, editing, other } = await twoEditors();
   fireEvent.change(editing, { target: { value: "Edited" } });
   second.read.mockResolvedValue(saved);
   await user.click(
@@ -439,6 +443,42 @@ it("reloads another open editor after it saves and removes the shared draft", as
   expect(first.read).toHaveBeenCalledOnce();
   expect(viewRevision(scope, `canvas-draft-v1:${channelId}`)).toBeNull();
   expect(screen.queryByRole("alert")).toBeNull();
+});
+
+it("keeps a draft typed after a save while another editor's reload is pending", async () => {
+  const user = userEvent.setup();
+  const { saved, first, second, editing, other } = await twoEditors();
+  fireEvent.change(editing, { target: { value: "Edited" } });
+  const land = hold(second.read);
+  await user.click(
+    screen.getAllByRole("button", { name: "Save Canvas" })[0] as HTMLElement,
+  );
+  await waitFor(() => {
+    expect(second.read).toHaveBeenCalledTimes(2);
+    expect(
+      screen.getAllByRole("region", { name: "Channel Canvas" })[0],
+    ).toHaveAttribute("aria-busy", "false");
+  });
+  fireEvent.change(editing, { target: { value: "After save" } });
+  await act(() => land(saved));
+  expect(other).toHaveValue("Edited");
+  expect(readView(scope, `canvas-draft-v1:${channelId}`, null)).toEqual({
+    content: "After save",
+    base: saved.id,
+  });
+  expect(first.read).toHaveBeenCalledOnce();
+  expect(editing).toHaveValue("After save");
+});
+
+it("keeps another editor's typed text when an edit back to the Canvas removes the draft", async () => {
+  const { second, editing, other } = await twoEditors();
+  fireEvent.change(other, { target: { value: "Mine" } });
+  fireEvent.change(editing, { target: { value: "Theirs" } });
+  fireEvent.change(editing, { target: { value: head.content } });
+  expect(viewRevision(scope, `canvas-draft-v1:${channelId}`)).toBeNull();
+  // An automatic reload would have started its read synchronously.
+  expect(second.read).toHaveBeenCalledOnce();
+  expect(other).toHaveValue("Mine");
 });
 
 function hold(operation: ReturnType<typeof vi.fn>) {
@@ -782,6 +822,39 @@ it.each([false, true])(
       expect(screen.getByRole("button", { name: "Save Canvas" })).toBeEnabled();
   },
 );
+it("stores no draft after restoring over a revision Refresh history found", async () => {
+  const user = userEvent.setup();
+  const remote = { ...head, content: "Remote edit", id: "b".repeat(64) };
+  const { canvas } = historyFixture();
+  await openHistory(user);
+  canvas.read.mockResolvedValue(remote);
+  canvas.history.mockResolvedValue({
+    revisions: [remote, head, old],
+    next: undefined,
+  });
+  await user.click(screen.getByRole("button", { name: "Refresh history" }));
+  await waitFor(() =>
+    expect(screen.getAllByRole("radio")[0]).toHaveAccessibleName(/Current/),
+  );
+  await user.click(
+    screen.getByRole("button", { name: "Restore this version" }),
+  );
+  await user.click(screen.getByRole("button", { name: "Restore version" }));
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("dialog", { name: "Restore this version?" }),
+    ).not.toBeInTheDocument(),
+  );
+  expect(canvas.save).toHaveBeenCalledWith(channelId, old.content, remote.id);
+  expect(viewRevision(scope, `canvas-draft-v1:${channelId}`)).toBeNull();
+  cleanup();
+  fixture((canvas) => canvas.read.mockResolvedValue(restored));
+  const text = screen.getByRole("textbox", { name: "Canvas Markdown" });
+  await waitFor(() => expect(text).toBeEnabled());
+  expect(text).toHaveValue(restored.content);
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.getByRole("button", { name: "Save Canvas" })).toBeEnabled();
+});
 it("keeps a stale recovered draft even when its text matches the loaded head", async () => {
   const user = userEvent.setup();
   writeView(scope, `canvas-draft-v1:${channelId}`, {

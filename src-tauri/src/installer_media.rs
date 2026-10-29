@@ -11,8 +11,6 @@
 //! quarantine metadata, relaunch the installed copy, and detach the disk image
 //! if we were running from one.
 //!
-//! Ported from berd (squareup/berd#561).
-//!
 //! The copy already installed in `/Applications` is located, compared, quit
 //! and replaced purely by bundle path. Nothing here reads a bundle identifier,
 //! executable name, signing identity or data directory, so the old Buzz from

@@ -22,6 +22,7 @@ import type {
   TurnResult,
 } from "../../features/agents/service";
 import type { EventData } from "../../features/relay/events";
+import type { ChannelLabel } from "../../features/channels/channel-icon";
 import { appClient, readFile } from "../../buzz-mcp/app-client";
 import { readProject } from "../../features/agent-harness/project";
 import { RESUMED_PROMPT } from "../../buzz-mcp/prompt";
@@ -178,12 +179,11 @@ type Server = {
   threads: Map<string, AgentKey>;
 };
 export type SessionView = { key: string; status: string; detail: string };
-/** A saved binding, newest first, for the owner's transcript list. */
-export type SavedConversation = {
+/** A saved binding, newest first, for the owner's transcript list, with the
+ * channel's name and kind when this community lists it. */
+export type SavedConversation = Partial<ChannelLabel> & {
   key: string;
   channelId: string;
-  /** The channel's name, when this community lists it. */
-  name?: string;
   root?: string;
   threadId: string;
   at?: number;
@@ -602,12 +602,11 @@ export class CodexRuntime {
           const [channelId, root] = JSON.parse(key) as unknown[];
           if (typeof channelId !== "string" || typeof root !== "string")
             return [];
-          const name = reads?.channelName(channelId);
           return [
             {
               key,
               channelId,
-              ...(name ? { name } : {}),
+              ...reads?.channelLabel(channelId),
               ...(root === "channel" ? {} : { root }),
               threadId,
               ...(at === undefined ? {} : { at }),
@@ -630,20 +629,24 @@ export class CodexRuntime {
     place: Readonly<{ channelId: string; root?: string }>,
     signal: AbortSignal,
   ): Promise<SavedConversation | undefined> {
-    const name = this.reads(agent.key)?.channelName(place.channelId);
+    const label = this.reads(agent.key)?.channelLabel(place.channelId);
     const found = await findConversation(
       this.spawn,
-      { agent, ...place, ...(name ? { name } : {}) },
+      { agent, ...place, ...(label ? { name: label.name } : {}) },
       signal,
     );
     return (
       found && {
         key: JSON.stringify([place.channelId, place.root ?? "channel"]),
         ...place,
-        ...(name ? { name } : {}),
         ...found,
       }
     );
+  }
+  /** The community's current name and kind for a channel, if it lists it;
+   * `useOpenedSession` gives them to a thread `find` returned. */
+  channelLabel(agent: AgentKey, channelId: string) {
+    return this.reads(agent)?.channelLabel(channelId);
   }
   private storageKey(scope: string, agent: AgentKey) {
     // Resume restores the persisted tool schema, so a binding from before a
@@ -652,8 +655,8 @@ export class CodexRuntime {
     // creation and changes; v9 added Attention delivery; v10 added plugin sources;
     // v11 added literal message keywords; v12 added self-handoff; v13 added
     // memory versions and search; v14 splits canvas into canvas_get and
-    // canvas_set.
-    return `buzz.codex.sessions.v14:${scope}:${agent}`;
+    // canvas_set; v15 removes message keywords.
+    return `buzz.codex.sessions.v15:${scope}:${agent}`;
   }
   private save(request: Request, entry: Entry, key: string, saved: Saved) {
     // Reinserted so the bounded set keeps the most recently used bindings.

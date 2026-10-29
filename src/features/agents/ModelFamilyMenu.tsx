@@ -18,6 +18,7 @@ import {
 
 /** Catalogs expose IDs, not a common family field. Unknown IDs remain available. */
 export function modelFamily(model: ModelChoice): string {
+  if (model.family) return model.family;
   const name = `${model.id} ${model.label}`.toLowerCase();
   for (const [family, pattern] of [
     ["OpenAI", /codex|gpt|openai|(?:^|[\s/._-])o[134](?:[\s/._-]|$)/],
@@ -29,6 +30,7 @@ export function modelFamily(model: ModelChoice): string {
     ["Llama", /llama/],
     ["Mistral", /mistral|mixtral|codestral/],
     ["Grok", /grok/],
+    ["GLM", /(?:^|[\s/._-])glm(?:[\s/._-]|\d|$)|zhipu|z[.-]ai/],
   ] as const)
     if (pattern.test(name)) return family;
   return "Other";
@@ -51,6 +53,7 @@ export function ModelFamilyMenu({
   disabled,
   loading = false,
   description,
+  align = "start",
   onChange,
   onCustom,
 }: {
@@ -70,6 +73,7 @@ export function ModelFamilyMenu({
   disabled: boolean;
   loading?: boolean;
   description?: string | undefined;
+  align?: "start" | "center" | "end";
   onChange(id: string): void;
   onCustom?: (() => void) | undefined;
 }) {
@@ -101,7 +105,7 @@ export function ModelFamilyMenu({
               </span>
             )}
             <span className="buzz-select-leading" aria-hidden="true">
-              <ModelIcon model={selected.id || selected.label} />
+              <ModelIcon model={modelFamily(selected)} />
             </span>
             {/* Card labels keep Default accessible without crowding the model. */}
             <span className={styles.value}>
@@ -123,7 +127,7 @@ export function ModelFamilyMenu({
           </Button>
         )}
       />
-      <MenuPopup aria-label={label}>
+      <MenuPopup aria-label={label} align={align}>
         {defaultChoice && (
           <MenuRadioGroup
             value={inherited ? "" : selected.id}

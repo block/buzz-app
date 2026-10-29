@@ -1,18 +1,14 @@
 import { test, expect } from "./source-fixture.mjs";
 
 const runtimeSwitch = (page) =>
-  page.getByRole("switch", { name: "Attention for Ada on this device" });
+  page.getByRole("switch", { name: "Run Ada’s watches on this device" });
 
 // Real browser focus and scroll geometry are outside jsdom.
-test("Agent Attention fits both themes and sizes and manages existing watches by keyboard", async ({
+test("The Watching tab fits both themes and sizes and manages existing watches by keyboard", async ({
   page,
 }) => {
   await page.goto("/tests/fixtures/agent-attention.html");
-  const pane = page.getByRole("region", {
-    name: "Agent Attention",
-    exact: true,
-  });
-  await expect(page.getByRole("button", { name: "New watch" })).toHaveCount(0);
+  const pane = page.getByRole("region", { name: "Watching", exact: true });
   await expect(pane).toBeVisible();
   await page
     .getByRole("button", { name: "Details for Release discussion" })
@@ -35,12 +31,12 @@ test("Agent Attention fits both themes and sizes and manages existing watches by
     }
   }
   const runtime = page.getByRole("switch", {
-    name: "Attention for Ada on this device",
+    name: "Run Ada’s watches on this device",
   });
   await runtime.focus();
   await page.keyboard.press("Space");
   await expect(runtime).toHaveAttribute("aria-checked", "false");
-  await expect(page.getByText("Attention paused on this device")).toBeVisible();
+  await expect(page.getByText("Paused on this device").first()).toBeVisible();
   await expect(
     page.getByRole("switch", { name: "Watch Release discussion" }),
   ).toBeVisible();
@@ -68,10 +64,7 @@ test("watch and interest deletion restore focus without taking it from another c
   page,
 }) => {
   await page.goto("/tests/fixtures/agent-attention.html");
-  const pane = page.getByRole("region", {
-    name: "Agent Attention",
-    exact: true,
-  });
+  const pane = page.getByRole("region", { name: "Watching", exact: true });
   const remove = page.getByRole("button", {
     name: "Delete Release discussion",
   });
@@ -131,14 +124,14 @@ test("watch and interest deletion restore focus without taking it from another c
       .poll(() => page.evaluate(() => window.attentionFixture.saveStarted))
       .toBe(true);
     await page
-      .getByRole("switch", { name: "Attention for Ada on this device" })
+      .getByRole("switch", { name: "Run Ada’s watches on this device" })
       .focus();
   } finally {
     await page.evaluate(() => window.attentionFixture.releaseSave());
   }
   await expect(remove).toHaveCount(0);
   await expect(
-    page.getByRole("switch", { name: "Attention for Ada on this device" }),
+    page.getByRole("switch", { name: "Run Ada’s watches on this device" }),
   ).toBeFocused();
 });
 

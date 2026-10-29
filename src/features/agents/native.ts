@@ -169,11 +169,12 @@ export type AgentsNative = {
   /** A repository's URL in the agent's community and the Git header that
    * authorizes it there as the agent for a minute. */
   gitAuth(member: Membership, owner: string, repo: string): Promise<GitAuth>;
-  /** Writes memory entry `slug`, encrypted to the owner, newer than `after`. */
+  /** Writes memory entry `slug`, encrypted to the owner, newer than `after`;
+   * a `null` body deletes it. */
   remember(
     member: Membership,
     slug: string,
-    body: string,
+    body: string | null,
     after: number,
   ): Promise<RelayEvent>;
   /** Publishes its name and picture as its profile in one community unless

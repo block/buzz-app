@@ -748,7 +748,7 @@ it("keeps an agent's two communities' threads apart, each under its membership's
   await f.complete(0, "HERE");
   await vi.waitFor(() => expect(f.runtime.sessions(elsewhere)).toHaveLength(1));
   const saved = (key: string) =>
-    f.storage.get(`buzz.codex.sessions.v14:${scope}:${key}`);
+    f.storage.get(`buzz.codex.sessions.v15:${scope}:${key}`);
   expect(saved(pubkey)).toBeTruthy();
   expect(saved(elsewhere)).toBeTruthy();
   expect(f.runtime.conversations(pubkey)).toHaveLength(1);
@@ -2524,6 +2524,7 @@ it.each(["v2", "v3", "v5", "v6", "v7"])(
     expect(thread.dynamicTools[0]?.tools.map((tool) => tool.name)).toEqual(
       expect.arrayContaining([
         "media_get",
+        "mem_rm",
         "notes_get",
         "notes_set",
         "notes_rm",
@@ -3289,7 +3290,7 @@ it("lists saved conversations newest first from storage, and moves a started one
   const channel = JSON.stringify(["channel", "channel"]);
   const elsewhere = JSON.stringify(["unlisted", root]);
   f.storage.set(
-    `buzz.codex.sessions.v14:${scope}:${pubkey}`,
+    `buzz.codex.sessions.v15:${scope}:${pubkey}`,
     JSON.stringify({
       [channel]: { threadId: "before-timestamps", workspace: "/w" },
       [thread]: { threadId: "older", workspace: "/w", at: 1 },
@@ -3309,6 +3310,7 @@ it("lists saved conversations newest first from storage, and moves a started one
       key: thread,
       channelId: "channel",
       name: "test",
+      channelType: "stream",
       root,
       threadId: "older",
       at: 1,
@@ -3317,6 +3319,7 @@ it("lists saved conversations newest first from storage, and moves a started one
       key: channel,
       channelId: "channel",
       name: "test",
+      channelType: "stream",
       threadId: "before-timestamps",
     },
   ]);
@@ -3326,7 +3329,7 @@ it("lists saved conversations newest first from storage, and moves a started one
   expect(latest?.at).toBeGreaterThan(2);
   const stored = Object.keys(
     JSON.parse(
-      f.storage.get(`buzz.codex.sessions.v14:${scope}:${pubkey}`) ?? "{}",
+      f.storage.get(`buzz.codex.sessions.v15:${scope}:${pubkey}`) ?? "{}",
     ),
   );
   expect(stored.at(-1)).toBe(latest?.key);
@@ -3393,7 +3396,7 @@ it("always offers the attention tools, on search, keeps the thread when attentio
   );
   const next = f.starts()[1]?.params as { input: { text: string }[] };
   expect(next.input[0]?.text).toMatch(
-    /<attention>\nYour owner has attention off/,
+    /<attention>\nAttention is off on this device/,
   );
   expect(next.input[0]?.text).not.toContain("Handle the work");
   const off = await f.tool("interest_show", { id: "ops" }, 1);
@@ -3447,7 +3450,7 @@ it("offers the tools plugins add, runs them as the agent here, and starts a new 
     1,
   );
   const saved = JSON.parse(
-    f.storage.get(`buzz.codex.sessions.v14:${scope}:${pubkey}`) ?? "{}",
+    f.storage.get(`buzz.codex.sessions.v15:${scope}:${pubkey}`) ?? "{}",
   );
   expect(Object.values(saved)).toEqual([
     expect.objectContaining({ tools: expect.any(String) }),
@@ -3666,7 +3669,7 @@ it("ends a queued mention with the attention note current when it starts", async
   const text = (
     f.starts()[1]?.params as { input: { text: string }[] } | undefined
   )?.input[0]?.text;
-  expect(text).toMatch(/<attention>\nYour owner has attention off/);
+  expect(text).toMatch(/<attention>\nAttention is off on this device/);
   await f.complete(1, "SECOND");
 });
 

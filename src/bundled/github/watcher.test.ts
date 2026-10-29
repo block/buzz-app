@@ -158,36 +158,53 @@ function setup(initial: Pull | null = answer()) {
     reconcile();
     for (const listener of listeners) listener();
   };
-  const attention = (key: string) =>
-    ({
+  const attention = (key: string) => {
+    // As the real store does, a watch of another Interest is out of scope.
+    const scope = (
+      slug: string,
+      value: AttentionValue | null,
+      interest?: string,
+    ) => {
+      const owned = records[key]?.[slug] ?? value;
+      if (interest && owned && owned.type !== "interest")
+        if (owned.interest_id !== interest)
+          throw new Error(
+            `wrong-scope: Watch ${slug} belongs to Interest ${owned.interest_id}`,
+          );
+    };
+    const show = async (slug: string, interest?: string) => {
+      scope(slug, null, interest);
+      const object = records[key]?.[slug];
+      return {
+        result: object ? "found" : "not-found",
+        object: object
+          ? {
+              ...object,
+              id: slug.split("/")[1],
+              status: completed.has(`${key}/${slug}`) ? "completed" : "enabled",
+            }
+          : null,
+        expected_state: JSON.stringify(object) ?? "absent",
+      };
+    };
+    return {
       enabled: () => enabled,
-      async show(slug: string) {
-        const object = records[key]?.[slug];
-        return {
-          result: object ? "found" : "not-found",
-          object: object
-            ? {
-                ...object,
-                id: slug.split("/")[1],
-                status: completed.has(`${key}/${slug}`)
-                  ? "completed"
-                  : "enabled",
-              }
-            : null,
-          expected_state: JSON.stringify(object) ?? "absent",
-        };
-      },
+      classifier: () => "available",
+      show,
       async write(
         slug: string,
         value: AttentionValue | null,
-        options: { expected: string },
+        options: { expected: string; interest?: string },
       ) {
+        scope(slug, value, options.interest);
         expect(options.expected).toBe(
           JSON.stringify(records[key]?.[slug]) ?? "absent",
         );
         await save(key, { attention: { [slug]: value } });
+        return show(slug);
       },
-    }) as unknown as AgentAttention;
+    } as unknown as AgentAttention;
+  };
   const addAttentionSource = vi.fn((value: AttentionSource) => {
     source = value;
     reconcile();
@@ -215,12 +232,23 @@ function setup(initial: Pull | null = answer()) {
   } as unknown as Context;
   watchPulls(ctx);
   const tool = tools[0] as AddedTool;
-  const call = (args: Record<string, unknown>, topLevel = false, key = agent) =>
-    tool.call(
+  const call = (
+    args: Record<string, unknown>,
+    topLevel = false,
+    key = agent,
+  ) => {
+    // The agent's own Interest, which every watch it adds names.
+    records[key] ??= {};
+    records[key]["interest/pr"] ??= {
+      type: "interest",
+      instructions: "Land the pull request",
+    };
+    return tool.call(
       { key, pubkey: agent, attention: attention(key) } as BuzzClient,
       topLevel ? { channel: "c", topLevel } : { channel: "c", root },
-      args,
+      { interest: "pr", ...args },
     );
+  };
   return {
     call,
     records,
@@ -377,54 +405,78 @@ describe("github_watch_pr", () => {
     app.dispose();
   });
 
-  it("imports saved watches once with their cursor and conversation", async () => {
-    localStorage.setItem("test.attention", JSON.stringify({ [agent]: {} }));
+  it("moves a PR's watch from another Interest to the one named", async () => {
+    const app = setup();
+    await app.call({ url });
+    const id = Object.keys(app.records[agent] ?? {}).find((slug) =>
+      slug.startsWith("watch/"),
+    );
+    if (!id) throw new Error("Missing watch");
+    const watch = app.records[agent]?.[id];
+    if (watch?.type !== "source") throw new Error("Missing source");
+    // As the shipped plugin saved it, under its own Interest.
+    await app.save(agent, {
+      attention: {
+        "interest/github-pulls": { type: "interest", instructions: "Follow" },
+        [id]: { ...watch, interest_id: "github-pulls" },
+      },
+    });
+    expect(await app.call({ url }, true)).toContain(
+      "The watch moved to Interest pr from Interest github-pulls, which gets no more wakes for this pull request.",
+    );
+    expect(app.records[agent]?.[id]).toEqual(
+      expect.objectContaining({ interest_id: "pr", channel: "c" }),
+    );
+    expect(app.records[agent]?.[id]).not.toHaveProperty("root");
+    app.dispose();
+  });
+
+  it("drops watches saved before Attention instead of importing them", async () => {
     localStorage.setItem(
       "buzz.github.pull-watches.v1",
-      JSON.stringify([
-        {
-          agent,
-          url,
-          channel: "c",
-          root,
-          wakes: 2,
-          seen: [],
-          reported: "1111111111:passed",
-        },
-      ]),
+      JSON.stringify([{ agent, url, channel: "c", root, wakes: 2 }]),
     );
-    const app = setup(
-      answer({ checks: [{ name: "unit", conclusion: "SUCCESS" }] }),
+    const app = setup();
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+    expect(localStorage.getItem("buzz.github.pull-watches.v1")).toBeNull();
+    expect(app.records).toEqual({});
+    expect(app.runCommand).not.toHaveBeenCalled();
+    app.dispose();
+  });
+
+  it("adds the watch to the agent's Interest, and needs one that exists", async () => {
+    const app = setup();
+    await expect(app.call({ url, interest: undefined })).rejects.toThrow(
+      /interest is required/,
     );
-    await vi.advanceTimersByTimeAsync(0);
-    await vi.waitFor(() =>
-      expect(Object.values(app.records[agent] ?? {})).toContainEqual(
+    await expect(app.call({ url, interest: "missing" })).rejects.toThrow(
+      /Interest missing does not exist.*interest_set/,
+    );
+    expect(app.runCommand).not.toHaveBeenCalled();
+    await app.call({ url });
+    const sources = () =>
+      Object.entries(app.records[agent] ?? {}).filter(
+        ([, value]) => value.type === "source",
+      );
+    expect(sources()).toEqual([
+      [
+        expect.stringMatching(/^watch\/github-/),
         expect.objectContaining({
-          type: "source",
+          interest_id: "pr",
           provider: "attention/github-pr",
           channel: "c",
           root,
-          config: expect.objectContaining({
-            initial: expect.objectContaining({ wakes: 2 }),
-          }),
         }),
-      ),
+      ],
+    ]);
+    expect(Object.keys(app.records[agent] ?? {})).not.toContain(
+      "interest/github-pulls",
     );
-    expect(
-      JSON.parse(localStorage.getItem("buzz.github.pull-watches.v1") ?? "[]"),
-    ).toEqual([]);
-    expect(app.woke).not.toHaveBeenCalled();
-    await app.call({ url, stop: true });
+    // A second call updates the same watch, now at the top of a Solo chat.
+    await app.call({ url }, true);
+    expect(sources()).toHaveLength(1);
+    expect(sources()[0]?.[1]).not.toHaveProperty("root");
     app.dispose();
-    const next = setup();
-    await vi.advanceTimersByTimeAsync(POLL_MS);
-    expect(
-      Object.values(next.records[agent] ?? {}).filter(
-        (value) => value.type === "source",
-      ),
-    ).toEqual([]);
-    expect(next.runCommand).not.toHaveBeenCalled();
-    next.dispose();
   });
 
   it("starts fresh after the owner deletes a watch outside the tool", async () => {
@@ -584,7 +636,11 @@ describe("github_watch_pr", () => {
     app.gh(answer({ state: "MERGED" }));
     await vi.advanceTimersByTimeAsync(POLL_MS);
     expect([...app.completed]).toHaveLength(1);
-    expect(app.woke).not.toHaveBeenCalled();
+    expect(app.texts()).toEqual([
+      expect.stringMatching(
+        new RegExp(`^${url} was merged, so this watch has ended`),
+      ),
+    ]);
     app.dispose();
   });
 
@@ -714,7 +770,7 @@ describe("github_watch_pr", () => {
       app.tool.call(
         { key: agent, pubkey: agent, attention: app.attention } as BuzzClient,
         { channel: "c" },
-        { url },
+        { url, interest: "pr" },
       ),
     ).rejects.toThrow(/thread or a Solo chat/);
     app.dispose();

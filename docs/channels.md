@@ -208,7 +208,7 @@ manually marked unread messages or unread thread activity. Active in the last op
 content-sized dialog with visible 1-, 7-, 30-, and 90-day text-only radio tiles in two columns.
 Apply saves the selected rolling window and activates the filter;
 Cancel leaves the saved choice unchanged. The dialog retains its draft after a
-failed save, and the menu shows the selected window. Activity uses verified timestamps. Channels with unknown activity remain visible until a successful activity read; a failed read keeps them available alongside the activity Retry warning. These filters are encrypted account preferences on the current relay, using a
+failed save, and the menu shows the selected window. Activity uses verified timestamps, including your own messages once the relay accepts them. Channels with unknown activity remain visible until a successful activity read; a failed read keeps them available alongside the activity Retry warning. These filters are encrypted account preferences on the current relay, using a
 separate kind-30078 `channel-filter` record. They leave saved sorting and section
 membership unchanged; earlier device-only filter choices are ignored, not automatically published.
 Filtered sections with no visible channels show only their header, retaining their expanded/collapsed state and menu access to hidden channels.
@@ -699,9 +699,15 @@ Starred** and saves Starred placement with the creation intent. In the sidebar,
 the filled Tabler star retains the section emoji artwork size and is centered in
 the channel icon column. The creation heading reuses the decorative emoji slot
 and inherits the heading's typography.
-Starred placement uses the existing preference writer after channel admission;
-unavailable placement blocks a new create, while a later placement failure reports
-partial setup without creating a second channel. An identical retry rechecks its
+Group and Starred placement use the existing preference writer and normally
+apply before the new channel opens, so its first sidebar row is already in its
+destination; placement that must first re-read preferences can list the row
+before moving it.
+Placement starts once the Create is delivered, so it also stands when the form
+cannot yet confirm the channel; the channel lists in its destination once it is
+confirmed. Unavailable placement blocks a new create. Once the channel opens, a
+placement failure reports partial setup without creating a second channel; an
+unconfirmed create reports only its own failure. An identical retry rechecks its
 Create without continuing the template's setup writes; agents or Canvas that
 changed underneath an untouched form do not count as new details.
 Group placement remains managed through the left-nav Move action.
@@ -809,22 +815,25 @@ native acceptance.
 
 ## Member administration
 
-**Members** has a scoped conversation history visit (`panel: "members"`)
-through the host navigation owner. Opening creates a visit; browser Back dismisses
-and Forward restores the list. Reload restores the same channel and Members,
-including the underlying message/thread address when present. Close, Escape and
-outside dismissal return to the visit Members was opened from, so closing never
-adds a visit and Back does not reopen the list. When that visit is unknown, such
-as after a reload, dismissal replaces the Members visit with the underlying
-conversation instead; Back then steps to the earlier visit of that same
-conversation. A profile handoff replaces the Members visit rather than
-traversing back, so the profile and its address stay current. Opening a DM
-adds the DM as a new visit after Members, so Back from the DM returns to the
-list. History traversal never repeats a DM open or membership mutation.
+**Members** has its own conversation visit, carried in its address as
+`panel: "members"` through the host navigation owner.
+Opening adds a visit: Back closes the dialog on the same channel and Forward
+restores it. Explicit dismissal (Close, Escape, outside click) retires the visit
+without adding a closed-dialog stop, so Back can leave the channel and Forward
+keeps Members closed. Reload and deep links restore the same channel and
+Members, including the underlying message/thread address when present; cold
+dismissal replaces in place when no matching opener is known.
+Profile/DM handoffs dismiss Members without overwriting the destination. A
+routed destination replaces the Members visit, so Back returns to its channel
+opener once; traversal never repeats a DM open or membership mutation.
 Search, role filters, menus and confirmations are transient, not address data.
 Scoped history still requires the original viewer, joined community and current
 channel access. Tabs remain session-owned: navigation preserves them, but this
 change does not add disk persistence for tab sets. Draft persistence is unchanged.
+The content-tab menu's **Close other tabs** and **Close all tabs** retire all
+closed thread, Profile and GitHub visits together, including inactive tabs.
+The kept tab stays selected; underlying channel/message visits remain. Back and
+Forward skip the closed content, and reopening it explicitly is still possible.
 A covering Members modal owns focus while underlying exact-message readers verify
 and restore their targets without focusing through the modal. Session conversations
 have no Members surface; a restored/handwritten Members route to a session resolves
@@ -836,6 +845,9 @@ It is titled **Channel access** in channels and **Chat access** in a Solo chat (
 agents there but cannot change roles.
 One search field, with an accessible name but no visible label, filters current
 members and lists people, agents and Teams to invite under **Not in this channel**.
+With an empty query, ordinary channels show invitations only when the viewer is
+the sole member; otherwise they show just the roster. Searching offers invitations
+with the existing grouping, ranking and expansion behavior.
 Each result's **Add** button, or Enter on the highlighted result, adds immediately.
 The footer keeps **Copy link** at its leading edge and **Done** at its trailing edge.
 When adding is unavailable, the field reads **Search members** and a short reason names
@@ -1155,10 +1167,20 @@ render-driven request loop. Key fragments remain the fallback for unavailable na
 `useChannelLabels.test.tsx` binds the mounted hook to real session roster omission,
 including hidden/archived deletion, stale in-flight replies and unsuccessful name
 reads. `tests/browser/dm-labels.spec.mjs` guards the production page wiring and DOM
-labels through the real Refresh channels control and broker. These are foundational
-recovery constraints, not a new shared-session API or a guarantee of general
-profile retry after every cache clear/network failure. See [browser coverage and
-limits](browser-testing.md#dm-label-recovery).
+labels through the real Refresh channels control and broker.
+
+Open channel timelines and mounted thread/media-comment views also recover: after
+an access-loss purge, each retained window and each mounted thread of a channel the
+viewer can still read requests its rows' names once, at background priority. Names
+whose only evidence was in the lost channel are not requested. A channel opened
+afterwards from a head read shortly before the purge is not covered: its next head
+read or an older page restores its names, while new traffic and the viewer's own
+sends restore only its latest rows. `revocation.test.ts` covers roster omission,
+denied reads and a mention that appears only in a thread reply.
+
+These are foundational recovery constraints, not a new shared-session API or a
+guarantee of general profile retry after every cache clear/network failure. See
+[browser coverage and limits](browser-testing.md#dm-label-recovery).
 
 ## Membership activity
 
@@ -1187,7 +1209,10 @@ path. No native or relay changes are required.
 
 Click a message's reply count to open its root and replies in the right column.
 Up to three overlapping participant avatars appear beside the count, with `+N`
-for additional summary participants; missing/unavailable pictures use initials.
+for additional participants; missing/unavailable pictures use initials. Like the
+count, participants come from the relay's summary, with the authors of replies
+this client has sent since that summary placed first, so your own reply's avatar
+is among the visible three as soon as you send it.
 They reuse the channel's existing shared profile/media path, not extra per-row reads.
 On a supporting relay, the panel opens at the newest 10 replies and loads older
 pages of 50 when you scroll upward; there is no Load more replies button. It validates
@@ -1268,7 +1293,25 @@ implemented. In the composer, typing the third character of a line holding only 
 Shift+Enter on an empty last line leaves the block. Only a fence that opens a block converts: a
 fence typed inside an existing code block stays literal, and so does pasted or restored fenced
 text, including its closing fence line, so Enter after a pasted or edited fenced block sends or
-saves as usual and the text still renders as code once sent.
+saves as usual and the text still renders as code once sent. Content copied from a rendered
+message or from a composer pastes with its lists, quotes, code blocks and inline formatting as
+the composer's own blocks and formatting; text copied from anywhere else pastes as plain text,
+keeping only its web links. Paste and Match Style pastes the clipboard's plain text verbatim
+over the selection with the caret's formatting: no copied blocks, formatting or links, no linked
+selection and no recipients. It is ⌘⇧V or Edit → Paste and Match Style in the macOS app, ⌥⇧⌘V in
+macOS browsers and Ctrl+Shift+V elsewhere.
+A copied spoiler stays a spoiler whether or not it was revealed, and
+keeps its `||` delimiters elsewhere. Headings, task checkboxes and horizontal rules, which the
+composer has no block for, paste as their Markdown source (`# `, `[ ]`/`[x]`, `***`) so they still
+render once sent. Copied with other blocks, each keeps a line of its own; a heading or rule copied
+alone, including by triple-click, pastes into the current line like copied prose, so after other
+text on that line it stays text. Plain text keeps a task's state and a rule (`---`) but not
+heading markers. Blocks pasted at
+the start of a list item, or over a selection that starts there, cannot precede its text: a pasted
+list of the same kind (bulleted or numbered) has its items join the list before that item, or take
+the place of an item whose only content was selected, and other blocks, including a list of the
+other kind, which keeps its own numbering, follow the item's text. Pasted into an
+empty item, such blocks leave the list first, as Enter does there, and take the empty line's place.
 Typing the space after a list or quote marker that starts a line (`- `, `* `, `+ ` or `• `, a number
 with a dot or parenthesis such as `1. ` or `3) `, or `> `) turns that line into a bullet, a
 numbered item starting at that number, or a quoted paragraph at once, the same block the
@@ -1353,7 +1396,9 @@ follow the operating system.
 
 The session owns the catalog and its live updates. Reopening reuses the ready
 catalog, without hiding custom results behind a fresh read. Catalog failures expose
-Retry while leaving Unicode available and retaining drafts. Only one picker owns
+Retry while leaving Unicode available and retaining drafts. A catalog that has loaded
+stays usable for sending and in the picker while it refreshes, such as after a
+reconnect, and when that refresh fails. Only one picker owns
 Emoji Mart's global dictionary at a time; scoped custom IDs and disposal prevent
 old community entries leaking into search or Frequent. Historical messages and
 existing reactions keep their signed emoji URLs after catalog changes.

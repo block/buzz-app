@@ -1420,6 +1420,33 @@ it("shows an editable ordinary source link and sends it with the default agent",
     ["a".repeat(64)],
   );
 });
+it("types prose after a seeded source link instead of extending it", async () => {
+  const t = setup();
+  const linkedId = "22222222-2222-4222-8222-222222222222";
+  const source: LinkedChat = {
+    channelId: "design",
+    link: `buzz://message?channel=design&id=${"c".repeat(64)}`,
+  };
+  writeView("test", linkedDraftKey(linkedId), source);
+  render(
+    <SoloDraft
+      session={t.session}
+      scope="test"
+      linkedId={linkedId}
+      source={source}
+      focusRequest={1}
+      onStarted={vi.fn()}
+    />,
+  );
+  await waitFor(() =>
+    expect(screen.getByRole("textbox")).toHaveTextContent("@Member agent"),
+  );
+  const input = screen.getByRole("textbox") as HTMLTextAreaElement;
+  expect(input.value).toBe(`@Member agent ${source.link} `);
+  expect(input.selectionStart).toBe(input.value.length);
+  await userEvent.keyboard("Investigate");
+  expect(input.value).toBe(`@Member agent ${source.link} Investigate`);
+});
 it("starting again from a sent source seeds its link and default agent again", async () => {
   const t = setup();
   const linkedId = "22222222-2222-4222-8222-222222222222";

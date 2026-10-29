@@ -86,6 +86,11 @@ composerDOMFixture();
 const owners: ReturnType<typeof createRelaySession>[] = [];
 
 const first = { pubkey: "a".repeat(64), name: "Honey" };
+const noArchives = Object.freeze({ status: "ready" as const, archived: [] });
+const firstArchived = Object.freeze({
+  status: "ready" as const,
+  archived: [first.pubkey],
+});
 const second = { pubkey: "b".repeat(64), name: "Honey" };
 /** The mounted channel listed as a Solo chat. */
 const soloList = {
@@ -1639,11 +1644,17 @@ it("offers emoji catalog refresh after an attachment publication fails preparati
   );
   await waitFor(() => expect(h.input()).toHaveValue("caption :party:"));
   expect(within(h.form()).getByRole("alert")).toHaveTextContent(
-    "Community emoji unavailable",
+    "Community emoji isn't ready",
   );
+  // The refused send retried the catalog; recovery is offered once that fails.
   expect(
-    screen.getByRole("button", { name: "Retry message preparation" }),
+    await screen.findByRole("button", { name: "Retry message preparation" }),
   ).toBeVisible();
+  // The retained refusal stays accurate once that retry has failed.
+  expect(h.owner.session.emoji.snapshot().status).toBe("error");
+  expect(within(h.form()).getByRole("alert")).toHaveTextContent(
+    "Community emoji isn't ready. Your draft is kept; try sending again shortly.",
+  );
   available = true;
   fireEvent.click(
     screen.getByRole("button", { name: "Retry message preparation" }),
@@ -1654,6 +1665,35 @@ it("offers emoji catalog refresh after an attachment publication fails preparati
   expect(h.input()).toHaveValue("caption :party:");
   expect(within(h.form()).getByText("emoji.txt")).toBeVisible();
   expect(h.publish).not.toHaveBeenCalled();
+});
+
+it("sends once the catalog retry started by a refused emoji send loads", async () => {
+  let available = false;
+  const h = await mountUploadComposer({
+    emojiRead: async () => {
+      if (!available) throw Error("catalog offline");
+      return [];
+    },
+  });
+  await waitFor(() =>
+    expect(h.owner.session.emoji.snapshot().status).toBe("error"),
+  );
+  available = true;
+  await userEvent.type(h.input(), ":party:");
+  fireEvent.click(h.send());
+  expect(within(h.form()).getByRole("alert")).toHaveTextContent(
+    "Community emoji isn't ready. Your draft is kept; try sending again shortly.",
+  );
+  await waitFor(() =>
+    expect(h.owner.session.emoji.snapshot().status).toBe("ready"),
+  );
+  expect(
+    screen.queryByRole("button", { name: "Retry message preparation" }),
+  ).toBeNull();
+  expect(h.input()).toHaveValue(":party:");
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.publish).toHaveBeenCalledTimes(1));
+  expect(within(h.form()).queryByRole("alert")).toBeNull();
 });
 
 it("does not overwrite a later local edit when a background upload fails", async () => {
@@ -1926,6 +1966,9 @@ it("retains preparation retry when recovery is deferred by an edit then unmounte
     h.uploadCalls[0]?.result.resolve(uploadDescriptor("edit-remount.txt")),
   );
   expect(h.input()).toHaveAccessibleName("Edit message");
+  await waitFor(() =>
+    expect(h.owner.session.emoji.snapshot().status).toBe("error"),
+  );
   expect(
     within(h.form()).queryByRole("button", {
       name: "Retry message preparation",
@@ -1948,10 +1991,11 @@ it("retains preparation retry when recovery is deferred by an edit then unmounte
     expect(composer.getByText("edit-remount.txt")).toBeVisible(),
   );
   expect(composer.getByRole("alert")).toHaveTextContent(
-    "Community emoji unavailable",
+    "Community emoji isn't ready",
   );
+  // The refused send retried the catalog; recovery is offered once that fails.
   expect(
-    composer.getByRole("button", { name: "Retry message preparation" }),
+    await composer.findByRole("button", { name: "Retry message preparation" }),
   ).toBeVisible();
 });
 
@@ -1991,12 +2035,14 @@ it("offers message preparation retry after a failed attachment send remounts", a
     expect(composer.getByText("emoji-remount.txt")).toBeVisible(),
   );
   expect(composer.getByRole("alert")).toHaveTextContent(
-    "Community emoji unavailable",
+    "Community emoji isn't ready",
   );
+  // The refused send retried the catalog; recovery is offered once that fails.
+  const retry = await composer.findByRole("button", {
+    name: "Retry message preparation",
+  });
   available = true;
-  fireEvent.click(
-    composer.getByRole("button", { name: "Retry message preparation" }),
-  );
+  fireEvent.click(retry);
   await waitFor(() =>
     expect(h.owner.session.emoji.snapshot().status).toBe("ready"),
   );
@@ -4938,7 +4984,10 @@ for (const threadRootId of [undefined, "f".repeat(64)])
     Object.assign(h.session, {
       channels: { list: () => list, subscribeList: () => () => {} },
       viewer: "d".repeat(64),
-      archives: { state: () => "not-archived" },
+      archives: {
+        state: () => "not-archived",
+        snapshot: () => noArchives,
+      },
       channelWrites: {
         refreshMembership: vi.fn(async () => {
           if (operations[0]?.delivery === "accepted")
@@ -5058,7 +5107,10 @@ it.each([false, true])(
     Object.assign(h.session, {
       channels: { list: () => list, subscribeList: () => () => {} },
       viewer: "d".repeat(64),
-      archives: { state: () => "not-archived" },
+      archives: {
+        state: () => "not-archived",
+        snapshot: () => noArchives,
+      },
       channelWrites: { refreshMembership: async () => list.channels[0] },
       outbox: {
         supports: () => true,
@@ -5973,6 +6025,135 @@ it("tags a Berd draft with the default agent once and needs a tag to send", asyn
     h.commands().insertMention(first);
   });
   expect(send).not.toHaveAttribute("aria-disabled");
+});
+
+it("tags the default agent once while shown, without saving the tag as a draft", async () => {
+  const h = mount({
+    submission: {
+      draftKey: "new-chat",
+      locked: false,
+      disabled: false,
+      submit: vi.fn(),
+    },
+    ownSoloConversation: true,
+    soloConversation: true,
+    requireMention: true,
+    defaultMention: { pubkey: first.pubkey, name: "Cached" },
+  });
+  h.setLibrary([
+    { pubkey: first.pubkey, name: "Cached" },
+    { pubkey: second.pubkey, name: "Saved" },
+  ]);
+  Object.assign(h.session, {
+    channels: { ...h.session.channels, list: () => soloList },
+  });
+  await waitFor(() => expect(h.input()).toHaveValue("@Cached "));
+  expect(readView("scope", "new-chat", null)).toBeNull();
+  // A new default doesn't swap the tag on screen.
+  h.retarget({ defaultMention: { pubkey: second.pubkey, name: "Saved" } });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  expect(h.input()).toHaveValue("@Cached ");
+  // Shown again untouched, it tags the current default.
+  h.retarget({ shown: false });
+  h.retarget({ shown: true });
+  await waitFor(() => expect(h.input()).toHaveValue("@Saved "));
+  expect(h.commands().recipients).toEqual([
+    { pubkey: second.pubkey, name: "Saved" },
+  ]);
+  expect(readView("scope", "new-chat", null)).toBeNull();
+  // Once edited, the draft and its tag are the viewer's.
+  h.fill("@Saved hi");
+  expect(readView("scope", "new-chat", null)).toMatchObject({
+    text: "@Saved hi",
+  });
+  h.retarget({ defaultMention: { pubkey: first.pubkey, name: "Cached" } });
+  h.retarget({ shown: false });
+  h.retarget({ shown: true });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  expect(h.input()).toHaveValue("@Saved hi");
+});
+
+it("keeps a tag the viewer chose in a new chat across showing again and a remount", async () => {
+  const open = () => {
+    const h = mount({
+      submission: {
+        draftKey: "new-chat",
+        locked: false,
+        disabled: false,
+        submit: vi.fn(),
+      },
+      ownSoloConversation: true,
+      soloConversation: true,
+      requireMention: true,
+      defaultMention: { pubkey: first.pubkey, name: "Ada" },
+    });
+    h.setLibrary([
+      { pubkey: first.pubkey, name: "Ada" },
+      { pubkey: second.pubkey, name: "Bea" },
+    ]);
+    Object.assign(h.session, {
+      channels: { ...h.session.channels, list: () => soloList },
+    });
+    return h;
+  };
+  const h = open();
+  await waitFor(() => expect(h.input()).toHaveValue("@Ada "));
+  // The viewer clears the default tag and picks another agent.
+  h.fill("");
+  act(() => {
+    h.commands().insertMention({ pubkey: second.pubkey, name: "Bea" });
+  });
+  expect(h.input()).toHaveValue("@Bea ");
+  h.retarget({ shown: false });
+  h.retarget({ shown: true });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  expect(h.input()).toHaveValue("@Bea ");
+  h.unmount();
+  const reopened = open();
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  expect(reopened.input()).toHaveValue("@Bea ");
+  expect(reopened.commands().recipients).toEqual([
+    { pubkey: second.pubkey, name: "Bea" },
+  ]);
+});
+
+it("an untouched default tag is retagged for the current default after a remount", async () => {
+  const props = (name: string, pubkey: string) => ({
+    submission: {
+      draftKey: "new-chat",
+      locked: false,
+      disabled: false,
+      submit: vi.fn(),
+    },
+    ownSoloConversation: true,
+    soloConversation: true,
+    requireMention: true,
+    defaultMention: { pubkey, name },
+  });
+  const library = [
+    { pubkey: first.pubkey, name: "Cached" },
+    { pubkey: second.pubkey, name: "Saved" },
+  ];
+  const open = (name: string, pubkey: string) => {
+    const h = mount(props(name, pubkey));
+    h.setLibrary(library);
+    Object.assign(h.session, {
+      channels: { ...h.session.channels, list: () => soloList },
+    });
+    return h;
+  };
+  const before = open("Cached", first.pubkey);
+  await waitFor(() => expect(before.input()).toHaveValue("@Cached "));
+  // The viewer leaves before the account's main agent arrives.
+  before.unmount();
+  const after = open("Saved", second.pubkey);
+  await waitFor(() => expect(after.input()).toHaveValue("@Saved "));
+  // An edited draft keeps its tag across a remount.
+  after.fill("@Saved hi");
+  after.unmount();
+  const edited = open("Cached", first.pubkey);
+  await waitFor(() => expect(edited.input()).toHaveTextContent("hi"));
+  expect(edited.input()).toHaveValue("@Saved hi");
 });
 
 it.each([
@@ -7271,6 +7452,7 @@ it.each([
         archives: {
           state: (key: string) =>
             key === first.pubkey ? "archived" : "not-archived",
+          snapshot: () => firstArchived,
         },
       }),
     });
@@ -7451,12 +7633,11 @@ it("disabled completion keeps the highlighted key and consumes Enter without sen
 it("rejects a known archived recipient at send entry without clearing the draft", () => {
   const h = mount();
   let archived = false;
-  const snapshot = { status: "ready" as const, archived: [] as string[] };
   h.retarget({
     session: {
       ...h.session,
       archives: {
-        snapshot: () => snapshot,
+        snapshot: () => (archived ? firstArchived : noArchives),
         subscribe: () => () => {},
         state: () => (archived ? "archived" : "not-archived"),
         ensure: async () => {},

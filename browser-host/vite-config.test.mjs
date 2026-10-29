@@ -139,6 +139,21 @@ it("loads the broker's Vite config without native-compatibility warnings", () =>
               );
             }
             delete process.env.BUZZ_DATABRICKS_HOST;
+            // A fresh checkout uses production for both dev and packaged frontends.
+            // Explicit empty values retain the deployment opt-out.
+            for (const local of ['', 'BUZZ_BUILDERLAB_URL=']) {
+              writeFileSync('.env.local', local);
+              delete process.env.BUZZ_BUILDERLAB_URL;
+              for (const command of ['serve', 'build']) {
+                const result = await loadConfigFromFile(
+                  { command, mode: command === 'serve' ? 'development' : 'production' }, configFile,
+                );
+                assert.equal(
+                  result.config.define['import.meta.env.VITE_BUZZ_BUILDERLAB_URL'],
+                  JSON.stringify(local ? '' : 'https://app.builderlab.xyz'),
+                );
+              }
+            }
             // Desktop shares .env.local/process inputs with the native build.
             // An explicit empty process value clears the frontend URL too.
             writeFileSync('.env.local', 'BUZZ_BUILDERLAB_URL=https://app.builderlab.xyz/');

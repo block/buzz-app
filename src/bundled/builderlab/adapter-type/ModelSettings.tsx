@@ -1,25 +1,38 @@
-import { useEffect, useRef, useState } from "react";
-import { useAgentSaveState } from "../../../features/agents/AgentSaveButton";
+import { useEffect, useId, useRef, useState } from "react";
+import { AgentSaveButton } from "../../../features/agents/AgentSaveButton";
+import { ModelFamilyMenu } from "../../../features/agents/ModelFamilyMenu";
+import { CaretDownIcon } from "../../../shared/design-system/icons";
 import { Button } from "../../../shared/design-system/ui/Button";
-import { InlineHeader } from "../../../shared/design-system/ui/Header";
+import { Field } from "../../../shared/design-system/ui/Field";
+import { PreferenceRow } from "../../../shared/design-system/ui/PreferenceRow";
+import {
+  PopoverRoot,
+  PopoverTrigger,
+  PopoverPopup,
+  PopoverDescription,
+} from "../../../shared/design-system/ui/Popover";
 import { Select } from "../../../shared/design-system/ui/Select";
 import { SettingsGroup } from "../../../shared/design-system/ui/SettingsGroup";
+import { Textarea } from "../../../shared/design-system/ui/Textarea";
 import { useToastNotification } from "../../../shared/design-system/ui/Toast";
-import type {
-  AgentClient,
-  RemoteAgent,
-  RemoteAgentModel,
+import {
+  MAX_INSTRUCTIONS_LENGTH,
+  validInstructions,
+  type AgentClient,
+  type RemoteAgent,
+  type RemoteAgentModel,
 } from "../agents/client";
 import type { OAuthSession } from "../oauth/session";
+import { effortLabel, modelChoice } from "./models";
 
 const statuses = {
-  "setup-required": "Choose a model and reasoning effort to finish setup.",
+  "setup-required": "Choose a model and thinking level to finish setup.",
   "model-unavailable":
-    "The saved model is no longer available. Choose another model and reasoning effort.",
+    "The saved model is no longer available. Choose another model and thinking level.",
   "effort-unsupported":
-    "The saved reasoning effort is no longer supported. Choose a supported effort.",
+    "The saved thinking level is no longer supported. Choose a supported level.",
   unknown:
-    "The server has not confirmed the saved model selection. Choose a model and reasoning effort.",
+    "The server has not confirmed the saved model selection. Choose a model and thinking level.",
 };
 const message = (reason: unknown) =>
   reason instanceof Error ? reason.message : "Could not load model settings.";
@@ -29,20 +42,24 @@ export function ModelSettings({
   session,
   agent,
   subject,
-  active = true,
 }: {
   client: AgentClient;
   session: OAuthSession;
   agent: RemoteAgent;
   subject: string;
-  active?: boolean;
 }) {
+  const form = useId();
+  const harnessHelp = useId();
+  const [harnessHelpOpen, setHarnessHelpOpen] = useState(false);
   const notify = useToastNotification();
   const [saved, setSaved] = useState(agent);
   const [models, setModels] = useState<readonly RemoteAgentModel[]>();
   const [modelId, setModelId] = useState(agent.modelId ?? "");
   const [effort, setEffort] = useState(agent.reasoningEffort ?? "");
-  const [busy, setBusy] = useState(true);
+  const [instructions, setInstructions] = useState(agent.instructions ?? "");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const busy = loading || saving;
   const [error, setError] = useState("");
   const [catalogError, setCatalogError] = useState("");
   const [revision, setRevision] = useState(0);
@@ -55,7 +72,7 @@ export function ModelSettings({
   // biome-ignore lint/correctness/useExhaustiveDependencies: revision retries a failed catalog request while keeping the draft.
   useEffect(() => {
     const current = new AbortController();
-    setBusy(true);
+    setLoading(true);
     setCatalogError("");
     void client
       .modelCatalog(current.signal)
@@ -68,36 +85,65 @@ export function ModelSettings({
         },
       )
       .finally(() => {
-        if (!current.signal.aborted) setBusy(false);
+        if (!current.signal.aborted) setLoading(false);
       });
     return () => current.abort();
   }, [client, revision]);
   const model = models?.find((choice) => choice.id === modelId);
   const valid = !!model?.supportedReasoningEfforts.includes(effort);
-  const changed =
+  const modelChanged =
     modelId !== (saved.modelId ?? "") ||
     effort !== (saved.reasoningEffort ?? "");
-  useAgentSaveState(changed, busy, active);
+  const instructionsChanged = instructions !== (saved.instructions ?? "");
+  const saveModel =
+    modelChanged ||
+    (!instructionsChanged && saved.modelSelectionStatus !== "valid");
+  const disabled =
+    saving ||
+    !validInstructions(instructions) ||
+    (!instructionsChanged && !saveModel) ||
+    (saveModel && (loading || !valid));
   const save = async () => {
-    if (!valid || busy) return;
+    if (disabled) return;
     const signal = controller.current?.signal;
     if (!signal) return;
-    setBusy(true);
+    setSaving(true);
     setError("");
     try {
       await session.ensureSignedIn(signal);
       if (session.credential().account.subject !== subject)
         throw new Error(
-          "Sign in to the Builderlab account that loaded these model settings.",
+          "Sign in to the Builderlab account that loaded these settings.",
         );
-      await client.updateModel(saved, modelId, effort, signal);
+      if (saved.status !== "Active")
+        throw new Error("Only Active agents can have their settings edited.");
+      if (saveModel && instructionsChanged)
+        await client.configure(
+          saved.pubkey,
+          {
+            instructions,
+            modelId,
+            reasoningEffort: effort,
+          },
+          signal,
+        );
+      else if (saveModel)
+        await client.updateModel(saved, modelId, effort, signal);
+      else await client.updateInstructions(saved, instructions, signal);
+      signal.throwIfAborted();
+      if (!saveModel) {
+        setSaved({ ...saved, instructions });
+        return;
+      }
       const remote = (await client.list(signal)).find(
         (row) => row.pubkey === saved.pubkey,
       );
       signal.throwIfAborted();
       if (!remote)
         throw new Error("Agent not found in this Builderlab account.");
-      setSaved(remote);
+      // Model readback must not replace the instructions draft with an omitted
+      // or stale value. Only model fields need server validity confirmation.
+      setSaved({ ...remote, instructions });
       setModelId(remote.modelId ?? "");
       setEffort(remote.reasoningEffort ?? "");
       if (remote.modelSelectionStatus === "valid")
@@ -105,103 +151,179 @@ export function ModelSettings({
     } catch (reason) {
       if (!signal.aborted) setError(message(reason));
     } finally {
-      if (!signal.aborted) setBusy(false);
+      if (!signal.aborted) setSaving(false);
     }
   };
   return (
-    <div className="grid gap-3">
-      <InlineHeader title="Model" />
-      <SettingsGroup layout="form">
-        {saved.modelSelectionStatus !== "valid" && (
-          <p role="status" className="m-0 text-body-sm text-warning">
-            {statuses[saved.modelSelectionStatus ?? "unknown"]}
-            {saved.modelId &&
-              ` Saved model: ${models?.find((choice) => choice.id === saved.modelId)?.displayName ?? saved.modelId}.`}
-            {saved.reasoningEffort &&
-              ` Saved effort: ${saved.reasoningEffort}.`}
-          </p>
-        )}
-        {models ? (
-          models.length ? (
-            <>
-              <Select
-                label="Model"
-                variant="field"
-                value={model ? modelId : ""}
-                placeholder="Choose a model"
-                disabled={busy}
-                groups={[
-                  {
-                    label: "Models",
-                    options: models.map((choice) => ({
-                      value: choice.id,
-                      label: choice.displayName,
-                    })),
-                  },
-                ]}
-                onValueChange={(next) => {
-                  setModelId(next);
-                  setEffort("");
-                }}
-              />
-              <Select
-                label="Reasoning effort"
-                variant="field"
-                value={valid ? effort : ""}
-                placeholder="Choose reasoning effort"
-                disabled={busy || !model}
-                groups={[
-                  {
-                    label: "Supported reasoning efforts",
-                    options: (model?.supportedReasoningEfforts ?? []).map(
-                      (value) => ({ value, label: value }),
-                    ),
-                  },
-                ]}
-                onValueChange={setEffort}
-              />
-              <div>
-                <Button
-                  variant="prominent"
-                  loading={busy}
-                  disabled={
-                    !valid ||
-                    (!changed && saved.modelSelectionStatus === "valid")
+    <form
+      id={form}
+      className="grid gap-4"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void save();
+      }}
+    >
+      {saved.modelSelectionStatus !== "valid" && (
+        <p role="status" className="m-0 text-body-sm text-warning">
+          {statuses[saved.modelSelectionStatus ?? "unknown"]}
+          {saved.modelId &&
+            ` Saved model: ${models?.find((choice) => choice.id === saved.modelId)?.displayName ?? saved.modelId}.`}
+          {saved.reasoningEffort &&
+            ` Saved thinking: ${effortLabel(saved.reasoningEffort)}.`}
+        </p>
+      )}
+      <SettingsGroup>
+        <PreferenceRow
+          title="Harness"
+          trailing={
+            <div className="buzz-select" data-variant="compact">
+              <PopoverRoot
+                open={harnessHelpOpen}
+                onOpenChange={(open, details) => {
+                  if (!open && details.reason === "trigger-press") {
+                    details.cancel();
+                    return;
                   }
-                  onClick={() => void save()}
+                  setHarnessHelpOpen(open);
+                }}
+              >
+                <PopoverTrigger
+                  openOnHover="preview"
+                  nativeButton={false}
+                  role="presentation"
+                  tabIndex={-1}
+                  aria-haspopup={false}
+                  aria-expanded={undefined}
+                  aria-controls={undefined}
+                  onKeyDownCapture={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      setHarnessHelpOpen(true);
+                    }
+                  }}
+                  render={
+                    <span className="inline-flex">
+                      <Button
+                        variant="outline"
+                        shape="control"
+                        size="sm"
+                        disabled
+                        focusableWhenDisabled
+                        aria-label="Harness: Builderlab"
+                        aria-haspopup="dialog"
+                        aria-expanded={harnessHelpOpen}
+                        aria-describedby={
+                          harnessHelpOpen ? harnessHelp : undefined
+                        }
+                        onFocus={() => setHarnessHelpOpen(true)}
+                      >
+                        Builderlab
+                        <CaretDownIcon size={14} aria-hidden="true" />
+                      </Button>
+                    </span>
+                  }
+                />
+                <PopoverPopup
+                  side="top"
+                  align="end"
+                  aria-label="Builderlab harness"
+                  initialFocus={false}
+                  finalFocus={false}
                 >
-                  Save model
-                </Button>
-              </div>
-            </>
-          ) : (
+                  <PopoverDescription id={harnessHelp}>
+                    Builderlab holds this agent’s signing key. Buzz can’t move
+                    that identity to a local harness yet. To run locally, create
+                    a new agent.
+                  </PopoverDescription>
+                </PopoverPopup>
+              </PopoverRoot>
+            </div>
+          }
+        />
+        {!!models?.length && (
+          <>
+            <ModelFamilyMenu
+              label="Model"
+              align="end"
+              selected={
+                model ? modelChoice(model) : { id: "", label: "Choose a model" }
+              }
+              models={models.map(modelChoice)}
+              disabled={busy}
+              onChange={(next) => {
+                setModelId(next);
+                setEffort("");
+              }}
+            />
+            <Select
+              label="Thinking"
+              variant="preference"
+              align="end"
+              value={valid ? effort : ""}
+              placeholder="Choose thinking"
+              disabled={busy || !model}
+              groups={[
+                {
+                  label: "",
+                  options: (model?.supportedReasoningEfforts ?? []).map(
+                    (value) => ({ value, label: effortLabel(value) }),
+                  ),
+                },
+              ]}
+              onValueChange={setEffort}
+            />
+          </>
+        )}
+      </SettingsGroup>
+      {models
+        ? !models.length && (
             <p className="m-0 text-body-sm text-secondary">
               No models are available. Retry when the catalog is available.
             </p>
           )
-        ) : (
-          busy && (
+        : loading && (
             <p className="m-0 text-body-sm text-secondary">Loading models…</p>
-          )
-        )}
-        {(catalogError || error) && (
-          <p role="alert" className="m-0 text-body-sm text-danger">
-            {catalogError || error}
-          </p>
-        )}
-        {(catalogError || error || models?.length === 0) && (
-          <div>
-            <Button
-              disabled={busy}
-              onClick={() => setRevision((value) => value + 1)}
-            >
-              {catalogError || models?.length === 0
-                ? "Retry models"
-                : "Refresh models"}
-            </Button>
-          </div>
-        )}
-      </SettingsGroup>
-    </div>
+          )}
+      <Field
+        label="Instructions"
+        error={
+          !validInstructions(instructions)
+            ? "Use text or leave this empty."
+            : undefined
+        }
+      >
+        <Textarea
+          appearance="outlined"
+          value={instructions}
+          onChange={(event) => setInstructions(event.target.value)}
+          disabled={saving}
+          rows={8}
+          maxLength={MAX_INSTRUCTIONS_LENGTH}
+        />
+      </Field>
+      <AgentSaveButton
+        form={form}
+        saving={saving}
+        disabled={disabled}
+        dirty={modelChanged || instructionsChanged}
+      />
+      {(catalogError || error) && (
+        <p role="alert" className="m-0 text-body-sm text-danger">
+          {error || catalogError}
+        </p>
+      )}
+      {(catalogError || error || models?.length === 0) && (
+        <div>
+          <Button
+            disabled={busy}
+            onClick={() => setRevision((value) => value + 1)}
+          >
+            {catalogError || models?.length === 0
+              ? "Retry models"
+              : "Refresh models"}
+          </Button>
+        </div>
+      )}
+    </form>
   );
 }

@@ -36,7 +36,11 @@ import {
 } from "./mention-draft";
 import { messageLinkParts } from "./message-link-parts";
 import { profileMentionParts } from "./profile-mentions";
-import { serializeNode, serializeSelection } from "./selection-copy";
+import {
+  serializeNode,
+  serializeSelection,
+  spoilerDelimiter,
+} from "./selection-copy";
 import { profileKey, profileTarget } from "../profiles/target";
 import { scanMarkdown } from "../relay/message-content";
 
@@ -1137,6 +1141,146 @@ describe("pasting a bare URL over a selection", () => {
     expect(h.markdown()).toBe(
       `Check the${url} ${url} release notes before Friday`,
     );
+  });
+});
+
+/** Mod+Shift+V: the chord's keydown, then the paste event its native command fires. */
+function pasteRaw(
+  input: ComposerInputElement,
+  text: string,
+  html = "",
+  chord: Partial<KeyboardEventInit> = { key: "V", ctrlKey: true },
+) {
+  act(() => {
+    input.focus();
+    fireEvent.keyDown(input, { code: "KeyV", shiftKey: true, ...chord });
+  });
+  paste(input, text, html);
+}
+
+describe("Mod+Shift+V pastes plain text verbatim", () => {
+  const url = "https://example.com/release-notes";
+  const chord = { key: "V", code: "KeyV", ctrlKey: true, shiftKey: true };
+
+  it("ignores rich flavors, this app's included, and keeps Markdown and line breaks literal", () => {
+    const h = mount("", { links: true });
+    const text =
+      "**bold** and [docs](https://example.com/)\n\n> quote\n- one\n- two";
+    pasteRaw(
+      h.input,
+      text,
+      copyHtml(
+        '<p><strong>bold</strong> and <a href="https://example.com/">docs</a></p><blockquote><p>quote</p></blockquote><ul><li><p>one</p></li><li><p>two</p></li></ul>',
+      ),
+    );
+    expect(h.markdown()).toBe(text);
+    expect(h.input.querySelector("strong, blockquote, ul")).toBeNull();
+    const external = mount();
+    pasteRaw(
+      external.input,
+      "Read the guide",
+      '<p>Read <a href="https://example.com/guide"><b>the guide</b></a></p>',
+    );
+    expect(external.markdown()).toBe("Read the guide");
+  });
+
+  it("replaces a selection with a URL as text in one undo step", () => {
+    const h = mount("Check the release notes before Friday");
+    act(() => h.input.setSelectionRange(10, 23));
+    pasteRaw(h.input, url);
+    expect(h.markdown()).toBe(`Check the ${url} before Friday`);
+    expect([h.input.selectionStart, h.input.selectionEnd]).toEqual([43, 43]);
+    act(() => h.input.undo(false));
+    expect(h.markdown()).toBe("Check the release notes before Friday");
+    expect([h.input.selectionStart, h.input.selectionEnd]).toEqual([10, 23]);
+    act(() => h.input.undo(true));
+    expect(h.markdown()).toBe(`Check the ${url} before Friday`);
+  });
+
+  it("takes the caret's formatting and leaves identity links as source", () => {
+    const accept = vi.fn((pubkey: string) => ({ pubkey, name: "Mic" }));
+    const h = mount("", { links: true, acceptRecipient: accept });
+    act(() => h.input.toggleFormat("bold"));
+    pasteRaw(h.input, `Ping ${micLink}`);
+    expect(h.markdown()).toBe(`**Ping ${micLink}**`);
+    expect(h.draft().recipients).toEqual([]);
+    expect(accept).not.toHaveBeenCalled();
+  });
+
+  it("inserts nothing for a clipboard without text", () => {
+    const h = mount("draft");
+    pasteRaw(h.input, "");
+    expect(h.markdown()).toBe("draft");
+    act(() => {
+      fireEvent.keyDown(h.input, chord);
+      fireEvent.paste(h.input, {
+        clipboardData: {
+          items: [{ kind: "file" }],
+          getData: (type: string) => (type === "text/plain" ? "name.png" : ""),
+        },
+      });
+    });
+    expect(h.markdown()).toBe("draft");
+  });
+
+  it("takes Apple chords on Apple platforms only", () => {
+    const platform = vi.spyOn(navigator, "platform", "get");
+    try {
+      platform.mockReturnValue("MacIntel");
+      for (const apple of [
+        { key: "V", metaKey: true },
+        // Option+Shift+V types ◊; the physical key still names the chord.
+        { key: "◊", metaKey: true, altKey: true },
+      ]) {
+        const h = mount("Check the release notes");
+        act(() => h.input.setSelectionRange(10, 23));
+        pasteRaw(h.input, url, "", apple);
+        expect(h.markdown()).toBe(`Check the ${url}`);
+      }
+      const control = mount("Check the release notes");
+      act(() => control.input.setSelectionRange(10, 23));
+      pasteRaw(control.input, url);
+      expect(control.markdown()).toBe(`Check the [release notes](${url})`);
+    } finally {
+      platform.mockRestore();
+    }
+  });
+
+  it("pastes verbatim after the desktop menu's request without a key", () => {
+    const h = mount("Check the release notes");
+    act(() => h.input.setSelectionRange(10, 23));
+    act(() => {
+      h.input.focus();
+      h.input.dispatchEvent(new Event("buzz:paste-plain"));
+    });
+    paste(h.input, url);
+    expect(h.markdown()).toBe(`Check the ${url}`);
+    // The request covers one paste.
+    act(() => h.input.setSelectionRange(0, 5));
+    paste(h.input, url);
+    expect(h.markdown()).toBe(`[Check](${url}) the ${url}`);
+  });
+
+  it.each([
+    [
+      "the chord is released",
+      (input: Element) => fireEvent.keyUp(input, { key: "Shift" }),
+    ],
+    ["the pointer goes down", (input: Element) => fireEvent.mouseDown(input)],
+    [
+      "another key goes down",
+      (input: Element) =>
+        fireEvent.keyDown(input, { key: "v", code: "KeyV", ctrlKey: true }),
+    ],
+  ])("leaves a later paste ordinary once %s", (_name, after) => {
+    const h = mount("Check the release notes");
+    act(() => {
+      fireEvent.keyDown(h.input, chord);
+      after(h.input);
+    });
+    act(() => h.input.setSelectionRange(10, 23));
+    paste(h.input, url);
+    expect(h.markdown()).toBe(`Check the [release notes](${url})`);
   });
 });
 
@@ -3097,23 +3241,26 @@ it("uses plain text when pasting rich content into an existing code block", asyn
 });
 
 it.each([
-  ["First\n\nSecond", "First\n\nSecond"],
-  ["First\nSecond", "First\nSecond"],
-  ["> First\n>\n> Second", "First\n\nSecond"],
-  ["- one\n- two", "one\ntwo"],
-  ["3. first\n4. second", "first\nsecond"],
-  ["> quoted", "quoted"],
-  ["```sh\necho hi\n```", "echo hi\n"],
-  ["```sh\necho hi\n\n```", "echo hi\n\n"],
-  ["| a | b |\n| - | - |\n| 1 | 2 |", "a\tb\n1\t2"],
-  ["para\n\n```sh\necho hi\n```\n\nafter", "para\n\necho hi\n\nafter"],
+  ["First\n\nSecond", "First\n\nSecond", ""],
+  ["First\nSecond", "First\nSecond", ""],
+  ["> First\n>\n> Second", "First\n\nSecond", "blockquote"],
+  ["- one\n- two", "one\ntwo", "ul li + li"],
+  ["3. first\n4. second", "first\nsecond", 'ol[start="3"] li + li'],
+  ["- one\n  \n  - sub\n- two", "one\n\nsub\ntwo", "ul li ul li"],
+  ["> quoted", "quoted", "blockquote"],
+  ["```sh\necho hi\n```", "echo hi\n", 'pre[data-language="sh"]'],
+  ["```sh\necho hi\n\n```", "echo hi\n\n", 'pre[data-language="sh"]'],
+  ["| a | b |\n| - | - |\n| 1 | 2 |", "a\tb\n1\t2", ""],
+  ["a ||secret|| b", "a ||secret|| b", "[data-spoiler]"],
+  ["para\n\n```sh\necho hi\n```\n\nafter", "para\n\necho hi\n\nafter", "pre"],
   [
     "intro\n\n- one\n- two\n\n> quoted\n\nouter",
     "intro\n\none\ntwo\n\nquoted\n\nouter",
+    "ul li + li, blockquote",
   ],
 ])(
   "copies real timeline structure through the composer: %s",
-  (content, plain) => {
+  (content, plain, shown) => {
     const view = render(
       <MessageMarkdown
         row={{
@@ -3153,6 +3300,129 @@ it.each([
     const target = mount();
     paste(target.input, copied.text, copied.html);
     expect(target.markdown()).toBe(content.startsWith("|") ? plain : content);
+    // The composer shows the copied blocks, not their source.
+    for (const selector of shown ? shown.split(", ") : [])
+      expect(target.input.querySelector(selector)).not.toBeNull();
+  },
+);
+
+it.each([
+  ["# Title\n\n## Sub", "Title\n\nSub", "p + p + p"],
+  ["- [ ] todo\n- [x] done", "[ ] todo\n[x] done", "ul li + li"],
+  // A rule's source is respelled: see "pastes a copied rule" below.
+  [
+    "above\n\n---\n\nbelow",
+    "above\n\n---\n\nbelow",
+    "p + p + p + p + p",
+    "above\n\n***\n\nbelow",
+  ],
+])(
+  "copies %j, which the composer has no node for, as source that sends the same",
+  (content, plain, shown, sent = content) => {
+    const view = render(
+      <MessageMarkdown
+        row={{
+          id: "m",
+          channelId: "general",
+          authorId: mic,
+          content,
+          createdAt: 1,
+          mentions: [],
+          participants: [],
+          attachments: [],
+          reactions: [],
+          replyCount: 0,
+        }}
+        media={() => undefined}
+        onOpenLink={() => false}
+      />,
+    );
+    // Select the whole message, as triple-click and select-all do.
+    const range = document.createRange();
+    range.selectNodeContents(view.container);
+    const copied = {
+      text: serializeNode(view.container, "text", range),
+      html: `<div data-buzz-copy="timeline">${serializeNode(view.container, "html", range)}</div>`,
+    };
+    expect(copied.text).toBe(plain);
+    const target = mount();
+    paste(target.input, copied.text, copied.html);
+    expect(target.markdown()).toBe(sent);
+    expect(target.input.querySelector(shown)).not.toBeNull();
+    expect(target.input.querySelector("h1, h2, hr, input")).toBeNull();
+  },
+);
+
+it("pastes a copied rule after existing text without turning it into a heading", () => {
+  // Copied as `<hr><p>after</p>`, the rule's line lands directly under `foo`,
+  // where `---` would read as a setext underline; `***` cannot.
+  const h = mount("foo");
+  act(() => h.input.setSelectionRange(3, 3));
+  paste(
+    h.input,
+    "---\n\nafter",
+    '<div data-buzz-copy="timeline"><hr><p>after</p></div>',
+  );
+  expect(h.markdown()).toBe("foo\n***\n\nafter");
+  const sent = render(
+    <MessageMarkdown
+      row={{
+        id: "m",
+        channelId: "general",
+        authorId: mic,
+        content: h.markdown(),
+        createdAt: 1,
+        mentions: [],
+        participants: [],
+        attachments: [],
+        reactions: [],
+        replyCount: 0,
+      }}
+      media={() => undefined}
+      onOpenLink={() => false}
+    />,
+  );
+  expect(sent.container.querySelector("p + hr + p")).not.toBeNull();
+  expect(sent.container.querySelector("h1, h2")).toBeNull();
+});
+
+it.each([
+  ["## Title\n\nbody", "h2", "foo## Title"],
+  ["first\n\nbody", "p", "foofirst"],
+])(
+  "pastes a triple-clicked block of %j into the current line, as when selected exactly",
+  (content, block, pasted) => {
+    const view = render(
+      <MessageMarkdown
+        row={{
+          id: "m",
+          channelId: "general",
+          authorId: mic,
+          content,
+          createdAt: 1,
+          mentions: [],
+          participants: [],
+          attachments: [],
+          reactions: [],
+          replyCount: 0,
+        }}
+        media={() => undefined}
+        onOpenLink={() => false}
+      />,
+    );
+    // Chromium and WebKit end a triple-click at the next block's start.
+    const range = document.createRange();
+    range.setStart(view.container.querySelector(block)?.firstChild as Text, 0);
+    range.setEnd(view.container.querySelector(`${block} + p`) as Element, 0);
+    const target = mount("foo");
+    act(() => target.input.setSelectionRange(3, 3));
+    paste(
+      target.input,
+      serializeNode(view.container, "text", range),
+      `<div data-buzz-copy="timeline">${serializeNode(view.container, "html", range)}</div>`,
+    );
+    expect(target.markdown()).toBe(pasted);
+    expect(target.input.querySelector("p > br:only-child")).toBeNull();
   },
 );
 
@@ -3194,6 +3464,8 @@ it.each(["-", "3."])(
     const target = mount();
     paste(target.input, text, html);
     expect(target.markdown()).toBe("sk **Morgan** ab");
+    expect(target.input.querySelector("strong")).toHaveTextContent("Morgan");
+    expect(target.input.querySelector("ul, ol")).toBeNull();
 
     // Selecting the enclosing list still keeps its marker and starting number.
     range.selectNodeContents(view.getByRole("list"));
@@ -3267,10 +3539,17 @@ it("writes blocks, breaks and spoilers as HTML the paste side reads back", async
   expect(copied).toEqual({
     text: h.markdown(),
     html: copyHtml(
-      "<p>first ||secret||<br>next</p><pre><code>ls\n</code></pre>",
+      `<p>first <span data-spoiler="">${spoilerDelimiter}secret${spoilerDelimiter}</span><br>next</p><pre><code>ls\n</code></pre>`,
     ),
   });
   expect(readBack(copied.html)).toBe(h.markdown());
+  // Composer → composer keeps the spoiler a mark, as the timeline flavor does.
+  const target = mount();
+  paste(target.input, copied.text ?? "", copied.html);
+  expect(target.markdown()).toBe(h.markdown());
+  expect(target.input.querySelector("[data-spoiler]")).toHaveTextContent(
+    "secret",
+  );
 });
 
 it("copies marked whitespace, lists, a quote and a fence as HTML that reads back as the same Markdown", () => {
@@ -3326,10 +3605,318 @@ it("copies marked whitespace, lists, a quote and a fence as HTML that reads back
     ),
   });
   expect(readBack(copied.html)).toBe(h.markdown());
-  // Pasted into another composer, the message sends with the same source.
+  // Pasted into another composer, the message sends with the same source and
+  // shows the same blocks and marks.
   const target = mount();
   paste(target.input, copied.text ?? "", copied.html);
   expect(target.markdown()).toBe(h.markdown());
+  for (const selector of [
+    "strong",
+    "ul li + li",
+    'ol[start="3"] li',
+    "blockquote p",
+    'pre[data-language="sh"] code',
+  ])
+    expect(target.input.querySelector(selector)).not.toBeNull();
+});
+
+it("pastes this app's blocks as sibling nodes, one paragraph inline, and undoes as one step", () => {
+  const list = copyHtml("<ul><li><p>one</p></li><li><p>two</p></li></ul>");
+  const h = mount("intro");
+  act(() => h.input.setSelectionRange(5, 5));
+  paste(h.input, "one\ntwo", list);
+  expect(h.input.querySelectorAll("ul li")).toHaveLength(2);
+  expect(h.markdown()).toBe("intro\n\n- one\n- two");
+  expect(h.input.selectionStart).toBe(h.input.value.length);
+  act(() => h.input.undo(false));
+  expect(h.markdown()).toBe("intro");
+  expect(h.input.querySelector("ul")).toBeNull();
+  // One marked paragraph stays in the sentence; several paragraphs split it.
+  const inline = mount("xxyy");
+  act(() => inline.input.setSelectionRange(2, 2));
+  paste(inline.input, "a b c", copyHtml("<p>a <strong>b</strong> c</p>"));
+  expect(inline.markdown()).toBe("xxa **b** cyy");
+  expect(inline.input.querySelectorAll("p")).toHaveLength(1);
+  expect(inline.input.querySelector("strong")).toHaveTextContent("b");
+  const split = mount("xxyy");
+  act(() => split.input.setSelectionRange(2, 2));
+  paste(
+    split.input,
+    "First\n\nSecond",
+    '<div data-buzz-copy="timeline"><p>First</p><p>Second</p></div>',
+  );
+  expect(split.markdown()).toBe("xx\nFirst\n\nSecond\nyy");
+});
+
+const pastedList = copyHtml("<ul><li><p>one</p></li><li><p>two</p></li></ul>");
+const pastedOrdered = copyHtml(
+  '<ol start="3"><li><p>one</p></li><li><p>two</p></li></ol>',
+);
+const pastedQuote = copyHtml("<blockquote><p>quoted</p></blockquote>");
+
+// ProseMirror renders an empty textblock as `<p><br></p>`, which `p:empty`
+// never matches; this is the shape an item-start paste must not leave.
+const emptyParagraph = "p > br:only-child";
+
+// A list item is `paragraph block*`: blocks cannot precede its first paragraph,
+// so at its start a pasted list of the same kind joins the list and other
+// blocks, including a list of the other kind, follow the paragraph, with the
+// caret at the end of the paste. Elsewhere ProseMirror's placement stands:
+// inside the last pasted block after text, before the text when pasting at its
+// start.
+it.each([
+  [
+    "bullet_list",
+    0,
+    pastedList,
+    "- one\n- two\n- alpha",
+    "ul > li + li + li",
+    "\nalpha",
+  ],
+  [
+    "bullet_list",
+    5,
+    pastedList,
+    "- alpha\n  \n  - one\n  - two",
+    "ul > li > p + ul > li + li",
+    "",
+  ],
+  [
+    "bullet_list",
+    0,
+    pastedQuote,
+    "- alpha\n  \n  > quoted",
+    "ul > li > p + blockquote",
+    "",
+  ],
+  [
+    "ordered_list",
+    0,
+    pastedOrdered,
+    "1. one\n2. two\n3. alpha",
+    "ol > li + li + li",
+    "\nalpha",
+  ],
+  [
+    "ordered_list",
+    0,
+    pastedList,
+    "1. alpha\n   \n   - one\n   - two",
+    "ol > li > p + ul > li + li",
+    "",
+  ],
+  [
+    "bullet_list",
+    0,
+    pastedOrdered,
+    "- alpha\n  \n  3. one\n  4. two",
+    'ul > li > p + ol[start="3"] > li + li',
+    "",
+  ],
+  [
+    "blockquote",
+    0,
+    pastedList,
+    "> - one\n> - two\n>\n> alpha",
+    "blockquote > ul + p",
+    "alpha",
+  ],
+  [
+    "blockquote",
+    5,
+    pastedList,
+    "> alpha\n>\n> - one\n> - two",
+    "blockquote > p + ul",
+    "",
+  ],
+] as const)(
+  "pastes this app's blocks with the caret in a %s at offset %i",
+  (format, caret, html, markdown, shown, after) => {
+    const h = mount("alpha");
+    act(() => h.input.toggleFormat(format));
+    act(() => h.input.setSelectionRange(caret, caret));
+    const original = h.markdown();
+    paste(h.input, "pasted", html);
+    expect(h.markdown()).toBe(markdown);
+    expect(h.input.querySelector(shown)).not.toBeNull();
+    expect(h.input.querySelector(emptyParagraph)).toBeNull();
+    expect(h.input.value.slice(h.input.selectionStart ?? 0)).toBe(after);
+    act(() => h.input.undo(false));
+    expect(h.markdown()).toBe(original);
+  },
+);
+
+// Deleting the selection first puts a selection from an item's start on the
+// same footing as a caret there, so no empty paragraph is left behind; a fully
+// selected item text becomes the empty item the pasted items replace.
+it.each([
+  [[0, 5], pastedList, "- one\n- two\n- beta", "ul > li + li + li"],
+  [[0, 3], pastedList, "- one\n- two\n- ha\n- beta", "ul > li + li + li + li"],
+  [[0, 8], pastedList, "- one\n- two\n- ta", "ul > li + li + li"],
+  [
+    [0, 3],
+    pastedQuote,
+    "- ha\n  \n  > quoted\n- beta",
+    "ul > li > p + blockquote",
+  ],
+  [[6, 10], pastedQuote, "- alpha\n\n> quoted", "ul + blockquote"],
+] as const)(
+  "pastes this app's blocks over a selection %j from a list item's start",
+  async ([from, to], html, markdown, shown) => {
+    const h = mount("alpha");
+    act(() => h.input.toggleFormat("bullet_list"));
+    await h.user.keyboard("{Enter}beta");
+    expect(h.markdown()).toBe("- alpha\n- beta");
+    act(() => h.input.setSelectionRange(from, to));
+    paste(h.input, "pasted", html);
+    expect(h.markdown()).toBe(markdown);
+    expect(h.input.querySelector(shown)).not.toBeNull();
+    expect(h.input.querySelector(emptyParagraph)).toBeNull();
+    act(() => h.input.undo(false));
+    expect(h.markdown()).toBe("- alpha\n- beta");
+  },
+);
+
+// A blank item that no same-kind list replaces leaves its list first, as Enter
+// there does, so a quote or a list of the other kind never sits beside an empty
+// paragraph that sends as `- `; a same-kind list still takes the item's place.
+it.each([
+  ["bullet_list", pastedQuote, "- alpha\n\n> quoted", "ul + blockquote"],
+  [
+    "bullet_list",
+    pastedOrdered,
+    "- alpha\n\n3. one\n4. two",
+    'ul + ol[start="3"]',
+  ],
+  ["bullet_list", pastedList, "- alpha\n- one\n- two", "ul > li + li + li"],
+  ["ordered_list", pastedList, "1. alpha\n\n- one\n- two", "ol + ul"],
+] as const)(
+  "pastes this app's blocks into a blank %s item after the first",
+  async (format, html, markdown, shown) => {
+    const h = mount("alpha");
+    act(() => h.input.toggleFormat(format));
+    await h.user.keyboard("{Enter}");
+    const original = h.markdown();
+    paste(h.input, "pasted", html);
+    expect(h.markdown()).toBe(markdown);
+    expect(h.input.querySelector(shown)).not.toBeNull();
+    expect(h.input.querySelector(emptyParagraph)).toBeNull();
+    act(() => h.input.undo(false));
+    expect(h.markdown()).toBe(original);
+  },
+);
+
+it("lifts a blank middle or nested item out of its list before pasting a quote", async () => {
+  const h = mount("alpha");
+  act(() => h.input.toggleFormat("bullet_list"));
+  await h.user.keyboard("{Enter}beta");
+  act(() => h.input.setSelectionRange(6, 6));
+  await h.user.keyboard("{Enter}");
+  expect(h.markdown()).toBe("- alpha\n- \n- beta");
+  act(() => h.input.setSelectionRange(6, 6));
+  paste(h.input, "pasted", pastedQuote);
+  expect(h.markdown()).toBe("- alpha\n\n> quoted\n\n- beta");
+  expect(h.input.querySelector("ul + blockquote + ul")).not.toBeNull();
+  expect(h.input.querySelector(emptyParagraph)).toBeNull();
+  // A nested blank item leaves every list it is in, as Enter twice would.
+  const nested = mount("alpha");
+  act(() => nested.input.toggleFormat("bullet_list"));
+  await nested.user.keyboard("{Enter}{Tab}");
+  expect(nested.markdown()).toBe("- alpha\n  \n  - ");
+  paste(nested.input, "pasted", pastedQuote);
+  expect(nested.markdown()).toBe("- alpha\n\n> quoted");
+  expect(nested.input.querySelector(emptyParagraph)).toBeNull();
+  // A blank nested item before a sibling leaves both lists too: the first
+  // lift moves the sibling under it, and the second takes them both out.
+  const sibling = mount("alpha");
+  act(() => sibling.input.toggleFormat("bullet_list"));
+  await sibling.user.keyboard("{Enter}{Tab}beta");
+  act(() => sibling.input.setSelectionRange(6, 6));
+  await sibling.user.keyboard("{Enter}");
+  expect(sibling.markdown()).toBe("- alpha\n  \n  - \n  - beta");
+  act(() => sibling.input.setSelectionRange(6, 6));
+  paste(sibling.input, "pasted", pastedQuote);
+  expect(sibling.markdown()).toBe("- alpha\n\n> quoted\n\n- beta");
+  expect(sibling.input.querySelector("ul + blockquote + ul")).not.toBeNull();
+  expect(sibling.input.querySelector(emptyParagraph)).toBeNull();
+});
+
+it("joins a pasted list before a later item and keeps empty-item pastes whole", async () => {
+  const h = mount("alpha");
+  act(() => h.input.toggleFormat("bullet_list"));
+  await h.user.keyboard("{Enter}beta");
+  expect(h.markdown()).toBe("- alpha\n- beta");
+  act(() => h.input.setSelectionRange(6, 6));
+  paste(h.input, "pasted", pastedList);
+  expect(h.markdown()).toBe("- alpha\n- one\n- two\n- beta");
+  // An empty item takes the pasted items' place.
+  const empty = mount();
+  act(() => empty.input.toggleFormat("bullet_list"));
+  paste(empty.input, "pasted", pastedList);
+  expect(empty.markdown()).toBe("- one\n- two");
+});
+
+it("promotes identity links inside this app's pasted blocks", () => {
+  const accept = vi.fn((pubkey: string) => ({ pubkey, name: "Mic" }));
+  const h = mount("", { links: true, acceptRecipient: accept });
+  paste(
+    h.input,
+    "Ping @Mic",
+    copyHtml(
+      `<ul><li><p>Ping <a href="${profileTarget(mic)}">@Mic</a></p></li></ul>`,
+    ),
+  );
+  expect(h.input.querySelector("ul li [data-mention]")).toHaveTextContent(
+    "@Mic",
+  );
+  expect(h.markdown()).toBe("- Ping @Mic");
+  expect(h.draft().recipients).toEqual([
+    { pubkey: mic, name: "Mic", start: 5, end: 9 },
+  ]);
+});
+
+it("offers only the pasted content for promotion when it lands after an item's text", () => {
+  const accept = vi.fn((pubkey: string) => ({ pubkey, name: "Mic" }));
+  const h = mount(`Ping ${micLink}`, { links: true, acceptRecipient: accept });
+  act(() => h.input.toggleFormat("bullet_list"));
+  expect(h.draft().recipients).toEqual([]);
+  // A quote pasted at the item's start follows its text; the display-only
+  // link in that text is not part of the paste.
+  act(() => h.input.setSelectionRange(0, 0));
+  paste(h.input, "quoted", pastedQuote);
+  expect(h.markdown()).toBe(`- Ping ${micLink}\n  \n  > quoted`);
+  expect(accept).not.toHaveBeenCalled();
+  expect(h.draft().recipients).toEqual([]);
+  // A link inside the pasted quote is offered, wherever the quote lands.
+  act(() => h.input.setSelectionRange(0, 0));
+  paste(
+    h.input,
+    "See @Mic",
+    copyHtml(
+      `<blockquote><p>See <a href="${profileTarget(mic)}">@Mic</a></p></blockquote>`,
+    ),
+  );
+  const markdown = h.markdown();
+  expect(markdown).toBe(`- Ping ${micLink}\n  \n  > See @Mic\n  \n  > quoted`);
+  expect(accept).toHaveBeenCalledTimes(1);
+  // Recipient offsets index the draft's source text, not the wire Markdown.
+  const at = h.draft().text.indexOf("See @Mic") + 4;
+  expect(h.draft().recipients).toEqual([
+    { pubkey: mic, name: "Mic", start: at, end: at + 4 },
+  ]);
+});
+
+it("keeps this app's blocks literal in a code block and within the paste limit", () => {
+  const list = copyHtml("<ul><li><p>one</p></li><li><p>two</p></li></ul>");
+  const h = mount();
+  act(() => h.input.toggleFormat("code_block"));
+  paste(h.input, "one\ntwo", list);
+  expect(h.markdown()).toBe("```\none\ntwo\n```");
+  expect(h.input.querySelector("ul")).toBeNull();
+  const limited = mount("", { maxLength: 8 });
+  paste(limited.input, "one\ntwo", list);
+  expect(limited.markdown()).toBe("");
+  expect(limited.input.querySelector("ul")).toBeNull();
 });
 
 it("pastes this app's HTML as identity Markdown and other HTML as its text/plain", () => {
@@ -3460,7 +4047,7 @@ it("keeps external linked text literal in code blocks and enforces the paste lim
   expect(limited.markdown()).toBe("");
 });
 
-it.each(["ul", "ol", "blockquote", "pre"])(
+it.each(["ul", "ol", "blockquote", "pre", "h1"])(
   "pastes external %s as linked text without importing block formatting",
   (tag) => {
     const h = mount();
@@ -3474,6 +4061,16 @@ it.each(["ul", "ol", "blockquote", "pre"])(
     expect(h.input.querySelector("ul, ol, blockquote, pre")).toBeNull();
   },
 );
+
+it("drops external rules and checkboxes that this app's copies keep as source", () => {
+  const h = mount();
+  paste(
+    h.input,
+    "guide\nnotes",
+    '<p><input type="checkbox" checked><a href="https://example.com/">guide</a></p><hr><p>notes</p>',
+  );
+  expect(h.markdown()).toBe("[guide](https://example.com/)\nnotes");
+});
 
 it.each([
   [

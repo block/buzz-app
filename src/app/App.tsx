@@ -96,6 +96,37 @@ function ConnectedApp({ services }: { services: AppServices }) {
     null,
   );
   const route = useAppNavigation(services, departure);
+  const settingsTraversal = useRef<((proceed: boolean) => void) | undefined>(
+    undefined,
+  );
+  const discardSettings = useRef(false);
+  const settingsEditorScope = useRef<string | undefined>(undefined);
+  useLayoutEffect(() => {
+    if (!settingsUnsaved) return;
+    return services.navigationHost.guardDeparture((next, decide) => {
+      if (discardSettings.current) {
+        discardSettings.current = false;
+        return false;
+      }
+      const current = services.navigation.snapshot().entry.target;
+      // Settings sections share the mounted Profile editor. A different scope
+      // or leaving the dialog would unmount it.
+      if (
+        next.kind === "settings" &&
+        current.kind === "settings" &&
+        JSON.stringify(next.scope) === JSON.stringify(current.scope)
+      )
+        return false;
+      settingsTraversal.current = decide;
+      setConfirmSettingsDiscard(true);
+      return true;
+    });
+  }, [services, settingsUnsaved]);
+  const keepSettings = () => {
+    settingsTraversal.current?.(false);
+    settingsTraversal.current = undefined;
+    setConfirmSettingsDiscard(false);
+  };
   const launcher = usePanelLauncher(services.panels, startup === "ready");
   const client = useSyncExternalStore(
     services.communities.subscribe,
@@ -129,8 +160,10 @@ function ConnectedApp({ services }: { services: AppServices }) {
     client.memberships.length === 0;
   // The prompt is stale once Settings ends another way or nothing is left to
   // discard, such as when a pending save is sent behind it.
-  if (confirmSettingsDiscard && (!settings || !settingsUnsaved))
+  if (confirmSettingsDiscard && (!settings || !settingsUnsaved)) {
+    settingsTraversal.current = undefined;
     setConfirmSettingsDiscard(false);
+  }
   const settingsFocus = useRef<HTMLElement | null>(null);
   const wasSettings = useRef(false);
   const workspaceEntry = useRef<string | undefined>(undefined);
@@ -266,7 +299,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
           void services.navigation.open({
             version: 1,
             kind: "settings",
-            section: "block.hosted-communities/hosted",
+            section: "block.builderlab/login",
           })
         }
       />
@@ -287,6 +320,17 @@ function ConnectedApp({ services }: { services: AppServices }) {
         : { scope: null }),
     });
   };
+  const settingsUnavailable =
+    (!route.state.ingress && !!route.failure) ||
+    route.state.status === "failed";
+  const settingsBlocked = settingsUnavailable || route.waiting;
+  const settingsScope =
+    route.target.kind === "settings"
+      ? JSON.stringify(route.target.scope)
+      : undefined;
+  // Preserve Settings' completion/focus state across admitted scope changes.
+  // A blocked destination may retain only its own scope's dirty editor.
+  if (settings && !settingsBlocked) settingsEditorScope.current = settingsScope;
   const destinationFailure = (
     <div role="alert" className="notice">
       <h1>This destination couldn’t open</h1>
@@ -488,61 +532,74 @@ function ConnectedApp({ services }: { services: AppServices }) {
             }}
           >
             <div id="settings-content" className="h-full" tabIndex={-1}>
-              {(!route.state.ingress && route.failure) ||
-              route.state.status === "failed" ? (
+              {settingsUnavailable ? (
                 destinationFailure
               ) : route.waiting ? (
                 <p role="status">Opening destination…</p>
-              ) : (
-                <Settings
-                  agents={services.agents}
-                  decisions={services.decisions}
-                  plugins={plugins}
-                  cards={services.settingsCards}
-                  adminAccess={services.adminAccess}
-                  communities={services.communities}
-                  identity={services.identity}
-                  appearance={services.appearance}
-                  shortcuts={services.shortcuts}
-                  shortcutBindings={services.shortcutBindings}
-                  notifications={services.notifications}
-                  updates={services.updates}
-                  navigation={route.request}
-                  navigationPane
-                  onDeparturePending={(pending) => {
-                    const client = services.communities.snapshot();
-                    const attempt = route.state.attempt;
-                    if (pending && client.viewer && client.selected)
-                      setDeparture({
-                        attempt,
-                        viewer: client.viewer,
-                        communityId: client.selected,
-                      });
-                    else if (!pending)
-                      setDeparture((current) =>
-                        current?.attempt === attempt ? null : current,
-                      );
-                  }}
-                  onSection={openSettingsSection}
-                  onUnsavedChange={setSettingsUnsaved}
-                />
+              ) : null}
+              {(!settingsBlocked ||
+                (settingsUnsaved &&
+                  settingsEditorScope.current === settingsScope)) && (
+                <div
+                  className="h-full"
+                  hidden={settingsBlocked}
+                  inert={settingsBlocked}
+                >
+                  <Settings
+                    agents={services.agents}
+                    decisions={services.decisions}
+                    plugins={plugins}
+                    cards={services.settingsCards}
+                    adminAccess={services.adminAccess}
+                    communities={services.communities}
+                    identity={services.identity}
+                    appearance={services.appearance}
+                    shortcuts={services.shortcuts}
+                    shortcutBindings={services.shortcutBindings}
+                    notifications={services.notifications}
+                    updates={services.updates}
+                    navigation={route.request}
+                    navigationPane
+                    onDeparturePending={(pending) => {
+                      const client = services.communities.snapshot();
+                      const attempt = route.state.attempt;
+                      if (pending && client.viewer && client.selected)
+                        setDeparture({
+                          attempt,
+                          viewer: client.viewer,
+                          communityId: client.selected,
+                        });
+                      else if (!pending)
+                        setDeparture((current) =>
+                          current?.attempt === attempt ? null : current,
+                        );
+                    }}
+                    onSection={openSettingsSection}
+                    onProvider={route.setSettingsProvider}
+                    onUnsavedChange={setSettingsUnsaved}
+                  />
+                </div>
               )}
             </div>
             {confirmSettingsDiscard && settings && settingsUnsaved && (
               <AlertDialog
                 title="Discard changes?"
                 description="Your profile has unsaved changes."
-                onClose={() => setConfirmSettingsDiscard(false)}
+                onClose={keepSettings}
                 actions={
                   <>
-                    <Button onClick={() => setConfirmSettingsDiscard(false)}>
-                      Keep editing
-                    </Button>
+                    <Button onClick={keepSettings}>Keep editing</Button>
                     <Button
                       variant="destructive"
                       onClick={() => {
                         setConfirmSettingsDiscard(false);
-                        route.leaveSettings();
+                        const decide = settingsTraversal.current;
+                        settingsTraversal.current = undefined;
+                        if (decide) decide(true);
+                        else {
+                          discardSettings.current = true;
+                          route.leaveSettings();
+                        }
                       }}
                     >
                       Discard changes

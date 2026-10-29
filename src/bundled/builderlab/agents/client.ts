@@ -1,3 +1,5 @@
+import { transientStatus } from "../../../features/relay/errors";
+import { retryRead } from "../../../features/relay/read-retry";
 import { invoke } from "@tauri-apps/api/core";
 import { nativeIdentityEnabled } from "../../../features/identity/service";
 import type {
@@ -57,6 +59,9 @@ function modelSelectionStatus(
 }
 
 export const MAX_INSTRUCTIONS_LENGTH = 20_000;
+const AGENT_NAME = /^[\w .-]{1,64}$/;
+const INVALID_NAME =
+  "Use 1–64 letters, numbers, spaces, dots, hyphens or underscores for the agent name.";
 
 export function validInstructions(value: unknown): value is string {
   return (
@@ -94,6 +99,8 @@ const nativeOwner: OwnerIdentity = {
   signBinding: (challenge) =>
     invoke("identity_sign_builderlab_binding", { challenge }),
 };
+
+class BuilderlabUnavailable extends Error {}
 
 const LINK_ERRORS: Record<string, string> = {
   identity_already_bound:
@@ -154,7 +161,7 @@ export function createAgentClient(
       });
     } catch {
       check(credential, signal);
-      throw new Error("Could not reach Builderlab. Try again.");
+      throw new BuilderlabUnavailable("Could not reach Builderlab. Try again.");
     }
     check(credential, signal);
     signOutIfExpired(response);
@@ -176,6 +183,26 @@ export function createAgentClient(
     } catch {
       throw new Error("Builderlab returned an invalid response.");
     }
+  }
+  function readRequest(
+    path: "get-model-catalog" | "list-agents",
+    body: unknown,
+    signal: AbortSignal,
+  ) {
+    const credential = remoteCredential();
+    return retryRead(
+      (signal) => {
+        check(credential, signal);
+        return request(path, body, signal);
+      },
+      signal,
+      (error) =>
+        error instanceof BuilderlabUnavailable ||
+        (error instanceof Error &&
+          "status" in error &&
+          typeof error.status === "number" &&
+          transientStatus(error.status)),
+    );
   }
   /** Builderlab's identity routes answer failures with `{ error: { code } }`. */
   async function identityRequest(
@@ -332,7 +359,7 @@ export function createAgentClient(
     async modelCatalog(
       signal: AbortSignal,
     ): Promise<readonly RemoteAgentModel[]> {
-      const result = await request("get-model-catalog", {}, signal);
+      const result = await readRequest("get-model-catalog", {}, signal);
       const models = result.models ?? [];
       if (
         !Array.isArray(models) ||
@@ -425,6 +452,29 @@ export function createAgentClient(
         signal,
       );
     },
+    /** Republishes the agent's profile; Beekeeper keeps the stored picture when none is sent. */
+    async updateProfile(
+      profile: Readonly<{
+        pubkey: string;
+        community: string;
+        name: string;
+        picture?: string;
+      }>,
+      signal: AbortSignal,
+    ): Promise<void> {
+      const agentName = profile.name.trim();
+      if (!AGENT_NAME.test(agentName)) throw new Error(INVALID_NAME);
+      await request(
+        "update-agent-profile",
+        {
+          agent_pubkey: profile.pubkey,
+          community_url: profile.community,
+          agent_name: agentName,
+          agent_picture_url: profile.picture ?? "",
+        },
+        signal,
+      );
+    },
     async delete(
       agent: Pick<RemoteAgent, "id">,
       signal: AbortSignal,
@@ -484,25 +534,28 @@ export function createAgentClient(
         agent: RemoteAgent,
         intent: RegistrationIntent,
       ) => void,
-    ): Promise<RemoteAgent> {
+      picture?: string,
+    ): Promise<RemoteAgent & Readonly<{ picture?: string }>> {
       signal.throwIfAborted();
       const agentName = name.trim();
-      if (!/^[\w .-]{1,64}$/.test(agentName))
-        throw new Error(
-          "Use 1–64 letters, numbers, spaces, dots, hyphens or underscores for the agent name.",
-        );
+      if (!AGENT_NAME.test(agentName)) throw new Error(INVALID_NAME);
       const credential = remoteCredential();
       const { account } = credential;
       const intent = registrationIntent(
         oauthTarget(),
         account.subject,
         agentName,
+        picture,
       );
       let result: Record<string, unknown>;
       try {
         result = await request(
           "register-agent",
-          { agent_name: agentName, idempotency_key: intent.key },
+          {
+            agent_name: agentName,
+            ...(intent.picture ? { agent_picture_url: intent.picture } : {}),
+            idempotency_key: intent.key,
+          },
           signal,
         );
       } catch (error) {
@@ -559,10 +612,14 @@ export function createAgentClient(
       // Hosted provisioning keeps replay until Agents has durably saved setup.
       check(credential, signal);
       retainRegistration(agent, intent);
-      return agent;
+      // A replay registers the first picture, not the one passed this time.
+      return {
+        ...agent,
+        ...(intent.picture ? { picture: intent.picture } : {}),
+      };
     },
     async list(signal: AbortSignal): Promise<readonly RemoteAgent[]> {
-      const result = await request(
+      const result = await readRequest(
         "list-agents",
         { include_instructions: true },
         signal,

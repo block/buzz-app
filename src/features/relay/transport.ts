@@ -131,6 +131,9 @@ export interface ReadTransport {
   /** The relay advertises `buzz-search-sort`: bridge search accepts
    * `search_sort: "newest"`. Older relays silently rank by relevance. */
   readonly searchSort?: true;
+  /** The relay advertises NIP-AR sync (`artifacts.sync.version` 1 in NIP-11):
+   * a REQ with `"artifact": "current"` streams a complete set, then live heads. */
+  readonly artifactSync?: true;
   /** Strictly validated atomic writer snapshot; never an ordinary event-array query. */
   readStateSnapshot?(
     signal: AbortSignal,
@@ -157,6 +160,10 @@ export interface ReadTransport {
   readonly writeSidebarSectionOrder?: SidebarSectionOrderMutator;
   readonly renameSidebarSection?: SidebarSectionRenameMutator;
   readonly writeSidebarStar?: SidebarStarMutator;
+  /** Host-only private account record of the main agent the viewer chose:
+   * undefined when never saved. */
+  readMainAgent?(signal: AbortSignal): Promise<string | undefined>;
+  writeMainAgent?(agent: string, signal: AbortSignal): Promise<void>;
   readonly profiling?: RelayProfiler;
   /** Verified incoming traffic. The session owns this subscription and fences late delivery. */
   subscribe?(callbacks: LiveCallbacks): LiveSubscription;
@@ -456,6 +463,7 @@ export async function connectBrokerTransport(
     channelKit?: boolean;
     channelIdentity?: boolean;
     searchSort?: boolean;
+    artifactSync?: boolean;
     sidebarPreferenceWrites?: boolean;
     sidebarSectionRemoval?: boolean;
     sidebarSectionOrder?: boolean;
@@ -785,6 +793,7 @@ export async function connectBrokerTransport(
       ? { channelIdentity: true as const }
       : {}),
     ...(session.searchSort === true ? { searchSort: true as const } : {}),
+    ...(session.artifactSync === true ? { artifactSync: true as const } : {}),
     ...(session.channelKit
       ? {
           channelKit: {

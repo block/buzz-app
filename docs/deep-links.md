@@ -24,6 +24,8 @@ The OS ingress accepts the Buzz link forms and nothing else:
 - `buzz://pr?id=<64-hex event>&owner=<64-hex key>&d=<repository>`
 - `buzz://issue?id=<64-hex event>&owner=<64-hex key>&d=<repository>`
 - `buzz://join?relay=<wss-url>&code=<code>[&policy_receipt=<receipt>]`
+- `buzz://connect?relay=<wss-url>`
+- `buzz://add-community?relay=<wss-url>[&name=<name>]`
 
 Both query-based invite and message links also accept a single `/` before `?`,
 as supplied by Windows URL activation (for example, `buzz://join/?relay=…&code=…`).
@@ -45,7 +47,11 @@ It holds through identity setup and opens the
 existing join dialog with the relay and code prefilled; it never claims or saves
 membership until the user completes discovery, policy acceptance, claim and profile
 confirmation. The relay's HTTPS `/invite/<code>` page supplies that `buzz://join`
-link; HTTPS itself is not registered as an OS handler. Malformed join links,
+link; HTTPS itself is not registered as an OS handler. `buzz://connect`
+(the relay website's **Open in Buzz**) and `buzz://add-community` (hosted
+community **Open in Buzz**; `name` is ignored) are the same form without a code:
+they open the join dialog with the relay prefilled or, when this device already
+belongs to that community, switch to it. Malformed join or community links,
 incomplete entity links, unknown hosts and oversize links fail as
 `invalid-target` and show "This destination couldn't open" with **Open Settings**.
 Unsupported links have no Retry action. Nothing is auto-joined. A valid address
@@ -134,7 +140,7 @@ installed app or build and run a debug binary, then open a link:
 
 ```powershell
 just desktop-bundle --no-bundle
-.\target\debug\buzz-foundation.exe
+.\target\debug\Buzz.exe
 start buzz://channel/general
 ```
 
@@ -151,7 +157,7 @@ declare the scheme in their desktop entry.
 
 ```sh
 just desktop-bundle --no-bundle
-./target/debug/buzz-foundation
+./target/debug/Buzz
 xdg-open "buzz://channel/general"
 ```
 

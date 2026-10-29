@@ -41,7 +41,13 @@ export async function selectPage(page, name, { connected = true } = {}) {
   await expect(
     dialog.getByText("Connecting to this community…", { exact: true }),
   ).toHaveCount(connected ? 0 : 1);
-  await input.fill(name);
+  // On CI's Linux WebKit, startup work can drop the inserted text while the
+  // field stays focused and empty. Re-typing the name is idempotent; the
+  // selection below is never retried.
+  await expect(async () => {
+    await input.fill(name);
+    await expect(input).toHaveValue(name, { timeout: 1000 });
+  }).toPass({ timeout: 10_000 });
   const choice = pageChoice(
     dialog.locator(
       '[role="group"][aria-label="Pages"], [role="rowgroup"][aria-label="Pages"]',
@@ -55,6 +61,8 @@ export async function selectPage(page, name, { connected = true } = {}) {
   // selection follows the choice itself, not its position.
   const id = await choice.getAttribute("id");
   const limit = await dialog.locator("[role=option], [role=row]").count();
+  // Establish keyboard modality without stepping past a preselected target.
+  await input.press("ArrowUp");
   for (
     let step = 0;
     (await input.getAttribute("aria-activedescendant")) !== id;
@@ -67,6 +75,16 @@ export async function selectPage(page, name, { connected = true } = {}) {
   }
   await input.press("Enter");
   await expect(dialog).not.toBeVisible();
+}
+
+// Activate a control by keyboard when the test is about the action, not
+// pointer hit testing: a click released after the control moved (a timeline's
+// re-pin after opening a thread, Virtua's pointer hold, a list's layout
+// motion) reaches whatever is under the pointer instead.
+export async function activate(control) {
+  await control.focus();
+  await expect(control).toBeFocused();
+  await control.press("Enter");
 }
 
 // The shell toggle's label follows a matchMedia change listener in AppShell,

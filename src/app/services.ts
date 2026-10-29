@@ -29,13 +29,17 @@ import { ConversationService } from "../features/conversation/service";
 import { createAppearance } from "../shared/theme/service";
 import { createCommunities } from "../features/communities/service";
 import { createInviteIntent } from "../features/communities/invite-intent";
+import type { InviteLink } from "../features/communities/invite-link";
 import { connectNativeTransport } from "../features/relay/native";
 import { createUpdates } from "../features/updates/updates";
 import { PanelsService } from "../features/panels/service";
 import { Context } from "@deepseek-ai/cordis";
 import { BrowserService } from "../features/browser/service";
 import { PagesService } from "../features/pages/service";
+import { SoloNavigationService } from "../features/channel-navigation/solo-navigation";
+import { SidebarSectionsService } from "../features/channel-navigation/sidebar-sections-service";
 import { bundledPlugins } from "../bundled";
+import { conversationFeatures } from "./conversation-features";
 import { createPluginManager } from "../plugins/manager";
 import { withTimeout } from "../plugins/timeout";
 
@@ -47,6 +51,7 @@ export function createServices() {
   new HostService(ctx);
   const plugins = createPluginManager(ctx, {
     bundled: bundledPlugins,
+    builtIn: conversationFeatures,
   });
   const localAgents = createLocalAgents();
   const localActivity = createLocalAgentActivity();
@@ -56,6 +61,7 @@ export function createServices() {
   const shortcuts = new ShortcutsService(ctx, undefined, shortcutBindings);
   const decisions = new DecisionsService(ctx);
   const pages = new PagesService(ctx);
+  const sidebarSections = new SidebarSectionsService(ctx);
   const panels = new PanelsService(ctx);
   const accountActions = new AccountActionsService(ctx);
   const conversation = new ConversationService(ctx);
@@ -83,6 +89,8 @@ export function createServices() {
     apply: communities.applySync,
   });
   const relay = communities.relay;
+  // Expose v2 only with the complete label/projection/frame/Destination/guard slice.
+  new SoloNavigationService(ctx, relay, plugins);
   const adminAccess = createAdminAccess(relay, communities, nativeRelayStaff());
   ctx.provide("adminAccess", adminAccess);
   ctx.effect(() => () => adminAccess.dispose());
@@ -93,7 +101,6 @@ export function createServices() {
     undefined,
     undefined,
     localActivity,
-    undefined,
     decisions,
   );
   ctx.effect(() =>
@@ -111,7 +118,28 @@ export function createServices() {
     (target) => notificationAuthorized(communities, target),
   );
   ctx.effect(() => bindMessageNotifications(notifications, communities));
-  const invites = createInviteIntent();
+  const inviteIntent = createInviteIntent();
+  const invites = {
+    ...inviteIntent,
+    // With no code to claim, an existing membership just opens its community.
+    open(invite: InviteLink, viewer: string) {
+      const { memberships } = communities.snapshot();
+      const id = communityDestination(invite.community).id;
+      if (invite.code || !memberships.some((m) => m.id === id))
+        return inviteIntent.open(invite, viewer);
+      inviteIntent.clear();
+      // Select now, not in the navigation effect, so a link read in the
+      // meantime is not discarded as a community switch.
+      communities.select(id);
+      void navigation.open({
+        version: 1,
+        kind: "page",
+        pluginId: "buzz.channels",
+        pageId: "channels",
+        scope: { viewer, communityOrigin: invite.community },
+      });
+    },
+  };
   // OS deep links; a no-op in the browser build. Invite admission remains in
   // the join dialog, never in navigation or the native queue.
   ctx.effect(() =>
@@ -146,6 +174,7 @@ export function createServices() {
     settingsCards,
     adminAccess,
     pages,
+    sidebarSections,
     panels,
     plugins,
     relay,

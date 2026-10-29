@@ -5,7 +5,8 @@ import { expect, it, vi } from "vitest";
 import type { BuzzClient, BuzzEvent, Filter, Memory, Template } from "./client";
 import { respond } from "./rpc";
 import { ATTENTION_TOOLS } from "./attention";
-import { callTool, TOOLS } from "./tools";
+import { createHash } from "node:crypto";
+import { callTool, memoryVersion, TOOLS } from "./tools";
 
 const me = "c".repeat(64);
 const alice = "a".repeat(64);
@@ -63,6 +64,7 @@ function fake(
     });
   };
   const client: BuzzClient = {
+    key: me,
     pubkey: me,
     query: vi.fn(async (filters: readonly Filter[]) => {
       const newest = [...events, ...kept].sort(
@@ -268,6 +270,14 @@ it("keeps a top-level chat out of threads, wherever a reply would resolve", asyn
         ...args,
       }),
     ).rejects.toThrow(refused);
+  for (const parent of [root, nested])
+    await expect(
+      callTool(client, context, "reply_in_subthread", {
+        audience: "everyone",
+        text: "hi",
+        parent,
+      }),
+    ).rejects.toThrow("This chat stays at the top level: use send instead.");
   expect(published).toEqual([]);
   await callTool(client, context, "send", { audience: "everyone", text: "hi" });
   await callTool(client, context, "send", {
@@ -558,18 +568,163 @@ it("takes back its own reaction", async () => {
   ]);
 });
 
-it("writes memory under mem/, newer than the entry it replaces", async () => {
+it("replaces memory only at the version it was shown, newer than the entry it replaces", async () => {
   const { client } = fake();
-  await callTool(client, {}, "mem_set", { slug: "notes", text: "new" });
-  expect(client.remember).toHaveBeenCalledWith("mem/notes", "new", 50);
+  const shown = await callTool(client, {}, "mem_get", { slug: "notes" });
+  const version = /^version: ([0-9a-f]{16})\n\nold$/.exec(String(shown))?.[1];
+  // The version is the start of the SHA-256 of the text.
+  expect(version).toBe(
+    createHash("sha256").update("old").digest("hex").slice(0, 16),
+  );
   await expect(
-    callTool(client, {}, "mem_get", { slug: "notes" }),
-  ).resolves.toBe("old");
-  // Both read the one entry by its slug, not the whole listing.
+    callTool(client, {}, "mem_set", { slug: "notes", text: "new" }),
+  ).rejects.toThrow(
+    "mem/notes exists. Read it with mem_get, keep what still holds, and pass its version as expected.",
+  );
+  await expect(
+    callTool(client, {}, "mem_set", {
+      slug: "notes",
+      text: "new",
+      expected: "0".repeat(16),
+    }),
+  ).rejects.toThrow(/^mem\/notes changed since version 0{16}\. Read it again/);
+  // Writing back the whole mem_get reply would save its header.
+  await expect(
+    callTool(client, {}, "mem_set", {
+      slug: "notes",
+      text: `${shown}\nnew`,
+      expected: version,
+    }),
+  ).rejects.toThrow(
+    "Leave out the version line from mem_get; pass the version as expected.",
+  );
+  expect(client.remember).not.toHaveBeenCalled();
+  await expect(
+    callTool(client, {}, "mem_set", {
+      slug: "notes",
+      text: "new",
+      expected: version,
+    }),
+  ).resolves.toBe(`saved; version ${await memoryVersion("new")}`);
+  expect(client.remember).toHaveBeenCalledWith("mem/notes", "new", 50);
+  // Every read is of the one entry by its slug, not the whole listing.
   expect(vi.mocked(client.memories).mock.calls).toEqual([
     ["mem/notes"],
     ["mem/notes"],
+    ["mem/notes"],
+    ["mem/notes"],
   ]);
+  // Without an entry, expected names nothing to replace.
+  vi.mocked(client.memories).mockResolvedValue({ entries: [], partial: false });
+  await expect(
+    callTool(client, {}, "mem_set", {
+      slug: "gone",
+      text: "x",
+      expected: version,
+    }),
+  ).rejects.toThrow(
+    "No memory mem/gone to replace; leave out expected to create it.",
+  );
+});
+
+it("refuses to overwrite core that another session changed since this one read it", async () => {
+  const { client } = fake();
+  let core = "I am Gander.";
+  vi.mocked(client.memories).mockImplementation(async () => ({
+    entries: [{ slug: "core", body: core, createdAt: 10 }],
+    partial: false,
+  }));
+  const first = await memoryVersion(core);
+  // Another session of the agent adds a line after this one read `core`.
+  core = "I am Gander.\nShip on Fridays.";
+  await expect(
+    callTool(client, {}, "mem_set", {
+      slug: "core",
+      text: "I am Gander.\nUse pnpm.",
+      expected: first,
+    }),
+  ).rejects.toThrow(`core changed since version ${first}.`);
+  expect(client.remember).not.toHaveBeenCalled();
+  // Merging into what is there now saves, and says how big core is.
+  await expect(
+    callTool(client, {}, "mem_set", {
+      slug: "core",
+      text: `${core}\nUse pnpm.`,
+      expected: await memoryVersion(core),
+    }),
+  ).resolves.toMatch(/^saved; version [0-9a-f]{16}; core is 39 bytes\.$/);
+  core = "x".repeat(12_000);
+  await expect(
+    callTool(client, {}, "mem_set", {
+      slug: "core",
+      text: "y".repeat(12_345),
+      expected: await memoryVersion(core),
+    }),
+  ).resolves.toMatch(
+    /; core is 12\.3 KB, over the ~10 KB target\. Move detail you do not need every turn to a mem\/ slug\.$/,
+  );
+});
+
+it("searches all memory for entries with every word, newest first", async () => {
+  const { client } = fake();
+  const long = `${"a".repeat(200)} needle ${"b".repeat(200)}`;
+  const entries: Memory[] = [
+    { slug: "core", body: "I am Gander.\nRelease on Fridays.", createdAt: 30 },
+    {
+      slug: "mem/release",
+      body: "Release steps\nTag, then RELEASE notes.\nunrelated",
+      createdAt: 20,
+    },
+    { slug: "mem/old", body: `fridays only\n${long}`, createdAt: 10 },
+    ...Array.from({ length: 21 }, (_, i) => ({
+      slug: `mem/bulk/${i}`,
+      body: "bulk",
+      createdAt: i,
+    })),
+  ];
+  vi.mocked(client.memories).mockResolvedValue({ entries, partial: false });
+  const at = (seconds: number) =>
+    `${new Date(seconds * 1000).toISOString().slice(0, 16)}Z`;
+  await expect(callTool(client, {}, "mem_get", { q: "release" })).resolves.toBe(
+    [
+      `core ${at(30)}`,
+      "  Release on Fridays.",
+      `mem/release ${at(20)}`,
+      "  Release steps",
+      "  Tag, then RELEASE notes.",
+    ].join("\n"),
+  );
+  // Every word must match, in the slug or the text.
+  await expect(
+    callTool(client, {}, "mem_get", { q: "Fridays  release" }),
+  ).resolves.toBe(`core ${at(30)}\n  Release on Fridays.`);
+  // A long line is cut around its match.
+  const cut = await callTool(client, {}, "mem_get", { q: "needle" });
+  expect(cut).toBe(`mem/old ${at(10)}\n  …${long.slice(161, 321)}…`);
+  expect(String(cut)).toContain("needle");
+  // Twenty entries at most, then how many more.
+  const bulk = String(await callTool(client, {}, "mem_get", { q: "bulk" }));
+  expect(
+    bulk.split("\n").filter((line) => line.startsWith("mem/")),
+  ).toHaveLength(20);
+  expect(bulk).toMatch(/^mem\/bulk\/20 /);
+  expect(bulk).toMatch(/\n1 more; add words to q to narrow it\.$/);
+  await expect(callTool(client, {}, "mem_get", { q: "zebra" })).resolves.toBe(
+    "No memory matches zebra.",
+  );
+  await expect(
+    callTool(client, {}, "mem_get", { q: "release", slug: "core" }),
+  ).rejects.toThrow("q searches all memory; leave out slug.");
+  await expect(callTool(client, {}, "mem_get", { q: " " })).rejects.toThrow(
+    "q needs a word to search for.",
+  );
+  vi.mocked(client.memories).mockResolvedValue({ entries, partial: true });
+  await expect(callTool(client, {}, "mem_get", { q: "steps" })).resolves.toBe(
+    `mem/release ${at(20)}\n  Release steps\nThis search is incomplete: some memory could not be read.`,
+  );
+  await expect(callTool(client, {}, "mem_get", { q: "zebra" })).rejects.toThrow(
+    "Memory could not be read; try again.",
+  );
 });
 
 it("never reports memory cut short by a limit as missing", async () => {
@@ -1038,7 +1193,7 @@ it("finds a channel past the relay's first page, by name and then by ID", async 
     callTool(client, {}, "channel", { channel: fixers }),
   ).resolves.toBe(`${fixers} fixers (private)\nyou: bot`);
   await expect(
-    callTool(client, {}, "canvas", { channel: fixers }),
+    callTool(client, {}, "canvas_get", { channel: fixers }),
   ).resolves.toBe("No canvas.");
   const unseen =
     "No channel fixers that you can see (it may not be visible yet). If you supplied a name, channels with q finds its ID.";
@@ -1046,10 +1201,13 @@ it("finds a channel past the relay's first page, by name and then by ID", async 
     callTool(client, {}, "channel", { channel: "fixers" }),
   ).rejects.toThrow(unseen);
   await expect(
-    callTool(client, {}, "canvas", { channel: "fixers" }),
+    callTool(client, {}, "canvas_get", { channel: "fixers" }),
   ).rejects.toThrow(unseen);
   await expect(
-    callTool(client, {}, "canvas", { channel: "fixers", text: "# Plan" }),
+    callTool(client, {}, "canvas_set", {
+      channel: "fixers",
+      content: "# Plan",
+    }),
   ).rejects.toThrow(unseen);
   expect(published).toEqual([]);
 });
@@ -1285,7 +1443,7 @@ it.each([-1, 0, 1])(
 it("reads an existing canvas without querying channel metadata", async () => {
   const { client } = fake([event({ kind: 40100, content: "# Existing" })]);
   await expect(
-    callTool(client, { channel: "chan" }, "canvas", {}),
+    callTool(client, { channel: "chan" }, "canvas_get", {}),
   ).resolves.toBe("# Existing");
   expect(client.query).toHaveBeenCalledExactlyOnceWith([
     { kinds: [40100], "#h": ["chan"], limit: 1 },
@@ -1304,8 +1462,8 @@ it("waits past the existing canvas timestamp before publishing", async () => {
       expect(Date.now()).toBe(101_000);
       return publish(template);
     });
-    const write = callTool(client, { channel: "chan" }, "canvas", {
-      text: "new",
+    const write = callTool(client, { channel: "chan" }, "canvas_set", {
+      content: "new",
     });
     await vi.advanceTimersByTimeAsync(499);
     expect(published).toEqual([]);
@@ -1335,8 +1493,8 @@ it("keeps waiting when the timer fires a moment early", async () => {
       expect(Date.now()).toBe(101_000);
       return publish(template);
     });
-    const write = callTool(client, { channel: "chan" }, "canvas", {
-      text: "new",
+    const write = callTool(client, { channel: "chan" }, "canvas_set", {
+      content: "new",
     });
     await vi.advanceTimersByTimeAsync(500);
     early.mockRestore();
@@ -1352,13 +1510,57 @@ it("publishes the first canvas only after finding visible channel metadata", asy
     event({ kind: 39000, tags: [["d", "chan"]] }),
   ]);
   await expect(
-    callTool(client, { channel: "chan" }, "canvas", { text: "first" }),
+    callTool(client, { channel: "chan" }, "canvas_set", { content: "first" }),
   ).resolves.toBe("saved");
   expect(client.query).toHaveBeenNthCalledWith(2, [
     { kinds: [39000], "#d": ["chan"], limit: 1 },
   ]);
   expect(published).toEqual([
     { kind: 40100, content: "first", tags: [["h", "chan"]] },
+  ]);
+});
+
+it("reads and replaces the canvas of a named channel or the current one", async () => {
+  const { client, published } = fake([
+    event({ kind: 40100, content: "# Existing" }),
+  ]);
+  await expect(
+    callTool(client, { channel: "chan" }, "canvas_get", {}),
+  ).resolves.toBe("# Existing");
+  await expect(
+    callTool(client, {}, "canvas_get", { channel: "chan" }),
+  ).resolves.toBe("# Existing");
+  await expect(callTool(client, {}, "canvas_get", {})).rejects.toThrow(
+    "channel is required here.",
+  );
+  await expect(
+    callTool(client, {}, "canvas_set", { content: "x" }),
+  ).rejects.toThrow("channel is required here.");
+  await expect(
+    callTool(client, {}, "canvas_set", { path: "plan.md" }),
+  ).rejects.toThrow("channel is required here.");
+  expect(client.read).not.toHaveBeenCalled();
+  await expect(
+    callTool(client, { channel: "chan" }, "canvas_set", {}),
+  ).rejects.toThrow("Give content or path.");
+  await expect(
+    callTool(client, { channel: "chan" }, "canvas_set", { text: "old name" }),
+  ).rejects.toThrow("Give content or path.");
+  expect(() => callTool(client, { channel: "chan" }, "canvas", {})).toThrow(
+    "No tool canvas",
+  );
+  expect(published).toEqual([]);
+
+  await expect(
+    callTool(client, { channel: "chan" }, "canvas_set", { path: "plan.md" }),
+  ).resolves.toBe("saved");
+  expect(client.read).toHaveBeenCalledWith("plan.md");
+  await expect(
+    callTool(client, { channel: "chan" }, "canvas_set", { content: "" }),
+  ).resolves.toBe("saved");
+  expect(published).toEqual([
+    { kind: 40100, content: "# plan.md", tags: [["h", "chan"]] },
+    { kind: 40100, content: "", tags: [["h", "chan"]] },
   ]);
 });
 
@@ -2549,6 +2751,86 @@ it("validates creation inputs and reports hosts without agent creation", async (
   expect(client.createAgent).not.toHaveBeenCalled();
 });
 
+it("hands off to the agent in another of its conversations it can see", async () => {
+  const solo = event({
+    kind: 39000,
+    tags: [["d", "solo"], ["t", "stream"], ["t", "buzz.solo"], ["private"]],
+  });
+  const reply = event({
+    id: nested,
+    tags: [
+      ["h", "chan"],
+      ["e", root, "", "reply"],
+    ],
+  });
+  const other = "3".repeat(64);
+  const inSolo = event({ id: "4".repeat(64), tags: [["h", "solo"]] });
+  const { client } = fake([
+    event({ kind: 39000, tags: [["d", "chan"]] }),
+    solo,
+    event({ id: root }),
+    reply,
+    event({ id: other, tags: [["h", "elsewhere"]] }),
+    inSolo,
+  ]);
+  const wake = (context: object, args: object) =>
+    callTool(client, context, "self_handoff", { text: "carry on", ...args });
+  await expect(wake({}, { channel: "chan" })).rejects.toThrow("unavailable");
+  client.handoff = vi.fn();
+  await expect(wake({}, { channel: "nope" })).rejects.toThrow(
+    "No channel nope",
+  );
+  await expect(
+    wake({}, { channel: "chan", thread: "9".repeat(64) }),
+  ).rejects.toThrow("No message");
+  await expect(wake({}, { channel: "chan", thread: other })).rejects.toThrow(
+    `${other} is not in chan.`,
+  );
+  await expect(wake({}, { channel: "chan" })).rejects.toThrow(
+    "thread is required outside a Solo chat.",
+  );
+  await expect(
+    wake({ channel: "chan", root }, { channel: "chan", thread: nested }),
+  ).rejects.toThrow("That is this conversation.");
+  // A session with no root, as in a Solo chat, a DM or channel scope, or one
+  // marked whole, is the whole channel, whatever thread is named.
+  for (const context of [
+    { channel: "solo", topLevel: true },
+    { channel: "chan" },
+    { channel: "chan", root: "5".repeat(64), wholeChannel: true },
+  ])
+    await expect(
+      wake(context, { channel: context.channel, thread: inSolo.id }),
+    ).rejects.toThrow(
+      context.channel === "solo" ? "That is this conversation." : "is not in",
+    );
+  await expect(
+    wake({ channel: "chan" }, { channel: "chan", thread: nested }),
+  ).rejects.toThrow("That is this conversation.");
+  await expect(
+    wake(
+      { channel: "chan", root: "5".repeat(64), wholeChannel: true },
+      { channel: "chan", thread: nested },
+    ),
+  ).rejects.toThrow("That is this conversation.");
+  await expect(
+    callTool(client, {}, "self_handoff", { channel: "chan", thread: root }),
+  ).rejects.toThrow("text is required.");
+  expect(client.handoff).not.toHaveBeenCalled();
+  // Any message of the thread names its root, and the wake says where it
+  // came from.
+  await wake(
+    { channel: "solo", topLevel: true },
+    { channel: "chan", thread: nested },
+  );
+  await wake({ channel: "chan", root }, { channel: "solo" });
+  await wake({}, { channel: "chan", thread: root });
+  expect(vi.mocked(client.handoff).mock.calls).toEqual([
+    [{ channel: "chan", root, text: "carry on", from: { channel: "solo" } }],
+    [{ channel: "solo", text: "carry on", from: { channel: "chan", root } }],
+    [{ channel: "chan", root, text: "carry on", from: {} }],
+  ]);
+});
 it("validates change drafts and passes only the proposed fields", async () => {
   const { client } = fake([]);
   await expect(
@@ -2582,4 +2864,215 @@ it("validates change drafts and passes only the proposed fields", async () => {
     agent: "Child",
     instructions: "",
   });
+});
+
+it("nests a reply under a message inside a thread, naming the root and the parent", async () => {
+  const { client, published } = fake([
+    ...community,
+    event({ id: root, tags: [["h", "other"]] }),
+  ]);
+  // The parent's channel wins over where the agent is working.
+  await callTool(client, { channel: "elsewhere" }, "reply_in_subthread", {
+    audience: "everyone",
+    parent: nested,
+    text: "@Bob take this one",
+    files: ["shot.png"],
+  });
+  expect(published[0]?.tags.slice(0, 4)).toEqual([
+    ["h", "chan"],
+    ["e", root, "", "root"],
+    ["e", nested, "", "reply"],
+    ["p", bob],
+  ]);
+  expect(published[0]?.tags[4]?.[0]).toBe("imeta");
+});
+
+it.each(["everyone", "agents"])(
+  "replies under a thread's root as send does, for audience %s",
+  async (audience) => {
+    const { client, published } = fake(community);
+    const context = { channel: "chan", root };
+    await callTool(client, context, "reply_in_subthread", {
+      parent: root,
+      audience,
+      text: "@Alice Smith hi",
+    });
+    await callTool(client, context, "send", {
+      audience,
+      text: "@Alice Smith hi",
+    });
+    expect(published[0]).toEqual(published[1]);
+    expect(published[0]?.tags).toEqual([
+      ["h", "chan"],
+      ["e", root, "", "reply"],
+      ["p", alice],
+      ...(audience === "agents" ? [["audience", "agents"]] : []),
+    ]);
+  },
+);
+
+it("tags a nested reply for agents only", async () => {
+  const { client, published } = fake(community);
+  await callTool(client, { channel: "chan", root }, "reply_in_subthread", {
+    parent: nested,
+    audience: "agents",
+    text: "a",
+  });
+  expect(published[0]?.tags).toEqual([
+    ["h", "chan"],
+    ["e", root, "", "root"],
+    ["e", nested, "", "reply"],
+    ["audience", "agents"],
+  ]);
+});
+
+it.each([undefined, "humans"])(
+  "refuses a nested reply whose audience is %s, publishing nothing",
+  async (audience) => {
+    const { client, published } = fake(community);
+    await expect(
+      callTool(client, { channel: "chan", root }, "reply_in_subthread", {
+        parent: nested,
+        audience,
+        text: "hi",
+      }),
+    ).rejects.toThrow("audience must be everyone or agents.");
+    expect(published).toEqual([]);
+  },
+);
+
+it("keeps nested replies out of a top-level chat and to channel members", async () => {
+  const { client, published } = fake(community);
+  await expect(
+    callTool(
+      client,
+      { channel: "chan", topLevel: true },
+      "reply_in_subthread",
+      { parent: nested, audience: "everyone", text: "hi" },
+    ),
+  ).rejects.toThrow("This chat stays at the top level");
+  await expect(
+    callTool(client, { channel: "chan", root }, "reply_in_subthread", {
+      audience: "everyone",
+      parent: nested,
+      text: "hi @Carol",
+    }),
+  ).rejects.toThrow("No single channel member is @carol");
+  expect(published).toEqual([]);
+});
+
+it("starts a thread under a top-level message that is not the current root", async () => {
+  const other = event({ id: "5".repeat(64), tags: [["h", "chan"]] });
+  const { client, published } = fake([...community, other]);
+  await callTool(client, { channel: "chan", root }, "reply_in_subthread", {
+    audience: "everyone",
+    parent: other.id,
+    text: "a",
+  });
+  expect(published[0]?.tags).toEqual([
+    ["h", "chan"],
+    ["e", other.id, "", "reply"],
+  ]);
+});
+
+it("nests under parents as the relay reads their root, whatever the markers or case", async () => {
+  const remarked = event({
+    id: "3".repeat(64),
+    tags: [
+      ["h", "chan"],
+      ["e", alice, "", "root"],
+      ["e", root, "", "root"],
+      ["e", nested, "", "reply"],
+    ],
+  });
+  const uppercase = event({
+    id: "4".repeat(64),
+    tags: [
+      ["h", "chan"],
+      ["e", root.replace(/1/g, "A"), "", "reply"],
+    ],
+  });
+  const { client, published } = fake([...community, remarked, uppercase]);
+  const context = { channel: "chan", root };
+  await callTool(client, context, "reply_in_subthread", {
+    audience: "everyone",
+    parent: remarked.id,
+    text: "a",
+  });
+  await callTool(client, context, "reply_in_subthread", {
+    audience: "everyone",
+    parent: uppercase.id,
+    text: "b",
+  });
+  expect(published.map((sent) => sent.tags.slice(1))).toEqual([
+    [
+      ["e", root, "", "root"],
+      ["e", remarked.id, "", "reply"],
+    ],
+    [
+      ["e", root.replace(/1/g, "a"), "", "root"],
+      ["e", uppercase.id, "", "reply"],
+    ],
+  ]);
+});
+
+it("finds an uppercase parent and writes its id in lowercase", async () => {
+  const lettered = "ab".repeat(32);
+  const child = "cd".repeat(32);
+  const { client, published } = fake([
+    ...community,
+    event({ id: lettered }),
+    event({
+      id: child,
+      tags: [
+        ["h", "chan"],
+        ["e", lettered, "", "reply"],
+      ],
+    }),
+  ]);
+  const context = { channel: "chan", root: lettered };
+  await callTool(client, context, "reply_in_subthread", {
+    audience: "everyone",
+    parent: child.toUpperCase(),
+    text: "a",
+  });
+  await callTool(client, context, "reply_in_subthread", {
+    audience: "everyone",
+    parent: lettered.toUpperCase(),
+    text: "b",
+  });
+  expect(published.map((sent) => sent.tags)).toEqual([
+    [
+      ["h", "chan"],
+      ["e", lettered, "", "root"],
+      ["e", child, "", "reply"],
+    ],
+    [
+      ["h", "chan"],
+      ["e", lettered, "", "reply"],
+    ],
+  ]);
+});
+
+it("refuses a parent it cannot find, publishing nothing", async () => {
+  const { client, published } = fake(community);
+  await expect(
+    callTool(client, { channel: "chan", root }, "reply_in_subthread", {
+      audience: "everyone",
+      parent: "9".repeat(64),
+      text: "hi",
+    }),
+  ).rejects.toThrow(`No message ${"9".repeat(64)}.`);
+  expect(published).toEqual([]);
+});
+
+it("needs the message to reply under", async () => {
+  const { client, published } = fake(community);
+  await expect(
+    callTool(client, { channel: "chan", root }, "reply_in_subthread", {
+      audience: "everyone",
+      text: "hi",
+    }),
+  ).rejects.toThrow("parent is required");
+  expect(published).toEqual([]);
 });

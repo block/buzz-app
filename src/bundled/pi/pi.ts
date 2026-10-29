@@ -36,9 +36,20 @@ export type PiEvent = Readonly<
     | { type: "step"; tool: string; target?: string }
   )
 >;
+export type PiHookCall = Readonly<{
+  agent: string;
+  conversation: number;
+  event: "beforeTool" | "afterTool";
+  input: unknown;
+}>;
 type Handlers = Readonly<{
+  hook?(call: PiHookCall): Promise<unknown>;
   tool(call: ToolCall): Promise<ToolResult>;
   event(event: PiEvent): void;
+  prompt?(call: {
+    agent: string;
+    request: string;
+  }): Promise<{ text: string; steer: string } | undefined>;
 }>;
 
 /** The host stopped after it started; its runs continue in the next one. */
@@ -149,8 +160,18 @@ export class Pi {
       if (message.method === "ready") ready();
       else if (message.method === "event")
         this.handlers.event(message.params as PiEvent);
-      else if (message.method === "tool" && message.id !== undefined)
-        void this.answer(connection, message.id, message.params as ToolCall);
+      else if (
+        (message.method === "tool" ||
+          message.method === "prompt" ||
+          message.method === "hook") &&
+        message.id !== undefined
+      )
+        void this.answer(
+          connection,
+          message.id,
+          message.method,
+          message.params,
+        );
       else if (typeof message.id === "number") {
         const call = connection.calls.get(message.id);
         connection.calls.delete(message.id);
@@ -222,11 +243,22 @@ export class Pi {
   private async answer(
     connection: Connection,
     id: number | string,
-    call: ToolCall,
+    method: "tool" | "prompt" | "hook",
+    params: unknown,
   ) {
     let message: Message;
     try {
-      message = { id, result: await this.handlers.tool(call) };
+      message = {
+        id,
+        result:
+          method === "hook"
+            ? ((await this.handlers.hook?.(params as PiHookCall)) ?? null)
+            : method === "tool"
+              ? await this.handlers.tool(params as ToolCall)
+              : ((await this.handlers.prompt?.(
+                  params as { agent: string; request: string },
+                )) ?? false),
+      };
     } catch (error) {
       message = {
         id,

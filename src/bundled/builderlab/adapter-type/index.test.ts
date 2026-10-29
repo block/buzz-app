@@ -301,10 +301,59 @@ it("rejects a stop at once when signed out, without signing in or reaching Build
   expect(request).not.toHaveBeenCalled();
 });
 
+it.each([config, undefined])(
+  "signs in to finish setup after a restart signed it out (config %o)",
+  async (saved) => {
+    const first = await fixture();
+    first.request.mockResolvedValueOnce(response(registration));
+    await first.remote.provision(provision);
+    first.session.signOut();
+    first.request.mockResolvedValue(response({ status: 1 }));
+    await first.remote.activate({
+      ...provision,
+      config: saved,
+      pubkey,
+      auth: proof,
+    });
+    expect(first.session.snapshot().status).toBe("signed-in");
+    expect(first.bodies()[1]).toMatchObject({ agent_pubkey: pubkey });
+  },
+);
+
 it("supplies the Settings and Activity tabs", async () => {
   const { type } = await fixture();
   expect(type.tabs?.map(({ title, role }) => [title, role])).toEqual([
     ["Settings", "settings"],
     ["Activity", "activity"],
   ]);
+});
+
+it("sends the picture when provisioning and publishes profile changes through Beekeeper", async () => {
+  const h = await fixture();
+  const picture = "https://example.test/sky.png";
+  h.request
+    .mockResolvedValueOnce(response(registration))
+    .mockResolvedValueOnce(response({}));
+  await expect(h.remote.provision({ ...provision, picture })).resolves.toEqual({
+    pubkey,
+    picture,
+  });
+  expect(h.bodies()[0]).toMatchObject({ agent_picture_url: picture });
+  await h.remote.profile({
+    pubkey,
+    community: provision.community,
+    name: "Sea",
+    signal: provision.signal,
+  });
+  expect(h.request).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      url: expect.stringContaining("/update-agent-profile"),
+      body: JSON.stringify({
+        agent_pubkey: pubkey,
+        community_url: provision.community,
+        agent_name: "Sea",
+        agent_picture_url: "",
+      }),
+    }),
+  );
 });

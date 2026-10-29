@@ -1,4 +1,6 @@
 mod archive;
+#[cfg(test)]
+mod build_resources;
 use archive::relay_archive;
 mod browser;
 #[cfg(target_os = "macos")]
@@ -49,6 +51,8 @@ use nsec_backup::{
 use nsec_backup_choice::{nsec_backup_choice, nsec_backup_set_choice};
 mod image_clipboard;
 mod jev;
+mod keep_awake;
+mod legacy_communities;
 #[cfg(any(not(target_os = "macos"), test))]
 mod microphone;
 
@@ -58,6 +62,7 @@ mod repositories_folder;
 mod window_controls;
 mod window_state;
 mod workspace_folder;
+use legacy_communities::legacy_communities;
 use os_idle::get_os_idle_seconds;
 use repositories_folder::repositories_folder_validate;
 mod relay;
@@ -68,9 +73,8 @@ use identity::{
     identity_legacy_available, identity_prepare_remote_agent_authorization, identity_restore,
     identity_sign_builderlab_binding, IdentityHost,
 };
-use relay::{huddle_close, huddle_open, huddle_pcm, huddle_touch, Huddles};
 use relay::{
-    media_copy_image, media_download, media_stream_base, relay_agent_library,
+    file_download, media_copy_image, media_download, media_stream_base, relay_agent_library,
     relay_agent_log_proof, relay_agent_memories_read, relay_agent_observer, relay_agent_resolve,
     relay_channel_publish, relay_channel_sign, relay_decode_read_state, relay_decode_reminders,
     relay_decode_sidebar, relay_direct_message, relay_git_authorization, relay_http,
@@ -79,6 +83,7 @@ use relay::{
     relay_sign_reminder, relay_sign_sidebar, relay_upload, relay_upload_begin, relay_upload_cancel,
     relay_upload_chunk, relay_workflow_runs,
 };
+use relay::{huddle_close, huddle_open, huddle_pcm, huddle_touch, Huddles};
 mod terminal;
 #[cfg(all(test, unix))]
 mod test_executable;
@@ -542,12 +547,14 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         relay_upload_chunk,
         relay_upload,
         relay_upload_cancel,
+        file_download,
         media_download,
         media_copy_image,
         media_stream_base,
         get_os_idle_seconds,
         workspace_pick_folder,
         repositories_folder_validate,
+        legacy_communities,
         plugin_import_folder,
         plugin_update_check,
         plugin_update_preview,
@@ -589,6 +596,10 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         app_agents::app_agent_set_type,
         app_agents::app_agent_delete,
         app_agents::app_agent_begin_delete,
+        app_agents::app_agent_begin_leave,
+        app_agents::app_agent_hold_removal,
+        app_agents::app_agent_release_removal,
+        app_agents::app_agent_join,
         app_agents::app_agent_forget,
         app_agents::app_agent_publish,
         app_agents::app_agent_publish_profile,
@@ -616,6 +627,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         deep_link_watch,
         dock_permission,
         unread_indicator_set,
+        keep_awake::keep_awake_set,
         terminal_create_owner,
         terminal_spawn,
         terminal_read,
@@ -666,9 +678,14 @@ pub fn run() {
             },
             identity::remove_saved_key,
         )
+        .and_then(|instance| {
+            sign_out::forget_signed_out_key(&instance, identity::remove_current_key)
+                .map(|()| instance)
+        })
         .unwrap_or_else(|message| sign_out::exit_with(&message))
     });
     let identity = IdentityHost::default();
+    let identifier = context.config().identifier.clone();
     let builder = tauri::Builder::default();
     let builder = if !tauri::is_dev() {
         // Single instance comes first, as its documentation requires. Its deep-link
@@ -713,13 +730,14 @@ pub fn run() {
                     })?;
                 }
             }
-            if let Some(window) = app.get_window("main") {
-                if let Err(error) = window_state::restore(&window) {
+            if let Some(window) = app.get_webview_window("main") {
+                if let Err(error) = window_state::restore(&window.as_ref().window()) {
                     eprintln!("Could not restore Buzz window: {error}");
                 }
             }
             #[cfg(target_os = "macos")]
             notifications::macos::init();
+            tauri::async_runtime::spawn(host_command::load_login_shell_path());
             deep_links::setup(app.handle());
             app.manage(relay::Spools::new(
                 app.path()
@@ -745,43 +763,44 @@ pub fn run() {
                 }
                 Err(error) => eprintln!("Could not start the media listener: {error}"),
             }
-            // Only app-owned storage is created. Preview uses the OS-resolved legacy
-            // parent, never a browser-supplied path or a different environment source.
+            // Only app-owned storage is created; a development build keeps its agents
+            // in the installed app's (`legacy_identifier::agents`). Preview uses the
+            // OS-resolved legacy parent, never a browser-supplied path or a
+            // different environment source.
             let paths = (|| {
-                let root = app
+                let app_data = app
                     .path()
                     .app_data_dir()
-                    .map_err(|_| "Could not resolve local agent storage")?
-                    .join("agent-controller");
+                    .map_err(|_| "Could not resolve local agent storage")?;
+                let agents =
+                    sign_out::legacy_identifier::agents(&app.config().identifier, &app_data);
                 let legacy = app
                     .path()
                     .data_dir()
                     .map_err(|_| "Could not resolve legacy library directory")?;
-                Ok((root, legacy))
+                Ok((app_data.join("agent-controller"), agents, legacy))
             })();
             app.manage(agent_state::AgentState::new(
                 paths
                     .as_ref()
-                    .map(|(root, _)| root.with_file_name(sign_out::AGENTS).join("state"))
+                    .map(|(_, agents, _)| agents.join("state"))
                     .map_err(Clone::clone),
             ));
             app.manage(app_agents::AppAgentHost::new(
                 paths
                     .as_ref()
-                    .map(|(root, _)| {
-                        root.with_file_name(sign_out::AGENTS)
-                            .join("identities.json")
-                    })
+                    .map(|(_, agents, _)| agents.join("identities.json"))
                     .map_err(Clone::clone),
                 paths
                     .as_ref()
-                    .map(|(root, legacy)| buzz_agent_controller::OldStores {
+                    .map(|(root, _, legacy)| buzz_agent_controller::OldStores {
                         harness: root.join("agents.json"),
                         data_dir: legacy.clone(),
                     })
                     .map_err(Clone::clone),
-                // `just desktop` builds step aside for a packaged app.
-                !tauri::is_dev(),
+                // `just desktop` builds and debug bundles step aside for the
+                // installed app.
+                !tauri::is_dev() && app.config().identifier == sign_out::legacy_identifier::CURRENT,
             ));
             Ok(())
         });
@@ -818,6 +837,7 @@ pub fn run() {
     };
     builder
         .manage(image_clipboard::ImageClipboard::default())
+        .manage(keep_awake::KeepAwake::default())
         .manage(identity)
         .manage(archive::ArchiveHost::default())
         .manage(jev::JevHost::new())
@@ -835,7 +855,11 @@ pub fn run() {
         .manage(NsecBackupHost::default())
         .manage(Notifications::default())
         .manage(DeepLinks::default())
-        .manage(PluginManager(Manager::from_env()))
+        // Plugin storage lives in this identifier's app data, so development
+        // builds keep theirs apart from the installed app.
+        .manage(PluginManager(Manager::from_env(
+            dirs::data_dir().map(|dir| dir.join(&identifier)),
+        )))
         .invoke_handler({
             let application_commands = commands::<tauri::Wry>();
             let browser_commands: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![
@@ -870,6 +894,7 @@ pub fn run() {
                 webview.state::<Huddles>().stop_all();
                 webview.state::<HostProcesses>().stop_all();
                 webview.state::<HostMcpServers>().stop_all();
+                webview.state::<app_agents::AppAgentHost>().page_load();
             }
             browser::page_load(webview, payload);
         })
@@ -909,6 +934,7 @@ pub(crate) fn shut_down<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
         .cancel_all(&app.state::<relay::Uploads>());
     app.state::<image_clipboard::ImageClipboard>().release();
     app.state::<HostProcesses>().shutdown();
+    host_command::stop_login_shell_probe();
     app.state::<HostMcpServers>().stop_all();
     browser::shutdown();
     if let Err(error) = app.state::<Terminals>().shutdown() {

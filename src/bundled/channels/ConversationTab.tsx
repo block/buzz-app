@@ -1,4 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import type { RelaySession } from "../../features/relay/session";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
@@ -12,6 +18,7 @@ import { MessageManagementStatus } from "../../features/messages/MessageManageme
 import { useMessageOpening } from "../../features/messages/use-message-opening";
 import { usePendingRequest } from "../../features/messages/use-pending-request";
 import type { MessageLinkOrigin } from "../../features/messages/MessageRow";
+import type { ThreadPanelProps } from "../../features/messages/ThreadPanel";
 import { ChannelBody } from "./ChannelBody";
 import { SoloColumn } from "../../features/solo/SoloPresentation";
 import type { ConversationTab as Tab } from "./useChannelTabState";
@@ -39,6 +46,8 @@ type ConversationTabProps = {
   onRetryNavigation?: (() => void) | undefined;
   onResolvedRoot?: ((rootId: string) => void) | undefined;
   onDifferentThread?: ((requested: string, kept: string) => void) | undefined;
+  /** Where a thread shown here lives, when it can open there. */
+  parent?: ThreadPanelProps["parent"];
 };
 /** Each secondary conversation retains its own editing and media-review scope. */
 export function ConversationTab({
@@ -59,6 +68,7 @@ export function ConversationTab({
   onRetryNavigation,
   onResolvedRoot,
   onDifferentThread,
+  parent,
 }: ConversationTabProps) {
   // A saved reply intent belongs to the previous visit, not this restoration;
   // a renamed or merged copy of the tab carries the same request.
@@ -107,6 +117,22 @@ export function ConversationTab({
   }, [revealKey]);
   const [sent, setSent] = useState<string>();
   const media = useMediaReview();
+  // A retained tab re-renders with its page. Its memoized rows open links and
+  // threads through stable openers that consult the latest handlers when chosen.
+  const latest = useRef({ openLink, openThread });
+  useLayoutEffect(() => {
+    latest.current = { openLink, openThread };
+  });
+  const onOpenLink = useCallback(
+    (url: string, origin?: MessageLinkOrigin) =>
+      latest.current.openLink(url, origin),
+    [],
+  );
+  const onOpenThread = useCallback<typeof openThread>(
+    (messageId, rootId, intent) =>
+      latest.current.openThread(messageId, rootId, intent),
+    [],
+  );
   return (
     <ConversationChannel
       session={session}
@@ -115,7 +141,7 @@ export function ConversationTab({
       channel={channel}
       active={active && visit}
       interactions={{
-        onOpenLink: openLink,
+        onOpenLink,
         canOpenLink,
         onOpenMediaReview: media.open,
       }}
@@ -142,6 +168,7 @@ export function ConversationTab({
             revealSelected={threadReveal !== undefined}
             revealRequest={threadReveal}
             close={close}
+            parent={parent}
           />
         ) : target && inTimeline === false ? (
           <ConversationThread
@@ -152,6 +179,7 @@ export function ConversationTab({
             revealSelected
             revealRequest={revealRequest}
             close={close}
+            parent={parent}
           />
         ) : (
           <SoloColumn enabled={soloConversation}>
@@ -160,7 +188,7 @@ export function ConversationTab({
               cached={!!channel.cached}
               // The composer below mounts TypingIndicator for a live channel.
               activityLane={!channel.cached}
-              onOpenThread={openThread}
+              onOpenThread={onOpenThread}
               revealMessageId={sent}
               // Mount the list once, at the message, not while it is sought.
               holding={!!target && inTimeline === undefined}

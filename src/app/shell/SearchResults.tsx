@@ -24,6 +24,7 @@ import {
 } from "../../shared/design-system/icons/index";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
+import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
 import {
   MenuPopup,
   MenuRadioGroup,
@@ -33,7 +34,7 @@ import {
 } from "../../shared/design-system/ui/Menu";
 import type { SearchDestination, SearchInputProps } from "./SearchChoices";
 import { SearchChoices } from "./SearchChoices";
-import { matchName, matchRank } from "../../features/search/match";
+import { MatchRank, matchName, matchRank } from "../../features/search/match";
 import {
   noSearchUsage,
   readSearchUsage,
@@ -622,7 +623,7 @@ export function SearchResults({
   // The shared search order, with archived channels half a step behind live
   // ones in the same place.
   const rankOf = (label: string, key: string, archived?: boolean) => {
-    const rank = matchRank(label, needle) ?? 6;
+    const rank = matchRank(label, needle) ?? MatchRank.inOrder + 1;
     return searchOrder(usage, picked, { key, rank }) + (archived ? 0.5 : 0);
   };
   /** Whether a search order is an exact name, live (-2) or archived (-1.5). */
@@ -1281,6 +1282,16 @@ export function SearchResults({
           </div>
         )}
       </div>
+      {/* A warm directory answers within the typing pause, so this feedback
+          waits a second; the rows and errors above are immediate. */}
+      {query.trim() && !scopedChannelId && (
+        <LoadingRegion
+          pending={publicChannels.loading}
+          label="Searching open channels…"
+        >
+          {null}
+        </LoadingRegion>
+      )}
     </SearchChoices>
   );
 }

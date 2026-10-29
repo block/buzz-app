@@ -1,3 +1,4 @@
+import { prepareSoloMove } from "../../features/channel-navigation/solo-navigation";
 import { useChatConversions } from "../../features/solo/conversion";
 import { ConvertToChannel } from "../../features/solo/ConvertToChannel";
 import { ChatSharedMark } from "./ChatSharedMark";
@@ -5,7 +6,10 @@ import { ChannelMembersDialog } from "./ChannelMembersDialog";
 import { SoloChatName } from "./SoloChatName";
 import { canEditLifetime } from "../../features/solo/Lifetime";
 import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
-import { soloDraftTarget } from "../../features/channel-navigation/routes";
+import {
+  soloNeighbors,
+  soloSuccessor,
+} from "../../features/channel-navigation/solo-successor";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import type { ChannelLifecycleAction } from "../../features/relay/channel-lifecycle-protocol";
 import { Collapsible } from "@base-ui/react/collapsible";
@@ -67,6 +71,7 @@ export function SoloWorkspaces({
   scope,
   chats,
   renderChat,
+  renderChatMenu,
   onNew,
   onConverted,
   visit,
@@ -79,6 +84,7 @@ export function SoloWorkspaces({
   navigator?: Navigation | undefined;
   scope: string;
   chats: readonly ChatListItem[];
+  renderChatMenu?: ((channelId: string) => ReactNode) | undefined;
   renderChat: (
     item: ChatListItem,
     rename: (() => boolean) | undefined,
@@ -231,6 +237,7 @@ export function SoloWorkspaces({
     project.rows.some((item) => item.id === renaming),
   )?.id;
   const move = (id: string, projectId?: string) => {
+    if (prepareSoloMove(session, id)) return;
     const saving = preferences.assign(id, projectId);
     toggle(projectId ?? "", true);
     hold([id]);
@@ -245,12 +252,13 @@ export function SoloWorkspaces({
       setRowFocus(id);
     });
   };
-  // Matches the open chat's own actions menu: leaving the open chat returns to
-  // a new Solo draft, unless the user has already moved on.
+  // Matches the open chat's own actions menu: leaving the open chat opens its
+  // nearest sidebar neighbor (or a new draft), unless the user has moved on.
   const chooseLifecycle = (
     channel: ChannelSummary,
     action: ChannelLifecycleAction,
   ) => {
+    const neighbors = handoff?.soloNeighbors.current?.(channel.id) ?? [];
     const trigger =
       document.querySelector<HTMLElement>(
         `[data-solo-menu-id="${CSS.escape(channel.id)}"] button`,
@@ -268,7 +276,14 @@ export function SoloWorkspaces({
         },
         completed() {
           if (leavesOpenChat && !current.attempt.signal.aborted)
-            void navigationController?.open(soloDraftTarget(scope));
+            void navigationController?.open(
+              soloSuccessor(
+                scope,
+                session.channels.list().channels,
+                neighbors,
+                channel.id,
+              ),
+            );
         },
       }),
     );
@@ -332,6 +347,22 @@ export function SoloWorkspaces({
         hidden: project.rows.length - listed.length,
       };
     });
+  const soloNeighborsRef = handoff?.soloNeighbors;
+  useLayoutEffect(() => {
+    if (!soloNeighborsRef) return;
+    const shown = visible.map((project) => ({
+      rows: project.rows,
+      shown: collapsed.includes(project.id)
+        ? []
+        : project.listed.map((item) => item.id),
+    }));
+    const neighbors = (id: string) => soloNeighbors(shown, id);
+    soloNeighborsRef.current = neighbors;
+    return () => {
+      if (soloNeighborsRef.current === neighbors)
+        soloNeighborsRef.current = undefined;
+    };
+  });
   const overflow = visible.flatMap((project) => project.overflow).join(" ");
   useEffect(() => {
     if (overflow) hold(overflow.split(" "));
@@ -520,30 +551,33 @@ export function SoloWorkspaces({
                     className={styles.organizedRow}
                     content={
                       channel && (
-                        <SoloChatMenuItems
-                          session={session}
-                          channel={channel}
-                          onShare={() => setSharing({ id: item.id, visit })}
-                          onConvert={() =>
-                            setConverting({ id: item.id, visit })
-                          }
-                          onMove={(projectId) => move(item.id, projectId)}
-                          onNewWorkspace={() => setCreatingFor(item)}
-                          onSettings={() => setChatSettings({ item, visit })}
-                          onLifecycle={
-                            handoff &&
-                            ((action) => chooseLifecycle(channel, action))
-                          }
-                          onReadResult={(error) =>
-                            setReadError((current) =>
-                              error
-                                ? { id: item.id, message: error }
-                                : current?.id === item.id
-                                  ? undefined
-                                  : current,
-                            )
-                          }
-                        />
+                        <>
+                          {renderChatMenu?.(item.id)}
+                          <SoloChatMenuItems
+                            session={session}
+                            channel={channel}
+                            onShare={() => setSharing({ id: item.id, visit })}
+                            onConvert={() =>
+                              setConverting({ id: item.id, visit })
+                            }
+                            onMove={(projectId) => move(item.id, projectId)}
+                            onNewWorkspace={() => setCreatingFor(item)}
+                            onSettings={() => setChatSettings({ item, visit })}
+                            onLifecycle={
+                              handoff &&
+                              ((action) => chooseLifecycle(channel, action))
+                            }
+                            onReadResult={(error) =>
+                              setReadError((current) =>
+                                error
+                                  ? { id: item.id, message: error }
+                                  : current?.id === item.id
+                                    ? undefined
+                                    : current,
+                              )
+                            }
+                          />
+                        </>
                       )
                     }
                   >
@@ -699,6 +733,7 @@ export function SoloWorkspaces({
             <Button
               disabled={!preferences.writable}
               onClick={() =>
+                !prepareSoloMove(session, move.channelId) &&
                 void preferences.retryMove(move.channelId).catch(() => {})
               }
             >
@@ -726,7 +761,11 @@ export function SoloWorkspaces({
           name={creatingFor.title}
           close={() => setCreatingFor(undefined)}
           create={(name) => {
-            if (!preferences.writable) return false;
+            if (
+              !preferences.writable ||
+              prepareSoloMove(session, creatingFor.id)
+            )
+              return false;
             const id = crypto.randomUUID();
             void preferences
               .createAndAssign(creatingFor.id, { id, name })
@@ -761,7 +800,7 @@ function DropProject({
 }
 
 /** Both entry points use one action list; right-click never selects the row. */
-function ChatActionsMenu({
+export function ChatActionsMenu({
   id,
   title,
   className,
@@ -783,9 +822,14 @@ function ChatActionsMenu({
 }) {
   const [open, setOpen] = useState(false);
   const [anchor, setAnchor] = useState<HTMLElement>();
-  const restoreFocus = () =>
-    document.querySelector<HTMLElement>(`[data-solo-menu-id="${id}"] button`) ??
-    false;
+  const restoreFocus = () => {
+    const row = document.querySelector(`[data-solo-menu-id="${id}"]`);
+    return (
+      row?.querySelector<HTMLElement>("[data-solo-destination-id]") ??
+      row?.querySelector<HTMLElement>("button") ??
+      false
+    );
+  };
   if (!enabled)
     return (
       <div className={className} data-solo-menu-id={id}>

@@ -70,6 +70,12 @@ export function useReading({
       (element.contains(node) ||
         !!surface?.contains(node) ||
         focusedTab(node) ||
+        // A plain channel visit also reads the side pane's visible selected
+        // thread while focus stays anywhere in that channel's workspace.
+        !!surface
+          ?.closest("[data-panel-workspace]")
+          ?.closest("[data-reading-thread]")
+          ?.contains(node) ||
         !!composer?.current?.contains(node));
     // Everything but geometry, so an event can check it without a layout.
     const ready = () =>
@@ -272,6 +278,13 @@ export function useReading({
     const visibility = () =>
       document.visibilityState === "visible" ? schedule() : stop();
     document.addEventListener("visibilitychange", visibility);
+    // Pane transforms can bring unchanged rows into view without a resize.
+    const motion = (event: Event) => {
+      if (event.target instanceof Element && event.target.contains(element))
+        schedule();
+    };
+    document.addEventListener("transitionend", motion);
+    document.addEventListener("animationend", motion);
     const mutation = new MutationObserver(reflow);
     mutation.observe(element, {
       childList: true,
@@ -284,6 +297,8 @@ export function useReading({
     return () => {
       stopped = true;
       stop();
+      document.removeEventListener("transitionend", motion);
+      document.removeEventListener("animationend", motion);
       mutation.disconnect();
       resize.disconnect();
       for (const event of ["pointerdown", "keydown", "reading-positioned"])

@@ -312,6 +312,7 @@ describe("mounted Markdown preparation", () => {
       directory: {
         profiles: new Map(),
         agents: [],
+        named: [],
         channels: [{ id: "design", name: "first", channelType: "forum" }],
       },
     });
@@ -329,6 +330,7 @@ describe("mounted Markdown preparation", () => {
         directory={{
           profiles: new Map(),
           agents: [],
+          named: [],
           channels: [{ id: "design", name: "second", channelType: "forum" }],
         }}
       />,
@@ -564,13 +566,21 @@ describe("Markdown profile mentions", () => {
     },
   );
 
-  it("does not rebind edited, untagged, unknown, disabled or ambiguous names", () => {
+  it.each<[string, RenderOptions]>([
+    ["no opener", { canOpenLink: undefined }],
+    ["a refusing opener", { canOpenLink: () => false }],
+  ])("renders mentions as inert names with %s", (_, options) => {
+    const html = render("**@Mic**", options);
+    expect(html).not.toContain("<button");
+    expect(html).toContain('data-mention-kind="person"');
+    expect(html).toContain('data-mention-name="Mic"');
+  });
+
+  it("does not rebind edited, untagged, unknown or ambiguous names", () => {
     const unavailable: RenderOptions[] = [
       { patch: { edited: true } },
       { patch: { mentions: [] } },
       { participantProfiles: undefined },
-      { canOpenLink: undefined },
-      { canOpenLink: () => false },
       {
         patch: { mentions: [mic, other] },
         participantProfiles: new Map([
@@ -792,19 +802,11 @@ it("keeps resolved private channel labels and lock icons for Buzz links", () => 
     component: ({ url }: { url: string }) => <LinkLabel href={url} />,
   };
   const href = `buzz://message?channel=design&id=${"a".repeat(64)}`;
+  const channels = [
+    { id: "design", name: "design", channelType: "forum", private: true },
+  ] as const;
   const html = render(`<${href}> <buzz://channel/design> #design`, {
-    directory: {
-      profiles: new Map(),
-      agents: [],
-      channels: [
-        {
-          id: "design",
-          name: "design",
-          channelType: "forum",
-          private: true,
-        },
-      ],
-    },
+    directory: { profiles: new Map(), agents: [], channels, named: channels },
     extensions: {
       ...extensions,
       links: { snapshot: () => [entry], subscribe: () => () => {} },
@@ -826,6 +828,7 @@ it("renders tagged agent library names and profile names with the same agent ico
   const directory = {
     profiles: new Map([[mic, { name: "Fizz" }]]),
     channels: [],
+    named: [],
     agents: [{ pubkey: mic, name: "Fast Fizz" }],
   };
   const options = {

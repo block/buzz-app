@@ -16,7 +16,6 @@ import {
   useSyncExternalStore,
 } from "react";
 import { ActivityTranscript } from "../../features/agents/ActivityTranscript";
-import type { Transcript } from "../../features/agents/activity-transcript";
 import { AgentInstructions } from "../../features/agents/AgentInstructions";
 import { CreateModelChoices } from "../../features/agents/CreateModelChoices";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
@@ -50,7 +49,7 @@ import {
 import type { ClaudeModel } from "./claude";
 import type { ClaudeSetup } from "./setup";
 import type { ClaudeDefaults } from "./defaults";
-import { TURN_LIMIT } from "./transcript";
+import { type ClaudeTranscript, TURN_LIMIT } from "./transcript";
 
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
@@ -59,7 +58,7 @@ const label = ({ channelId, name, root }: SavedConversation) =>
   `${name ? `#${name}` : channelId.slice(0, 8)} · ${root ? `thread ${root.slice(0, 8)}` : "channel"}`;
 const CONVERSATION_LIMIT = 30;
 type Read =
-  | { status: "ready"; transcript: Transcript & { more: boolean } }
+  | { status: "ready"; transcript: ClaudeTranscript }
   | { status: "missing" }
   | { status: "error"; error: string };
 
@@ -644,6 +643,7 @@ export function createTabs({
           title="Transcript"
           actions={
             <IconButton
+              hint="familiar"
               aria-label="Refresh transcript"
               title="Refresh transcript"
               loading={loading}
@@ -676,11 +676,22 @@ export function createTabs({
             agentName={agent.name}
             state={() => (working ? "working" : undefined)}
             before={
-              read.transcript.more && (
-                <p className="m-0 text-body-sm text-subtle">
-                  Showing the latest {TURN_LIMIT} turns.
-                </p>
-              )
+              <>
+                {read.transcript.incomplete && (
+                  <p role="status" className="m-0 text-body-sm">
+                    Some of this conversation’s sessions may be missing. Refresh
+                    to try again.{" "}
+                    <span className="text-subtle">
+                      ({read.transcript.incomplete.split("\n")[0]})
+                    </span>
+                  </p>
+                )}
+                {read.transcript.more && (
+                  <p className="m-0 text-body-sm text-subtle">
+                    Showing the latest {TURN_LIMIT} turns.
+                  </p>
+                )}
+              </>
             }
           />
         )}
@@ -693,15 +704,19 @@ export function createTabs({
   function ActivityTab({
     agent,
     conversation,
+    initialTranscript,
+    close,
   }: {
     agent: AgentViewProps<Config>["agent"];
     conversation?: AgentViewProps<Config>["conversation"];
+    initialTranscript?: AgentViewProps<Config>["initialTranscript"];
+    close?: AgentViewProps<Config>["close"];
   }) {
     const sessions = useSyncExternalStore(
       (listener) => runtime.subscribe(listener),
-      () => runtime.sessions(agent.pubkey),
+      () => runtime.sessions(agent.key),
     );
-    const conversations = runtime.conversations(agent.pubkey);
+    const conversations = runtime.conversations(agent.key);
     const busy = new Map(
       sessions.map((session) => [session.key, session.busy]),
     );
@@ -711,7 +726,7 @@ export function createTabs({
       searching,
       error: lookupError,
     } = useOpenedSession(conversations, conversation, (place, signal) =>
-      runtime.find(agent.pubkey, place, workspace, signal),
+      runtime.find(agent.key, place, workspace, signal),
     );
     const recent = conversations
       .filter((item) => item.key !== here?.key)
@@ -720,7 +735,12 @@ export function createTabs({
       const running = busy.get(key);
       return running === undefined ? undefined : running ? "Working" : "Idle";
     };
-    const { open, show, back } = useOpenTranscript(conversation, label);
+    const { open, show, back } = useOpenTranscript(
+      conversation,
+      label,
+      initialTranscript && { initial: here, ...initialTranscript },
+      close,
+    );
     return (
       <div className={activityStyles.activity}>
         {conversation && (
@@ -792,6 +812,7 @@ export function createTabs({
             onBack={back}
           >
             <TranscriptView
+              key={open.key}
               agent={agent}
               conversation={open}
               working={busy.get(open.key) ?? false}

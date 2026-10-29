@@ -1,7 +1,9 @@
 import {
   exactName,
   matchPerson,
+  nameStarts,
   normalizeName,
+  startKey,
 } from "../../features/search/person-match";
 import type { mentionCandidates } from "./mention-candidates";
 export type MentionChoice = ReturnType<typeof mentionCandidates>[number] & {
@@ -28,9 +30,62 @@ export function mentionMatch(choice: MentionChoice, query: string) {
   if (Number.isFinite(visible)) return visible;
   return 4 + baseMatch(choice, query);
 }
+// One sorted index of name starts per immutable choice list. Choices with a
+// name too long to index are always kept for ranking to match directly.
+const indexes = new WeakMap<
+  readonly MentionChoice[],
+  { starts: string[]; owners: number[]; unindexed: number[] }
+>();
+/**
+ * The choices, in their given order, with a label or alias that the query can
+ * match: a superset of every choice that `rankMentions` or `exactMention` keeps
+ * for this query. A binary search of the list's name index finds them, so a
+ * keystroke costs O(log n + matches) instead of a scan of every choice.
+ */
+export function matchingMentions(
+  choices: readonly MentionChoice[],
+  query: string,
+): readonly MentionChoice[] {
+  const needle = startKey(normalized(query));
+  if (!needle) return choices;
+  let index = indexes.get(choices);
+  if (!index) {
+    const entries: { start: string; owner: number }[] = [];
+    const unindexed: number[] = [];
+    choices.forEach((choice, owner) => {
+      const names = [...new Set([choice.label, ...choice.aliases])].map(
+        nameStarts,
+      );
+      if (names.some((name) => !name.complete)) unindexed.push(owner);
+      else
+        for (const name of names)
+          for (const start of name.starts) entries.push({ start, owner });
+    });
+    entries.sort((a, b) => compare(a.start, b.start));
+    index = {
+      starts: entries.map((entry) => entry.start),
+      owners: entries.map((entry) => entry.owner),
+      unindexed,
+    };
+    indexes.set(choices, index);
+  }
+  let low = 0;
+  let high = index.starts.length;
+  while (low < high) {
+    const middle = (low + high) >> 1;
+    if ((index.starts[middle] ?? "") < needle) low = middle + 1;
+    else high = middle;
+  }
+  const found = new Set<number>(index.unindexed);
+  for (let i = low; index.starts[i]?.startsWith(needle); i += 1)
+    found.add(index.owners[i] ?? 0);
+  return [...found]
+    .sort((a, b) => a - b)
+    .flatMap((owner) => choices[owner] ?? []);
+}
 /**
  * Sorts by per-choice keys, so the order is transitive for any mix of people
- * and agents. After match quality, your own agents come first. Agents that
+ * and agents. Another community's agents follow everyone here. After match quality, your own agents come first. Agents that
  * share a name form one block at its first visible label; recency, managed,
  * and presence order only that block.
  */
@@ -45,6 +100,7 @@ export function rankMentions(
     .map((c) => {
       const tier = [
         c.member ? 0 : 1,
+        c.elsewhere ? 1 : 0,
         mentionMatch(c, query),
         baseMatch(c, query),
         c.agent && c.owned ? 0 : 1,

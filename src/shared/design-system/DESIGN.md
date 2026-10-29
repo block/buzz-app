@@ -97,6 +97,7 @@ content, local controls, and its states; it must not repeat those outer elements
 Keep object summary before detailed sections. Use panel-style tabs for related
 content on the opaque surface; do not use backdrop/chrome tabs inside it.
 
+Content tabs follow the [navigation history and dismissal contract](../../../docs/navigation-history.md#content-tabs).
 Use the existing panel navigation/subview mechanism for related details. Preserve
 the original panel's scroll and draft state, the host's close/back behavior, and
 focus restoration. Do not create another overlay, navigation history, or global
@@ -146,6 +147,15 @@ standalone consequential confirmation. “Modal” is the interaction mode, not 
 component to build. Preserve established stepped confirmations and their dismissal
 policy rather than silently changing semantics during visual adoption.
 
+New addressable dialogs and dialog-navigation changes follow the
+[navigation history and dismissal contract](../../../docs/navigation-history.md): Back closes
+the dialog before leaving its underlying view, Forward can restore it, and
+explicit Close retires its restoration visits. Global/contextual scope does not
+change that rule. Navigation owns history; this shared modal owns controls,
+focus and dismissal guards. Existing dialogs are not automatically migrated by
+using this component. Transient confirmations, menus and popovers do not create
+history visits. Preserve operation/draft lifecycles as specified there.
+
 Compose title and optional useful description together in the shared header
 heading, with Close aligned beside them. This lockup applies to both `Dialog`
 and `AlertDialog`; descriptions are not separate body paragraphs. Follow with
@@ -156,6 +166,10 @@ help, status, warnings, and section-specific explanations with their content.
 Ordinary flow Dialogs use sticky header and footer bars over the scrolling body.
 Their full backgrounds combine a surface-color gradient and progressive blur;
 labels and actions remain sharp. Reduced transparency uses an opaque surface.
+`ScrollEdgeMaterial` owns this treatment, shared with the agent Save footer.
+Its host supplies overlap and isolation; `--scroll-edge-surface` selects the
+host surface when it differs from the default popover surface.
+`--scroll-edge-fill` can supply a stronger backing behind text within that fade.
 Navigated, stepped, stable-height, and internally scrolling dialogs retain their
 existing layout.
 
@@ -164,6 +178,11 @@ task controls in the body; reserve `headerActions` for contextual utilities besi
 the shared Close control. The pane-header icon-only rule does not prohibit text
 buttons in dialog footers, forms, or menus. Do not recreate the backdrop, title,
 close button, body padding, or footer with feature-specific markup.
+
+For an illustrated introduction, `artwork` places feature-owned imagery above a
+centered title and description, keeping shared Close at the top right. Keep the
+artwork bounded and leave room beside its top edge for Close. Community import
+uses this slot for the agent portrait and its overlapping community images.
 
 | Task | Shared starting point | Scrolling |
 | --- | --- | --- |
@@ -279,6 +298,32 @@ without stealing focus from the new dialog. On completion, return focus to the
 appropriate surviving trigger unless the person has moved elsewhere. See
 [`ChannelHeaderMenu`](../../bundled/channels/ChannelHeaderMenu.tsx) and the shared
 [menus and choice-row rules](#menus-popovers-and-choice-rows).
+
+### Hover timing
+
+Hover content opens only once the pointer rests on its trigger, never while it
+crosses on the way to something else; any movement restarts the wait. Keyboard
+focus is deliberate, so it opens hints and previews at once, and anything that
+opens on hover also opens with Enter; Escape dismisses them all. Every hover
+surface belongs to exactly one bucket, and the timings live in
+`ui/hoverIntent.ts`. The components accept a bucket, never a delay: to change a
+timing, change the bucket for everyone. Submenus inside an open menu are the one
+exception and open on hover at once, as menus conventionally do.
+
+| Bucket | Use for | Timing | API |
+| --- | --- | --- | --- |
+| Familiar hint | Naming an icon whose meaning is already obvious: back/forward, close, window controls, sidebar and pane toggles, new (+), more (…), send, attach, copy, download, refresh, delete, mute, reply, add reaction, bold/italic. An obvious icon stays familiar when its hint also shows a shortcut; a disabled one switches to helpful | Rests 1.5s | `Tooltip hint="familiar"`; `Button`/`IconButton` `title` with `hint="familiar"` |
+| Helpful hint | Naming an icon people may not recognize, or adding information the control does not show: an unfamiliar control’s shortcut, why it is disabled, an error, a truncated value | Rests 0.5s | `Tooltip`, or `title` on `Button`/`IconButton` (the default) |
+| Preview | Rich content about an object: a profile, link, channel, activity, typing participants, who reacted | Rests 0.6s | `PreviewCard`; `PopoverTrigger openOnHover="preview"` |
+| Hover control | A control that expands in place under the pointer: video volume, playback speed | Rests 0.1s | `PopoverTrigger` or `MenuTrigger` with `openOnHover="control"` |
+| No hover | A control whose visible text already says what it does | None | Omit `title` |
+
+Hints share the app's `TooltipProvider`: once one is showing, its neighbors open
+at once, so scanning a toolbar stays quick. Previews never open instantly from a
+neighbor, so moving down a column of avatars opens nothing; the reaction row's
+one preview may slide between its own pills once open (`PreviewCard warm`). The
+accessible name is never the hint: an icon button keeps its `aria-label` in
+every bucket.
 
 ### States, feedback, and motion
 
@@ -642,6 +687,8 @@ Layout and overflow remain shell-owned.
 
 Use `Tabs variant="segmented"` for grouped filters on an opaque surface, with
 a capsule track and raised capsule selection (for example, sidebar scope).
+Proposed: `Tabs variant="segmented-icons"` uses the same track for icon-only
+avatar choices, retaining accessible labels and titles. Each item supplies an icon.
 Use `Tabs variant="chrome"` for a flat pill selection on the shell and `variant="panel"`
 for an underline on a plain surface. IconButton also provides a `chrome` variant.
 Chrome tab and route-navigation groups use the shell's `affordance-chrome` capsule
@@ -694,10 +741,17 @@ rather than a control ring. `styles/composer.css` clears the textarea's own
 outline and lets `.buzz-composer:focus-within` carry focus on the shell: the 1px
 perimeter border switches to `--border-focus` and a matching 1px ring doubles
 it, so the composite reads as one focused surface instead of a ring around the
-text area inside a bordered box. Measured in the viewer, the stroke moves from
-`rgb(232, 232, 232)` to `rgb(0, 0, 0)` in light and `rgb(35, 35, 35)` to
-`rgb(255, 255, 255)` in dark — 21:1 and 17.4:1 against the panel surface, and
-17.1:1 and 15.7:1 against the resting border, so the change itself is legible.
+text area inside a bordered box. The resting shell uses `surface-composer`:
+panel fill in light mode and neutral-4 in dark mode, preserving the former
+dark stroke color as its fill. Both composer hosts use `data-composer-surface`
+to opt into the shared surface context: in dark mode, `affordance-subtle`, its
+hover and pressed roles use neutral-5, neutral-6 and neutral-7. Inline code,
+reference chips and recipient pills retain distinct nested fills without local
+control overrides. Light mode and controls outside the composer are unchanged.
+The context reapplies `interaction-panel` on the composer so shared controls
+resolve their fill, hover and pressed aliases against these local roles.
+Dark standard borders use neutral-5 so separators remain distinct from panels.
+Focus retains the existing `border-focus` stroke and ring.
 Unlike the text-field exception this is not modality-gated, because the shell
 also marks where typing will land. Do not copy the container pattern to a
 control that has a component ring recipe.
@@ -904,6 +958,12 @@ Field groups label, input, help and error using Base UI. Input and Textarea
 carry the shared field appearance. RadioGroup is for one choice, Checkbox for an
 independent choice and Switch for an immediate on/off setting. Use the native
 form semantics exposed by those Base UI primitives rather than duplicating them.
+
+`Checkbox` and `Radio` default to 40px rows with 20px controls. For compact
+inline choices, use `size="sm"`: 32px rows, 16px controls, and an 8px label gap.
+Pair small radios with `RadioGroup size="sm"` to remove the extra group gap.
+Compact filter popovers use `padding="list"`; keep room around a scrolling
+choice list for the shared keyboard focus ring.
 
 For finite choices, use Select: its inline layout fits compact toolbars and
 `variant="field"` fits labelled forms. The proposed `variant="compact"` fits
@@ -1320,7 +1380,8 @@ semantics, hug their contents up to a 12rem maximum with ellipsis, use 18px corn
 actions, and a subtle selected fill, accept avatars/icons, and place a sibling close
 button over reserved trailing space. Tab close icons use 1rem artwork to match
 container header actions while retaining their compact hit areas. Close buttons stay visible on the active tab; inactive tabs reveal them on hover or keyboard focus. Touch devices keep close buttons visible. Navigation tab strips scroll only horizontally. Their rounded thumb uses the sidebar’s quiet scrollbar role, with a 3px visible thumb in the header’s 4px bottom inset. The tab row keeps its vertical position as overflow starts or stops. It appears only while the strip is hovered; touch devices retain the thumb without requiring hover. The main
-channel header uses the same control with a single non-closable tab with `showSelection={false}` (no selection or hover fill); channel
+channel header uses the same control with a single non-closable tab with `showSelection={false}` (no selection or hover fill); that
+title tab fills the header's title slot instead of stopping at 12rem, truncating only when the header runs out of room; channel
 actions remain in the header action slot. The settings launcher uses
 `data-highlight-expanded="false"` to preserve disclosure semantics without a
 sticky pressed treatment; the selected tab owns the open-state indicator.
@@ -1335,14 +1396,53 @@ NavigationItem
 offers an `option` variant for picker rows with even 8px padding and immediate
 hover feedback. It forwards normal button events, refs and data attributes so unread observation,
 preloading and product shortcuts remain with the caller.
+`multiline` lets a stacked navigation label grow with its content. Use
+`NavigationCard` when a destination has supporting detail or separate sibling
+controls: the primary NavigationItem owns focus and `aria-current`, while the
+card owns the shared hover and selected surface. Put details in its `footer`,
+not inside the primary button. Nested destinations keep their own selection.
+Use `tone="tonal"` for task trees: the shared card uses neutral selected and hover
+surfaces. Use `tone="inset"` for a lead destination whose own hover, focus, menu,
+and selection use `surface-inset`. Both tones rest transparent, including open
+cards. A contained active branch clears its enclosing cards' fill and border.
+Own row hover, focus, or menu can paint over contained selection; that enclosure
+has one uniform surface until a contained interaction takes priority. A
+task card hovered inside `SidebarNavigation` temporarily clears the other task
+cards' shading; selected shading returns when the pointer leaves the cards. A Solo
+card's `dropTarget` uses `affordance-sidebar-hover` across its full enclosure;
+it takes priority over selection and clears contained card fills while active.
+Put nested destinations in `body`. Solo sources compose rows from
+`ui.Conversation` parts and `ui.Disclosure`; see
+[Solo regions](../../../docs/solo-regions.md). Task rows keep worker disclosures in
+`footer` by default; show their summary only while that task or a worker is
+selected. A project heading puts an independent caret immediately after the
+project title. Only the caret toggles the container; the title and supporting
+metadata navigate to the project chat, and double-click does not rename the title.
+Own-row hover, keyboard focus, or menu interaction reveals the caret through
+`Reveal`; expansion alone does not. More stays at the row end, aligned with the
+same status column as ordinary tasks.
+Keep the worker body mounted and its saved expansion state. Footer disclosures
+put the caret at the inline end:
+closed rows show worker avatars; hover, expansion, or keyboard focus replaces the
+avatars with the caret. Worker rows and their summary add no hierarchy indentation.
+Solo task headings use `text-body-sm`; workers use `text-caption`, and inset
+project headings use `text-label`. Task and worker supporting text uses
+`text-caption`; project rollups keep `text-body-sm`. Footer summary text and its
+caret use the unselected row role `text-navigation` and align to the inline start.
+Worker status glyphs are 12px; task and project glyphs remain 14px. Worker unread
+counts appear in the summary; retain accessible row unread evidence without
+painting a dot. Task and project unread dots stay in the card's trailing flow,
+separate from status text and the overflow action.
+Selected rows can expand without painting the entire branch in the accent color.
+
 Its `text` variant is a text-only row action, such as a capped list's Show
 more and Show less: the base navigation item's type and padding with no fill, resting in
 `--text-subtle` and strengthening to `--text-standard` on hover and keyboard
 focus. Use it where a fill would read as another destination.
 
 PreviewCard may expose supplemental actions through `actionRef`, such as copying
-an identity's full npub. Action previews open without a delay so immediate Tab
-navigation reaches the action. They remain non-modal and never take focus on hover. When no side has enough room,
+an identity's full npub. Focus opens every preview at once, so immediate Tab
+navigation reaches the action; hover still waits for the pointer to rest. They remain non-modal and never take focus on hover. When no side has enough room,
 action previews shift within the viewport to keep their controls reachable. Tab
 from the trigger reaches the first focusable item, including a pausable status ticker.
 Tab moves through the supplemental actions in document order. Shift+Tab from the
@@ -1473,8 +1573,9 @@ to remain visible on conversation surfaces in both modes.
 
 One device-local accent choice colors message bubbles and their related content,
 the composer Send button, and sidebar row hover/selection. General buttons,
-checked controls, segmented filters, tabs, menus, links outside bubbles, and drag
-indicators keep their neutral appearance. Status colors, focus, categorical
+checked controls, segmented filters, tabs, menus, and links outside bubbles keep
+their neutral appearance. Solo card drop destinations use the sidebar hover tint;
+other drag indicators stay neutral. Status colors, focus, categorical
 purple, shadows, and media-specific roles stay independent.
 
 **Chillin’** (the default) uses soft accent fills for your messages; **Buzzin’**

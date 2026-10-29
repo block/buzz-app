@@ -51,6 +51,7 @@ it("leaves the device Attention switch out of Settings", () => {
     configHistory: () => undefined,
     addedTabs: () => [],
     registerTab: () => {},
+    controlAttention: () => {},
   } as unknown as Agents;
   const sections = agentSections({
     agents,
@@ -75,6 +76,7 @@ it("adds no Settings tab when the host has nothing to set", () => {
       configHistory: () => undefined,
       addedTabs: () => [],
       registerTab: () => {},
+      controlAttention: () => {},
     } as unknown as Agents,
     agent,
     type: undefined,
@@ -105,6 +107,7 @@ it("shows each synced side's History as its own named section", () => {
     configHistory: () => history,
     addedTabs: () => [],
     registerTab: () => {},
+    controlAttention: () => {},
   } as unknown as Agents;
   const section = agentSections({
     agents,
@@ -141,6 +144,7 @@ it("adds plugin tabs to local agents only, before History", () => {
     }),
     addedTabs: () => [added],
     registerTab: () => {},
+    controlAttention: () => {},
   } as unknown as Agents;
   const values = (place: Agent["place"]) =>
     agentSections({

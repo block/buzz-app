@@ -995,6 +995,10 @@ export type Agents = {
   registerTab(tab: AgentAddedTab): void;
   /** The tabs active plugins add now. */
   addedTabs(): readonly RegisteredAgentAddedTab[];
+  /** Says the calling plugin shows Attention and its device switch. Agents'
+   * Attention runs on this device only while such a plugin is on; with none,
+   * it is off for every agent and each keeps its saved switch. */
+  controlAttention(): void;
   /** Adds a tool to every agent session in the app, beside the Buzz tools.
    * The tool acts as the agent, like the rest of a trusted plugin's code
    * acts as its owner. A session lists
@@ -1447,6 +1451,7 @@ export class AgentsService extends Service implements Agents {
   }
   private readonly contributions;
   private readonly tabContributions;
+  private readonly attentionControls;
   private readonly addedTools;
   /** Every added tool's name, its plugin active or still starting. */
   private readonly toolNames = new Set<string>();
@@ -1559,6 +1564,7 @@ export class AgentsService extends Service implements Agents {
     this.contributions = createContributions<AgentType>(ctx);
     this.hookContributions = createAgentHooks(ctx);
     this.tabContributions = createContributions<AgentAddedTab>(ctx);
+    this.attentionControls = createContributions<{ id: string }>(ctx);
     this.addedTools = createContributions<AddedTool & { id: string }>(ctx);
     this.attentionSources = createContributions<AttentionProducer>(ctx);
     // Each changes the copy at once and logs a failed save itself.
@@ -1627,6 +1633,7 @@ export class AgentsService extends Service implements Agents {
       },
       scope: (agent) => this.bindingOf(agent)?.scope,
       saved: (key) => this.records[key],
+      attentionShown: () => this.attentionShown(),
       record: (key) => {
         const member = this.liveMember(key);
         if (!member) throw new Error("No such agent on this device");
@@ -1832,6 +1839,11 @@ export class AgentsService extends Service implements Agents {
           this.update();
           this.notify();
         }),
+        // Every agent's Attention turns on or off with its controls.
+        this.attentionControls.subscribe(() => {
+          this.update();
+          this.notify();
+        }),
         // A new state object, so views reading `addedTabs()` render again.
         this.tabContributions.subscribe(() => {
           this.state = Object.freeze({ ...this.state });
@@ -1935,6 +1947,11 @@ export class AgentsService extends Service implements Agents {
     this.tabContributions.register(this.ctx, tab);
   }
   addedTabs = () => this.tabContributions.snapshot();
+  controlAttention() {
+    this.attentionControls.register(this.ctx, { id: "attention" });
+  }
+  /** Whether a plugin that shows Attention is on, so Attention may run. */
+  private attentionShown = () => this.attentionControls.snapshot().length > 0;
   addTool(tool: AddedTool) {
     if (
       !/^[a-z][a-z0-9_]{0,63}$/.test(tool.name ?? "") ||
@@ -4394,7 +4411,8 @@ export class AgentsService extends Service implements Agents {
       timers: record.timers ?? EMPTY,
       ...(record.sourceRuns ? { sourceRuns: record.sourceRuns } : {}),
       attentionHistory: record.attentionHistory,
-      attentionEnabled: record.attentionEnabled === true,
+      attentionEnabled:
+        record.attentionEnabled === true && this.attentionShown(),
       config: editor?.config ?? record.config,
       ...(editor && { configBase: editor.base }),
       ...(editor?.problem && { configProblem: editor.problem }),
@@ -4949,7 +4967,8 @@ export class AgentsService extends Service implements Agents {
           prior.timers === (record.timers ?? EMPTY) &&
           prior.sourceRuns === record.sourceRuns &&
           prior.attentionHistory === record.attentionHistory &&
-          prior.attentionEnabled === (record.attentionEnabled === true) &&
+          prior.attentionEnabled ===
+            (record.attentionEnabled === true && this.attentionShown()) &&
           sameConfig(prior, editor?.config ?? record.config, editor?.base) &&
           prior.configProblem === editor?.problem &&
           prior.archiveUnchecked === this.archiveUnchecked(identity.key) &&

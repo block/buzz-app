@@ -300,6 +300,12 @@ its profile panel, and is not offered for hosted or elsewhere agents. It is
 removed when the plugin is turned off or its scope ends. The bundled Agent
 Attention UI plugin uses it.
 
+A plugin that shows Attention and its device switch calls
+`ctx.agents.controlAttention()`. Agents' watches, timers and sources run on this
+device only while such a plugin is on. With none on, every agent's
+`attentionEnabled` reads false and each keeps its saved switch. The bundled Agent
+Attention UI plugin calls it.
+
 A plugin, bundled or installed, can add a tool to every agent session in the
 app with `ctx.agents.addTool({ name, description, inputSchema, call })`. `call`
 gets the agent's Buzz client and where it is working, so the tool acts as the

@@ -388,6 +388,7 @@ function setup(
     configHistory: () => undefined,
     addedTabs: () => [],
     registerTab: () => {},
+    controlAttention: () => {},
   } satisfies Agents;
   const disconnected = { status: "disconnected", generation: 0 };
   const relay = {

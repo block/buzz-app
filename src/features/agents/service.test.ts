@@ -255,6 +255,16 @@ async function setup({
     ...(syncedSettings ? { syncedSettings } : {}),
   };
   plugin.agents.register(type);
+  // The Agent Attention UI plugin, so agents' Attention runs.
+  const watching = ctx
+    .extend({
+      pluginOwner: Object.freeze({ id: "buzz.watching", revision: "one" }),
+    })
+    .plugin({
+      inject: ["agents"],
+      apply: (scope: Context) => scope.agents.controlAttention(),
+    });
+  await watching;
   await vi.waitFor(() => expect(service.snapshot().status).toBe("ready"), {
     // Keep fake-clock advancement unchanged in the timer behavior cases.
     interval: vi.isFakeTimers() ? 50 : 1,
@@ -281,6 +291,7 @@ async function setup({
     history: fake.history,
     authorize,
     plugin,
+    watching,
     presence: fake.presence,
     second,
     select: client.select,
@@ -8927,6 +8938,32 @@ it("stops watches and timers while attention is off, keeps every object, and res
   expect(run.mock.calls.map(([{ trigger }]) => trigger.type)).toEqual([
     "mention",
     "timer",
+    "watch",
+  ]);
+});
+
+it("turns every agent's attention off while no plugin shows it, keeps its switch, and resumes it", async () => {
+  vi.useFakeTimers({ now: 1_000_000 });
+  const { service, run, emit, watching, ctx } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
+  await watching.dispose();
+  expect(service.find(bot)?.attentionEnabled).toBe(false);
+  emit({ events: [deploy("w")] });
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(run).not.toHaveBeenCalled();
+  await ctx
+    .extend({
+      pluginOwner: Object.freeze({ id: "buzz.watching", revision: "two" }),
+    })
+    .plugin({
+      inject: ["agents"],
+      apply: (scope: Context) => scope.agents.controlAttention(),
+    });
+  expect(service.find(bot)?.attentionEnabled).toBe(true);
+  emit({ events: [deploy("w2")] });
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(run.mock.calls.map(([{ trigger }]) => trigger.type)).toEqual([
     "watch",
   ]);
 });

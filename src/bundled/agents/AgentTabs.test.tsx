@@ -103,6 +103,7 @@ function editingFixture(split: boolean, save = vi.fn(async () => {})) {
       configHistory: () => undefined,
       addedTabs: () => [],
       registerTab: () => {},
+      controlAttention: () => {},
     } as unknown as Agents,
     agent,
     type,
@@ -306,6 +307,7 @@ it.each(["here", "hosted"] as const)(
             configHistory: () => undefined,
             addedTabs: () => [],
             registerTab: () => {},
+            controlAttention: () => {},
           } as unknown as Agents
         }
         agent={agent}
@@ -369,6 +371,7 @@ it("shows History for an agent whose config syncs", () => {
           configHistory: () => history,
           addedTabs: () => [],
           registerTab: () => {},
+          controlAttention: () => {},
           snapshot: () => ({ agents: [agent] }),
           subscribe: () => () => {},
         } as unknown as Agents

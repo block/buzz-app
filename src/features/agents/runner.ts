@@ -408,6 +408,8 @@ export type RunnerHost = {
   scope(agent: Agent): string | undefined;
   /** Its saved record, without defaults. */
   saved(key: AgentKey): AgentRecord | undefined;
+  /** Whether a plugin that shows Attention is on; Attention runs only then. */
+  attentionShown(): boolean;
   /** Its record as its attention handle reads it; throws once it is gone. */
   record(key: AgentKey): AgentRecord;
   /** Changes its record after the changes sent before it, from the newest
@@ -603,7 +605,11 @@ export class AgentRunners {
     for (const identity of identities) {
       const type = types.get(identity.type);
       const runner = this.runners.get(identity.key);
-      if (runner && this.host.saved(identity.key)?.attentionEnabled !== true) {
+      if (
+        runner &&
+        (this.host.saved(identity.key)?.attentionEnabled !== true ||
+          !this.host.attentionShown())
+      ) {
         runner.epoch++;
         this.dropWatchWork(runner);
       }
@@ -1083,13 +1089,17 @@ export class AgentRunners {
       this.setCheckpoint(key, checkpoint);
       changed = true;
     };
+    // With no plugin showing Attention, as while its plugin starts, every
+    // checkpoint stays put, so the first catch-up after it is on still reads
+    // what the app missed while closed.
+    const shown = this.host.attentionShown();
     for (const runner of this.runners.values()) {
       this.resumeTurns(runner);
       const agent = this.host.agent(runner.key);
       const community = agent && this.host.community(agent);
       const on = !!agent?.attentionEnabled && !!runner.type?.run;
       const reading: Stream[] = [];
-      for (const stream of agent ? streamsOf(agent) : []) {
+      for (const stream of agent && shown ? streamsOf(agent) : []) {
         if (!on || !stream.enabled) {
           // Saved too, so one turned on after a restart starts from about
           // when this copy last saw it off.
@@ -2685,7 +2695,8 @@ export class AgentRunners {
     const record = () => this.host.record(key);
     return guarded(
       {
-        enabled: () => record().attentionEnabled === true,
+        enabled: () =>
+          record().attentionEnabled === true && this.host.attentionShown(),
         classifier: () => this.host.classifier(),
         show: async (slug: string, interest?: string) => {
           const result = await show(record(), slug, seconds(), interest);

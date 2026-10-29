@@ -201,7 +201,7 @@ async fn real_listener_preserves_callback_parameters_and_closes_after_completion
         assert!(response.contains("<h1 id=\"heading\">You're now signed in.</h1>"));
         assert!(response.contains("data-complete=\"true\""));
         assert!(response.contains("data-close-delay=\"3\""));
-        assert!(response.contains("Close now</button>"));
+        assert!(response.contains("Closing this window automatically</span>"));
         assert!(response.contains("id=\"close-spinner\""));
         assert!(!response.contains("{{"));
         let (headers, body) = response.split_once("\r\n\r\n").unwrap();

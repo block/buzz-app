@@ -83,8 +83,8 @@ is within ten seconds after the reading delay. Slow verification never causes a
 late focus jump. This checks
 applications, not browser tabs. Other platforms skip automatic focus return until
 they have a reliable foreground-browser check; no desktop-control permission is
-requested. **Close now** skips the browser delay; native focus return follows
-the verified-login policy independently.
+requested. Native focus return follows the verified-login policy independently
+of whether browser policy permits closing the callback tab.
 
 ## Callback handling and limits
 
@@ -102,16 +102,17 @@ the verified-login policy independently.
   and `no-referrer`. Its Content Security Policy permits only the exact embedded
   stylesheet and close-window script by hash, with no external assets or network
   requests. A valid callback shows the headline **You're now signed in.** and a
-  spinner for three seconds before trying to close its page; **Close now** skips
-  the wait. Its branded panel fades and scales in with a small bounce over the
+  spinner with muted **Closing this window automatically** text for three seconds
+  before trying to close its page. The hint reserves its wrapped size through
+  script startup and a blocked-close fallback, keeping the panel stationary.
+  Its branded panel fades and scales in with a small bounce over the
   shared 220ms settle duration; reduced motion and error pages stay immediate.
-  No supporting copy appears unless closing is blocked or JavaScript
-  is disabled. The spinner respects reduced motion
-  and stops if closing is blocked, leaving manual-close guidance. The
+  The hint changes to **You can close this tab.** if closing is blocked or
+  JavaScript is disabled. The spinner respects reduced motion
+  and disappears if closing is blocked, leaving manual-close guidance. The
   reading delay and native focus-return delay share one native constant. Error
-  pages remain open. Close controls are shown when JavaScript is enabled,
-  with manual-close guidance if browser policy refuses `window.close()`. Restoring
-  an unclosed tab later can still fail because the loopback listener is temporary.
+  pages remain open. Restoring an unclosed tab later can still fail because the
+  loopback listener is temporary.
   The headline acknowledges the browser sign-in callback. Receipt of a callback
   does not establish successful account verification; Buzz still performs code
   exchange and account validation, and reports failures in the app.

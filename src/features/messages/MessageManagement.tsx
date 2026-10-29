@@ -143,7 +143,10 @@ export function MessageManagement({
     ((!channelId || channelId === selection.row.channelId) &&
       channels.channels.some(
         (channel) =>
-          channel.id === selection.row.channelId && !channel.readOnly,
+          channel.id === selection.row.channelId &&
+          !channel.cached &&
+          (!channel.readOnly ||
+            (channel.viewerRole === "guest" && !!selection.authorization)),
       ));
   useEffect(() => {
     if (!available) setSelection(undefined);
@@ -244,17 +247,19 @@ export function MessageManagement({
   );
 }
 
-/** Read-state, edit and delete items share one gate: a managed, delivered row
- * in a writable channel. */
+/** Personal read/follow actions need current membership, not writing access. */
 function useManagedMessage(row: ChannelMessage, session: RelaySession) {
   const management = useContext(Management);
-  const writable = useListedChannel(
+  const joined = useListedChannel(
     session.channels,
     row.channelId,
-    (channel) => !!channel && !channel.readOnly,
+    (channel) =>
+      !!channel &&
+      !channel.cached &&
+      (!channel.readOnly || channel.viewerRole === "guest"),
   );
   return management &&
-    writable &&
+    joined &&
     !row.membership &&
     !row.diff &&
     (!row.delivery || ["accepted", "seen"].includes(row.delivery))
@@ -325,6 +330,11 @@ export function MessageManagementItems({
     row.channelId,
     (channel) => channel?.channelType === "dm",
   );
+  const writable = useListedChannel(
+    session.channels,
+    row.channelId,
+    (channel) => !!channel && !channel.readOnly && !channel.cached,
+  );
   const threadRootId = row.threadRootId ?? row.id;
   const following = useSyncExternalStore(session.unread.subscribeSync, () =>
     session.unread.following(row.channelId, threadRootId),
@@ -343,7 +353,8 @@ export function MessageManagementItems({
       item.event.tags.some(([name, id]) => name === "e" && id === row.id),
   );
   const own = row.authorId === session.viewer && !archived;
-  const canEdit = own && editor?.current && lastEditableMessage(session, [row]);
+  const canEdit =
+    writable && own && editor?.current && lastEditableMessage(session, [row]);
   const authorization =
     row.authorId !== session.viewer &&
     session.viewer &&
@@ -351,7 +362,8 @@ export function MessageManagementItems({
     ownership.owner === session.viewer
       ? { agentId: row.authorId, ownerId: session.viewer }
       : undefined;
-  const canDelete = (own || !!authorization) && session.outbox?.supports(5);
+  const canDelete =
+    ((writable && own) || !!authorization) && session.outbox?.supports(5);
   const act = (action: () => void) =>
     afterClose ? afterClose(action) : action();
   return (
@@ -477,7 +489,9 @@ function DeleteMessageDialog({
             (channel) =>
               channel.id === row.channelId &&
               !channel.archived &&
-              !channel.readOnly,
+              !channel.cached &&
+              (!channel.readOnly ||
+                (channel.viewerRole === "guest" && !!authorization)),
           )
       )
         throw new Error(
@@ -535,9 +549,6 @@ export function MessageManagementStatus() {
   const [error, setError] = useState<string>();
   if (!management) return null;
   const { session, channelId, operations } = management;
-  const channel = session.channels
-    .list()
-    .channels.find((item) => item.id === channelId);
   const pending = operations.filter(
     (item) =>
       (item.event.kind === 40003 ||
@@ -568,12 +579,7 @@ export function MessageManagementStatus() {
               same operation; dismissing does not undo it.
             </p>
           )}
-          <Button
-            disabled={!channel || channel.archived || channel.readOnly}
-            onClick={() => session.outbox?.retry(item.event.id)}
-          >
-            Retry message update
-          </Button>
+          <RetryMessageUpdate session={session} event={item.event} />
           <Button
             onClick={async () => {
               try {
@@ -596,5 +602,33 @@ export function MessageManagementStatus() {
       ))}
       {error && <p role="alert">{error}</p>}
     </>
+  );
+}
+
+function RetryMessageUpdate({
+  session,
+  event,
+}: {
+  session: RelaySession;
+  event: OutgoingEvent["event"];
+}) {
+  const eligible = useSyncExternalStore(
+    (listener) => {
+      const offChannels = session.channels.subscribeList(listener);
+      const offProfiles = session.profiles.subscribe(listener);
+      return () => {
+        offChannels();
+        offProfiles();
+      };
+    },
+    () => session.messages.canRetry(event),
+  );
+  return (
+    <Button
+      disabled={!eligible}
+      onClick={() => session.outbox?.retry(event.id)}
+    >
+      Retry message update
+    </Button>
   );
 }

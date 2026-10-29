@@ -544,9 +544,7 @@ it.each([false, true])(
     expect(
       screen.getByRole("button", { name: "Restore this version" }),
     ).toBeDisabled();
-    expect(
-      screen.getByText("Archived channel. Canvas is read-only."),
-    ).toBeVisible();
+    expect(screen.getByText("Canvas is read-only.")).toBeVisible();
     expect(canvas.save).not.toHaveBeenCalled();
     await user.click(screen.getByRole("tab", { name: "Edit" }));
     expect(text).toHaveValue(content);

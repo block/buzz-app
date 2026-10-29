@@ -2324,6 +2324,10 @@ function Composer({
         </footer>
       </>
     );
+  const submissionHeader = submission?.header?.(value, {
+    changeToken: (id) => editTaskToken(id, true),
+    removeToken: (id) => editTaskToken(id, false),
+  });
   return (
     <SelectedMentionContext.Provider value={value.recipients}>
       {taskContext?.mode.header && !threadRootId && !editing.target && (
@@ -2333,10 +2337,9 @@ function Composer({
           ui={taskHeaderUI}
         />
       )}
-      {submission?.header?.(value, {
-        changeToken: (id) => editTaskToken(id, true),
-        removeToken: (id) => editTaskToken(id, false),
-      })}
+      {submissionHeader && (
+        <div className={styles.composerColumn}>{submissionHeader}</div>
+      )}
       {context}
       {active && bringing.dialog}
       {active && nonmembers.dialog}

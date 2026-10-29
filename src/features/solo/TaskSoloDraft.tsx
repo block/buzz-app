@@ -48,6 +48,7 @@ import type { SoloDraft as DraftRoute } from "../channel-navigation/routes";
 import { ChatNotStarted } from "../relay/channel-writes";
 import { taskHeaderUI } from "./TaskHeaderTitle";
 import { regionLabels } from "./region-labels";
+import composerStyles from "../messages/Messages.module.css";
 
 const noopSubscribe = () => () => {};
 const noSnapshot = () => undefined;
@@ -504,9 +505,21 @@ export function TaskSoloDraft({
           },
         }}
       />
-      {!context && <p role="status">{TASK_UNAVAILABLE}</p>}
-      {eligiblePrimary && <p>Primary: {eligiblePrimary.name}</p>}
-      {error && <p role="alert">{error}</p>}
+      {!context && (
+        <p className={composerStyles.composerColumn} role="status">
+          {TASK_UNAVAILABLE}
+        </p>
+      )}
+      {eligiblePrimary && (
+        <p className={composerStyles.composerColumn}>
+          Primary: {eligiblePrimary.name}
+        </p>
+      )}
+      {error && (
+        <p className={composerStyles.composerColumn} role="alert">
+          {error}
+        </p>
+      )}
     </SoloDraftView>
   );
 }

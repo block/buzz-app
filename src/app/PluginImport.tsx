@@ -602,21 +602,31 @@ export function PluginImport({
           if (!next) void close();
         }}
         title={
-          showUnchanged
-            ? "Unchanged declarations"
-            : error || !preview
-              ? updateId
-                ? "Update plugin"
-                : "Add a plugin"
-              : reviewing
-                ? duplicate
-                  ? "Already installed"
-                  : existing
-                    ? `Update ${existing.manifest.name}`
-                    : "Review plugin access"
-                : preview.candidates.length
-                  ? "Choose a plugin"
-                  : "No plugins found"
+          showUnchanged ? (
+            "Unchanged declarations"
+          ) : error || !preview ? (
+            updateId ? (
+              "Update plugin"
+            ) : (
+              "Add a plugin"
+            )
+          ) : reviewing ? (
+            duplicate ? (
+              "Already installed"
+            ) : existing ? (
+              `Update ${existing.manifest.name}`
+            ) : (
+              <>
+                Review{" "}
+                <strong>{candidate?.manifest.name ?? "Unknown"} Plugin</strong>{" "}
+                access
+              </>
+            )
+          ) : preview.candidates.length ? (
+            "Choose a plugin"
+          ) : (
+            "No plugins found"
+          )
         }
         description={
           error || showUnchanged

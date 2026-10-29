@@ -1873,7 +1873,7 @@ it.each(["acquisition", "authorization"])(
       fireEvent.click(
         screen.getByRole("button", { name: "Browse plugin folder" }),
       );
-      await screen.findByRole("dialog", { name: "Review plugin access" });
+      await screen.findByRole("dialog", { name: /^Review .+ access$/ });
       await act(async () => {
         release();
         await gate;
@@ -2118,7 +2118,7 @@ it("keeps a late close bound to the replaced import", async () => {
     />,
   );
   const review = await screen.findByRole("dialog", {
-    name: "Review plugin access",
+    name: /^Review .+ access$/,
   });
   fireEvent.keyDown(review, { key: "Escape" });
   expect(manager.imports?.discard).toHaveBeenCalledTimes(1);
@@ -2133,11 +2133,11 @@ it("keeps a late close bound to the replaced import", async () => {
       }}
     />,
   );
-  await screen.findByRole("dialog", { name: "Review plugin access" });
+  await screen.findByRole("dialog", { name: /^Review .+ access$/ });
   await act(async () => finish());
   expect(firstClosed).toHaveBeenCalledTimes(1);
   expect(secondClosed).not.toHaveBeenCalled();
   expect(
-    screen.getByRole("dialog", { name: "Review plugin access" }),
+    screen.getByRole("dialog", { name: /^Review .+ access$/ }),
   ).toBeVisible();
 });

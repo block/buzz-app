@@ -635,7 +635,7 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
     .screenshot({ path: info.outputPath("plugin-choose-light.png") });
   await button(page, "Continue").click();
   await expect(page.getByRole("dialog")).toHaveAccessibleName(
-    "Review plugin access",
+    /^Review .+ access$/,
   );
   await expect(page.getByRole("dialog")).toHaveAccessibleDescription(
     "Only install code you trust.",
@@ -1221,7 +1221,7 @@ test("Add keeps a rejected install reachable and retries the same preview", asyn
   const dialog = page
     .getByRole("dialog")
     .and(page.locator('[aria-modal="true"]'));
-  await expect(dialog).toHaveAccessibleName("Review plugin access");
+  await expect(dialog).toHaveAccessibleName(/^Review .+ access$/);
   await expect(dialog.getByRole("radio")).toHaveCount(0);
   await expect(
     dialog.getByText("Choose a plugin folder", { exact: true }),
@@ -1557,7 +1557,7 @@ for (const mode of ["Light", "Dark"]) {
     );
     await page.goto(app.origin);
     const review = page.getByRole("dialog", {
-      name: "Review plugin access",
+      name: "Review Linked plugin Plugin access",
       exact: true,
     });
     await expect(review).toBeVisible();

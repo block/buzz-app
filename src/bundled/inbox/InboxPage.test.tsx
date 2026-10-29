@@ -1173,6 +1173,38 @@ it("keeps the conversation visible and reports a failed archive save", async () 
   );
   expect(reader()).toBeInTheDocument();
 });
+it("archives a conversation when 1,000 archives are already saved", async () => {
+  const h = fixture();
+  writeView(
+    h.session.scope,
+    archiveKey,
+    Array.from({ length: 1000 }, (_, index) => ({
+      id: `gone-${index}:gone`,
+      channelId: `gone-${index}`,
+      through: index + 1,
+      messageIds: [],
+    })),
+  );
+  render(h.view);
+  await waitFor(() => expect(rows()).toHaveLength(2));
+  const thread = rows().find((row) =>
+    row.textContent?.includes("A thread update"),
+  );
+  if (!thread) throw new Error("Missing fixture thread");
+  const id = thread.getAttribute("data-inbox-row");
+  fireEvent.click(within(thread).getByRole("button", { name: /^Archive / }));
+  await waitFor(() => expect(rows()).toHaveLength(1));
+  await waitFor(() =>
+    expect(
+      screen.getByRole("list", { name: "Inbox conversations" }),
+    ).toHaveAttribute("aria-busy", "false"),
+  );
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  const saved = readArchives(viewRevision(h.session.scope, archiveKey));
+  expect(saved).toHaveLength(1000);
+  expect(saved.map((archive) => archive.id)).not.toContain("gone-0:gone");
+  expect(saved.at(-1)).toMatchObject({ id });
+});
 it.each(["reply", "unrelated", "mention"] as const)(
   "archive Retry survives an intervening %s projection update",
   async (update) => {

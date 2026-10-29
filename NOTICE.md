@@ -88,6 +88,20 @@ cropped the border, padded it to square, resized to 64×64 and quantised it to
 16 colours. The MIT license terms above also apply to this artwork, with the
 Nous Research copyright notice.
 
+Builderlab: the Builderlab Event 2026 mark was supplied by Taylor Ho as native
+Figma SVG exports on October 29, 2026.
+Builderlab is a mark of Block, Inc.
+This app's harness icon is a small-size adaptation for 16–32px choices and agent
+cards, not the full event artwork. It broadens the silhouette's top-right and
+bottom-left corner curves for legibility at small sizes, preserves the letter
+geometry and Gaussian blur, pads the viewBox to square, and converts the letter to a
+transparent luminance-mask cutout so the mark follows `currentColor`. The source's
+procedural grain and displacement are intentionally omitted: they alias at small
+sizes and render differently from Figma's texture. Larger branded surfaces should
+use a dedicated textured asset rather than scaling up this UI icon.
+No open-source license is asserted for this supplied brand asset; the mark
+remains its owner's property.
+
 ## Model-family brand marks
 
 The additional artwork in `src/shared/design-system/icons/HarnessLogos.tsx`

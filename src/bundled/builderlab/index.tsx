@@ -17,7 +17,7 @@ import { startKnownCommunitiesSync } from "./known-communities/sync";
 import type { AgentProviderSnapshot } from "../../features/agents/service";
 import { Header, InlineHeader } from "../../shared/design-system/ui/Header";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
-import { BlockLogoIcon } from "../../shared/design-system/icons";
+import { BuilderlabLogoIcon } from "../../shared/design-system/icons";
 import { HostedCommunities } from "./communities/HostedCommunities";
 import { brokerApi, createApi } from "./communities/api";
 import { createNativeBackend } from "./communities/native";
@@ -188,7 +188,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   ctx.settingsCards.register({
     id: "login",
     title: "Builderlab",
-    icon: BlockLogoIcon,
+    icon: BuilderlabLogoIcon,
     group: "Plugins",
     component: ({ active }) => (
       <section aria-labelledby="builderlab-title">

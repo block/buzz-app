@@ -472,6 +472,28 @@ it("spends nothing, rather than everything, when the clock is set back", async (
   expect(states.get(pull)).toEqual({ state: "open" });
 });
 
+it("reads links shown while the budget is spent in turn with those left before them", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const fetch = vi.fn(
+    async (_url: string) => new Response(JSON.stringify({ state: "open" })),
+  );
+  vi.stubGlobal("fetch", fetch);
+  const states = createPullStates(undefined);
+  for (const url of pulls) states.watch(url, () => {});
+  await vi.waitFor(() =>
+    expect(states.get(pulls[PUBLIC_READS_PER_POLL - 1] ?? "")).toBeDefined(),
+  );
+  // Shown half a minute after the rest were left over, they are not out of
+  // step with them, so the earlier ones cannot take every read as it is earned.
+  await vi.advanceTimersByTimeAsync(PULL_REFRESH_MS / 2);
+  const later = [second, third, pull];
+  for (const url of later) states.watch(url, () => {});
+  await vi.advanceTimersByTimeAsync(10 * PULL_REFRESH_MS);
+  for (const url of [...pulls, ...later])
+    expect(states.get(url)).toEqual({ state: "open" });
+  expect(fetch).toHaveBeenCalledTimes(PUBLIC_READS_PER_POLL + 5);
+});
+
 it("reads a public pull request never read before those that keep failing", async () => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
   // Private repositories are 404 without gh. Enough of them that some are

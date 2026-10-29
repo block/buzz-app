@@ -239,9 +239,11 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
       if (current.signal.aborted) return;
       const changed: string[] = [];
       for (const [i, url] of due.entries()) {
-        // Those a public poll left for the next one wait a minute.
+        // Those a public poll could not afford wait for the next read earned,
+        // all together, so the longest unread of them takes it whenever each
+        // was shown. One GitHub holds waits for the hold.
         if (i >= found.length) {
-          nextRead.set(url, now + PULL_REFRESH_MS);
+          nextRead.set(url, publicEarnedTo + PUBLIC_READ_EARNED_MS);
           continue;
         }
         const state = found[i] ?? "failed";

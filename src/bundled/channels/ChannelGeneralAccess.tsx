@@ -72,7 +72,7 @@ export function ChannelGeneralAccess({
   if (channel?.readOnly)
     return (
       <section aria-label="General access" className={styles.generalAccess}>
-        <h3 className="text-label-sm">General access</h3>
+        <h3 className="pb-2 text-caption text-subtle">General</h3>
         <div className={styles.accessRow}>
           <span className={styles.accessIcon} aria-hidden="true">
             {channel.visibility === "public" ? (
@@ -206,7 +206,7 @@ function ChannelGeneralAccessEditor({
       aria-busy={loading || pending}
       className={styles.generalAccess}
     >
-      <h3 className="text-label-sm">General access</h3>
+      <h3 className="pb-2 text-caption text-subtle">General</h3>
       <div className={styles.accessRow}>
         <span
           className={styles.accessIcon}

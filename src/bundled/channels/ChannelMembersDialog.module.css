@@ -161,19 +161,18 @@
 }
 
 .generalAccess {
-  display: grid;
-  gap: var(--space-3);
-  border-top: 1px solid var(--border-standard);
-  padding-top: var(--space-4);
+  padding: var(--space-2) var(--space-control-inset) 0;
+}
+.generalAccess > :where(.accessRow) ~ * {
+  margin-block-start: var(--space-3);
 }
 .accessRow {
   display: grid;
   grid-template-columns:
-    calc(var(--size-control-sm) + var(--space-6)) minmax(0, 1fr)
+    var(--size-control-sm) minmax(0, 1fr)
     auto;
   align-items: start;
-  gap: var(--space-2);
-  column-gap: 0;
+  gap: var(--space-row-gap);
 }
 .accessIcon {
   display: flex;
@@ -211,10 +210,7 @@
     max-width: 100%;
   }
   .accessRow {
-    grid-template-columns: calc(var(--size-control-sm) + var(--space-6)) minmax(
-        0,
-        1fr
-      );
+    grid-template-columns: var(--size-control-sm) minmax(0, 1fr);
   }
   .accessRole {
     grid-column: 2;

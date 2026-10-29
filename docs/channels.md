@@ -729,7 +729,8 @@ text before each row’s ellipsis button; Member and Guest are shown as **Partic
 and **Viewing only**. The ellipsis menu contains permitted role choices with
 the verified selection checked, alongside profile/removal actions and the existing role
 confirmation. Immutable roles such as Owner and self remain protected.
-**General access** sits below the list as one sentence-like row: a community avatar/lock
+**General** is the first section of the scrolling member list. Its row aligns its
+avatar slot and text with the member rows: a community avatar/lock
 icon, a compact audience Select (**Who can read**), a short result description,
 and the trailing **New people can** Select (Participate / View only), with short
 descriptions of the permitted actions. Audience options show the community avatar and

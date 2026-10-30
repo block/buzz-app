@@ -590,6 +590,20 @@ function ThreadMessages({
   const [expandedActivity, setExpandedActivity] = useState<ReadonlySet<string>>(
     new Set(),
   );
+  const [pinnedActivity, setPinnedActivity] = useState<
+    ReadonlyMap<string, number>
+  >(() => new Map());
+  const keepActivityMounted = useCallback((id: string) => {
+    setPinnedActivity((ids) => new Map(ids).set(id, (ids.get(id) ?? 0) + 1));
+    return () =>
+      setPinnedActivity((ids) => {
+        const next = new Map(ids);
+        const count = (ids.get(id) ?? 0) - 1;
+        if (count > 0) next.set(id, count);
+        else next.delete(id);
+        return next;
+      });
+  }, []);
   const activityVisit = useRef<unknown[]>([]);
   useLayoutEffect(() => {
     const request = [messageId, navigation?.signal, revealRequest];
@@ -1290,6 +1304,7 @@ function ThreadMessages({
       activitySnapshot,
       agentPubkeys,
       parent ?? rootId,
+      pinnedActivity,
     );
     const groups = presentation.groups.filter((group) =>
       group.ids.every((id) => !tree.children.get(id)?.length),
@@ -1299,7 +1314,9 @@ function ThreadMessages({
       groups,
       messageId,
     );
-    const activeGroups = groups.filter((group) => !group.done);
+    const activeGroups = groups.filter(
+      (group) => !group.done || group.retained,
+    );
     const groupsByFirst = new Map(
       activeGroups.map((group) => [group.ids[0], group]),
     );
@@ -1345,6 +1362,7 @@ function ThreadMessages({
         const recordedActivity = presentation.byRow.get(row.id);
         return (
           <MessageRow
+            keepMounted={keepActivityMounted}
             representedAgents={presentation.representedAgents.get(row.id)}
             recordedActivity={
               recordedActivity && {

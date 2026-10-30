@@ -1,3 +1,4 @@
+import { useActivityFocusHandoff } from "./use-activity-focus-handoff";
 import messageStyles from "./Messages.module.css";
 import { useReplacedTypers } from "../conversation/typing-presentation";
 import { useChannelIdentityNames } from "../identity-names/react";
@@ -441,6 +442,7 @@ function AgentChooser({
 }) {
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
+  useActivityFocusHandoff(trigger);
   const popup = useRef<HTMLDivElement>(null);
   const keyboardPreview = useRef(false);
   const actions =

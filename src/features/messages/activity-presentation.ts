@@ -78,6 +78,7 @@ export function activityPresentation(
   snapshot: Snapshot | undefined,
   agents: ReadonlySet<string> | undefined,
   rootId?: string,
+  pinnedIds?: ReadonlyMap<string, number>,
 ) {
   const following = new Map(
     rows.map((row, index) => [row.id, rows[index + 1]]),
@@ -135,9 +136,12 @@ export function activityPresentation(
       followingMessage: following.get(latest.id),
     };
     const { done, working, completedReply } = activityStatus(group, snapshot);
+    const retained = done && group.ids.some((id) => pinnedIds?.has(id));
     const before = preceding.get(first.id);
     const anchor =
-      completedReply?.authorId === first.authorId ? completedReply : before;
+      !retained && completedReply?.authorId === first.authorId
+        ? completedReply
+        : before;
     const standalone =
       !anchor ||
       !!anchor.membership ||
@@ -164,6 +168,7 @@ export function activityPresentation(
     groups.push({
       ...group,
       done,
+      retained,
       working: working.size > 0,
       standalone,
     });

@@ -1,4 +1,5 @@
-import { useLayoutEffect, useRef, type ReactNode } from "react";
+import { useActivityFocusHandoff } from "./use-activity-focus-handoff";
+import { useRef, type ReactNode } from "react";
 import { CaretUpIcon } from "../../shared/design-system/icons";
 import { AgentResponsePreview } from "./AgentResponsePreview";
 import { useActivityIndicator } from "./use-activity-indicator";
@@ -32,39 +33,7 @@ export function ActivityGroupPreview({
   renderHistory?: (row: ChannelMessage) => ReactNode;
 }) {
   const container = useRef<HTMLDivElement>(null);
-  useLayoutEffect(() => {
-    const node = container.current;
-    return () => {
-      const scope = node?.closest<HTMLElement>("[data-message-scroller]");
-      const focused = node?.ownerDocument.activeElement;
-      if (!node || !scope || !focused || !node.contains(focused)) return;
-      const top = node.getBoundingClientRect().top;
-      queueMicrotask(() => {
-        if (
-          !scope.isConnected ||
-          scope.ownerDocument.activeElement !== scope.ownerDocument.body
-        )
-          return;
-        const buttons = [
-          ...scope.querySelectorAll<HTMLButtonElement>(
-            "[data-message-id] button:not([disabled])",
-          ),
-        ];
-        const target = buttons
-          .filter(
-            (button) =>
-              button.getClientRects().length &&
-              !button.closest("[inert], [aria-hidden='true']"),
-          )
-          .sort(
-            (a, b) =>
-              Math.abs(a.getBoundingClientRect().top - top) -
-              Math.abs(b.getBoundingClientRect().top - top),
-          )[0];
-        (target ?? scope).focus({ preventScroll: true });
-      });
-    };
-  }, []);
+  useActivityFocusHandoff(container);
   const { latest: row, history, participants, done, working } = group;
   const live = useActivityIndicator(
     session,

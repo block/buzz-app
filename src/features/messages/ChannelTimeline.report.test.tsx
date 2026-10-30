@@ -24,6 +24,7 @@ import {
   scriptedTransport,
   signed,
 } from "../relay/testing";
+import { ThreadPanel } from "./ThreadPanel";
 import { ChannelTimeline } from "./ChannelTimeline";
 
 // Virtualizer boundary: render only "visible" indices plus `keepMounted`,
@@ -99,11 +100,13 @@ function mount(
   publish: (event: RelayEvent) => Promise<void>,
   targetEvent = target,
   initial = [targetEvent, neighbor],
+  threadRoot?: string,
 ) {
   let live: LiveCallbacks | undefined;
   const owner = createRelaySession(
     {
       ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+      ...(threadRoot ? { query: async () => initial } : {}),
       writer: { sign: async (template) => signed(viewer, template), publish },
       subscribe(callbacks) {
         live = callbacks;
@@ -118,13 +121,24 @@ function mount(
   const tree = () => (
     <StrictMode>
       <ToastProvider>
-        <ChannelTimeline
-          channelId="c"
-          scope="viewer"
-          queries={owner.session}
-          window={owner.session.channels.window("c")}
-          onOpenLink={() => false}
-        />
+        {threadRoot ? (
+          <ThreadPanel
+            session={owner.session}
+            scope="viewer"
+            channelName="C"
+            channelId="c"
+            messageId={threadRoot}
+            onOpenLink={() => false}
+          />
+        ) : (
+          <ChannelTimeline
+            channelId="c"
+            scope="viewer"
+            queries={owner.session}
+            window={owner.session.channels.window("c")}
+            onOpenLink={() => false}
+          />
+        )}
       </ToastProvider>
     </StrictMode>
   );
@@ -339,9 +353,14 @@ it("closing the image viewer before the report notice ends keeps the row pinned 
   expect(h.neighborRow()).not.toBeNull();
 });
 
-it.each(["draft", "pending"] as const)(
-  "retains the contained report owner through completion with a %s report",
-  async (phase) => {
+it.each([
+  ["channel", "draft"],
+  ["channel", "pending"],
+  ["thread", "draft"],
+  ["thread", "pending"],
+] as const)(
+  "retains the %s report owner through completion with a %s report",
+  async (host, phase) => {
     let release!: () => void;
     const publish = vi.fn(
       () =>
@@ -349,12 +368,26 @@ it.each(["draft", "pending"] as const)(
           release = resolve;
         }),
     );
+    const root = message(viewer, "c", "Request", 1);
+    const tags =
+      host === "thread"
+        ? [
+            ["e", root.id, "", "root"],
+            ["e", root.id, "", "reply"],
+          ]
+        : [];
     const step = message(other, "c", "Working on the report", 2, [
       ["audience", "agents"],
+      ...tags,
     ]);
-    const h = mount(publish, step, [step]);
+    const h = mount(
+      publish,
+      step,
+      [root, step],
+      host === "thread" ? root.id : undefined,
+    );
     await userEvent.click(
-      screen.getByRole("button", { name: /Show activity history/ }),
+      await screen.findByRole("button", { name: /Show activity history/ }),
     );
     const original = h.row();
     if (!original) throw new Error("Missing contained activity");
@@ -369,7 +402,7 @@ it.each(["draft", "pending"] as const)(
         await user.click(screen.getByRole("button", { name: "Submit report" }));
         await waitFor(() => expect(publish).toHaveBeenCalledOnce());
       }
-      h.receive(message(other, "c", "Finished the work", 3));
+      h.receive(message(other, "c", "Finished the work", 3, tags));
       expect(h.row()).toBe(original);
       expect(
         screen.getByRole("dialog", { name: "Report message" }),
@@ -378,9 +411,15 @@ it.each(["draft", "pending"] as const)(
     } finally {
       if (phase === "pending") await act(async () => release());
     }
-    if (phase === "pending")
+    if (phase === "pending") {
       expect(
         await screen.findByText("Report submitted to community moderators"),
       ).toBeTruthy();
+      expect(h.row()).toBe(original);
+      await user.click(screen.getByRole("button", { name: /dismiss/i }));
+    } else {
+      await user.click(screen.getByRole("button", { name: "Cancel" }));
+    }
+    await waitFor(() => expect(h.row()).toBeNull());
   },
 );

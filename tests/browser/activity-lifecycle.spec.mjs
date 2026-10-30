@@ -64,19 +64,24 @@ for (const inThread of [false, true]) {
         : []),
     ];
     let timestamp = Math.floor(Date.now() / 1000);
-    const publish = (kind, content, extra = []) =>
-      app.relay.publish(
+    const publish = (kind, content, extra = []) => {
+      timestamp =
+        kind === 20002
+          ? Math.floor(Date.now() / 1000)
+          : Math.max(timestamp + 1, Math.floor(Date.now() / 1000) + 2);
+      return app.relay.publish(
         "primary",
         finalizeEvent(
           {
             kind,
             content,
             tags: [...tags, ...extra],
-            created_at: timestamp++,
+            created_at: timestamp,
           },
           key,
         ),
       );
+    };
     publish(20002, "");
     const trigger = history.getByRole("button", {
       name: "Activity: Working agent working",
@@ -91,6 +96,36 @@ for (const inThread of [false, true]) {
         ),
       )
       .toBeLessThan(2);
+    if (!inThread) {
+      const tailHeight = await history
+        .locator("[data-conversation-activity]")
+        .evaluate((el) => el.getBoundingClientRect().height);
+      const editor = page.getByRole("textbox", {
+        name: "Message #Alpha",
+        exact: true,
+      });
+      await editor.fill("Sending while the agent is working");
+      await editor.press("Enter");
+      await expect(
+        history.getByText("Sending while the agent is working", {
+          exact: true,
+        }),
+      ).toBeVisible();
+      await expect
+        .poll(() =>
+          history.evaluate((el) =>
+            el.querySelector("[data-conversation-activity]")
+              ? el.scrollHeight - el.clientHeight - el.scrollTop
+              : Number.POSITIVE_INFINITY,
+          ),
+        )
+        .toBeLessThan(2);
+      expect(
+        await history
+          .locator("[data-conversation-activity]")
+          .evaluate((el) => el.getBoundingClientRect().height),
+      ).toBe(tailHeight);
+    }
     await trigger.focus();
     const original = await trigger.elementHandle();
     app.append(
@@ -111,6 +146,16 @@ for (const inThread of [false, true]) {
     const disclosure = history.getByRole("button", {
       name: /Show activity history:.*Checking the lifecycle/,
     });
+    await expect(disclosure).toBeVisible();
+    await expect
+      .poll(() =>
+        history.evaluate(
+          (el) =>
+            el.contains(document.activeElement) &&
+            document.activeElement !== document.body,
+        ),
+      )
+      .toBe(true);
     await disclosure.click();
     const collapse = history.getByRole("button", {
       name: /Collapse activity history/,

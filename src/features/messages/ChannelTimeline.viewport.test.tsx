@@ -1,3 +1,4 @@
+import { cloneElement } from "react";
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import {
@@ -986,3 +987,51 @@ it("reveals a directly linked completed step without restoring the completed sum
   view.unmount();
   f.owner.dispose();
 });
+
+it.each([0, 1])(
+  "includes the measured activity tail only when sent row %s is last",
+  (sentIndex) => {
+    const { owner, updates, content } = activityFixture();
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      frames.push(callback);
+      return frames.length;
+    });
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+      function (this: HTMLElement) {
+        const height = this.querySelector(
+          ":scope > [data-agent-working-status]",
+        )
+          ? 75
+          : 0;
+        return {
+          top: 0,
+          left: 0,
+          right: 800,
+          bottom: height,
+          width: 800,
+          height,
+          x: 0,
+          y: 0,
+          toJSON() {},
+        };
+      },
+    );
+    const rows = updates(2).map(({ audience: _audience, ...row }) => row);
+    try {
+      render(
+        cloneElement(content(rows), { revealMessageId: rows[sentIndex]?.id }),
+      );
+      viewport.scrollToIndex.mockClear();
+      act(() => {
+        for (const frame of frames.splice(0)) frame(0);
+      });
+      expect(viewport.scrollToIndex).toHaveBeenCalledWith(sentIndex, {
+        align: "end",
+        ...(sentIndex === 1 ? { offset: 75 } : {}),
+      });
+    } finally {
+      owner.dispose();
+    }
+  },
+);

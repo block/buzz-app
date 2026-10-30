@@ -966,16 +966,15 @@ function Timeline({
         follow.current = false;
       } else if (follow.current) {
         layoutCorrection.current = true;
-        if (revealIndex >= 0)
-          handle.current.scrollToIndex(revealIndex, { align: "end" });
-        else {
-          const tailHeight =
-            activityTail.current?.getBoundingClientRect().height ?? 0;
-          handle.current.scrollToIndex(rows.length - 1, {
-            align: "end",
-            ...(tailHeight ? { offset: tailHeight } : {}),
-          });
-        }
+        const index = revealIndex >= 0 ? revealIndex : rows.length - 1;
+        const tailHeight =
+          index === rows.length - 1
+            ? (activityTail.current?.getBoundingClientRect().height ?? 0)
+            : 0;
+        handle.current.scrollToIndex(index, {
+          align: "end",
+          ...(tailHeight ? { offset: tailHeight } : {}),
+        });
         if (revealIndex >= 0) {
           revealed.current = revealMessageId;
           pendingReveal.current = undefined;

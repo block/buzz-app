@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, type RefObject } from "react";
 import { readingPositioned } from "./use-reading";
-import { highlightMessage } from "./message-highlight";
+import { highlightMessage, messageHighlightTarget } from "./message-highlight";
 
 /** One reveal per request signal, never per row/profile/image update. */
 export function useMessageReveal({
@@ -127,9 +127,7 @@ export function useMessageReveal({
           return;
         }
         revealed.current = signal;
-        const message = row.matches("[data-message-highlight]")
-          ? row
-          : row.querySelector<HTMLElement>(":scope > [data-layout]");
+        const message = messageHighlightTarget(row);
         if (message)
           highlighted.current = highlightMessage(
             message,

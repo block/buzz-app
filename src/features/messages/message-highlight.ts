@@ -2,6 +2,12 @@ import styles from "./Messages.module.css";
 
 const cues = new WeakMap<HTMLElement, () => void>();
 
+export function messageHighlightTarget(row: HTMLElement) {
+  return row.matches("[data-message-highlight]")
+    ? row
+    : row.querySelector<HTMLElement>(":scope > [data-layout]");
+}
+
 /** Revealed links keep their cue until dismissal; returns briefly orient the reader. */
 export function highlightMessage(
   row: HTMLElement,
@@ -50,9 +56,7 @@ export function highlightMessage(
           const replacement = [
             ...container.querySelectorAll<HTMLElement>("[data-message-id]"),
           ].find((element) => element.dataset.messageId === messageId);
-          const message = replacement?.matches("[data-message-highlight]")
-            ? replacement
-            : replacement?.querySelector<HTMLElement>(":scope > [data-layout]");
+          const message = replacement && messageHighlightTarget(replacement);
           if (!message) return;
           cues.get(message)?.();
           cues.delete(current);

@@ -144,6 +144,10 @@ it("keeps the verified target highlighted until dismissal and repeats for a new 
   await frame();
   await frame();
   expect(message.classList.contains(styles.linkedHighlight ?? "")).toBe(true);
+  for (const key of ["Tab", "ArrowDown", "a"]) {
+    fireEvent.keyDown(document, { key });
+    expect(message.classList.contains(styles.linkedHighlight ?? "")).toBe(true);
+  }
   fireEvent.keyDown(document, { key: "Escape" });
   expect(message.classList.contains(styles.linkedHighlight ?? "")).toBe(false);
 });

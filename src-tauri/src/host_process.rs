@@ -111,7 +111,7 @@ impl HostProcesses {
     }
     /// Starts `command`, owned by `plugin`, and streams its output to `on_event`,
     /// unless the page that asked during `page` has since gone.
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     fn start(
         &self,
         page: u64,

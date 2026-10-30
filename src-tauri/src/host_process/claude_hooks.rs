@@ -23,6 +23,7 @@ struct State {
 #[derive(Clone)]
 pub(super) struct ClaudeHooks {
     state: Arc<Mutex<State>>,
+    #[cfg_attr(not(unix), allow(dead_code))]
     group: u32,
 }
 impl ClaudeHooks {

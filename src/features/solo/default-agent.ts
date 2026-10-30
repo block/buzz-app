@@ -30,8 +30,10 @@ const readErrors = new WeakMap<Account, string>();
 const readValues = new WeakMap<Account, string | undefined>();
 const readFailures = new WeakMap<Account, string>();
 const failedChoices = new WeakSet<Account>();
-// Accounts whose saved choice is known: read, or confirmed by a save here.
+// Accounts whose saved choice is known: read before any choice here, or
+// confirmed by a save here, and not while a save is pending.
 const known = new WeakSet<Account>();
+const saving = new WeakMap<Account, number>();
 const listeners = new Set<() => void>();
 function notifySaved() {
   for (const listener of listeners) listener();
@@ -40,6 +42,17 @@ function remember(account: Account, agent: string | undefined) {
   saved.set(account, agent);
   readErrors.delete(account);
   notifySaved();
+}
+/** Saves `agent`, or none, to the account; its choice is known once saved. */
+async function save(account: Account, agent: string | null) {
+  saving.set(account, (saving.get(account) ?? 0) + 1);
+  for (const listener of listeners) listener();
+  try {
+    await account.write(agent);
+    known.add(account);
+  } finally {
+    saving.set(account, (saving.get(account) ?? 1) - 1);
+  }
 }
 function subscribeSaved(listener: () => void) {
   listeners.add(listener);
@@ -89,7 +102,7 @@ export async function chooseDefaultAgent(
   if (!account) return;
   const attempt = advance(account);
   try {
-    await account.write(pubkey);
+    await save(account, pubkey);
   } catch {
     // Initial-read recovery must not replace an already settled account choice.
     if (revision(account) === attempt && !saved.has(account)) {
@@ -113,7 +126,6 @@ export async function chooseDefaultAgent(
     );
   }
   failedChoices.delete(account);
-  known.add(account);
   remember(account, pubkey);
 }
 
@@ -127,7 +139,7 @@ export async function clearDefaultAgent(session: RelaySession, scope: string) {
   if (!account) return;
   const attempt = advance(account);
   try {
-    await account.write(null);
+    await save(account, null);
   } catch {
     if (revision(account) === attempt) {
       if (previous) setDefaultAgent(scope, previous);
@@ -148,7 +160,6 @@ export async function clearDefaultAgent(session: RelaySession, scope: string) {
       "Removing your Bestie couldn't be saved to your account. Try again.",
     );
   }
-  known.add(account);
   if (revision(account) === attempt) remember(account, undefined);
 }
 
@@ -202,7 +213,8 @@ function adopt(account: Account, scope: string) {
         }
         const adopts = !explicit.has(account);
         if (adopts && agent !== undefined) cache(scope, agent);
-        known.add(account);
+        // A choice made meanwhile is known only once it is saved.
+        if (adopts) known.add(account);
         remember(account, adopts ? agent : (saved.get(account) ?? agent));
       },
       (cause) => {
@@ -291,7 +303,7 @@ export function savedAgentStore(session: RelaySession, scope: string) {
     snapshot: () => (account ? saved.get(account) : chosenAgent(scope)),
     /** Whether the account's choice is known, so an undefined snapshot means
      * none was saved rather than not read yet, or unreadable. */
-    known: () => !!account && known.has(account),
+    known: () => !!account && known.has(account) && !saving.get(account),
     subscribe(listener: () => void) {
       if (account) void adopt(account, scope);
       // The device's choice is browser storage; without a window there is none

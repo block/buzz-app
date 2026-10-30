@@ -2960,21 +2960,16 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   width: 100%;
 }
 
+/* Keep sent and received avatars close to their message in every layout. */
 .messageAvatar {
   user-select: none;
   position: absolute;
   bottom: 0;
-  right: calc(100% + var(--space-3));
-  display: flex;
-}
-.message:not([data-layout="timeline"]) .messageAvatar {
   right: calc(100% + var(--space-2));
+  display: flex;
 }
 .message[data-viewer-message] .messageAvatar {
   right: auto;
-  left: calc(100% + var(--space-3));
-}
-.message[data-viewer-message]:not([data-layout="timeline"]) .messageAvatar {
   left: calc(100% + var(--space-2));
 }
 .messageBubble > :is(.text, .plainText) {

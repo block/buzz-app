@@ -31,6 +31,8 @@ export type RelaySnapshot = Readonly<{
   cached?: true;
   /** Only local disk bootstrap is pending; never waits for the network. */
   restoring?: true;
+  /** This error is transient: the service reconnects without anyone acting. */
+  retrying?: true;
 }>;
 export type RelayData = {
   snapshot(): RelaySnapshot;
@@ -77,11 +79,15 @@ export function provideRelay(
   /** Whether the latest connection failure can clear without anyone acting.
    * Later publishes of the same failure (cache handoff) keep it. */
   let transientFailure = false;
-  const publish = (next: RelaySnapshot) => {
-    snapshot = Object.freeze(next);
+  const publish = ({ retrying: _retrying, ...next }: RelaySnapshot) => {
+    if (next.status !== "error") transientFailure = false;
+    snapshot = Object.freeze(
+      transientFailure && !disposed
+        ? { ...next, retrying: true as const }
+        : next,
+    );
     clearTimeout(reconnectTimer);
     reconnectTimer = undefined;
-    if (next.status !== "error") transientFailure = false;
     if (next.status === "ready" && !next.cached) reconnects = 0;
     else if (next.status === "error" && transientFailure && !disposed)
       reconnectTimer = setTimeout(

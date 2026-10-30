@@ -8,6 +8,14 @@ import { AgentsContext } from "../features/agents/react";
 import { ToastProvider } from "../shared/design-system/ui/Toast";
 import { AlertDialog } from "../shared/design-system/ui/AlertDialog";
 import { Button } from "../shared/design-system/ui/Button";
+import { EmptyState } from "../shared/design-system/ui/EmptyState";
+import { LoadingRegion } from "../shared/design-system/ui/LoadingRegion";
+import {
+  CloudOffIcon,
+  LinkBreakIcon,
+  LockIcon,
+  WarningCircleIcon,
+} from "../shared/design-system/icons";
 import { ModalWindowDragProvider } from "../shared/design-system/ui/ModalWindowDrag";
 import { modalWindowDragHandlers } from "./shell/title-bar";
 import { isTauri } from "@tauri-apps/api/core";
@@ -187,6 +195,8 @@ function ConnectedApp({ services }: { services: AppServices }) {
     return () => document.removeEventListener("focusin", remember);
   }, []);
   const retryFocus = useRef<string | undefined>(undefined);
+  /** The visit whose Try again already failed once, for honest feedback. */
+  const [retriedEntry, setRetriedEntry] = useState<string>();
   // A passive effect runs after the destination's own mount focus, so this
   // only fills in when focus would otherwise be left on the body.
   useEffect(() => {
@@ -332,38 +342,95 @@ function ConnectedApp({ services }: { services: AppServices }) {
   // Preserve Settings' completion/focus state across admitted scope changes.
   // A blocked destination may retain only its own scope's dirty editor.
   if (settings && !settingsBlocked) settingsEditorScope.current = settingsScope;
+  const failureReason = route.state.reason ?? route.failure;
+  const failureKind =
+    failureReason === "denied"
+      ? "denied"
+      : route.state.ingress && !route.state.retryable
+        ? "link"
+        : route.offline
+          ? "offline"
+          : "unavailable";
+  const retryButton = (variant: "primary" | "quiet") => (
+    <Button
+      type="button"
+      variant={variant}
+      onClick={(event) => {
+        const focused = event.currentTarget === document.activeElement;
+        const before = services.navigation.snapshot().attempt.id;
+        setRetriedEntry(route.state.entry.id);
+        route.retry();
+        // Retry can remove this control and briefly unmount the
+        // shell; hand focus to main only once it has fallen away.
+        const after = services.navigation.snapshot().attempt.id;
+        retryFocus.current = focused && after !== before ? after : undefined;
+      }}
+    >
+      Try again
+    </Button>
+  );
+  const messagesButton = (variant: "primary" | "quiet") => (
+    <Button
+      type="button"
+      variant={variant}
+      onClick={() => select("buzz.channels/channels")}
+    >
+      Go to Messages
+    </Button>
+  );
   const destinationFailure = (
-    <div role="alert" className="notice">
-      <h1>This destination couldn’t open</h1>
-      <p>
-        {(route.state.reason ?? route.failure) === "denied"
-          ? "This target needs its original account and an already joined community."
-          : route.state.ingress && !route.state.retryable
-            ? "This link is invalid or unsupported."
-            : "The destination is unavailable or isn’t supported yet. Your target has been kept for retry."}
-      </p>
-      {(!route.state.ingress || route.state.retryable) && (
-        <Button
-          type="button"
-          onClick={(event) => {
-            const focused = event.currentTarget === document.activeElement;
-            const before = services.navigation.snapshot().attempt.id;
-            route.retry();
-            // Retry can remove this control and briefly unmount the
-            // shell; hand focus to main only once it has fallen away.
-            const after = services.navigation.snapshot().attempt.id;
-            retryFocus.current =
-              focused && after !== before ? after : undefined;
-          }}
-        >
-          Retry navigation
-        </Button>
+    <div role="alert" className="page-status">
+      {failureKind === "denied" ? (
+        <EmptyState
+          icon={<LockIcon />}
+          title="You don’t have access to this"
+          description="It belongs to another account or a community you haven’t joined."
+          action={messagesButton("primary")}
+        />
+      ) : failureKind === "link" ? (
+        <EmptyState
+          icon={<LinkBreakIcon />}
+          title="This link doesn’t work"
+          description="It may be incomplete or out of date."
+          action={messagesButton("primary")}
+        />
+      ) : failureKind === "offline" ? (
+        <EmptyState
+          icon={<CloudOffIcon />}
+          title="Can’t connect"
+          description={
+            retriedEntry === route.state.entry.id
+              ? "Still can’t connect. We’ll keep trying."
+              : "Check your connection. We’ll keep trying."
+          }
+          action={
+            <>
+              {retryButton("primary")}
+              {messagesButton("quiet")}
+            </>
+          }
+        />
+      ) : (
+        <EmptyState
+          icon={<WarningCircleIcon />}
+          title="This page isn’t available"
+          description="It may have been removed, or you may need to update Buzz."
+          action={
+            <>
+              {messagesButton("primary")}
+              {(!route.state.ingress || route.state.retryable) &&
+                retryButton("quiet")}
+            </>
+          }
+        />
       )}
-      {!settings && (
-        <Button type="button" onClick={() => select("settings")}>
-          Open Settings
-        </Button>
-      )}
+    </div>
+  );
+  const opening = (
+    <div className="page-status">
+      <LoadingRegion pending label="Loading…">
+        {null}
+      </LoadingRegion>
     </div>
   );
   return (
@@ -472,10 +539,10 @@ function ConnectedApp({ services }: { services: AppServices }) {
                 route.state.status === "failed") ? (
               destinationFailure
             ) : !settings && route.waiting ? (
-              <p role="status">Opening destination…</p>
+              opening
             ) : startup === "loading" || restoring ? (
               settings ? null : (
-                <p role="status">Opening destination…</p>
+                opening
               )
             ) : workspace.page ? (
               <PageView
@@ -535,11 +602,11 @@ function ConnectedApp({ services }: { services: AppServices }) {
             }}
           >
             <div id="settings-content" className="h-full" tabIndex={-1}>
-              {settingsUnavailable ? (
-                destinationFailure
-              ) : route.waiting ? (
-                <p role="status">Opening destination…</p>
-              ) : null}
+              {settingsUnavailable
+                ? destinationFailure
+                : route.waiting
+                  ? opening
+                  : null}
               {(!settingsBlocked ||
                 (settingsUnsaved &&
                   settingsEditorScope.current === settingsScope)) && (

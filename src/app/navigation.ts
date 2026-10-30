@@ -49,6 +49,11 @@ export function useAppNavigation(
   // frame was the timeout notice.
   useLayoutEffect(() => services.navigationHost.attach(), [services]);
 
+  const relay = useSyncExternalStore(
+    services.relay.subscribe,
+    services.relay.snapshot,
+  );
+
   const startup = plugins.configuration.status;
   const target = state.entry.target;
   const settings = target.kind === "settings";
@@ -327,6 +332,25 @@ export function useAppNavigation(
       services.communities.select(membership.id);
     }
   }, [services, state.attempt, failure, scope, client, membership]);
+  // A visit whose content could not load, or did not load in time, reopens by
+  // itself once per live connection: a dropped or slow connection recovers
+  // without Retry. Host-decided, denied and invalid visits keep their error.
+  const reopened = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (
+      state.status !== "failed" ||
+      state.ingress ||
+      failure ||
+      (state.reason !== "timeout" && state.reason !== "unavailable") ||
+      relay.status !== "ready" ||
+      relay.cached
+    )
+      return;
+    const key = `${state.entry.id}:${relay.generation}`;
+    if (reopened.current === key) return;
+    reopened.current = key;
+    void navigation.retry();
+  }, [navigation, state, failure, relay]);
   const select = (
     key: string,
     options?: Pick<NavigationOpenOptions, "focus"> & {
@@ -385,6 +409,8 @@ export function useAppNavigation(
     waiting,
     failure,
     selected: pageKey ?? target.kind,
+    /** The failed visit cannot reach its community yet; it reopens when it can. */
+    offline: relay.status === "connecting" || relay.status === "error",
     workspace: {
       page: workspacePage || undefined,
       target: workspaceTarget,

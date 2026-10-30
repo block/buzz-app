@@ -459,6 +459,16 @@
   .notice {
     @apply my-5 rounded-2xl border border-warning-border bg-warning-surface p-5 text-body-sm text-warning;
   }
+  /* A page-sized status, such as a page that could not open, centered in its pane. */
+  .page-status {
+    display: grid;
+    place-items: center;
+    min-block-size: 100%;
+    padding: var(--space-6);
+  }
+  .page-status > * {
+    max-inline-size: 28rem;
+  }
   .error,
   .danger {
     @apply text-danger;

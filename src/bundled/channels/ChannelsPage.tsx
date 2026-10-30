@@ -170,9 +170,17 @@ export function ChannelsPage({
     if (!navigation || !sessionNavigation) return;
     if (session.status === "disconnected" && navigation.target.kind === "page")
       sessionNavigation.complete({ status: "opened" });
-    else if (session.status === "error" && !session.cached)
+    // A connection that is retrying on its own keeps the visit pending; the
+    // visit deadline bounds the wait and the host reopens it once connected.
+    else if (session.status === "error" && !session.cached && !session.retrying)
       sessionNavigation.complete({ status: "failed", reason: "unavailable" });
-  }, [navigation, sessionNavigation, session.status, session.cached]);
+  }, [
+    navigation,
+    sessionNavigation,
+    session.status,
+    session.cached,
+    session.retrying,
+  ]);
   return (
     <section className={styles.root} aria-label="Channels">
       {session.status !== "ready" && !session.cached ? (

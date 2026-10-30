@@ -120,8 +120,11 @@ it("retains a timed-out cached startup, rejects the late handshake and promotes 
     status: "error",
     cached: true,
     error: expect.stringContaining("timed out"),
+    // A timeout reconnects by itself; navigation waits instead of failing.
+    retrying: true,
   });
   data.retry();
+  expect(data.snapshot().retrying).toBeUndefined();
   await vi.waitFor(() => expect(connections).toHaveLength(2));
   connections[0]?.resolve(source);
   await vi.advanceTimersByTimeAsync(10);
@@ -141,6 +144,7 @@ it("explicit handshake denial purges saved history instead of retaining offline 
   connections[0]?.reject(new ReadError("denied", "Removed"));
   await vi.waitFor(() => expect(data.snapshot().status).toBe("error"));
   expect(data.snapshot().cached).toBeUndefined();
+  expect(data.snapshot().retrying).toBeUndefined();
   expect(data.snapshot().session.channels.list().channels).toEqual([]);
   expect(await disk.readStartup?.()).toBeUndefined();
   expect(await disk.read()).toEqual([]);

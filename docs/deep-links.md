@@ -71,11 +71,14 @@ community **Open in Buzz**; `name` is ignored) are the same form without a code:
 they open the join dialog with the relay prefilled or, when this device already
 belongs to that community, switch to it. Links that name no destination, such
 as bare `buzz://`, unknown hosts, missing or malformed parameters, malformed join
-or community links, incomplete entity or plugin links and oversize links, open Inbox in the
-selected community with a "This link doesn't work" notice; with Inbox turned
-off, the notice shows over the page the link interrupted. A repeat replaces
-the notice, and the next link that names a destination clears it. Without an identity and selected community the link waits for both,
-and new navigation cancels it. A valid link that cannot open yet, or that is
+or community links, incomplete entity or plugin links and oversize links, show a "This
+link doesn't work" notice. In a running app the notice shows over the current
+page, and history is unchanged. A link that launches the app, read before the
+client is first ready, opens Inbox in the selected community with the notice;
+with Inbox turned off, the notice shows over the start page. A repeat replaces
+the notice, and the next link that names a destination clears it. Without an
+identity and selected community a launch link waits for both, and new
+navigation cancels it. A valid link that cannot open yet, or that is
 not yours, keeps its own failure: `unavailable` with Retry, or `denied`.
 Nothing is auto-joined. A valid address
 is never authorization:
@@ -109,7 +112,7 @@ the correct community before opening it. Original mobile Buzz requires a UUID
 channel identifier; named development channels are supported here but do not imply
 mobile compatibility. The app has no link form of its own beyond the Buzz ones:
 unknown `buzz://` hosts are rejected everywhere, staying plain text in message
-content and opening Inbox with a notice at the OS boundary.
+content and showing the notice at the OS boundary.
 
 ## Testing locally
 
@@ -118,8 +121,8 @@ For OS ingress, use a packaged app or debug bundle. Write a link by hand, such a
 A warm packaged app should come to the front and open the conversation. A cold
 start should launch, show the start page, then open the destination once the
 client is ready. A malformed link such as `buzz://` or
-`buzz://join?relay=example` must open Inbox with the "This link doesn't work"
-notice. Ordinary `just desktop` keeps in-app Buzz links and
+`buzz://join?relay=example` must show the "This link doesn't work" notice over
+the current page when warm, and open Inbox with it on a cold start. Ordinary `just desktop` keeps in-app Buzz links and
 **Copy link**, but external `buzz://` delivery is not a supported development
 contract.
 

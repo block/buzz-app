@@ -325,7 +325,10 @@ it.each([""])(
       queue.push(`buzz://join${path}?relay=example&code=x`);
       ping();
       await vi.waitFor(() => expect(rejected).toHaveBeenCalledTimes(1));
-      expect(host.navigation.snapshot().entry.target).toEqual(inbox);
+      expect(host.navigation.snapshot().entry.target).toEqual({
+        version: 1,
+        kind: "home",
+      });
       expect(fail).not.toHaveBeenCalled();
     } finally {
       stop();
@@ -364,39 +367,39 @@ it.each([
   "buzz://channel/%E0%A4%A",
   "buzz://unknown/general",
 ])(
-  "opens Inbox and explains a malformed or unsupported warm link: %s",
+  "explains a malformed or unsupported warm link over the current page: %s",
   async (url) => {
     const t = harness(ready);
     await settle();
+    await t.host.navigation.open({ version: 1, kind: "settings" });
+    const before = t.host.navigation.snapshot();
     t.arrive(url);
     await settle();
-    expect(t.log).toEqual(["rejected", inboxOpen]);
+    expect(t.host.rejected).toHaveBeenCalledTimes(1);
+    expect(t.host.navigation.open).toHaveBeenCalledTimes(1);
     expect(t.host.fail).not.toHaveBeenCalled();
+    expect(t.host.inboxOff).not.toHaveBeenCalled();
     expect(t.host.navigation.snapshot()).toMatchObject({
-      entry: { target: inbox },
+      entry: { id: before.entry.id },
       status: "opened",
+      canGoForward: false,
     });
     t.stop();
   },
 );
-it("explains each repeated malformed link without stacking visits, then opens a valid one", async () => {
+it("explains each repeated malformed warm link without adding visits, then opens a valid one", async () => {
   const t = harness(ready);
   await settle();
   t.arrive("buzz://");
   await settle();
   t.arrive("buzz://");
   await settle();
-  expect(t.log).toEqual(["rejected", inboxOpen, "rejected", inboxOpen]);
+  expect(t.log).toEqual(["rejected", "rejected"]);
   expect(t.host.accepted).not.toHaveBeenCalled();
   t.arrive("buzz://channel/general");
   await settle();
   expect(t.host.accepted).toHaveBeenCalledTimes(1);
-  expect(t.log.at(-1)).toBe(channelOpen);
-  expect(t.host.navigation.snapshot().entry.target).toMatchObject({
-    channelId: "general",
-  });
-  t.host.navigation.back();
-  expect(t.host.navigation.snapshot().entry.target).toEqual(inbox);
+  expect(t.log).toEqual(["rejected", "rejected", channelOpen]);
   t.host.navigation.back();
   expect(t.host.navigation.snapshot().entry.target).toEqual({
     version: 1,
@@ -404,18 +407,14 @@ it("explains each repeated malformed link without stacking visits, then opens a 
   });
   t.stop();
 });
-it("explains a malformed link over the current page, adding no visit, when Inbox is turned off", async () => {
-  const t = harness(ready);
+it("explains a malformed launch link over the start page, adding no visit, when Inbox is turned off", async () => {
+  const t = harness(loading, ["buzz://"]);
   t.host.inboxOff.mockReturnValue(true);
   await settle();
-  await t.host.navigation.open({ version: 1, kind: "settings" });
   const before = t.host.navigation.snapshot();
-  t.arrive("buzz://");
-  await settle();
-  t.arrive("buzz://");
-  await settle();
-  expect(t.host.rejected).toHaveBeenCalledTimes(2);
-  expect(t.host.navigation.open).toHaveBeenCalledTimes(1);
+  t.become(ready);
+  expect(t.host.rejected).toHaveBeenCalledTimes(1);
+  expect(t.host.navigation.open).not.toHaveBeenCalled();
   expect(t.host.navigation.snapshot()).toMatchObject({
     entry: { id: before.entry.id },
     canGoForward: false,

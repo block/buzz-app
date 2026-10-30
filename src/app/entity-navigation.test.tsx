@@ -186,50 +186,24 @@ it("keeps an OS entity intent through real community selection and Retry in App"
       },
     },
   });
-  // A link that names nothing lands on Inbox with a notice, as a real visit
-  // that Back leaves, and a valid link afterwards still opens.
-  const recovered = current.navigation.snapshot().entry.id;
-  await act(async () => {
-    queue.push("buzz://");
-    ping();
-  });
-  await screen.findByRole("dialog", { name: "This link doesn’t work" });
-  await waitFor(() =>
-    expect(current.navigation.snapshot()).toMatchObject({
-      status: "opened",
-      entry: {
-        target: {
-          kind: "page",
-          pluginId: "buzz.inbox",
-          pageId: "inbox",
-          scope: { viewer, communityOrigin: origin },
-        },
-      },
-    }),
-  );
-  expect(current.navigation.snapshot().ingress).toBeUndefined();
-  // The notice is the only failure shown: no card replaces the page.
-  expect(screen.getAllByText(pageFailure)).toHaveLength(1);
-  await act(async () => current.navigation.back());
-  await screen.findByText("Actual recovered destination");
-  expect(current.navigation.snapshot().entry.id).toBe(recovered);
-  // With Inbox turned off, the notice shows over the page in place and
-  // history is unchanged.
-  await act(() => current.plugins.change("disable", "buzz.inbox"));
-  const shown = current.rejectedLinks.snapshot();
+  // A link that names nothing, in the running app, shows its notice over the
+  // page in place: no visit, and history is unchanged.
   const before = current.navigation.snapshot();
   await act(async () => {
     queue.push("buzz://");
     ping();
   });
-  await waitFor(() => expect(current.rejectedLinks.snapshot()).not.toBe(shown));
+  await screen.findByRole("dialog", { name: "This link doesn’t work" });
   expect(current.navigation.snapshot()).toMatchObject({
     status: "opened",
     attempt: { id: before.attempt.id },
-    entry: { id: recovered },
+    entry: { id: before.entry.id },
     canGoForward: before.canGoForward,
   });
+  expect(current.navigation.snapshot().ingress).toBeUndefined();
   expect(screen.getByText("Actual recovered destination")).toBeVisible();
+  // The notice is the only failure shown: no card replaces the page.
+  expect(screen.getAllByText(pageFailure)).toHaveLength(1);
   await act(async () => {
     queue.push("buzz://channel/general");
     ping();
@@ -250,11 +224,56 @@ it("keeps an OS entity intent through real community selection and Retry in App"
   );
 });
 
+it.each([
+  ["opens Inbox with the notice", true],
+  ["shows the notice over the start page when Inbox is turned off", false],
+] as const)(
+  "for a malformed link that launches the app, %s",
+  async (_, inbox) => {
+    // The client stays loading until released, so the link is a launch link.
+    let release = () => {};
+    const identity = new Promise<void>((resolve) => (release = resolve));
+    const { current } = bindCommunityLinks(
+      origin,
+      async () => ["buzz://"],
+      identity,
+    );
+    await waitFor(() => expect(current.plugins.startup()).not.toBe("loading"));
+    if (!inbox)
+      await act(() => current.plugins.change("disable", "buzz.inbox"));
+    const before = current.navigation.snapshot();
+    release();
+    await screen.findByRole("dialog", { name: "This link doesn’t work" });
+    if (inbox)
+      await waitFor(() =>
+        expect(current.navigation.snapshot()).toMatchObject({
+          status: "opened",
+          entry: {
+            target: {
+              kind: "page",
+              pluginId: "buzz.inbox",
+              pageId: "inbox",
+              scope: { viewer, communityOrigin: origin },
+            },
+          },
+        }),
+      );
+    else
+      expect(current.navigation.snapshot()).toMatchObject({
+        attempt: { id: before.attempt.id },
+        entry: { id: before.entry.id },
+        canGoForward: false,
+      });
+  },
+);
+
 const elsewhere = "https://elsewhere.example";
 /** Live App services with community links bound to a controllable shell. */
 function bindCommunityLinks(
   selected: string | null,
   take: () => Promise<readonly string[]>,
+  /** Holds the identity lookup, keeping the client loading. */
+  identity?: Promise<void>,
 ) {
   vi.stubGlobal(
     "ResizeObserver",
@@ -279,7 +298,10 @@ function bindCommunityLinks(
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string) => {
-      if (url.endsWith("/identity")) return Response.json({ viewer });
+      if (url.endsWith("/identity")) {
+        await identity;
+        return Response.json({ viewer });
+      }
       if (url.endsWith("/session"))
         return Response.json({ viewer, relayAuthor: viewer, relayUrl: origin });
       if (url.endsWith("/query")) return Response.json([]);

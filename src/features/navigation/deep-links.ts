@@ -23,11 +23,11 @@ export type DeepLinkHost = Readonly<{
   navigation: Pick<Navigation, "open" | "snapshot" | "subscribe">;
   /** Host-only: record an ingress that produced no destination. */
   fail(reason: OpenFailure, retry?: () => Promise<OpenResult>): void;
-  /** Explain a link that names no Buzz destination; the binding opens Inbox. */
+  /** Explain a link that names no Buzz destination. */
   rejected(): void;
   /** A newer link names a destination, so an earlier rejection's notice is stale. */
   accepted(): void;
-  /** Inbox is known to be turned off, so a rejected link stays where it is. */
+  /** Inbox is known to be turned off, so a rejected launch link stays put. */
   inboxOff(): boolean;
   /** Invite presentation belongs to the community switcher, not navigation. */
   invite?: (invite: InviteLink, viewer: string) => void;
@@ -111,6 +111,8 @@ export function bindDeepLinks(
         invite: InviteLink | null;
         /** Names no destination, so no account or community binds it. */
         invalid: boolean;
+        /** Read before the client was first ready: it launched the app. */
+        launch: boolean;
         viewer: string | undefined;
         selected: string | null;
         reported: boolean;
@@ -118,32 +120,42 @@ export function bindDeepLinks(
     | undefined;
   let attempt = host.navigation.snapshot().attempt;
   let client = communities.snapshot();
+  const isReady = (client: Client) =>
+    client.status === "ready" && !!client.viewer && !!client.selected;
+  // Whether the client has been ready since binding: the app is running.
+  let running = isReady(client);
   let clientEpoch = 0;
-  // A malformed link opens Inbox once there is one to show; with Inbox turned
-  // off, its notice shows over the current page. Until then it waits like any
-  // held link, and newer navigation cancels it.
-  const reject = (client: Client): Promise<OpenResult> => {
-    if (client.status !== "ready" || !client.viewer || !client.selected)
+  // A malformed link in a running app explains itself over the page the user
+  // is on. One that launched the app opens Inbox once there is one to show, or,
+  // with Inbox turned off, explains itself over the start page. Until then it
+  // waits like any held link, and newer navigation cancels it.
+  const reject = (client: Client, launch: boolean): Promise<OpenResult> => {
+    const scope =
+      client.status === "ready" && client.viewer && client.selected
+        ? {
+            viewer: client.viewer,
+            communityOrigin: communityDestination(client.selected).url,
+          }
+        : undefined;
+    if (launch && !scope)
       return Promise.resolve({ status: "failed", reason: "invalid-target" });
     held = undefined;
     host.rejected();
-    if (host.inboxOff()) return Promise.resolve({ status: "cancelled" });
+    if (!launch || !scope || host.inboxOff())
+      return Promise.resolve({ status: "cancelled" });
     return host.navigation.open({
       version: 1,
       kind: "page",
       pluginId: "buzz.inbox",
       pageId: "inbox",
-      scope: {
-        viewer: client.viewer,
-        communityOrigin: communityDestination(client.selected).url,
-      },
+      scope,
     });
   };
   const openHeld = (): Promise<OpenResult> => {
     if (closed || !held) return Promise.resolve({ status: "cancelled" });
     const client = communities.snapshot();
     const incoming = held;
-    if (incoming.invalid) return reject(client);
+    if (incoming.invalid) return reject(client, incoming.launch);
     if (
       (incoming.viewer && incoming.viewer !== client.viewer) ||
       (!incoming.invite &&
@@ -171,7 +183,7 @@ export function bindDeepLinks(
       held = undefined;
       return host.navigation.open(step.open);
     }
-    if (step.fail === "invalid-target") return reject(client);
+    if (step.fail === "invalid-target") return reject(client, incoming.launch);
     // Only an unbound link fails here; it stays held for Retry.
     incoming.reported = true;
     host.fail(step.fail, openHeld);
@@ -206,6 +218,7 @@ export function bindDeepLinks(
         requested = false;
         const started = host.navigation.snapshot().attempt;
         const epoch = clientEpoch;
+        const launch = !running;
         let urls: readonly string[];
         try {
           urls = await shell.take();
@@ -235,6 +248,7 @@ export function bindDeepLinks(
           url,
           invite,
           invalid: !invite && !buzzLink(url),
+          launch,
           viewer: client.viewer,
           selected: client.selected,
           reported: false,
@@ -256,6 +270,7 @@ export function bindDeepLinks(
     )
       clientEpoch++;
     client = next;
+    running ||= isReady(next);
     flush();
   });
   const stopNavigation = host.navigation.subscribe(() => {

@@ -496,6 +496,26 @@ test.describe("pages inside one second", () => {
     } finally {
       await page.evaluate(() => window.releaseFrames());
     }
+    // A pause in geometry is not completion of the deferred page measurements.
+    // Wait for Virtua's offsets to reflect the mounted rows' actual heights
+    // before taking an independent baseline for the growth below the reader.
+    await expect
+      .poll(() =>
+        history(page).evaluate((element) => {
+          const items = Array.from(element.querySelector("ol").children);
+          return items.every((item, index) => {
+            const next = items[index + 1];
+            return (
+              !next ||
+              Math.abs(
+                next.getBoundingClientRect().top -
+                  item.getBoundingClientRect().bottom,
+              ) < 1
+            );
+          });
+        }),
+      )
+      .toBe(true);
     await settle(page);
     await grow(page);
   });

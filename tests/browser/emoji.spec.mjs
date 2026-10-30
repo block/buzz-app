@@ -89,8 +89,7 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
       page.getByRole("link", { name: "https://example.test/:party" }),
     ).toHaveAttribute("href", "https://example.test/:party");
     const historic = page.locator('img[src*="original.png"]');
-    // A transient media failure must recover in the mounted message. Reopening
-    // the channel used to be the only way to clear CustomEmoji's failed state.
+    // A transient media failure must recover while the same message remains mounted.
     const historicMessage = page.locator("p").filter({ hasText: "Historic" });
     releaseHistoric();
     await expect(historicMessage).toContainText(":unknown:party:");

@@ -2305,3 +2305,71 @@ it("hides managed recommendations where plugins cannot be imported", () => {
   act(fixture.publish);
   expect(screen.queryByRole("region", { name: /Recommended by/ })).toBeNull();
 });
+
+it("routes a managed plugin's updates through the managed review instead of the reference tip", async () => {
+  const manifest = {
+    id: "example.external",
+    name: "Zebra external",
+    apiVersion: 1 as const,
+  };
+  const git = vi.fn(async () => ({
+    token: "pinned",
+    source: "https://example.com/plugins",
+    commit: pinned,
+    warnings: [],
+    candidates: [{ path: "dist", revision: "pinned-revision", manifest }],
+  }));
+  const checkGit = vi.fn(async () => {
+    throw new Error("the reference tip must not be checked");
+  });
+  const fixture = reviewPluginFixture({
+    communities: {
+      ...host.communities,
+      relay: { snapshot: () => ({ status: "connecting" }) },
+    } as never,
+  });
+  const external = fixture.snapshot.configuration.catalog.plugins[1];
+  Object.assign(external as object, {
+    updateSource: {
+      repository: "https://example.com/plugins",
+      reference: "v1",
+      path: "dist",
+    },
+  });
+  Object.assign(fixture.manager, {
+    imports: { git, checkGit, discard: vi.fn(async () => {}) },
+    installImport: vi.fn(async () => true),
+  });
+  Object.assign(fixture.snapshot.configuration, {
+    managed: managedPolicy("outdated"),
+  });
+  act(fixture.publish);
+  fireEvent.click(
+    screen.getByRole("button", { name: "View Zebra external details" }),
+  );
+  const details = screen.getByRole("complementary", {
+    name: "Zebra external details",
+  });
+  expect(
+    within(details).getByText(/Example Org recommends a different version/),
+  ).toBeVisible();
+  expect(
+    within(details).queryByRole("button", {
+      name: /Check for updates|^Update/,
+    }),
+  ).toBeNull();
+  fireEvent.click(
+    within(details).getByRole("button", { name: "Review update" }),
+  );
+  const dialog = await screen.findByRole("dialog", {
+    name: "Update Zebra external",
+  });
+  await within(dialog).findByRole("button", { name: "Update" });
+  expect(git).toHaveBeenCalledWith(
+    "https://example.com/plugins",
+    "v1",
+    undefined,
+    pinned,
+  );
+  expect(checkGit).not.toHaveBeenCalled();
+});

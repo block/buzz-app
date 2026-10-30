@@ -52,7 +52,7 @@ import { canRetryPlugin, type PluginManager } from "../plugins/manager";
 import type { Catalog, PluginInfo } from "../plugins/types";
 import type { Communities, Membership } from "../features/communities/service";
 import { PluginImport } from "./PluginImport";
-import { ManagedPlugins } from "./ManagedPlugins";
+import { ManagedPluginUpdate, ManagedPlugins } from "./ManagedPlugins";
 import { managedBy, pendingManaged } from "../plugins/managed";
 import { RecommendationCount } from "./RecommendationCount";
 import { PluginReadme } from "./PluginReadme";
@@ -283,7 +283,7 @@ function pluginToggleDisabled(
 
 function PluginDetails({
   plugin,
-  managedSource,
+  managed,
   failure,
   retryable,
   busy,
@@ -301,7 +301,7 @@ function PluginDetails({
   initialUpdateAvailable,
 }: {
   plugin: PluginInfo;
-  managedSource?: string | undefined;
+  managed?: ReturnType<typeof managedBy>;
   failure: string | null;
   retryable: boolean;
   busy: boolean;
@@ -392,9 +392,9 @@ function PluginDetails({
             <CheckCircleIcon size={14} aria-hidden="true" />
             Installed
           </span>
-          {managedSource && (
+          {managed && (
             <span className={styles.pluginInstallBadge}>
-              Managed by {managedSource}
+              Managed by {managed.source}
             </span>
           )}
           <span
@@ -491,7 +491,18 @@ function PluginDetails({
           </span>
         )}
       </div>
-      {plugin.source === "external" && plugins.imports && (
+      {plugin.source === "external" && plugins.imports && managed && (
+        <ManagedPluginUpdate
+          plugins={plugins}
+          catalog={catalog}
+          busy={busy}
+          source={managed.source}
+          entry={managed.entry}
+          returnFocus={() => close.current}
+          {...(authorizeGit ? { authorizeGit } : {})}
+        />
+      )}
+      {plugin.source === "external" && plugins.imports && !managed && (
         <PluginImport
           key={`${plugin.revision}:${JSON.stringify(plugin.updateSource)}`}
           initialUpdateAvailable={initialUpdateAvailable}
@@ -938,6 +949,7 @@ export function Settings({
                 (running?.revision === plugin.revision ? running.error : null);
               const updateAvailable =
                 !!plugins.imports &&
+                !managedBy(managed, id) &&
                 updateChecks[id]?.revision === plugin.revision &&
                 !!updateChecks[id]?.available;
               const name = (
@@ -1464,9 +1476,10 @@ export function Settings({
         <PluginDetails
           key={selectedPlugin.manifest.id}
           plugin={selectedPlugin}
-          managedSource={managedBy(managed, selectedPlugin.manifest.id)?.source}
+          managed={managedBy(managed, selectedPlugin.manifest.id)}
           catalog={catalog}
           initialUpdateAvailable={
+            !managedBy(managed, selectedPlugin.manifest.id) &&
             updateChecks[selectedPlugin.manifest.id]?.revision ===
               selectedPlugin.revision &&
             updateChecks[selectedPlugin.manifest.id]?.available === true

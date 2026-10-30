@@ -355,3 +355,253 @@ it("reports an unusable file and ignored entries without recommending anything",
   );
   expect(screen.queryByRole("button")).toBeNull();
 });
+
+const other = "fedcba9876543210fedcba9876543210fedcba98";
+
+it("refuses a preview whose commit is not the pinned one, even when the host ignored the pin", async () => {
+  const { manager, imports } = harness({
+    git: vi.fn(async () => preview({ commit: other })),
+  });
+  show(manager, ready([entry("missing")]));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Review and install example.managed" }),
+  );
+  const dialog = await screen.findByRole("dialog");
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+    `returned commit ${other}, not the recommended commit ${commit}`,
+  );
+  expect(imports.discard).toHaveBeenCalledWith("preview");
+  expect(
+    within(dialog).queryByRole("button", { name: "Install plugin" }),
+  ).toBeNull();
+  expect(manager.installImport).not.toHaveBeenCalled();
+});
+
+it("refuses a preview without a commit and accepts the pin in any letter case", async () => {
+  const missing = harness({
+    git: vi.fn(async () => preview({ commit: null })),
+  });
+  const first = show(missing.manager, ready([entry("missing")]));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Review and install example.managed" }),
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent("unknown");
+  first.unmount();
+  cleanup();
+  const upper = harness({
+    git: vi.fn(async () => preview({ commit: commit.toUpperCase() })),
+  });
+  show(upper.manager, ready([entry("missing")]));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Review and install example.managed" }),
+  );
+  expect(
+    await screen.findByRole("button", { name: "Install plugin" }),
+  ).toBeEnabled();
+});
+
+it("keeps reviewing and enables a new plugin when installing empties the recommendations", async () => {
+  const { manager, imports } = harness();
+  const view = (managed: Policy, plugins: Catalog["plugins"]) => (
+    <ManagedPlugins
+      plugins={manager as unknown as PluginManager}
+      managed={managed}
+      catalog={catalog(plugins)}
+      busy={false}
+    />
+  );
+  const { rerender } = render(view(ready([entry("missing")]), []));
+  let dialogAtEnable: HTMLElement | null = null;
+  let discardedBeforeEnable = false;
+  manager.installImport.mockImplementation(async () => {
+    rerender(view(ready([entry("current")]), [installed]));
+    return true;
+  });
+  manager.change.mockImplementation(async () => {
+    dialogAtEnable = screen.queryByRole("dialog");
+    discardedBeforeEnable = imports.discard.mock.calls.length > 1;
+    return true;
+  });
+  fireEvent.click(
+    screen.getByRole("button", { name: "Review and install example.managed" }),
+  );
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Install plugin" }),
+  );
+  await waitFor(() =>
+    expect(manager.change).toHaveBeenCalledExactlyOnceWith(
+      "enable",
+      "example.managed",
+    ),
+  );
+  expect(dialogAtEnable).not.toBeNull();
+  expect(discardedBeforeEnable).toBe(false);
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(imports.discard).toHaveBeenCalledTimes(1);
+});
+
+it("reviews again when the recommendation changes while the review is open", async () => {
+  const git = vi
+    .fn()
+    .mockResolvedValueOnce(preview())
+    .mockResolvedValueOnce(preview({ token: "second", commit: other }));
+  const { manager, imports } = harness({ git });
+  const view = (managed: Policy) => (
+    <ManagedPlugins
+      plugins={manager as unknown as PluginManager}
+      managed={managed}
+      catalog={catalog()}
+      busy={false}
+    />
+  );
+  const { rerender } = render(view(ready([entry("missing")])));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Review and install example.managed" }),
+  );
+  await screen.findByText(`Commit: ${commit}`);
+  rerender(view(ready([entry("missing", { commit: other })])));
+  await screen.findByText(`Commit: ${other}`);
+  expect(git).toHaveBeenLastCalledWith(
+    "https://example.com/plugins",
+    "v1",
+    undefined,
+    other,
+  );
+  expect(imports.discard).toHaveBeenCalledWith("preview");
+  fireEvent.click(screen.getByRole("button", { name: "Install plugin" }));
+  await waitFor(() =>
+    expect(manager.installImport).toHaveBeenCalledExactlyOnceWith(
+      "second",
+      "dist",
+    ),
+  );
+});
+
+it("cannot install a preview for a recommendation that has since changed", async () => {
+  let release: (value: ImportPreview) => void = () => {};
+  const git = vi
+    .fn()
+    .mockResolvedValueOnce(preview())
+    .mockReturnValueOnce(
+      new Promise<ImportPreview>((done) => (release = done)),
+    );
+  const { manager } = harness({ git });
+  const view = (managed: Policy) => (
+    <ManagedPlugins
+      plugins={manager as unknown as PluginManager}
+      managed={managed}
+      catalog={catalog()}
+      busy={false}
+    />
+  );
+  const { rerender } = render(view(ready([entry("missing")])));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Review and install example.managed" }),
+  );
+  await screen.findByText(`Commit: ${commit}`);
+  rerender(view(ready([entry("missing", { commit: other })])));
+  await waitFor(() => expect(git).toHaveBeenCalledTimes(2));
+  expect(screen.queryByRole("button", { name: "Install plugin" })).toBeNull();
+  expect(manager.installImport).not.toHaveBeenCalled();
+  release(preview({ token: "second", commit: other }));
+  expect(
+    await screen.findByRole("button", { name: "Install plugin" }),
+  ).toBeEnabled();
+});
+
+it("closes the review when the policy no longer lists the plugin", async () => {
+  const { manager, imports } = harness();
+  const view = (managed: Policy) => (
+    <ManagedPlugins
+      plugins={manager as unknown as PluginManager}
+      managed={managed}
+      catalog={catalog()}
+      busy={false}
+    />
+  );
+  const { rerender } = render(view(ready([entry("missing")])));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Review and install example.managed" }),
+  );
+  await screen.findByText(`Commit: ${commit}`);
+  rerender(view(ready([])));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(imports.discard).toHaveBeenCalledWith("preview");
+  expect(manager.installImport).not.toHaveBeenCalled();
+});
+
+it("treats a plugin installed while the review was open as an update", async () => {
+  const { manager } = harness();
+  const view = (plugins: Catalog["plugins"]) => (
+    <ManagedPlugins
+      plugins={manager as unknown as PluginManager}
+      managed={ready([entry("missing")])}
+      catalog={catalog(plugins)}
+      busy={false}
+    />
+  );
+  const { rerender } = render(view([]));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Review and install example.managed" }),
+  );
+  await screen.findByRole("switch", { name: "Enable plugin" });
+  rerender(view([{ ...installed, enabled: false }]));
+  fireEvent.click(await screen.findByRole("button", { name: "Update" }));
+  await waitFor(() => expect(manager.installImport).toHaveBeenCalled());
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(manager.change).not.toHaveBeenCalled();
+});
+
+it("warns about rollback and a revision the plugin already has, as the Add dialog does", async () => {
+  const { manager } = harness({
+    git: vi.fn(async () =>
+      preview({
+        candidates: [
+          { path: "dist", revision: "old", manifest, publisher: "npub1signer" },
+        ],
+      }),
+    ),
+  });
+  show(manager, ready([entry("outdated")]), [
+    {
+      ...installed,
+      hasSignature: false,
+      rollbackBlockedReason: "Rolling back is blocked by a newer signature",
+    },
+  ]);
+  fireEvent.click(
+    screen.getByRole("button", { name: "Review update example.managed" }),
+  );
+  const dialog = await screen.findByRole("dialog", {
+    name: "Update Managed example",
+  });
+  expect(
+    await within(dialog).findByText(
+      "You cannot roll back to the unsigned revision after this update.",
+    ),
+  ).toBeVisible();
+  expect(
+    within(dialog).getByText(/already matches this revision/),
+  ).toBeVisible();
+  expect(within(dialog).getByRole("button", { name: "Update" })).toBeEnabled();
+});
+
+it("warns when the update keeps a rollback block for an identical revision", async () => {
+  const { manager } = harness({
+    git: vi.fn(async () =>
+      preview({ candidates: [{ path: "dist", revision: "old", manifest }] }),
+    ),
+  });
+  show(manager, ready([entry("outdated")]), [
+    {
+      ...installed,
+      rollbackBlockedReason: "Rolling back is blocked by a newer signature",
+    },
+  ]);
+  fireEvent.click(
+    screen.getByRole("button", { name: "Review update example.managed" }),
+  );
+  expect(
+    await screen.findByText("Rolling back is blocked by a newer signature."),
+  ).toBeVisible();
+});

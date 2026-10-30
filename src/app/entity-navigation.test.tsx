@@ -153,13 +153,17 @@ it("keeps an OS entity intent through real community selection and Retry in App"
   const current = services;
   const queue = [`buzz://repo?owner=${viewer}&d=project`];
   let ping = () => {};
-  stop = bindDeepLinks(current.navigationHost, current.communities, {
-    take: async () => queue.splice(0),
-    watch(listener) {
-      ping = listener;
-      return () => {};
+  stop = bindDeepLinks(
+    { ...current.navigationHost, rejected: current.rejectedLinks.reject },
+    current.communities,
+    {
+      take: async () => queue.splice(0),
+      watch(listener) {
+        ping = listener;
+        return () => {};
+      },
     },
-  });
+  );
   render(<App services={current} />);
   await screen.findByRole("button", { name: "Try again" });
   expect(current.navigation.snapshot()).toMatchObject({
@@ -186,29 +190,47 @@ it("keeps an OS entity intent through real community selection and Retry in App"
       },
     },
   });
+  // A link that names nothing lands on Inbox with a notice, as a real visit
+  // that Back leaves, and a valid link afterwards still opens.
+  const recovered = current.navigation.snapshot().entry.id;
   await act(async () => {
-    queue.push("buzz://unsupported");
+    queue.push("buzz://");
     ping();
   });
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "This link doesn’t work",
+  await screen.findByRole("dialog", { name: "This link doesn’t work" });
+  await waitFor(() =>
+    expect(current.navigation.snapshot()).toMatchObject({
+      status: "opened",
+      entry: {
+        target: {
+          kind: "page",
+          pluginId: "buzz.inbox",
+          pageId: "inbox",
+          scope: { viewer, communityOrigin: origin },
+        },
+      },
+    }),
+  );
+  expect(current.navigation.snapshot().ingress).toBeUndefined();
+  // The notice is the only failure shown: no card replaces the page.
+  expect(screen.getAllByText(pageFailure)).toHaveLength(1);
+  await act(async () => current.navigation.back());
+  await screen.findByText("Actual recovered destination");
+  expect(current.navigation.snapshot().entry.id).toBe(recovered);
+  await act(async () => {
+    queue.push("buzz://channel/general");
+    ping();
+  });
+  await waitFor(() =>
+    expect(current.navigation.snapshot().entry.target).toMatchObject({
+      kind: "conversation",
+      channelId: "general",
+      scope: { viewer, communityOrigin: origin },
+    }),
   );
   expect(
-    screen.queryByRole("button", { name: "Try again" }),
-  ).not.toBeInTheDocument();
-  // The rejected link never became a visit, so Go back returns to the
-  // page underneath it rather than the one before that.
-  const recovered = current.navigation.snapshot().entry.id;
-  await userEvent.click(
-    within(screen.getByRole("alert")).getByRole("button", { name: "Go back" }),
-  );
-  await screen.findByText("Actual recovered destination");
-  expect(current.navigation.snapshot()).toMatchObject({
-    status: "opened",
-    entry: { id: recovered },
-  });
-  expect(current.navigation.snapshot().ingress).toBeUndefined();
-  expect(screen.queryByText("This link doesn’t work")).toBeNull();
+    screen.getAllByRole("dialog", { name: "This link doesn’t work" }),
+  ).toHaveLength(1);
 });
 
 const elsewhere = "https://elsewhere.example";
@@ -251,7 +273,11 @@ function bindCommunityLinks(
   const current = services;
   let ping = () => {};
   stop = bindDeepLinks(
-    { ...current.navigationHost, invite: current.invites.open },
+    {
+      ...current.navigationHost,
+      invite: current.invites.open,
+      rejected: current.rejectedLinks.reject,
+    },
     current.communities,
     {
       take,

@@ -9,6 +9,7 @@ import {
 import type { OpenTarget } from "./targets";
 import {
   createNavigationController,
+  type NavigationOpenOptions,
   type OpenFailure,
   type OpenResult,
 } from "./controller";
@@ -91,6 +92,13 @@ it.each([
   // The retired locator is not a Buzz link however well-formed its JSON target,
   // whether unscoped or scoped to a community as early Copy link output was.
   locator,
+  "buzz://",
+  "buzz:",
+  "buzz://channel/",
+  "buzz://message?channel=general",
+  `buzz://message?id=${message}`,
+  "buzz://message?channel=general&id=not-an-event",
+  "buzz://channel/%E0%A4%A",
   `buzz://open?target=%7B%22version%22%3A1%2C%22kind%22%3A%22conversation%22%2C%22scope%22%3A%7B%22communityOrigin%22%3A%22https%3A%2F%2Felsewhere.example%22%7D%2C%22channelId%22%3A%22general%22%2C%22messageId%22%3A%22${message}%22%7D`,
   "buzz://join?relay=example&code=abc123",
   "buzz://unknown/general",
@@ -141,18 +149,23 @@ function harness(initial: Client, pending: string[] = []) {
   const host = {
     navigation: {
       ...controller.navigation,
-      open: vi.fn(async (target: OpenTarget) => {
-        log.push(`open:${JSON.stringify(target)}`);
-        const result = controller.navigation.open(target);
-        controller.complete(controller.navigation.snapshot().attempt, {
-          status: "opened",
-        });
-        return result;
-      }),
+      open: vi.fn(
+        async (target: OpenTarget, options?: NavigationOpenOptions) => {
+          log.push(`open:${JSON.stringify(target)}`);
+          const result = controller.navigation.open(target, options);
+          controller.complete(controller.navigation.snapshot().attempt, {
+            status: "opened",
+          });
+          return result;
+        },
+      ),
     },
     fail: vi.fn((reason: OpenFailure, retry?: () => Promise<OpenResult>) => {
       log.push(`fail:${reason}`);
       controller.fail(reason, retry);
+    }),
+    rejected: vi.fn(() => {
+      log.push("rejected");
     }),
   };
   const stop = bindDeepLinks(
@@ -196,6 +209,14 @@ const channelOpen = `open:${JSON.stringify({
   scope: { viewer, communityOrigin: origin },
   channelId: "general",
 })}`;
+const inbox = {
+  version: 1,
+  kind: "page",
+  pluginId: "buzz.inbox",
+  pageId: "inbox",
+  scope: { viewer, communityOrigin: origin },
+} as const;
+const inboxOpen = `open:${JSON.stringify(inbox)}`;
 
 it.each([""])(
   "holds a cold invite through identity setup without claiming (path %j)",
@@ -209,8 +230,9 @@ it.each([""])(
     const invite = vi.fn();
     const host = createNavigationController(createMemoryHistory());
     const fail = vi.fn();
+    const rejected = vi.fn();
     const stop = bindDeepLinks(
-      { navigation: host.navigation, fail, invite },
+      { navigation: host.navigation, fail, invite, rejected },
       {
         snapshot: () => client,
         subscribe(fn) {
@@ -240,6 +262,7 @@ it.each([""])(
         viewer,
       );
       expect(fail).not.toHaveBeenCalled();
+      expect(rejected).not.toHaveBeenCalled();
       expect(host.navigation.snapshot().entry.target).toEqual({
         version: 1,
         kind: "home",
@@ -262,8 +285,9 @@ it.each([""])(
     const invite = vi.fn();
     const host = createNavigationController(createMemoryHistory());
     const fail = vi.fn();
+    const rejected = vi.fn();
     const stop = bindDeepLinks(
-      { navigation: host.navigation, fail, invite },
+      { navigation: host.navigation, fail, invite, rejected },
       { snapshot: () => ready, subscribe: () => () => {} },
       {
         take: async () => queue.splice(0),
@@ -284,9 +308,9 @@ it.each([""])(
       );
       queue.push(`buzz://join${path}?relay=example&code=x`);
       ping();
-      await vi.waitFor(() =>
-        expect(fail).toHaveBeenCalledWith("invalid-target", undefined),
-      );
+      await vi.waitFor(() => expect(rejected).toHaveBeenCalledTimes(1));
+      expect(host.navigation.snapshot().entry.target).toEqual(inbox);
+      expect(fail).not.toHaveBeenCalled();
     } finally {
       stop();
       host.dispose();
@@ -303,13 +327,133 @@ it("drains the shell at startup and opens a held link only once the client is re
   expect(t.log).toEqual([channelOpen]);
   t.stop();
 });
-it("waits for loading to finish even for links that will fail, then reports them in arrival order", async () => {
+it("holds a malformed cold-start link until Inbox can open, then explains it once", async () => {
   const t = harness(loading, ["buzz://join?relay=example"]);
   await settle();
-  expect(t.host.fail).not.toHaveBeenCalled();
   t.become({ status: "unavailable" });
-  expect(t.log).toEqual(["fail:invalid-target"]);
+  t.become({ status: "ready", viewer });
+  expect(t.log).toEqual([]);
+  t.become(ready);
+  expect(t.log).toEqual(["rejected", inboxOpen]);
+  expect(t.host.navigation.snapshot().entry.target).toEqual(inbox);
+  expect(t.host.fail).not.toHaveBeenCalled();
+  t.become({ selected: elsewhere });
+  expect(t.log).toEqual(["rejected", inboxOpen]);
   t.stop();
+});
+it.each([
+  "buzz://",
+  "buzz://message?channel=general",
+  "buzz://message?channel=general&id=not-an-event",
+  "buzz://channel/%E0%A4%A",
+  "buzz://unknown/general",
+])(
+  "opens Inbox and explains a malformed or unsupported warm link: %s",
+  async (url) => {
+    const t = harness(ready);
+    await settle();
+    t.arrive(url);
+    await settle();
+    expect(t.log).toEqual(["rejected", inboxOpen]);
+    expect(t.host.fail).not.toHaveBeenCalled();
+    expect(t.host.navigation.snapshot()).toMatchObject({
+      entry: { target: inbox },
+      status: "opened",
+    });
+    t.stop();
+  },
+);
+it("explains each repeated malformed link without stacking visits, then opens a valid one", async () => {
+  const t = harness(ready);
+  await settle();
+  t.arrive("buzz://");
+  await settle();
+  t.arrive("buzz://");
+  await settle();
+  expect(t.log).toEqual(["rejected", inboxOpen, "rejected", inboxOpen]);
+  t.arrive("buzz://channel/general");
+  await settle();
+  expect(t.log.at(-1)).toBe(channelOpen);
+  expect(t.host.navigation.snapshot().entry.target).toMatchObject({
+    channelId: "general",
+  });
+  t.host.navigation.back();
+  expect(t.host.navigation.snapshot().entry.target).toEqual(inbox);
+  t.host.navigation.back();
+  expect(t.host.navigation.snapshot().entry.target).toEqual({
+    version: 1,
+    kind: "home",
+  });
+  t.stop();
+});
+it("lands a malformed link on Messages in place of a turned-off Inbox", async () => {
+  const t = harness(ready);
+  t.host.navigation.open.mockImplementation(async (target, options) => {
+    const result = t.controller.navigation.open(target, options);
+    const attempt = t.controller.navigation.snapshot().attempt;
+    t.controller.complete(
+      attempt,
+      target.kind === "page" && target.pluginId === "buzz.inbox"
+        ? { status: "failed", reason: "unavailable" }
+        : { status: "opened" },
+    );
+    return result;
+  });
+  await settle();
+  t.arrive("buzz://");
+  await vi.waitFor(() =>
+    expect(t.host.navigation.snapshot()).toMatchObject({
+      status: "opened",
+      entry: {
+        target: {
+          kind: "page",
+          pluginId: "buzz.channels",
+          pageId: "channels",
+          scope: { viewer, communityOrigin: origin },
+        },
+      },
+    }),
+  );
+  expect(t.host.rejected).toHaveBeenCalledTimes(1);
+  // The failed Inbox visit was replaced, so Back leaves for where it came from.
+  t.host.navigation.back();
+  expect(t.host.navigation.snapshot().entry.target).toEqual({
+    version: 1,
+    kind: "home",
+  });
+  t.stop();
+});
+it("never reports a held malformed link as denied when the account changes", async () => {
+  const other = "f".repeat(64);
+  const t = harness({ ...ready, status: "loading" }, ["buzz://"]);
+  try {
+    await vi.waitFor(() => expect(t.take).toHaveBeenCalledTimes(1));
+    await settle();
+    t.become({ status: "ready", viewer: other, selected: elsewhere });
+    expect(t.host.fail).not.toHaveBeenCalled();
+    expect(t.log).toEqual([
+      "rejected",
+      `open:${JSON.stringify({
+        ...inbox,
+        scope: { viewer: other, communityOrigin: elsewhere },
+      })}`,
+    ]);
+  } finally {
+    t.stop();
+  }
+});
+it("a newer user visit cancels a malformed link waiting for a community", async () => {
+  const t = harness({ status: "ready", viewer, selected: null }, ["buzz://"]);
+  try {
+    await vi.waitFor(() => expect(t.take).toHaveBeenCalledTimes(1));
+    await settle();
+    await t.host.navigation.open({ version: 1, kind: "home" });
+    t.become(ready);
+    expect(t.host.rejected).not.toHaveBeenCalled();
+    expect(t.host.navigation.open).toHaveBeenCalledTimes(1);
+  } finally {
+    t.stop();
+  }
 });
 it("opens an OS message link carrying unknown query parameters as the bound conversation", async () => {
   const t = harness(ready);
@@ -452,15 +596,11 @@ it("a malformed newer arrival replaces retained recovery without reviving the ol
       expect(t.host.navigation.snapshot().retryable).toBe(true),
     );
     t.arrive("buzz://unsupported");
-    await vi.waitFor(() =>
-      expect(t.host.navigation.snapshot().reason).toBe("invalid-target"),
-    );
+    await vi.waitFor(() => expect(t.take).toHaveBeenCalledTimes(2));
+    await settle();
     t.become(ready);
-    await expect(t.host.navigation.retry()).resolves.toEqual({
-      status: "failed",
-      reason: "invalid-target",
-    });
-    expect(t.host.navigation.open).not.toHaveBeenCalled();
+    expect(t.log).toEqual(["fail:unavailable", "rejected", inboxOpen]);
+    expect(t.host.navigation.snapshot().entry.target).toEqual(inbox);
   } finally {
     t.stop();
   }
@@ -611,7 +751,7 @@ it("latches the first available account and community before retry", async () =>
 it("still drains once when the shell cannot deliver updates, without aborting startup", async () => {
   const error = vi.spyOn(console, "error").mockImplementation(() => {});
   const controller = createNavigationController(createMemoryHistory());
-  const host = { ...controller, fail: vi.fn() };
+  const host = { ...controller, fail: vi.fn(), rejected: vi.fn() };
   const stop = bindDeepLinks(
     host,
     { snapshot: () => ready, subscribe: () => () => {} },
@@ -627,7 +767,7 @@ it("still drains once when the shell cannot deliver updates, without aborting st
     "Deep link updates are unavailable",
     expect.any(Error),
   );
-  expect(host.fail).toHaveBeenCalledWith("invalid-target", undefined);
+  expect(host.rejected).toHaveBeenCalledTimes(1);
   stop();
   controller.dispose();
 });
@@ -646,10 +786,10 @@ it("is a no-op in the browser build, where no shell exists", async () => {
   expect(createDeepLinkShell()).toBeUndefined();
   const host = createNavigationController(createMemoryHistory());
   const subscribe = vi.fn(() => () => {});
-  const stop = bindDeepLinks(host, {
-    snapshot: () => ready,
-    subscribe,
-  });
+  const stop = bindDeepLinks(
+    { ...host, rejected: vi.fn() },
+    { snapshot: () => ready, subscribe },
+  );
   await settle();
   expect(subscribe).not.toHaveBeenCalled();
   expect(invoked.fn).not.toHaveBeenCalled();
@@ -700,7 +840,7 @@ it("drains URLs arriving between startup take and deferred native watch registra
     throw new Error(`Unexpected native command: ${command}`);
   });
   const controller = createNavigationController(createMemoryHistory());
-  const host = { ...controller, fail: vi.fn() };
+  const host = { ...controller, fail: vi.fn(), rejected: vi.fn() };
   const stop = bindDeepLinks(host, {
     snapshot: () => ready,
     subscribe: () => () => {},
@@ -713,10 +853,10 @@ it("drains URLs arriving between startup take and deferred native watch registra
     )?.value;
     // No native watcher exists yet, so this arrival cannot ping the webview.
     queue.push("buzz://join?relay=example");
-    expect(host.fail).not.toHaveBeenCalled();
+    expect(host.rejected).not.toHaveBeenCalled();
     registered();
     await vi.waitFor(() => expect(take).toHaveBeenCalledTimes(2));
-    expect(host.fail).toHaveBeenCalledWith("invalid-target", undefined);
+    expect(host.rejected).toHaveBeenCalledTimes(1);
     expect(queue).toEqual([]);
   } finally {
     registered();

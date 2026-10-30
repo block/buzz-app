@@ -17,7 +17,10 @@ import {
 import { HostService } from "../features/host/service";
 import { bindUnreadIndicator } from "../features/notifications/indicator-unread";
 import { provideNavigation } from "../features/navigation/service";
-import { bindDeepLinks } from "../features/navigation/deep-links";
+import {
+  bindDeepLinks,
+  createRejectedLinks,
+} from "../features/navigation/deep-links";
 import { bindSearchUsage } from "../features/search/usage";
 import { communityDestination } from "../features/communities/destination";
 import { NotificationsService } from "../features/notifications/service";
@@ -153,8 +156,16 @@ export function createServices() {
   };
   // OS deep links; a no-op in the browser build. Invite admission remains in
   // the join dialog, never in navigation or the native queue.
+  const rejectedLinks = createRejectedLinks();
   ctx.effect(() =>
-    bindDeepLinks({ ...navigationHost, invite: invites.open }, communities),
+    bindDeepLinks(
+      {
+        ...navigationHost,
+        invite: invites.open,
+        rejected: rejectedLinks.reject,
+      },
+      communities,
+    ),
   );
   // Search ranks places by how often and how recently they were opened.
   ctx.effect(() =>
@@ -193,6 +204,7 @@ export function createServices() {
     relay,
     communities,
     invites,
+    rejectedLinks,
     appearance,
     updates,
     dispose() {

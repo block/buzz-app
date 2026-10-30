@@ -51,9 +51,7 @@ test("Bestie opts in without changing the other bundled defaults and survives re
     .getByRole("button", { name: "Bestie", exact: true });
   await expect(destination).toBeVisible();
   await destination.click();
-  await expect(
-    page.getByRole("heading", { name: "Meet your Bestie" }),
-  ).toBeVisible();
+  await expect(page.getByRole("region", { name: "Bestie" })).toBeVisible();
   await plugins(page);
   await bestie.click();
   await expect(bestie).toHaveAccessibleName(/^Enable /);

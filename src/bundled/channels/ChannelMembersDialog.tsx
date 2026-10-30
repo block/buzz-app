@@ -100,6 +100,8 @@ import {
 import { writeClipboardText } from "../../shared/clipboard";
 
 const INVITATION_GROUP_SIZE = 4;
+const MEMBER_PAGE_SIZE = 50;
+const MEMBER_PROFILE_BATCH = 500;
 
 const additionRoles = [
   {
@@ -789,6 +791,7 @@ export function ChannelMembersDialog({
     };
   }, [session, channelId, refresh, solo]);
   const memberKey = channel?.members?.join(":") ?? "";
+  const largeRoster = (channel?.members?.length ?? 0) > MEMBER_PAGE_SIZE;
   const administration = useMemberAdministration(
     session,
     channelId,
@@ -809,8 +812,19 @@ export function ChannelMembersDialog({
       return;
     }
     let current = true;
-    void session.profiles
-      .ensure(memberKey.split(":"), "foreground")
+    const loadNames = async () => {
+      const keys = memberKey.split(":");
+      for (
+        let offset = 0;
+        current && offset < keys.length;
+        offset += MEMBER_PROFILE_BATCH
+      )
+        await session.profiles.ensure(
+          keys.slice(offset, offset + MEMBER_PROFILE_BATCH),
+          largeRoster ? "background" : "foreground",
+        );
+    };
+    void loadNames()
       .catch(() => {
         if (current)
           setNameError(
@@ -823,7 +837,7 @@ export function ChannelMembersDialog({
     return () => {
       current = false;
     };
-  }, [session, memberKey, refresh]);
+  }, [session, memberKey, refresh, largeRoster]);
   const namesBusy =
     namesSettledFor?.session !== session ||
     namesSettledFor?.memberKey !== memberKey;
@@ -847,9 +861,14 @@ export function ChannelMembersDialog({
     // The authority hook may have started a new roster's read in this effect
     // flush. Do not reveal using the previous render's settled role snapshot.
     const status = session.memberAdministration.snapshot(channelId).status;
-    if (!rosterBusy && !namesBusy && rolesSettled && status !== "loading")
+    if (
+      !rosterBusy &&
+      (!namesBusy || largeRoster) &&
+      rolesSettled &&
+      status !== "loading"
+    )
       setRevealedFor(session);
-  }, [session, channelId, rosterBusy, namesBusy, rolesSettled]);
+  }, [session, channelId, rosterBusy, namesBusy, largeRoster, rolesSettled]);
   const initialLoading = revealedFor !== session;
   const known = useMemo(
     () =>
@@ -915,6 +934,29 @@ export function ChannelMembersDialog({
       (roleFilter === "All" || group.name === roleFilter) &&
       group.keys.length > 0,
   );
+  const [memberPages, setMemberPages] = useState({
+    memberKey,
+    text,
+    roleFilter,
+    pages: {} as Record<string, number>,
+  });
+  const pages =
+    memberPages.memberKey === memberKey &&
+    memberPages.text === text &&
+    memberPages.roleFilter === roleFilter
+      ? memberPages.pages
+      : {};
+  if (pages !== memberPages.pages)
+    setMemberPages({ memberKey, text, roleFilter, pages: {} });
+  const changeMemberPage = (group: string, page: number) => {
+    setMemberPages({
+      memberKey,
+      text,
+      roleFilter,
+      pages: { ...pages, [group]: page },
+    });
+    document.getElementById(`${presenceId}-${group}-page`)?.focus();
+  };
   const search = useMemberSearch(session, query, canAddPeople);
   const relayKeys = new Set(search.people.map((person) => person.pubkey));
   const candidates = new Map(
@@ -1853,18 +1895,64 @@ export function ChannelMembersDialog({
               )
             ) : (
               <>
-                {filteredGroups.map((group) => (
-                  <section key={group.name} aria-label={group.name}>
-                    <h3
-                      className={`${styles.groupHeading} pb-2 text-caption text-subtle`}
-                    >
-                      {group.name} · {text ? group.keys.length : group.count}
-                    </h3>
-                    <ul>
-                      {group.keys.map((key) => row(key, label(key), false))}
-                    </ul>
-                  </section>
-                ))}
+                {filteredGroups.map((group) => {
+                  const pageCount = Math.ceil(
+                    group.keys.length / MEMBER_PAGE_SIZE,
+                  );
+                  const page = Math.min(pages[group.name] ?? 0, pageCount - 1);
+                  return (
+                    <section key={group.name} aria-label={group.name}>
+                      <h3
+                        id={`${presenceId}-${group.name}-page`}
+                        tabIndex={-1}
+                        className={`${styles.groupHeading} pb-2 text-caption text-subtle`}
+                      >
+                        {group.name} · {text ? group.keys.length : group.count}
+                      </h3>
+                      <ul>
+                        {group.keys
+                          .slice(
+                            page * MEMBER_PAGE_SIZE,
+                            (page + 1) * MEMBER_PAGE_SIZE,
+                          )
+                          .map((key) => row(key, label(key), false))}
+                      </ul>
+                      {pageCount > 1 && (
+                        <nav
+                          aria-label={`${group.name} member pages`}
+                          className="flex items-center justify-between gap-2 px-control-inset"
+                        >
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            disabled={page === 0}
+                            onClick={() =>
+                              changeMemberPage(group.name, page - 1)
+                            }
+                          >
+                            Previous
+                          </Button>
+                          <span
+                            className="text-caption text-subtle"
+                            aria-live="polite"
+                          >
+                            {page + 1} of {pageCount}
+                          </span>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            disabled={page + 1 === pageCount}
+                            onClick={() =>
+                              changeMemberPage(group.name, page + 1)
+                            }
+                          >
+                            Next
+                          </Button>
+                        </nav>
+                      )}
+                    </section>
+                  );
+                })}
                 {!filteredGroups.length && !rosterBusy && !offering && (
                   <p className="px-control-inset text-body-sm text-subtle">
                     {query

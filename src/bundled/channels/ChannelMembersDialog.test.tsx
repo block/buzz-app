@@ -96,6 +96,8 @@ async function setup(
   agents?: Agents,
   options: {
     archivedAgent?: boolean;
+    extraMembers?: number;
+    pendingMemberNames?: Promise<void>;
     channelCreation?: boolean;
     communities?: CommunityReader;
   } = {},
@@ -112,7 +114,12 @@ async function setup(
   const control = localAgentsFixture([agent]);
   const id = "11111111-1111-4111-8111-111111111111";
   const target = localAgent ? agent.pubkey : person.pubkey;
-  const members = [viewer.pubkey];
+  const members = [
+    viewer.pubkey,
+    ...Array.from({ length: options.extraMembers ?? 0 }, (_, i) =>
+      (i + 10000).toString(16).padStart(64, "0"),
+    ),
+  ];
   let clock = 1700000000;
   let failure = "";
   let applyAddition = true;
@@ -171,6 +178,8 @@ async function setup(
       await nameRetry;
       throw new Error("Names unavailable");
     }
+    if (filters.some((filter) => filter.kinds?.includes(0)))
+      await options.pendingMemberNames;
     if (filters.some((filter) => filter.kinds?.includes(39002)))
       await rosterRead;
     return [roster(relay, id, members, clock), ...stableEvents].filter(
@@ -223,7 +232,11 @@ async function setup(
   const user = userEvent.setup();
   const trigger = screen.getByRole("button", { name: "Access" });
   await user.click(trigger);
-  if (missingNames) await screen.findByText(/Some names could not load/);
+  if (options.pendingMemberNames)
+    await within(
+      await screen.findByRole("region", { name: "Member list", exact: true }),
+    ).findAllByRole("listitem");
+  else if (missingNames) await screen.findByText(/Some names could not load/);
   else await screen.findByText("Carl (you)");
   return {
     user,
@@ -2963,3 +2976,59 @@ it.each([false, true])(
     expect(publish).not.toHaveBeenCalled();
   },
 );
+
+it("pages a large roster without waiting for optional names or exceeding the profile request budget", async () => {
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  try {
+    const t = await setup("stream", false, false, undefined, undefined, {
+      extraMembers: 1024,
+      pendingMemberNames: pending,
+    });
+    const list = screen.getByRole("region", {
+      name: "Member list",
+      exact: true,
+    });
+    expect(within(list).getAllByRole("listitem")).toHaveLength(50);
+    expect(screen.queryByText("Loading members…")).not.toBeInTheDocument();
+    const pages = within(list).getByRole("navigation", {
+      name: "People member pages",
+    });
+    expect(
+      within(pages).getByRole("button", { name: "Previous" }),
+    ).toBeDisabled();
+    await t.user.click(within(pages).getByRole("button", { name: "Next" }));
+    expect(within(pages).getByText("2 of 21")).toBeVisible();
+    expect(within(list).getAllByRole("listitem")).toHaveLength(50);
+    await act(async () => release());
+    await vi.waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Refresh member data" }),
+      ).toHaveAttribute("aria-busy", "false"),
+    );
+    const batches = t.query.mock.calls
+      .flatMap(([filters]) => filters)
+      .filter((filter) => filter.kinds?.includes(0) && filter.authors?.length);
+    expect(batches.length).toBeGreaterThan(1);
+    expect(
+      batches.every((filter) => (filter.authors?.length ?? 0) <= 500),
+    ).toBe(true);
+    expect(
+      screen.queryByText(/Some names could not load/),
+    ).not.toBeInTheDocument();
+    fireEvent.change(screen.getByRole("searchbox"), {
+      target: { value: (11023).toString(16).padStart(64, "0") },
+    });
+    await vi.waitFor(() =>
+      expect(within(list).getAllByRole("listitem")).toHaveLength(1),
+    );
+    await t.user.clear(screen.getByRole("searchbox"));
+    await vi.waitFor(() =>
+      expect(within(list).getByText("1 of 21")).toBeVisible(),
+    );
+  } finally {
+    await act(async () => release());
+  }
+});

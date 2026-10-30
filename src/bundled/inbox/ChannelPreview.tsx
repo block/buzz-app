@@ -30,7 +30,7 @@ export function ChannelPreview({
   onDraftSaved?: () => void;
   label?: string;
   /** Focus the composer when it mounts, as a user-triggered handoff. */
-  autoFocus?: boolean;
+  autoFocus?: boolean | HTMLElement;
 }) {
   const { session, channelId } = useConversation();
   const window = useChannelWindow(session.channels, channelId);

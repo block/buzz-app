@@ -140,9 +140,8 @@ it("lets a preset and note be chosen before saving, and keeps the draft after fa
   );
   const close = dialog(create);
   await vi.waitFor(() =>
-    expect(screen.getByRole("button", { name: "Close" })).toHaveFocus(),
+    expect(screen.getByRole("combobox", { name: "When" })).toHaveFocus(),
   );
-  screen.getByRole("combobox", { name: "When" }).focus();
   await user.keyboard("{Enter}");
   await screen.findByRole("option", { name: "In 1 hour" });
   await user.keyboard("{ArrowDown}{Enter}");
@@ -185,9 +184,8 @@ it("reveals labelled custom fields and saves a future time with the note", async
   dialog(create);
   expect(screen.queryByLabelText("Reminder date")).toBeNull();
   await vi.waitFor(() =>
-    expect(screen.getByRole("button", { name: "Close" })).toHaveFocus(),
+    expect(screen.getByRole("combobox", { name: "When" })).toHaveFocus(),
   );
-  screen.getByRole("combobox", { name: "When" }).focus();
   await user.keyboard("{Enter}");
   await screen.findByRole("option", { name: "Custom date & time" });
   await vi.waitFor(() =>

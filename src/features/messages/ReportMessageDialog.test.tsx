@@ -92,6 +92,11 @@ it("reports from the message menu, keeps input after failure and confirms succes
   await user.click(trigger);
   await user.click(await screen.findByRole("menuitem", { name: "Report" }));
   const dialog = await screen.findByRole("dialog", { name: "Report message" });
+  await waitFor(() =>
+    expect(document.activeElement).toBe(
+      screen.getByRole("radio", { name: "Spam" }),
+    ),
+  );
   // A virtualized list must not evict the row owning the draft and outcome.
   expect(keepMounted.mock.calls).toEqual([[root.id]]);
   const submit = screen.getByRole("button", { name: "Submit report" });

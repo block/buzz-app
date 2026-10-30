@@ -298,8 +298,8 @@ export type MessageComposerProps = {
   replyContext?: ReactNode;
   mediaTimeSeconds?: number;
   clearMediaTime?(): void;
-  /** Focus once when this conversation mounts, not when overlays close. */
-  autoFocus?: boolean;
+  /** Focus once on entry; an opening control preserves intent through delayed mounting. */
+  autoFocus?: boolean | HTMLElement;
   focusRequest?: number;
   hideMediaTimeIndicator?: boolean;
   disabled?: boolean;
@@ -746,9 +746,12 @@ function Composer({
 
   const caret = useRef<number | undefined>(undefined);
   const input = useRef<ComposerInputElement>(null);
+  const focusFromControl = useRef(typeof autoFocus === "object");
   const focusOnMount = useRef(
     autoFocus && typeof document !== "undefined"
-      ? document.activeElement
+      ? typeof autoFocus === "boolean"
+        ? document.activeElement
+        : autoFocus
       : undefined,
   );
   useEffect(() => {
@@ -775,10 +778,14 @@ function Composer({
     if (!focusOnMount.current) return;
     const focus = () => {
       const previous = focusOnMount.current;
+      // A responsive draft detail hides its opening row while the thread loads.
+      // That browser blur may leave body focused; a later focusin still cancels.
       if (
         !previous ||
         (previous !== document.activeElement &&
-          (previous.isConnected || document.activeElement !== document.body))
+          (document.activeElement !== document.body ||
+            (previous.isConnected &&
+              (!focusFromControl.current || previous.checkVisibility()))))
       )
         return;
       const editor = input.current;

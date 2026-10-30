@@ -142,11 +142,8 @@ export function DraftsView({
   const [limit, setLimit] = useState(50);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const closeControl = useRef<HTMLButtonElement>(null);
-  useEffect(() => {
-    if (selected) closeControl.current?.focus({ preventScroll: true });
-  }, [selected]);
   const deleteTrigger = useRef<HTMLButtonElement>(null);
-  const deleteAction = useRef<HTMLButtonElement>(null);
+  const cancelDelete = useRef<HTMLButtonElement>(null);
   const [error, setError] = useState<string>();
   // Selection owns editor lifetime, not the bounded list summary's eligibility.
   const coordinates = selected && draftCoordinates(selected);
@@ -219,6 +216,10 @@ export function DraftsView({
   const activeChannel = active
     ? channelFor(active.coordinates.channelId)
     : undefined;
+  useEffect(() => {
+    if (selected && !activeChannel)
+      closeControl.current?.focus({ preventScroll: true });
+  }, [selected, activeChannel]);
   const ActiveIcon = channelIcon(activeChannel);
   const title = !activeChannel
     ? "Unavailable conversation"
@@ -466,6 +467,7 @@ export function DraftsView({
                     <ConversationThread
                       messageId={active.coordinates.threadRootId}
                       requireReadyRoot
+                      autoFocus={visit?.row ?? false}
                       onDraftSaved={retire}
                     />
                   ) : (
@@ -476,6 +478,7 @@ export function DraftsView({
                           : activeChannel.name
                       }
                       draft
+                      autoFocus={visit?.row ?? false}
                       onDraftSaved={retire}
                     />
                   )}
@@ -489,7 +492,7 @@ export function DraftsView({
             {confirmDelete && (
               <AlertDialog
                 title="Delete draft?"
-                initialFocus={deleteAction}
+                initialFocus={cancelDelete}
                 description="Delete this saved draft and its attachments on this device? This cannot be undone."
                 onClose={() => setConfirmDelete(false)}
                 // On deletion, retirement restores the surviving list control.
@@ -499,16 +502,12 @@ export function DraftsView({
                 }
                 actions={
                   <>
-                    <Button
-                      ref={deleteAction}
-                      size="sm"
-                      variant="destructive"
-                      onClick={remove}
-                    >
+                    <Button size="sm" variant="destructive" onClick={remove}>
                       Delete draft
                     </Button>
                     <Button
                       size="sm"
+                      ref={cancelDelete}
                       variant="ghost"
                       onClick={() => setConfirmDelete(false)}
                     >

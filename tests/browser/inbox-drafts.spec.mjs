@@ -495,7 +495,7 @@ test("keyboard draft retirement returns to its row, a remaining row, then Inbox 
     await page.setViewportSize({ width, height: 900 });
     for (const row of [beta, alpha]) {
       await activate(row);
-      await expect(detail.getByRole("textbox")).toBeVisible();
+      await expect(detail.getByRole("textbox")).toBeFocused();
       await activate(
         detail.getByRole("button", { name: "Close detail", exact: true }),
       );
@@ -541,7 +541,7 @@ test("keyboard draft retirement returns to its row, a remaining row, then Inbox 
       name: "Delete draft",
       exact: true,
     });
-    await expect(confirm).toBeFocused();
+    await expect(dialog.getByRole("button", { name: "Cancel" })).toBeFocused();
     await expect(dialog).toHaveAttribute("aria-modal", "true");
     await settleDialogMotion(dialog);
     const box = await dialog.boundingBox();
@@ -551,13 +551,13 @@ test("keyboard draft retirement returns to its row, a remaining row, then Inbox 
     expect(box.x + box.width).toBeLessThanOrEqual(width);
     expect(await editorElement.boundingBox()).toEqual(before);
     await page.keyboard.press("Tab");
-    await expect(dialog.getByRole("button", { name: "Cancel" })).toBeFocused();
-    await page.keyboard.press("Tab");
     await expect(
       dialog.getByRole("button", { name: "Close", exact: true }),
     ).toBeFocused();
     await page.keyboard.press("Tab");
     await expect(confirm).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(dialog.getByRole("button", { name: "Cancel" })).toBeFocused();
     await page.screenshot({
       path: testInfo.outputPath(`delete-draft-${mode}-${width}.png`),
     });
@@ -569,15 +569,18 @@ test("keyboard draft retirement returns to its row, a remaining row, then Inbox 
   }
   await activate(deleteDraft);
   await expect(
-    dialog.getByRole("button", { name: "Delete draft", exact: true }),
+    dialog.getByRole("button", { name: "Cancel", exact: true }),
   ).toBeFocused();
-  await dialog.getByRole("button", { name: "Cancel" }).click();
+  await page.keyboard.press("Enter");
   await expect(dialog).toHaveCount(0);
   await expect(deleteDraft).toBeFocused();
   await activate(deleteDraft);
   await expect(
-    dialog.getByRole("button", { name: "Delete draft", exact: true }),
+    dialog.getByRole("button", { name: "Cancel", exact: true }),
   ).toBeFocused();
+  await dialog
+    .getByRole("button", { name: "Delete draft", exact: true })
+    .focus();
   await page.keyboard.press("Enter");
   await expect(detail).toHaveCount(0);
   await expect(beta).toHaveCount(0);

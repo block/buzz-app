@@ -9,6 +9,7 @@ import {
   useState,
   useSyncExternalStore,
   type ComponentPropsWithoutRef,
+  type ReactElement,
   type ReactNode,
 } from "react";
 import type { RelaySession } from "../relay/session";
@@ -59,7 +60,9 @@ import {
   isLiteralMarkdownContext,
   prepareMarkdown,
   type LiteralRange,
+  type PreparedMarkdown,
 } from "./markdown-preparation";
+import { writeClipboardText } from "../../shared/clipboard";
 
 type MarkdownNode = {
   type: string;
@@ -459,7 +462,10 @@ export function MessageMarkdown({
   interactive?: boolean;
 }) {
   const resolveName = useChannelIdentityNames(session, row.channelId);
-  const prepared = useMemo(() => prepareMarkdown(row.content), [row.content]);
+  const prepared = useMemo(
+    () => preparedBodies(row.content, () => prepareMarkdown(row.content)),
+    [row.content],
+  );
   if (prepared.kind === "plain")
     return <div className={styles.plainText}>{prepared.content}</div>;
   return (
@@ -635,13 +641,26 @@ function PreparedMessageMarkdown({
     return undefined;
   };
   const components: MessageComponents = {
-    p: ({ node: _node, ...props }) => (
-      <p
-        {...props}
-        className={largeEmoji ? styles.text : undefined}
-        data-single-emoji={largeEmoji || undefined}
-      />
-    ),
+    p: ({ node, ...props }) => {
+      const first = node?.children[0];
+      const element = first?.type === "element" ? first : undefined;
+      const href = element?.properties.href;
+      const leadingMention =
+        typeof element?.properties["data-profile-target"] === "string" ||
+        (element?.tagName === "a" &&
+          typeof href === "string" &&
+          !!profileKey(href) &&
+          interactive &&
+          !!canOpenLink?.(href));
+      return (
+        <p
+          {...props}
+          className={largeEmoji ? styles.text : undefined}
+          data-single-emoji={largeEmoji || undefined}
+          data-leading-mention={leadingMention || undefined}
+        />
+      );
+    },
     a: ({ href, children }) => {
       if (href && profileKey(href)) {
         const label = labelText(children);
@@ -724,26 +743,80 @@ function PreparedMessageMarkdown({
   return largeEmoji ? markdown : <div className={styles.text}>{markdown}</div>;
 }
 
+/** Switching channels remounts every row. Keep recent results so a revisit
+ * does not prepare and parse unchanged bodies again. */
+function recentResults<T>(
+  budget: number,
+  weigh: (key: string, value: T) => number,
+) {
+  const results = new Map<string, Readonly<{ value: T; weight: number }>>();
+  let total = 0;
+  return (key: string, make: () => T) => {
+    let entry = results.get(key);
+    if (entry) results.delete(key);
+    else {
+      const value = make();
+      entry = { value, weight: weigh(key, value) };
+      // Keeping a result heavier than the budget would evict all the others.
+      if (entry.weight > budget) return value;
+      total += entry.weight;
+    }
+    results.set(key, entry);
+    for (const [oldest, { weight }] of results) {
+      if (total <= budget) break;
+      results.delete(oldest);
+      total -= weight;
+    }
+    return entry.value;
+  };
+}
+function elementCount(node: ReactNode): number {
+  if (Array.isArray(node))
+    return node.reduce<number>((sum, child) => sum + elementCount(child), 0);
+  return isValidElement<{ children?: ReactNode }>(node)
+    ? 1 + elementCount(node.props.children)
+    : 0;
+}
+// A prepared body keeps its content and literal ranges: ~200k characters.
+const preparedBodies = recentResults<PreparedMarkdown>(
+  200_000,
+  (content) => 100 + content.length,
+);
+// A parsed body keeps ~2 KB, ~1 KB per element and ~2 bytes per character of
+// its key and text. Dense markup has an element every few characters, so weigh
+// both: ~4 MB in all. The elements depend only on the protected content; their
+// components still read the rendering row's context.
+const parsedBodies = recentResults<ReactElement>(
+  4_000,
+  (key, body) => 2 + elementCount(body) + Math.ceil(key.length / 500),
+);
+
 const MarkdownBody = memo(function MarkdownBody({
   protectedContent,
 }: {
   protectedContent: ProtectedContent;
 }) {
-  return (
-    <Markdown
-      remarkPlugins={[
-        remarkGfm,
-        remarkBreaks,
-        [remarkSpoilers, `<${protectedContent.prefix}spoiler\uE002>`],
-        [remarkInlineContent, protectedContent],
-        remarkLiteralHtml,
-      ]}
-      components={markdownComponents}
-      skipHtml
-      urlTransform={transformUrl}
-    >
-      {protectedContent.content}
-    </Markdown>
+  return parsedBodies(
+    JSON.stringify([
+      protectedContent.content,
+      protectedContent.prefix,
+      protectedContent.parts,
+    ]),
+    // The default export is a hook-free function: calling it keeps its result.
+    () =>
+      Markdown({
+        remarkPlugins: [
+          remarkGfm,
+          remarkBreaks,
+          [remarkSpoilers, `<${protectedContent.prefix}spoiler\uE002>`],
+          [remarkInlineContent, protectedContent],
+          remarkLiteralHtml,
+        ],
+        components: markdownComponents,
+        skipHtml: true,
+        urlTransform: transformUrl,
+        children: protectedContent.content,
+      }),
   );
 });
 
@@ -860,7 +933,7 @@ function CodeActions({
         onClick={() => {
           setCopying(true);
           void Promise.resolve()
-            .then(() => navigator.clipboard.writeText(code))
+            .then(() => writeClipboardText(code))
             .then(
               () => notify("Copied code to clipboard", "success"),
               () => notify("Failed to copy code", "error"),

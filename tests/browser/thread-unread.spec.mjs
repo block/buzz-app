@@ -771,9 +771,7 @@ test("opening a fitting thread reads after unchanged-row continuation without an
       panel.getByText("Unread reply 1", { exact: true }),
     ).toBeInViewport();
     await expect(
-      page.locator(
-        '[role="tab"][data-tab-value^="thread:"][aria-selected="true"]',
-      ),
+      panel.getByRole("textbox", { name: "Reply to thread", exact: true }),
     ).toBeFocused();
     expect(
       await history.evaluate(
@@ -796,9 +794,7 @@ test("opening a fitting thread reads after unchanged-row continuation without an
   await other.click();
   await expect(panel).toHaveCount(1);
   await expect(
-    page.locator(
-      '[role="tab"][data-tab-value^="thread:"][aria-selected="true"]',
-    ),
+    panel.getByRole("textbox", { name: "Reply to thread", exact: true }),
   ).toBeFocused();
   const reply = panel
     .locator("[data-message-id]")

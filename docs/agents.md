@@ -41,8 +41,9 @@ the usual Create agent form, may edit the name, runtime and settings, and create
 only by submitting it. Closing the form discards the request. Requests are local,
 bounded to 16 and do not survive reload or a change of signed-in owner.
 Approval binds the identity to the requesting agent's owner and community, even
-when another community is selected. Use `members` separately after creation to add
-it to a conversation. Agent tools do not expose draft approval.
+when another community is selected. Add the agent to a conversation separately
+after creation; see the [shared tool definitions](../src/buzz-mcp/tools.ts) for
+the available operations and arguments. Agent tools do not expose draft approval.
 
 `agent_update` submits an unsaved draft of changes to one of the owner's local
 agents in the same community, named by pubkey or exact name: a new name, a type
@@ -55,16 +56,32 @@ requests share the creation requests' local bound and lifetime.
 Keys stay in native custody. Hosted-provider provisioning and standalone tool
 servers do not support these operations.
 
+## Product help for agents
+
+The read-only `buzz_help` tool returns [the Buzz quick guide](buzz-help.md), bundled
+with this app version. The shared agent prompt tells agents to read it when someone
+asks how to use Buzz; the full guide is not added to every session's initial context.
+Claude, Codex, Goose and Pi use the shared tools. This repository's standalone MCP
+server exposes the same tool and supplies the hint in its server instructions.
+Other remote hosts must adopt the tool themselves. No repository checkout or web
+request is needed to read it.
+
+Keep the guide current in the same change as user-facing behavior. It describes
+implemented features, not plans or internal support procedures. Existing sessions
+may retain their previous prompt or tool list; use **Start a new session** to pick
+up the new guidance. Installing a new build updates the bundled guide, not every
+older app or remote host.
+
 ## Agent Attention
 
-Attention itself (the runtime, tools, storage and sources) is core, but it runs on this device only while a plugin that shows it is on. The bundled Agent Attention UI plugin (`buzz.watching`, on by default) adds a Watching tab to the settings of every agent running on this device, whatever its type. The tab explains Attention, holds the switch that lets this device run the agent's watches, then groups that agent's subscriptions by Interest. It shows instructions, listening and delivery destinations, enabled state and available wake history, and suggests asks while the agent has none. Ask an agent to create watches through its Attention tools; pausing or removing one preserves the other saved objects. Empty Interests remain visible and can be deleted after their watches are removed. Turning the plugin off hides the tab and turns every agent's Attention off on this device; mentions still wake agents, and each agent keeps its saved switch for when the plugin is back on. The former standalone Agent Attention page is gone, so an old link to `buzz.agents/attention` opens as an unavailable destination.
+Attention itself (the runtime, tools, storage and sources) is core, but it runs on this device only while a plugin that shows it is on. The bundled Attention plugin (`buzz.watching`, on by default) adds an Attention tab to the settings of every agent running on this device, whatever its type. The tab explains Attention, holds the switch that lets this device run the agent's watches, then groups that agent's subscriptions by Interest. It shows instructions, listening and delivery destinations, enabled state and available wake history, and suggests asks while the agent has none. Ask an agent to create watches through its Attention tools; pausing or removing one preserves the other saved objects. Empty Interests remain visible and can be deleted after their watches are removed. Turning the plugin off hides the tab and turns every agent's Attention off on this device; mentions still wake agents, and each agent keeps its saved switch for when the plugin is back on. The former standalone Agent Attention page is gone, so an old link to `buzz.agents/attention` opens as an unavailable destination.
 
 ## Agent types and providers
 
 Harness plugins register agent types with the Agents service. An agent type owns
 the defaults, migration policy, per-agent settings tabs, model discovery and run
 behavior for its agents. Plugins can add a tab to every local agent with
-`ctx.agents.registerTab`; the Agent Attention UI plugin's Watching tab holds the
+`ctx.agents.registerTab`; the Attention plugin's Attention tab holds the
 device Attention switch.
 
 Attention is shared by every harness, and a harness has no attention code.
@@ -360,6 +377,10 @@ from its saved identities (deleted ones omitted), so it carries Agents' own
 loading and error state. Agents' `snapshot()` is different: it holds only the
 selected community's agents, with their settings.
 
+The source can also carry a separate `hosted` array of completed owned agents
+shown in the selected community. These are DM eligibility evidence for
+`agentChoices`, not local identities for name precedence or process control.
+
 `app/services.ts` composes consumers before Agents exists, through
 `createLocalAgents()`. Until `bind` connects `agents.local`, the snapshot is
 `unavailable`; unbinding returns it there. Two consumers read it directly:
@@ -402,6 +423,17 @@ sources, deduplicated by public key:
   the host's saved Buzz library plus the owner's relay-published records; and
 - the viewer's local agents for this exact community, flagged `managed` with a
   `managedName`.
+
+The same app-owned source also supplies completed hosted agents shown in the
+selected community, separately from local identities. The projection checks their
+owner and community and gives hosted choices `messageable: true`. As with local
+agents, archived identities remain in `identities`; `selectable` and each action's
+existing archive policy govern forward-looking choices.
+`canMessageAgent` accepts that flag or local `managed` evidence. Profile Message,
+search, the DM picker and fresh-send validation use this predicate; hosted agents
+never gain local custody or template-management status from it. Library presence
+alone does not grant DM eligibility. Existing DMs can reopen without agent-control
+evidence, through the normal relay-confirmed DM open.
 
 A snapshot exposes `identities`, `selectable`, `archives`, `definitions`, `status`,
 `pending`, `complete` and a separate `templates` projection. `status: ready` means
@@ -1077,6 +1109,29 @@ the thinking level and "Default" to its menu and accessible label so the model
 name keeps its room. Goose device defaults have no reset action: omitting a
 model in Goose retains its stored provider model.
 
+### Databricks model names
+
+Goose's Databricks providers list workspace endpoints (`databricks-*`,
+`goose-*`) and Unity Catalog model services (`catalog.schema.model`). The
+pickers show their model names, such as `GPT-6.1 Sol` for
+`system.ai.gpt-6-1-sol`; endpoints without a known prefix keep their IDs. Models
+whose names would read the same keep their IDs. Saved and requested models keep their
+full IDs. An agent's one-line summary shows the ID.
+
+`DATABRICKS_MODEL_FILTER`, read through goose's config (its environment
+variable, else the same key in goose's `config.yaml`), narrows the listing of
+`databricks` and `databricks_v2`: comma-separated patterns, each matched against
+a whole ID, case-sensitively, with `*` for any characters and `?` for one, for
+example `goose-*,acme_models.goose.*`. A listed model matching any
+pattern stays listed. Without patterns, the provider's full listing stays,
+which for `databricks` is still only its `databricks-` and `goose-` endpoints,
+so a filter cannot widen it. A filter that matches nothing lists none. It only hides
+models: a saved model the filter hides is kept, and its menu marks it as a
+"Custom model" in pickers that accept one (profiles, cards, new agents) or an
+"Unavailable model" in the Goose default model picker. Databricks still decides
+access. Buzz does not pass its own `BUZZ_*` variables to goose, so the filter
+uses goose's name.
+
 ## Usage
 
 Usage is a default-off page summarising what the selected community's agents
@@ -1164,7 +1219,7 @@ Use `watch_add` with `type: "source"`, a `provider` in `plugin/source` form and 
 
 Source output accepts the same optional classifier questions as event watches. Classification preserves output ordering and completion until the resulting delivery settles. `agents.attentionProviders()` lists active registered provider keys with their optional `description` and `configExample`, including providers from unrelated plugins. Disabled and unloaded registrations disappear from discovery.
 
-The bundled Agents plugin owns the command producer and discovery tool. The GitHub plugin owns the GitHub PR producer. Saved provider IDs remain `attention/command` and `attention/github-pr`, and discovery marks them `builtIn: true`. The bundled Agent Attention UI plugin owns the per-agent overview and controls for existing watches. The GitHub source uses the same PR parser and feedback policy as `github_watch_pr`; it requires the signed-in `gh` CLI. The tool configures Attention subscriptions rather than owning a separate polling loop. Other plugins can register their own source producers through the same lifecycle. Legacy Monitor command registrations and pending wakes are not imported; recreate needed command watches in Attention.
+The bundled Agents plugin owns the command producer and discovery tool. The GitHub plugin owns the GitHub PR producer. Saved provider IDs remain `attention/command` and `attention/github-pr`, and discovery marks them `builtIn: true`. The bundled Attention plugin owns the per-agent overview and controls for existing watches. The GitHub source uses the same PR parser and feedback policy as `github_watch_pr`; it requires the signed-in `gh` CLI. The tool configures Attention subscriptions rather than owning a separate polling loop. Other plugins can register their own source producers through the same lifecycle. Legacy Monitor command registrations and pending wakes are not imported; recreate needed command watches in Attention.
 
 ## Attention delivery destinations
 

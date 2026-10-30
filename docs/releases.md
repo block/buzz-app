@@ -1,5 +1,17 @@
 # Desktop test releases
 
+## Agent protection compatibility notice
+
+Builds with agent protection require explicit native owner confirmation before
+upgrading local agents to the one-way protected storage format. **Every local
+agent becomes inaccessible to older Buzz builds**, including an installed app
+sharing the development build's store. Clearing protection does not undo this.
+Close other Buzz builds before confirming and retain a compatible build. Cancel
+leaves files unchanged; earlier protected previews prompt at startup. See the
+[upgrade and recovery contract](agent-protection.md#local-storage-upgrade).
+
+## Preview artifacts
+
 The **Desktop previews** workflow builds all supported desktop platforms from
 `main` and publishes one GitHub prerelease, tagged
 `v<app-version>-preview.<run-number>.<attempt>` at the built commit:
@@ -179,6 +191,8 @@ The **Desktop previews** workflow sets `BUZZ_BUILDERLAB_URL` for all platform
 builds, including candidate-only runs. It defaults to `https://app.builderlab.xyz`.
 To override it, set the repository's non-secret Actions variable
 `BUZZ_BUILDERLAB_URL`; an unset or empty variable uses the production default.
+When `BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG` is set, the workflow supplies an
+empty `BUZZ_BUILDERLAB_URL` instead, because FI builds reject the legacy origin.
 
 ### Signing
 

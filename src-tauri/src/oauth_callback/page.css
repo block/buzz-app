@@ -1,0 +1,194 @@
+/* Standalone counterpart of design-system/styles/{tokens,typography,materials}.css.
+   No app runtime or remote assets are available on the loopback callback. */
+:root {
+  color-scheme: light dark;
+  --bg-app: #f1f1f2;
+  --surface-panel: #fff;
+  --text-standard: #0f0f0f;
+  --text-subtle: #525252;
+  --texture-dots-color: color-mix(in srgb, var(--bg-app) 94%, black);
+  --space-panel-inset: 1.5rem;
+  --radius-container: 1.5rem;
+  --duration-settle: 220ms;
+  --easing-enter: cubic-bezier(0.23, 1, 0.32, 1);
+  --shadow-panel:
+    0 0 0 1px rgb(0 0 0 / 6%), 0 1px 2px -1px rgb(0 0 0 / 6%),
+    0 2px 4px rgb(0 0 0 / 4%);
+  font:
+    400 100% / 1.4285714286 "Inter Variable",
+    Inter,
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    sans-serif;
+  background-color: var(--bg-app);
+  background-image: radial-gradient(
+    var(--texture-dots-color) 1px,
+    transparent 1px
+  );
+  background-size: 24px 24px;
+  color: var(--text-standard);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg-app: #101010;
+    --surface-panel: #1a1a1a;
+    --text-standard: #fff;
+    --text-subtle: #a4a4a4;
+    --texture-dots-color: color-mix(in srgb, var(--bg-app) 92%, white);
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+/* Browser-injected body siblings must not become rows in the centering grid. */
+.page {
+  min-block-size: 100svh;
+  padding: var(--space-panel-inset);
+  display: grid;
+  place-items: center;
+}
+
+main {
+  inline-size: 100%;
+  max-inline-size: 30rem;
+  padding: var(--space-panel-inset);
+  border: 1px solid transparent;
+  border-radius: var(--radius-container);
+  background: var(--surface-panel);
+  box-shadow: var(--shadow-panel);
+  overflow-wrap: anywhere;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  body[data-complete="true"] main {
+    animation: arrive var(--duration-settle) var(--easing-enter) both;
+  }
+}
+
+@keyframes arrive {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+  65% {
+    opacity: 1;
+    transform: scale(1.012);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+p {
+  margin: 1rem 0 0;
+  font-size: 0.875rem;
+  letter-spacing: -0.005em;
+}
+
+p:empty {
+  display: none;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-block-end: var(--space-panel-inset);
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+.brand svg {
+  inline-size: 1.5rem;
+  block-size: 1.5rem;
+  flex-shrink: 0;
+}
+
+.brand svg > path {
+  fill: currentColor;
+}
+
+h1 {
+  margin: 0;
+  font-size: 2rem;
+  line-height: 1.1;
+  font-weight: 500;
+  letter-spacing: -0.015em;
+}
+
+.hint {
+  color: var(--text-subtle);
+  display: grid;
+  grid-template-columns: 1.125rem minmax(0, 1fr);
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.hint-copy {
+  display: contents;
+}
+
+/* Both messages reserve their wrapped size, including before script startup. */
+.hint-copy > span {
+  grid-area: 1 / 1 / 2 / -1;
+  min-inline-size: 0;
+}
+
+#closing-hint {
+  grid-column: 2;
+}
+
+#closing-hint,
+body[data-closing="true"] #close-hint {
+  visibility: hidden;
+}
+
+/* Same Tabler loader and motion as the shared Button's CircleNotchIcon. */
+#close-spinner {
+  grid-area: 1 / 1;
+  inline-size: 1.125rem;
+  block-size: 1.125rem;
+  visibility: hidden;
+  animation: spin 1s linear infinite;
+}
+
+body[data-closing="true"] #closing-hint,
+body[data-closing="true"] #close-spinner {
+  visibility: visible;
+}
+
+body[data-complete="false"] #close-spinner {
+  display: none;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #close-spinner {
+    animation: none;
+  }
+}
+
+@media (forced-colors: active) {
+  :root {
+    background: Canvas;
+    color: CanvasText;
+  }
+
+  main {
+    border-color: CanvasText;
+  }
+}

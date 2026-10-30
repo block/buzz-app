@@ -1,7 +1,9 @@
 //! Browser sign-in startup and loopback OAuth authorization-code responses.
 //! RFC 8252 §§7.3, 8.3, 8.4, 8.9; RFC 6749 §§4.1.2, 4.1.2.1; RFC 9700 §2.1.
 //! See this folder's README.md for the command contract, ownership, and limits.
+mod focus;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use sha2::{Digest, Sha256};
 use std::{
     sync::{Arc, Mutex},
     time::Duration,
@@ -44,7 +46,7 @@ impl Drop for Attempt {
     }
 }
 #[derive(Clone, Default)]
-pub(crate) struct OAuthCallbackHost(Arc<Mutex<Option<Attempt>>>);
+pub(crate) struct OAuthCallbackHost(Arc<Mutex<Option<Attempt>>>, focus::FocusReturn);
 
 impl OAuthCallbackHost {
     pub(crate) fn document_load(
@@ -55,6 +57,7 @@ impl OAuthCallbackHost {
         if label == "main" && event == tauri::webview::PageLoadEvent::Started {
             // The new document cannot recover the previous plugin's attempt ID.
             self.0.lock().map_err(|_| "Sign-in unavailable")?.take();
+            self.1.cancel(None);
         }
         Ok(())
     }
@@ -64,7 +67,7 @@ impl OAuthCallbackHost {
         request: OAuthRequest,
         open: impl FnOnce(&str) -> Result<(), String>,
     ) -> Result<OAuthAttempt, String> {
-        self.begin_with_parameter(request, "redirect_uri", open)
+        self.begin_with_parameter(request, "redirect_uri", open, None)
     }
 
     /// NIP-FA binds its handoff secret instead of requiring echoed OAuth state.
@@ -82,6 +85,7 @@ impl OAuthCallbackHost {
             },
             "return_to",
             open,
+            None,
         )
     }
 
@@ -90,6 +94,7 @@ impl OAuthCallbackHost {
         request: OAuthRequest,
         callback_parameter: &str,
         open: impl FnOnce(&str) -> Result<(), String>,
+        browser: Option<String>,
     ) -> Result<OAuthAttempt, String> {
         let mut authorization =
             url::Url::parse(&request.authorization_url).map_err(|_| "Invalid authorization URL")?;
@@ -152,11 +157,19 @@ impl OAuthCallbackHost {
         } else {
             None
         };
+        // Native federated authorities keep the original neutral callback page.
+        let branded = callback_parameter == "redirect_uri";
         let (send, receive) = oneshot::channel();
         let task = tokio::spawn(async move {
             let result = tokio::time::timeout(
                 Duration::from_secs(600),
-                receive_callback(listener, &authority, &path, expected_state.as_deref()),
+                receive_callback(
+                    listener,
+                    &authority,
+                    &path,
+                    expected_state.as_deref(),
+                    branded,
+                ),
             )
             .await
             .unwrap_or_else(|_| Err("Sign-in timed out. Try again.".into()));
@@ -171,6 +184,7 @@ impl OAuthCallbackHost {
             // Generic OAuth keeps its existing finished-task replacement rule.
             retain_result: callback_parameter == "return_to",
         });
+        self.1.arm(&id, browser);
         drop(current);
         if open(authorization.as_str()).is_err() {
             self.cancel(&id)?;
@@ -194,7 +208,17 @@ impl OAuthCallbackHost {
         let result = receiver
             .await
             .unwrap_or_else(|_| Err("Sign-in canceled.".into()));
-        self.cancel(id)?;
+        let mut current = self.0.lock().map_err(|_| "Sign-in unavailable")?;
+        if current.as_ref().is_some_and(|attempt| attempt.id == id) {
+            current.take();
+        }
+        self.1.received(
+            id,
+            result.as_ref().is_ok_and(|callback| {
+                callback.parameters.iter().any(|(name, _)| name == "code")
+                    && !callback.parameters.iter().any(|(name, _)| name == "error")
+            }),
+        );
         result
     }
 
@@ -203,6 +227,7 @@ impl OAuthCallbackHost {
         if current.as_ref().is_some_and(|attempt| attempt.id == id) {
             *current = None;
         }
+        self.1.cancel(Some(id));
         Ok(())
     }
 }
@@ -215,20 +240,23 @@ pub(crate) fn oauth_callback_begin<R: tauri::Runtime>(
     callback_path: String,
     use_state: Option<bool>,
 ) -> Result<OAuthAttempt, String> {
+    let browser = focus::capture(&app, &authorization_url);
     // Register and launch inline so reload cleanup cannot overtake a queued begin.
     // Enter the runtime for the Tokio listener; startup does not await anything.
     tauri::async_runtime::block_on(async {
-        state.begin(
+        state.begin_with_parameter(
             OAuthRequest {
                 authorization_url,
                 callback_path,
                 use_state,
             },
+            "redirect_uri",
             |url| {
                 app.opener()
                     .open_url(url, None::<&str>)
                     .map_err(|_| "Could not open the sign-in browser".into())
             },
+            browser,
         )
     })
 }
@@ -238,6 +266,16 @@ pub(crate) async fn oauth_callback_wait(
     id: String,
 ) -> CallbackResult {
     state.wait(&id).await
+}
+/// Called by the trusted main webview only after code exchange and account verification.
+#[tauri::command]
+pub(crate) async fn oauth_callback_complete<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: tauri::State<'_, OAuthCallbackHost>,
+    id: String,
+) -> Result<(), String> {
+    state.1.complete(app, id).await;
+    Ok(())
 }
 #[tauri::command]
 pub(crate) fn oauth_callback_cancel(
@@ -252,6 +290,7 @@ async fn receive_callback(
     authority: &str,
     path: &str,
     expected_state: Option<&str>,
+    branded: bool,
 ) -> CallbackResult {
     loop {
         let (mut stream, _) = listener
@@ -261,7 +300,7 @@ async fn receive_callback(
         // Bound slow/oversize requests; malformed callbacks do not consume the attempt.
         let result = tokio::time::timeout(
             Duration::from_secs(5),
-            callback(&mut stream, authority, path, expected_state),
+            callback(&mut stream, authority, path, expected_state, branded),
         )
         .await;
         if let Ok(Some(response)) = result {
@@ -277,6 +316,7 @@ async fn callback(
     authority: &str,
     path: &str,
     expected_state: Option<&str>,
+    branded: bool,
 ) -> Option<OAuthCallback> {
     let mut bytes = Vec::new();
     let mut chunk = [0; 1024];
@@ -287,12 +327,12 @@ async fn callback(
         }
         bytes.extend_from_slice(&chunk[..count]);
         if bytes.len() > 8192 {
-            reply(stream, 400, "Invalid callback").await;
+            reply(stream, 400, "Invalid callback", branded).await;
             return None;
         }
     }
     let (status, message, result) = parse_callback(&bytes, authority, path, expected_state);
-    reply(stream, status, message).await;
+    reply(stream, status, message, branded).await;
     result
 }
 
@@ -367,14 +407,47 @@ fn parse_callback(
     )
 }
 
-async fn reply(stream: &mut TcpStream, status: u16, message: &str) {
-    let body = format!("<!doctype html><title>Sign-in callback</title><p>{message}</p>");
+async fn reply(stream: &mut TcpStream, status: u16, message: &str, branded: bool) {
+    let (body, policy) = if branded {
+        // All copy comes from the fixed responses above, never from callback values.
+        let heading = match status {
+            200 => "Signing you in…",
+            404 => "Page not found",
+            _ => "Sign-in needs attention",
+        };
+        let style = include_str!("page.css");
+        let style_hash = base64::engine::general_purpose::STANDARD.encode(Sha256::digest(style));
+        let script = include_str!("page.js");
+        let script_hash = base64::engine::general_purpose::STANDARD.encode(Sha256::digest(script));
+        // Replace whole HTML comments so the template is valid without parsing placeholders as CSS/JS.
+        let body = include_str!("page.html")
+            .replace("<!-- {{style}} -->", &format!("<style>{style}</style>"))
+            .replace("<!-- {{script}} -->", &format!("<script>{script}</script>"))
+            .replace("{{complete}}", if status == 200 { "true" } else { "false" })
+            .replace(
+                "{{closeDelay}}",
+                &focus::READABLE_DELAY.as_secs().to_string(),
+            )
+            .replace(
+                "{{brand}}",
+                include_str!("../../../public/builderlab-mark.svg"),
+            )
+            .replace("{{heading}}", heading)
+            .replace("{{message}}", if status == 200 { "" } else { message });
+        let policy = format!("default-src 'none'; style-src 'sha256-{style_hash}'; script-src 'sha256-{script_hash}'; base-uri 'none'; frame-ancestors 'none'");
+        (body, policy)
+    } else {
+        (
+            format!("<!doctype html><title>Sign-in callback</title><p>{message}</p>"),
+            "default-src 'none'; base-uri 'none'; frame-ancestors 'none'".into(),
+        )
+    };
     let reason = match status {
         200 => "OK",
         404 => "Not Found",
         _ => "Bad Request",
     };
-    let response = format!("HTTP/1.1 {status} {reason}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\nCache-Control: no-store\r\nContent-Security-Policy: default-src 'none'; base-uri 'none'; frame-ancestors 'none'\r\nReferrer-Policy: no-referrer\r\n\r\n{body}", body.len());
+    let response = format!("HTTP/1.1 {status} {reason}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\nCache-Control: no-store\r\nContent-Security-Policy: {policy}\r\nReferrer-Policy: no-referrer\r\n\r\n{body}", body.len());
     let _ = stream.write_all(response.as_bytes()).await;
     let _ = stream.shutdown().await;
 }

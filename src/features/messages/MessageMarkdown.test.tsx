@@ -1478,3 +1478,16 @@ it("marks only a mention of the viewer as a mention of you", () => {
     view.getByRole("button", { name: "View Mic profile" }),
   ).not.toHaveAttribute("data-mention-self");
 });
+
+it("opens a plugin page link in message content through the host opener", () => {
+  const href =
+    "buzz://plugin?id=com.example.catalog&page=detail&route.slug=hello";
+  const onOpenLink = vi.fn(() => true);
+  renderDom(
+    <ToastProvider>
+      <MessageMarkdown {...props(`See [the entry](${href})`, { onOpenLink })} />
+    </ToastProvider>,
+  );
+  fireEvent.click(screen.getByRole("link", { name: "the entry" }));
+  expect(onOpenLink).toHaveBeenCalledWith(href);
+});

@@ -1314,7 +1314,14 @@ while a new destination truncates the forward branch. Leaving aborts the old
 attempt, and late completion cannot acknowledge a replacement attempt.
 
 Version-1 `OpenTarget` accepts legacy Home targets (resolved to Messages), Settings sections, contributed pages with
-optional versioned JSON routes, and account/community-bound conversations.
+optional versioned JSON routes, plugin links, and account/community-bound conversations.
+A plugin link, `{ kind: "plugin", pluginId, pageId?, params?, scope? }`, is the target
+form of `buzz://plugin?id=…`. It names a plugin and optionally one of its pages, with
+untrusted string `params`. Once the plugin runtime has settled, the host resolves it
+in place to an ordinary page target: the named page, else the plugin's primary page,
+else its first page. `params` become that page's route params only when the page
+declares a route and its `validate` accepts them; otherwise the page opens without
+params. A plugin that is absent, disabled, or lacks the page fails `unavailable`.
 Conversation targets may include `panel: "members"` to restore that channel’s
 Members dialog without replacing its channel/message identity. Unknown panel
 values are rejected; this is presentation state, never mutation or confirmation state.
@@ -1355,8 +1362,10 @@ into versioned route parameters. These are host-matched preview types through
 
 Browser `#buzz=` addresses and session history support reload and Back/Forward.
 Messages recognize the Buzz link forms `buzz://channel/<id>`,
-`buzz://channel/<id>/<event>` and
-`buzz://message?channel=<id>&id=<event>&thread=<optional-root>`. Buzz links carry
+`buzz://channel/<id>/<event>`,
+`buzz://message?channel=<id>&id=<event>&thread=<optional-root>` and
+`buzz://plugin?id=<plugin>&page=<optional-page>&route.<key>=<optional-value>`
+(plugin pages; see [OS deep links](deep-links.md)). Buzz links carry
 no community: they bind to the receiving conversation's community and viewer and
 pass through existing navigation admission and session ownership checks. The app
 has no link form of its own; any other `buzz://` host is rejected everywhere,

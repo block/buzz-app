@@ -743,3 +743,66 @@ it("does not revive a disposed bridge when native registration finishes", async 
   await invoked.fn.mock.results[0]?.value;
   expect(listener).not.toHaveBeenCalled();
 });
+
+it("binds a plugin page link to the selected community and viewer", () => {
+  const scope = { viewer, communityOrigin: origin };
+  expect(
+    deepLinkStep(
+      "buzz://plugin?id=com.example.catalog&page=detail&route.slug=a&foo=b",
+      client,
+    ),
+  ).toEqual({
+    open: {
+      version: 1,
+      kind: "plugin",
+      pluginId: "com.example.catalog",
+      pageId: "detail",
+      params: { slug: "a" },
+      scope,
+    },
+  });
+  expect(deepLinkStep("buzz://plugin?id=com.example.catalog", client)).toEqual({
+    open: {
+      version: 1,
+      kind: "plugin",
+      pluginId: "com.example.catalog",
+      scope,
+    },
+  });
+  expect(
+    deepLinkStep("buzz://plugin?id=com.example.catalog", {
+      viewer,
+      selected: null,
+    }),
+  ).toEqual({ fail: "unavailable" });
+});
+it.each([
+  "buzz://plugin",
+  "buzz://plugin?id=Not.Valid",
+  "buzz://plugin?id=a&id=b",
+  "buzz://plugin?id=a&page=b&page=c",
+  "buzz://plugin?id=a&route.k=1&route.k=2",
+  "buzz://plugin?id=a&page=",
+])("fails a malformed plugin link as invalid-target: %s", (url) => {
+  expect(deepLinkStep(url, client)).toEqual({ fail: "invalid-target" });
+});
+it("opens a warm plugin link through the navigation host", async () => {
+  const t = harness(ready);
+  try {
+    await settle();
+    t.arrive("buzz://plugin?id=com.example.catalog&route.slug=a");
+    await vi.waitFor(() =>
+      expect(t.log).toEqual([
+        `open:${JSON.stringify({
+          version: 1,
+          kind: "plugin",
+          pluginId: "com.example.catalog",
+          params: { slug: "a" },
+          scope: { viewer, communityOrigin: origin },
+        })}`,
+      ]),
+    );
+  } finally {
+    t.stop();
+  }
+});

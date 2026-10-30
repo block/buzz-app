@@ -35,7 +35,10 @@ function Row(props: ComponentProps<typeof MessageActionBar>) {
   const rowRef = useRef<HTMLDivElement>(null);
   return (
     <div ref={rowRef} data-testid="message">
-      <span>Message author</span>
+      <div data-message-action-header>
+        <span>Message author</span>
+      </div>
+      <span>Message accessory</span>
       <div data-message-action-anchor>
         <span>Message bubble</span>
       </div>
@@ -170,7 +173,7 @@ it("defers desktop controls until row interaction and retains them after leaving
   ).toBe(trigger);
 });
 
-it("reveals actions only over message content or the toolbar, not the row's empty space", () => {
+it("reveals actions only over message content, its byline or the toolbar, not the row's empty space", () => {
   pointerMedia();
   render(
     <StrictMode>
@@ -185,7 +188,11 @@ it("reveals actions only over message content or the toolbar, not the row's empt
   fireEvent.pointerEnter(row);
   fireEvent.pointerOver(row);
   expect(row.hasAttribute("data-actions-revealed")).toBe(false);
-  for (const content of ["Message bubble", "Message attachment"]) {
+  for (const content of [
+    "Message author",
+    "Message bubble",
+    "Message attachment",
+  ]) {
     const target = screen.getByText(content);
     fireEvent.pointerOver(target, { relatedTarget: row });
     expect(row.hasAttribute("data-actions-revealed")).toBe(true);
@@ -196,7 +203,7 @@ it("reveals actions only over message content or the toolbar, not the row's empt
     fireEvent.pointerOut(bar, { relatedTarget: row });
     expect(row.hasAttribute("data-actions-revealed")).toBe(false);
   }
-  fireEvent.pointerOver(screen.getByText("Message author"));
+  fireEvent.pointerOver(screen.getByText("Message accessory"));
   expect(row.hasAttribute("data-actions-revealed")).toBe(false);
 });
 

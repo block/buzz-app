@@ -246,7 +246,7 @@ export function AgentDetails({
             />
           )}
           <aside
-            className={`${hero.hero} ${hero.panelHero}`}
+            className={`${hero.hero} ${hero.panelHero} ${styles.identityCard}`}
             aria-label={`${agent.name} identity`}
           >
             <ProfileBackdrop src={backdrop}>

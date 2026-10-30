@@ -174,6 +174,28 @@
 .panelFooter > * {
   pointer-events: auto;
 }
+/* The decorative backdrop and portrait fade; labels and controls retain color. */
+.build:has(> .panelFooter:not(:empty))
+  .identityCard
+  > :is([aria-hidden="true"], .identityPortrait) {
+  animation: signInDesaturate 10s linear forwards;
+}
+@keyframes signInDesaturate {
+  from {
+    filter: grayscale(0);
+  }
+  to {
+    filter: grayscale(1);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .build:has(> .panelFooter:not(:empty))
+    .identityCard
+    > :is([aria-hidden="true"], .identityPortrait) {
+    animation: none;
+    filter: grayscale(1);
+  }
+}
 .saveFooter {
   flex: none;
   position: sticky;

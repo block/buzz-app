@@ -676,10 +676,18 @@ test("explicit conversion moves the same conversation from Solo to Messages and 
 
 // Browser-only: native modal focus handoff to a replacement Messages header.
 // The held metadata/completion ordering matrix lives in the mounted page test.
-test("Messages conversion restores focus after its chat header is replaced", async ({
+test("Public Solo conversion preserves visibility and restores focus after its chat header is replaced", async ({
   page,
   app,
-}) => {
+}, testInfo) => {
+  app.setChannelMetadata(id, [
+    ["name", "Alpha"],
+    ["t", "stream"],
+    ["t", "buzz.solo"],
+    ["P", app.viewer],
+    ["public"],
+    ["join_role", "guest"],
+  ]);
   await page.goto(app.origin);
   await expect
     .poll(() =>
@@ -706,6 +714,13 @@ test("Messages conversion restores focus after its chat header is replaced", asy
   await expect(
     dialog.getByRole("button", { name: "Convert to channel" }),
   ).toBeEnabled();
+  await expect(
+    dialog.getByRole("radio", { name: "Public", exact: true }),
+  ).toBeChecked();
+  if (testInfo.project.name === "chromium")
+    await dialog.screenshot({
+      path: testInfo.outputPath("SOLO_PUBLIC_CONVERSION.png"),
+    });
   await dialog.getByRole("button", { name: "Cancel" }).click();
   expect(app.report.detailsPublications ?? []).toHaveLength(0);
   await expect(trigger).toBeFocused();
@@ -713,6 +728,9 @@ test("Messages conversion restores focus after its chat header is replaced", asy
   await convert.click();
   const confirm = dialog.getByRole("button", { name: "Convert to channel" });
   await expect(confirm).toBeEnabled();
+  await expect(
+    dialog.getByRole("radio", { name: "Public", exact: true }),
+  ).toBeChecked();
   await confirm.focus();
   await confirm.press("Enter");
   await expect(dialog).not.toBeVisible();

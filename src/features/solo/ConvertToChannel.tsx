@@ -68,7 +68,7 @@ export function ConvertToChannel({
   const [base, setBase] = useState<ChannelDetails>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [visibility, setVisibility] = useState<"private" | "public">("private");
+  const [visibility, setVisibility] = useState<"private" | "public">();
   const lifetime = useRef<AbortController | undefined>(undefined);
   const pending = useRef(false);
   const conversionAttempt =
@@ -100,7 +100,9 @@ export function ConvertToChannel({
   const selectedVisibility =
     receipt?.draft.visibility ??
     conversionAttempt?.draft.visibility ??
-    visibility;
+    visibility ??
+    base?.visibility ??
+    "private";
 
   useEffect(() => {
     const controller = new AbortController();
@@ -110,7 +112,7 @@ export function ConvertToChannel({
       ...(signal ? [signal] : []),
     ]);
     setBase(undefined);
-    setVisibility("private");
+    setVisibility(undefined);
     setError("");
     setBusy(false);
     pending.current = false;

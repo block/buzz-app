@@ -206,7 +206,7 @@ it.each(["member", "guest", undefined] as const)(
 );
 
 it.each(["private", "view-only", "legacy-public"])(
-  "offers only Private and View only for a %s Solo chat",
+  "disables Public and offers View only / Private for a %s Solo chat",
   async (policy) => {
     const h = harness();
     const current: ChannelDetails = {
@@ -234,13 +234,18 @@ it.each(["private", "view-only", "legacy-public"])(
       (await screen.findAllByRole("option")).map((node) =>
         node.getAttribute("aria-label"),
       ),
-    ).toEqual(["View only", "Private"]);
+    ).toEqual(["Public", "View only", "Private"]);
     expect(
       screen.getByRole("option", { name: "View only" }),
     ).toHaveAccessibleDescription("Anyone in the community can read.");
-    expect(
-      screen.queryByRole("option", { name: "Public" }),
-    ).not.toBeInTheDocument();
+    const publicOption = screen.getByRole("option", { name: "Public" });
+    expect(publicOption).toHaveAttribute("aria-disabled", "true");
+    expect(publicOption).toHaveAccessibleDescription(
+      "Anyone joining could direct your agents.",
+    );
+    await user.click(publicOption);
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(h.save).not.toHaveBeenCalled();
     await user.click(
       screen.getByRole("option", {
         name: policy === "view-only" ? "Private" : "View only",

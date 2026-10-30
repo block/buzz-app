@@ -396,7 +396,7 @@
   .shell-header
     .buzz-button[data-icon-variant]:not(
       [data-icon-variant="prominent"],
-      [data-icon-size="md"]
+      .shell-search-action .buzz-button
     ) {
     width: var(--size-control-sm);
     height: var(--size-control-sm);

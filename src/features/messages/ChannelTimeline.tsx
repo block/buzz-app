@@ -38,6 +38,10 @@ import type { PageNavigation } from "../navigation/service";
 import { messageViewKey } from "./view-key";
 import { useKnownAgentPubkeys } from "../agents/use-known";
 import { JumpToLatestButton } from "./JumpToLatestButton";
+import { DateJumpContext } from "./DateJumpMenu";
+import { useDateJump } from "./use-date-jump";
+import { useReturnHighlight } from "./use-return-highlight";
+import { useToastNotification } from "../../shared/design-system/ui/Toast";
 
 // Native upward scrolling can start on a focused message link or button.
 // Inner scrollports own the key while they can move. At their top boundary,
@@ -153,6 +157,8 @@ export type ChannelTimelineProps = {
   transient?: boolean | undefined;
   /** False: viewing rows marks nothing read; the owner decides what was read. */
   marksRead?: boolean | undefined;
+  /** Day dividers open "Jump to…"; a jump may detach the window from its head. */
+  dateJump?: boolean | undefined;
   navigation?: PageNavigation | undefined;
   onOpenThread?(
     messageId: string,
@@ -202,8 +208,21 @@ function Timeline({
   chatPresentation = false,
   startsThreads = true,
   activityLane = false,
+  dateJump = false,
 }: ChannelTimelineProps) {
   useMessageSelectionCopy();
+  const notify = useToastNotification();
+  const dates = useDateJump(queries.channels, channelId, () =>
+    notify("Couldn't jump to that date.", "error"),
+  );
+  // A detached window holds a segment of history below rows not yet loaded:
+  // its bottom is not the conversation's latest, so it never follows.
+  const detached = !!window.hasNewer;
+  const detachedNow = useRef(detached);
+  detachedNow.current = detached;
+  // Set by Jump to latest or a send while detached, until the head lands.
+  const attaching = useRef(false);
+  if (!detached) attaching.current = false;
   const [initialPosition] = useState(() =>
     transient
       ? null
@@ -334,7 +353,8 @@ function Timeline({
     ids: ReadonlySet<string>;
     floor: number;
     paging: boolean;
-  }>({ order: [], ids: new Set(), floor: 0, paging: false });
+    detached: boolean;
+  }>({ order: [], ids: new Set(), floor: 0, paging: false, detached: false });
   // The reader's anchor row and its offset before this render's rows.
   const reader = useRef<{ id: string | undefined; top: number; y: number }>({
     id: undefined,
@@ -436,6 +456,7 @@ function Timeline({
       // Restoration can scroll before Virtua measures rows beneath the anchor,
       // briefly reaching the estimated bottom. Only reader input may follow.
       if (restoredAnchor.current) position.bottom = false;
+      if (detachedNow.current && !attaching.current) position.bottom = false;
       savedPosition.current = position;
       follow.current = position.bottom;
       measuredPosition.current = {
@@ -455,6 +476,10 @@ function Timeline({
   }, []);
   const jumpToLatest = useCallback(() => {
     if (!handle.current || !rows.length) return;
+    if (detachedNow.current) {
+      attaching.current = true;
+      queries.channels.attach?.(channelId);
+    }
     intent.current++;
     follow.current = true;
     restoredAnchor.current = undefined;
@@ -467,13 +492,31 @@ function Timeline({
     handle.current.scrollToIndex(rows.length - 1, {
       align: "end",
     });
-  }, [rows.length]);
+  }, [rows.length, queries, channelId]);
   const inlineSignal = inlineTarget?.signal;
-  const targetId =
+  const externalId =
     inlineTarget?.messageId ??
     (navigation?.target.kind === "conversation"
       ? navigation.target.messageId
       : undefined);
+  const externalSignal = inlineSignal ?? navigation?.signal;
+  // A date jump supersedes the visit it started over; a newer visit cancels it.
+  const [jumpedOver, setJumpedOver] = useState<AbortSignal>();
+  const cancelJump = dates.cancel;
+  useLayoutEffect(() => {
+    if (externalSignal && externalSignal !== jumpedOver) cancelJump();
+  }, [externalSignal, jumpedOver, cancelJump]);
+  const startJump = dates.jump;
+  const jumpTo = useCallback(
+    (from: number) => {
+      setJumpedOver(externalSignal);
+      startJump(from);
+    },
+    [externalSignal, startJump],
+  );
+  const dateTarget = dates.target;
+  const external = externalSignal !== jumpedOver;
+  const targetId = dateTarget?.messageId ?? (external ? externalId : undefined);
   const targetIndex = rows.findIndex((row) => row.id === targetId);
   // The reveal keeps its row in place through late measurement until any newer
   // intent: reader input, a send or Jump to latest.
@@ -505,7 +548,8 @@ function Timeline({
         list.getItemOffset(targetIndex),
     });
   }, [targetIndex]);
-  const targetSignal = inlineSignal ?? navigation?.signal;
+  const targetSignal =
+    dateTarget?.signal ?? (external ? externalSignal : undefined);
   const activityReveal = useRef<AbortSignal | string | undefined>(undefined);
   useLayoutEffect(() => {
     const id = targetId ?? revealMessageId;
@@ -522,18 +566,36 @@ function Timeline({
   // Positioning waits for the exact reveal, then must run again: a reveal that
   // leaves the reader at the bottom keeps following late row measurement.
   const [revealedSignal, setRevealedSignal] = useState<AbortSignal>();
+  // The cue looks up this timeline inside its parent.
+  const highlightRoot = useMemo(
+    () => ({
+      get current() {
+        return scroller.current?.parentElement ?? null;
+      },
+    }),
+    [],
+  );
+  // A fresh callback each render; the reveal must not reschedule for it.
+  const cue = useReturnHighlight(highlightRoot, channelId);
+  const highlight = useRef(cue);
+  highlight.current = cue;
+  const revealedDate = dates.revealed;
   const completeTarget = useCallback(() => {
     const element = scroller.current;
     // Only a reveal clamped at the scroll limit follows. A near-bottom reveal
     // keeps its row where it placed it instead of re-aligning to the end.
     if (
-      element &&
-      element.scrollHeight - element.clientHeight - element.scrollTop > 1
+      detachedNow.current ||
+      (element &&
+        element.scrollHeight - element.clientHeight - element.scrollTop > 1)
     )
       follow.current = false;
-    navigation?.complete({ status: "opened" });
+    if (dateTarget && dateTarget.signal === targetSignal) {
+      revealedDate();
+      highlight.current(dateTarget.messageId);
+    } else navigation?.complete({ status: "opened" });
     setRevealedSignal(targetSignal);
-  }, [navigation, targetSignal]);
+  }, [navigation, targetSignal, dateTarget, revealedDate]);
   useMessageReveal({
     scroller,
     focus: !(
@@ -544,6 +606,7 @@ function Timeline({
     messageId: targetId,
     signal: targetSignal,
     ready: !!size.width && !!size.height && targetIndex >= 0,
+    block: dateTarget ? "center" : "start",
     prepare: prepareTarget,
     placed: targetPlaced,
     complete: completeTarget,
@@ -557,7 +620,8 @@ function Timeline({
     latestMessageId: window.rows
       .filter((row) => !row.membership && !row.huddle)
       .at(-1)?.id,
-    enabled: marksRead,
+    // A detached segment's newest row is not the conversation's latest.
+    enabled: marksRead && !detached,
   });
   // Shift keeps the distance from the end, so it holds the reader only while
   // the rows from their first visible item to the end are kept. Relay pages
@@ -702,6 +766,17 @@ function Timeline({
     element.ownerDocument.addEventListener("pointercancel", done);
     return () => release(true);
   }, [rows, prepend]);
+  // Leaving a detached segment returns the channel to its head, at the bottom.
+  const attachOnLeave = useRef(() => queries.channels.attach?.(channelId));
+  attachOnLeave.current = () => queries.channels.attach?.(channelId);
+  useLayoutEffect(
+    () => () => {
+      if (!detachedNow.current) return;
+      savedPosition.current = { offset: 0, bottom: true };
+      attachOnLeave.current();
+    },
+    [],
+  );
   useLayoutEffect(() => {
     const element = scroller.current;
     if (!element) return;
@@ -800,7 +875,7 @@ function Timeline({
     // Rows before the loaded first row's second are history. A page also
     // returns rows of that second, and can land after a retained first row:
     // when one lands, only rows after the previous last row are new.
-    const { floor, order } = edges.current;
+    const { floor, order, detached: wasDetached } = edges.current;
     const paged = edges.current.paging && !loadingOlder.current;
     const tail = rows.findIndex((row) => row.id === order.at(-1));
     const arrivals = rows.filter(
@@ -814,11 +889,16 @@ function Timeline({
       ids: new Set(rows.map((row) => row.id)),
       floor: rows[0]?.createdAt ?? 0,
       paging: loadingOlder.current,
+      detached: detachedNow.current,
     };
+    // Rows a newer page appends, including the page that reattaches, are
+    // history the reader asked for, not new messages.
     if (
       arrivals > 0 &&
       previousIds.size > 0 &&
       !follow.current &&
+      !wasDetached &&
+      !detachedNow.current &&
       (!targetId || revealedSignal === targetSignal)
     ) {
       setNewMessageCount((count) => count + arrivals);
@@ -999,6 +1079,31 @@ function Timeline({
     if (olderDemand.current && scroller.current)
       loadNearTop(scroller.current, true);
   }, [loadNearTop]);
+  const loadNearBottom = useCallback(
+    (element: HTMLElement) => {
+      if (
+        !window.hasNewer ||
+        window.loadingNewer ||
+        window.status !== "ready" ||
+        window.error ||
+        attaching.current ||
+        element.scrollHeight - element.clientHeight - element.scrollTop >=
+          Math.max(3000, element.clientHeight * 4)
+      )
+        return;
+      queries.channels.loadNewer?.(channelId);
+    },
+    [window, queries, channelId],
+  );
+  // A send while detached lands at the head, so return there first.
+  const sent = useRef(revealMessageId);
+  useLayoutEffect(() => {
+    if (revealMessageId === sent.current) return;
+    sent.current = revealMessageId;
+    if (!revealMessageId || !detachedNow.current) return;
+    attaching.current = true;
+    queries.channels.attach?.(channelId);
+  }, [revealMessageId, queries, channelId]);
   const gesture = (upward = false) => {
     restoredAnchor.current = undefined;
     layoutCorrection.current = false;
@@ -1024,6 +1129,8 @@ function Timeline({
     // At a restored top edge, input cannot move the DOM and emits no scroll.
     if (scroller.current && scroller.current.scrollTop <= 0)
       loadNearTop(scroller.current);
+    // Likewise at a detached bottom edge.
+    if (scroller.current) loadNearBottom(scroller.current);
   };
   return (
     <section
@@ -1117,6 +1224,7 @@ function Timeline({
           updateJumpToLatest(element);
         }
         loadNearTop(element);
+        loadNearBottom(element);
       }}
     >
       <div
@@ -1148,8 +1256,13 @@ function Timeline({
           <span role="status">Loading older…</span>
         ) : null}
       </div>
+      {dates.pending && (
+        <div className={styles.jumpStatus} role="status">
+          <span>Loading older…</span>
+        </div>
+      )}
       <JumpToLatestButton
-        visible={showJumpToLatest}
+        visible={showJumpToLatest || detached}
         newMessageCount={newMessageCount}
         onClick={jumpToLatest}
         activityLane={
@@ -1157,145 +1270,152 @@ function Timeline({
         }
       />
       {width > 0 && (
-        <Virtualizer
-          ref={handle}
-          scrollRef={scroller}
-          // Before Virtua measures its viewport there is no reading position
-          // to preserve; shifting then can freeze its initial empty range.
-          shift={prepend && !!handle.current?.viewportSize}
-          bufferSize={1600}
-          // Reflow must not evict the focused control or a row's open report.
-          keepMounted={keptIndices}
-          onResize={() => {
-            const element = scroller.current;
-            // Rows can measure after native scrollend without moving the
-            // scroll offset. Do not carry their estimated Y into the next hold.
-            if (
-              element &&
-              settled.current &&
-              element.clientWidth === size.width &&
-              element.clientHeight === size.height &&
-              !follow.current &&
-              !restoredAnchor.current &&
-              heldReader.current?.intent !== intent.current
-            )
-              // A size change refreshes geometry, never bottom-follow intent.
-              savedPosition.current = { ...positionAt(element), bottom: false };
-          }}
-          as="ol"
-          item="li"
-          startMargin={size.edgeHeight}
-          {...(initialCache.current ? { cache: initialCache.current } : {})}
+        <DateJumpContext
+          value={dateJump && queries.channels.seek ? jumpTo : undefined}
         >
-          {rows.map((row, index) => {
-            const disclosure = disclosures.get(row.id);
-            const hidden = foldedActivity.has(row.id);
-            const previousRow = rows[index - 1];
-            const nextRow = rows[index + 1];
-            const day =
-              index === 0
-                ? true
-                : new Date(
-                    (rows[index - 1]?.createdAt ?? 0) * 1000,
-                  ).toDateString() !==
-                  new Date(row.createdAt * 1000).toDateString();
-            return (
-              <Fragment key={row.id}>
-                {disclosure && (
-                  <div
-                    className={styles.activityDisclosure}
-                    data-activity-group-id={row.id}
-                  >
-                    {day && <DayDivider createdAt={row.createdAt} />}
-                    <Button
-                      variant="plain"
-                      size="inline"
-                      shape="control"
-                      aria-expanded={disclosure.expanded}
-                      onClick={(event) => {
-                        event.currentTarget.focus({ preventScroll: true });
-                        // Opening history is explicit reading intent, even at
-                        // the bottom: new activity must not pull it away.
-                        intent.current++;
-                        follow.current = false;
-                        userScrolled.current = true;
-                        restoredAnchor.current = undefined;
-                        const next = new Set(expandedActivity);
-                        for (const id of disclosure.expanded
-                          ? disclosure.ids
-                          : disclosure.ids.slice(0, -RECENT_ACTIVITY_COUNT)) {
-                          if (disclosure.expanded) next.delete(id);
-                          else next.add(id);
-                        }
-                        setExpandedActivity(next);
-                      }}
+          <Virtualizer
+            ref={handle}
+            scrollRef={scroller}
+            // Before Virtua measures its viewport there is no reading position
+            // to preserve; shifting then can freeze its initial empty range.
+            shift={prepend && !!handle.current?.viewportSize}
+            bufferSize={1600}
+            // Reflow must not evict the focused control or a row's open report.
+            keepMounted={keptIndices}
+            onResize={() => {
+              const element = scroller.current;
+              // Rows can measure after native scrollend without moving the
+              // scroll offset. Do not carry their estimated Y into the next hold.
+              if (
+                element &&
+                settled.current &&
+                element.clientWidth === size.width &&
+                element.clientHeight === size.height &&
+                !follow.current &&
+                !restoredAnchor.current &&
+                heldReader.current?.intent !== intent.current
+              )
+                // A size change refreshes geometry, never bottom-follow intent.
+                savedPosition.current = {
+                  ...positionAt(element),
+                  bottom: false,
+                };
+            }}
+            as="ol"
+            item="li"
+            startMargin={size.edgeHeight}
+            {...(initialCache.current ? { cache: initialCache.current } : {})}
+          >
+            {rows.map((row, index) => {
+              const disclosure = disclosures.get(row.id);
+              const hidden = foldedActivity.has(row.id);
+              const previousRow = rows[index - 1];
+              const nextRow = rows[index + 1];
+              const day =
+                index === 0
+                  ? true
+                  : new Date(
+                      (rows[index - 1]?.createdAt ?? 0) * 1000,
+                    ).toDateString() !==
+                    new Date(row.createdAt * 1000).toDateString();
+              return (
+                <Fragment key={row.id}>
+                  {disclosure && (
+                    <div
+                      className={styles.activityDisclosure}
+                      data-activity-group-id={row.id}
                     >
-                      {disclosure.expanded
-                        ? "Show fewer"
-                        : `Show ${disclosure.ids.length - RECENT_ACTIVITY_COUNT} previous ${disclosure.ids.length - RECENT_ACTIVITY_COUNT === 1 ? "step" : "steps"}`}
-                      <CaretDownIcon
-                        className={styles.activityChevron}
-                        aria-hidden="true"
-                      />
-                    </Button>
-                  </div>
-                )}
-                <ActivityExpansion
-                  open={!hidden}
-                  enabled={row.audience === "agents"}
-                >
-                  {row.membership ? (
-                    <MembershipRow
-                      resolveName={resolveName}
-                      names={queries.names}
-                      row={row}
-                      profiles={profiles}
-                      viewer={viewer}
-                      media={queries.media}
-                      agentPubkeys={agentPubkeys}
-                      day={day}
-                      onOpenLink={onOpenLink}
-                      canOpenLink={canOpenLink}
-                    />
-                  ) : (
-                    <MessageRow
-                      stackPrevious={
-                        !!previousRow &&
-                        !foldedActivity.has(previousRow.id) &&
-                        continuesMessageGroup(previousRow, row)
-                      }
-                      stackNext={
-                        !!nextRow &&
-                        !foldedActivity.has(nextRow.id) &&
-                        continuesMessageGroup(row, nextRow)
-                      }
-                      session={queries}
-                      scope={scope}
-                      row={row}
-                      unread={queries.unread}
-                      extensions={extensions}
-                      profile={profiles.get(row.authorId)}
-                      participantProfiles={profiles}
-                      agentPubkeys={agentPubkeys}
-                      media={queries.media}
-                      onOpenLink={onOpenLink}
-                      canOpenLink={canOpenLink}
-                      onOpenThread={onOpenThread}
-                      startsThreads={startsThreads}
-                      {...(onOpenMediaReview ? { onOpenMediaReview } : {})}
-                      retry={queries.outbox?.retry}
-                      keepMounted={keepRowMounted}
-                      day={day && !disclosure}
-                    />
+                      {day && <DayDivider createdAt={row.createdAt} />}
+                      <Button
+                        variant="plain"
+                        size="inline"
+                        shape="control"
+                        aria-expanded={disclosure.expanded}
+                        onClick={(event) => {
+                          event.currentTarget.focus({ preventScroll: true });
+                          // Opening history is explicit reading intent, even at
+                          // the bottom: new activity must not pull it away.
+                          intent.current++;
+                          follow.current = false;
+                          userScrolled.current = true;
+                          restoredAnchor.current = undefined;
+                          const next = new Set(expandedActivity);
+                          for (const id of disclosure.expanded
+                            ? disclosure.ids
+                            : disclosure.ids.slice(0, -RECENT_ACTIVITY_COUNT)) {
+                            if (disclosure.expanded) next.delete(id);
+                            else next.add(id);
+                          }
+                          setExpandedActivity(next);
+                        }}
+                      >
+                        {disclosure.expanded
+                          ? "Show fewer"
+                          : `Show ${disclosure.ids.length - RECENT_ACTIVITY_COUNT} previous ${disclosure.ids.length - RECENT_ACTIVITY_COUNT === 1 ? "step" : "steps"}`}
+                        <CaretDownIcon
+                          className={styles.activityChevron}
+                          aria-hidden="true"
+                        />
+                      </Button>
+                    </div>
                   )}
-                </ActivityExpansion>
-                {index === rows.length - 1 && (
-                  <div className={styles.timelineEnd} aria-hidden="true" />
-                )}
-              </Fragment>
-            );
-          })}
-        </Virtualizer>
+                  <ActivityExpansion
+                    open={!hidden}
+                    enabled={row.audience === "agents"}
+                  >
+                    {row.membership ? (
+                      <MembershipRow
+                        resolveName={resolveName}
+                        names={queries.names}
+                        row={row}
+                        profiles={profiles}
+                        viewer={viewer}
+                        media={queries.media}
+                        agentPubkeys={agentPubkeys}
+                        day={day}
+                        onOpenLink={onOpenLink}
+                        canOpenLink={canOpenLink}
+                      />
+                    ) : (
+                      <MessageRow
+                        stackPrevious={
+                          !!previousRow &&
+                          !foldedActivity.has(previousRow.id) &&
+                          continuesMessageGroup(previousRow, row)
+                        }
+                        stackNext={
+                          !!nextRow &&
+                          !foldedActivity.has(nextRow.id) &&
+                          continuesMessageGroup(row, nextRow)
+                        }
+                        session={queries}
+                        scope={scope}
+                        row={row}
+                        unread={queries.unread}
+                        extensions={extensions}
+                        profile={profiles.get(row.authorId)}
+                        participantProfiles={profiles}
+                        agentPubkeys={agentPubkeys}
+                        media={queries.media}
+                        onOpenLink={onOpenLink}
+                        canOpenLink={canOpenLink}
+                        onOpenThread={onOpenThread}
+                        startsThreads={startsThreads}
+                        {...(onOpenMediaReview ? { onOpenMediaReview } : {})}
+                        retry={queries.outbox?.retry}
+                        keepMounted={keepRowMounted}
+                        day={day && !disclosure}
+                      />
+                    )}
+                  </ActivityExpansion>
+                  {index === rows.length - 1 && (
+                    <div className={styles.timelineEnd} aria-hidden="true" />
+                  )}
+                </Fragment>
+              );
+            })}
+          </Virtualizer>
+        </DateJumpContext>
       )}
       {!rows.length &&
         !window.hasMore &&

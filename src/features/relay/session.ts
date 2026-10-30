@@ -86,6 +86,7 @@ import {
   type UploadProgress,
 } from "./attachments";
 import { PRODUCT_FEEDBACK_KIND } from "./product-feedback";
+import { attemptEnded } from "./withdraw";
 import type { ReadTransport } from "./transport";
 import type { LiveSnapshot, LiveSubscription } from "./live";
 import {
@@ -427,6 +428,41 @@ export function createRelaySession(
         for (const revoked of [...followRevocations]) revoked();
       }
     }
+  }
+  /** Leaving or removal strands a channel's failed sends: nothing can retry
+   * or reach them. Drop them, and any attempt still running that fails,
+   * unless the viewer is back. Unconfirmed intent stays for a regrant. */
+  function dropFailedSends(ids: readonly string[]) {
+    const outbox = writes?.outbox;
+    if (!outbox) return;
+    const failed = (id: string) =>
+      outbox
+        .snapshot()
+        .some((item) => item.event.id === id && item.delivery === "failed");
+    // Restored sends can still be loading when the first roster read lands.
+    void outbox
+      .ready()
+      .then(() => {
+        for (const item of outbox.snapshot()) {
+          const channelId = item.event.tags.find(
+            ([name, value]) => name === "h" && ids.includes(value ?? ""),
+          )?.[1];
+          if (
+            !channelId ||
+            (item.delivery !== "failed" && item.delivery !== "sending")
+          )
+            continue;
+          const { id } = item.event;
+          void attemptEnded(outbox, id)
+            .then(() =>
+              failed(id) && !channels.canParticipate(channelId)
+                ? outbox.dismiss(id)
+                : undefined,
+            )
+            .catch(() => {});
+        }
+      })
+      .catch(() => {});
   }
   /** Solo chats this device is starting; set once channel writes exist. */
   let startingChannel: (id: string) => Promise<void> | undefined = () =>
@@ -876,6 +912,7 @@ export function createRelaySession(
           channelIdentity: transport.channelIdentity,
           media: (url, size) => transport.media(url, size),
           revokeAccess,
+          membershipEnded: dropFailedSends,
           visible: (events) => events.filter(visibility(events)),
           restored: (events) => unread.accept(events),
           demand: (channelId) => demandChannel(channelId),

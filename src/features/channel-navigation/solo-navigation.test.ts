@@ -27,16 +27,16 @@ function fixture() {
 
 it("keeps labeled channels in one live or recovery placement throughout registration and disposal", async () => {
   const h = fixture();
-  expect([...h.service.snapshot().excluded]).toEqual(["owned", "shared"]);
+  expect([...h.service.snapshot().excluded]).toEqual(["owned", "second"]);
   expect(h.service.snapshot().regions[0]).toMatchObject({ reason: "off" });
   const source = await h.register();
   expect([...(h.service.snapshot().regions[0]?.live ?? [])]).toEqual([
     "owned",
-    "shared",
+    "second",
   ]);
   source.update({ status: "loading", binding: source.binding(), revision: 2 });
   expect(h.service.snapshot().regions[0]).toMatchObject({ reason: "loading" });
-  expect([...h.service.snapshot().excluded]).toEqual(["owned", "shared"]);
+  expect([...h.service.snapshot().excluded]).toEqual(["owned", "second"]);
   source.update({
     status: "unavailable",
     binding: source.binding(),
@@ -73,7 +73,7 @@ it("fences reconnects and rejects old or conflicting snapshots without losing la
   source.update({ status: "unavailable", binding: old, revision: 999 });
   expect([...(h.service.snapshot().regions[0]?.live ?? [])]).toEqual([
     "owned",
-    "shared",
+    "second",
   ]);
   await expect(source.handle.classify(old, "owned")).rejects.toThrow("ended");
 });
@@ -89,7 +89,7 @@ it.each(["bind", "subscribe", "read"] as const)(
     });
     expect(h.service.snapshot().regions[0]).toMatchObject({ reason: "failed" });
     expect([...(h.service.snapshot().regions[0]?.live ?? [])]).toEqual([]);
-    expect([...h.service.snapshot().excluded]).toEqual(["owned", "shared"]);
+    expect([...h.service.snapshot().excluded]).toEqual(["owned", "second"]);
   },
 );
 
@@ -101,6 +101,7 @@ it("uses the code-point-lowest external region label and excludes no unknown or 
       id: "multi",
       name: "Multi",
       channelType: "solo",
+      creator: h.session.viewer,
       labels: ["buzz.region:zeta:other", label],
     },
   ]);
@@ -117,7 +118,7 @@ it("keeps cached labeled channels in recovery while the new connection is unavai
   const source = await h.register();
   h.cache();
   expect(source.signal().aborted).toBe(true);
-  expect([...h.service.snapshot().excluded]).toEqual(["owned", "shared"]);
+  expect([...h.service.snapshot().excluded]).toEqual(["owned", "second"]);
   expect(h.service.snapshot().regions[0]).toMatchObject({ reason: "loading" });
   expect([...(h.service.snapshot().regions[0]?.live ?? [])]).toEqual([]);
 });
@@ -140,7 +141,7 @@ it("gives Retry a fresh incarnation and restores a failed source without revivin
   expect(source.binding().incarnation).not.toBe(old.incarnation);
   expect([...(h.service.snapshot().regions[0]?.live ?? [])]).toEqual([
     "owned",
-    "shared",
+    "second",
   ]);
   await expect(source.handle.classify(old, "owned")).rejects.toThrow("ended");
 });
@@ -149,7 +150,7 @@ it("keeps label exclusion even when connection coordinates are missing", async (
   const h = fixture();
   await h.register();
   h.loseCoordinates();
-  expect([...h.service.snapshot().excluded]).toEqual(["owned", "shared"]);
+  expect([...h.service.snapshot().excluded]).toEqual(["owned", "second"]);
 });
 
 it("revokes a source create during signing before the host publishes it", async () => {
@@ -428,7 +429,7 @@ it("allows explicit recovery reveal with cached connection coordinates while ref
   const stop = h.service.subscribeReveal(reveal);
   h.service.reveal("owned");
   expect(reveal).toHaveBeenCalledWith("owned", true);
-  h.service.reveal("shared");
+  h.service.reveal("foreign");
   expect(reveal).toHaveBeenCalledOnce();
   stop();
 });

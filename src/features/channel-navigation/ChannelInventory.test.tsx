@@ -1821,7 +1821,7 @@ it("moves a saved group from its menu, rolls back a failed save, and retries it"
 });
 
 it.each(["star", "section", "unfiled"])(
-  "lists a shared chat with the viewer's chats, never under Team (%s)",
+  "never lists a chat shared with the viewer, under Solo or Team (%s)",
   async (placement) => {
     const data = {
       sections: [{ id: "work", name: "Work", order: 0 }],
@@ -1847,14 +1847,14 @@ it.each(["star", "section", "unfiled"])(
     ]);
     render(h.view("alpha"));
     await screen.findByRole("button", { name: "Team channel" });
-    // One row, in the Solo list (which the sidebar navigation contains).
-    const rows = screen.getAllByRole("button", { name: "Shared work" });
-    expect(rows).toHaveLength(1);
-    expect(rows[0]?.closest("nav")).toHaveAccessibleName("Solo conversations");
+    // Starred or filed, someone else's chat still stays out of the sidebar.
+    expect(
+      screen.queryByRole("button", { name: "Shared work" }),
+    ).not.toBeInTheDocument();
   },
 );
 
-it("opening a shared chat lists it once, with the viewer's chats", async () => {
+it("opening a shared chat selects Solo without listing it", async () => {
   const h = fixture();
   h.publish("beta", {
     channelType: "solo",
@@ -1869,7 +1869,7 @@ it("opening a shared chat lists it once, with the viewer's chats", async () => {
     "aria-selected",
     "true",
   );
-  const rows = await screen.findAllByRole("button", { name: "beta" });
-  expect(rows).toHaveLength(1);
-  expect(rows[0]?.closest("nav")).toHaveAccessibleName("Solo conversations");
+  expect(
+    screen.queryByRole("button", { name: "beta" }),
+  ).not.toBeInTheDocument();
 });

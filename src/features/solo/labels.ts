@@ -33,14 +33,12 @@ export function soloChatLinkName(channel: { id: string; name: string }) {
   return channel.name.trim() || channel.id.slice(0, 8);
 }
 
-/** The authorized Solo inventory; unknown metadata never implies Solo. */
+/** The sidebar's Solo inventory: the viewer's own unarchived chats. A chat
+ * shared with the viewer is reachable from where it was shared, never listed;
+ * unknown metadata never implies Solo or ownership. */
 export function eligibleSolo(
   channel: ChannelSummary,
   viewer: string | undefined,
 ) {
-  return (
-    !channel.archived &&
-    channel.channelType === "solo" &&
-    (!channel.readOnly || ownSolo(channel, viewer))
-  );
+  return !channel.archived && ownSolo(channel, viewer);
 }

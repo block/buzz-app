@@ -86,8 +86,16 @@ export function createSoloRegionFixture(viewer = "a".repeat(64)) {
       labels: [label],
     },
     {
-      id: "shared",
-      name: "Shared",
+      id: "second",
+      name: "Second",
+      channelType: "solo",
+      creator: viewer,
+      labels: ["buzz.solo", label],
+    },
+    // Shared with the viewer: reachable, but never placed in the sidebar.
+    {
+      id: "foreign",
+      name: "Foreign",
       channelType: "solo",
       creator: "b".repeat(64),
       labels: ["buzz.solo", label],

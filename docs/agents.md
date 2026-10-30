@@ -143,11 +143,57 @@ so the agent can finish and retire its Interest. Attention delivers the wake
 in the conversation where it called the tool: no message is sent, and the agent
 is told its text is data. It quotes the failed checks' names and the new
 comments, line by line, each clipped, with GitHub's links. Agents comment as the
-`gh` account, as their owner does, so GitHub cannot tell them apart: a comment of
-that account that starts with 🤖, as an agent's do, wakes nobody, and the owner's
-other comments wake the agent. A watch is saved in Attention on the device and respects its on/off switch. Device-local GitHub watches saved before Attention are dropped, not imported: they name no Interest. It ends when the
+`gh` account, as their owner does, so GitHub cannot tell them apart: by default
+a comment of that account that starts with 🤖, as an agent's do, wakes nobody,
+and the owner's other comments wake the agent. A watch is saved in Attention on the device and respects its on/off switch. Device-local GitHub watches saved before Attention are dropped, not imported: they name no Interest. It ends when the
 pull request merges or closes, after 20 wakes, after 30 minutes without a
 successful read, or when the agent calls it with `stop: true`.
+
+Settings → Plugins → GitHub comment authors decides whose feedback wakes agents,
+since anyone can comment on a public pull request. It holds rules, one per
+line, saved on the device. Each starts with `allow` or `deny`, followed by any
+of these conditions, all of which must hold:
+
+- `author:login`, an exact login, or `author:@me`, the signed-in `gh` account.
+  A bot's login ends in `[bot]`.
+- `author:/pattern/`, a JavaScript regular expression the login must match.
+- `org:name`, membership of a GitHub organization, named exactly.
+- `body:/pattern/`, a regular expression the comment's first 1,000 characters
+  must match. That is the most of a comment a wake quotes.
+- `prefix:text`, what the comment starts with, leading space aside. It runs to
+  the end of the line, spaces included, so it comes last.
+
+A bare `allow` or `deny`, with no conditions, matches everyone.
+
+Logins match case aside, so an author pattern always has the `i` flag; a
+pattern may also use `m`, `s` and `u`. Patterns take JavaScript's syntax but not
+backreferences, lookaround or escapes that mean something else alone, such as
+`\c1`, `\U0041` or `\q`, and `src/bundled/github/pattern.ts` matches them
+as an automaton, in time the text's length bounds, so a pattern like
+`/^(a+)+$/` cannot stall the app on a hostile comment. The first rule that matches decides, and
+When no rule matches decides the rest: Wake the agent or Don't wake it.
+Saving compiles every pattern and rejects the rules, naming the line, when one
+is not a rule, or when they name more organizations than one membership read
+can ask about. Saved rules that no longer parse, such as a pattern with
+lookaround an earlier build accepted, stay in Settings with their error, and
+hold all feedback until they are fixed rather than falling back to the defaults. The defaults keep the behavior from before rules: agents'
+comments wake nobody, and everyone else's wake the agent.
+
+```text
+deny author:@me prefix:🤖
+```
+
+with When no rule matches set to Wake the agent. Adding, say,
+`allow org:block` and `allow author:copilot-pull-request-reviewer[bot]` and choosing Don't wake it
+limits feedback to those. Membership is asked of `gh` only for organizations the rules
+name, and kept for an hour; feedback whose author's membership cannot be read
+waits for a later poll, until ten polls in a row fail for that login alone and
+it counts as no member. While GitHub answers no membership read, not even about
+the signed-in account, no failure counts, so an outage holds feedback rather
+than letting it past an `org:` deny rule. A membership hidden from the `gh` account, or a
+misspelled organization, counts as none, and bots and deleted accounts are in
+no organization. Each poll reads the rules again, so a change applies to
+running watches. CI and pull request state are not limited.
 
 The Agents runner starts a mention run from a `p` tag, or from any new message
 by the other member of a one-to-one DM the agent is in; group DMs still need

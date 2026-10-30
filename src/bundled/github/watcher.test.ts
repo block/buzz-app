@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 import type { Context } from "@deepseek-ai/cordis";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { createElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AddedTool } from "../../buzz-mcp/session-tools";
 import type { BuzzClient } from "../../buzz-mcp/client";
@@ -13,6 +15,8 @@ import { GitHubError, type GitHubCli } from "./gh";
 import { createPullStates } from "./pull-states";
 import { POLL_MS, watchPulls } from "./watcher";
 import { QUIET_MS, WAKE_LIMIT } from "./watch";
+import { savePolicy } from "./authors";
+import { AuthorSettings } from "./AuthorSettings";
 
 const agent = "a".repeat(64);
 const root = "f".repeat(64);
@@ -101,12 +105,56 @@ function respond(
   return data;
 }
 
+/** Whether `query` is a membership read rather than the store's. */
+const membershipRead = (query: string) => query.startsWith("query{\nu");
+
+/** What gh answers a membership read, when `members` are in every
+ * organization, or `login@org` in that one. */
+function membership(members: readonly string[], query: string) {
+  const users = [...query.matchAll(/(u\d+):user\(login:"([^"]+)"\)/g)];
+  const orgs = [
+    ...new Map(
+      [...query.matchAll(/(o\d+):organization\(login:"([^"]+)"\)/g)].map(
+        ([, alias, org]) => [alias, org],
+      ),
+    ),
+  ];
+  // GitHub has no user for a mannequin, which fails the whole read.
+  if (users.some(([, , login]) => login === "mannequin"))
+    throw new GitHubError("Could not resolve to a User", "NOT_FOUND");
+  return Object.fromEntries(
+    users.map(([, alias, login]) => [
+      alias,
+      Object.fromEntries(
+        orgs.map(([org, name]) => [
+          org,
+          members.includes(login as string) ||
+          members.includes(`${login}@${name}`)
+            ? { id: "O" }
+            : null,
+        ]),
+      ),
+    ]),
+  );
+}
+
+/** How many membership reads asked GitHub about `login`. */
+const asks = (app: ReturnType<typeof setup>, login: string) =>
+  app.github.mock.calls.filter(
+    ([query]) => membershipRead(query) && query.includes(`login:"${login}"`),
+  ).length;
+
 function setup(initial: Pull | null = answer()) {
   let gh = initial;
   let texts = true;
+  let members: readonly string[] | null = [];
   /** GitHub through gh, as the store reads it. */
   const github = vi.fn(
     async (query: string, variables: Record<string, unknown>) => {
+      if (membershipRead(query)) {
+        if (!members) throw new Error("gh did not answer");
+        return membership(members, query);
+      }
       if (!gh) throw new GitHubError("Could not resolve to a Repository");
       if (!texts && "ids" in variables)
         throw new GitHubError("Something went wrong");
@@ -238,7 +286,7 @@ function setup(initial: Pull | null = answer()) {
     },
     effect: (fn: () => () => void) => disposers.push(fn()),
   } as unknown as Context;
-  watchPulls(ctx, states);
+  watchPulls(ctx, states, github as unknown as GitHubCli);
   const tool = tools[0] as AddedTool;
   const call = (
     args: Record<string, unknown>,
@@ -280,6 +328,11 @@ function setup(initial: Pull | null = answer()) {
     states,
     gh: (value: Pull | null) => {
       gh = value;
+    },
+    /** Who is in every organization, or `login@org` in one, or null when
+     * membership cannot be read. */
+    members: (value: readonly string[] | null) => {
+      members = value;
     },
     /** Whether reads of feedback text succeed, as a too-long answer cannot. */
     readsText: (value: boolean) => {
@@ -827,6 +880,498 @@ describe("github_watch_pr", () => {
     expect(shown).toHaveBeenCalled();
     expect(app.texts()).toEqual([`CI passed on 111111111 for ${url}.`]);
     unwatch();
+    app.dispose();
+  });
+
+  it("reads newer feedback before rereading what it holds", async () => {
+    savePolicy("allow author:wes\nallow org:block");
+    const app = setup();
+    await app.call({ url });
+    app.members(null);
+    const held = Array.from({ length: 50 }, (_, index) => ({
+      id: `I${index}`,
+      login: `stranger${index}`,
+      body: `body-${index}`,
+    }));
+    app.gh(answer({ comments: held }));
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+    app.gh(
+      answer({
+        comments: [...held, { id: "I50", login: "wes", body: "body-wes" }],
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(POLL_MS + QUIET_MS + POLL_MS);
+    expect(app.texts().join("\n")).toContain("body-wes");
+    app.dispose();
+  });
+
+  it("keeps holding feedback a poll did not reread, so it cannot crowd out what is new", async () => {
+    savePolicy("allow author:wes\nallow org:block");
+    const app = setup();
+    await app.call({ url });
+    app.members(null);
+    const stranger = (index: number) => ({
+      id: `I${index}`,
+      login: `stranger${index}`,
+      body: `body-${index}`,
+      path: "a.ts",
+    });
+    app.gh(
+      answer({
+        reviews: [
+          {
+            ...stranger(100),
+            inline: Array.from({ length: 60 }, (_, index) => stranger(index)),
+          },
+        ],
+        comments: [
+          ...Array.from({ length: 49 }, (_, index) => stranger(index + 60)),
+          { id: "I109", login: "wes", body: "body-wes" },
+        ],
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(4 * POLL_MS + QUIET_MS + POLL_MS);
+    expect(app.texts().join("\n")).toContain("body-wes");
+    app.dispose();
+  });
+
+  it("tells only feedback from trusted authors, once their organization is known", async () => {
+    savePolicy("allow author:wes\nallow org:block");
+    const app = setup();
+    await app.call({ url });
+    app.members(null);
+    app.gh(
+      answer({
+        comments: [
+          { id: "I1", login: "wes", body: "body-wes" },
+          { id: "I2", login: "stranger", body: "body-stranger" },
+          { id: "I3", login: "alice", body: "body-alice" },
+        ],
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(POLL_MS + QUIET_MS + POLL_MS);
+    expect(app.texts()).toHaveLength(1);
+    expect(app.texts()[0]).toContain("body-wes");
+    expect(app.texts()[0]).not.toContain("body-alice");
+    // Membership read once it can be; strangers are never told.
+    app.members(["alice"]);
+    await vi.advanceTimersByTimeAsync(POLL_MS + QUIET_MS + POLL_MS);
+    expect(app.texts()).toHaveLength(2);
+    expect(app.texts()[1]).toContain("body-alice");
+    expect(app.texts().join("\n")).not.toContain("body-stranger");
+    app.dispose();
+  });
+
+  it("tells waiting feedback only if the rules still allow it", async () => {
+    const app = setup();
+    await app.call({ url });
+    app.gh(
+      answer({
+        comments: [
+          { id: "I1", login: "wes", body: "body-wes" },
+          { id: "I2", login: "stranger", body: "body-stranger" },
+        ],
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+    savePolicy("allow author:wes");
+    await vi.advanceTimersByTimeAsync(QUIET_MS + POLL_MS);
+    expect(app.texts()).toHaveLength(1);
+    expect(app.texts()[0]).toContain("body-wes");
+    expect(app.texts()[0]).not.toContain("body-stranger");
+    app.dispose();
+  });
+
+  it("tells a running watch what rules saved in Settings allow", async () => {
+    const app = setup();
+    await app.call({ url });
+    render(createElement(AuthorSettings, { active: () => true }));
+    const save = (rules: string) => {
+      fireEvent.change(screen.getByRole("textbox", { name: /Rules/ }), {
+        target: { value: rules },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    };
+    fireEvent.click(screen.getByRole("radio", { name: "Don’t wake it" }));
+    save("allow author:wes");
+    const wes = { id: "I1", login: "wes", body: "body-wes" };
+    const stranger = { id: "I2", login: "stranger", body: "body-stranger" };
+    app.gh(answer({ comments: [wes, stranger] }));
+    await vi.advanceTimersByTimeAsync(POLL_MS + QUIET_MS + POLL_MS);
+    expect(app.texts()).toHaveLength(1);
+    expect(app.texts()[0]).toContain("body-wes");
+    expect(app.texts()[0]).not.toContain("body-stranger");
+    save("allow author:stranger");
+    const later = { id: "I3", login: "stranger", body: "body-later" };
+    app.gh(answer({ comments: [wes, stranger, later] }));
+    await vi.advanceTimersByTimeAsync(POLL_MS + QUIET_MS + POLL_MS);
+    expect(app.texts()).toHaveLength(2);
+    expect(app.texts()[1]).toContain("body-later");
+    cleanup();
+    app.dispose();
+  });
+
+  it("checks newly read feedback against rules saved while membership is read", async () => {
+    savePolicy("allow org:block", "allow");
+    const wes = { id: "I0", login: "wes", body: "body-wes" };
+    const pending = [{ name: "ci", conclusion: null }];
+    const app = setup(answer({ checks: pending, comments: [wes] }));
+    await app.call({ url });
+    let asked = false;
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const run = app.github.getMockImplementation();
+    app.github.mockImplementation(async (query, variables) => {
+      if (membershipRead(query)) {
+        asked = true;
+        await gate;
+      }
+      return run?.(query, variables);
+    });
+    app.gh(
+      answer({
+        checks: [{ name: "ci", conclusion: "SUCCESS" }],
+        comments: [wes, { id: "I1", login: "stranger", body: "body-stranger" }],
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+    expect(asked).toBe(true);
+    savePolicy("deny author:stranger");
+    release();
+    await vi.advanceTimersByTimeAsync(QUIET_MS + POLL_MS);
+    expect(app.texts().join("\n")).toContain("CI passed");
+    expect(app.texts().join("\n")).not.toContain("body-stranger");
+    app.dispose();
+  });
+
+  it("tells CI while a membership read hangs", async () => {
+    savePolicy("allow org:block");
+    const pending = [{ name: "ci", conclusion: null }];
+    const app = setup(answer({ checks: pending }));
+    await app.call({ url });
+    const run = app.github.getMockImplementation();
+    app.github.mockImplementation(async (query, variables) =>
+      membershipRead(query) ? new Promise(() => {}) : run?.(query, variables),
+    );
+    app.gh(
+      answer({
+        checks: [{ name: "ci", conclusion: "SUCCESS" }],
+        comments: [{ id: "I1", login: "alice", body: "body-alice" }],
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+    expect(app.texts()).toEqual([`CI passed on 111111111 for ${url}.`]);
+    app.dispose();
+  });
+
+  it("learns feedback already there on a first read, whatever membership it needs", async () => {
+    savePolicy("allow org:block");
+    const app = setup(
+      answer({ comments: [{ id: "I1", login: "alice", body: "body-old" }] }),
+    );
+    app.members(["alice"]);
+    // Another reader, such as the panel, already holds its text.
+    await app.states.read(url, {
+      maxAge: 0,
+      level: "feedback",
+      wantsText: () => true,
+    });
+    await app.call({ url });
+    await vi.advanceTimersByTimeAsync(POLL_MS + QUIET_MS + POLL_MS);
+    expect(app.texts().join("\n")).not.toContain("body-old");
+    app.dispose();
+  });
+
+  it("tells newly read feedback rules saved while membership is read allow", async () => {
+    savePolicy("allow org:block");
+    const app = setup();
+    await app.call({ url });
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const run = app.github.getMockImplementation();
+    app.github.mockImplementation(async (query, variables) => {
+      if (membershipRead(query)) await gate;
+      return run?.(query, variables);
+    });
+    app.gh(
+      answer({
+        comments: [{ id: "I1", login: "stranger", body: "body-stranger" }],
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+    savePolicy("allow");
+    release();
+    await vi.advanceTimersByTimeAsync(QUIET_MS + POLL_MS);
+    expect(app.texts().join("\n")).toContain("body-stranger");
+    app.dispose();
+  });
+
+  it("holds waiting feedback while the rules need a membership it cannot read", async () => {
+    const app = setup();
+    await app.call({ url });
+    app.gh(
+      answer({ comments: [{ id: "I1", login: "wes", body: "body-wes" }] }),
+    );
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+    savePolicy("allow org:block");
+    app.members(null);
+    await vi.advanceTimersByTimeAsync(QUIET_MS + POLL_MS);
+    expect(app.texts()).toHaveLength(0);
+    app.members(["wes"]);
+    await vi.advanceTimersByTimeAsync(POLL_MS + QUIET_MS + POLL_MS);
+    expect(app.texts()).toHaveLength(1);
+    expect(app.texts()[0]).toContain("body-wes");
+    app.dispose();
+  });
+
+  it("does not trust an expired membership it could not read again", async () => {
+    savePolicy("allow org:block");
+    const app = setup();
+    await app.call({ url });
+    app.members(["alice"]);
+    const first = { id: "I1", login: "alice", body: "body-first" };
+    app.gh(answer({ comments: [first] }));
+    await vi.advanceTimersByTimeAsync(POLL_MS + QUIET_MS + POLL_MS);
+    expect(app.texts()).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(60 * POLL_MS);
+    app.members(null);
+    app.gh(
+      answer({
+        comments: [first, { id: "I2", login: "alice", body: "body-later" }],
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(POLL_MS + QUIET_MS + POLL_MS);
+    expect(app.texts()).toHaveLength(1);
+    app.members(["alice"]);
+    await vi.advanceTimersByTimeAsync(POLL_MS + QUIET_MS + POLL_MS);
+    expect(app.texts()).toHaveLength(2);
+    expect(app.texts()[1]).toContain("body-later");
+    app.dispose();
+  });
+
+  it("keeps each membership read under its size limit", async () => {
+    const organizations = Array.from(
+      { length: 8 },
+      (_, index) => `organization-${index}-with-a-long-name`,
+    );
+    const logins = Array.from(
+      { length: 30 },
+      (_, index) => `commenter-${index}-with-a-long-login`,
+    );
+    savePolicy(organizations.map((org) => `allow org:${org}`).join("\n"));
+    const app = setup();
+    await app.call({ url });
+    app.members(logins);
+    app.gh(
+      answer({
+        comments: logins.map((login, index) => ({
+          id: `I${index}`,
+          login,
+          body: `body-${index}`,
+        })),
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(POLL_MS + QUIET_MS + POLL_MS);
+    const reads = app.github.mock.calls
+      .map(([query]) => query)
+      .filter(membershipRead);
+    expect(reads.length).toBeGreaterThan(1);
+    for (const query of reads)
+      expect(new TextEncoder().encode(query).length).toBeLessThanOrEqual(4096);
+    expect(app.texts()[0]).toContain("30 new comments");
+    app.dispose();
+  });
+
+  it("holds feedback while saved rules no longer parse, and tells it once they are fixed", async () => {
+    localStorage.setItem(
+      "buzz.github.author-policy.v2",
+      JSON.stringify({
+        version: 2,
+        text: "allow author:/^(?!eve$)[a-z]+$/",
+        fallback: "deny",
+      }),
+    );
+    const app = setup();
+    await app.call({ url });
+    app.gh(
+      answer({ comments: [{ id: "I1", login: "eve", body: "body-eve" }] }),
+    );
+    await vi.advanceTimersByTimeAsync(POLL_MS + QUIET_MS + 3 * POLL_MS);
+    expect(app.texts().join("\n")).not.toContain("body-eve");
+    savePolicy("allow");
+    await vi.advanceTimersByTimeAsync(POLL_MS + QUIET_MS + POLL_MS);
+    expect(app.texts().join("\n")).toContain("body-eve");
+    app.dispose();
+  });
+
+  it("does not take anyone to be in no organization while GitHub cannot be asked", async () => {
+    savePolicy("deny org:evil\nallow");
+    const app = setup();
+    await app.call({ url });
+    app.members(null);
+    app.gh(
+      answer({
+        comments: [{ id: "I1", login: "mallory", body: "body-mallory" }],
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(15 * POLL_MS);
+    app.members(["mallory@evil"]);
+    await vi.advanceTimersByTimeAsync(POLL_MS + QUIET_MS + POLL_MS);
+    expect(app.texts().join("\n")).not.toContain("body-mallory");
+    app.dispose();
+  });
+
+  it("asks alone after a login fails its batch, and gives up on that login", async () => {
+    savePolicy("allow org:block");
+    const app = setup();
+    await app.call({ url });
+    app.members(["alice"]);
+    app.gh(
+      answer({
+        comments: [
+          { id: "I1", login: "mannequin", body: "body-mannequin" },
+          { id: "I2", login: "alice", body: "body-alice" },
+        ],
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(POLL_MS + QUIET_MS + POLL_MS);
+    expect(app.texts()).toHaveLength(1);
+    expect(app.texts()[0]).toContain("body-alice");
+    // After ten polls it is taken to be in no organization, and is seen.
+    await vi.advanceTimersByTimeAsync(12 * POLL_MS);
+    const settled = asks(app, "mannequin");
+    expect(settled).toBeGreaterThan(0);
+    await vi.advanceTimersByTimeAsync(3 * POLL_MS);
+    expect(asks(app, "mannequin")).toBe(settled);
+    expect(app.texts().join("\n")).not.toContain("body-mannequin");
+    app.dispose();
+  });
+
+  it("gives up on a lone commenter GitHub cannot read, as it answers the viewer", async () => {
+    savePolicy("allow org:block");
+    const app = setup();
+    await app.call({ url });
+    app.gh(
+      answer({
+        comments: [{ id: "I1", login: "mannequin", body: "body-mannequin" }],
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(12 * POLL_MS);
+    const settled = asks(app, "mannequin");
+    expect(settled).toBeGreaterThan(0);
+    await vi.advanceTimersByTimeAsync(3 * POLL_MS);
+    expect(asks(app, "mannequin")).toBe(settled);
+    expect(app.texts().join("\n")).not.toContain("body-mannequin");
+    app.dispose();
+  });
+
+  it("counts a login's failed membership reads once a poll, however many watches read it", async () => {
+    savePolicy("allow org:block");
+    const app = setup();
+    const urls = [7, 8, 9].map((pull) => url.replace(/\d+$/, `${pull}`));
+    for (const pull of urls) await app.call({ url: pull });
+    app.members(null);
+    app.gh(
+      answer({ comments: [{ id: "I1", login: "wes", body: "body-wes" }] }),
+    );
+    await vi.advanceTimersByTimeAsync(4 * POLL_MS);
+    expect(app.texts()).toHaveLength(0);
+    app.members(["wes"]);
+    await vi.advanceTimersByTimeAsync(POLL_MS + QUIET_MS + POLL_MS);
+    expect(app.texts()).toHaveLength(3);
+    for (const text of app.texts()) expect(text).toContain("body-wes");
+    app.dispose();
+  });
+
+  it("stops asking each login alone once the watch stops", async () => {
+    savePolicy("allow org:block");
+    const app = setup();
+    await app.call({ url });
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const run = app.github.getMockImplementation();
+    const asked: string[] = [];
+    app.github.mockImplementation(async (query, variables) => {
+      if (!membershipRead(query)) return run?.(query, variables);
+      asked.push(query);
+      await gate;
+      throw new Error("gh did not answer");
+    });
+    app.gh(
+      answer({
+        comments: ["alice", "bob", "carol"].map((login, index) => ({
+          id: `I${index}`,
+          login,
+          body: `body-${login}`,
+        })),
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+    expect(asked).toHaveLength(1);
+    app.attentionEnabled(false);
+    release();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(asked).toHaveLength(1);
+    app.dispose();
+  });
+
+  it("by default tells the viewer's comments but not its 🤖 ones", async () => {
+    const app = setup();
+    await app.call({ url });
+    app.gh(
+      answer({
+        comments: [
+          { id: "I1", login: "baxen", body: " 🤖 body-agent" },
+          { id: "I2", login: "Baxen", body: "body-owner" },
+          { id: "I3", login: "stranger", body: "🤖 body-stranger" },
+        ],
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(POLL_MS + QUIET_MS + POLL_MS);
+    expect(app.texts()).toHaveLength(1);
+    expect(app.texts()[0]).toContain("body-owner");
+    expect(app.texts()[0]).toContain("body-stranger");
+    expect(app.texts()[0]).not.toContain("body-agent");
+    // No membership is read when no rule names an organization.
+    expect(
+      app.github.mock.calls.filter(([query]) => membershipRead(query)),
+    ).toEqual([]);
+    app.dispose();
+  });
+
+  it("tells feedback rules allow by pattern and by each organization", async () => {
+    savePolicy(`deny body:/^\\s*nit\\b/i
+allow author:/^COPILOT/
+allow org:block
+allow org:squareup author:/^ada_/`);
+    const app = setup();
+    await app.call({ url });
+    app.members(["alice@block", "ada_x@squareup", "bob@squareup"]);
+    app.gh(
+      answer({
+        comments: [
+          { id: "I1", login: "alice", body: "body-alice" },
+          { id: "I2", login: "ada_x", body: "body-ada" },
+          { id: "I3", login: "bob", body: "body-bob" },
+          { id: "I4", login: "copilot-x", body: "body-copilot" },
+          { id: "I5", login: "alice", body: "Nit: body-nit" },
+          { id: "I6", login: "baxen", body: "body-owner" },
+        ],
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(POLL_MS + QUIET_MS + POLL_MS);
+    expect(app.texts()).toHaveLength(1);
+    const [text] = app.texts();
+    for (const body of ["body-alice", "body-ada", "body-copilot"])
+      expect(text).toContain(body);
+    for (const body of ["body-bob", "body-nit", "body-owner"])
+      expect(text).not.toContain(body);
     app.dispose();
   });
 

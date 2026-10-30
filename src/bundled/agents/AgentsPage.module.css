@@ -179,43 +179,16 @@
   width: 8rem;
   height: 8rem;
 }
-/* The decorative backdrop and portrait fade; labels and controls retain color. */
-.build:has(> .panelFooter:not(:empty))
-  .identityCard
-  > :is([aria-hidden="true"], .identityPortrait) {
-  animation: signInDesaturate 10s linear forwards;
+/* Motion drives only artwork; labels and controls retain color. */
+.identityCard > :is([aria-hidden="true"], .identityPortrait) {
+  filter: grayscale(var(--agent-artwork-grayscale, 0));
 }
-.build:has(> .panelFooter:not(:empty)) .identityCard > .identityPortrait {
-  animation-name: signInAvatarRecede;
-}
-@keyframes signInDesaturate {
-  from {
-    filter: grayscale(0);
-  }
-  to {
-    filter: grayscale(1);
-  }
-}
-@keyframes signInAvatarRecede {
-  from {
-    filter: grayscale(0) blur(0px);
-    scale: 1;
-    opacity: 1;
-  }
-  to {
-    filter: grayscale(1) blur(2px);
-    /* Independent scale preserves the name editor's motion transform. */
-    scale: 0.85;
-    opacity: 0.5;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .build:has(> .panelFooter:not(:empty))
-    .identityCard
-    > :is([aria-hidden="true"], .identityPortrait) {
-    animation: none;
-    filter: grayscale(1);
-  }
+.identityCard > .identityPortrait {
+  filter: grayscale(var(--agent-artwork-grayscale, 0))
+    blur(var(--agent-artwork-blur, 0px));
+  /* Independent scale preserves the name editor's motion transform. */
+  scale: var(--agent-artwork-scale, 1);
+  opacity: var(--agent-artwork-opacity, 1);
 }
 .saveFooter {
   flex: none;

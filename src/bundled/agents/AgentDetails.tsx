@@ -122,13 +122,18 @@ export function AgentDetails({
   );
   usePanelTabTitle(agent.name, tabAvatar);
   const [saveFooter, setSaveFooter] = useState<HTMLDivElement | null>(null);
+  const [signInVisible, setSignInVisible] = useState(false);
   const content = useRef<HTMLDivElement>(null);
   const panelFooter = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     const footer = panelFooter.current;
     const scroll = content.current;
-    if (!type?.PanelFooter || !footer || !scroll) return;
+    if (!type?.PanelFooter || !footer || !scroll) {
+      setSignInVisible(false);
+      return;
+    }
     const measure = () => {
+      setSignInVisible(footer.childElementCount > 0);
       // Share the fields' usable width, excluding either side's scrollbar gutter.
       footer.style.width = `${scroll.clientWidth}px`;
       footer.style.left = `${scroll.offsetLeft + scroll.clientLeft}px`;
@@ -247,9 +252,34 @@ export function AgentDetails({
               onClick={onRemoved}
             />
           )}
-          <aside
+          <motion.aside
             className={`${hero.hero} ${hero.panelHero} ${styles.identityCard}`}
             aria-label={`${agent.name} identity`}
+            initial={false}
+            animate={{
+              "--agent-artwork-grayscale": signInVisible ? 1 : 0,
+              "--agent-artwork-scale":
+                signInVisible && !reducedMotion ? 0.85 : 1,
+              "--agent-artwork-opacity":
+                signInVisible && !reducedMotion ? 0.5 : 1,
+              "--agent-artwork-blur":
+                signInVisible && !reducedMotion ? "2px" : "0px",
+            }}
+            transition={
+              reducedMotion
+                ? { duration: 0 }
+                : signInVisible
+                  ? { duration: 10, ease: "linear" }
+                  : {
+                      duration: 0.8,
+                      ease: [0.23, 1, 0.32, 1],
+                      "--agent-artwork-scale": {
+                        type: "spring",
+                        duration: 0.8,
+                        bounce: 0.4,
+                      },
+                    }
+            }
           >
             <ProfileBackdrop src={backdrop}>
               {pack && <PackedAgentAvatar avatar={pack} fit="cover" />}
@@ -395,7 +425,7 @@ export function AgentDetails({
                 onClose={() => setEditingIdentity(false)}
               />
             )}
-          </aside>
+          </motion.aside>
           <section
             className={styles.work}
             aria-label={`${agent.name} settings`}

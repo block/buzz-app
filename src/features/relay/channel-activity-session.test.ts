@@ -68,7 +68,7 @@ function setup() {
   );
   const channels = owner.session.channels;
   const preferences = owner.session.sidebarPreferences;
-  async function initial() {
+  async function initial(extra: readonly string[] = []) {
     channels.ensureList();
     wire
       .next()
@@ -77,6 +77,10 @@ function setup() {
         roster(relay, "beta", [viewer.pubkey]),
         metadata(relay, "alpha", "Alpha"),
         metadata(relay, "beta", "Beta"),
+        ...extra.flatMap((id) => [
+          roster(relay, id, [viewer.pubkey]),
+          metadata(relay, id, id),
+        ]),
       ]);
     await flush();
     const reading = preferences.ensure();
@@ -327,6 +331,32 @@ it("retries failed Recent activity after an explicit roster refresh", async () =
     expect(
       h.channels.list().channels.find((c) => c.id === "beta")?.lastActivityAt,
     ).toBe(100);
+  } finally {
+    h.owner.dispose();
+  }
+});
+it("projects activity read before a later batch failed and leaves only unread channels unknown", async () => {
+  const h = setup();
+  try {
+    const rooms = Array.from({ length: 127 }, (_, i) => `room-${1000 + i}`);
+    await h.initial(rooms);
+    await h.preferences.setSort("channels", "recent", []);
+    const find = (id: string) =>
+      h.channels.list().channels.find((c) => c.id === id);
+    const first = take(h.pending);
+    expect(first.ids).toEqual(["alpha", "beta", ...rooms.slice(0, 126)]);
+    first.resolve([message(h.peer, "beta", "landed", 90)]);
+    await flush();
+    expect(h.channels.list().activityStatus).toBe("loading");
+    expect(find("beta")?.activityKnown).toBeUndefined();
+    const second = take(h.pending);
+    expect(second.ids).toEqual(rooms.slice(126));
+    second.reject(new Error("offline"));
+    await flush();
+    expect(h.channels.list().activityStatus).toBe("error");
+    expect(find("beta")?.lastActivityAt).toBe(90);
+    expect(find("alpha")).toMatchObject({ activityKnown: true });
+    expect(find(rooms[126] ?? "")?.activityKnown).toBeUndefined();
   } finally {
     h.owner.dispose();
   }

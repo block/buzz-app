@@ -18,8 +18,8 @@ export const inject = [
   "navigation",
   "settingsCards",
   "agents",
-  "communityReader",
   "shortcuts",
+  "communityReader",
 ];
 export const apply: PluginModule["apply"] = (ctx) => {
   registerCanvas(ctx);

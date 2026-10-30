@@ -137,9 +137,9 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
         .sort(),
       [
         "block.builderlab",
-        "block.hosted-communities",
         "buzz.channels",
         "buzz.emoji",
+        "buzz.github",
         "buzz.pairing",
       ],
     );
@@ -209,9 +209,9 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
         .sort(),
       [
         "block.builderlab",
-        "block.hosted-communities",
         "buzz.channels",
         "buzz.emoji",
+        "buzz.github",
         "buzz.pairing",
       ],
     );

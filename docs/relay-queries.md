@@ -361,7 +361,14 @@ channel through `refer`, as any channel-only link does. Raw
 list, their label follows the exact reference, so a rename or lost access
 shows at once rather than the directory's older name.
 
-A public preview offers **Join channel**. It sends the NIP-29 `9021` join request
+A Member-default public preview offers **Join channel**. Guest-default previews
+keep history and thread links readable without Join or writing controls, and
+opening a link creates no membership. After Leave, fresh signed public metadata
+can restore preview reading while retained membership stays denied; stale or
+private metadata cannot reopen reading. Missing defaults mean Member; malformed
+explicit defaults mean Guest.
+
+Join sends the NIP-29 `9021` join request
 through the purpose-bound channel-lifecycle sign/publish route; generic signing
 rejects `9021`. Before signing, the lifecycle owner re-reads signed metadata and
 the viewer roster: a current roster entry needs no request, and only active public
@@ -464,6 +471,18 @@ The timeline, channel-list preview and filtered plugin views share that operatio
   are visible; unconfirmed operations are never silently evicted. Plugins can
   explicitly `dismiss(id)` to remove an operation's local contribution.
 - Reactive filtered views: at most 64 owned handles; dispose with the plugin.
+- Reminders: the viewer's list is read in pages of 200, newest first, until a
+  page comes back short, up to 10,000 reminders. Each page asks for one event
+  past it, which tells a full page from the end of the list and heads the next
+  page. Pages show as they land, but the list stays loading until the last one.
+  Past 10,000 the pages read so far show under "Some reminders could not be
+  loaded" with Retry (a list of exactly 10,001 is in fact complete, but cannot
+  be told from a longer one), anything older stays hidden, the reminders
+  plugin's saved check time does not advance (so pending reminders due since
+  then notify again on each launch), and every refresh reads all the pages
+  again. Handled
+  reminders carry an expiration the relay does not enforce yet, so the list
+  grows with use.
 - Existing fetched channel history, profile, media and disk budgets remain in place.
   Local overlays have their separate journal budget and can extend a visible window.
   Shared verified observations retain up to 4,096 events / 8 MiB; owned filtered views

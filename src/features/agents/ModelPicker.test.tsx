@@ -3,9 +3,98 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
+import { StrictMode, useState } from "react";
 import { ModelPicker, type ModelChoice } from "./ModelPicker";
+import {
+  DeepSeekLogoIcon,
+  GrokLogoIcon,
+  ZaiLogoIcon,
+  KimiLogoIcon,
+  ClaudeLogoIcon,
+  CodexLogoIcon,
+  GoogleLogoIcon,
+} from "../../shared/design-system/icons";
 
 afterEach(cleanup);
+
+it.each([
+  ["Gemini 3 Pro", "Gemini", GoogleLogoIcon],
+  ["Claude Sonnet 5", "Claude", ClaudeLogoIcon],
+  ["GPT-6", "OpenAI", CodexLogoIcon],
+] as const)(
+  "matches the selected %s icon to its family submenu with an opaque catalog ID",
+  async (label, family, Icon) => {
+    const user = userEvent.setup();
+    const reference = render(<Icon size={20} />);
+    const artwork = reference.container.querySelector("svg")?.innerHTML;
+    reference.unmount();
+    render(
+      <ModelPicker
+        groupByFamily
+        includeDefault={false}
+        models={[{ id: "opaque-catalog-id", label }]}
+        value="opaque-catalog-id"
+        defaultLabel="Choose model"
+        onChange={vi.fn()}
+      />,
+    );
+    const trigger = screen.getByRole("button", { name: /^Model:/ });
+    expect(trigger.querySelector("svg")?.innerHTML).toBe(artwork);
+    expect(trigger.querySelector(".buzz-select-leading")).toContainElement(
+      trigger.querySelector("svg"),
+    );
+    await user.click(trigger);
+    const submenu = await screen.findByRole("menuitem", { name: family });
+    expect(submenu.querySelector("svg")?.innerHTML).toBe(artwork);
+  },
+);
+
+it.each([
+  ["DeepSeek", "deepseek/deepseek-v3", DeepSeekLogoIcon],
+  ["Grok", "xai/grok-4", GrokLogoIcon],
+  ["GLM", "zhipu/glm-4.6", ZaiLogoIcon],
+  ["Kimi", "moonshot/kimi-k2", KimiLogoIcon],
+] as const)(
+  "uses the %s mark for catalog families and inferred model IDs",
+  async (family, modelId, Icon) => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const reference = render(<Icon size={20} />);
+    const artwork = reference.container.querySelector("svg")?.innerHTML;
+    function Picker() {
+      const [value, setValue] = useState("opaque-catalog-id");
+      return (
+        <ModelPicker
+          groupByFamily
+          includeDefault={false}
+          models={[
+            { id: "opaque-catalog-id", label: "Catalog model", family },
+            { id: modelId, label: "Provider model" },
+          ]}
+          value={value}
+          defaultLabel="Choose model"
+          onChange={(id) => {
+            onChange(id);
+            setValue(id);
+          }}
+        />
+      );
+    }
+    render(<Picker />);
+    const trigger = screen.getByRole("button", { name: /^Model:/ });
+    expect(trigger.querySelector("svg")?.innerHTML).toBe(artwork);
+    await user.click(trigger);
+    const submenu = await screen.findByRole("menuitem", { name: family });
+    expect(submenu.querySelector("svg")?.innerHTML).toBe(artwork);
+    submenu.focus();
+    await user.keyboard("{ArrowRight}");
+    await user.click(
+      await screen.findByRole("menuitemradio", { name: "Provider model" }),
+    );
+    expect(onChange).toHaveBeenCalledExactlyOnceWith(modelId);
+    expect(trigger.querySelector("svg")?.innerHTML).toBe(artwork);
+  },
+);
 
 const models: ModelChoice[] = [
   { id: "sonnet", label: "Sonnet" },
@@ -27,6 +116,102 @@ function setup(value = "", props: { allowCustomModel?: boolean } = {}) {
 }
 
 const control = () => screen.getByRole("combobox", { name: "Model" });
+
+it("keeps mixed-vendor options aligned without an unknown trigger icon", async () => {
+  const user = userEvent.setup();
+  render(
+    <ModelPicker
+      models={[
+        { id: "opaque", label: "Unknown vendor" },
+        { id: "claude", label: "Claude" },
+      ]}
+      value="opaque"
+      defaultLabel="Choose model"
+      includeDefault={false}
+      onChange={vi.fn()}
+    />,
+  );
+  expect(control().querySelector(".buzz-select-leading")).toBeNull();
+  await user.click(control());
+  const unknown = await screen.findByRole("option", { name: "Unknown vendor" });
+  expect(unknown.querySelector(".buzz-select-leading")).toBeEmptyDOMElement();
+  expect(
+    screen
+      .getByRole("option", { name: "Claude" })
+      .querySelector(".buzz-select-leading svg"),
+  ).toBeInTheDocument();
+});
+
+it.each([false, true])(
+  "omits the icon column when every model is unknown (grouped: %s)",
+  async (groupByFamily) => {
+    const user = userEvent.setup();
+    render(
+      <ModelPicker
+        groupByFamily={groupByFamily}
+        models={[{ id: "opaque", label: "Unknown vendor" }]}
+        value="opaque"
+        defaultLabel="Provider default"
+        onChange={vi.fn()}
+      />,
+    );
+    const trigger = groupByFamily
+      ? screen.getByRole("button", { name: /^Model:/ })
+      : control();
+    expect(trigger.querySelector(".buzz-select-leading")).toBeNull();
+    await user.click(trigger);
+    if (groupByFamily) {
+      const family = await screen.findByRole("menuitem", { name: "Other" });
+      expect(family.querySelector(".buzz-select-leading")).toBeNull();
+      expect(
+        family.querySelector("svg:not(.buzz-menu-submenu-arrow)"),
+      ).toBeNull();
+      expect(
+        screen
+          .getByRole("menuitemradio", { name: "Provider default · Default" })
+          .querySelector(".buzz-select-leading"),
+      ).toBeNull();
+    } else {
+      for (const option of await screen.findAllByRole("option")) {
+        expect(option.querySelector(".buzz-select-leading")).toBeNull();
+      }
+    }
+  },
+);
+
+it("aligns mixed family rows with empty slots rather than generic icons", async () => {
+  const user = userEvent.setup();
+  render(
+    <ModelPicker
+      groupByFamily
+      models={[
+        { id: "opaque", label: "Unknown vendor" },
+        { id: "claude", label: "Claude" },
+      ]}
+      value="opaque"
+      defaultLabel="Provider default"
+      onChange={vi.fn()}
+    />,
+  );
+  const trigger = screen.getByRole("button", { name: /^Model:/ });
+  expect(trigger.querySelector(".buzz-select-leading")).toBeNull();
+  await user.click(trigger);
+  expect(
+    (await screen.findByRole("menuitem", { name: "Other" })).querySelector(
+      ".buzz-select-leading",
+    ),
+  ).toBeEmptyDOMElement();
+  expect(
+    screen
+      .getByRole("menuitem", { name: "Claude" })
+      .querySelector(".buzz-select-leading svg"),
+  ).toBeInTheDocument();
+  expect(
+    screen
+      .getByRole("menuitemradio", { name: "Provider default · Default" })
+      .querySelector(".buzz-select-leading"),
+  ).toBeEmptyDOMElement();
+});
 
 it("picks a listed model", async () => {
   const { onChange, user } = setup("");
@@ -157,6 +342,7 @@ it("keeps loading inside the disabled picker and restores the selected value", (
   const picker = control();
   expect(picker).toBeDisabled();
   expect(picker).toContainElement(screen.getByText("Loading models…"));
+  expect(picker.querySelector(".buzz-select-leading")).toBeNull();
   view.rerender(
     <ModelPicker
       models={models}
@@ -315,6 +501,38 @@ it("opens a family before selecting a model and strips only its display prefix",
     await screen.findByRole("menuitemradio", { name: "gpt-6-codex" }),
   );
   expect(onChange).toHaveBeenCalledExactlyOnceWith("databricks-gpt-6-codex");
+});
+
+it("uses a catalog-owned family for grouping and the selected model icon", async () => {
+  const onChange = vi.fn();
+  const user = userEvent.setup();
+  render(
+    <ModelPicker
+      groupByFamily
+      includeDefault={false}
+      models={[
+        { id: "anthropic-looking-id", label: "Sol 6.1", family: "OpenAI" },
+      ]}
+      value="anthropic-looking-id"
+      defaultLabel="Choose model"
+      onChange={onChange}
+    />,
+    { wrapper: StrictMode },
+  );
+  const trigger = screen.getByRole("button", { name: /^Model:/ });
+  expect(trigger.querySelector("svg")).toHaveAttribute(
+    "viewBox",
+    "176 176 364 364",
+  );
+  await user.click(trigger);
+  const family = await screen.findByRole("menuitem", { name: "OpenAI" });
+  expect(screen.queryByRole("menuitem", { name: "Claude" })).toBeNull();
+  family.focus();
+  await user.keyboard("{ArrowRight}");
+  await user.click(
+    await screen.findByRole("menuitemradio", { name: "Sol 6.1" }),
+  );
+  expect(onChange).toHaveBeenCalledExactlyOnceWith("anthropic-looking-id");
 });
 
 it("keeps custom entry and default selection in the family menu", async () => {

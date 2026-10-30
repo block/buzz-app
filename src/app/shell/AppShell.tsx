@@ -18,6 +18,7 @@ import type { SettingsCards } from "../../features/settings/service";
 import type { RegisteredPage } from "../../features/pages/service";
 import type { AccountActionsService } from "../../features/account-actions/service";
 import type { Communities } from "../../features/communities/service";
+import type { FederatedIdentity } from "../../features/federated-identity/service";
 import type { InviteLink } from "../../features/communities/invite-link";
 import type { OpenTarget } from "../../features/navigation/targets";
 import { CommunityPicker } from "../../features/communities/CommunityPicker";
@@ -52,6 +53,7 @@ export function AppShell({
   invite,
   onInviteClose,
   settingsCards,
+  federatedIdentity,
   accountActions,
   appearance,
   searchServices,
@@ -78,6 +80,7 @@ export function AppShell({
   invite?: (InviteLink & { requestId: number }) | undefined;
   onInviteClose?: ((requestId: number) => void) | undefined;
   settingsCards?: SettingsCards | undefined;
+  federatedIdentity?: FederatedIdentity | undefined;
   accountActions: AccountActionsService;
   appearance: Appearance;
   searchServices?: SearchServices;
@@ -446,6 +449,7 @@ export function AppShell({
                 invite={invite}
                 onInviteClose={onInviteClose}
                 settingsCards={settingsCards}
+                federatedIdentity={federatedIdentity}
                 onSelect={onCommunitySelect}
                 onOpenTarget={onOpenTarget}
               />

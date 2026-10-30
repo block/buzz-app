@@ -1,4 +1,4 @@
-// A glance at what wakes an agent. The Agent Attention UI plugin owns Interests, watches and the device switch.
+// A glance at what wakes an agent. The Attention plugin owns Interests, watches and the device switch.
 import { AtIcon, EyeIcon, TimerIcon } from "../../shared/design-system/icons";
 import {
   attentionOf,

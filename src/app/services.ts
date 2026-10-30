@@ -9,6 +9,10 @@ import {
 import { SettingsCardsService } from "../features/settings/service";
 import { IdentityNamesService } from "../features/identity-names/service";
 import { createLocalAgents } from "../features/agents/local";
+import {
+  FederatedIdentityService,
+  onSignedIn,
+} from "../features/federated-identity/service";
 import { HostService } from "../features/host/service";
 import { bindUnreadIndicator } from "../features/notifications/indicator-unread";
 import { provideNavigation } from "../features/navigation/service";
@@ -49,6 +53,7 @@ export function createServices() {
   const updates = createUpdates();
   const ctx = new Context();
   new HostService(ctx);
+  const federatedIdentity = new FederatedIdentityService(ctx);
   const plugins = createPluginManager(ctx, {
     bundled: bundledPlugins,
     builtIn: conversationFeatures,
@@ -91,6 +96,10 @@ export function createServices() {
   const relay = communities.relay;
   // Expose v2 only with the complete label/projection/frame/Destination/guard slice.
   new SoloNavigationService(ctx, relay, plugins);
+  // The one recovery point for federated sign-in; see onSignedIn.
+  ctx.effect(() =>
+    onSignedIn(federatedIdentity, () => communities.reauthorize()),
+  );
   const adminAccess = createAdminAccess(relay, communities, nativeRelayStaff());
   ctx.provide("adminAccess", adminAccess);
   ctx.effect(() => () => adminAccess.dispose());
@@ -177,6 +186,7 @@ export function createServices() {
     sidebarSections,
     panels,
     plugins,
+    federatedIdentity,
     relay,
     communities,
     invites,

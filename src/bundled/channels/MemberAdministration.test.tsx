@@ -94,7 +94,8 @@ async function setup(
     : profile(target, profileBody);
   const viewerProfile = profile(viewer, { name: "Carl" });
   const ownerProfile = profile(owner, { name: "Owner" });
-  let role: string | undefined = targetRole;
+  let role: string | undefined =
+    targetRole === "absent" ? undefined : targetRole;
   let tick = 1700000000;
   let lag = false;
   const members = () => [
@@ -143,6 +144,8 @@ async function setup(
   });
   let dialogReads = false;
   const query = vi.fn(async (filters: Parameters<typeof matchesEvent>[1][]) => {
+    if (targetRole === "absent" && filters.some((filter) => filter.search))
+      return [targetProfile];
     if (filters.some((filter) => filter.kinds?.includes(39001))) await roleRead;
     if (filters.some((filter) => filter.kinds?.includes(0)))
       await initialReads?.names;
@@ -211,7 +214,8 @@ async function setup(
   await user.click(screen.getByRole("button", { name: "Access" }));
   if (roleRead || initialReads)
     await screen.findByRole("status", { name: "Loading members" });
-  else await screen.findByText("Morgan");
+  else
+    await screen.findByText(targetRole === "absent" ? "Carl (you)" : "Morgan");
   if (!initialReads)
     await vi.waitFor(() =>
       expect(session.memberAdministration.snapshot(id).status).toBe(
@@ -238,19 +242,162 @@ async function setup(
     },
     choose: async (name: string) => {
       await user.click(
-        screen.getByRole("button", { name: "Actions for Morgan" }),
+        screen.getByRole("button", { name: /^Actions for Morgan$/ }),
       );
-      await user.click(await screen.findByRole("menuitem", { name }));
+      const roleChoice =
+        name === "Set as admin"
+          ? "Admin"
+          : name === "Set to participating"
+            ? "Participating"
+            : name === "Set to viewing only"
+              ? "Viewing only"
+              : undefined;
+      await user.click(
+        roleChoice
+          ? await screen.findByRole("menuitemradio", { name: roleChoice })
+          : await screen.findByRole("menuitem", { name }),
+      );
       expect(onOpenLink).not.toHaveBeenCalled();
       return screen.findByRole("dialog", {
         name:
           name === "Remove from channel"
             ? `Remove ${targetAgent ? "agent" : "member"} from channel`
-            : "Change member role?",
+            : `Change access to ${name === "Set to viewing only" ? "Viewing only" : name === "Set to participating" ? "Participating" : "Admin"}?`,
       });
     },
   };
 }
+it.each([
+  ["owner", "member", true],
+  ["owner", "guest", true],
+  ["owner", "admin", true],
+  ["admin", "guest", false],
+  ["admin", "member", false],
+  ["admin", "admin", false],
+] as const)(
+  "lets an %s add someone directly as %s from the split menu (Agent: %s)",
+  async (actor, role, agent) => {
+    const t = await setup(actor, "absent", true, undefined, agent);
+    await t.user.type(screen.getByRole("searchbox"), "Morgan");
+    await t.user.click(
+      await screen.findByRole("button", { name: /^Add Morgan .* as$/ }),
+    );
+    await t.user.click(
+      await screen.findByRole("menuitem", {
+        name:
+          role === "guest"
+            ? "View only Read messages and threads."
+            : role === "member"
+              ? "Participate Send messages, reply, and react."
+              : "Admin Manage this channel and its members.",
+      }),
+    );
+    const dialog = await screen.findByRole("dialog", { name: "Add member?" });
+    expect(dialog).toHaveAccessibleDescription("Morgan");
+    expect(t.publish).not.toHaveBeenCalled();
+    await vi.waitFor(() =>
+      expect(
+        within(dialog).getByRole("button", { name: "Cancel" }),
+      ).toHaveFocus(),
+    );
+    await t.user.click(
+      within(dialog).getByRole("button", {
+        name:
+          role === "guest"
+            ? "Add with view-only access"
+            : role === "member"
+              ? "Add to participate"
+              : "Add as admin",
+      }),
+    );
+    await vi.waitFor(() =>
+      expect(
+        t.session.memberAdministration.snapshot(id).operation?.status,
+      ).toBe("confirmed"),
+    );
+    expect(t.publish).toHaveBeenCalledOnce();
+    expect(t.publish.mock.calls[0]?.[0].tags).toEqual([
+      ["h", id],
+      ["p", t.target.pubkey],
+      ["role", role],
+    ]);
+    await vi.waitFor(() =>
+      expect(screen.getByText("Morgan").closest("li")).toHaveTextContent(
+        role === "guest"
+          ? "Viewing only"
+          : role === "member"
+            ? "Participating"
+            : "Admin",
+      ),
+    );
+  },
+);
+
+it("cancels an addition from the split menu and retains the search and keyboard focus", async () => {
+  const t = await setup("owner", "absent");
+  await t.user.type(screen.getByRole("searchbox"), "Morgan");
+  const trigger = await screen.findByRole("button", {
+    name: /^Add Morgan .* as$/,
+  });
+  trigger.focus();
+  await t.user.keyboard("{Enter}");
+  await t.user.click(
+    await screen.findByRole("menuitem", {
+      name: "Admin Manage this channel and its members.",
+    }),
+  );
+  const dialog = await screen.findByRole("dialog", { name: "Add member?" });
+  await t.user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  await vi.waitFor(() => expect(screen.getByRole("searchbox")).toHaveFocus());
+  expect(screen.getByRole("searchbox")).toHaveValue("Morgan");
+  expect(t.publish).not.toHaveBeenCalled();
+  await t.user.click(
+    screen.getByRole("button", { name: /^Add Morgan .* as$/ }),
+  );
+  await t.user.keyboard("{Escape}");
+  await vi.waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: /^Add Morgan .* as$/ }),
+    ).toHaveFocus(),
+  );
+});
+
+it.each(["member", "guest"])(
+  "hides role additions from a %s",
+  async (actor) => {
+    const t = await setup(actor, "absent");
+    await t.user.type(screen.getByRole("searchbox"), "Morgan");
+    if (actor === "member")
+      await screen.findByRole("button", { name: /^Add Morgan \(/ });
+    expect(
+      screen.queryByRole("button", { name: /^Add Morgan .* as$/ }),
+    ).not.toBeInTheDocument();
+    expect(t.publish).not.toHaveBeenCalled();
+  },
+);
+
+it("disables an addition confirmation if the person joins with a different role", async () => {
+  const t = await setup("owner", "absent");
+  await t.user.type(screen.getByRole("searchbox"), "Morgan");
+  await t.user.click(
+    await screen.findByRole("button", { name: /^Add Morgan .* as$/ }),
+  );
+  await t.user.click(
+    await screen.findByRole("menuitem", {
+      name: "Admin Manage this channel and its members.",
+    }),
+  );
+  const dialog = await screen.findByRole("dialog", { name: "Add member?" });
+  await act(async () => {
+    t.confirm("member");
+    await t.session.memberAdministration.refresh(id);
+  });
+  expect(
+    within(dialog).getByRole("button", { name: "Add as admin" }),
+  ).toBeDisabled();
+  expect(t.publish).not.toHaveBeenCalled();
+});
+
 it.each([
   ["member", "admin"],
   ["admin", "member"],
@@ -551,7 +698,7 @@ it("presents verified roles, protects owners/self, and confirms a separate delib
   await expectProfileOnly(t.user, "Owner");
   const row = required(screen.getByText("Morgan").closest("li"));
   expect(row.closest("section")).toHaveAttribute("aria-label", "People");
-  let dialog = await t.choose("Make admin");
+  let dialog = await t.choose("Set as admin");
   await vi.waitFor(() =>
     expect(
       within(dialog).getByRole("button", { name: "Cancel" }),
@@ -561,14 +708,14 @@ it("presents verified roles, protects owners/self, and confirms a separate delib
     within(dialog).getByRole("button", { name: "Cancel" }),
   ).toHaveAttribute("data-variant", "subtle");
   expect(
-    within(dialog).getByRole("button", { name: "Make admin" }),
+    within(dialog).getByRole("button", { name: "Set as admin" }),
   ).toHaveAttribute("data-variant", "prominent");
   expect(t.publish).not.toHaveBeenCalled();
   await t.user.click(within(dialog).getByRole("button", { name: "Cancel" }));
   expect(t.publish).not.toHaveBeenCalled();
-  dialog = await t.choose("Make admin");
+  dialog = await t.choose("Set as admin");
   await t.user.click(
-    within(dialog).getByRole("button", { name: "Make admin" }),
+    within(dialog).getByRole("button", { name: "Set as admin" }),
   );
   await vi.waitFor(() =>
     expect(t.session.memberAdministration.snapshot(id).operation?.status).toBe(
@@ -664,49 +811,74 @@ it("confirms removal and removes only the confirmed roster entry", async () => {
   expect(t.session.channels.get?.(id)?.members).not.toContain(t.target.pubkey);
 });
 it.each(["member", "guest"])(
-  "keeps ordinary invitations usable for %s without admin controls",
+  "keeps the %s member directory usable without admin controls",
   async (actor) => {
     const t = await setup(actor);
     await expectProfileOnly(t.user, "Morgan");
     expect(screen.getByRole("searchbox")).toHaveAttribute(
       "placeholder",
-      "Add people and agents",
+      actor === "guest" ? "Search members" : "Add people and agents",
     );
   },
 );
-it.each([
-  ["member", ["Make admin", "Remove from channel"]],
-  ["admin", ["Make member", "Remove from channel"]],
-  ["guest", ["Make admin", "Make member", "Remove from channel"]],
-] as const)(
-  "omits Guest assignment while preserving the verified %s role and supported actions",
-  async (role, actions) => {
+it.each(["member", "admin", "guest"] as const)(
+  "shows the verified %s role beside an ellipsis menu until confirmation",
+  async (role) => {
     const t = await setup("owner", role);
     const row = required(screen.getByText("Morgan").closest("li"));
+    const caption =
+      role === "member"
+        ? "Participating"
+        : role === "guest"
+          ? "Viewing only"
+          : "Admin";
+    const actions = within(row).getByRole("button", {
+      name: "Actions for Morgan",
+    });
+    expect(within(row).getByText(caption)).toBeVisible();
+    expect(actions).not.toHaveTextContent(caption);
     expect(
-      within(row).getByRole("button", { name: /Open profile/ }),
-    ).toHaveAccessibleName(new RegExp(`, ${role}$`));
-    await t.user.click(
-      screen.getByRole("button", { name: "Actions for Morgan" }),
-    );
+      within(row).queryByRole("button", { name: "Access for Morgan" }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(row).queryByText(role === "guest" ? "Guest" : "Member"),
+    ).not.toBeInTheDocument();
+    await t.user.click(actions);
     await screen.findByRole("menuitem", { name: "Remove from channel" });
     expect(
-      screen.getAllByRole("menuitem").map((item) => item.textContent),
-    ).toEqual(["View profile", ...actions]);
+      screen.getAllByRole("menuitemradio").map((item) => item.textContent),
+    ).toEqual(["Admin", "Participating", "Viewing only"]);
+    expect(
+      screen.getByRole("menuitemradio", { name: caption }),
+    ).toHaveAttribute("aria-checked", "true");
     await t.user.keyboard("{Escape}");
+    await vi.waitFor(() => expect(actions).toHaveFocus());
     expect(
       within(row).getByRole("button", { name: /Open profile/ }),
     ).toHaveAccessibleName(new RegExp(`, ${role}$`));
     expect(t.publish).not.toHaveBeenCalled();
   },
 );
-it("changes an existing Guest to Member only after explicit confirmation", async () => {
-  const t = await setup("owner", "guest");
-  const dialog = await t.choose("Make member");
-  expect(dialog).toHaveTextContent("from guest to member");
+
+it("makes a member a guest only after explicit confirmation", async () => {
+  const t = await setup("owner", "member");
+  const dialog = await t.choose("Set to viewing only");
+  expect(dialog).toHaveTextContent("from Participating to Viewing only");
   expect(t.publish).not.toHaveBeenCalled();
   await t.user.click(
-    within(dialog).getByRole("button", { name: "Make member" }),
+    within(dialog).getByRole("button", { name: "Set to viewing only" }),
+  );
+  await vi.waitFor(() => expect(t.publish).toHaveBeenCalledOnce());
+  expect(t.publish.mock.calls[0]?.[0].tags).toContainEqual(["role", "guest"]);
+});
+
+it("changes an existing Guest to Member only after explicit confirmation", async () => {
+  const t = await setup("owner", "guest");
+  const dialog = await t.choose("Set to participating");
+  expect(dialog).toHaveTextContent("from Viewing only to Participating");
+  expect(t.publish).not.toHaveBeenCalled();
+  await t.user.click(
+    within(dialog).getByRole("button", { name: "Set to participating" }),
   );
   await vi.waitFor(() =>
     expect(t.session.memberAdministration.snapshot(id).operation?.status).toBe(
@@ -751,13 +923,15 @@ it.each([false, true])(
       ],
     ).toBe("bot");
     await t.user.click(
-      screen.getByRole("button", { name: "Actions for Morgan" }),
+      screen.getByRole("button", { name: /^Actions for Morgan$/ }),
     );
     expect(
       await screen.findByRole("menuitem", { name: "Remove from channel" }),
     ).toBeVisible();
-    expect(screen.getByRole("menuitem", { name: "Make admin" })).toBeVisible();
-    expect(screen.getByRole("menuitem", { name: "Make member" })).toBeVisible();
+    expect(screen.getByRole("menuitemradio", { name: "Admin" })).toBeVisible();
+    expect(
+      screen.getByRole("menuitemradio", { name: "Participating" }),
+    ).toBeVisible();
     expect(t.publish).not.toHaveBeenCalled();
     await t.user.click(
       screen.getByRole("menuitem", { name: "Remove from channel" }),
@@ -853,9 +1027,9 @@ it("reads roles on hosts without the narrow writer", async () => {
 it("keeps unconfirmed roles and session recovery across close/reopen without replay", async () => {
   const t = await setup();
   t.lag();
-  const dialog = await t.choose("Make admin");
+  const dialog = await t.choose("Set as admin");
   await t.user.click(
-    within(dialog).getByRole("button", { name: "Make admin" }),
+    within(dialog).getByRole("button", { name: "Set as admin" }),
   );
   await screen.findByText(/This request may have taken effect/);
   expect(
@@ -901,9 +1075,9 @@ it("pending operations survive closing while suppressing duplicate actions", asy
     await publish(event);
   });
   try {
-    const dialog = await t.choose("Make admin");
+    const dialog = await t.choose("Set as admin");
     await t.user.click(
-      within(dialog).getByRole("button", { name: "Make admin" }),
+      within(dialog).getByRole("button", { name: "Set as admin" }),
     );
     await vi.waitFor(() => expect(t.publish).toHaveBeenCalledOnce());
     await expectProfileOnly(t.user, "Morgan");
@@ -954,7 +1128,7 @@ it("retains roster and displays rejection with explicit refresh recovery", async
   await t.user.click(
     screen.getByRole("button", { name: "Refresh member data" }),
   );
-  await screen.findByRole("button", { name: "Actions for Morgan" });
+  await screen.findByRole("button", { name: /^Actions for Morgan$/ });
   expect(t.publish).toHaveBeenCalledOnce();
 });
 
@@ -1273,7 +1447,11 @@ async function expectProfileOnly(
   user: ReturnType<typeof userEvent.setup>,
   name: string,
 ) {
-  await user.click(screen.getByRole("button", { name: `Actions for ${name}` }));
+  await user.click(
+    screen.getByRole("button", {
+      name: new RegExp(`^Actions for ${name}$`),
+    }),
+  );
   expect(
     (await screen.findAllByRole("menuitem")).map((item) => item.textContent),
   ).toEqual(["View profile"]);
@@ -1291,7 +1469,7 @@ it.each(["ellipsis", "context", "keyboard", "context-key"])(
     const row = required(screen.getByText("Morgan").closest("li"));
     if (entry === "ellipsis") {
       await t.user.click(
-        screen.getByRole("button", { name: "Actions for Morgan" }),
+        screen.getByRole("button", { name: /^Actions for Morgan$/ }),
       );
     } else if (entry === "context") {
       fireEvent.contextMenu(row, { clientX: 100, clientY: 100, button: 2 });
@@ -1307,7 +1485,7 @@ it.each(["ellipsis", "context", "keyboard", "context-key"])(
     }
     expect(
       (await screen.findAllByRole("menuitem")).map((item) => item.textContent),
-    ).toEqual(["View profile", "Make admin", "Remove from channel"]);
+    ).toEqual(["View profile", "Remove from channel"]);
     expect(t.onOpenLink).not.toHaveBeenCalled();
     expect(t.publish).not.toHaveBeenCalled();
     await t.user.click(screen.getByRole("menuitem", { name: "View profile" }));
@@ -1322,7 +1500,9 @@ it.each(["ellipsis", "context", "keyboard", "context-key"])(
 it("keeps Members and restores the menu trigger when profile navigation is declined", async () => {
   const t = await setup();
   t.onOpenLink.mockReturnValue(false);
-  const actions = screen.getByRole("button", { name: "Actions for Morgan" });
+  const actions = screen.getByRole("button", {
+    name: /^Actions for Morgan$/,
+  });
   await t.user.click(actions);
   await t.user.click(
     await screen.findByRole("menuitem", { name: "View profile" }),
@@ -1399,7 +1579,9 @@ it.each(["Carl", "Owner", "Morgan"])(
   async (name) => {
     const t = await setup();
     await t.user.click(
-      screen.getByRole("button", { name: `Actions for ${name}` }),
+      screen.getByRole("button", {
+        name: new RegExp(`^Actions for ${name}$`),
+      }),
     );
     const view = await screen.findByRole("menuitem", { name: "View profile" });
     expect(
@@ -1431,14 +1613,14 @@ it.each([
       navigation,
     );
     await t.user.click(
-      screen.getByRole("button", { name: "Actions for Morgan" }),
+      screen.getByRole("button", { name: /^Actions for Morgan$/ }),
     );
     expect(
       (await screen.findAllByRole("menuitem")).map((item) => item.textContent),
     ).toEqual(offered ? ["View profile", "Send message"] : ["View profile"]);
     await t.user.keyboard("{Escape}");
     await t.user.click(
-      screen.getByRole("button", { name: "Actions for Carl" }),
+      screen.getByRole("button", { name: /^Actions for Carl$/ }),
     );
     expect(
       await screen.findByRole("menuitem", { name: "View profile" }),
@@ -1467,7 +1649,9 @@ it("opens a confirmed human DM once, then hands navigation off without a members
         release = resolve;
       }),
   );
-  const actions = screen.getByRole("button", { name: "Actions for Morgan" });
+  const actions = screen.getByRole("button", {
+    name: /^Actions for Morgan$/,
+  });
   await t.user.click(actions);
   await t.user.click(
     await screen.findByRole("menuitem", { name: "Send message" }),
@@ -1508,7 +1692,9 @@ it.each(["read", "navigation"])(
     if (failure === "read")
       t.openMessage.mockRejectedValueOnce(new Error("DM unavailable"));
     else t.onOpenConversation.mockReturnValueOnce(false);
-    const actions = screen.getByRole("button", { name: "Actions for Morgan" });
+    const actions = screen.getByRole("button", {
+      name: /^Actions for Morgan$/,
+    });
     await t.user.click(actions);
     await t.user.click(
       await screen.findByRole("menuitem", { name: "Send message" }),
@@ -1553,7 +1739,7 @@ it("closing Members aborts the DM waiter and prevents late navigation", async ()
       }),
   );
   await t.user.click(
-    screen.getByRole("button", { name: "Actions for Morgan" }),
+    screen.getByRole("button", { name: /^Actions for Morgan$/ }),
   );
   await t.user.click(
     await screen.findByRole("menuitem", { name: "Send message" }),
@@ -1672,14 +1858,12 @@ it.each(["bot", "member"])(
       name: "Open owner profile: Carl (you)",
     });
     await t.user.click(
-      screen.getByRole("button", { name: "Actions for Morgan" }),
+      screen.getByRole("button", { name: /^Actions for Morgan$/ }),
     );
     const remove = await screen.findByRole("menuitem", {
       name: "Remove from channel",
     });
-    expect(
-      screen.queryByRole("menuitem", { name: /^Make / }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("menuitemradio")).not.toBeInTheDocument();
     await t.user.click(remove);
     const dialog = await screen.findByRole("dialog", {
       name: "Remove agent from channel",
@@ -1738,15 +1922,13 @@ it.each(["other", "invalid"] as const)(
       ).toHaveAttribute("aria-busy", "false"),
     );
     await t.user.click(
-      screen.getByRole("button", { name: "Actions for Morgan" }),
+      screen.getByRole("button", { name: /^Actions for Morgan$/ }),
     );
     await screen.findByRole("menuitem", { name: "View profile" });
     expect(
       screen.queryByRole("menuitem", { name: "Remove from channel" }),
     ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("menuitem", { name: /^Make / }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("menuitemradio")).not.toBeInTheDocument();
   },
 );
 
@@ -1754,11 +1936,18 @@ it.each(["owner", "admin"])(
   "lets %s explicitly promote a bot while preserving verified agent identity",
   async (actor) => {
     const t = await setup(actor, "bot", true, undefined, true);
-    const dialog = await t.choose("Make admin");
-    expect(dialog).toHaveTextContent("from bot to admin");
+    await t.user.click(
+      screen.getByRole("button", { name: "Actions for Morgan" }),
+    );
+    expect(
+      await screen.findByRole("menuitemradio", { name: "Participating" }),
+    ).toHaveAttribute("aria-checked", "true");
+    await t.user.keyboard("{Escape}");
+    const dialog = await t.choose("Set as admin");
+    expect(dialog).toHaveTextContent("from Participating to Admin");
     expect(t.publish).not.toHaveBeenCalled();
     await t.user.click(
-      within(dialog).getByRole("button", { name: "Make admin" }),
+      within(dialog).getByRole("button", { name: "Set as admin" }),
     );
     await vi.waitFor(() =>
       expect(

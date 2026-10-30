@@ -404,7 +404,11 @@ it("removing a failed operation in Diagnostics unlocks the preserved draft on re
   await waitFor(() => expect(outbox.snapshot()[0]?.delivery).toBe("failed"));
   page.unmount();
   const diagnostics = render(
-    <OutboxStatus outbox={outbox} profiling={createRelayProfiler()} />,
+    <OutboxStatus
+      outbox={outbox}
+      profiling={createRelayProfiler()}
+      memberAdditions={owner.session.memberAdditions}
+    />,
   );
   await t.user.click(
     screen.getByRole("button", { name: "Remove from outbox" }),

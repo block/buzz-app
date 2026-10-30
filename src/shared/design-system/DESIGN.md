@@ -354,7 +354,10 @@ local color override to disguise a blocked action.
 Keep the surface header, content frame, focus and scroll anchor mounted. Reserve
 the content’s approximate final geometry on a first read rather than replacing a
 form with a one-line loading message. LoadingRegion keeps a reserved status line;
-its children own geometry. Unknown fields stay hidden/inert, not editable defaults
+its children own geometry. When field placeholders already convey loading, use
+`statusVisibility="screen-reader"` to retain the delayed announcement without a
+visible status row; supplied error/retry feedback still appears immediately.
+Unknown fields stay hidden/inert, not editable defaults
 from another scope. Avoid decorative shimmer or a skeleton of every control.
 
 Prefer already-verified content for the exact account/community/item while
@@ -887,6 +890,10 @@ extra-small capsule uses `text-caption`. For a caption-sized inline choice such 
 the composer's model name, `size="inline"` keeps a 24px minimum target with 4px
 horizontal padding and icon gap, and 12px icons. Pair it with `variant="ghost"`
 for an unframed label; shared hover, disabled, and keyboard focus still apply.
+Compact Selects use `appearance="link"` for a text-and-caret choice, such as channel access, without a capsule or horizontal
+button inset. It uses regular body-small type and a 24px minimum target with
+the text at its bottom edge, so supporting copy follows without an extra gap;
+it retains the Select's keyboard behavior and focus treatment.
 
 Button defaults to `md` (40px minimum height); IconButton defaults to `sm`
 (32px square with 16px artwork) and a 10px rounded rectangle
@@ -1267,11 +1274,14 @@ body scrollport and only the shared outer gutter below its actions.
 For a bounded dialog with fixed controls above a list, use `height="stable"`
 with `bodyLayout="flex"`. The body becomes a non-scrolling flex column; the
 feature supplies a `flex: 1; min-height: 0` composition with fixed controls and
-one flexing scrollport. Keep results and their recovery feedback reachable; Members
+one flexing scrollport. Stable flex bodies outside expanded dialogs retain a
+minimum of one control plus the shared body insets before the whole dialog
+scrolls. Expanded dialogs retain their zero body minimum. Keep results and their
+recovery feedback reachable; Members
 administration errors sit outside that scrollport, below its fixed search controls.
 Without footer actions, the flex body omits its bottom padding so
 only the popup supplies the outer bottom gutter. With actions, it retains the
-body-to-footer spacing. The default flow layout and other dialogs remain unchanged.
+body-to-footer spacing. The default flow layout remains unchanged.
 The shared Dialog uses `duration-settle` and `easing-enter` for a subtle upward
 fade, with `duration-fast` on exit. Base UI owns transition presence;
 keep the controlled component mounted while setting `open={false}` for an exit.

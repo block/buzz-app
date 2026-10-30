@@ -103,6 +103,29 @@ function deferred() {
   return { promise, resolve, reject };
 }
 const message = () => screen.queryByRole("button", { name: "Message" });
+const editProfile = () =>
+  screen.queryByRole("button", { name: "Edit profile" });
+
+it("offers Edit profile only on the viewer's own profile in a community and opens its Settings there", () => {
+  const f = fixture();
+  const view = render(f.panel(person));
+  expect(message()).toBeTruthy();
+  expect(editProfile()).toBeNull();
+  view.rerender(f.panel(viewer));
+  expect(message()).toBeNull();
+  fireEvent.click(editProfile() as HTMLElement);
+  expect(f.navigate).toHaveBeenCalledExactlyOnceWith({
+    version: 1,
+    kind: "settings",
+    section: "profile",
+    scope: { viewer, communityOrigin: origin },
+  });
+  // A scope for another identity names no community for this viewer.
+  f.reconnect(`${origin}:${other}`);
+  expect(screen.getByRole("region", { name: "Profile details" })).toBeTruthy();
+  expect(editProfile()).toBeNull();
+  f.owner.dispose();
+});
 
 it("offers Message only for a foreign profile on a DM-capable connection", () => {
   const unavailable = fixture(false);

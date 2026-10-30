@@ -11,6 +11,10 @@ export type RecoverySource = Readonly<{
   status(): RecoveryStatus;
   subscribe(listener: () => void): () => void;
   retry(): void;
+  /** Credentials changed: read again after any read already in flight, even
+   * one its status does not show (a ready catalog revalidating). Without it,
+   * recovery waits out a `busy` read before retrying. */
+  reauthorize?(): void;
 }>;
 export type RecoverySnapshot = Readonly<{
   /** True while at least one source shows a failure. */
@@ -20,6 +24,9 @@ export type RecoverySnapshot = Readonly<{
   /** True from the first automatic retry until every source settles. Kept
    * apart from `attempt` so a manual or signal retry keeps the notice up. */
   shown: boolean;
+  /** Counts credential changes (retryAll). A finite read owned outside
+   * recovery retries its failure when this moves; see useReauthorizedRetry. */
+  reauthorized: number;
 }>;
 export type RelayRecovery = Readonly<{
   snapshot(): RecoverySnapshot;
@@ -27,17 +34,51 @@ export type RelayRecovery = Readonly<{
   /** Retry failed sources now and restart the delay sequence. `except` skips
    * a source that already owns its own recovery for the triggering event. */
   retryNow(except?: RecoverySource): void;
+  /** Credentials changed: retry every source, settled ones included, since a
+   * changed credential can clear a refusal recovery deliberately leaves alone.
+   * A source busy with a read begun under the old credentials retries again
+   * once that read settles, so joining it cannot keep its stale refusal. */
+  retryAll(): void;
   dispose(): void;
 }>;
 
+/** A background read's state as recovery sees it. Only failures a retry can
+ * fix enter recovery; a denial or a deterministic failure stays visible on its
+ * own surface (see isTransientFailure). */
+export const loadState = (
+  state: Readonly<{ status: string; transient?: true | undefined }>,
+): RecoveryStatus =>
+  state.status === "error"
+    ? state.transient
+      ? "failed"
+      : "settled"
+    : state.status === "loading"
+      ? "busy"
+      : "settled";
+/** A refusal that federated sign-in can clear: the relay wanted a token. */
+export const isSignInRefusal = (error: unknown) =>
+  /Federated sign-in is required|Federated identity is not configured/.test(
+    error instanceof Error ? error.message : String(error),
+  );
+/** Calls `retry` once credentials change after generation `sent` (a request's
+ * `reauthorized` when sent); returns its cancel. */
+export function reauthorizedOnce(
+  recovery: RelayRecovery,
+  sent: number,
+  retry: () => void,
+) {
+  const check = () => {
+    if (recovery.snapshot().reauthorized <= sent) return;
+    stop();
+    retry();
+  };
+  const stop = recovery.subscribe(check);
+  check();
+  return stop;
+}
 export const RECOVERY_DELAYS_MS = Object.freeze([
   1_000, 2_000, 4_000, 8_000, 16_000, 30_000,
 ]);
-const IDLE: RecoverySnapshot = Object.freeze({
-  recovering: false,
-  attempt: 0,
-  shown: false,
-});
 
 export function createRecovery(
   sources: readonly RecoverySource[],
@@ -51,7 +92,17 @@ export function createRecovery(
   },
 ): RelayRecovery {
   const listeners = new Set<() => void>();
-  let snapshot = IDLE,
+  /** Sources whose pre-reauthorization read is still in flight. */
+  const stale = new Set<RecoverySource>();
+  let reauthorized = 0;
+  const idle = () =>
+    Object.freeze({
+      recovering: false,
+      attempt: 0,
+      shown: false,
+      reauthorized,
+    });
+  let snapshot: RecoverySnapshot = idle(),
     attempt = 0,
     shown = false,
     timer: unknown,
@@ -61,7 +112,8 @@ export function createRecovery(
     if (
       next.recovering === snapshot.recovering &&
       next.attempt === snapshot.attempt &&
-      next.shown === snapshot.shown
+      next.shown === snapshot.shown &&
+      next.reauthorized === snapshot.reauthorized
     )
       return;
     snapshot = next;
@@ -74,21 +126,32 @@ export function createRecovery(
   };
   function evaluate() {
     if (disposed || running) return;
+    // A source publishes its settled state before it releases the old read,
+    // so its retry waits a turn rather than joining the read that is ending.
+    for (const source of stale)
+      if (source.status() !== "busy") {
+        stale.delete(source);
+        timers.setTimeout(() => {
+          if (!disposed) source.retry();
+        }, 0);
+      }
     const states = sources.map((source) => source.status());
     if (!states.includes("failed")) {
       cancel();
       // A retry in flight is not proof of recovery: keep the notice and the
       // delay sequence until every source settles.
       if (snapshot.recovering && states.includes("busy")) {
-        publish(Object.freeze({ recovering: true, attempt, shown }));
+        publish(
+          Object.freeze({ recovering: true, attempt, shown, reauthorized }),
+        );
         return;
       }
       attempt = 0;
       shown = false;
-      publish(IDLE);
+      publish(idle());
       return;
     }
-    publish(Object.freeze({ recovering: true, attempt, shown }));
+    publish(Object.freeze({ recovering: true, attempt, shown, reauthorized }));
     if (timer !== undefined) return;
     const delay =
       RECOVERY_DELAYS_MS[Math.min(attempt, RECOVERY_DELAYS_MS.length - 1)] ??
@@ -128,9 +191,27 @@ export function createRecovery(
       attempt = 0;
       run(except);
     },
+    retryAll() {
+      if (disposed) return;
+      cancel();
+      attempt = 0;
+      reauthorized++;
+      running = true;
+      try {
+        for (const source of sources)
+          if (source.reauthorize) source.reauthorize();
+          else if (source.status() === "busy") stale.add(source);
+          else source.retry();
+      } finally {
+        running = false;
+      }
+      evaluate();
+      publish({ ...snapshot, reauthorized });
+    },
     dispose() {
       disposed = true;
       cancel();
+      stale.clear();
       for (const stop of stops) stop();
       listeners.clear();
     },

@@ -31,7 +31,7 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-it.each(["create", "share"] as const)(
+it.each(["create", "community"] as const)(
   "stops %s after the owner changes during its first request",
   async (operation) => {
     let owner = "A";
@@ -50,7 +50,7 @@ it.each(["create", "share"] as const)(
     const pending =
       operation === "create"
         ? client.create("Demo")
-        : client.share("demo", "team");
+        : client.community("demo", "buzz-alpha", "grant");
     const rejected = expect(pending).rejects.toThrow(/sign-in changed/);
     session.signOut();
     owner = "B";
@@ -58,11 +58,7 @@ it.each(["create", "share"] as const)(
     held.resolve(
       operation === "create"
         ? contract()
-        : json(200, {
-            visibility: "restricted",
-            lifecycle_id: "life",
-            workspace_grant_revision: 1,
-          }),
+        : json(200, { lifecycle_id: "life", community_grant_revision: 1 }),
     );
     await rejected;
     expect(request).toHaveBeenCalledTimes(1);
@@ -298,7 +294,7 @@ it("uploads the artifact to the app's deploy endpoint", async () => {
 it("points the agent at Settings when signed out or refused", async () => {
   const signedOut = await setup([], false);
   await expect(signedOut.client.list()).rejects.toThrow(
-    /not signed in.*Settings → Plugins → Builderlab agents/,
+    /not signed in.*Settings → Plugins → Builderlab, then/,
   );
   expect(signedOut.requests).toEqual([]);
   const refused = await setup([json(401, {})]);
@@ -323,24 +319,99 @@ it("reports the server's error without the session", async () => {
   );
 });
 
-it("shares only a restricted app, at its current grant revision", async () => {
+it("switches visibility without sending viewers", async () => {
   const { client, requests } = await setup([
-    json(200, {
-      visibility: "restricted",
-      lifecycle_id: "life-1",
-      workspace_grant_revision: 3,
-    }),
-    json(200, { ok: true }),
+    json(200, { ok: true, app_id: "demo", visibility: "restricted" }),
+    json(200, { ok: true, app_id: "demo", visibility: "restricted" }),
   ]);
-  await client.share("demo", "team/one");
-  expect(requests[1]).toMatchObject({
-    url: `${BASE}/v1/agent/apps/demo/sharing/workspaces/team%2Fone`,
-    method: "POST",
-    body: JSON.stringify({ lifecycle_id: "life-1", expected_revision: 3 }),
+  await client.visibility("demo", "only_you");
+  expect(requests[0]).toMatchObject({
+    url: `${BASE}/v1/agent/apps/demo/visibility`,
+    method: "PUT",
+    body: JSON.stringify({ visibility: "restricted" }),
   });
-  const open = await setup([json(200, { visibility: "organization" })]);
-  await expect(open.client.share("demo", "team")).rejects.toThrow(
-    /restricted visibility/,
+  await expect(client.visibility("demo", "workspace")).rejects.toThrow(
+    "Apps Platform reported demo as restricted, not demo as organization. Ask your owner to check who can open it in Share & manage before retrying",
+  );
+  const other = await setup([
+    json(200, { ok: true, app_id: "other", visibility: "organization" }),
+  ]);
+  await expect(other.client.visibility("demo", "workspace")).rejects.toThrow(
+    /reported other as organization, not demo as organization/,
+  );
+});
+
+it.each([
+  ["grant", "POST"],
+  ["revoke", "DELETE"],
+] as const)(
+  "%ss a community at the grant revision it just read",
+  async (action, method) => {
+    const { client, requests } = await setup([
+      json(200, { lifecycle_id: "life-1", community_grant_revision: 7 }),
+      json(200, { ok: true, community_grant_revision: 8 }),
+    ]);
+    await client.community("demo", "buzz/alpha", action);
+    const path = `${BASE}/v1/agent/apps/demo/sharing/communities/buzz%2Falpha`;
+    expect(requests).toMatchObject([
+      { url: path, method: "GET" },
+      {
+        url: path,
+        method,
+        body: JSON.stringify({ lifecycle_id: "life-1", expected_revision: 7 }),
+      },
+    ]);
+  },
+);
+
+it("tells the agent to deploy before sharing an app with no sharing lifecycle", async () => {
+  for (const response of [
+    json(409, {
+      error: {
+        code: "community_grant_conflict",
+        message: "app sharing state changed; read access and retry",
+      },
+    }),
+  ]) {
+    const { client, requests } = await setup([response]);
+    await expect(
+      client.community("demo", "buzz-alpha", "grant"),
+    ).rejects.toThrow(
+      "This app isn't set up for sharing yet. Deploy it with apps_deploy, then try again.",
+    );
+    expect(requests).toHaveLength(1);
+  }
+});
+
+it("changes nothing when the sharing read has no valid revision", async () => {
+  for (const body of [
+    { community_grant_revision: 0 },
+    { lifecycle_id: "life-1" },
+    { lifecycle_id: "life-1", community_grant_revision: -1 },
+    { lifecycle_id: "life-1", community_grant_revision: 1.5 },
+  ]) {
+    const { client, requests } = await setup([json(200, body)]);
+    await expect(
+      client.community("demo", "buzz-alpha", "grant"),
+    ).rejects.toThrow(/no valid sharing revision.*nothing was changed/);
+    expect(requests).toHaveLength(1);
+  }
+});
+
+it("passes a conflicting community change through unchanged", async () => {
+  const { client } = await setup([
+    json(200, { lifecycle_id: "life-1", community_grant_revision: 7 }),
+    json(409, {
+      error: {
+        code: "community_grant_conflict",
+        message: "app sharing state changed; read access and retry",
+      },
+    }),
+  ]);
+  await expect(
+    client.community("demo", "buzz-alpha", "revoke"),
+  ).rejects.toThrow(
+    "Revoking the community failed (HTTP 409): community_grant_conflict: app sharing state changed; read access and retry",
   );
 });
 

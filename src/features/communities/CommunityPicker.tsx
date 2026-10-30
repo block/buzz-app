@@ -29,6 +29,7 @@ import {
   leaveUnsettled,
 } from "./departure";
 import { CommunityDialog } from "./CommunityDialog";
+import type { FederatedIdentity } from "../federated-identity/service";
 import type { InviteLink } from "./invite-link";
 import { CommunityPickerItem, MEMBERSHIP_SECTION } from "./CommunityPickerItem";
 import { communityDestination } from "./destination";
@@ -52,6 +53,7 @@ const noSubscription = () => () => {};
 /** Shell navigation only: selecting a community remains owned by Communities. */
 export function CommunityPicker({
   communities,
+  federatedIdentity,
   invite,
   onInviteClose,
   onSelect,
@@ -59,6 +61,7 @@ export function CommunityPicker({
   settingsCards,
 }: {
   communities: Communities;
+  federatedIdentity?: FederatedIdentity | undefined;
   invite?: (InviteLink & { requestId: number }) | undefined;
   onInviteClose?: ((requestId: number) => void) | undefined;
   settingsCards?: Pick<SettingsCards, "subscribe" | "has"> | undefined;
@@ -117,7 +120,7 @@ export function CommunityPicker({
   );
   const hostedAvailable = useSyncExternalStore(
     settingsCards?.subscribe ?? noSubscription,
-    () => settingsCards?.has("block.hosted-communities/hosted") ?? false,
+    () => settingsCards?.has("block.builderlab/login") ?? false,
   );
   const invites = !!onOpenTarget && membershipAvailable;
   const role = useCommunityRole(invites ? session : undefined, client.viewer);
@@ -326,7 +329,7 @@ export function CommunityPicker({
                   onOpenTarget({
                     version: 1,
                     kind: "settings",
-                    section: "block.hosted-communities/hosted",
+                    section: "block.builderlab/login",
                   });
                 }}
               />
@@ -338,6 +341,7 @@ export function CommunityPicker({
         <CommunityDialog
           key={invite ? invite.requestId : "manual"}
           communities={communities}
+          federatedIdentity={federatedIdentity}
           mode="join"
           invite={invite}
           onJoined={(id) => select(id)}

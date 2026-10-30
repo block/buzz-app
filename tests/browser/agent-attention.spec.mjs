@@ -4,11 +4,11 @@ const runtimeSwitch = (page) =>
   page.getByRole("switch", { name: "Run Ada’s watches on this device" });
 
 // Real browser focus and scroll geometry are outside jsdom.
-test("The Watching tab fits both themes and sizes and manages existing watches by keyboard", async ({
+test("The Attention tab fits both themes and sizes and manages existing watches by keyboard", async ({
   page,
 }) => {
   await page.goto("/tests/fixtures/agent-attention.html");
-  const pane = page.getByRole("region", { name: "Watching", exact: true });
+  const pane = page.getByRole("region", { name: "Attention", exact: true });
   await expect(pane).toBeVisible();
   await page
     .getByRole("button", { name: "Details for Release discussion" })
@@ -57,6 +57,14 @@ test("The Watching tab fits both themes and sizes and manages existing watches b
   await expect(
     page.getByRole("link", { name: "Open project#42" }),
   ).toHaveAttribute("href", "https://github.com/example/project/pull/42");
+  await page
+    .getByRole("button", { name: "Choose who can wake agents" })
+    .click();
+  expect(await page.evaluate(() => window.attentionFixture.opened)).toEqual({
+    version: 1,
+    kind: "settings",
+    section: "buzz.github/authors",
+  });
 });
 
 // Browser focus after removal, including async writes, cannot be proved by jsdom.
@@ -64,7 +72,7 @@ test("watch and interest deletion restore focus without taking it from another c
   page,
 }) => {
   await page.goto("/tests/fixtures/agent-attention.html");
-  const pane = page.getByRole("region", { name: "Watching", exact: true });
+  const pane = page.getByRole("region", { name: "Attention", exact: true });
   const remove = page.getByRole("button", {
     name: "Delete Release discussion",
   });

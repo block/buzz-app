@@ -75,6 +75,30 @@ it("reads the existing local inventory without changing public profile evidence"
   f.library.dispose();
 });
 
+it("leaves synthetic public profile names to the caller's identity fallback", () => {
+  const f = fixture();
+  const source = {
+    ...f.source,
+    profiles: {
+      ...f.source.profiles,
+      snapshot: () =>
+        new Map([
+          [key, { name: key.slice(0, 10), nameIsFallback: true as const }],
+        ]),
+    },
+  };
+  const names = bindNames(source);
+  try {
+    expect(names.lookup(key)).toBeUndefined();
+    expect(names.resolve(key, "Recognizable fallback")).toBe(
+      "Recognizable fallback",
+    );
+  } finally {
+    names.dispose();
+    f.library.dispose();
+  }
+});
+
 it("reuses one scope per candidate array and keeps distinct candidates distinct", () => {
   const a = "a".repeat(64),
     b = "b".repeat(64);

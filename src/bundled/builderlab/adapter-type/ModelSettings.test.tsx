@@ -515,6 +515,36 @@ it.each(["save", "catalog"])(
   },
 );
 
+it("retires a session-expired save error after explicit reauthentication", async () => {
+  const h = await fixture({
+    modelId: "model-one",
+    reasoningEffort: "high",
+    modelSelectionStatus: "valid",
+    instructions: "Saved instructions.",
+  });
+  const user = userEvent.setup();
+  const field = screen.getByRole("textbox", { name: "Instructions" });
+  await user.type(field, " Draft");
+  h.request.mockResolvedValueOnce({ status: 401, headers: {}, body: "{}" });
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(h.session.snapshot().status).toBe("signed-out"));
+  expect(field).toBeDisabled();
+  expect(screen.queryByRole("alert")).toBeNull();
+  await act(() => h.session.signIn());
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: /^Model:/ })).toBeEnabled(),
+  );
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.queryByRole("button", { name: /Retry|Refresh/ })).toBeNull();
+  expect(field).toHaveValue("Saved instructions. Draft");
+  expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+  expect(
+    h.request.mock.calls.filter(([request]) =>
+      request.url.endsWith("/update-agent"),
+    ),
+  ).toHaveLength(1);
+});
+
 it("retries a failed catalog refresh without retrying a failed save", async () => {
   const h = await fixture();
   await choose("Model", "Friendly One");

@@ -72,6 +72,9 @@ export function ModelSettings({
   const [saving, setSaving] = useState(false);
   const busy = !saved || loading || saving || !hasAccess;
   const [error, setError] = useState("");
+  useEffect(() => {
+    if (!signedIn) setError("");
+  }, [signedIn]);
   const [catalogError, setCatalogError] = useState("");
   const [revision, setRevision] = useState(0);
   const controller = useRef<AbortController | null>(null);
@@ -171,7 +174,8 @@ export function ModelSettings({
       if (remote.modelSelectionStatus === "valid")
         notify("Model preferences saved", "success");
     } catch (reason) {
-      if (!signal.aborted) setError(message(reason));
+      if (!signal.aborted && session.snapshot().status === "signed-in")
+        setError(message(reason));
     } finally {
       if (!signal.aborted) setSaving(false);
     }

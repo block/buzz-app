@@ -21,9 +21,13 @@ export type PageNavigation = Readonly<{
   /** Back/Forward returned to this visit. A consumer that kept its state may
    * restore it rather than replay the visit's opening. */
   traversal?: true;
-  /** This visit's state under a consumer's key, kept for Back/Forward. */
+  /** This visit's state under a consumer's key, kept for Back/Forward until
+   * the shared store evicts it. */
   position(key: string): JsonValue | undefined;
-  /** Usable after this presentation is revoked, so leaving can record it. */
+  /** Usable after this presentation is revoked, so leaving can record it.
+   * Every visit and consumer shares one store that keeps the latest 100
+   * entries, so use few keys and small values: never drafts, message bodies,
+   * credentials or authorization. */
   savePosition(key: string, value: JsonValue): void;
   /** Bind a domain subtree to the exact connection it renders, without another visit. */
   forSession(relay: RelayData, connection: RelaySnapshot): PageNavigation;
@@ -51,7 +55,6 @@ export function provideNavigation(
     controller.dispose();
     positions.clear();
   });
-  /** Bounded per-visit state; never drafts, message bodies, credentials or authorization. */
   const position = (id: string) => positions.get(id);
   function savePosition(id: string, value: JsonValue) {
     positions.delete(id);

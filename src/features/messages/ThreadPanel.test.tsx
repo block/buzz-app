@@ -2110,6 +2110,61 @@ it("a reader first shown while its route retargets stays hidden until the route 
   expect(h.element.scrollTop).toBe(3300);
 });
 
+it("a reader hidden while its route retargets reads nothing until the route restores its place", async () => {
+  vi.useFakeTimers();
+  const { places, visit } = visitPlaces();
+  places.set("thread-visit:thread", {
+    anchor: { id: row.id, top: 100, ancestors: [] },
+  });
+  const h = messagesHarness();
+  h.snapshot.status = "loading";
+  h.snapshot.replies = [threadReply("d", row.id)];
+  vi.mocked(document.hasFocus).mockReturnValue(true);
+  vi.spyOn(HTMLElement.prototype, "getClientRects").mockReturnValue([
+    new DOMRect(0, 0, 500, 500),
+  ] as unknown as DOMRectList);
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(
+    new DOMRect(0, 0, 500, 500),
+  );
+  const observe = vi.fn(async () => {});
+  const catchUp = vi.fn(async () => {});
+  Object.assign(h.session.unread, {
+    sync: () => ({ capability: "frontier-sync" }),
+    reading: () => ({ view() {}, observe, catchUp, dispose() {} }),
+  });
+  const props = h.props as ThreadPanelProps;
+  Object.assign(props, { retainThread: true });
+  h.render();
+  let release!: (value: "selected") => void;
+  h.view.retarget.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+  );
+  Object.assign(props, { navigation: visit("thread-visit", true) });
+  h.rerenderProps();
+  try {
+    // The first page lands at the end behind the loader, with focus inside.
+    h.snapshot.status = "ready";
+    h.render();
+    expect(h.element.scrollTop).toBe(3400);
+    h.element.focus();
+    await act(() => vi.advanceTimersToNextFrame());
+    await act(() => vi.advanceTimersByTimeAsync(300));
+    expect(catchUp).not.toHaveBeenCalled();
+    expect(observe).not.toHaveBeenCalled();
+  } finally {
+    await act(async () => release("selected"));
+  }
+  // The restored place is read, not the end the reader never saw.
+  expect(h.element.scrollTop).toBe(3300);
+  await act(() => vi.advanceTimersToNextFrame());
+  await act(() => vi.advanceTimersByTimeAsync(300));
+  expect(observe).toHaveBeenCalled();
+  expect(catchUp).not.toHaveBeenCalled();
+});
+
 it("an unrouted retained opening retries allocation locally", () => {
   const h = messagesHarness();
   const navigationRetry = vi.fn();

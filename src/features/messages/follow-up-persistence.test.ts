@@ -6,7 +6,11 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { finalizeEvent, getPublicKey } from "nostr-tools";
 import type { LocalWork } from "../agents/local-activity";
 import type { RelaySession } from "../relay/session";
-import { createOutbox, type OutgoingEvent } from "../relay/outbox";
+import {
+  createOutbox,
+  PublishRejected,
+  type OutgoingEvent,
+} from "../relay/outbox";
 import { createMessages } from "../relay/messages";
 import { followUpQueue } from "./follow-up-queue";
 import { followUpMessage } from "./follow-up-message";
@@ -63,6 +67,7 @@ afterEach(() => {
 });
 
 function fixture(partition = scope, records: readonly OutgoingEvent[] = []) {
+  let signGate: Promise<void> | undefined;
   let persisted = structuredClone(records);
   const publish = vi.fn(async () => {});
   const save = vi.fn(async (value: readonly OutgoingEvent[]) => {
@@ -71,7 +76,10 @@ function fixture(partition = scope, records: readonly OutgoingEvent[] = []) {
   const owner = createOutbox(
     viewer,
     {
-      sign: async (event) => finalizeEvent(structuredClone(event), secret),
+      sign: async (event) => {
+        await signGate;
+        return finalizeEvent(structuredClone(event), secret);
+      },
       publish,
     },
     { load: () => persisted, save },
@@ -89,6 +97,9 @@ function fixture(partition = scope, records: readonly OutgoingEvent[] = []) {
     members: [viewer, agent],
     archived: false,
   };
+  let rosterStatus = "ready";
+  let channelVisible = true;
+  const channelListeners = new Set<() => void>();
   const refresh = vi.fn(async () => channel);
   const messages = createMessages(
     owner.outbox,
@@ -103,7 +114,16 @@ function fixture(partition = scope, records: readonly OutgoingEvent[] = []) {
   const session = {
     scope: partition,
     viewer,
-    channels: { list: () => ({ status: "ready", channels: [channel] }) },
+    channels: {
+      list: () => ({
+        status: rosterStatus,
+        channels: channelVisible ? [channel] : [],
+      }),
+      subscribeList: (listener: () => void) => {
+        channelListeners.add(listener);
+        return () => channelListeners.delete(listener);
+      },
+    },
     channelWrites: { refreshMembership: refresh },
     agentChoices: {
       subscribe: (listener: () => void) => {
@@ -156,6 +176,14 @@ function fixture(partition = scope, records: readonly OutgoingEvent[] = []) {
     refresh,
     send,
     saved: () => persisted,
+    holdSigning(gate: Promise<void>) {
+      signGate = gate;
+    },
+    roster(status: string, visible: boolean) {
+      rosterStatus = status;
+      channelVisible = visible;
+      for (const listener of channelListeners) listener();
+    },
     finish() {
       working = false;
       for (const listener of listeners) listener();
@@ -937,7 +965,7 @@ it.each([false, true])(
       await vi.waitFor(() =>
         expect(restarted.queue.snapshot()[0]?.error).toBe("Recovery failed"),
       );
-      expect(restarted.queue.snapshot()[0]?.sending).toBe(false);
+      expect(restarted.queue.snapshot()[0]?.sending).toBe(true);
     } else {
       await vi.waitFor(() => expect(restarted.queue.snapshot()).toEqual([]));
       expect(followUpStorage(scope).has(id)).toBe(false);
@@ -981,3 +1009,125 @@ it.each([false, true])(
     }
   },
 );
+
+it.each(["loading", "error"])(
+  "keeps resumed saved rows when the empty roster is %s",
+  async (status) => {
+    const id = fixture().enqueue();
+    const h = fixture();
+    h.roster(status, false);
+    h.queue.resumeAfter(agent, { original: "chat" });
+    h.roster(status, false);
+    await followUpStorage(scope).lock(id, async () => {});
+    expect(h.queue.snapshot().map((row) => row.id)).toEqual([id]);
+    expect(followUpStorage(scope).has(id)).toBe(true);
+    expect(h.send).not.toHaveBeenCalled();
+    h.roster("ready", true);
+    h.work("original", "done");
+    h.finish();
+    await vi.waitFor(() => expect(h.queue.snapshot()).toEqual([]));
+    expect(h.send).toHaveBeenCalledOnce();
+  },
+);
+
+it.each([false, true])(
+  "keeps Remove fenced after recovery failure until delivery or failed dismissal (%s)",
+  async (failed) => {
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
+    const h = fixture();
+    await h.owner.ready;
+    const id = h.enqueue();
+    let release!: () => void;
+    h.holdSigning(
+      new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+    );
+    if (failed)
+      h.publish.mockRejectedValue(new PublishRejected("Publish refused"));
+    h.save
+      .mockImplementationOnce(async () => {})
+      .mockRejectedValueOnce(new Error("Recovery disk failure"));
+    render(
+      createElement(QueuedFollowUps, {
+        session: h.session,
+        channelId: "chat",
+        disabled: false,
+        focusComposer() {},
+      }),
+    );
+    try {
+      h.queue.sendNow(id);
+      await vi.waitFor(() =>
+        expect(h.queue.snapshot()[0]?.error).toBe("Recovery disk failure"),
+      );
+      await followUpStorage(scope).lock(id, async () => {});
+      expect(
+        (
+          screen.getByRole("button", {
+            name: "Remove queued message",
+          }) as HTMLButtonElement
+        ).disabled,
+      ).toBe(true);
+      h.queue.remove(id);
+      await followUpStorage(scope).lock(id, async () => {});
+      expect(followUpStorage(scope).has(id)).toBe(true);
+      // Restoring the row must not clear known Outbox ownership either.
+      window.dispatchEvent(new StorageEvent("storage"));
+      await followUpStorage(scope).lock(id, async () => {});
+      expect(h.queue.snapshot()[0]?.sending).toBe(true);
+    } finally {
+      release();
+    }
+    await vi.waitFor(() => expect(h.publish).toHaveBeenCalledOnce());
+    if (failed) {
+      await vi.waitFor(() =>
+        expect(h.owner.outbox.snapshot()[0]?.delivery).toBe("failed"),
+      );
+      await h.owner.outbox.dismiss(
+        h.owner.outbox.snapshot()[0]?.event.id ?? "missing",
+      );
+      expect(
+        (
+          screen.getByRole("button", {
+            name: "Remove queued message",
+          }) as HTMLButtonElement
+        ).disabled,
+      ).toBe(false);
+      h.queue.remove(id);
+    } else h.queue.sendNow(id);
+    await vi.waitFor(() => expect(h.queue.snapshot()).toEqual([]));
+    expect(h.send).toHaveBeenCalledOnce();
+  },
+);
+
+it("abandoning a gated resumed reread pauses only its saved rows, not fresh submissions", async () => {
+  const id = fixture().enqueue();
+  const h = fixture();
+  h.finish();
+  h.queue.resumeAfter(agent, { original: "chat" });
+  let finishRead!: () => void;
+  const read = new Promise<void>((resolve) => {
+    finishRead = resolve;
+  });
+  const abandoned = read.then(() =>
+    h.queue.pauseAfter(agent, { original: "chat" }),
+  );
+  const fresh = h.enqueue({ ...message, text: "Fresh follow-up" });
+  finishRead();
+  await abandoned;
+  expect(h.queue.snapshot().find((row) => row.id === id)?.restored).toBe(true);
+  expect(h.queue.snapshot().find((row) => row.id === fresh)?.restored).not.toBe(
+    true,
+  );
+  h.queue.remove(id);
+  await vi.waitFor(() => expect(h.queue.snapshot()).toEqual([]));
+  expect(h.send).toHaveBeenCalledOnce();
+  expect(h.send.mock.calls[0]?.[1]).toBe("Fresh follow-up");
+});

@@ -99,7 +99,7 @@ export function QueuedFollowUps({
                 onFocus={() => {
                   focused.current = { id: entry.id, action: "remove" };
                 }}
-                disabled={entry.sending && !entry.error}
+                disabled={entry.sending}
                 data-remove-action
                 style={{ width: "var(--space-6)", height: "var(--space-6)" }}
                 variant="destructive-quiet"

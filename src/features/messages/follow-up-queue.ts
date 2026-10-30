@@ -18,6 +18,9 @@ type Entry = {
   publish(recovery?: OutboxRecovery): string;
   message?: FollowUpMessage;
   restored?: boolean;
+  admitted?: boolean;
+  resumedBy?: Set<string>;
+  deliveryId?: string | undefined;
   resumeCancelled?: boolean;
   predecessorRemoved?: boolean;
   sending?: boolean;
@@ -198,6 +201,9 @@ function createQueue(session: RelaySession) {
       // The store retains channels on ordinary loading/read failures. Confirmed
       // denial removes them even when list status is error; cached membership
       // alone does not establish revocation.
+      for (const entry of entries)
+        if (roster.channels.some((row) => row.id === entry.channelId))
+          entry.admitted = true;
       const retired = new Set(
         [...waits.keys(), ...entries.map((entry) => entry.channelId)].filter(
           (id) => {
@@ -206,7 +212,7 @@ function createQueue(session: RelaySession) {
               (!channel &&
                 (roster.status === "ready" ||
                   entries.some(
-                    (entry) => entry.channelId === id && !entry.restored,
+                    (entry) => entry.channelId === id && entry.admitted,
                   ))) ||
               (channel?.readOnly && !channel.cached)
             );
@@ -224,6 +230,13 @@ function createQueue(session: RelaySession) {
     });
     const offDismiss = session.outbox?.observeDismiss((item) => {
       if (item.delivery !== "failed") return;
+      for (const entry of entries) {
+        if (entry.deliveryId !== item.event.id) continue;
+        entry.deliveryId = undefined;
+        entry.sending = false;
+      }
+      entries = [...entries];
+      emit();
       for (const [channelId, current] of waits) {
         const remaining = current.filter(
           (wait) => wait.message !== item.event.id,
@@ -337,6 +350,7 @@ function createQueue(session: RelaySession) {
             (item) => item.recovery?.key === followUpRecovery(entry.id).key,
           );
         if (previous) {
+          entry.deliveryId = previous.event.id;
           waitForMessage(entry, previous.event.id);
           await session.outbox.recover(
             previous.event.id,
@@ -378,6 +392,7 @@ function createQueue(session: RelaySession) {
           entry,
           entry.message ? followUpRecovery(entry.id) : undefined,
         );
+        entry.deliveryId = id;
       } catch (error) {
         if (storage && entry.message) storage.sending(entry.id, false);
         throw error;
@@ -394,7 +409,7 @@ function createQueue(session: RelaySession) {
         item === entry
           ? {
               ...item,
-              sending: false,
+              sending: !!item.deliveryId,
               error: error instanceof Error ? error.message : String(error),
             }
           : item,
@@ -455,7 +470,7 @@ function createQueue(session: RelaySession) {
   function remove(id: string, locked = false) {
     const entry = entries.find((item) => item.id === id);
     try {
-      if (entry?.sending && publishing.has(id)) return;
+      if (entry?.deliveryId || (entry?.sending && publishing.has(id))) return;
       if (
         entry?.message &&
         storage &&
@@ -496,7 +511,14 @@ function createQueue(session: RelaySession) {
       void storage
         .lock(entry.id, async () => {
           if (!entries.includes(entry) || publishing.has(entry.id)) return;
-          entry.sending = false;
+          await session.outbox?.ready();
+          if (!entries.includes(entry)) return;
+          entry.deliveryId ??= session.outbox
+            ?.snapshot()
+            .find(
+              (item) => item.recovery?.key === followUpRecovery(entry.id).key,
+            )?.event.id;
+          entry.sending = !!entry.deliveryId;
           entries = [...entries];
           emit();
         })
@@ -579,7 +601,7 @@ function createQueue(session: RelaySession) {
         if (!storage) throw new Error("Queued message storage is unavailable.");
         storage.save({ ...entry.message, id, createdAt });
       }
-      entries = [...entries, { ...entry, id, createdAt }];
+      entries = [...entries, { ...entry, id, createdAt, admitted: true }];
       watch();
       emit();
       pump();
@@ -608,10 +630,14 @@ function createQueue(session: RelaySession) {
       }
       entries = entries.map((entry) => {
         if (
-          entry.restored &&
+          (entry.restored || entry.resumedBy) &&
           !entry.resumeCancelled &&
           channels.has(entry.channelId)
         ) {
+          entry.resumedBy ??= new Set();
+          for (const [request, channelId] of Object.entries(turns))
+            if (channelId === entry.channelId)
+              entry.resumedBy.add(`${agent}:${request}`);
           entry.restored = false;
           entry.beforePublish = () => beforePublish?.(entry);
         }
@@ -624,7 +650,9 @@ function createQueue(session: RelaySession) {
     },
     /** A request positively abandoned by the runner is not completion evidence. */
     pauseAfter(agent: string, turns: Readonly<Record<string, string>>) {
-      const channels = new Set(Object.values(turns));
+      const abandoned = Object.keys(turns).map(
+        (request) => `${agent}:${request}`,
+      );
       for (const [channelId, current] of waits) {
         const remaining = current.filter(
           (wait) =>
@@ -639,7 +667,7 @@ function createQueue(session: RelaySession) {
         else waits.delete(channelId);
       }
       entries = entries.map((entry) => {
-        if (channels.has(entry.channelId)) {
+        if (abandoned.some((request) => entry.resumedBy?.has(request))) {
           entry.restored = true;
           entry.resumeCancelled = true;
         }

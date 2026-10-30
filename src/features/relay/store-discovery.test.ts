@@ -1001,6 +1001,81 @@ it.each(["caller", "cache clear", "disposal"])(
   },
 );
 
+it.each(["renamed", "archived"])(
+  "uses a delivered %s delta when exact metadata arrives first",
+  async (change) => {
+    let clock = 1_700_000_000_000;
+    const h = setup({ now: () => clock });
+    h.channels.ensureList();
+    await h.rosters(0);
+    await h.settled();
+    const old = metadata(relay, "x", "release-one", clock / 1000, [["public"]]);
+    const keep = metadata(relay, "k", "release-keep", clock / 1000, [
+      ["public"],
+    ]);
+    const warm = h.channels.searchPublic?.("zzz");
+    (await h.next(39000)).respond([old, keep]);
+    await warm;
+    clock += 30_000;
+    const current = metadata(
+      relay,
+      "x",
+      change === "renamed" ? "release-two" : "release-one",
+      clock / 1000,
+      [["public"], ...(change === "archived" ? [["archived", "true"]] : [])],
+    );
+    const progress = vi.fn();
+    const search = h.channels.searchPublic?.("release", { progress });
+    const delta = await h.next(39000);
+    expect(delta.filters[0]?.since).toBeDefined();
+    (await h.next(39000)).respond([keep, current]);
+    await vi.waitFor(() => expect(progress).toHaveBeenCalled());
+    delta.respond([current]);
+    const exact = await h.next(39000);
+    expect(exact.filters[0]?.["#d"]).toBeDefined();
+    exact.respond(
+      [keep, current].filter((event) =>
+        exact.filters[0]?.["#d"]?.includes(tag(event, "d") ?? ""),
+      ),
+    );
+    const result = await search;
+    expect(result).toMatchObject({
+      channels:
+        change === "renamed" ? [{ id: "k" }, { id: "x" }] : [{ id: "k" }],
+      partial: false,
+    });
+    expect(h.pending).toHaveLength(0);
+  },
+);
+
+it("preserves newer renamed metadata that arrives during a provisional full-scan lookup", async () => {
+  const h = setup();
+  h.channels.ensureList();
+  await h.rosters(0);
+  await h.settled();
+  const old = metadata(relay, "release", "release-old", 10, [["public"]]);
+  const current = metadata(relay, "release", "release-new", 11, [["public"]]);
+  const { first } = openDirectory(h);
+  const progress = vi.fn();
+  const search = h.channels.searchPublic?.("release", { progress });
+  (await h.next(39000)).respond([old, ...first.slice(0, 499)]);
+  const older = await h.next(39000);
+  const provisional = await h.next(39000);
+  // Exact metadata changes while the next directory page is pending.
+  provisional.respond([current]);
+  await vi.waitFor(() => expect(progress).toHaveBeenCalled());
+  older.respond([]);
+  (await h.next(39000)).respond([current]);
+  expect(await search).toMatchObject({
+    channels: [{ id: "release", name: "release-new" }],
+  });
+  expect(h.channels.openDirectory?.()).toContainEqual({
+    id: "release",
+    name: "release-new",
+  });
+  expect(h.pending).toHaveLength(0);
+});
+
 it("merges incremental metadata and periodically replaces the full directory", async () => {
   const start = 1_700_000_000_000;
   let clock = start;

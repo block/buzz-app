@@ -354,6 +354,8 @@ candidate still needs fresh exact resolution, including a name-match check;
 the completed full read or merged delta supplies the final answer. A completed
 directory read cancels unfinished provisional lookups. A failed provisional
 lookup waits for the directory's final answer rather than failing the search.
+If the directory fails, an in-flight provisional lookup can still supply rows
+before the error; a stalled lookup then waits for its existing transport timeout.
 Names match by
 the joined-channel rule (`matchRank`: exact, prefix, word start, substring,
 word runs, then letters in order), so `buzz community` finds `buzz-community`.

@@ -2165,12 +2165,24 @@ export function createChannelStore(
           }),
         );
         if (stale.size) {
-          entry.reconcile = true;
-          // Keep the in-flight scan's array: its next pages append here.
-          const kept = entry.events.filter(
-            (event) => !stale.has(tag(event, "d") ?? ""),
-          );
-          entry.events.splice(0, entry.events.length, ...kept);
+          if (final) entry.reconcile = true;
+          // Exact reads can beat directory pages. Retain their signed newer
+          // versions, and never discard a newer page that landed meanwhile.
+          const kept = latestPublicMetadata(entry.events);
+          for (const id of stale) {
+            const current = discovery.metadataVersion(id);
+            const landed = kept.get(id);
+            const candidate = latest.get(id);
+            if (current) kept.set(id, newer(landed, current));
+            else if (
+              !landed ||
+              !candidate ||
+              newer(candidate, landed).id === candidate.id
+            )
+              kept.delete(id);
+          }
+          // Keep the in-flight array: subsequent pages append here.
+          entry.events.splice(0, entry.events.length, ...kept.values());
           if (entry.previous)
             entry.previous = entry.previous.filter(
               (event) => !stale.has(tag(event, "d") ?? ""),
@@ -2231,7 +2243,10 @@ export function createChannelStore(
               answer(false, provisional.signal).catch(() =>
                 entry.read.then(() => undefined),
               ),
-              entry.read.then(() => undefined),
+              entry.read.then(
+                () => undefined,
+                () => new Promise<never>(() => {}),
+              ),
               aborted,
             ]);
             // A completed directory supersedes provisional work and its errors.
